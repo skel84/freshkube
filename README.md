@@ -4,10 +4,23 @@ A terminal UI (TUI) for managing and monitoring [Talos Linux](https://www.talos.
 
 **talos-pilot** provides real-time cluster visibility, diagnostics, log streaming, network analysis, and production-ready node operations - all from your terminal.
 
+[![CI](https://github.com/Handfish/talos-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Handfish/talos-pilot/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Handfish/talos-pilot)](https://github.com/Handfish/talos-pilot/releases)
 ![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 https://github.com/user-attachments/assets/4c946c32-1f7e-4ab8-9d88-9937516015d1
+
+*Live cluster overview, interleaved log streaming, diagnostics, and safe node operations, all from the terminal.*
+
+## Contents
+
+- [Why talos-pilot?](#why-talos-pilot) · [Relationship to k9s](#relationship-to-k9s)
+- [Features](#features)
+- [Design Philosophy](#design-philosophy)
+- [Engineering Highlights](#engineering-highlights)
+- [Installation](#installation) · [Usage](#usage) · [Keyboard Navigation](#keyboard-navigation)
+- [Architecture](#architecture) · [Development](#development)
 
 ## Why talos-pilot?
 
@@ -71,6 +84,25 @@ Use **talos-pilot** for "why won't my node join the cluster?"
 | **Node Reboot** | Post-reboot verification, auto-uncordon |
 | **Rolling Operations** | Sequential multi-node with progress tracking |
 | **Audit Logging** | All operations logged to `~/.talos-pilot/audit.log` |
+
+## Design Philosophy
+
+talos-pilot favors reliability in how it reports cluster health:
+
+- State over logs: health is read from system state (procfs files, Talos and Kubernetes API responses), not from log lines. A stale error in an old log does not trigger a false alarm.
+- Reliability hierarchy: checks prefer file and procfs state first, then API responses, then log parsing. Where a file like `/run/flannel/subnet.env` exists, it is read directly.
+- No false positives: when a data source is unavailable, a check reports `unknown` rather than guessing or crashing.
+- Separation of concerns: three crates. `talos-rs` is the gRPC client, `talos-pilot-core` holds the business logic and unit tests, and `talos-pilot-tui` is the ratatui UI. The logic can be tested without a terminal or a live cluster.
+
+## Engineering Highlights
+
+Some implementation notes:
+
+- The Talos API is addressed at node endpoints directly, not through the cluster VIP. The VIP depends on a healthy control plane, so using it would break diagnostics when the control plane is down.
+- The COSI resource API is not reachable on the public `:50000` port; a direct gRPC client gets `PermissionDenied`. talos-pilot shells out to `talosctl get` for that data instead.
+- When the Talos discovery service is disabled, there is no membership list to read. talos-pilot enumerates and targets nodes through the Kubernetes API, so multi-node views and rolling operations still work.
+- Packet capture streams pcap data back over the same `:50000` connection it runs on, so an unfiltered capture records its own traffic and loops. talos-pilot applies a BPF filter that drops traffic on the API port. It is precompiled with `tcpdump -dd` and embedded as bytecode (parameterized by port, with a variant per link type for IPv4/IPv6, TCP/UDP/SCTP, and fragmented packets), so no filter compiler is needed on the node.
+- Business logic in `talos-pilot-core` is unit-tested without a terminal or a live node (47 tests). The workspace has 124 tests across the three crates and builds clean under `clippy -D warnings`.
 
 ## Installation
 
@@ -230,11 +262,13 @@ Once complete, you can manage the cluster using standard talos-pilot commands.
 
 ## Architecture
 
+A three-crate workspace (~40k lines of Rust, 110 tests) split so the logic is testable without a terminal or a live cluster:
+
 ```
 crates/
-├── talos-rs/           # Talos gRPC client library
-├── talos-pilot-core/   # Shared business logic
-└── talos-pilot-tui/    # Terminal UI (ratatui)
+├── talos-rs/           # Talos gRPC client library   (~10k LOC, 41 tests)
+├── talos-pilot-core/   # Shared business logic        (~2.6k LOC, 47 tests)
+└── talos-pilot-tui/    # Terminal UI (ratatui)        (~27k LOC, 22 tests)
 ```
 
 ### Core Modules
@@ -279,27 +313,9 @@ cargo clippy --all --all-targets -- -D warnings
 
 See [docs/local-talos-setup.md](docs/local-talos-setup.md) for setting up a local Talos cluster.
 
-### Current Stats
-
-- **Core library**: ~1,760 lines across 8 modules
-- **Tests**: 98 total (47 core + 8 TUI + 32 talos-rs + 11 doc)
-- **Components**: 12 TUI components
-- **Build warnings**: 0
-
 ## Contributing
 
-### Key Principles
-
-1. **State over logs** - Check actual system state, not log messages
-2. **Graceful degradation** - Show "unknown" rather than crash
-3. **No false positives** - When in doubt, show unknown not failed
-
-## Roadmap
-
-| Feature | Priority |
-|---------|----------|
-| Container namespace support | Medium |
-| Upgrade availability alerts | Low |
+Contributions are welcome. Please keep changes aligned with the [Design Philosophy](#design-philosophy) above: check real system state, degrade gracefully, and never report failure when "unknown" is the honest answer.
 
 ## License
 
