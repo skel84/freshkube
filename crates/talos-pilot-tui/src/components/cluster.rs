@@ -2,6 +2,7 @@
 
 use crate::action::Action;
 use crate::components::Component;
+use crate::components::diagnostics::k8s;
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -148,6 +149,72 @@ struct ClusterData {
     /// Non-fatal warning when worker discovery is unavailable, so the node list
     /// (control-plane-only in that case) isn't silently misleading.
     discovery_warning: Option<String>,
+    /// Non-fatal warning when an ambient `KUBECONFIG` names a different cluster
+    /// than this Talos context (so Kubernetes views ignore it and pin to a
+    /// control plane node). Explains why `KUBECONFIG` is being disregarded.
+    kubeconfig_warning: Option<String>,
+}
+
+impl ClusterData {
+    /// Best control plane node IP for fetching a cluster-correct kubeconfig.
+    /// Prefers an etcd member (etcd runs only on control planes), then a roster
+    /// `controlplane` member, then the configured endpoint.
+    fn control_plane_ip(&self) -> Option<String> {
+        self.etcd_members
+            .iter()
+            .find_map(|m| m.ip_address())
+            .or_else(|| {
+                self.discovery_members
+                    .iter()
+                    .find(|m| m.machine_type == "controlplane")
+                    .and_then(|m| m.addresses.first().cloned())
+            })
+            .or_else(|| {
+                self.endpoints
+                    .first()
+                    .map(|e| e.split(':').next().unwrap_or(e).to_string())
+            })
+    }
+}
+
+/// Wrap a cluster warning into indented lines so it reads as part of the
+/// cluster's expanded tray rather than a detached block clipped at the pane
+/// edge. The ⚠ sits on the first line, aligned under the group rows (Control
+/// Plane / Workers); continuations hang-indent under the text.
+fn warning_lines(text: &str, pane_width: u16) -> Vec<Line<'static>> {
+    const INDENT: &str = "    "; // aligns ⚠ under the "▼ Control Plane" group rows
+    const HANG: &str = "      "; // continuations align under the wrapped text
+    let avail = (pane_width as usize).saturating_sub(HANG.len()).max(12);
+
+    let mut wrapped: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let sep = usize::from(!cur.is_empty());
+        if !cur.is_empty() && cur.chars().count() + sep + word.chars().count() > avail {
+            wrapped.push(std::mem::take(&mut cur));
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(word);
+    }
+    if !cur.is_empty() {
+        wrapped.push(cur);
+    }
+
+    let style = Style::default().fg(Color::Yellow);
+    wrapped
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let rendered = if i == 0 {
+                format!("{INDENT}⚠ {line}")
+            } else {
+                format!("{HANG}{line}")
+            };
+            Line::from(Span::styled(rendered, style))
+        })
+        .collect()
 }
 
 /// Cluster component showing overview with node list
@@ -525,37 +592,92 @@ impl ClusterComponent {
                 cluster.discovery_members = members;
                 cluster.discovery_warning = None;
             }
-            Ok(_) => {
-                // Discovery succeeded but returned no members. This usually means
-                // the cluster discovery service is disabled, so only nodes known
-                // via etcd (control plane) can be enumerated.
-                tracing::warn!(
-                    "Discovery returned no members for {} (discovery service likely disabled); \
-                     worker nodes cannot be enumerated",
-                    cluster.name
-                );
-                if cluster.discovery_members.is_empty() {
-                    cluster.discovery_warning = Some(
-                        "Worker nodes unavailable: cluster discovery returned no members \
-                         (the discovery service may be disabled)."
-                            .to_string(),
-                    );
+            outcome => {
+                // Talos discovery gave us nothing usable. It's an optional service
+                // and commonly disabled, so this is not fatal — log the reason.
+                match &outcome {
+                    Ok(_) => tracing::warn!(
+                        "Discovery returned no members for {} (discovery service likely disabled)",
+                        cluster.name
+                    ),
+                    Err(e) => tracing::warn!(
+                        "Failed to fetch discovery members for {} after retries: {}",
+                        cluster.name,
+                        e
+                    ),
                 }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to fetch discovery members for {} after retries: {} (using cached data)",
-                    cluster.name,
-                    e
-                );
-                // DO NOT clear discovery_members - preserve existing data for resilience.
-                // Only warn if we have no discovery data at all (would fall back to
-                // control-plane-only), so the user knows workers may be missing.
+
+                // Only rebuild the roster when we have none cached. If discovery
+                // succeeded on an earlier refresh, keep those members for
+                // resilience rather than dropping workers on a transient failure.
                 if cluster.discovery_members.is_empty() {
-                    cluster.discovery_warning = Some(format!(
-                        "Worker nodes may be missing: could not reach the discovery service \
-                         ({e}). Check that talosctl is installed and on PATH."
-                    ));
+                    // Fall back to the Kubernetes API, which knows every node —
+                    // control plane AND worker — independently of Talos discovery.
+                    // This is what makes workers show up when discovery is disabled;
+                    // etcd membership alone would leave the list control-plane-only.
+                    // Prefer an etcd member IP (a real control plane node) for the
+                    // kubeconfig fetch; fall back to the configured endpoint IP.
+                    let cp_ip = cluster
+                        .etcd_members
+                        .iter()
+                        .find_map(|m| m.ip_address())
+                        .or_else(|| {
+                            cluster
+                                .endpoints
+                                .first()
+                                .map(|e| e.split(':').next().unwrap_or(e).to_string())
+                        });
+
+                    match cp_ip {
+                        Some(cp_ip) => {
+                            match k8s::discovery_members_via_k8s(&client, &cp_ip).await {
+                                Ok(members) if !members.is_empty() => {
+                                    cluster.node_ips.clear();
+                                    for member in &members {
+                                        if let Some(ip) = member.addresses.first() {
+                                            cluster
+                                                .node_ips
+                                                .insert(member.hostname.clone(), ip.clone());
+                                        }
+                                    }
+                                    let count = members.len();
+                                    cluster.discovery_members = members;
+                                    cluster.discovery_warning = None;
+                                    tracing::info!(
+                                        "Enumerated {} node(s) via the Kubernetes API for {} \
+                                     (Talos discovery unavailable)",
+                                        count,
+                                        cluster.name
+                                    );
+                                }
+                                Ok(_) => {
+                                    cluster.discovery_warning = Some(
+                                        "Worker nodes unavailable: Talos discovery returned no \
+                                     members and the Kubernetes API reported no nodes."
+                                            .to_string(),
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Kubernetes node enumeration failed for {}: {}",
+                                        cluster.name,
+                                        e
+                                    );
+                                    cluster.discovery_warning = Some(format!(
+                                        "Worker nodes may be missing: Talos discovery is unavailable \
+                                     and the Kubernetes API could not be reached ({e})."
+                                    ));
+                                }
+                            }
+                        }
+                        None => {
+                            cluster.discovery_warning = Some(
+                                "Worker nodes unavailable: cluster discovery returned no members \
+                                 (the discovery service may be disabled)."
+                                    .to_string(),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -706,6 +828,23 @@ impl ClusterComponent {
                 );
             }
         }
+
+        // Warn if an ambient KUBECONFIG names a *different* cluster than this
+        // Talos context. Kubernetes views ignore it and pin to a control plane
+        // node (see k8s::create_k8s_client_with_source), so this only explains
+        // why KUBECONFIG is being disregarded — it never blocks anything. The
+        // helper reads the local kubeconfig first and returns None when unset,
+        // so there's no extra Talos round-trip in the common case.
+        let cp_ip = self
+            .clusters
+            .get(cluster_idx)
+            .and_then(ClusterData::control_plane_ip);
+        if let Some(cp_ip) = cp_ip {
+            let warning = k8s::kubeconfig_mismatch_warning(&client, &cp_ip).await;
+            if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
+                cluster.kubeconfig_warning = warning;
+            }
+        }
     }
 
     /// Refresh only the selected node's stats (memory, load, services)
@@ -853,6 +992,17 @@ impl ClusterComponent {
     /// Get a reference to the client for the active cluster
     pub fn client(&self) -> Option<&TalosClient> {
         self.clusters.get(self.active_cluster)?.client.as_ref()
+    }
+
+    /// Best control plane node IP for the active cluster, used to fetch a
+    /// cluster-correct kubeconfig (see [`k8s::create_k8s_client_with_source`]).
+    ///
+    /// Prefers an etcd member address (etcd only runs on control plane nodes, so
+    /// this is unambiguously a control plane), then a discovery/roster member
+    /// tagged `controlplane`, then the configured endpoint. `None` only when the
+    /// cluster has no known address at all.
+    pub fn control_plane_ip(&self) -> Option<String> {
+        self.clusters.get(self.active_cluster)?.control_plane_ip()
     }
 
     /// Get context name for active cluster
@@ -1802,13 +1952,17 @@ impl ClusterComponent {
 
                 // Discovery warning: worker enumeration failed, so the list
                 // above may be control-plane-only. Surface it instead of
-                // silently hiding workers.
+                // silently hiding workers. Indented + wrapped so it reads as
+                // part of this cluster's tray rather than a clipped stray line.
                 if let Some(warning) = &cluster.discovery_warning {
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
-                        Span::styled(warning.clone(), Style::default().fg(Color::Yellow)),
-                    ]));
+                    lines.extend(warning_lines(warning, pane_layout[0].width));
+                }
+
+                // KUBECONFIG points at a different cluster than this context, so
+                // Kubernetes views ignore it and pin to a control plane node.
+                // Explain that rather than let it be a silent surprise.
+                if let Some(warning) = &cluster.kubeconfig_warning {
+                    lines.extend(warning_lines(warning, pane_layout[0].width));
                 }
             }
 
@@ -2364,5 +2518,100 @@ mod tests {
         assert!(workers.contains(&"c".to_string()));
         assert!(cp.contains(&"a".to_string()));
         assert!(workers.contains(&"b".to_string()));
+    }
+
+    /// End-to-end for the discovery-disabled path: nodes enumerated via the
+    /// Kubernetes API classify into the right groups, so workers appear even
+    /// when Talos discovery is off. Regression guard for the "workers missing
+    /// when discovery disabled" bug.
+    #[test]
+    fn k8s_derived_members_populate_worker_group() {
+        use crate::components::diagnostics::k8s::{K8sNodeInfo, k8s_nodes_to_discovery_members};
+        let members = k8s_nodes_to_discovery_members(vec![
+            K8sNodeInfo {
+                name: "cp1".into(),
+                internal_ip: Some("10.0.0.1".into()),
+                is_control_plane: true,
+            },
+            K8sNodeInfo {
+                name: "w1".into(),
+                internal_ip: Some("10.0.0.2".into()),
+                is_control_plane: false,
+            },
+            K8sNodeInfo {
+                name: "w2".into(),
+                internal_ip: Some("10.0.0.3".into()),
+                is_control_plane: false,
+            },
+        ]);
+        let mut comp = ClusterComponent::default();
+        comp.clusters.push(ClusterData {
+            name: "test".to_string(),
+            versions: vec![ver("cp1"), ver("w1"), ver("w2")],
+            discovery_members: members,
+            ..Default::default()
+        });
+        assert_eq!(names(&comp.controlplane_nodes_for(0)), vec!["cp1"]);
+        assert_eq!(names(&comp.worker_nodes_for(0)), vec!["w1", "w2"]);
+    }
+
+    /// `control_plane_ip` picks a real control plane address to fetch a
+    /// cluster-correct kubeconfig from. It prefers an etcd member (etcd only
+    /// runs on control planes), then a roster `controlplane` member, then the
+    /// endpoint. Guards the fix that pins the K8s client to the launched
+    /// `--context` instead of an ambient KUBECONFIG.
+    #[test]
+    fn control_plane_ip_prefers_etcd_then_roster_then_endpoint() {
+        let etcd_member = EtcdMemberInfo {
+            id: 1,
+            hostname: "cp1".into(),
+            peer_urls: vec!["https://10.0.0.1:2380".into()],
+            client_urls: vec!["https://10.0.0.1:2379".into()],
+            is_learner: false,
+        };
+        let cp_roster = DiscoveryMember {
+            id: "cp2".into(),
+            addresses: vec!["10.0.0.9".into()],
+            hostname: "cp2".into(),
+            machine_type: "controlplane".into(),
+            operating_system: String::new(),
+        };
+        let worker_roster = DiscoveryMember {
+            id: "w1".into(),
+            addresses: vec!["10.0.0.2".into()],
+            hostname: "w1".into(),
+            machine_type: "worker".into(),
+            operating_system: String::new(),
+        };
+
+        // etcd member wins over roster and endpoint.
+        let mut comp = ClusterComponent::default();
+        comp.clusters.push(ClusterData {
+            name: "test".to_string(),
+            etcd_members: vec![etcd_member],
+            discovery_members: vec![cp_roster.clone(), worker_roster.clone()],
+            endpoints: vec!["10.0.0.5:50000".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(comp.control_plane_ip().as_deref(), Some("10.0.0.1"));
+
+        // No etcd: a roster controlplane member wins over a worker and endpoint.
+        let mut comp = ClusterComponent::default();
+        comp.clusters.push(ClusterData {
+            name: "test".to_string(),
+            discovery_members: vec![worker_roster, cp_roster],
+            endpoints: vec!["10.0.0.5:50000".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(comp.control_plane_ip().as_deref(), Some("10.0.0.9"));
+
+        // Nothing but an endpoint: fall back to it, port stripped.
+        let mut comp = ClusterComponent::default();
+        comp.clusters.push(ClusterData {
+            name: "test".to_string(),
+            endpoints: vec!["10.0.0.5:50000".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(comp.control_plane_ip().as_deref(), Some("10.0.0.5"));
     }
 }

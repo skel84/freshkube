@@ -9,7 +9,7 @@ use kube::{
     Client, Config,
     api::{Api, EvictParams, ListParams, Patch, PatchParams},
 };
-use talos_rs::TalosClient;
+use talos_rs::{DiscoveryMember, TalosClient};
 
 /// Error type for K8s operations
 #[derive(Debug, thiserror::Error)]
@@ -46,10 +46,20 @@ pub async fn create_k8s_client(talos_client: &TalosClient) -> Result<Client, K8s
 
 /// Create a Kubernetes client and return the source of the kubeconfig
 ///
-/// This function tries sources in this order:
-/// 1. KUBECONFIG environment variable (via Config::infer())
-/// 2. Fetching kubeconfig from a specific control plane node (if cp_node_ip provided)
-/// 3. Fetching kubeconfig from Talos API via VIP (fallback, may fail with multiple nodes)
+/// Match-and-honor: when we can pin to a control plane node (`cp_node_ip`), that
+/// node's kubeconfig identifies the cluster we launched against. We honor an
+/// ambient `KUBECONFIG` **only when it names the same cluster** (matching CA) —
+/// then it may reach the cluster by a more convenient endpoint (VIP/LB), so we
+/// prefer it. When `KUBECONFIG` names a *different* cluster it is ignored and we
+/// use the node's kubeconfig, so read views never show — and drain/cordon never
+/// mutate — the wrong cluster. When no node is available to pin to (both args
+/// `None`), we honor the ambient `KUBECONFIG` per standard tooling conventions.
+///
+/// Sources, in order:
+/// 1. Pinned control plane node kubeconfig, with `KUBECONFIG` honored iff its CA matches
+/// 2. Provided kubeconfig client (a control plane used while diagnosing a worker)
+/// 3. Ambient `KUBECONFIG` (env or default path)
+/// 4. Main Talos client via VIP (may fail with multiple nodes configured)
 ///
 /// # Arguments
 /// * `talos_client` - The main Talos client (connected to VIP or endpoint)
@@ -63,33 +73,63 @@ pub async fn create_k8s_client_with_source(
     cp_node_ip: Option<&str>,
     kubeconfig_client: Option<&TalosClient>,
 ) -> Result<(Client, KubeconfigSource), K8sError> {
-    // Try KUBECONFIG environment variable first (via Config::infer())
-    // This respects standard K8s tooling conventions
-    if let Ok(config) = Config::infer().await
-        && let Ok(client) = Client::try_from(config)
-    {
-        tracing::debug!("Using kubeconfig from environment (KUBECONFIG or default path)");
-        return Ok((client, KubeconfigSource::Environment));
-    }
-
-    tracing::debug!("KUBECONFIG not available, falling back to Talos API");
-
-    // If a specific control plane node IP is provided, target that node
     if let Some(node_ip) = cp_node_ip {
         tracing::debug!("Targeting control plane node {} for kubeconfig", node_ip);
-        let node_client = talos_client.with_node(node_ip);
-        match fetch_kubeconfig_from_client(&node_client).await {
-            Ok(client) => {
-                return Ok((client, KubeconfigSource::TalosNode(node_ip.to_string())));
+        match fetch_node_kubeconfig(&talos_client.with_node(node_ip)).await {
+            Ok(node_kubeconfig) => {
+                let node_ca = current_context_cluster_ca(&node_kubeconfig);
+                match (node_ca.as_deref(), ambient_kubeconfig_ca()) {
+                    // Ambient KUBECONFIG names the SAME cluster: honor it (it may
+                    // reach the cluster by a friendlier endpoint than the node IP).
+                    (Some(node_ca), Some(ambient_ca)) if node_ca == ambient_ca => {
+                        if let Ok(config) = Config::infer().await
+                            && let Ok(client) = Client::try_from(config)
+                        {
+                            tracing::debug!("KUBECONFIG matches the Talos cluster; using it");
+                            return Ok((client, KubeconfigSource::Environment));
+                        }
+                        // Env client build failed (e.g. exec/OIDC auth we don't
+                        // support): fall back to the node's kubeconfig.
+                        return Ok((
+                            client_from_kubeconfig(node_kubeconfig).await?,
+                            KubeconfigSource::TalosNode(node_ip.to_string()),
+                        ));
+                    }
+                    // Ambient KUBECONFIG names a DIFFERENT cluster: ignore it.
+                    (Some(_), Some(_)) => {
+                        tracing::warn!(
+                            "KUBECONFIG points at a different cluster than control plane node {}; \
+                             ignoring it and using the node's kubeconfig",
+                            node_ip
+                        );
+                        return Ok((
+                            client_from_kubeconfig(node_kubeconfig).await?,
+                            KubeconfigSource::TalosNode(node_ip.to_string()),
+                        ));
+                    }
+                    // No ambient KUBECONFIG, or CAs can't be compared: use the
+                    // node's kubeconfig (no false "mismatch" claim).
+                    _ => {
+                        return Ok((
+                            client_from_kubeconfig(node_kubeconfig).await?,
+                            KubeconfigSource::TalosNode(node_ip.to_string()),
+                        ));
+                    }
+                }
             }
             Err(e) => {
-                tracing::warn!("Failed to fetch kubeconfig from node {}: {}", node_ip, e);
+                tracing::warn!(
+                    "Failed to fetch kubeconfig from node {}: {} (falling back)",
+                    node_ip,
+                    e
+                );
                 // Fall through to try other methods
             }
         }
     }
 
-    // Try the provided kubeconfig_client if available
+    // Next, a provided kubeconfig client (e.g. a control plane node used to serve
+    // the kubeconfig while diagnosing a worker) — also cluster-correct.
     if let Some(kc_client) = kubeconfig_client {
         tracing::debug!("Trying provided kubeconfig client");
         match fetch_kubeconfig_from_client(kc_client).await {
@@ -105,6 +145,15 @@ pub async fn create_k8s_client_with_source(
         }
     }
 
+    // No control plane node to pin to: honor the ambient KUBECONFIG (env or
+    // default path), respecting standard K8s tooling conventions.
+    if let Ok(config) = Config::infer().await
+        && let Ok(client) = Client::try_from(config)
+    {
+        tracing::debug!("Using kubeconfig from environment (KUBECONFIG or default path)");
+        return Ok((client, KubeconfigSource::Environment));
+    }
+
     // Last resort: try the main client (may fail with multiple nodes configured)
     tracing::debug!("Trying main Talos client for kubeconfig (may fail with multiple nodes)");
     match fetch_kubeconfig_from_client(talos_client).await {
@@ -113,25 +162,98 @@ pub async fn create_k8s_client_with_source(
     }
 }
 
-/// Fetch kubeconfig from a specific Talos client and create a K8s client
-async fn fetch_kubeconfig_from_client(client: &TalosClient) -> Result<Client, K8sError> {
-    // Get kubeconfig from Talos
+/// Create a Kubernetes client by fetching the kubeconfig directly from a
+/// specific Talos control plane node, bypassing the environment `KUBECONFIG`.
+///
+/// Unlike [`create_k8s_client_with_source`], this never consults the ambient
+/// `KUBECONFIG`. That matters for node enumeration: we must talk to *this*
+/// cluster's API server, and an environment kubeconfig can point at a
+/// different cluster entirely — listing another cluster's nodes here would be
+/// a silent false positive. The Talos-served kubeconfig is scoped to the node
+/// we ask, so it always identifies the correct cluster.
+pub async fn create_k8s_client_from_node(
+    talos_client: &TalosClient,
+    cp_node_ip: &str,
+) -> Result<Client, K8sError> {
+    let node_client = talos_client.with_node(cp_node_ip);
+    fetch_kubeconfig_from_client(&node_client).await
+}
+
+/// Fetch and parse the kubeconfig a Talos node serves.
+async fn fetch_node_kubeconfig(client: &TalosClient) -> Result<kube::config::Kubeconfig, K8sError> {
     let kubeconfig_yaml = client
         .kubeconfig()
         .await
         .map_err(|e| K8sError::KubeconfigFetch(e.to_string()))?;
+    serde_yaml::from_str(&kubeconfig_yaml).map_err(|e| K8sError::KubeconfigParse(e.to_string()))
+}
 
-    // Parse kubeconfig
-    let kubeconfig: kube::config::Kubeconfig = serde_yaml::from_str(&kubeconfig_yaml)
-        .map_err(|e| K8sError::KubeconfigParse(e.to_string()))?;
-
-    // Create client config from kubeconfig
+/// Build a K8s client from an already-parsed kubeconfig.
+async fn client_from_kubeconfig(kubeconfig: kube::config::Kubeconfig) -> Result<Client, K8sError> {
     let config = Config::from_custom_kubeconfig(kubeconfig, &Default::default())
         .await
         .map_err(|e| K8sError::ClientCreate(e.to_string()))?;
-
-    // Create client
     Client::try_from(config).map_err(|e| K8sError::ClientCreate(e.to_string()))
+}
+
+/// Fetch kubeconfig from a specific Talos client and create a K8s client
+async fn fetch_kubeconfig_from_client(client: &TalosClient) -> Result<Client, K8sError> {
+    client_from_kubeconfig(fetch_node_kubeconfig(client).await?).await
+}
+
+/// The CA cert (base64 PEM) of the cluster a kubeconfig's current context points
+/// at. Two kubeconfigs sharing this value describe the *same* cluster, whether
+/// they reach it by a node IP or a VIP/load-balancer — so it's a reliable
+/// same-cluster key that doesn't false-mismatch on endpoint differences.
+///
+/// Returns `None` when the kubeconfig has no current context, no matching
+/// cluster, or a file-path CA rather than inline data — cases where we can't
+/// cheaply compare, and so treat as "unknown" rather than risk a false mismatch.
+fn current_context_cluster_ca(kubeconfig: &kube::config::Kubeconfig) -> Option<String> {
+    let ctx_name = kubeconfig.current_context.as_deref()?;
+    let ctx = kubeconfig.contexts.iter().find(|c| c.name == ctx_name)?;
+    let cluster_name = &ctx.context.as_ref()?.cluster;
+    let cluster = kubeconfig
+        .clusters
+        .iter()
+        .find(|c| &c.name == cluster_name)?;
+    cluster.cluster.as_ref()?.certificate_authority_data.clone()
+}
+
+/// The cluster CA the ambient `KUBECONFIG` (env var or default `~/.kube/config`)
+/// currently points at, if any. `None` when no kubeconfig is present/readable.
+fn ambient_kubeconfig_ca() -> Option<String> {
+    let kubeconfig = kube::config::Kubeconfig::read().ok()?;
+    current_context_cluster_ca(&kubeconfig)
+}
+
+/// A user-facing warning when an ambient `KUBECONFIG` names a *different* cluster
+/// than the one control plane node `cp_node_ip` serves — i.e. the Talos context
+/// we launched against. In that case Kubernetes views ignore `KUBECONFIG` and
+/// pin to the node, so they never read or mutate the wrong cluster.
+///
+/// Returns `None` (no warning) when there is no ambient kubeconfig, it matches
+/// this cluster, or we can't determine either CA — never a false positive.
+pub async fn kubeconfig_mismatch_warning(
+    talos_client: &TalosClient,
+    cp_node_ip: &str,
+) -> Option<String> {
+    // Cheap local read first: if no KUBECONFIG is set, there's nothing to warn
+    // about and we avoid an extra Talos API round-trip.
+    let ambient_ca = ambient_kubeconfig_ca()?;
+    let node_kubeconfig = fetch_node_kubeconfig(&talos_client.with_node(cp_node_ip))
+        .await
+        .ok()?;
+    let node_ca = current_context_cluster_ca(&node_kubeconfig)?;
+    if ambient_ca != node_ca {
+        Some(format!(
+            "KUBECONFIG points at a different cluster than this Talos context — \
+             ignoring it. Kubernetes views (workloads, drain/cordon) use the \
+             kubeconfig from control plane node {cp_node_ip} instead."
+        ))
+    } else {
+        None
+    }
 }
 
 /// Create a Kubernetes client, optionally using a different client to fetch kubeconfig
@@ -145,6 +267,112 @@ pub async fn create_k8s_client_with_kubeconfig_source(
     let (client, _source) =
         create_k8s_client_with_source(talos_client, None, kubeconfig_client).await?;
     Ok(client)
+}
+
+/// A cluster node as seen by the Kubernetes API.
+///
+/// Every node — control plane and worker — registers a `Node` object with the
+/// API server independently of the Talos discovery service, which makes this
+/// the reliable source of truth for the full roster when discovery is disabled.
+#[derive(Debug, Clone, PartialEq)]
+pub struct K8sNodeInfo {
+    /// Node name (matches the Talos hostname).
+    pub name: String,
+    /// Primary internal IP, used to reach the node's Talos API. `None` if the
+    /// node has no `InternalIP` address (then it cannot be queried).
+    pub internal_ip: Option<String>,
+    /// Whether the node carries a control-plane role label.
+    pub is_control_plane: bool,
+}
+
+/// Extract roster info from a single Kubernetes `Node`.
+///
+/// Prefers the `InternalIP` address (the kubelet node IP, which is also the
+/// Talos API address) and reads the role from the standard control-plane role
+/// labels (`node-role.kubernetes.io/control-plane`, or the legacy `master`).
+fn node_info_from(node: &Node) -> K8sNodeInfo {
+    let name = node.metadata.name.clone().unwrap_or_default();
+
+    let internal_ip = node
+        .status
+        .as_ref()
+        .and_then(|s| s.addresses.as_ref())
+        .and_then(|addrs| {
+            addrs
+                .iter()
+                .find(|a| a.type_ == "InternalIP")
+                .map(|a| a.address.clone())
+        });
+
+    let is_control_plane = node.metadata.labels.as_ref().is_some_and(|labels| {
+        labels.contains_key("node-role.kubernetes.io/control-plane")
+            || labels.contains_key("node-role.kubernetes.io/master")
+    });
+
+    K8sNodeInfo {
+        name,
+        internal_ip,
+        is_control_plane,
+    }
+}
+
+/// List all cluster nodes via the Kubernetes API.
+///
+/// This is the discovery-independent fallback for enumerating nodes (including
+/// workers) when the Talos discovery service is disabled and
+/// `talosctl get members` returns nothing.
+pub async fn list_cluster_nodes(client: &Client) -> Result<Vec<K8sNodeInfo>, K8sError> {
+    let nodes: Api<Node> = Api::all(client.clone());
+    let list = nodes
+        .list(&ListParams::default())
+        .await
+        .map_err(|e| K8sError::ApiError(format!("Failed to list nodes: {e}")))?;
+    Ok(list.items.iter().map(node_info_from).collect())
+}
+
+/// Enumerate all cluster nodes (control plane and workers) through the
+/// Kubernetes API and present them as [`DiscoveryMember`]s.
+///
+/// This is the shared fallback for when the Talos discovery service is disabled
+/// and `talosctl get members` returns nothing. Every node registers with the
+/// Kubernetes API independently of Talos discovery, so — unlike etcd
+/// membership, which only ever lists control plane nodes — it can reveal
+/// workers. The kubeconfig is fetched straight from `cp_ip` (a control plane
+/// node) so we always query the correct cluster's API server, never an
+/// unrelated one an ambient `KUBECONFIG` might point at.
+pub async fn discovery_members_via_k8s(
+    client: &TalosClient,
+    cp_ip: &str,
+) -> Result<Vec<DiscoveryMember>, K8sError> {
+    let k8s_client = create_k8s_client_from_node(client, cp_ip).await?;
+    let nodes = list_cluster_nodes(&k8s_client).await?;
+    Ok(k8s_nodes_to_discovery_members(nodes))
+}
+
+/// Map Kubernetes node roster entries onto [`DiscoveryMember`]s.
+///
+/// Nodes without an internal IP are dropped: a node's Talos API is reached by
+/// IP, so an IP-less node can neither be queried nor displayed. The
+/// control-plane role label maps to the `controlplane`/`worker` machine type
+/// that the node-classification logic keys on.
+pub fn k8s_nodes_to_discovery_members(nodes: Vec<K8sNodeInfo>) -> Vec<DiscoveryMember> {
+    nodes
+        .into_iter()
+        .filter_map(|n| {
+            let ip = n.internal_ip?;
+            Some(DiscoveryMember {
+                id: n.name.clone(),
+                addresses: vec![ip],
+                hostname: n.name,
+                machine_type: if n.is_control_plane {
+                    "controlplane".to_string()
+                } else {
+                    "worker".to_string()
+                },
+                operating_system: String::new(),
+            })
+        })
+        .collect()
 }
 
 /// Detected CNI information from K8s
@@ -1243,5 +1471,129 @@ users:
             config_result.is_err(),
             "Config::infer() should fail with non-existent kubeconfig"
         );
+    }
+
+    /// `node_info_from` must pick the `InternalIP` (the Talos API address) and
+    /// read the control-plane role from the standard role labels. This is the
+    /// extraction the discovery-disabled worker fallback relies on.
+    #[test]
+    fn node_info_extracts_internal_ip_and_control_plane_role() {
+        // Control plane node: role label present; InternalIP chosen even when
+        // other address types precede it.
+        let cp: Node = k8s_openapi::serde_json::from_value(k8s_openapi::serde_json::json!({
+            "metadata": {
+                "name": "cp-1",
+                "labels": { "node-role.kubernetes.io/control-plane": "" }
+            },
+            "status": {
+                "addresses": [
+                    { "type": "Hostname", "address": "cp-1" },
+                    { "type": "InternalIP", "address": "10.0.0.1" }
+                ]
+            }
+        }))
+        .unwrap();
+        let info = node_info_from(&cp);
+        assert_eq!(info.name, "cp-1");
+        assert_eq!(info.internal_ip.as_deref(), Some("10.0.0.1"));
+        assert!(info.is_control_plane);
+
+        // Worker node: no role label -> not control plane.
+        let worker: Node = k8s_openapi::serde_json::from_value(k8s_openapi::serde_json::json!({
+            "metadata": { "name": "worker-1", "labels": {} },
+            "status": { "addresses": [ { "type": "InternalIP", "address": "10.0.0.2" } ] }
+        }))
+        .unwrap();
+        let info = node_info_from(&worker);
+        assert!(!info.is_control_plane);
+        assert_eq!(info.internal_ip.as_deref(), Some("10.0.0.2"));
+
+        // Legacy `master` label also counts as control plane; no InternalIP -> None.
+        let legacy: Node = k8s_openapi::serde_json::from_value(k8s_openapi::serde_json::json!({
+            "metadata": { "name": "old-cp", "labels": { "node-role.kubernetes.io/master": "" } },
+            "status": { "addresses": [] }
+        }))
+        .unwrap();
+        let info = node_info_from(&legacy);
+        assert!(info.is_control_plane);
+        assert_eq!(info.internal_ip, None);
+    }
+
+    /// `current_context_cluster_ca` extracts the CA of the current context's
+    /// cluster — the same-cluster key used to decide whether an ambient
+    /// KUBECONFIG matches the launched Talos context. Equal CAs => same cluster
+    /// (honor KUBECONFIG); different CAs => different cluster (ignore it).
+    #[test]
+    fn cluster_ca_extracted_from_current_context() {
+        let yaml = |ca: &str, server: &str| {
+            format!(
+                "apiVersion: v1\nkind: Config\n\
+                 current-context: ctx\n\
+                 clusters:\n\
+                 - name: c1\n  cluster:\n    server: {server}\n    certificate-authority-data: {ca}\n\
+                 contexts:\n- name: ctx\n  context: {{cluster: c1, user: u1}}\n\
+                 users:\n- name: u1\n  user: {{token: t}}\n"
+            )
+        };
+
+        // Same CA but different server endpoints (node IP vs VIP) => same cluster.
+        let node: kube::config::Kubeconfig =
+            serde_yaml::from_str(&yaml("CA_ALPHA", "https://10.6.0.2:6443")).unwrap();
+        let vip: kube::config::Kubeconfig =
+            serde_yaml::from_str(&yaml("CA_ALPHA", "https://10.6.0.1:6443")).unwrap();
+        assert_eq!(
+            current_context_cluster_ca(&node).as_deref(),
+            Some("CA_ALPHA")
+        );
+        assert_eq!(
+            current_context_cluster_ca(&node),
+            current_context_cluster_ca(&vip),
+            "same CA, different endpoint => matched as same cluster"
+        );
+
+        // Different CA => different cluster.
+        let other: kube::config::Kubeconfig =
+            serde_yaml::from_str(&yaml("CA_BETA", "https://192.0.2.9:6443")).unwrap();
+        assert_ne!(
+            current_context_cluster_ca(&node),
+            current_context_cluster_ca(&other)
+        );
+
+        // No current context / no inline CA => None (treated as "can't compare",
+        // never a false mismatch).
+        let empty: kube::config::Kubeconfig =
+            serde_yaml::from_str("apiVersion: v1\nkind: Config\n").unwrap();
+        assert_eq!(current_context_cluster_ca(&empty), None);
+    }
+
+    /// Kubernetes roster entries map onto discovery members, dropping IP-less
+    /// nodes (unreachable over the Talos API) and mapping the control-plane flag
+    /// to the machine type the UI classifies on.
+    #[test]
+    fn k8s_nodes_map_to_discovery_members_dropping_ipless() {
+        let members = k8s_nodes_to_discovery_members(vec![
+            K8sNodeInfo {
+                name: "cp1".into(),
+                internal_ip: Some("10.0.0.1".into()),
+                is_control_plane: true,
+            },
+            K8sNodeInfo {
+                name: "w1".into(),
+                internal_ip: Some("10.0.0.2".into()),
+                is_control_plane: false,
+            },
+            // No InternalIP -> unreachable over the Talos API -> dropped.
+            K8sNodeInfo {
+                name: "ghost".into(),
+                internal_ip: None,
+                is_control_plane: false,
+            },
+        ]);
+        assert_eq!(members.len(), 2, "IP-less node dropped");
+        assert_eq!(members[0].hostname, "cp1");
+        assert_eq!(members[0].machine_type, "controlplane");
+        assert_eq!(members[0].addresses, vec!["10.0.0.1".to_string()]);
+        assert_eq!(members[1].hostname, "w1");
+        assert_eq!(members[1].machine_type, "worker");
     }
 }
