@@ -74,6 +74,13 @@ GPUI has its own executor; tonic and kube need Tokio. The binary owns the Tokio 
 
 Documentation is thin. Before using an API, read the source of the pinned versions in the Cargo registry (`~/.cargo/registry/src/*/gpui-kit-0.7.0`, `gpui-component-0.7.0`, `gpui-base-0.7.0`, `gpui-pre-*`); don't guess from older GPUI examples. Expect odd shapes, such as `window.root::<Root>()` returning `Option<Option<Entity<Root>>>`, and breaking changes whenever the pinned pre-1.0 versions move.
 
+### Keys and focus
+
+- When the focused element isn't drawn, key dispatch starts from the window root and the page's bindings stop working. Give a page's key context to a wrapper that is drawn in every state, not to a list that a placeholder replaces.
+- macOS reports Command-Shift-] as `}` with Command alone, so bind `secondary-}`, not `secondary-shift-]`. Command-Shift with a letter keeps Shift: `secondary-shift-g`.
+- A deeper context's binding wins. A handler that calls `cx.propagate()` lets the key reach raw listeners, which is how Enter still presses a focused button.
+- `FocusHandle::dispatch_action` runs at once on that node; `window.dispatch_action` is deferred. A Kit dialog remembers what had focus when it opens, so focus its content after `open_dialog`.
+
 ### UI tests
 
 Headless UI tests render the real app, find elements by id and click or type into them; the suite runs in seconds. Prefer them over manual checks, and give every interactive element a stable, domain-based id.
@@ -270,9 +277,11 @@ Selecting a row opens the detail pane (`resources/pane/`, with its model in `res
 
 A pod's pane adds a Logs tab, `LogView<PodLogs>` (`logs/pod/`), fed by `follow_pod_log` in core. Nothing is read until the tab first shows for that pod; then one container's stream lives while the pod stays open, on any tab, and is dropped when another object opens, the pane closes or the page hides. Showing the page again reads on from the last line, never repeating one. The previous instance is only ever read when the user asks for it. Example mode applies a container's lines at once and writes on with a background timer, so UI tests advance the clock to see new lines.
 
+The keyboard follows one path through the page, and each level owns a key context: `KubeResources` on the list (always drawn, so the page keeps its keys while it shows no rows), `KubeResourcesFilter`, `KubeDetail` on the pane, `KubeDetailTabs` on its tab strip, and `LogPanel`, `LogSearch` and `LogView` inside the Logs tab. Enter opens the selected row and moves the keyboard into the pane. Escape steps back one level at a time: a search clears and then leaves, the pane hands the keyboard to the list with the pane left open, and the list clears its filter and then closes the pane. Whatever takes the keyboard away (a new context, the namespace picker, the filter) hands it back to the list. Command-F, Command-G and Command-A act on what has focus. Command-K (`desktop/kind_switcher.rs`) is a Kit `Command` palette in a dialog that opens any kind.
+
 ## Adding a screen
 
-1. Add the page to `Page` (`desktop/mod.rs`): `ALL`, `SCREENS` if it is a `ScreenPanel`, its slug, sidebar entry and shortcut.
+1. Add the page to `Page` (`desktop/pages.rs`): `ALL`, `SCREENS` if it is a `ScreenPanel`, its slug, sidebar entry and shortcut.
 2. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
 3. Put cluster logic in `freshkube-core` and keep the screen to presentation.
 4. Add UI tests for loading, empty, failure and the main interactions.
