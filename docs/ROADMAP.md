@@ -22,14 +22,9 @@ These hold for every step until a later one deliberately changes them.
 | 2b. Kubernetes only | Works without a talosconfig: kubeconfig contexts in the sidebar, `--kubernetes-only`, `--kube-context`, one shared connection attempt per context, Talos pages ask for a talosconfig | `3bfb4d4` |
 | Logs resize | With wrapping on, a resize lays out only the log lines on screen and re-measures the rest once the width holds ([LONG_LISTS.md](LONG_LISTS.md#wrapped-rows-during-a-resize)) | `decdefa` |
 | 3. Detail pane | Overview, YAML and Events for the selected object, beside the list or below it in a narrow window. Reads on demand and follows the list's resourceVersion at most once a second; drops late answers; shows refused, failed, stale, deleted and recreated. YAML is a `uniform_list` with search, line selection and copy. Events match by UID. Secret values stay hidden until one key is revealed | `28bf866`, `f8546ef` |
+| 4. Custom resources | A Custom Resources sidebar section with one entry per API group, discovered when opened, and each group's kinds when the group opens; custom kinds list through the same Table path, with the server's printer columns. A refused, failed or listless group says why with Retry, never as an empty group; a version answering 404 shows as not served. A page kind the server stops serving says so and has its group discovered again. Checked live: 58 groups, a custom kind's rows, and an unserved version | `09fb6fd`, `c8547cb`, `7bdad9c` |
 
 ## Next: finish Kubernetes browsing
-
-### Step 4. Custom resources
-
-- A Custom Resources group, with one entry per API group, discovered when expanded.
-- CRD kinds list through the same Table path, so their printer columns come from the server.
-- Report removed APIs, unserved versions and refused discovery per group; never as an empty group.
 
 ### Step 5. Pod logs
 
@@ -43,7 +38,8 @@ These hold for every step until a later one deliberately changes them.
 ### Open checks
 
 - Talos mode's Kubernetes pages against the live cluster. Only Kubernetes-only mode has been checked live so far.
-- A visual pass of Kubernetes-only mode on a live cluster, including the detail pane. The live checks ran with the screen locked, so they covered data, not drawing.
+- Unserved CRD versions: legacy `/apis` discovery omits versions a CRD marks `served: false`, so the sidebar never offers them. What it does cover was checked live by asking for a version that doesn't exist (`FRESHKUBE_VERSION=v0` in `examples/probe.rs`, and the app opening a kind at it): a group version that answers 404 shows as not served, and a page kind that answers 404 shows as not served and has its group discovered again. A CRD actually removed or unserved while the app runs is covered by UI tests only, since a read-only check can't make one.
+- A visual pass of Kubernetes-only mode on a live cluster, including the detail pane and the Custom Resources section. The live checks ran with the screen locked, so they covered data, not drawing.
 - The detail pane's re-read on a new version, and its deleted and recreated states, are covered by UI tests only. A read-only check can't make an object change, so they wait for one that changes on its own.
 - Launched as an app bundle, the app couldn't reach a LAN cluster that the terminal-launched binary reached. This is probably macOS Local Network privacy. Confirm before packaging, and add `NSLocalNetworkUsageDescription`.
 
