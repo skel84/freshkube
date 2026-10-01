@@ -2114,3 +2114,62 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        window.press("secondary-2", cx);
+        window.press("secondary-k", cx);
+    });
+    step(cx, &|window, cx| {
+        assert!(window.has_active_dialog(cx));
+        // Kinds match by name or kubectl key.
+        window.input("statefulsets", cx);
+    });
+    step(cx, &|window, cx| window.press("enter", cx));
+    step(cx, &|window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).resource_kind.key(), "statefulsets.apps");
+        assert_eq!(window.find("page-title").label(), Some("StatefulSets"));
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        // Escape leaves the palette and hands the keyboard back.
+        window.press("secondary-k", cx);
+    });
+    step(cx, &|window, cx| {
+        assert!(window.has_active_dialog(cx));
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        assert_eq!(view.read(cx).resource_kind.key(), "statefulsets.apps");
+        // Custom kinds join once discovered.
+        let kind = crate::resources::example::kind("certificates.cert-manager.io").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+    });
+    step(cx, &|window, cx| {
+        window.press("secondary-1", cx);
+        window.press("secondary-k", cx);
+    });
+    step(cx, &|window, cx| window.input("certificates.cert", cx));
+    step(cx, &|window, cx| window.press("enter", cx));
+    step(cx, &|_, cx| {
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(
+            view.read(cx).resource_kind.key(),
+            "certificates.cert-manager.io"
+        );
+    });
+}

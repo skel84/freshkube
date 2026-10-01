@@ -1,3 +1,4 @@
+mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
 mod overview;
@@ -34,6 +35,7 @@ use freshkube_core::cluster_overview::{
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{
     ActiveTheme, Theme, ThemeMode, TitleBar,
+    command::CommandState,
     input::{InputEvent, InputState},
     v_flex,
 };
@@ -131,7 +133,8 @@ gpui_kit::actions!(
         PreviousNode,
         NextNode,
         PreviousService,
-        NextService
+        NextService,
+        GoToKind
     ]
 );
 
@@ -283,6 +286,8 @@ pub(crate) struct Pilot {
     resource_kind: ResourceKind,
     /// The sidebar's Custom Resources, discovered when opened.
     custom: Entity<CustomResources>,
+    /// Command-K's palette of kinds.
+    kind_switcher: Entity<CommandState>,
     /// Kubernetes navigation groups shown open in the sidebar, by slug.
     kubernetes_groups: BTreeSet<&'static str>,
     sidebar_scroll: ScrollHandle,
@@ -339,6 +344,7 @@ impl Pilot {
             KeyBinding::new("ctrl-shift-tab", PreviousScreen, Some("Freshkube")),
             KeyBinding::new("alt-up", PreviousContext, Some("Freshkube")),
             KeyBinding::new("alt-down", NextContext, Some("Freshkube")),
+            KeyBinding::new("secondary-k", GoToKind, Some("Freshkube")),
             KeyBinding::new("up", PreviousNode, Some("TalosNodes")),
             KeyBinding::new("left", PreviousNode, Some("TalosNodes")),
             KeyBinding::new("down", NextNode, Some("TalosNodes")),
@@ -519,6 +525,7 @@ impl Pilot {
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             custom,
+            kind_switcher: cx.new(|cx| CommandState::new(window, cx)),
             kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
             sidebar_scroll: ScrollHandle::new(),
             sidebar_reveal: None,
@@ -1316,6 +1323,9 @@ impl Render for Pilot {
             .on_action(cx.listener(|view, _: &NextContext, window, cx| {
                 view.adjacent_context(true, window, cx)
             }))
+            .on_action(
+                cx.listener(|view, _: &GoToKind, window, cx| view.open_kind_switcher(window, cx)),
+            )
             .child(self.render_title_bar(window, cx))
             .child(
                 div()
