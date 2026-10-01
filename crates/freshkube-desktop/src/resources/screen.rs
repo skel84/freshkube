@@ -100,7 +100,7 @@ pub(crate) enum KubeAccess {
 }
 
 impl KubeAccess {
-    pub(super) async fn client(&self) -> Result<kube::Client, String> {
+    pub(crate) async fn client(&self) -> Result<kube::Client, String> {
         match self {
             KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
             KubeAccess::Talos(live) => live.kubernetes().await,
@@ -111,7 +111,7 @@ impl KubeAccess {
     }
 
     /// Drops a reused client after a failure, so the next read rebuilds it.
-    pub(super) fn forget(&self) {
+    pub(crate) fn forget(&self) {
         match self {
             KubeAccess::Example => {}
             KubeAccess::Talos(live) => live.forget_kubernetes(),
@@ -435,7 +435,7 @@ impl ResourcesScreen {
             if let Some(source) = &self.source {
                 let access = source.access.clone();
                 self.detail
-                    .update(cx, |detail, _| detail.set_access(access));
+                    .update(cx, |detail, cx| detail.set_access(access, cx));
             }
             return;
         }

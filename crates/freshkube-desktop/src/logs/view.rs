@@ -1,7 +1,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AvailableSpace, Context, FontWeight, ListSizingBehavior, Pixels, Render, Role, ScrollStrategy,
-    SharedString, TestSupportExt, Window,
+    AnyElement, AvailableSpace, Context, FontWeight, ListSizingBehavior, Pixels, Render, Role,
+    ScrollStrategy, SharedString, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants, Toggle, ToggleVariants},
@@ -31,9 +31,13 @@ impl<S: LogSource> LogView<S> {
         row_ix: usize,
         measuring: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<S> {
+    ) -> AnyElement {
         let entry = self.review.entry(row_ix);
         let id = self.review.id(row_ix);
+        if entry.is_marker() {
+            return self.render_marker(row_ix, measuring, cx);
+        }
+        let columns = self.columns;
         let selected = self.review.selected.contains(&id);
         let matched = !self.review.query.is_empty() && entry.matches_query(&self.review.query);
         let current = self.review.current_match == Some(id);
@@ -55,11 +59,23 @@ impl<S: LogSource> LogView<S> {
         } else {
             entry.message.clone()
         };
-        let label = format!(
-            "{time} {} {level} {}",
-            entry.service.as_str(),
+        // What the row shows, as Copy would copy it.
+        let mut label = String::new();
+        if columns.time {
+            label.push_str(&time);
+            label.push(' ');
+        }
+        if columns.source {
+            label.push_str(entry.service.as_str());
+            label.push(' ');
+        }
+        label.push_str(level);
+        label.push(' ');
+        label.push_str(if columns.time {
             entry.selectable_text()
-        );
+        } else {
+            entry.text_without_timestamp()
+        });
         let wrapped = self.wrapped;
         h_flex()
             .id(SharedString::from(format!(
@@ -95,22 +111,26 @@ impl<S: LogSource> LogView<S> {
             .when(!selected && !matched && !current, |element| {
                 element.hover(|style| style.bg(p.hover))
             })
-            .child(
-                div()
-                    .flex_none()
-                    .w(rems(4.7))
-                    .text_color(p.muted)
-                    .child(time),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .w(rems(6.))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_color(p.ink_2)
-                    .child(entry.service.as_str().to_owned()),
-            )
+            .when(columns.time, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .w(rems(4.7))
+                        .text_color(p.muted)
+                        .child(time),
+                )
+            })
+            .when(columns.source, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .w(rems(6.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_color(p.ink_2)
+                        .child(entry.service.as_str().to_owned()),
+                )
+            })
             .child(
                 div()
                     .flex_none()
@@ -143,6 +163,47 @@ impl<S: LogSource> LogView<S> {
                     }
                 }),
             )
+            .into_any_element()
+    }
+
+    /// A note between lines, such as a restart, centred between two rules.
+    /// Search, copy and the level counts all pass over it.
+    fn render_marker(&self, row_ix: usize, measuring: bool, cx: &mut Context<Self>) -> AnyElement {
+        let entry = self.review.entry(row_ix);
+        let id = self.review.id(row_ix);
+        let p = palette(cx);
+        let wrapped = self.wrapped;
+        let rule = || div().flex_1().min_w(rems(1.5)).h(px(1.)).bg(p.line_strong);
+        h_flex()
+            .id(SharedString::from(format!(
+                "log-marker-{}-{id}",
+                self.generation
+            )))
+            .test_support()
+            .role(Role::ListBoxOption)
+            .aria_label(entry.message.clone())
+            .w_full()
+            .gap(rems(0.6))
+            .px(rems(0.7))
+            .py(rems(0.3))
+            .font_family(ui::MONO_FONT)
+            .text_size(rems(0.8))
+            .line_height(relative(1.5))
+            .text_color(p.muted)
+            .when(!wrapped && measuring, |element| element.w_auto())
+            .when(!wrapped && !measuring, |element| {
+                element.min_w(self.unwrapped_width)
+            })
+            .child(rule())
+            .child(
+                div()
+                    .min_w_0()
+                    .text_center()
+                    .when(!wrapped, |element| element.whitespace_nowrap())
+                    .child(entry.message.clone()),
+            )
+            .child(rule())
+            .into_any_element()
     }
 
     fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
@@ -313,6 +374,7 @@ impl<S: LogSource> LogView<S> {
                                     .outline()
                                     .small()
                                     .w(px(104.))
+                                    .disabled(!S::live(self))
                                     .toggled(self.following)
                                     .selected(self.following)
                                     .icon(if self.following {
@@ -345,7 +407,7 @@ impl<S: LogSource> LogView<S> {
                                         "Copy".into()
                                     })
                                     .tooltip("Copy selected lines")
-                                    .disabled(self.review.copy_text().is_err())
+                                    .disabled(self.review.copy_text(self.columns.time).is_err())
                                     .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
                             ),
                     ),
@@ -460,7 +522,7 @@ impl<S: LogSource> Render for LogView<S> {
                     }
                 });
             })
-            .when(self.review.visible.is_empty(), |element| element.child(div().p_4().text_size(px(12.5)).text_color(p.muted).child(empty)))
+            .when(self.review.visible.is_empty(), |element| element.child(div().id("logs-empty").test_support().role(Role::Status).aria_label(empty.clone()).p_4().text_size(px(12.5)).text_color(p.muted).child(empty)))
             .when(!self.review.visible.is_empty(), |element| {
                 element.child(v_virtual_list(cx.entity(), ("log-list", self.generation), self.sizes.clone(), |this, range, _, cx| {
                     range.map(|ix| this.render_row(ix, false, cx)).collect::<Vec<_>>()

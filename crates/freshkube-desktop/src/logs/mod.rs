@@ -18,6 +18,7 @@
 //! - `talos`: the Talos source: service catalog, collection and delivery.
 
 mod measure;
+mod pod;
 mod review;
 mod talos;
 mod view;
@@ -45,6 +46,7 @@ use gpui_kit::{
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
+pub(crate) use pod::PodLogView;
 use review::LogReview;
 pub(crate) use talos::TalosLogs;
 
@@ -84,7 +86,16 @@ struct MeasurementKey {
     rem: Pixels,
     font: SharedString,
     wrapped: bool,
+    columns: Columns,
     revision: u64,
+}
+
+/// Which of the optional columns rows show. A source with one stream has
+/// no use for the source column; pod logs may hide their timestamps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Columns {
+    pub(super) time: bool,
+    pub(super) source: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -156,7 +167,13 @@ pub(crate) trait LogSource: Sized + 'static {
     fn controls(view: &LogView<Self>, cx: &mut Context<LogView<Self>>) -> Vec<AnyElement>;
 
     /// What the list says while no line is visible.
-    fn empty_message(view: &LogView<Self>) -> &'static str;
+    fn empty_message(view: &LogView<Self>) -> SharedString;
+
+    /// Whether new lines may still arrive, so following them means
+    /// something. A log read to its end turns Follow off.
+    fn live(_view: &LogView<Self>) -> bool {
+        true
+    }
 
     /// Stream failures by source, shown above the lines.
     fn errors(&self) -> &BTreeMap<ServiceId, String>;
@@ -172,6 +189,7 @@ pub(crate) struct LogView<S: LogSource> {
     generation: u64,
     following: bool,
     wrapped: bool,
+    columns: Columns,
     query: Entity<InputState>,
     _query_subscription: Subscription,
     focus: FocusHandle,
@@ -240,6 +258,10 @@ impl<S: LogSource> LogView<S> {
             generation: 0,
             following: true,
             wrapped: true,
+            columns: Columns {
+                time: true,
+                source: true,
+            },
             query,
             _query_subscription: subscription,
             focus: cx.focus_handle().tab_stop(true),
@@ -322,6 +344,16 @@ impl<S: LogSource> LogView<S> {
     /// node: lines, filters, scroll position and search all start over.
     /// Measurements are keyed by line identity and stay cached.
     fn reset(&mut self, address: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.reset_lines(address);
+        // Setting the input's value from code emits no change event.
+        self.review.query.clear();
+        self.query
+            .update(cx, |query, cx| query.set_value("", window, cx));
+    }
+
+    /// Like [`Self::reset`], but the search carries over to the new lines.
+    fn reset_lines(&mut self, address: &str) {
+        let query = std::mem::take(&mut self.review.query);
         self.backlog.clear();
         self.generation += 1;
         self.review = LogReview::new(address);
@@ -336,8 +368,16 @@ impl<S: LogSource> LogView<S> {
         self.row_exact.clear();
         self.scroll = VirtualListScrollHandle::new();
         self.manual_review = Rc::new(Cell::new(false));
-        self.query
-            .update(cx, |query, cx| query.set_value("", window, cx));
+        self.review.query = query;
+    }
+
+    /// Shows or hides the optional columns, keeping the review in place.
+    fn set_columns(&mut self, columns: Columns, cx: &mut Context<Self>) {
+        if self.columns != columns {
+            self.capture_anchor();
+            self.columns = columns;
+            cx.notify();
+        }
     }
 
     /// Shows or hides one source's lines without touching its stream.
@@ -433,7 +473,7 @@ impl<S: LogSource> LogView<S> {
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
-        match self.review.copy_text() {
+        match self.review.copy_text(self.columns.time) {
             Ok(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 self.feedback = Some("Copied selected complete visible lines".into());

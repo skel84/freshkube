@@ -455,3 +455,75 @@ fn secret_values_stay_hidden_until_one_is_revealed(cx: &mut TestAppContext) {
     assert!(copied.contains("ledger-database"));
     assert!(!copied.contains("example-only-password"));
 }
+
+fn running_pod() -> (DetailTarget, String) {
+    target("pods", |cells, name| {
+        cells[2] == "Running" && !name.starts_with("metrics-server")
+    })
+}
+
+#[gpui_kit::test]
+fn only_a_pod_has_a_logs_tab(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    let (deployment, _) = target("deployments.apps", |_, _| true);
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &deployment, Duration::ZERO, cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-tab-logs").is_none());
+
+        open(&pane, &pod, Duration::ZERO, cx);
+        window.render_frame(cx);
+        window.click("detail-tab-logs", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
+        assert_eq!(window.find("pod-logs-status").label(), Some("Streaming"));
+
+        // Another kind has no logs to stay on.
+        open(&pane, &deployment, Duration::ZERO, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert!(window.try_find("pod-logs-status").is_none());
+        assert!(!pane.read(cx).logs.read(cx).streaming());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_pods_log_streams_while_it_stays_open_on_any_tab(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    let (crashing, _) = crashing_pod();
+    let logs = pane.read_with(cx, |pane, _| pane.logs.clone());
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        window.render_frame(cx);
+        // Nothing is read until the tab shows.
+        assert!(!logs.read(cx).streaming());
+        window.click("detail-tab-logs", cx);
+        assert!(logs.read(cx).streaming());
+
+        // Another tab keeps the stream.
+        window.click("detail-tab-events", cx);
+        assert!(logs.read(cx).streaming());
+
+        // Hiding the page stops it; showing it reads on.
+        pane.update(cx, |pane, cx| pane.set_active(false, cx));
+        assert!(!logs.read(cx).streaming());
+        pane.update(cx, |pane, cx| pane.set_active(true, cx));
+        assert!(logs.read(cx).streaming());
+
+        // Another pod starts over, on the tab that shows.
+        window.click("detail-tab-logs", cx);
+        open(&pane, &crashing, Duration::ZERO, cx);
+        window.render_frame(cx);
+        let status = window.find("pod-logs-status").label().unwrap().to_owned();
+        assert!(status.starts_with("Waiting: "), "{status}");
+        assert!(window.find("pod-logs-hint").visible());
+
+        // Closing the pane ends it.
+        pane.update(cx, |pane, cx| pane.close(cx));
+        assert!(!logs.read(cx).streaming());
+    })
+    .unwrap();
+}

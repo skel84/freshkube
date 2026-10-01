@@ -219,6 +219,9 @@ impl DetailPane {
                     )
                 }),
             ))
+            .when(detail.target.kind.is_pod(), |this| {
+                this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None))
+            })
     }
 
     /// What replaces the overview and YAML while there is no document.
@@ -294,6 +297,7 @@ impl Render for DetailPane {
             (Tab::Overview, Some(_), Some(summary)) => self.overview(detail, summary, cx),
             (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
             (Tab::Events, ..) => self.events(detail, cx),
+            (Tab::Logs, ..) => self.logs.clone().into_any_element(),
             _ => self.document_state(detail, cx),
         };
         panel(cx)

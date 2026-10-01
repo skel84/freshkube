@@ -3,8 +3,8 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::resources::{
-    ApiGroup, Failure, FailureKind, GroupKinds, ObjectDocument, ObjectEvent, ResourceKind,
-    SecretValue, builtin, object_from_yaml,
+    ApiGroup, Failure, FailureKind, GroupKinds, ObjectDocument, ObjectEvent, PodLogUpdate,
+    ResourceKind, SecretValue, Termination, builtin, object_from_yaml,
 };
 
 use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
@@ -724,7 +724,7 @@ pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDo
     let (row, ix) = find(identity, now)?;
     let created = row.created.unwrap_or_default();
     let yaml = match identity.resource.as_str() {
-        "pods" => pod_yaml(&row, ix, created),
+        "pods" => pod_yaml(&row, ix, created, now),
         "deployments.apps" => deployment_yaml(&row, ix, created),
         "services" => service_yaml(&row, ix),
         "nodes" => node_yaml(&row, created),
@@ -755,7 +755,7 @@ pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDo
     object_from_yaml(&kind(&identity.resource)?, &yaml).ok()
 }
 
-fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
+fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> String {
     let (_, app, image, _) = WORKLOADS[ix % WORKLOADS.len()];
     let hash = format!("{:x}", 0x6c4f_8d9b + ix % WORKLOADS.len());
     let status = row.cells[2].as_str();
@@ -770,9 +770,15 @@ fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
         row.identity.uid
     );
     let scheduled = status != "Pending";
+    let init = has_init_container(ix);
     let mut yaml = metadata("Pod", "v1", row, &labels);
     yaml.push_str(&format!(
-        "spec:\n  containers:\n  - name: {app}\n    image: {image}\n    ports:\n    - containerPort: 8080\n      protocol: TCP\n    resources:\n      requests:\n        cpu: 100m\n        memory: 128Mi\n      limits:\n        memory: 256Mi\n"
+        "spec:\n{}  containers:\n  - name: {app}\n    image: {image}\n    ports:\n    - containerPort: 8080\n      protocol: TCP\n    resources:\n      requests:\n        cpu: 100m\n        memory: 128Mi\n      limits:\n        memory: 256Mi\n",
+        if init {
+            format!("  initContainers:\n  - name: {INIT_CONTAINER}\n    image: busybox:1.37\n")
+        } else {
+            String::new()
+        }
     ));
     if scheduled {
         yaml.push_str(&format!("  nodeName: {}\n", row.cells[6]));
@@ -786,7 +792,7 @@ fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
     yaml.push_str(&format!("  phase: {phase}\n  conditions:\n"));
     if scheduled {
         yaml.push_str(&format!(
-            "  - type: Ready\n    status: '{}'\n    lastTransitionTime: '{}'\n{}  - type: PodScheduled\n    status: 'True'\n    lastTransitionTime: '{}'\n  podIP: {}\n  startTime: '{}'\n  containerStatuses:\n  - name: {app}\n    image: {image}\n    ready: {ready}\n    restartCount: {restarts}\n    state:\n",
+            "  - type: Ready\n    status: '{}'\n    lastTransitionTime: '{}'\n{}  - type: PodScheduled\n    status: 'True'\n    lastTransitionTime: '{}'\n  podIP: {}\n  startTime: '{}'\n{}  containerStatuses:\n  - name: {app}\n    image: {image}\n    ready: {ready}\n    restartCount: {restarts}\n{}    state:\n",
             if ready { "True" } else { "False" },
             timestamp(created + 40),
             if ready {
@@ -797,6 +803,23 @@ fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
             timestamp(created),
             row.cells[5],
             timestamp(created),
+            if init {
+                format!(
+                    "  initContainerStatuses:\n  - name: {INIT_CONTAINER}\n    image: busybox:1.37\n    ready: true\n    restartCount: 0\n    state:\n      terminated:\n        exitCode: 0\n        reason: Completed\n        finishedAt: '{}'\n",
+                    timestamp(created + 25)
+                )
+            } else {
+                String::new()
+            },
+            match last_termination(status, restarts, ix, now) {
+                Some(last) => format!(
+                    "    lastState:\n      terminated:\n        exitCode: {}\n        reason: {}\n        finishedAt: '{}'\n",
+                    last.exit_code,
+                    last.reason,
+                    last.finished.unwrap_or_default().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                ),
+                None => String::new(),
+            },
         ));
         yaml.push_str(&match status {
             "Running" => format!("      running:\n        startedAt: '{}'\n", timestamp(created + 30)),
@@ -814,6 +837,156 @@ fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
         ));
     }
     yaml
+}
+
+/// The init container some example pods run first.
+const INIT_CONTAINER: &str = "init-config";
+
+fn has_init_container(ix: usize) -> bool {
+    ix.is_multiple_of(3)
+}
+
+/// How an example pod's app container ended before its current instance.
+fn last_termination(status: &str, restarts: u32, ix: usize, now: i64) -> Option<Termination> {
+    let (exit_code, reason, finished) = match status {
+        "CrashLoopBackOff" => (137, "OOMKilled", now - 180),
+        "Running" if restarts > 0 => (1, "Error", now - (ix as i64 % 9 + 1) * 86_400),
+        _ => return None,
+    };
+    Some(Termination {
+        exit_code,
+        reason: reason.into(),
+        finished: time(finished),
+    })
+}
+
+/// Lines an example container writes, cycling through these.
+const LOG_MESSAGES: [&str; 8] = [
+    "level=info msg=\"GET /healthz 200\" duration=1.2ms",
+    "level=info msg=\"GET /api/v1/items 200\" duration=14ms",
+    "level=debug msg=\"cache hit\" key=items:page=1",
+    "level=info msg=\"POST /api/v1/orders 201\" duration=38ms",
+    "level=warn msg=\"slow query\" duration=812ms table=orders",
+    "level=info msg=\"GET /api/v1/items 200\" duration=11ms",
+    "level=error msg=\"upstream timeout\" upstream=ledger:8080 attempt=1",
+    "level=info msg=\"GET /healthz 200\" duration=0.9ms",
+];
+
+/// One example log line as Kubernetes writes it with timestamps.
+pub(crate) fn pod_log_line(sequence: u64, at: DateTime<Utc>) -> String {
+    format!(
+        "{} {}",
+        at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        LOG_MESSAGES[sequence as usize % LOG_MESSAGES.len()]
+    )
+}
+
+/// `count` example lines, one every `step` seconds, the last at `end`.
+fn log_lines(count: i64, step: i64, end: i64) -> impl Iterator<Item = PodLogUpdate> {
+    (0..count).map(move |ix| {
+        let at = time(end - (count - 1 - ix) * step).unwrap_or_default();
+        PodLogUpdate::Line(pod_log_line(ix as u64, at))
+    })
+}
+
+/// What following an example container's log reports at once, and whether
+/// it goes on writing. The metrics server refuses its logs, as a viewer
+/// without `pods/log` would see.
+pub(crate) fn pod_log(
+    identity: &ResourceIdentity,
+    container: &str,
+    previous: bool,
+    now: i64,
+) -> (Vec<PodLogUpdate>, bool) {
+    let failed = |kind, message: String| {
+        (
+            vec![PodLogUpdate::Failed(Failure::new(kind, message))],
+            false,
+        )
+    };
+    let Some((row, ix)) = find(identity, now) else {
+        return failed(FailureKind::NotFound, "Example data has no such pod".into());
+    };
+    let (namespace, app, ..) = WORKLOADS[ix % WORKLOADS.len()];
+    let name = &identity.name;
+    if app == "metrics-server" {
+        return failed(
+            FailureKind::Forbidden,
+            format!(
+                "pods \"{name}\" is forbidden: User \"viewer\" cannot get resource \"pods/log\" in API group \"\" in the namespace \"{namespace}\""
+            ),
+        );
+    }
+    let status = row.cells[2].as_str();
+    let created = row.created.unwrap_or(now);
+    let streaming = PodLogUpdate::Streaming;
+    if container == INIT_CONTAINER && has_init_container(ix) {
+        if status == "Pending" {
+            return (vec![PodLogUpdate::Waiting("Not started".into())], false);
+        }
+        let mut updates = vec![streaming];
+        updates.extend(log_lines(3, 2, created + 24));
+        updates.push(PodLogUpdate::Ended(Some(Termination {
+            exit_code: 0,
+            reason: "Completed".into(),
+            finished: time(created + 25),
+        })));
+        return (updates, false);
+    }
+    if container != app {
+        return failed(
+            FailureKind::NotFound,
+            format!("The pod has no container named {container}"),
+        );
+    }
+    let restarts = row.cells[3]
+        .split_whitespace()
+        .next()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    let last = last_termination(status, restarts, ix, now);
+    if previous {
+        let Some(last) = last else {
+            return failed(
+                FailureKind::Other,
+                format!(
+                    "previous terminated container \"{container}\" in pod \"{name}\" not found"
+                ),
+            );
+        };
+        let end = last.finished.map_or(now, |finished| finished.timestamp()) - 1;
+        let mut updates = vec![streaming];
+        updates.extend(log_lines(24, 5, end));
+        updates.push(PodLogUpdate::Ended(None));
+        return (updates, false);
+    }
+    match status {
+        "Running" => {
+            let mut updates = vec![streaming];
+            updates.extend(log_lines(40, 7, now - 1));
+            (updates, true)
+        }
+        "CrashLoopBackOff" => {
+            // The instance that just ended, then the wait to start again.
+            let mut updates = vec![streaming];
+            updates.extend(log_lines(12, 5, now - 181));
+            updates.push(PodLogUpdate::Restarting(last));
+            updates.push(PodLogUpdate::Waiting("CrashLoopBackOff".into()));
+            (updates, false)
+        }
+        "Completed" => {
+            let mut updates = vec![streaming];
+            updates.extend(log_lines(15, 18, created + 299));
+            updates.push(PodLogUpdate::Ended(Some(Termination {
+                exit_code: 0,
+                reason: "Completed".into(),
+                finished: time(created + 300),
+            })));
+            (updates, false)
+        }
+        "Pending" => (vec![PodLogUpdate::Waiting("Not started".into())], false),
+        other => (vec![PodLogUpdate::Waiting(other.into())], false),
+    }
 }
 
 fn deployment_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {

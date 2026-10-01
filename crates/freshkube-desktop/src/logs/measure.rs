@@ -16,6 +16,7 @@ impl<S: LogSource> LogView<S> {
             rem: window.rem_size(),
             font: cx.theme().mono_font_family.clone(),
             wrapped: self.wrapped,
+            columns: self.columns,
             revision: self.review.revision,
         };
         let unchanged = self.measured.as_ref() == Some(&key);
@@ -61,7 +62,10 @@ impl<S: LogSource> LogView<S> {
     fn rebuild_sizes(&mut self, key: &MeasurementKey, window: &mut Window, cx: &mut Context<Self>) {
         let previous = self.measured.as_ref();
         let measurements_stale = previous.is_none_or(|previous| {
-            previous.rem != key.rem || previous.font != key.font || previous.wrapped != key.wrapped
+            previous.rem != key.rem
+                || previous.font != key.font
+                || previous.wrapped != key.wrapped
+                || previous.columns != key.columns
         });
         let resized = previous.is_some_and(|previous| previous.width != key.width);
         if measurements_stale {

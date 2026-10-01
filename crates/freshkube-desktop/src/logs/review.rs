@@ -336,15 +336,22 @@ impl LogReview {
         self.cursor
     }
 
-    /// Copy only selected complete, retained, currently visible original lines.
-    /// Never silently truncate a line or turn Copy into a whole-buffer export.
-    pub(super) fn copy_text(&self) -> Result<String, &'static str> {
+    /// Copy only selected complete, retained, currently visible original lines,
+    /// without their leading timestamp unless `with_time`. Markers are notes,
+    /// not lines, so they are never copied. Never silently truncate a line or
+    /// turn Copy into a whole-buffer export.
+    pub(super) fn copy_text(&self, with_time: bool) -> Result<String, &'static str> {
         let mut output = String::new();
         for row_ix in 0..self.visible.len() {
-            if !self.selected.contains(&self.id(row_ix)) {
+            let entry = self.entry(row_ix);
+            if entry.is_marker() || !self.selected.contains(&self.id(row_ix)) {
                 continue;
             }
-            let line = self.entry(row_ix).selectable_text();
+            let line = if with_time {
+                entry.selectable_text()
+            } else {
+                entry.text_without_timestamp()
+            };
             if output.len() + line.len() + usize::from(!output.is_empty()) > MAX_COPY_BYTES {
                 return Err("Selection exceeds 1 MiB; select fewer complete lines");
             }
@@ -378,9 +385,33 @@ mod model_tests {
         assert_eq!(review.row_for_id(selected), Some(2));
         assert_eq!(review.selected, BTreeSet::from([selected]));
         assert_eq!(
-            review.copy_text().unwrap(),
+            review.copy_text(true).unwrap(),
             "2026-09-30T10:00:02Z info repeated"
         );
+    }
+
+    #[test]
+    fn copy_skips_markers_and_can_leave_out_timestamps() {
+        let mut review = LogReview::new("pod");
+        let restarted = "2026-10-01T12:00:01Z".parse().unwrap();
+        review.append([
+            LogEvent::new("web", "2026-10-01T12:00:00Z GET / 200"),
+            LogEvent::marker("web", restarted, "web restarted"),
+            LogEvent::new("web", "2026-10-01T12:00:02Z GET /health 200"),
+        ]);
+        review.select(0, false, false);
+        review.select(2, true, false);
+        assert_eq!(review.selected.len(), 3);
+        assert_eq!(
+            review.copy_text(true).unwrap(),
+            "2026-10-01T12:00:00Z GET / 200\n2026-10-01T12:00:02Z GET /health 200"
+        );
+        assert_eq!(
+            review.copy_text(false).unwrap(),
+            "GET / 200\nGET /health 200"
+        );
+        let web = ServiceId::from("web");
+        assert_eq!(review.level_counts([&web]).iter().sum::<usize>(), 2);
     }
 
     #[test]
@@ -419,7 +450,7 @@ mod model_tests {
         assert_eq!(review.row_for_id(old), None);
         assert!(!review.selected.contains(&old));
         review.set_service_filter(BTreeSet::new());
-        assert!(review.copy_text().is_err());
+        assert!(review.copy_text(true).is_err());
     }
 
     #[test]
@@ -428,7 +459,7 @@ mod model_tests {
         review.append((0..20).map(|_| LogEvent::new("apid", "x".repeat(MAX_LINE_BYTES))));
         review.select(0, false, false);
         review.select(19, true, false);
-        assert!(review.copy_text().is_err());
+        assert!(review.copy_text(true).is_err());
         review.append([LogEvent::new("apid", "x".repeat(MAX_LINE_BYTES + 1))]);
         assert_eq!(review.omitted, 1);
         assert_eq!(review.visible.len(), 20);
@@ -449,7 +480,7 @@ mod model_tests {
         assert_eq!(review.row_for_id(0), None);
         assert_eq!(review.row_for_id(survivor), Some(55));
         assert_eq!(review.selected, BTreeSet::from([survivor]));
-        assert_eq!(review.copy_text().unwrap().len(), MAX_LINE_BYTES);
+        assert_eq!(review.copy_text(true).unwrap().len(), MAX_LINE_BYTES);
         let retained_bytes: usize = review
             .logs
             .buffer()

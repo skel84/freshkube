@@ -116,7 +116,7 @@ impl LogSource for TalosLogs {
         ]
     }
 
-    fn empty_message(view: &LogPanel) -> &'static str {
+    fn empty_message(view: &LogPanel) -> SharedString {
         if view.source.active_target().is_none() {
             "Select a connected node to view its logs."
         } else if view.source.services.is_empty() {
@@ -126,6 +126,7 @@ impl LogSource for TalosLogs {
         } else {
             "No retained lines pass the service and level filters."
         }
+        .into()
     }
 
     fn errors(&self) -> &BTreeMap<ServiceId, String> {

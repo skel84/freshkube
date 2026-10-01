@@ -1,5 +1,5 @@
-//! The detail pane beside the resource list: one object's overview, YAML and
-//! events. It reads the object when opened and again whenever the list shows
+//! The detail pane beside the resource list: one object's overview, YAML,
+//! events and, for a pod, its logs. It reads the object when opened and again whenever the list shows
 //! a new version of it, at most once a second, and watches the object's
 //! events while open on a visible page. Read-only: Secret values stay hidden
 //! until one is revealed, and nothing here changes the cluster.
@@ -26,6 +26,7 @@ use super::model::ResourceIdentity;
 use super::screen::KubeAccess;
 use super::{example, live};
 use crate::backend::{self, OwnedJob};
+use crate::logs::PodLogView;
 
 mod events;
 mod overview;
@@ -64,6 +65,8 @@ enum Tab {
     Overview,
     Yaml,
     Events,
+    /// Pods only.
+    Logs,
 }
 
 fn local_time(time: DateTime<Utc>) -> String {
@@ -104,6 +107,9 @@ pub(crate) struct DetailPane {
     feedback: Option<SharedString>,
     focus: FocusHandle,
     yaml_scroll: UniformListScrollHandle,
+    /// The open pod's logs. Its stream lives while the pod stays open,
+    /// whichever tab shows.
+    logs: Entity<PodLogView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -133,6 +139,7 @@ impl DetailPane {
             KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
         ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
+        let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
         let subscriptions = vec![
             cx.subscribe_in(&find, window, |this, input, event, _, cx| match event {
                 InputEvent::Change => {
@@ -174,6 +181,7 @@ impl DetailPane {
             feedback: None,
             focus: cx.focus_handle(),
             yaml_scroll: UniformListScrollHandle::new(),
+            logs,
             _subscriptions: subscriptions,
         }
     }
@@ -183,7 +191,9 @@ impl DetailPane {
     }
 
     /// Fresh handles for the same connection.
-    pub(crate) fn set_access(&mut self, access: KubeAccess) {
+    pub(crate) fn set_access(&mut self, access: KubeAccess, cx: &mut Context<Self>) {
+        self.logs
+            .update(cx, |logs, _| logs.set_access(access.clone()));
         self.access = Some(access);
     }
 
@@ -197,11 +207,17 @@ impl DetailPane {
         delay: Duration,
         cx: &mut Context<Self>,
     ) {
-        self.access = Some(access);
+        self.access = Some(access.clone());
         if self.target_identity() == Some(&target.identity) {
             return;
         }
         self.stop_reads();
+        let pod = target.kind.is_pod().then(|| target.identity.clone());
+        if pod.is_none() && self.tab == Tab::Logs {
+            self.tab = Tab::Overview;
+        }
+        self.logs
+            .update(cx, |logs, cx| logs.show_pod(pod, Some(access), cx));
         self.title = target.identity.address().into();
         self.detail = Some(Detail::new(target));
         self.follow = Follow::new(version);
@@ -214,6 +230,7 @@ impl DetailPane {
         self.show_all_annotations = false;
         self.feedback = None;
         self.yaml_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.show_tab(cx);
         cx.notify();
         if !self.active {
             return;
@@ -227,6 +244,8 @@ impl DetailPane {
 
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         self.stop_reads();
+        self.logs
+            .update(cx, |logs, cx| logs.show_pod(None, None, cx));
         self.detail = None;
         self.summary = None;
         self.event_lines.clear();
@@ -244,6 +263,8 @@ impl DetailPane {
             return;
         }
         self.active = active;
+        self.logs.update(cx, |logs, cx| logs.set_active(active, cx));
+        self.show_tab(cx);
         if active {
             self.start(cx);
         } else {
@@ -389,7 +410,7 @@ impl DetailPane {
             _ => false,
         };
         if changed {
-            self.document_changed();
+            self.document_changed(cx);
         }
         cx.notify();
         self.schedule_follow(cx);
@@ -397,10 +418,14 @@ impl DetailPane {
 
     /// Derives what the new document shows: its overview, and the search
     /// and selection over its lines.
-    fn document_changed(&mut self) {
+    fn document_changed(&mut self, cx: &mut Context<Self>) {
         let Some(view) = self.detail.as_ref().and_then(|detail| detail.view.clone()) else {
             return;
         };
+        if let Some(containers) = view.document.overview.pod.clone() {
+            self.logs
+                .update(cx, |logs, cx| logs.set_containers(containers, cx));
+        }
         self.summary = Some(Summary::new(&view));
         self.matches = view.find(&self.query);
         self.current = match self.current {
@@ -639,7 +664,21 @@ impl DetailPane {
     fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.feedback = None;
+        self.show_tab(cx);
         cx.notify();
+    }
+
+    /// Tells the logs whether they show, and asks for them the first time
+    /// they do for this pod.
+    fn show_tab(&mut self, cx: &mut Context<Self>) {
+        let shown = self.tab == Tab::Logs && self.detail.is_some();
+        let active = self.active;
+        self.logs.update(cx, |logs, cx| {
+            if shown {
+                logs.want(cx);
+            }
+            logs.set_visible(shown && active, cx);
+        });
     }
 
     fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
