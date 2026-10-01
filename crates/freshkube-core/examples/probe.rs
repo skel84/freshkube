@@ -1,8 +1,9 @@
 //! Read-only probe of the resource browsing backend against a real cluster:
 //! connects to an explicitly named context, lists one kind as a server-side
-//! table, watches it for a few seconds and fetches one object's YAML. It only
-//! lists, watches and gets, and prints no credentials, no file contents and
-//! no YAML; for the YAML it prints only checks on it.
+//! table, watches it for a few seconds, then reads one object in full and
+//! watches its events for a few seconds. It only lists, watches and gets, and
+//! prints no credentials, no file contents and no YAML; for the document it
+//! prints only checks on it.
 //!
 //! ```sh
 //! FRESHKUBE_KUBECONFIG=<file> FRESHKUBE_CONTEXT=<name> \
@@ -15,8 +16,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use freshkube_core::resources::{
-    WatchEvent, builtin, connect, discover_contexts, get_object_yaml, kubeconfig_sources,
-    watch_collection,
+    EventScope, EventUpdate, WatchEvent, builtin, connect, discover_contexts, get_object,
+    kubeconfig_sources, watch_collection, watch_object_events,
 };
 
 #[tokio::main]
@@ -130,29 +131,82 @@ async fn main() {
     let Some(object) = first else {
         return;
     };
-    let yaml = get_object_yaml(
+    let document = get_object(
         &connection.client,
         &kind,
         object.namespace.as_deref(),
         &object.name,
     )
     .await
-    .expect("get yaml");
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("yaml parses");
-    let values_redacted = ["data", "stringData"].iter().all(|field| {
+    .expect("get object");
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&document.yaml).expect("yaml parses");
+    let values_hidden = ["data", "stringData"].iter().all(|field| {
         parsed
             .get(field)
             .and_then(|map| map.as_mapping())
             .is_none_or(|map| {
-                map.values()
-                    .all(|value| value.as_str() == Some("<redacted>"))
+                map.values().all(|value| {
+                    value
+                        .as_str()
+                        .is_some_and(|value| value.starts_with("<hidden,"))
+                })
             })
     });
+    let overview = &document.overview;
     println!(
-        "yaml of {}: {} line(s), managedFields absent {}, values redacted or none {}",
+        "document of {}: {} line(s), uid matches row {}, managedFields absent {}, Secret values hidden or none {}",
         object.name,
-        yaml.lines().count(),
-        !yaml.contains("managedFields"),
-        values_redacted
+        document.yaml.lines().count(),
+        document.uid == object.uid,
+        !document.yaml.contains("managedFields"),
+        values_hidden || !kind.is_secret()
     );
+    println!(
+        "overview: {} label(s), {} annotation(s), {} owner(s), {} condition(s), {} secret key(s)",
+        overview.labels.len(),
+        overview.annotations.len(),
+        overview.owners.len(),
+        overview.conditions.len(),
+        overview
+            .secret
+            .as_ref()
+            .map_or(0, |secret| secret.keys.len())
+    );
+
+    let scope = EventScope::new(
+        &kind,
+        object.namespace.as_deref(),
+        &object.name,
+        &object.uid,
+    );
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+    let events = tokio::spawn(watch_object_events(
+        connection.client.clone(),
+        scope,
+        sender,
+    ));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
+    loop {
+        let update = tokio::select! {
+            update = receiver.recv() => update,
+            _ = tokio::time::sleep_until(deadline) => break,
+        };
+        match update {
+            None => break,
+            Some(EventUpdate::Reset(events)) => {
+                let warnings = events.iter().filter(|event| event.is_warning()).count();
+                println!(
+                    "events: {} listed, {warnings} warning(s), all timed {}",
+                    events.len(),
+                    events.iter().all(|event| event.last_seen.is_some())
+                );
+            }
+            Some(EventUpdate::Upsert(_)) => println!("event upserted"),
+            Some(EventUpdate::Delete(_)) => println!("event deleted"),
+            Some(EventUpdate::Failed { failure, retrying }) => {
+                println!("events failed (retrying {retrying}): {failure}")
+            }
+        }
+    }
+    events.abort();
 }

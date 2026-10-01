@@ -160,33 +160,6 @@ pub(crate) async fn watch_table(
         .map_err(Failure::from_kube)
 }
 
-/// The full object as YAML, without `managedFields`. Secret values are
-/// replaced so they are never shown or copied by accident.
-pub async fn get_object_yaml(
-    client: &Client,
-    kind: &ResourceKind,
-    namespace: Option<&str>,
-    name: &str,
-) -> Result<String, Failure> {
-    let request = Request::get(kind.object_path(namespace, name))
-        .header(header::ACCEPT, "application/json")
-        .body(Vec::new())
-        .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
-    let mut object: serde_json::Value =
-        client.request(request).await.map_err(Failure::from_kube)?;
-    if let Some(metadata) = object
-        .get_mut("metadata")
-        .and_then(|value| value.as_object_mut())
-    {
-        metadata.remove("managedFields");
-    }
-    if kind.group.is_empty() && kind.plural == "secrets" {
-        redact_secret(&mut object);
-    }
-    serde_yaml::to_string(&object)
-        .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))
-}
-
 /// Percent-encodes a query value. Continue tokens are opaque and may carry
 /// characters a query string can't hold as they are.
 fn query_value(value: &str) -> String {
@@ -200,26 +173,6 @@ fn query_value(value: &str) -> String {
         }
     }
     encoded
-}
-
-fn redact_secret(object: &mut serde_json::Value) {
-    for field in ["data", "stringData"] {
-        if let Some(values) = object
-            .get_mut(field)
-            .and_then(|value| value.as_object_mut())
-        {
-            for value in values.values_mut() {
-                *value = serde_json::Value::String("<redacted>".into());
-            }
-        }
-    }
-    if let Some(annotations) = object
-        .pointer_mut("/metadata/annotations")
-        .and_then(|value| value.as_object_mut())
-    {
-        // kubectl apply stores the whole object, including data, here.
-        annotations.remove("kubectl.kubernetes.io/last-applied-configuration");
-    }
 }
 
 #[cfg(test)]
@@ -269,23 +222,5 @@ mod tests {
     fn query_values_are_percent_encoded() {
         assert_eq!(query_value("eyJ2Ijo-x_1.~"), "eyJ2Ijo-x_1.~");
         assert_eq!(query_value("a+b/c=d&e f"), "a%2Bb%2Fc%3Dd%26e%20f");
-    }
-
-    #[test]
-    fn secret_values_and_last_applied_configuration_are_redacted() {
-        let mut secret = serde_json::json!({
-            "kind": "Secret",
-            "metadata": {"name": "s", "annotations": {
-                "kubectl.kubernetes.io/last-applied-configuration": "{\"data\":{\"k\":\"djE=\"}}",
-                "keep": "yes"}},
-            "data": {"k": "djE="},
-            "stringData": {"plain": "v1"}
-        });
-        redact_secret(&mut secret);
-        assert_eq!(secret["data"]["k"], "<redacted>");
-        assert_eq!(secret["stringData"]["plain"], "<redacted>");
-        let annotations = secret["metadata"]["annotations"].as_object().unwrap();
-        assert!(!annotations.contains_key("kubectl.kubernetes.io/last-applied-configuration"));
-        assert_eq!(annotations["keep"], "yes");
     }
 }

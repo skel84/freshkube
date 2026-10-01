@@ -57,6 +57,11 @@ impl ResourceKind {
     pub fn object_path(&self, namespace: Option<&str>, name: &str) -> String {
         format!("{}/{name}", self.collection_path(namespace))
     }
+
+    /// Core v1 Secrets, whose values are hidden until revealed one by one.
+    pub fn is_secret(&self) -> bool {
+        self.group.is_empty() && self.plural == "secrets"
+    }
 }
 
 /// Built-in kinds that Freshkube's navigation offers, by kubectl key.

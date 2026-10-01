@@ -221,7 +221,7 @@ async fn send(sink: &mut mpsc::Sender<WatchBatch>, events: Vec<WatchEvent>) -> b
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use crate::resources::{FailureKind, builtin, get_object_yaml};
+    use crate::resources::{FailureKind, builtin};
     use http::{Request, Response};
     use kube::client::Body;
     use serde_json::json;
@@ -439,33 +439,5 @@ pub(super) mod tests {
             .expect("the watch ends once nobody listens")
             .unwrap();
         assert!(seen.lock().unwrap().len() <= 3);
-    }
-
-    #[tokio::test]
-    async fn yaml_drops_managed_fields_and_redacts_secrets() {
-        let (client, seen) = server(|uri| {
-            let object = if uri.contains("/secrets/") {
-                json!({"apiVersion": "v1", "kind": "Secret",
-                    "metadata": {"name": "s", "managedFields": [{"manager": "x"}]},
-                    "data": {"token": "c2VjcmV0LXZhbHVl"}})
-            } else {
-                json!({"apiVersion": "v1", "kind": "ConfigMap",
-                    "metadata": {"name": "c", "managedFields": [{"manager": "x"}]},
-                    "data": {"key": "visible"}})
-            };
-            (200, object.to_string())
-        });
-        let secret = get_object_yaml(&client, &builtin("secrets").unwrap(), Some("ns"), "s")
-            .await
-            .unwrap();
-        assert!(!secret.contains("managedFields"));
-        assert!(!secret.contains("c2VjcmV0LXZhbHVl"));
-        assert!(secret.contains("token: <redacted>"), "{secret}");
-        let config = get_object_yaml(&client, &builtin("configmaps").unwrap(), Some("ns"), "c")
-            .await
-            .unwrap();
-        assert!(!config.contains("managedFields"));
-        assert!(config.contains("key: visible"));
-        assert_eq!(seen.lock().unwrap()[0], "/api/v1/namespaces/ns/secrets/s");
     }
 }
