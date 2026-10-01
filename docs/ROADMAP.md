@@ -20,6 +20,7 @@ These hold for every step until a later one deliberately changes them.
 | 1. Core | Read-only listing and watching of any kind through the server-side Table API (kube 0.98), checked against a live cluster | `86294f9` |
 | 2a. Browse | KUBERNETES sidebar groups in Kubeli's order; one Resources page with a live list and watch, namespace picker and filter; Talos mode reads through the Talos-derived Kubernetes client | `361b9d5` |
 | 2b. Kubernetes only | Works without a talosconfig: kubeconfig contexts in the sidebar, `--kubernetes-only`, `--kube-context`, one shared connection attempt per context, Talos pages ask for a talosconfig | `3bfb4d4` |
+| Logs resize | With wrapping on, a resize lays out only the log lines on screen and re-measures the rest once the width holds ([LONG_LISTS.md](LONG_LISTS.md#wrapped-rows-during-a-resize)) | `decdefa` |
 
 ## Next: finish Kubernetes browsing
 
