@@ -1,0 +1,1057 @@
+//! Framework-independent log parsing, filtering, and retention models.
+//!
+//! The types in this module deliberately contain no transport or UI concerns. A
+//! worker can turn received Talos log lines into [`LogEvent`] values, while a UI
+//! owns one of the buffers and applies those immutable events on its own thread.
+
+use chrono::{DateTime, NaiveDateTime};
+use std::collections::BTreeSet;
+
+use crate::{constants::MAX_LOG_ENTRIES, types::LogLevel};
+
+/// Stable Talos service identifier.
+///
+/// The identifier is retained exactly as supplied by Talos; in particular, it
+/// is not lowercased or otherwise normalized, because it is also the request
+/// identity used when fetching that service's logs.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServiceId(String);
+
+impl ServiceId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for ServiceId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<String> for ServiceId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for ServiceId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+/// Explicit node and service identity for a single-service log request.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LogTarget {
+    pub node_address: String,
+    pub service: ServiceId,
+}
+
+impl LogTarget {
+    pub fn new(node_address: impl Into<String>, service: impl Into<ServiceId>) -> Self {
+        Self {
+            node_address: node_address.into(),
+            service: service.into(),
+        }
+    }
+}
+
+/// Display and ordering information extracted from a log timestamp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogTimestamp {
+    /// The compact timestamp displayed by a log viewer (`HH:MM:SS` where available).
+    pub display: String,
+    /// A deterministic key used to interleave multi-service logs.
+    pub sort_key: i64,
+}
+
+/// An immutable line delivered by a log worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEvent {
+    pub service: ServiceId,
+    pub line: String,
+}
+
+impl LogEvent {
+    pub fn new(service: impl Into<ServiceId>, line: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+            line: line.into(),
+        }
+    }
+}
+
+/// Parsed, selectable log data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogEntry {
+    pub service: ServiceId,
+    /// The complete original line, with surrounding whitespace removed as in the TUI.
+    pub raw: String,
+    pub timestamp: Option<LogTimestamp>,
+    pub level: LogLevel,
+    /// The display-oriented message with common log prefixes removed.
+    pub message: String,
+    search_text: String,
+    sequence: u64,
+}
+
+impl LogEntry {
+    /// Returns the exact retained raw line for copy/select actions.
+    pub fn selectable_text(&self) -> &str {
+        &self.raw
+    }
+
+    /// Checks a case-insensitive query without rebuilding the line text.
+    pub fn matches_query(&self, query: &str) -> bool {
+        self.search_text.contains(&query.to_lowercase())
+    }
+
+    /// Like [`Self::matches_query`] for a query the caller already lowercased,
+    /// so scanning many entries lowercases the query once.
+    pub fn matches_lowercase_query(&self, lowercase_query: &str) -> bool {
+        self.search_text.contains(lowercase_query)
+    }
+
+    /// Arrival number within the buffer that retained this entry. Unique per
+    /// buffer, and the tie-break of the timestamp ordering.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+/// Parse one Talos, klog, JSON, or containerd log line.
+pub fn parse_log_line(service: impl Into<ServiceId>, line: impl AsRef<str>) -> LogEntry {
+    parse_log_line_with_sequence(service.into(), line.as_ref(), 0)
+}
+
+fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -> LogEntry {
+    let raw = line.trim().to_owned();
+    let (timestamp, remainder) = extract_timestamp(&raw);
+
+    LogEntry {
+        service,
+        level: classify_log_level(remainder),
+        message: clean_message(remainder),
+        search_text: raw.to_lowercase(),
+        raw,
+        timestamp,
+        sequence,
+    }
+}
+
+/// Classify a line with the same precedence as the existing log viewers.
+pub fn classify_log_level(text: &str) -> LogLevel {
+    let lower = text.to_lowercase();
+    if lower.contains("error") || lower.contains("err") {
+        LogLevel::Error
+    } else if lower.contains("warn") {
+        LogLevel::Warning
+    } else if lower.contains("info") {
+        LogLevel::Info
+    } else if lower.contains("debug") || lower.contains("trace") {
+        LogLevel::Debug
+    } else {
+        LogLevel::Unknown
+    }
+}
+
+/// Active level switches. All levels are enabled by default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LevelFilter {
+    pub error: bool,
+    pub warning: bool,
+    pub info: bool,
+    pub debug: bool,
+    pub unknown: bool,
+}
+
+impl Default for LevelFilter {
+    fn default() -> Self {
+        Self {
+            error: true,
+            warning: true,
+            info: true,
+            debug: true,
+            unknown: true,
+        }
+    }
+}
+
+impl LevelFilter {
+    pub fn accepts(&self, level: &LogLevel) -> bool {
+        match level {
+            LogLevel::Error => self.error,
+            LogLevel::Warning => self.warning,
+            LogLevel::Info => self.info,
+            LogLevel::Debug => self.debug,
+            LogLevel::Unknown => self.unknown,
+        }
+    }
+
+    pub fn set(&mut self, level: &LogLevel, active: bool) {
+        match level {
+            LogLevel::Error => self.error = active,
+            LogLevel::Warning => self.warning = active,
+            LogLevel::Info => self.info = active,
+            LogLevel::Debug => self.debug = active,
+            LogLevel::Unknown => self.unknown = active,
+        }
+    }
+}
+
+/// Non-visual filtering state for a log view.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LogFilters {
+    /// `None` shows every service; `Some(empty)` intentionally shows none.
+    pub services: Option<BTreeSet<ServiceId>>,
+    pub levels: LevelFilter,
+}
+
+impl LogFilters {
+    pub fn accepts(&self, entry: &LogEntry) -> bool {
+        self.services
+            .as_ref()
+            .is_none_or(|services| services.contains(&entry.service))
+            && self.levels.accepts(&entry.level)
+    }
+}
+
+/// Stream presentation state owned by the caller.
+///
+/// Pausing does not discard received events; it lets the caller stop advancing
+/// its viewport while the bounded buffer continues retaining the newest data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogStreamState {
+    pub paused: bool,
+    pub following: bool,
+}
+
+impl Default for LogStreamState {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            following: true,
+        }
+    }
+}
+
+/// A bounded log collection with deterministic filtering and match navigation.
+#[derive(Debug, Clone)]
+pub struct LogBuffer {
+    entries: Vec<LogEntry>,
+    filters: LogFilters,
+    query: String,
+    query_lower: String,
+    stream: LogStreamState,
+    current_match: Option<usize>,
+    next_sequence: u64,
+    /// Total length of every retained raw line, kept in step with `entries`.
+    retained_bytes: usize,
+    /// Whether `entries` is known to be in timestamp/sequence order, which is
+    /// what lets [`MultiServiceLogs`] merge a batch instead of re-sorting.
+    ordered: bool,
+}
+
+impl Default for LogBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LogBuffer {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            filters: LogFilters::default(),
+            query: String::new(),
+            stream: LogStreamState::default(),
+            query_lower: String::new(),
+            current_match: None,
+            next_sequence: 0,
+            retained_bytes: 0,
+            ordered: true,
+        }
+    }
+
+    pub fn entries(&self) -> &[LogEntry] {
+        &self.entries
+    }
+
+    /// Evicts the oldest prefix until complete raw lines fit the supplied byte
+    /// budget. Returns the number of removed entries so UI identity/selection
+    /// sidecars can apply the same retention operation without copying records.
+    pub fn retain_newest_bytes(&mut self, max_bytes: usize) -> usize {
+        let removed = self.evict_bytes(max_bytes);
+        if !removed.is_empty() {
+            self.reset_match();
+        }
+        removed.len()
+    }
+
+    fn evict_bytes(&mut self, max_bytes: usize) -> Vec<LogEntry> {
+        let mut retained_bytes = self.retained_bytes;
+        let mut removed = 0;
+        while retained_bytes > max_bytes && removed < self.entries.len() {
+            retained_bytes -= self.entries[removed].raw.len();
+            removed += 1;
+        }
+        self.retained_bytes = retained_bytes;
+        self.entries.drain(..removed).collect()
+    }
+
+    /// Total length of the retained raw lines.
+    pub fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+
+    /// The arrival number the next accepted line receives.
+    pub fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn filters(&self) -> &LogFilters {
+        &self.filters
+    }
+
+    pub fn set_filters(&mut self, filters: LogFilters) {
+        self.filters = filters;
+        self.reset_match();
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn set_query(&mut self, query: impl Into<String>) {
+        self.query = query.into();
+        self.query_lower = self.query.to_lowercase();
+        self.reset_match();
+    }
+
+    pub fn clear_query(&mut self) {
+        self.set_query(String::new());
+    }
+
+    pub fn stream_state(&self) -> LogStreamState {
+        self.stream
+    }
+
+    pub fn set_stream_state(&mut self, stream: LogStreamState) {
+        self.stream = stream;
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.stream.paused = paused;
+    }
+
+    pub fn set_following(&mut self, following: bool) {
+        self.stream.following = following;
+    }
+
+    /// Appends an event and returns whether it contained a non-empty log line.
+    pub fn append(&mut self, event: LogEvent) -> bool {
+        let appended = self.append_unbounded(event);
+        if appended {
+            self.ordered = false;
+            self.retain_newest();
+            self.reset_match();
+        }
+        appended
+    }
+
+    /// Appends all non-empty immutable stream events in their supplied order.
+    pub fn append_batch<I>(&mut self, events: I) -> usize
+    where
+        I: IntoIterator<Item = LogEvent>,
+    {
+        let appended = events
+            .into_iter()
+            .map(|event| usize::from(self.append_unbounded(event)))
+            .sum();
+        if appended > 0 {
+            self.ordered = false;
+            self.retain_newest();
+            self.reset_match();
+        }
+        appended
+    }
+
+    /// Replaces the collection from an immutable snapshot.
+    pub fn replace<I>(&mut self, events: I)
+    where
+        I: IntoIterator<Item = LogEvent>,
+    {
+        self.entries.clear();
+        self.retained_bytes = 0;
+        self.next_sequence = 0;
+        self.current_match = None;
+        self.append_batch(events);
+    }
+
+    /// Whether an entry passes service, level, and query filtering.
+    pub fn accepts(&self, entry: &LogEntry) -> bool {
+        self.filters.accepts(entry)
+            && (self.query_lower.is_empty()
+                || entry.search_text.contains(self.query_lower.as_str()))
+    }
+
+    /// Entry indices that pass service, level, and query filtering in entry order.
+    pub fn visible_indices(&self) -> Vec<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| self.accepts(entry))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Ordered matching entry indices in the currently filtered view.
+    pub fn match_indices(&self) -> Vec<usize> {
+        if self.query.is_empty() {
+            Vec::new()
+        } else {
+            self.visible_indices()
+        }
+    }
+
+    pub fn current_match(&self) -> Option<usize> {
+        self.current_match
+    }
+
+    /// Select the first matching entry, if any.
+    pub fn select_first_match(&mut self) -> Option<usize> {
+        let first = self.match_indices().into_iter().next();
+        self.current_match = first;
+        first
+    }
+
+    /// Select the next match, wrapping at the end and disabling follow mode.
+    pub fn next_match(&mut self) -> Option<usize> {
+        self.navigate_match(true)
+    }
+
+    /// Select the previous match, wrapping at the beginning and disabling follow mode.
+    pub fn previous_match(&mut self) -> Option<usize> {
+        self.navigate_match(false)
+    }
+
+    pub fn is_current_match(&self, index: usize) -> bool {
+        self.current_match == Some(index)
+    }
+
+    fn navigate_match(&mut self, forward: bool) -> Option<usize> {
+        let matches = self.match_indices();
+        let selected = match matches.len() {
+            0 => None,
+            _ => Some(
+                match self
+                    .current_match
+                    .and_then(|current| matches.iter().position(|&index| index == current))
+                {
+                    Some(position) if forward => matches[(position + 1) % matches.len()],
+                    Some(0) => matches[matches.len() - 1],
+                    Some(position) => matches[position - 1],
+                    None => matches[0],
+                },
+            ),
+        };
+        self.current_match = selected;
+        if selected.is_some() {
+            self.stream.following = false;
+        }
+        selected
+    }
+
+    fn append_unbounded(&mut self, event: LogEvent) -> bool {
+        if event.line.trim().is_empty() {
+            return false;
+        }
+        let entry = parse_log_line_with_sequence(event.service, &event.line, self.next_sequence);
+        self.retained_bytes += entry.raw.len();
+        self.entries.push(entry);
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        true
+    }
+
+    fn reset_match(&mut self) {
+        self.current_match = self.match_indices().into_iter().next();
+    }
+
+    fn retain_newest(&mut self) {
+        let excess = self.entries.len().saturating_sub(MAX_LOG_ENTRIES);
+        if excess > 0 {
+            self.retained_bytes -= self
+                .entries
+                .drain(..excess)
+                .map(|entry| entry.raw.len())
+                .sum::<usize>();
+        }
+    }
+}
+
+/// A single service's bounded log model.
+#[derive(Debug, Clone)]
+pub struct SingleServiceLogs {
+    pub target: LogTarget,
+    buffer: LogBuffer,
+}
+
+impl SingleServiceLogs {
+    pub fn new(target: LogTarget) -> Self {
+        Self {
+            target,
+            buffer: LogBuffer::new(),
+        }
+    }
+
+    pub fn buffer(&self) -> &LogBuffer {
+        &self.buffer
+    }
+
+    pub fn buffer_mut(&mut self) -> &mut LogBuffer {
+        &mut self.buffer
+    }
+
+    pub fn append_line(&mut self, line: impl Into<String>) -> bool {
+        self.buffer
+            .append(LogEvent::new(self.target.service.clone(), line))
+    }
+
+    pub fn append_batch<I, S>(&mut self, lines: I) -> usize
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let service = self.target.service.clone();
+        self.buffer.append_batch(
+            lines
+                .into_iter()
+                .map(|line| LogEvent::new(service.clone(), line)),
+        )
+    }
+
+    pub fn replace_content(&mut self, content: &str) {
+        self.buffer.replace(
+            content
+                .lines()
+                .map(|line| LogEvent::new(self.target.service.clone(), line)),
+        );
+    }
+}
+
+/// A timestamp-ordered, bounded multi-service log model.
+#[derive(Debug, Clone)]
+pub struct MultiServiceLogs {
+    pub node_address: String,
+    buffer: LogBuffer,
+}
+
+impl MultiServiceLogs {
+    pub fn new(node_address: impl Into<String>) -> Self {
+        Self {
+            node_address: node_address.into(),
+            buffer: LogBuffer::new(),
+        }
+    }
+
+    pub fn buffer(&self) -> &LogBuffer {
+        &self.buffer
+    }
+
+    pub fn buffer_mut(&mut self) -> &mut LogBuffer {
+        &mut self.buffer
+    }
+
+    pub fn append(&mut self, event: LogEvent) -> bool {
+        self.append_batch([event]) > 0
+    }
+
+    pub fn append_batch<I>(&mut self, events: I) -> usize
+    where
+        I: IntoIterator<Item = LogEvent>,
+    {
+        self.append_bounded(events, usize::MAX).added.len()
+    }
+
+    /// Appends a batch, keeps timestamp order by merging it into the sorted
+    /// buffer, and applies the entry and byte retention limits. The outcome
+    /// says what changed so a caller can keep its own indexes in step without
+    /// rescanning the buffer.
+    pub fn append_bounded<I>(&mut self, events: I, max_bytes: usize) -> AppendOutcome
+    where
+        I: IntoIterator<Item = LogEvent>,
+    {
+        let previous_len = self.buffer.entries.len();
+        let mut added = Vec::new();
+        for event in events {
+            if self.buffer.append_unbounded(event) {
+                let entry = &self.buffer.entries[self.buffer.entries.len() - 1];
+                added.push((entry.service.clone(), entry.level.clone()));
+            }
+        }
+        let mut outcome = AppendOutcome {
+            previous_len,
+            first_changed: previous_len,
+            added,
+            evicted: Vec::new(),
+        };
+        if !outcome.added.is_empty() {
+            outcome.first_changed = self.merge_tail(previous_len);
+            let excess = self.buffer.entries.len().saturating_sub(MAX_LOG_ENTRIES);
+            if excess > 0 {
+                outcome.evicted = self.buffer.entries.drain(..excess).collect();
+                self.buffer.retained_bytes -= outcome
+                    .evicted
+                    .iter()
+                    .map(|entry| entry.raw.len())
+                    .sum::<usize>();
+            }
+        }
+        outcome.evicted.extend(self.buffer.evict_bytes(max_bytes));
+        if !outcome.added.is_empty() || !outcome.evicted.is_empty() {
+            self.buffer.reset_match();
+        }
+        outcome
+    }
+
+    pub fn replace<I>(&mut self, events: I)
+    where
+        I: IntoIterator<Item = LogEvent>,
+    {
+        self.buffer.entries.clear();
+        self.buffer.retained_bytes = 0;
+        self.buffer.next_sequence = 0;
+        self.buffer.current_match = None;
+        self.append_batch(events);
+    }
+
+    /// Restores timestamp/sequence order after `entries[from..]` were pushed.
+    /// Returns the first index whose entry changed: `from` when the batch
+    /// belongs at the end, otherwise where the earliest late line lands.
+    fn merge_tail(&mut self, from: usize) -> usize {
+        let key = |entry: &LogEntry| {
+            (
+                entry
+                    .timestamp
+                    .as_ref()
+                    .map_or(0, |timestamp| timestamp.sort_key),
+                entry.sequence,
+            )
+        };
+        let entries = &mut self.buffer.entries;
+        if !self.buffer.ordered {
+            entries.sort_by_key(key);
+            self.buffer.ordered = true;
+            return 0;
+        }
+        entries[from..].sort_by_key(key);
+        let first = key(&entries[from]);
+        let at = entries[..from].partition_point(|entry| key(entry) < first);
+        if at < from {
+            // Sorting runs, so this merges the two sorted halves.
+            entries[at..].sort_by_key(key);
+        }
+        at
+    }
+}
+
+/// What [`MultiServiceLogs::append_bounded`] changed.
+#[derive(Debug, Clone)]
+pub struct AppendOutcome {
+    /// Entries held before the call.
+    pub previous_len: usize,
+    /// Lowest entry index (before evictions) whose entry is new or moved;
+    /// equals `previous_len` when the batch only extended the end.
+    pub first_changed: usize,
+    /// Service and level of each accepted line.
+    pub added: Vec<(ServiceId, LogLevel)>,
+    /// Entries dropped from the front by the entry and byte limits.
+    pub evicted: Vec<LogEntry>,
+}
+
+impl AppendOutcome {
+    /// Whether the batch only extended the end of the buffer.
+    pub fn extended_tail(&self) -> bool {
+        self.first_changed == self.previous_len
+    }
+}
+
+fn extract_timestamp(line: &str) -> (Option<LogTimestamp>, &str) {
+    if let Some((timestamp, rest)) = extract_klog_timestamp(line) {
+        return (Some(timestamp), rest);
+    }
+
+    if line.starts_with('{')
+        && let Some(timestamp) = extract_json_timestamp(line)
+    {
+        return (Some(timestamp), line);
+    }
+
+    if let Some(timestamp) = extract_quoted_timestamp(line, "time=\"") {
+        return (Some(timestamp), line);
+    }
+
+    extract_leading_timestamp(line)
+}
+
+fn extract_klog_timestamp(line: &str) -> Option<(LogTimestamp, &str)> {
+    let bytes = line.as_bytes();
+    if bytes.len() < 15 || !matches!(bytes[0], b'I' | b'W' | b'E' | b'F') {
+        return None;
+    }
+    if !bytes[1..5].iter().all(u8::is_ascii_digit) || bytes[5] != b' ' {
+        return None;
+    }
+
+    let timestamp_end = line[6..]
+        .find(|character: char| !character.is_ascii_digit() && character != ':' && character != '.')
+        .map(|end| end + 6)?;
+    let time = &line[6..timestamp_end];
+    let display = extract_time_part(time)?;
+    let month = parse_digits(&line[1..3])?;
+    let day = parse_digits(&line[3..5])?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    let sort_key = month * 2_700_000 + day * 86_400 + time_sort_key(&display);
+    Some((
+        LogTimestamp { display, sort_key },
+        line[timestamp_end..].trim(),
+    ))
+}
+
+fn extract_json_timestamp(line: &str) -> Option<LogTimestamp> {
+    for key in ["ts", "time"] {
+        if let Some(value) = json_field_value(line, key)
+            && let Some(timestamp) = timestamp_from_text(value)
+        {
+            return Some(timestamp);
+        }
+    }
+    None
+}
+
+fn json_field_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let marker = match key {
+        "ts" => "\"ts\"",
+        "time" => "\"time\"",
+        _ => return None,
+    };
+    let start = line.find(marker)? + marker.len();
+    let rest = line[start..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    if let Some(quoted) = rest.strip_prefix('"') {
+        return quoted.find('"').map(|end| &quoted[..end]);
+    }
+    let end = rest.find([',', '}', ' ']).unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+fn extract_quoted_timestamp(line: &str, marker: &str) -> Option<LogTimestamp> {
+    let start = line.find(marker)? + marker.len();
+    let end = line[start..].find('"')? + start;
+    timestamp_from_text(&line[start..end])
+}
+
+fn extract_leading_timestamp(line: &str) -> (Option<LogTimestamp>, &str) {
+    let mut end = 0;
+    let mut has_colon = false;
+    let bytes = line.as_bytes();
+
+    while end < bytes.len() {
+        let byte = bytes[end];
+        if byte == b':' {
+            has_colon = true;
+        }
+        if byte.is_ascii_digit()
+            || matches!(byte, b'/' | b'-' | b':' | b'.' | b'T' | b'Z' | b'+' | b' ')
+        {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+
+    if end < 8 || !has_colon {
+        return (None, line);
+    }
+    let candidate = line[..end].trim();
+    let Some(timestamp) = timestamp_from_text(candidate) else {
+        return (None, line);
+    };
+    (Some(timestamp), line[end..].trim())
+}
+
+fn timestamp_from_text(text: &str) -> Option<LogTimestamp> {
+    if let Some(display) = extract_time_part(text) {
+        let sort_key = absolute_sort_key(text).unwrap_or_else(|| time_sort_key(&display));
+        return Some(LogTimestamp { display, sort_key });
+    }
+
+    let sort_key = absolute_sort_key(text)?;
+    let seconds_in_day = sort_key.rem_euclid(86_400);
+    Some(LogTimestamp {
+        display: format!(
+            "{:02}:{:02}:{:02}",
+            seconds_in_day / 3600,
+            (seconds_in_day % 3600) / 60,
+            seconds_in_day % 60
+        ),
+        sort_key,
+    })
+}
+
+fn extract_time_part(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let search_length = bytes.len().min(30);
+    for index in 0..search_length.saturating_sub(7) {
+        if valid_time_at(bytes, index, true) {
+            let display = &text[index..index + 8];
+            if display != "00:00:00" {
+                return Some(display.to_owned());
+            }
+        }
+    }
+    for index in 0..bytes.len().min(20).saturating_sub(4) {
+        if valid_time_at(bytes, index, false) {
+            let display = &text[index..index + 5];
+            if display != "00:00" {
+                return Some(display.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn valid_time_at(bytes: &[u8], index: usize, seconds: bool) -> bool {
+    let required = if seconds { 8 } else { 5 };
+    if index + required > bytes.len()
+        || !bytes[index].is_ascii_digit()
+        || !bytes[index + 1].is_ascii_digit()
+        || bytes[index + 2] != b':'
+        || !bytes[index + 3].is_ascii_digit()
+        || !bytes[index + 4].is_ascii_digit()
+    {
+        return false;
+    }
+    let hour = (bytes[index] - b'0') * 10 + bytes[index + 1] - b'0';
+    let minute = (bytes[index + 3] - b'0') * 10 + bytes[index + 4] - b'0';
+    if hour >= 24 || minute >= 60 {
+        return false;
+    }
+    !seconds
+        || (bytes[index + 5] == b':'
+            && bytes[index + 6].is_ascii_digit()
+            && bytes[index + 7].is_ascii_digit()
+            && (bytes[index + 6] - b'0') * 10 + bytes[index + 7] - b'0' < 60)
+}
+
+fn absolute_sort_key(text: &str) -> Option<i64> {
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(text) {
+        return Some(timestamp.timestamp());
+    }
+    for format in [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y/%m/%d %H:%M:%S%.f",
+    ] {
+        if let Ok(timestamp) = NaiveDateTime::parse_from_str(text, format) {
+            return Some(timestamp.and_utc().timestamp());
+        }
+    }
+    let value = text.parse::<f64>().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    Some(if value.abs() >= 1_000_000_000_000.0 {
+        (value / 1000.0).trunc() as i64
+    } else {
+        value.trunc() as i64
+    })
+}
+
+fn parse_digits(value: &str) -> Option<i64> {
+    value.parse().ok()
+}
+
+fn time_sort_key(display: &str) -> i64 {
+    let bytes = display.as_bytes();
+    let hour = parse_digits(&display[0..2]).unwrap_or(0);
+    let minute = parse_digits(&display[3..5]).unwrap_or(0);
+    let seconds = if bytes.len() >= 8 {
+        parse_digits(&display[6..8]).unwrap_or(0)
+    } else {
+        0
+    };
+    hour * 3600 + minute * 60 + seconds
+}
+
+fn clean_message(text: &str) -> String {
+    let text = text.trim();
+    let text = match text.find(": ") {
+        Some(position) if position < 20 => text[position + 2..].trim(),
+        _ => text,
+    };
+    text.trim_start_matches("[INFO]")
+        .trim_start_matches("[WARN]")
+        .trim_start_matches("[ERROR]")
+        .trim_start_matches("[DEBUG]")
+        .trim_start_matches("INFO")
+        .trim_start_matches("WARN")
+        .trim_start_matches("ERROR")
+        .trim_start_matches("DEBUG")
+        .trim_start_matches("OK")
+        .trim()
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_talos_klog_json_and_containerd_timestamps() {
+        let talos = parse_log_line("kubelet", "2026-01-09T16:40:59.776940Z INFO started");
+        assert_eq!(talos.timestamp.unwrap().display, "16:40:59");
+        assert_eq!(talos.level, LogLevel::Info);
+
+        let klog = parse_log_line("kubelet", "I0109 16:42:01.123456 1 server.go:94] ready");
+        assert_eq!(klog.timestamp.unwrap().display, "16:42:01");
+
+        let json = parse_log_line("etcd", r#"{"ts":1767972610784.5803,"msg":"ready"}"#);
+        assert_eq!(json.timestamp.unwrap().sort_key, 1_767_972_610);
+
+        let containerd = parse_log_line(
+            "containerd",
+            r#"time="2026-01-09T16:42:01.123456789Z" level=warning msg="slow""#,
+        );
+        assert_eq!(containerd.timestamp.unwrap().display, "16:42:01");
+        assert_eq!(containerd.level, LogLevel::Warning);
+    }
+
+    #[test]
+    fn filters_queries_and_navigates_in_entry_order() {
+        let mut logs = MultiServiceLogs::new("10.0.0.1");
+        logs.append_batch([
+            LogEvent::new("kubelet", "2026-01-09T16:40:01Z INFO alpha"),
+            LogEvent::new("etcd", "2026-01-09T16:40:02Z ERROR beta alpha"),
+            LogEvent::new("kubelet", "2026-01-09T16:40:03Z WARN gamma"),
+        ]);
+        let buffer = logs.buffer_mut();
+        buffer.set_query("ALPHA");
+        assert_eq!(buffer.match_indices(), vec![0, 1]);
+        assert_eq!(buffer.current_match(), Some(0));
+        assert_eq!(buffer.next_match(), Some(1));
+        assert_eq!(buffer.next_match(), Some(0));
+        assert!(!buffer.stream_state().following);
+
+        let filters = LogFilters {
+            services: Some(BTreeSet::from([ServiceId::from("etcd")])),
+            ..Default::default()
+        };
+        buffer.set_filters(filters);
+        assert_eq!(buffer.visible_indices(), vec![1]);
+    }
+
+    #[test]
+    fn interleaving_is_timestamp_ordered_and_stable_for_ties() {
+        let mut logs = MultiServiceLogs::new("10.0.0.1");
+        logs.append_batch([
+            LogEvent::new("z", "2026-01-09T16:40:02Z INFO second"),
+            LogEvent::new("a", "2026-01-09T16:40:01Z INFO first-a"),
+            LogEvent::new("b", "2026-01-09T16:40:01Z INFO first-b"),
+        ]);
+        let messages: Vec<_> = logs
+            .buffer()
+            .entries()
+            .iter()
+            .map(|entry| entry.message.as_str())
+            .collect();
+        assert_eq!(messages, ["first-a", "first-b", "second"]);
+    }
+
+    #[test]
+    fn bounded_retention_keeps_the_newest_arrival_order() {
+        let mut buffer = LogBuffer::new();
+        buffer.append_batch(
+            (0..=MAX_LOG_ENTRIES)
+                .map(|index| LogEvent::new("kubelet", format!("INFO line-{index}"))),
+        );
+        assert_eq!(buffer.entries().len(), MAX_LOG_ENTRIES);
+        assert_eq!(buffer.entries()[0].message, "line-1");
+        assert_eq!(
+            buffer.entries().last().unwrap().message,
+            format!("line-{MAX_LOG_ENTRIES}")
+        );
+    }
+
+    #[test]
+    fn byte_budget_evicts_complete_oldest_lines_and_resets_matches() {
+        let mut buffer = LogBuffer::new();
+        buffer.append_batch([
+            LogEvent::new("apid", "INFO oldest"),
+            LogEvent::new("apid", "ERROR newest"),
+        ]);
+        buffer.set_query("newest");
+        assert_eq!(buffer.current_match(), Some(1));
+        assert_eq!(buffer.retain_newest_bytes("ERROR newest".len()), 1);
+        assert_eq!(buffer.entries()[0].raw, "ERROR newest");
+        assert_eq!(buffer.current_match(), Some(0));
+        assert_eq!(buffer.retain_newest_bytes("ERROR newest".len()), 0);
+        assert_eq!(buffer.retain_newest_bytes(0), 1);
+        assert!(buffer.entries().is_empty());
+        assert_eq!(buffer.current_match(), None);
+    }
+
+    fn stamped(second: u32, text: &str) -> LogEvent {
+        LogEvent::new("apid", format!("2026-01-09T16:40:{second:02}Z INFO {text}"))
+    }
+
+    #[test]
+    fn late_lines_merge_into_order_and_report_where_they_landed() {
+        let mut logs = MultiServiceLogs::new("10.0.0.1");
+        let first = logs.append_bounded([stamped(10, "a"), stamped(30, "c")], usize::MAX);
+        assert!(first.extended_tail());
+        let tail = logs.append_bounded([stamped(40, "d"), stamped(35, "e")], usize::MAX);
+        assert!(tail.extended_tail());
+        let late = logs.append_bounded([stamped(20, "b"), stamped(50, "f")], usize::MAX);
+        assert!(!late.extended_tail());
+        assert_eq!(late.first_changed, 1);
+        let messages: Vec<_> = logs
+            .buffer()
+            .entries()
+            .iter()
+            .map(|entry| entry.message.as_str())
+            .collect();
+        assert_eq!(messages, ["a", "b", "c", "e", "d", "f"]);
+        let sequences: Vec<_> = logs
+            .buffer()
+            .entries()
+            .iter()
+            .map(LogEntry::sequence)
+            .collect();
+        assert_eq!(sequences, [0, 4, 1, 3, 2, 5]);
+    }
+
+    #[test]
+    fn retained_bytes_follow_every_append_and_eviction() {
+        let mut logs = MultiServiceLogs::new("10.0.0.1");
+        let outcome = logs.append_bounded(
+            (0..=MAX_LOG_ENTRIES).map(|ix| LogEvent::new("apid", format!("INFO l{ix}"))),
+            usize::MAX,
+        );
+        assert_eq!(outcome.evicted.len(), 1);
+        let actual: usize = logs.buffer().entries().iter().map(|e| e.raw.len()).sum();
+        assert_eq!(logs.buffer().retained_bytes(), actual);
+        let outcome = logs.append_bounded([LogEvent::new("apid", "INFO tail")], actual);
+        assert!(outcome.evicted.len() > 1);
+        let actual: usize = logs.buffer().entries().iter().map(|e| e.raw.len()).sum();
+        assert_eq!(logs.buffer().retained_bytes(), actual);
+    }
+}

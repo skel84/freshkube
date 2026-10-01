@@ -2,7 +2,6 @@
 
 use crate::action::Action;
 use crate::components::Component;
-use crate::components::diagnostics::k8s;
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -12,22 +11,14 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use std::collections::HashMap;
-use talos_rs::{
-    DiscoveryMember, EtcdMemberInfo, MemInfo, NodeCpuInfo, NodeLoadAvg, NodeMemory, NodeServices,
-    ServiceInfo, TalosClient, TalosConfig, VersionInfo, get_discovery_members_with_retry,
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
 };
-
-/// Simple etcd status for header display
-#[derive(Debug, Clone, Default)]
-struct EtcdSummary {
-    /// Number of healthy members
-    healthy: usize,
-    /// Total number of members
-    total: usize,
-    /// Whether etcd has quorum
-    has_quorum: bool,
-}
+use talos_pilot_core::cluster_overview::{ClusterOverview, ClusterOverviewCollector};
+use talos_rs::{
+    MemInfo, NodeCpuInfo, NodeLoadAvg, ServiceInfo, TalosClient, TalosConfig, VersionInfo,
+};
 
 /// Which pane is currently focused
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -109,71 +100,30 @@ enum NodeListItem {
     WorkerNode(usize, usize),
 }
 
-/// Per-cluster data storage
+/// Per-cluster state: the overview snapshot belongs to core; expansion belongs
+/// only to the TUI.
 #[derive(Clone, Default)]
 struct ClusterData {
-    /// Context/cluster name
-    name: String,
-    /// Talos client for this cluster
-    client: Option<TalosClient>,
-    /// Connection state
-    connected: bool,
-    /// Error message if connection failed
-    error: Option<String>,
-    /// Configured endpoints for this context (shown in connection-error details)
-    endpoints: Vec<String>,
-    /// Version info from nodes
-    versions: Vec<VersionInfo>,
-    /// Services from nodes
-    services: Vec<NodeServices>,
-    /// Memory info from nodes
-    memory: Vec<NodeMemory>,
-    /// Load average from nodes
-    load_avg: Vec<NodeLoadAvg>,
-    /// CPU info from nodes
-    cpu_info: Vec<NodeCpuInfo>,
-    /// Etcd members (control plane nodes only)
-    etcd_members: Vec<EtcdMemberInfo>,
-    /// Discovery members (ALL cluster nodes)
-    discovery_members: Vec<DiscoveryMember>,
-    /// Etcd summary for header
-    etcd_summary: Option<EtcdSummary>,
-    /// Node hostname to IP mapping
-    node_ips: HashMap<String, String>,
-    /// Whether this cluster accordion is expanded
+    overview: ClusterOverview,
+    /// Whether this cluster accordion is expanded.
     expanded: bool,
-    /// Whether control plane group is expanded
+    /// Whether control plane group is expanded.
     controlplane_expanded: bool,
-    /// Whether workers group is expanded
+    /// Whether workers group is expanded.
     workers_expanded: bool,
-    /// Non-fatal warning when worker discovery is unavailable, so the node list
-    /// (control-plane-only in that case) isn't silently misleading.
-    discovery_warning: Option<String>,
-    /// Non-fatal warning when an ambient `KUBECONFIG` names a different cluster
-    /// than this Talos context (so Kubernetes views ignore it and pin to a
-    /// control plane node). Explains why `KUBECONFIG` is being disregarded.
-    kubeconfig_warning: Option<String>,
 }
 
-impl ClusterData {
-    /// Best control plane node IP for fetching a cluster-correct kubeconfig.
-    /// Prefers an etcd member (etcd runs only on control planes), then a roster
-    /// `controlplane` member, then the configured endpoint.
-    fn control_plane_ip(&self) -> Option<String> {
-        self.etcd_members
-            .iter()
-            .find_map(|m| m.ip_address())
-            .or_else(|| {
-                self.discovery_members
-                    .iter()
-                    .find(|m| m.machine_type == "controlplane")
-                    .and_then(|m| m.addresses.first().cloned())
-            })
-            .or_else(|| {
-                self.endpoints
-                    .first()
-                    .map(|e| e.split(':').next().unwrap_or(e).to_string())
-            })
+impl Deref for ClusterData {
+    type Target = ClusterOverview;
+
+    fn deref(&self) -> &Self::Target {
+        &self.overview
+    }
+}
+
+impl DerefMut for ClusterData {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.overview
     }
 }
 
@@ -249,19 +199,6 @@ impl Default for ClusterComponent {
     }
 }
 
-/// Extract the deepest, most actionable message from an error chain.
-///
-/// tonic's transport-error `Display` is just "transport error"; the real cause
-/// (e.g. "Connection refused", "i/o timeout") lives at the bottom of the
-/// `source()` chain.
-fn root_cause(e: &dyn std::error::Error) -> String {
-    let mut deepest: &dyn std::error::Error = e;
-    while let Some(src) = deepest.source() {
-        deepest = src;
-    }
-    deepest.to_string()
-}
-
 impl ClusterComponent {
     pub fn new(config_path: Option<String>, context_filter: Option<String>) -> Self {
         Self {
@@ -286,20 +223,9 @@ impl ClusterComponent {
     /// etcd). Keeping these two in one place ensures the control-plane and
     /// worker groups stay complementary (every node lands in exactly one).
     fn node_is_controlplane(&self, cluster_idx: usize, node: &str) -> bool {
-        if let Some(cluster) = self.clusters.get(cluster_idx) {
-            let key = node.split(':').next().unwrap_or(node);
-            if let Some(member) = cluster.discovery_members.iter().find(|m| {
-                m.hostname.eq_ignore_ascii_case(node)
-                    || m.hostname.eq_ignore_ascii_case(key)
-                    || m.addresses.iter().any(|a| a == node || a == key)
-            }) {
-                return member.machine_type.eq_ignore_ascii_case("controlplane");
-            }
-        }
-        // Fallback: presence of the etcd service marks a control plane node.
-        self.get_node_services_for(cluster_idx, node)
-            .map(|s| s.iter().any(|svc| svc.id == "etcd"))
-            .unwrap_or(false)
+        self.clusters
+            .get(cluster_idx)
+            .is_some_and(|cluster| cluster.node_is_controlplane(node))
     }
 
     /// Get control plane nodes for a cluster (discovery machineType, else etcd service)
@@ -434,90 +360,30 @@ impl ClusterComponent {
         }
     }
 
-    /// Initialize connection to all Talos clusters from talosconfig
+    /// Initialize all configured Talos contexts and refresh their snapshots.
     pub async fn connect(&mut self) -> Result<()> {
-        // Install crypto provider (needed for rustls)
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
-        // Load talosconfig - use custom path if provided via --config flag
-        let config = match &self.config_path {
-            Some(path) => {
-                let path_buf = std::path::PathBuf::from(path);
-                match TalosConfig::load_from(&path_buf) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::error!("Failed to load talosconfig from {}: {}", path, e);
-                        return Ok(());
-                    }
-                }
+        let collector = self.overview_collector();
+        let snapshots = match collector.connect().await {
+            Ok(snapshots) => snapshots,
+            Err(error) => {
+                tracing::error!("{error}");
+                return Ok(());
             }
-            None => match TalosConfig::load_default() {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("Failed to load talosconfig: {}", e);
-                    return Ok(());
-                }
-            },
         };
 
-        // Determine which contexts to load based on --context flag
-        let context_names: Vec<String> = match &self.context_filter {
-            Some(ctx_name) => {
-                // Verify the context exists
-                if config.contexts.contains_key(ctx_name) {
-                    vec![ctx_name.clone()]
-                } else {
-                    tracing::error!(
-                        "Context '{}' not found in talosconfig. Available contexts: {:?}",
-                        ctx_name,
-                        config.contexts.keys().collect::<Vec<_>>()
-                    );
-                    return Ok(());
-                }
-            }
-            None => config.contexts.keys().cloned().collect(),
-        };
-
-        // Create ClusterData for each context
-        self.clusters.clear();
-        for (idx, name) in context_names.iter().enumerate() {
-            let mut cluster = ClusterData {
-                name: name.clone(),
-                expanded: idx == 0, // Expand first cluster by default
+        self.clusters = snapshots
+            .into_iter()
+            .enumerate()
+            .map(|(idx, overview)| ClusterData {
+                overview,
+                expanded: idx == 0,
                 controlplane_expanded: true,
                 workers_expanded: true,
-                ..Default::default()
-            };
+            })
+            .collect();
 
-            // Try to connect to each cluster using the loaded config
-            match config.get_context(name) {
-                Ok(ctx) => {
-                    cluster.endpoints = ctx.endpoints.clone();
-                    match TalosClient::from_context(ctx).await {
-                        Ok(client) => {
-                            cluster.client = Some(client);
-                            cluster.connected = true;
-                            cluster.error = None;
-                        }
-                        Err(e) => {
-                            cluster.error = Some(format!("Could not connect — {}", root_cause(&e)));
-                            cluster.connected = false;
-                        }
-                    }
-                }
-                Err(e) => {
-                    cluster.error = Some(e.to_string());
-                    cluster.connected = false;
-                }
-            }
-
-            self.clusters.push(cluster);
-        }
-
-        // Refresh all connected clusters
         self.refresh().await?;
 
-        // Set initial selection
         if !self.clusters.is_empty() {
             self.selected_item = NodeListItem::ClusterHeader(0);
             self.active_cluster = 0;
@@ -526,385 +392,39 @@ impl ClusterComponent {
         Ok(())
     }
 
-    /// Refresh all cluster data
+    /// Refresh all cluster overview snapshots through the shared core collector.
     pub async fn refresh(&mut self) -> Result<()> {
-        // Refresh each cluster
-        for cluster_idx in 0..self.clusters.len() {
-            self.refresh_cluster(cluster_idx).await;
+        let collector = self.overview_collector();
+        for cluster in &mut self.clusters {
+            collector.refresh(&mut cluster.overview).await;
         }
         self.last_refresh = Some(std::time::Instant::now());
         Ok(())
     }
 
-    /// Refresh a single cluster's data
-    async fn refresh_cluster(&mut self, cluster_idx: usize) {
-        let Some(cluster) = self.clusters.get_mut(cluster_idx) else {
-            return;
-        };
-
-        let Some(client) = &cluster.client else {
-            return;
-        };
-
-        // Clone client to avoid borrow issues
-        let client = client.clone();
-
-        // First, fetch etcd members via gRPC
-        match client.etcd_members().await {
-            Ok(members) => {
-                cluster.node_ips.clear();
-                for member in &members {
-                    if let Some(ip) = member.ip_address() {
-                        cluster.node_ips.insert(member.hostname.clone(), ip);
-                    }
-                }
-                cluster.etcd_members = members;
-            }
-            Err(e) => {
-                tracing::warn!("Failed to fetch etcd members for {}: {}", cluster.name, e);
-                cluster.etcd_members.clear();
-            }
-        }
-
-        // Try to get discovery members (ALL nodes including workers)
-        // Use context-aware async function with retry to avoid blocking and to use correct certificates
-        // Pass etcd member IPs as fallback in case VIP-based discovery fails
-        let context_name = cluster.name.clone();
-        let fallback_ips: Vec<String> = cluster
-            .etcd_members
-            .iter()
-            .filter_map(|m| m.ip_address())
-            .collect();
-        match get_discovery_members_with_retry(
-            &context_name,
-            self.config_path.as_deref(),
-            &fallback_ips,
+    fn overview_collector(&self) -> ClusterOverviewCollector {
+        ClusterOverviewCollector::new(
+            self.config_path.clone().map(std::path::PathBuf::from),
+            self.context_filter.clone(),
         )
-        .await
-        {
-            Ok(members) if !members.is_empty() => {
-                cluster.node_ips.clear();
-                for member in &members {
-                    if let Some(ip) = member.addresses.first() {
-                        cluster.node_ips.insert(member.hostname.clone(), ip.clone());
-                    }
-                }
-                cluster.discovery_members = members;
-                cluster.discovery_warning = None;
-            }
-            outcome => {
-                // Talos discovery gave us nothing usable. It's an optional service
-                // and commonly disabled, so this is not fatal — log the reason.
-                match &outcome {
-                    Ok(_) => tracing::warn!(
-                        "Discovery returned no members for {} (discovery service likely disabled)",
-                        cluster.name
-                    ),
-                    Err(e) => tracing::warn!(
-                        "Failed to fetch discovery members for {} after retries: {}",
-                        cluster.name,
-                        e
-                    ),
-                }
-
-                // Only rebuild the roster when we have none cached. If discovery
-                // succeeded on an earlier refresh, keep those members for
-                // resilience rather than dropping workers on a transient failure.
-                if cluster.discovery_members.is_empty() {
-                    // Fall back to the Kubernetes API, which knows every node —
-                    // control plane AND worker — independently of Talos discovery.
-                    // This is what makes workers show up when discovery is disabled;
-                    // etcd membership alone would leave the list control-plane-only.
-                    // Prefer an etcd member IP (a real control plane node) for the
-                    // kubeconfig fetch; fall back to the configured endpoint IP.
-                    let cp_ip = cluster
-                        .etcd_members
-                        .iter()
-                        .find_map(|m| m.ip_address())
-                        .or_else(|| {
-                            cluster
-                                .endpoints
-                                .first()
-                                .map(|e| e.split(':').next().unwrap_or(e).to_string())
-                        });
-
-                    match cp_ip {
-                        Some(cp_ip) => {
-                            match k8s::discovery_members_via_k8s(&client, &cp_ip).await {
-                                Ok(members) if !members.is_empty() => {
-                                    cluster.node_ips.clear();
-                                    for member in &members {
-                                        if let Some(ip) = member.addresses.first() {
-                                            cluster
-                                                .node_ips
-                                                .insert(member.hostname.clone(), ip.clone());
-                                        }
-                                    }
-                                    let count = members.len();
-                                    cluster.discovery_members = members;
-                                    cluster.discovery_warning = None;
-                                    tracing::info!(
-                                        "Enumerated {} node(s) via the Kubernetes API for {} \
-                                     (Talos discovery unavailable)",
-                                        count,
-                                        cluster.name
-                                    );
-                                }
-                                Ok(_) => {
-                                    cluster.discovery_warning = Some(
-                                        "Worker nodes unavailable: Talos discovery returned no \
-                                     members and the Kubernetes API reported no nodes."
-                                            .to_string(),
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Kubernetes node enumeration failed for {}: {}",
-                                        cluster.name,
-                                        e
-                                    );
-                                    cluster.discovery_warning = Some(format!(
-                                        "Worker nodes may be missing: Talos discovery is unavailable \
-                                     and the Kubernetes API could not be reached ({e})."
-                                    ));
-                                }
-                            }
-                        }
-                        None => {
-                            cluster.discovery_warning = Some(
-                                "Worker nodes unavailable: cluster discovery returned no members \
-                                 (the discovery service may be disabled)."
-                                    .to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // Determine which nodes to query
-        let nodes_to_query: Vec<(String, String)> = if !cluster.discovery_members.is_empty() {
-            cluster
-                .discovery_members
-                .iter()
-                .filter_map(|m| {
-                    m.addresses.first().map(|ip| {
-                        let name = if !m.hostname.is_empty() {
-                            m.hostname.clone()
-                        } else {
-                            ip.clone()
-                        };
-                        (name, ip.clone())
-                    })
-                })
-                .collect()
-        } else if !cluster.etcd_members.is_empty() {
-            cluster
-                .etcd_members
-                .iter()
-                .filter_map(|m| {
-                    m.ip_address().map(|ip| {
-                        let name = if !m.hostname.is_empty() {
-                            m.hostname.clone()
-                        } else {
-                            ip.clone()
-                        };
-                        (name, ip)
-                    })
-                })
-                .collect()
-        } else if !cluster.versions.is_empty() {
-            // Tertiary fallback: use nodes from previous version queries
-            tracing::debug!(
-                "Using version info as fallback node source for {}",
-                cluster.name
-            );
-            cluster
-                .versions
-                .iter()
-                .map(|v| {
-                    let ip = v.node.split(':').next().unwrap_or(&v.node).to_string();
-                    (v.node.clone(), ip)
-                })
-                .collect()
-        } else {
-            tracing::warn!(
-                "No node sources available for {}, skipping queries",
-                cluster.name
-            );
-            Vec::new()
-        };
-
-        // Query each node
-        if !nodes_to_query.is_empty() {
-            let mut versions = Vec::new();
-            let mut services = Vec::new();
-            let mut memory = Vec::new();
-            let mut load_avg = Vec::new();
-            let mut cpu_info = Vec::new();
-
-            for (node_name, ip) in &nodes_to_query {
-                let node_client = client.with_node(ip);
-
-                if let Ok(mut nv) = node_client.version().await {
-                    for v in &mut nv {
-                        v.node = node_name.clone();
-                    }
-                    versions.extend(nv);
-                }
-                if let Ok(mut ns) = node_client.services().await {
-                    for s in &mut ns {
-                        s.node = node_name.clone();
-                    }
-                    services.extend(ns);
-                }
-                if let Ok(mut nm) = node_client.memory().await {
-                    for m in &mut nm {
-                        m.node = node_name.clone();
-                    }
-                    memory.extend(nm);
-                }
-                if let Ok(mut nl) = node_client.load_avg().await {
-                    for l in &mut nl {
-                        l.node = node_name.clone();
-                    }
-                    load_avg.extend(nl);
-                }
-                if let Ok(mut nc) = node_client.cpu_info().await {
-                    for c in &mut nc {
-                        c.node = node_name.clone();
-                    }
-                    cpu_info.extend(nc);
-                }
-            }
-
-            // Need to re-borrow cluster mutably after async calls
-            if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
-                cluster.versions = versions;
-                cluster.services = services;
-                cluster.memory = memory;
-                cluster.load_avg = load_avg;
-                cluster.cpu_info = cpu_info;
-
-                // Fetch etcd status for header summary (target all control planes)
-                if let Some(client) = &cluster.client {
-                    // Use IPs instead of hostnames (hostnames may not be resolvable)
-                    let cp_ips: Vec<String> = cluster
-                        .etcd_members
-                        .iter()
-                        .filter_map(|m| m.ip_address())
-                        .collect();
-                    if let Ok(statuses) = client.etcd_status_for_nodes(&cp_ips).await {
-                        let total = cluster.etcd_members.len();
-                        let healthy = statuses.len();
-                        let quorum_needed = total / 2 + 1;
-                        cluster.etcd_summary = Some(EtcdSummary {
-                            healthy,
-                            total,
-                            has_quorum: healthy >= quorum_needed,
-                        });
-                    }
-                }
-            }
-        }
-
-        // Reflect real reachability so the UI shows a clear error instead of an
-        // empty/blank cluster when no endpoint can be reached. Healthy clusters
-        // have versions/etcd/discovery data; a transient failure keeps the
-        // previously cached data, so this only trips when there is nothing at all.
-        if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
-            let has_any_data = !cluster.versions.is_empty()
-                || !cluster.etcd_members.is_empty()
-                || !cluster.discovery_members.is_empty();
-            if has_any_data {
-                cluster.connected = true;
-                cluster.error = None;
-            } else {
-                cluster.connected = false;
-                cluster.error = Some(
-                    "Unable to reach any configured Talos endpoint. Check network \
-                     connectivity and the endpoints in your talosconfig."
-                        .to_string(),
-                );
-            }
-        }
-
-        // Warn if an ambient KUBECONFIG names a *different* cluster than this
-        // Talos context. Kubernetes views ignore it and pin to a control plane
-        // node (see k8s::create_k8s_client_with_source), so this only explains
-        // why KUBECONFIG is being disregarded — it never blocks anything. The
-        // helper reads the local kubeconfig first and returns None when unset,
-        // so there's no extra Talos round-trip in the common case.
-        let cp_ip = self
-            .clusters
-            .get(cluster_idx)
-            .and_then(ClusterData::control_plane_ip);
-        if let Some(cp_ip) = cp_ip {
-            let warning = k8s::kubeconfig_mismatch_warning(&client, &cp_ip).await;
-            if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
-                cluster.kubeconfig_warning = warning;
-            }
-        }
     }
 
-    /// Refresh only the selected node's stats (memory, load, services)
-    /// This is lighter weight than a full refresh
+    /// Refresh only the selected node's stats (memory, load, services).
+    ///
+    /// This delegates collection to core so the desktop GUI and TUI observe the
+    /// same targeted refresh behavior.
     pub async fn refresh_selected_node(&mut self) -> Result<()> {
         let cluster_idx = self.active_cluster;
-        let Some(cluster) = self.clusters.get(cluster_idx) else {
-            return Ok(());
-        };
-        let Some(client) = &cluster.client else {
-            return Ok(());
-        };
-        let client = client.clone();
-
-        // Get the selected node's name and IP
         let Some(node_name) = self.current_node_name() else {
             return Ok(());
         };
-        let Some(cluster) = self.clusters.get(cluster_idx) else {
-            return Ok(());
-        };
-        let Some(node_ip) = cluster.node_ips.get(&node_name).cloned() else {
-            return Ok(());
-        };
-
-        let node_client = client.with_node(&node_ip);
-
-        // Fetch services, memory, and load for this node
-        if let Ok(mut node_services) = node_client.services().await {
-            for s in &mut node_services {
-                s.node = node_name.clone();
-            }
-            // Update the services for this node
-            if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
-                cluster.services.retain(|s| s.node != node_name);
-                cluster.services.extend(node_services);
-            }
+        let collector = self.overview_collector();
+        if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
+            collector
+                .refresh_node(&mut cluster.overview, &node_name)
+                .await;
+            self.last_auto_refresh = Some(std::time::Instant::now());
         }
-
-        if let Ok(mut node_memory) = node_client.memory().await {
-            for m in &mut node_memory {
-                m.node = node_name.clone();
-            }
-            if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
-                cluster.memory.retain(|m| m.node != node_name);
-                cluster.memory.extend(node_memory);
-            }
-        }
-
-        if let Ok(mut node_load) = node_client.load_avg().await {
-            for l in &mut node_load {
-                l.node = node_name.clone();
-            }
-            if let Some(cluster) = self.clusters.get_mut(cluster_idx) {
-                cluster.load_avg.retain(|l| l.node != node_name);
-                cluster.load_avg.extend(node_load);
-            }
-        }
-
-        self.last_auto_refresh = Some(std::time::Instant::now());
         Ok(())
     }
 
@@ -995,7 +515,7 @@ impl ClusterComponent {
     }
 
     /// Best control plane node IP for the active cluster, used to fetch a
-    /// cluster-correct kubeconfig (see [`k8s::create_k8s_client_with_source`]).
+    /// cluster-correct kubeconfig.
     ///
     /// Prefers an etcd member address (etcd only runs on control plane nodes, so
     /// this is unambiguously a control plane), then a discovery/roster member
@@ -1571,7 +1091,11 @@ impl ClusterComponent {
     /// Draw compact header with status indicators
     fn draw_header(&self, frame: &mut Frame, area: Rect) {
         // Count connected clusters
-        let connected_count = self.clusters.iter().filter(|c| c.connected).count();
+        let connected_count = self
+            .clusters
+            .iter()
+            .filter(|cluster| cluster.connection.is_connected())
+            .count();
         let total_count = self.clusters.len();
 
         let (status_indicator, status_text) = if connected_count == total_count && total_count > 0 {
@@ -1708,8 +1232,12 @@ impl ClusterComponent {
                 };
 
                 // Status indicator
-                let status_symbol = if cluster.connected { "●" } else { "○" };
-                let status_color = if cluster.connected {
+                let status_symbol = if cluster.connection.is_connected() {
+                    "●"
+                } else {
+                    "○"
+                };
+                let status_color = if cluster.connection.is_connected() {
                     Color::Green
                 } else {
                     Color::Red
@@ -1758,11 +1286,11 @@ impl ClusterComponent {
 
                 // Show a connection error under the cluster header (always, even
                 // when collapsed) so failures are visible instead of a blank list.
-                if let Some(err) = &cluster.error {
+                if let Some(err) = cluster.connection.error() {
                     lines.push(Line::from(vec![
                         Span::raw("    "),
                         Span::styled("⚠ ", Style::default().fg(Color::Red)),
-                        Span::styled(err.as_str(), Style::default().fg(Color::Red)),
+                        Span::styled(err, Style::default().fg(Color::Red)),
                     ]));
                 }
 
@@ -2065,9 +1593,9 @@ impl ClusterComponent {
 
         // A disconnected cluster that failed to connect has no nodes to select,
         // so show the failure details here (endpoints tried + cause + hint).
-        if let Some(c) = cluster
-            && !c.connected
-            && let Some(err) = &c.error
+        if let Some(cluster) = cluster
+            && !cluster.connection.is_connected()
+            && let Some(err) = cluster.connection.error()
         {
             let block = Block::default()
                 .title(" Connection Error ")
@@ -2080,7 +1608,7 @@ impl ClusterComponent {
                 Line::from(vec![
                     Span::raw("  Cluster:  "),
                     Span::styled(
-                        c.name.clone(),
+                        cluster.name.clone(),
                         Style::default()
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
@@ -2092,13 +1620,13 @@ impl ClusterComponent {
                 ]),
             ];
 
-            if !c.endpoints.is_empty() {
+            if !cluster.endpoints.is_empty() {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "  Endpoints tried:",
                     Style::default().fg(Color::Yellow),
                 )));
-                for ep in &c.endpoints {
+                for ep in &cluster.endpoints {
                     lines.push(Line::from(vec![
                         Span::raw("    "),
                         Span::styled("- ", Style::default().fg(Color::DarkGray)),
@@ -2114,7 +1642,7 @@ impl ClusterComponent {
             )));
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled(err.clone(), Style::default().fg(Color::Red)),
+                Span::styled(err, Style::default().fg(Color::Red)),
             ]));
 
             lines.push(Line::from(""));
@@ -2136,7 +1664,11 @@ impl ClusterComponent {
 
         // Check if cluster is connected but has no etcd members (not bootstrapped)
         let needs_bootstrap = cluster
-            .map(|c| c.connected && c.etcd_members.is_empty() && c.versions.is_empty())
+            .map(|cluster| {
+                cluster.connection.is_connected()
+                    && cluster.etcd_members.is_empty()
+                    && cluster.versions.is_empty()
+            })
             .unwrap_or(false);
 
         if needs_bootstrap {
@@ -2412,7 +1944,7 @@ impl ClusterComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use talos_rs::{DiscoveryMember, NodeServices, ServiceInfo, VersionInfo};
+    use talos_rs::{DiscoveryMember, EtcdMemberInfo, NodeServices, ServiceInfo, VersionInfo};
 
     fn ver(node: &str) -> VersionInfo {
         VersionInfo {
@@ -2455,6 +1987,15 @@ mod tests {
         nodes.iter().map(|(_, v)| v.node.clone()).collect()
     }
 
+    fn cluster(overview: ClusterOverview) -> ClusterData {
+        ClusterData {
+            overview,
+            expanded: true,
+            controlplane_expanded: true,
+            workers_expanded: true,
+        }
+    }
+
     /// Discovery machineType is authoritative: a discovered worker is classified
     /// as a worker even when no per-node service data is available. This is the
     /// regression guard for "workers missing / shown only as control plane"
@@ -2462,7 +2003,7 @@ mod tests {
     #[test]
     fn classifies_by_discovery_machine_type() {
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             versions: vec![ver("cp1"), ver("worker1")],
             discovery_members: vec![
@@ -2470,7 +2011,7 @@ mod tests {
                 member("worker1", "10.0.0.2", "worker"),
             ],
             ..Default::default()
-        });
+        }));
 
         assert_eq!(names(&comp.controlplane_nodes_for(0)), vec!["cp1"]);
         assert_eq!(names(&comp.worker_nodes_for(0)), vec!["worker1"]);
@@ -2481,7 +2022,7 @@ mod tests {
     #[test]
     fn falls_back_to_etcd_service_without_discovery() {
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             versions: vec![ver("n1"), ver("n2")],
             services: vec![
@@ -2489,7 +2030,7 @@ mod tests {
                 services_with("n2", &["kubelet"]),
             ],
             ..Default::default()
-        });
+        }));
 
         assert_eq!(names(&comp.controlplane_nodes_for(0)), vec!["n1"]);
         assert_eq!(names(&comp.worker_nodes_for(0)), vec!["n2"]);
@@ -2500,7 +2041,7 @@ mod tests {
     #[test]
     fn groups_are_complementary() {
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             versions: vec![ver("a"), ver("b"), ver("c")],
             discovery_members: vec![
@@ -2509,7 +2050,7 @@ mod tests {
                 // "c" is intentionally absent from discovery and has no services
             ],
             ..Default::default()
-        });
+        }));
 
         let cp = names(&comp.controlplane_nodes_for(0));
         let workers = names(&comp.worker_nodes_for(0));
@@ -2545,12 +2086,12 @@ mod tests {
             },
         ]);
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             versions: vec![ver("cp1"), ver("w1"), ver("w2")],
             discovery_members: members,
             ..Default::default()
-        });
+        }));
         assert_eq!(names(&comp.controlplane_nodes_for(0)), vec!["cp1"]);
         assert_eq!(names(&comp.worker_nodes_for(0)), vec!["w1", "w2"]);
     }
@@ -2586,32 +2127,32 @@ mod tests {
 
         // etcd member wins over roster and endpoint.
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             etcd_members: vec![etcd_member],
             discovery_members: vec![cp_roster.clone(), worker_roster.clone()],
             endpoints: vec!["10.0.0.5:50000".to_string()],
             ..Default::default()
-        });
+        }));
         assert_eq!(comp.control_plane_ip().as_deref(), Some("10.0.0.1"));
 
         // No etcd: a roster controlplane member wins over a worker and endpoint.
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             discovery_members: vec![worker_roster, cp_roster],
             endpoints: vec!["10.0.0.5:50000".to_string()],
             ..Default::default()
-        });
+        }));
         assert_eq!(comp.control_plane_ip().as_deref(), Some("10.0.0.9"));
 
         // Nothing but an endpoint: fall back to it, port stripped.
         let mut comp = ClusterComponent::default();
-        comp.clusters.push(ClusterData {
+        comp.clusters.push(cluster(ClusterOverview {
             name: "test".to_string(),
             endpoints: vec!["10.0.0.5:50000".to_string()],
             ..Default::default()
-        });
+        }));
         assert_eq!(comp.control_plane_ip().as_deref(), Some("10.0.0.5"));
     }
 }

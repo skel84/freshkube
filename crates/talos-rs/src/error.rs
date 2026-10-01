@@ -53,3 +53,46 @@ pub enum TalosError {
     #[error("Could not determine home directory")]
     NoHomeDirectory,
 }
+
+impl TalosError {
+    /// Whether the failure means the underlying connection is unusable, so a
+    /// cached client should be dropped and rebuilt rather than retried.
+    ///
+    /// Application-level statuses (permission denied, not found, ...) are not
+    /// transport failures.
+    pub fn is_transport_failure(&self) -> bool {
+        match self {
+            Self::Transport(_) | Self::Connection(_) | Self::Tls(_) | Self::Io(_) => true,
+            Self::Grpc(status) => matches!(
+                status.code(),
+                tonic::Code::Unavailable
+                    | tonic::Code::DeadlineExceeded
+                    | tonic::Code::Cancelled
+                    | tonic::Code::Aborted
+            ),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_transport_failures() {
+        for code in [
+            tonic::Code::Unavailable,
+            tonic::Code::DeadlineExceeded,
+            tonic::Code::Cancelled,
+        ] {
+            assert!(TalosError::Grpc(tonic::Status::new(code, "x")).is_transport_failure());
+        }
+        assert!(TalosError::Connection("refused".into()).is_transport_failure());
+        assert!(TalosError::Tls("handshake".into()).is_transport_failure());
+        for code in [tonic::Code::PermissionDenied, tonic::Code::NotFound] {
+            assert!(!TalosError::Grpc(tonic::Status::new(code, "x")).is_transport_failure());
+        }
+        assert!(!TalosError::ContextNotFound("c".into()).is_transport_failure());
+    }
+}

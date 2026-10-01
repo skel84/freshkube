@@ -36,6 +36,16 @@ ratatui = "0.29"
 crossterm = "0.28"
 tachyonfx = "0.9"
 
+# Desktop GUI
+eframe = { version = "=0.32.3", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "x11",
+    "wayland",
+] }
+rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
+
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
@@ -74,6 +84,9 @@ x509-parser = "0.16"
 talos-rs = { path = "crates/talos-rs" }
 talos-pilot-core = { path = "crates/talos-pilot-core" }
 talos-pilot-tui = { path = "crates/talos-pilot-tui" }
+talos-pilot-gui = { path = "crates/talos-pilot-gui" }
+talos-pilot-dioxus = { path = "crates/talos-pilot-dioxus" }
+talos-pilot-gpui = { path = "crates/talos-pilot-gpui" }
 
 [package]
 name = "talos-pilot"
@@ -83,16 +96,33 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "A terminal UI for managing and monitoring Talos Linux Kubernetes clusters"
+description = "Terminal and native desktop interfaces for managing and monitoring Talos Linux Kubernetes clusters"
+
+[features]
+default = []
+# Experimental desktop frontend; leave system WebView dependencies opt-in.
+dioxus-ui = ["dep:talos-pilot-dioxus", "talos-pilot-dioxus/desktop"]
+# Readonly GPUI Kit prototype; native dependencies remain opt-in.
+gpui-ui = ["dep:talos-pilot-gpui", "talos-pilot-gpui/desktop"]
 
 [dependencies]
 talos-pilot-tui.workspace = true
+talos-pilot-gui.workspace = true
+talos-pilot-dioxus = { workspace = true, optional = true }
+talos-pilot-gpui = { workspace = true, optional = true }
 talos-rs.workspace = true
 clap.workspace = true
 tokio.workspace = true
 color-eyre.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# Unoptimised GPUI draws a frame roughly 14x slower. Optimise dependencies in
+# dev builds; workspace crates stay unoptimised so they rebuild quickly. Line
+# tables keep dependency backtraces readable without full debug info on disk.
+[profile.dev.package."*"]
+opt-level = 3
+debug = "line-tables-only"
 
 # The profile that 'dist' will build with
 [profile.dist]

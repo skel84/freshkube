@@ -25,10 +25,27 @@ fn exec_talosctl(args: &[&str]) -> Result<String, TalosError> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Execute a talosctl command asynchronously and return stdout
+/// Execute cancellable inspections or local generation asynchronously.
+///
+/// Dropping a bounded inspection must retire its child process. Submitted node
+/// mutations instead use `exec_talosctl_mutation_async` and must be awaited by
+/// their operation owner to completion.
 async fn exec_talosctl_async(args: &[&str]) -> Result<String, TalosError> {
+    exec_talosctl_with_drop_policy(args, true).await
+}
+
+/// Never arbitrarily kill an already submitted destructive node operation.
+async fn exec_talosctl_mutation_async(args: &[&str]) -> Result<String, TalosError> {
+    exec_talosctl_with_drop_policy(args, false).await
+}
+
+async fn exec_talosctl_with_drop_policy(
+    args: &[&str],
+    kill_on_drop: bool,
+) -> Result<String, TalosError> {
     let output = tokio::process::Command::new("talosctl")
         .args(args)
+        .kill_on_drop(kill_on_drop)
         .output()
         .await
         .map_err(TalosError::Io)?;
@@ -368,11 +385,11 @@ pub struct GenConfigResult {
     pub output_dir: String,
 }
 
-/// Generate Talos machine configuration
+/// Generate Talos machine configuration without an explicit install target.
 ///
-/// Executes: talosctl gen config <cluster-name> <endpoint> --output-dir <dir> [--force]
-///
-/// This generates controlplane.yaml, worker.yaml, and talosconfig in the output directory.
+/// This compatibility wrapper preserves the existing callers. New maintenance
+/// flows must use [`gen_config_with_install_disk`] so the selected disk is
+/// reflected in the generated machine configuration.
 pub async fn gen_config(
     cluster_name: &str,
     kubernetes_endpoint: &str,
@@ -380,12 +397,35 @@ pub async fn gen_config(
     additional_sans: Option<&[&str]>,
     force: bool,
 ) -> Result<GenConfigResult, TalosError> {
+    gen_config_with_install_disk(
+        cluster_name,
+        kubernetes_endpoint,
+        output_dir,
+        additional_sans,
+        force,
+        None,
+    )
+    .await
+}
+
+/// Generate Talos machine configuration with an explicit install disk.
+///
+/// Executes `talosctl gen config` and uses `--install-disk` only when a caller
+/// supplied a verified disk name. The files are written to `output_dir`.
+pub async fn gen_config_with_install_disk(
+    cluster_name: &str,
+    kubernetes_endpoint: &str,
+    output_dir: &str,
+    additional_sans: Option<&[&str]>,
+    force: bool,
+    install_disk: Option<&str>,
+) -> Result<GenConfigResult, TalosError> {
     let mut args = vec!["gen", "config", cluster_name, kubernetes_endpoint];
 
-    args.push("--output-dir");
+    args.push("--output");
     args.push(output_dir);
 
-    // Add additional SANs if provided
+    // Add additional SANs if provided.
     let sans_joined: String;
     if let Some(sans) = additional_sans
         && !sans.is_empty()
@@ -393,6 +433,11 @@ pub async fn gen_config(
         sans_joined = sans.join(",");
         args.push("--additional-sans");
         args.push(&sans_joined);
+    }
+
+    if let Some(disk) = install_disk {
+        args.push("--install-disk");
+        args.push(disk);
     }
 
     if force {
@@ -428,7 +473,7 @@ pub async fn apply_config_insecure(
     endpoint: &str,
     config_path: &str,
 ) -> Result<InsecureApplyResult, TalosError> {
-    let output = exec_talosctl_async(&[
+    let output = exec_talosctl_mutation_async(&[
         "apply-config",
         "--insecure",
         "-n",
@@ -458,14 +503,14 @@ pub async fn apply_config_insecure(
 ///
 /// Executes: talosctl reboot --insecure -n <endpoint>
 pub async fn reboot_insecure(endpoint: &str) -> Result<String, TalosError> {
-    exec_talosctl_async(&["reboot", "--insecure", "-n", endpoint]).await
+    exec_talosctl_mutation_async(&["reboot", "--insecure", "-n", endpoint]).await
 }
 
 /// Shutdown a node in insecure mode
 ///
 /// Executes: talosctl shutdown --insecure -n <endpoint>
 pub async fn shutdown_insecure(endpoint: &str) -> Result<String, TalosError> {
-    exec_talosctl_async(&["shutdown", "--insecure", "-n", endpoint]).await
+    exec_talosctl_mutation_async(&["shutdown", "--insecure", "-n", endpoint]).await
 }
 
 /// Get machine config info for a node
@@ -671,6 +716,64 @@ pub fn is_kubespan_enabled(node: &str) -> bool {
         }
         Err(_) => false,
     }
+}
+
+/// Build the explicit-context argument list for `talosctl get <resource> -o yaml`.
+///
+/// Never relies on the ambient talosconfig context; `--talosconfig` is added
+/// only when a path is given.
+fn context_get_args(
+    context: &str,
+    node_ip: &str,
+    config_path: Option<&str>,
+    resource: &str,
+) -> Vec<String> {
+    let mut args = vec!["--context".to_string(), context.to_string()];
+    if let Some(path) = config_path {
+        args.push("--talosconfig".to_string());
+        args.push(path.to_string());
+    }
+    for arg in ["-n", node_ip, "get", resource, "-o", "yaml"] {
+        args.push(arg.to_string());
+    }
+    args
+}
+
+/// Whether `talosctl get kubespanconfig -o yaml` output shows KubeSpan enabled.
+fn kubespan_config_enabled(output: &str) -> bool {
+    let trimmed = output.trim();
+    !trimmed.is_empty() && trimmed.contains("KubeSpanConfig") && trimmed.contains("enabled: true")
+}
+
+/// Get KubeSpan peer status for a specific node using context authentication (async, non-blocking)
+///
+/// Executes: talosctl --context <context> [--talosconfig <path>] -n <node> get kubespanpeerstatus -o yaml
+pub async fn get_kubespan_peers_for_node(
+    context: &str,
+    node_ip: &str,
+    config_path: Option<&str>,
+) -> Result<Vec<KubeSpanPeerStatus>, TalosError> {
+    let args = context_get_args(context, node_ip, config_path, "kubespanpeerstatus");
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = exec_talosctl_async(&args).await?;
+    parse_kubespan_peers_yaml(&output)
+}
+
+/// Check whether KubeSpan is enabled on a specific node using context authentication.
+///
+/// Executes: talosctl --context <context> [--talosconfig <path>] -n <node> get kubespanconfig -o yaml
+///
+/// `Ok(false)` means the query succeeded and KubeSpan is not enabled; `Err`
+/// means the state could not be determined and must not be read as disabled.
+pub async fn is_kubespan_enabled_for_node(
+    context: &str,
+    node_ip: &str,
+    config_path: Option<&str>,
+) -> Result<bool, TalosError> {
+    let args = context_get_args(context, node_ip, config_path, "kubespanconfig");
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = exec_talosctl_async(&args).await?;
+    Ok(kubespan_config_enabled(&output))
 }
 
 /// Parse volume status YAML output from talosctl
@@ -1227,6 +1330,39 @@ fn parse_duration_to_ms(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_get_args_are_explicit() {
+        assert_eq!(
+            context_get_args("prod", "10.0.0.1", Some("/tmp/tc"), "kubespanconfig"),
+            [
+                "--context",
+                "prod",
+                "--talosconfig",
+                "/tmp/tc",
+                "-n",
+                "10.0.0.1",
+                "get",
+                "kubespanconfig",
+                "-o",
+                "yaml"
+            ]
+        );
+        let args = context_get_args("prod", "10.0.0.1", None, "kubespanpeerstatus");
+        assert!(!args.iter().any(|a| a == "--talosconfig"));
+        assert_eq!(&args[..2], ["--context", "prod"]);
+    }
+
+    #[test]
+    fn kubespan_config_enabled_detection() {
+        assert!(kubespan_config_enabled(
+            "metadata:\n    id: kubespan\nspec:\n    kind: KubeSpanConfig\n    enabled: true\n"
+        ));
+        assert!(!kubespan_config_enabled(
+            "kind: KubeSpanConfig\nenabled: false\n"
+        ));
+        assert!(!kubespan_config_enabled("  \n"));
+    }
 
     #[test]
     fn test_parse_volume_status() {

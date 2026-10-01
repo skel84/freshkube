@@ -1,5 +1,5 @@
 {
-  description = "A flake for talos-pilot, a Talos TUI for real-time node monitoring.";
+  description = "Terminal and native desktop interfaces for Talos cluster monitoring.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -21,6 +21,10 @@
           lib,
           rustPlatform,
           protobuf,
+          pkg-config,
+          stdenv,
+          libxkbcommon,
+          wayland,
         }:
         let
           manifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
@@ -37,10 +41,17 @@
 
           nativeBuildInputs = [
             protobuf
+          ] ++ lib.optionals stdenv.isLinux [
+            pkg-config
+          ];
+
+          buildInputs = lib.optionals stdenv.isLinux [
+            libxkbcommon
+            wayland
           ];
 
           meta = {
-            description = "Talos TUI for real-time node monitoring, log streaming, etcd health, and diagnostics";
+            description = "Terminal and native desktop interfaces for Talos node monitoring, log streaming, etcd health, and diagnostics";
             homepage = "https://github.com/Handfish/talos-pilot";
             license = with lib.licenses; [ mit ];
             mainProgram = "talos-pilot";

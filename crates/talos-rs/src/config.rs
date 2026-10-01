@@ -47,13 +47,21 @@ impl TalosConfig {
             return Err(TalosError::ConfigNotFound(path.display().to_string()));
         }
         let content = std::fs::read_to_string(path)?;
-        let config: TalosConfig = serde_yaml::from_str(&content)?;
+        let config = Self::parse(&content)?;
         tracing::debug!(
             "Loaded config with {} contexts: {:?}",
             config.contexts.len(),
             config.contexts.keys().collect::<Vec<_>>()
         );
         Ok(config)
+    }
+
+    /// Parses a Talos configuration snapshot without reading files or connecting.
+    ///
+    /// Callers loading untrusted paths can enforce file type and size limits
+    /// before handing the in-memory UTF-8 configuration to this parser.
+    pub fn parse(content: &str) -> Result<Self, TalosError> {
+        Ok(serde_yaml::from_str(content)?)
     }
 
     /// Get the default config path (from $TALOSCONFIG env var or ~/.talos/config)
@@ -178,12 +186,18 @@ contexts:
     crt: Y2xpZW50LWNlcnQ=
     key: Y2xpZW50LWtleQ==
 "#;
-        let config: TalosConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = TalosConfig::parse(yaml).unwrap();
         assert_eq!(config.context, "default");
         assert_eq!(config.contexts.len(), 1);
 
         let ctx = config.current_context().unwrap();
         assert_eq!(ctx.endpoints, vec!["192.168.1.100:50000"]);
+    }
+
+    #[test]
+    fn in_memory_parser_rejects_invalid_schema_without_reading_a_path() {
+        assert!(TalosConfig::parse("context: [invalid]\ncontexts: {}").is_err());
+        assert!(TalosConfig::parse("context: missing-required-contexts").is_err());
     }
 
     #[test]

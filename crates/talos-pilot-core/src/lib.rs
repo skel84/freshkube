@@ -21,17 +21,30 @@
 //! - [`constants`] - Shared constants (thresholds, CRD names, refresh intervals)
 
 pub mod async_state;
+mod client_cache;
+pub mod cluster_overview;
+
 pub mod constants;
+pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
 pub mod formatting;
 pub mod indicators;
+pub mod inspection;
+mod kubeconfig_selection;
+pub mod logs;
+pub mod maintenance;
 pub mod network;
+pub mod operations;
+pub mod pcap;
+pub mod security_lifecycle;
 pub mod selection;
 pub mod types;
+pub mod workloads;
 
 // Re-export commonly used items at crate root
 pub use async_state::*;
+pub use cluster_overview::*;
 pub use diagnostics::*;
 pub use errors::*;
 pub use formatting::*;

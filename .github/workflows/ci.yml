@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -56,7 +56,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -102,7 +102,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
           if [[ "${{ matrix.target }}" == *"musl"* ]]; then
             sudo apt-get install -y musl-tools
           fi
@@ -130,3 +130,27 @@ jobs:
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+
+  desktop-prototypes:
+    name: Optional desktop frontends (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install desktop build tools
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-prototypes
+      - name: GPUI production UI integration and lifecycle tests
+        run: cargo test -p talos-pilot-gpui --features ui-tests --locked
+      - name: Dioxus desktop tests
+        run: cargo test -p talos-pilot-dioxus --features desktop --locked
+      - name: Feature-enabled CLI compatibility tests
+        run: cargo test -p talos-pilot --features gpui-ui,dioxus-ui --locked
+      - name: Build both optional desktop frontends
+        run: cargo build -p talos-pilot --features gpui-ui,dioxus-ui --locked
+      - name: Strict GPUI Clippy
+        run: cargo clippy -p talos-pilot-gpui --features ui-tests --all-targets --locked -- -D warnings

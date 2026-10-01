@@ -8,9 +8,12 @@ use crate::error::TalosError;
 use crate::proto::machine::machine_service_client::MachineServiceClient;
 use crate::proto::machine::{EtcdMemberListRequest, LogsRequest, NetstatRequest, netstat_request};
 use crate::proto::time::time_service_client::TimeServiceClient;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_stream::StreamExt;
 use tonic::Request;
 use tonic::transport::Channel;
+
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Link type for BPF filter generation.
 ///
@@ -29,6 +32,8 @@ pub enum LinkType {
 #[derive(Clone)]
 pub struct TalosClient {
     channel: Channel,
+    /// Identifies the underlying connection; shared by every clone and `with_node` copy.
+    connection_id: u64,
     /// Target nodes for API requests
     nodes: Vec<String>,
     /// Endpoints from configuration (used to filter out vIPs from node targeting)
@@ -44,9 +49,18 @@ impl TalosClient {
 
         Ok(Self {
             channel,
+            connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             nodes,
             endpoints,
         })
+    }
+
+    /// Identifier of the underlying connection, unique per `from_context` call.
+    ///
+    /// Clones and [`Self::with_node`] copies share it, so it can key caches of
+    /// data derived through this connection without exposing any credentials.
+    pub fn connection_id(&self) -> u64 {
+        self.connection_id
     }
 
     /// Create a new client from the default talosconfig
@@ -72,6 +86,7 @@ impl TalosClient {
     pub fn with_node(&self, node: &str) -> Self {
         Self {
             channel: self.channel.clone(),
+            connection_id: self.connection_id,
             nodes: vec![node.to_string()],
             endpoints: self.endpoints.clone(),
         }
@@ -222,7 +237,28 @@ impl TalosClient {
         let request = self.with_nodes(Request::new(()));
 
         let response = client.version(request).await?;
-        let inner = response.into_inner();
+        self.decode_version(response.into_inner())
+    }
+
+    fn decode_version(
+        &self,
+        inner: crate::proto::machine::VersionResponse,
+    ) -> Result<Vec<VersionInfo>, TalosError> {
+        validate_read_responses(
+            inner
+                .messages
+                .iter()
+                .map(|message| message.metadata.as_ref()),
+        )?;
+        if inner
+            .messages
+            .iter()
+            .any(|message| message.version.is_none())
+        {
+            return Err(TalosError::Grpc(tonic::Status::data_loss(
+                "Talos version response omitted its version body",
+            )));
+        }
 
         let versions: Vec<VersionInfo> = inner
             .messages
@@ -332,7 +368,19 @@ impl TalosClient {
         let request = self.with_nodes(Request::new(()));
 
         let response = client.service_list(request).await?;
-        let inner = response.into_inner();
+        self.decode_services(response.into_inner())
+    }
+
+    fn decode_services(
+        &self,
+        inner: crate::proto::machine::ServiceListResponse,
+    ) -> Result<Vec<NodeServices>, TalosError> {
+        validate_read_responses(
+            inner
+                .messages
+                .iter()
+                .map(|message| message.metadata.as_ref()),
+        )?;
 
         let services: Vec<NodeServices> = inner
             .messages
@@ -373,18 +421,27 @@ impl TalosClient {
         }));
 
         let response = client.service_restart(request).await?;
-        let inner = response.into_inner();
+        self.decode_service_restart(response.into_inner(), service_id)
+    }
 
-        let results: Vec<ServiceRestartResult> = inner
+    fn decode_service_restart(
+        &self,
+        response: crate::proto::machine::ServiceRestartResponse,
+        service_id: &str,
+    ) -> Result<Vec<ServiceRestartResult>, TalosError> {
+        self.validate_mutation_acknowledgements(
+            &format!("restart service {service_id}"),
+            response.messages.iter().map(|msg| msg.metadata.as_ref()),
+        )?;
+        Ok(response
             .messages
             .into_iter()
-            .map(|msg| ServiceRestartResult {
-                node: self.node_from_metadata(msg.metadata.as_ref(), 0),
+            .enumerate()
+            .map(|(index, msg)| ServiceRestartResult {
+                node: self.node_from_metadata(msg.metadata.as_ref(), index),
                 response: msg.resp,
             })
-            .collect();
-
-        Ok(results)
+            .collect())
     }
 
     /// Get memory information from all configured nodes
@@ -394,6 +451,12 @@ impl TalosClient {
 
         let response = client.memory(request).await?;
         let inner = response.into_inner();
+        validate_read_responses(
+            inner
+                .messages
+                .iter()
+                .map(|message| message.metadata.as_ref()),
+        )?;
 
         let memories: Vec<NodeMemory> = inner
             .messages
@@ -421,6 +484,12 @@ impl TalosClient {
 
         let response = client.load_avg(request).await?;
         let inner = response.into_inner();
+        validate_read_responses(
+            inner
+                .messages
+                .iter()
+                .map(|message| message.metadata.as_ref()),
+        )?;
 
         let loads: Vec<NodeLoadAvg> = inner
             .messages
@@ -443,6 +512,12 @@ impl TalosClient {
 
         let response = client.cpu_info(request).await?;
         let inner = response.into_inner();
+        validate_read_responses(
+            inner
+                .messages
+                .iter()
+                .map(|message| message.metadata.as_ref()),
+        )?;
 
         let cpus: Vec<NodeCpuInfo> = inner
             .messages
@@ -612,6 +687,35 @@ impl TalosClient {
         });
 
         Ok(rx)
+    }
+
+    /// Follow a service's logs with caller-driven backpressure and cancellation.
+    ///
+    /// Unlike [`Self::logs_stream`], this owns the gRPC stream directly: no
+    /// detached task or unbounded channel is created. Dropping the returned
+    /// stream immediately drops the transport, even when no logs are arriving.
+    /// Errors are yielded to the caller, partial UTF-8 lines span chunks, and
+    /// lines exceeding 64 KiB terminate the stream with a resource-limit error.
+    pub async fn logs_follow(
+        &self,
+        service_id: &str,
+        tail_lines: i32,
+    ) -> Result<impl futures::Stream<Item = Result<String, TalosError>> + Send + 'static, TalosError>
+    {
+        let mut client = self.machine_client();
+        let request = self.with_nodes(Request::new(LogsRequest {
+            namespace: "system".to_string(),
+            id: service_id.to_string(),
+            driver: 0,
+            follow: true,
+            tail_lines,
+        }));
+        let source = client.logs(request).await?.into_inner();
+        Ok(crate::log_stream::frame_log_lines(source.map(|chunk| {
+            chunk
+                .map_err(TalosError::from)
+                .and_then(crate::log_stream::decode_log_chunk)
+        })))
     }
 
     /// Get logs for multiple services in parallel
@@ -1084,19 +1188,33 @@ impl TalosClient {
         }));
 
         let response = client.apply_configuration(request).await?;
-        let inner = response.into_inner();
+        self.decode_apply_configuration(response.into_inner(), dry_run)
+    }
 
-        let results: Vec<ApplyConfigResult> = inner
+    fn decode_apply_configuration(
+        &self,
+        response: crate::proto::machine::ApplyConfigurationResponse,
+        dry_run: bool,
+    ) -> Result<Vec<ApplyConfigResult>, TalosError> {
+        let action = if dry_run {
+            "validate configuration (dry run)"
+        } else {
+            "apply configuration"
+        };
+        self.validate_mutation_acknowledgements(
+            action,
+            response.messages.iter().map(|msg| msg.metadata.as_ref()),
+        )?;
+        Ok(response
             .messages
             .into_iter()
-            .map(|msg| ApplyConfigResult {
-                node: self.node_from_metadata(msg.metadata.as_ref(), 0),
+            .enumerate()
+            .map(|(index, msg)| ApplyConfigResult {
+                node: self.node_from_metadata(msg.metadata.as_ref(), index),
                 mode_result: msg.mode_details,
                 warnings: msg.warnings,
             })
-            .collect();
-
-        Ok(results)
+            .collect())
     }
 
     /// Stream packet capture from an interface
@@ -1116,6 +1234,33 @@ impl TalosClient {
     ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>, TalosError> {
         self.packet_capture_with_filter(interface, promiscuous, snap_len, Vec::new())
             .await
+    }
+
+    /// Follow raw pcap chunks with caller-driven backpressure and cancellation.
+    ///
+    /// The first chunk contains the pcap header. No detached task or channel is
+    /// created: dropping this stream drops even an idle gRPC transport
+    /// immediately. Transport and proxied node errors terminate the stream.
+    /// Callers are responsible for bounding retained capture bytes.
+    pub async fn packet_capture_follow(
+        &self,
+        interface: &str,
+        promiscuous: bool,
+        snap_len: u32,
+        bpf_filter: Vec<crate::proto::machine::BpfInstruction>,
+    ) -> Result<impl futures::Stream<Item = Result<Vec<u8>, TalosError>> + Send + 'static, TalosError>
+    {
+        use crate::proto::machine::PacketCaptureRequest;
+
+        let mut client = self.machine_client();
+        let request = self.with_nodes(Request::new(PacketCaptureRequest {
+            interface: interface.to_string(),
+            promiscuous,
+            snap_len: if snap_len == 0 { 65535 } else { snap_len },
+            bpf_filter,
+        }));
+        let source = client.packet_capture(request).await?.into_inner();
+        Ok(packet_capture_chunks(source))
     }
 
     /// Determine the appropriate link type for a network interface.
@@ -1154,6 +1299,16 @@ impl TalosClient {
         let bpf_filter = Self::build_port_exclusion_filter(50000, link_type);
         self.packet_capture_with_filter(interface, promiscuous, snap_len, bpf_filter)
             .await
+    }
+
+    /// Build the existing link-type-aware filter excluding Talos API traffic.
+    ///
+    /// Use with [`Self::packet_capture_follow`] to avoid capture feedback loops
+    /// on the management interface while retaining caller-owned cancellation.
+    pub fn packet_capture_api_exclusion_filter(
+        interface: &str,
+    ) -> Vec<crate::proto::machine::BpfInstruction> {
+        Self::build_port_exclusion_filter(50000, Self::detect_link_type(interface))
     }
 
     /// Build BPF filter to exclude a specific TCP/UDP port.
@@ -1627,20 +1782,163 @@ impl TalosClient {
         }));
 
         let response = client.reboot(request).await?;
-        let inner = response.into_inner();
+        self.decode_reboot(response.into_inner())
+    }
 
-        // Get the first message (we're typically rebooting one node at a time)
-        let msg = inner.messages.into_iter().next();
-
+    fn decode_reboot(
+        &self,
+        response: crate::proto::machine::RebootResponse,
+    ) -> Result<RebootResult, TalosError> {
+        self.validate_mutation_acknowledgements(
+            "reboot",
+            response.messages.iter().map(|msg| msg.metadata.as_ref()),
+        )?;
+        // The public result represents the first node, but every acknowledgement
+        // must be valid before any success is reported.
+        let msg = &response.messages[0];
         Ok(RebootResult {
-            node: msg
-                .as_ref()
-                .and_then(|m| m.metadata.as_ref())
-                .map(|m| m.hostname.clone())
-                .unwrap_or_else(|| self.nodes.first().cloned().unwrap_or_default()),
-            success: msg.is_some(),
+            node: self.node_from_metadata(msg.metadata.as_ref(), 0),
+            success: true,
         })
     }
+    /// Shut down the node.
+    ///
+    /// `force` bypasses Talos's own cordon/drain attempt. Frontends must keep
+    /// their confirmation and Kubernetes safety checks outside this low-level
+    /// RPC wrapper.
+    pub async fn shutdown(&self, force: bool) -> Result<ShutdownResult, TalosError> {
+        use crate::proto::machine::ShutdownRequest;
+
+        let mut client = self.machine_client();
+        let request = self.with_nodes(Request::new(ShutdownRequest { force }));
+        let response = client.shutdown(request).await?;
+        self.decode_shutdown(response.into_inner())
+    }
+
+    fn decode_shutdown(
+        &self,
+        response: crate::proto::machine::ShutdownResponse,
+    ) -> Result<ShutdownResult, TalosError> {
+        self.validate_mutation_acknowledgements(
+            "shutdown",
+            response.messages.iter().map(|msg| msg.metadata.as_ref()),
+        )?;
+        let msg = &response.messages[0];
+        Ok(ShutdownResult {
+            node: self.node_from_metadata(msg.metadata.as_ref(), 0),
+            success: true,
+        })
+    }
+
+    /// A proxied metadata failure makes the remainder of that message undefined.
+    /// Check the entire response before exposing any successful result.
+    /// A present message acknowledges acceptance even when its informational
+    /// proto3 strings are empty and direct responses omit metadata.
+    fn validate_mutation_acknowledgements<'a>(
+        &self,
+        action: &str,
+        messages: impl Iterator<Item = Option<&'a crate::proto::common::Metadata>>,
+    ) -> Result<(), TalosError> {
+        let mut failures = Vec::new();
+        let mut failure_code = None;
+        let mut count = 0;
+        for (index, metadata) in messages.enumerate() {
+            count += 1;
+            let node = self.node_from_metadata(metadata, index);
+            if let Some(metadata) = metadata {
+                let status = metadata.status.as_ref().filter(|status| status.code != 0);
+                if !metadata.error.is_empty() || status.is_some() {
+                    let code = status.map_or(tonic::Code::Unknown, |status| {
+                        tonic::Code::from_i32(status.code)
+                    });
+                    failure_code.get_or_insert(code);
+                    let detail = match (metadata.error.is_empty(), status) {
+                        (false, Some(status)) => format!(
+                            "{} (upstream status {}: {})",
+                            metadata.error, status.code, status.message
+                        ),
+                        (false, None) => metadata.error.clone(),
+                        (true, Some(status)) => {
+                            format!("upstream status {}: {}", status.code, status.message)
+                        }
+                        (true, None) => unreachable!(),
+                    };
+                    failures.push(format!("{action} on {node}: {detail}"));
+                    continue;
+                }
+            }
+        }
+        if count == 0 {
+            failure_code = Some(tonic::Code::DataLoss);
+            let targets = if self.nodes.is_empty() {
+                &self.endpoints
+            } else {
+                &self.nodes
+            };
+            let target = if targets.is_empty() {
+                "selected Talos endpoint".to_string()
+            } else {
+                targets.join(", ")
+            };
+            failures.push(format!(
+                "{action} on {target}: no acknowledgements returned"
+            ));
+        }
+        if let Some(code) = failure_code {
+            let mut message = failures.join("; ");
+            if count > 1 {
+                message.push_str(
+                    "; other targets may already have accepted the action; aggregate success is not established",
+                );
+            }
+            return Err(TalosError::Grpc(tonic::Status::new(code, message)));
+        }
+        Ok(())
+    }
+}
+
+/// A successful outer RPC is insufficient: each targeted reply must be usable.
+fn validate_read_responses<'a>(
+    messages: impl Iterator<Item = Option<&'a crate::proto::common::Metadata>>,
+) -> Result<(), TalosError> {
+    let mut count = 0;
+    for metadata in messages {
+        crate::log_stream::validate_metadata(metadata)?;
+        count += 1;
+    }
+    if count == 0 {
+        return Err(TalosError::Grpc(tonic::Status::data_loss(
+            "Talos returned no node response",
+        )));
+    }
+    Ok(())
+}
+
+/// Preserve raw chunk boundaries while owning the source and ending on errors.
+fn packet_capture_chunks<S>(
+    source: S,
+) -> impl futures::Stream<Item = Result<Vec<u8>, TalosError>> + Send
+where
+    S: futures::Stream<Item = Result<crate::proto::common::Data, tonic::Status>> + Send + 'static,
+{
+    futures::stream::try_unfold(Box::pin(source), |mut source| async move {
+        match source.next().await {
+            Some(chunk) => {
+                let bytes = crate::log_stream::decode_log_chunk(chunk.map_err(TalosError::from)?)?;
+                Ok(Some((bytes, source)))
+            }
+            None => Ok(None),
+        }
+    })
+}
+
+/// Result of a shutdown operation.
+#[derive(Debug, Clone)]
+pub struct ShutdownResult {
+    /// Node whose shutdown was requested.
+    pub node: String,
+    /// Whether Talos accepted the request.
+    pub success: bool,
 }
 
 /// Reboot mode
@@ -2567,6 +2865,228 @@ impl NodeTimeInfo {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn packet_capture_preserves_chunks_and_applies_backpressure() {
+        let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = polls.clone();
+        let chunks = futures::stream::iter(vec![
+            Ok(crate::proto::common::Data {
+                metadata: None,
+                bytes: b"pcap header".to_vec(),
+            }),
+            Ok(crate::proto::common::Data {
+                metadata: None,
+                bytes: vec![0, 255, 128],
+            }),
+        ])
+        .map(move |chunk| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            chunk
+        });
+        let stream = packet_capture_chunks(chunks);
+        futures::pin_mut!(stream);
+        assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(stream.next().await.unwrap().unwrap(), b"pcap header");
+        assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(stream.next().await.unwrap().unwrap(), vec![0, 255, 128]);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn packet_capture_surfaces_proxy_metadata_errors_and_stops() {
+        for (error, code) in [
+            ("capture denied", Some(7)),
+            ("", Some(7)),
+            ("capture denied", None),
+        ] {
+            let stream = packet_capture_chunks(futures::stream::iter(vec![
+                Ok(crate::proto::common::Data {
+                    metadata: Some(crate::proto::common::Metadata {
+                        hostname: "fixture-node".into(),
+                        error: error.into(),
+                        status: code.map(|code| crate::proto::google::rpc::Status {
+                            code,
+                            message: "permission denied".into(),
+                            details: vec![],
+                        }),
+                    }),
+                    bytes: b"undefined bytes must not be saved".to_vec(),
+                }),
+                Ok(crate::proto::common::Data {
+                    metadata: None,
+                    bytes: b"must not be consumed".to_vec(),
+                }),
+            ]));
+            futures::pin_mut!(stream);
+            let TalosError::Grpc(status) = stream.next().await.unwrap().unwrap_err() else {
+                panic!("expected proxied gRPC status");
+            };
+            assert_eq!(
+                status.code(),
+                if code.is_some() {
+                    tonic::Code::PermissionDenied
+                } else {
+                    tonic::Code::Unknown
+                }
+            );
+            assert_eq!(
+                status.message(),
+                if error.is_empty() {
+                    "permission denied"
+                } else {
+                    error
+                }
+            );
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn packet_capture_surfaces_transport_errors_and_stops() {
+        let stream = packet_capture_chunks(futures::stream::iter(vec![
+            Err(tonic::Status::unavailable("capture disconnected")),
+            Ok(crate::proto::common::Data {
+                metadata: None,
+                bytes: vec![1],
+            }),
+        ]));
+        futures::pin_mut!(stream);
+        let TalosError::Grpc(status) = stream.next().await.unwrap().unwrap_err() else {
+            panic!("expected transport status");
+        };
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(status.message(), "capture disconnected");
+        assert!(stream.next().await.is_none());
+    }
+
+    struct IdleCaptureSource(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl futures::Stream for IdleCaptureSource {
+        type Item = Result<crate::proto::common::Data, tonic::Status>;
+
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for IdleCaptureSource {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn packet_capture_drop_retires_idle_transport_immediately() {
+        for poll_first in [false, true] {
+            let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let mut stream = Box::pin(packet_capture_chunks(IdleCaptureSource(dropped.clone())));
+            if poll_first {
+                assert!(futures::poll!(futures::StreamExt::next(&mut stream)).is_pending());
+            }
+            assert!(!dropped.load(std::sync::atomic::Ordering::SeqCst));
+            drop(stream);
+            assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+
+    /// Minimal classic-BPF interpreter for the existing port exclusion filters.
+    fn capture_filter_accepts(
+        filter: &[crate::proto::machine::BpfInstruction],
+        packet: &[u8],
+    ) -> bool {
+        let (mut accumulator, mut index, mut pc) = (0u32, 0usize, 0usize);
+        for _ in 0..128 {
+            let instruction = &filter[pc];
+            match instruction.op {
+                0x28 | 0x48 => {
+                    let offset =
+                        instruction.k as usize + if instruction.op == 0x48 { index } else { 0 };
+                    let Some(bytes) = packet.get(offset..offset + 2) else {
+                        return false;
+                    };
+                    accumulator = u16::from_be_bytes([bytes[0], bytes[1]]) as u32;
+                }
+                0x30 | 0xb1 => {
+                    let Some(byte) = packet.get(instruction.k as usize) else {
+                        return false;
+                    };
+                    if instruction.op == 0xb1 {
+                        index = ((byte & 0xf) * 4) as usize;
+                    } else {
+                        accumulator = *byte as u32;
+                    }
+                }
+                0x54 => accumulator &= instruction.k,
+                0x15 | 0x45 => {
+                    let matches = if instruction.op == 0x15 {
+                        accumulator == instruction.k
+                    } else {
+                        accumulator & instruction.k != 0
+                    };
+                    pc += if matches {
+                        instruction.jt
+                    } else {
+                        instruction.jf
+                    } as usize;
+                }
+                0x06 => return instruction.k != 0,
+                other => panic!("unsupported BPF opcode {other:#x}"),
+            }
+            pc += 1;
+            assert!(pc < filter.len(), "BPF jump outside program");
+        }
+        panic!("BPF program did not terminate");
+    }
+
+    fn capture_packet_fixture(
+        ethernet: bool,
+        ipv6: bool,
+        protocol: u8,
+        source_port: u16,
+        destination_port: u16,
+    ) -> Vec<u8> {
+        let ip = if ethernet { 14 } else { 0 };
+        let header = if ipv6 { 40 } else { 20 };
+        let mut packet = vec![0u8; ip + header + 20];
+        if ethernet {
+            let ether_type: u16 = if ipv6 { 0x86dd } else { 0x0800 };
+            packet[12..14].copy_from_slice(&ether_type.to_be_bytes());
+        }
+        packet[ip] = if ipv6 { 0x60 } else { 0x45 };
+        packet[ip + if ipv6 { 6 } else { 9 }] = protocol;
+        packet[ip + header..ip + header + 2].copy_from_slice(&source_port.to_be_bytes());
+        packet[ip + header + 2..ip + header + 4].copy_from_slice(&destination_port.to_be_bytes());
+        packet
+    }
+
+    #[test]
+    fn packet_capture_api_filter_excludes_management_traffic_for_both_link_types() {
+        for interface in ["eth0", "ens1", "lo", "kubespan", "wg0", "tun0"] {
+            let ethernet = TalosClient::detect_link_type(interface) == LinkType::EN10MB;
+            let filter = TalosClient::packet_capture_api_exclusion_filter(interface);
+            for ipv6 in [false, true] {
+                for protocol in [6, 17, 132] {
+                    for (source, destination, expected) in [
+                        (50000, 1234, false),
+                        (1234, 50000, false),
+                        (1234, 6443, true),
+                    ] {
+                        let packet =
+                            capture_packet_fixture(ethernet, ipv6, protocol, source, destination);
+                        assert_eq!(
+                            capture_filter_accepts(&filter, &packet),
+                            expected,
+                            "{interface}, ipv6={ipv6}, protocol={protocol}, {source}->{destination}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     use super::*;
 
     /// Helper to create a TalosClient for testing without a real connection
@@ -2577,9 +3097,379 @@ mod tests {
 
         TalosClient {
             channel,
+            connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             nodes,
             endpoints,
         }
+    }
+
+    #[tokio::test]
+    async fn connection_id_is_shared_by_clones_and_node_copies_only() {
+        let first = create_test_client(vec![], vec![]);
+        let second = create_test_client(vec![], vec![]);
+        assert_eq!(first.connection_id(), first.clone().connection_id());
+        assert_eq!(
+            first.connection_id(),
+            first.with_node("10.0.0.1").connection_id()
+        );
+        assert_ne!(first.connection_id(), second.connection_id());
+    }
+
+    #[tokio::test]
+    async fn overview_decoders_reject_embedded_proxy_failures_and_empty_envelopes() {
+        let client = create_test_client(vec!["selected-node".into()], vec![]);
+        for (error, code) in [
+            ("node unavailable", None),
+            ("", Some(14)),
+            ("denied", Some(0)),
+        ] {
+            let metadata = crate::proto::common::Metadata {
+                hostname: "selected-node".into(),
+                error: error.into(),
+                status: code.map(|code| crate::proto::google::rpc::Status {
+                    code,
+                    message: "proxy failure".into(),
+                    details: vec![],
+                }),
+            };
+            assert!(
+                client
+                    .decode_version(crate::proto::machine::VersionResponse {
+                        messages: vec![crate::proto::machine::Version {
+                            metadata: Some(metadata.clone()),
+                            ..Default::default()
+                        }],
+                    })
+                    .is_err()
+            );
+            assert!(
+                client
+                    .decode_services(crate::proto::machine::ServiceListResponse {
+                        messages: vec![crate::proto::machine::ServiceList {
+                            metadata: Some(metadata.clone()),
+                            services: vec![],
+                        }],
+                    })
+                    .is_err()
+            );
+            // Memory, load, and CPU replies use this same pre-decode validator.
+            assert!(validate_read_responses([Some(&metadata)].into_iter()).is_err());
+        }
+        assert!(
+            client
+                .decode_version(crate::proto::machine::VersionResponse::default())
+                .is_err()
+        );
+        assert!(
+            client
+                .decode_services(crate::proto::machine::ServiceListResponse::default())
+                .is_err()
+        );
+        assert!(
+            client
+                .decode_version(crate::proto::machine::VersionResponse {
+                    messages: vec![crate::proto::machine::Version::default()],
+                })
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn overview_decoders_accept_direct_node_and_successful_proxy_replies() {
+        let client = create_test_client(vec!["selected-node".into()], vec![]);
+        for metadata in [
+            None,
+            Some(crate::proto::common::Metadata {
+                hostname: "proxy-node".into(),
+                error: String::new(),
+                status: Some(crate::proto::google::rpc::Status::default()),
+            }),
+        ] {
+            let versions = client
+                .decode_version(crate::proto::machine::VersionResponse {
+                    messages: vec![crate::proto::machine::Version {
+                        metadata: metadata.clone(),
+                        version: Some(crate::proto::machine::VersionInfo {
+                            tag: "v1.11.0".into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
+                })
+                .unwrap();
+            assert_eq!(versions.len(), 1);
+            assert_eq!(versions[0].version, "v1.11.0");
+            let catalog = client
+                .decode_services(crate::proto::machine::ServiceListResponse {
+                    messages: vec![crate::proto::machine::ServiceList {
+                        metadata,
+                        services: vec![crate::proto::machine::ServiceInfo {
+                            id: "ExactCaseService".into(),
+                            state: "Running".into(),
+                            ..Default::default()
+                        }],
+                    }],
+                })
+                .unwrap();
+            assert_eq!(catalog.len(), 1);
+            assert_eq!(catalog[0].services[0].id, "ExactCaseService");
+        }
+    }
+
+    struct MutationAckFixture {
+        metadata: Option<crate::proto::common::Metadata>,
+        payload: String,
+    }
+
+    fn mutation_ack(error: &str, code: Option<i32>, payload: &str) -> MutationAckFixture {
+        MutationAckFixture {
+            metadata: Some(crate::proto::common::Metadata {
+                hostname: "fixture-node".to_string(),
+                error: error.to_string(),
+                status: code.map(|code| crate::proto::google::rpc::Status {
+                    code,
+                    message: "permission denied".to_string(),
+                    details: Vec::new(),
+                }),
+            }),
+            payload: payload.to_string(),
+        }
+    }
+
+    /// All fixtures exercise only response decoding: no RPC is made.
+    fn assert_mutation_response_protocol(
+        action: &str,
+        decode: impl Fn(Vec<MutationAckFixture>) -> Result<(), TalosError>,
+    ) {
+        for (error, code) in [
+            ("upstream denied", None),
+            ("", Some(7)),
+            ("upstream denied", Some(7)),
+            ("upstream denied", Some(0)),
+        ] {
+            // An error/status-only response and one with plausible but undefined
+            // success payload must both be rejected.
+            for payload in ["", "accepted"] {
+                let TalosError::Grpc(status) =
+                    decode(vec![mutation_ack(error, code, payload)]).unwrap_err()
+                else {
+                    panic!("expected upstream protocol error");
+                };
+                assert_eq!(
+                    status.code(),
+                    if code.is_some_and(|code| code != 0) {
+                        tonic::Code::PermissionDenied
+                    } else {
+                        tonic::Code::Unknown
+                    }
+                );
+                assert!(status.message().contains(action));
+                assert!(status.message().contains("fixture-node"));
+                assert!(status.message().contains(if error.is_empty() {
+                    "permission denied"
+                } else {
+                    "upstream denied"
+                }));
+            }
+        }
+
+        // A valid first message must not hide a failed later target. Test both
+        // orders and multiple failures so the full response is validated.
+        for payload in ["", "accepted"] {
+            for failed_first in [false, true] {
+                let mut messages = vec![
+                    mutation_ack("", None, payload),
+                    mutation_ack("", Some(7), "undefined payload"),
+                ];
+                if failed_first {
+                    messages.reverse();
+                }
+                let error = decode(messages).unwrap_err().to_string();
+                assert!(error.contains("aggregate success is not established"));
+            }
+        }
+        let mut second_failure = mutation_ack("second target denied", None, "");
+        second_failure.metadata.as_mut().unwrap().hostname = "second-node".to_string();
+        let error = decode(vec![
+            mutation_ack("first target denied", None, ""),
+            second_failure,
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("first target denied"));
+        assert!(error.contains("second target denied"));
+        assert!(error.contains("second-node"));
+
+        // An empty envelope cannot establish acceptance, but a present default
+        // message can: informational proto3 strings have no nonempty guarantee.
+        let TalosError::Grpc(status) = decode(Vec::new()).unwrap_err() else {
+            panic!("expected empty envelope error");
+        };
+        assert_eq!(status.code(), tonic::Code::DataLoss);
+        assert!(status.message().contains(action));
+        assert!(status.message().contains("configured-node"));
+
+        for payload in ["", " ", "accepted"] {
+            assert!(decode(vec![mutation_ack("", None, payload)]).is_ok());
+            assert!(decode(vec![mutation_ack("", Some(0), payload)]).is_ok());
+            assert!(
+                decode(vec![MutationAckFixture {
+                    metadata: None,
+                    payload: payload.to_string(),
+                }])
+                .is_ok()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn service_restart_response_protocol_rejects_failures_and_empty_envelopes() {
+        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        assert_mutation_response_protocol("restart service kubelet", |fixtures| {
+            client
+                .decode_service_restart(
+                    crate::proto::machine::ServiceRestartResponse {
+                        messages: fixtures
+                            .into_iter()
+                            .map(|fixture| crate::proto::machine::ServiceRestart {
+                                metadata: fixture.metadata,
+                                resp: fixture.payload,
+                            })
+                            .collect(),
+                    },
+                    "kubelet",
+                )
+                .map(|_| ())
+        });
+    }
+
+    #[tokio::test]
+    async fn apply_configuration_response_protocol_rejects_failures_and_empty_envelopes() {
+        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        for dry_run in [true, false] {
+            let action = if dry_run {
+                "validate configuration (dry run)"
+            } else {
+                "apply configuration"
+            };
+            assert_mutation_response_protocol(action, |fixtures| {
+                client
+                    .decode_apply_configuration(
+                        crate::proto::machine::ApplyConfigurationResponse {
+                            messages: fixtures
+                                .into_iter()
+                                .map(|fixture| crate::proto::machine::ApplyConfiguration {
+                                    metadata: fixture.metadata,
+                                    mode_details: fixture.payload,
+                                    ..Default::default()
+                                })
+                                .collect(),
+                        },
+                        dry_run,
+                    )
+                    .map(|_| ())
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn reboot_response_protocol_rejects_failures_and_empty_envelopes() {
+        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        assert_mutation_response_protocol("reboot", |fixtures| {
+            client
+                .decode_reboot(crate::proto::machine::RebootResponse {
+                    messages: fixtures
+                        .into_iter()
+                        .map(|fixture| crate::proto::machine::Reboot {
+                            metadata: fixture.metadata,
+                            actor_id: fixture.payload,
+                        })
+                        .collect(),
+                })
+                .map(|_| ())
+        });
+    }
+
+    #[tokio::test]
+    async fn shutdown_response_protocol_rejects_failures_and_empty_envelopes() {
+        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        assert_mutation_response_protocol("shutdown", |fixtures| {
+            client
+                .decode_shutdown(crate::proto::machine::ShutdownResponse {
+                    messages: fixtures
+                        .into_iter()
+                        .map(|fixture| crate::proto::machine::Shutdown {
+                            metadata: fixture.metadata,
+                            actor_id: fixture.payload,
+                        })
+                        .collect(),
+                })
+                .map(|_| ())
+        });
+    }
+
+    #[tokio::test]
+    async fn mutation_response_decoders_preserve_success_payloads_and_target_fallbacks() {
+        let client = create_test_client(
+            vec!["configured-node".to_string(), "second-node".to_string()],
+            Vec::new(),
+        );
+        let services = client
+            .decode_service_restart(
+                crate::proto::machine::ServiceRestartResponse {
+                    messages: vec![
+                        crate::proto::machine::ServiceRestart {
+                            metadata: None,
+                            resp: "restart accepted".to_string(),
+                        },
+                        crate::proto::machine::ServiceRestart {
+                            metadata: None,
+                            resp: "second restart accepted".to_string(),
+                        },
+                    ],
+                },
+                "kubelet",
+            )
+            .unwrap();
+        assert_eq!(services[0].node, "configured-node");
+        assert_eq!(services[0].response, "restart accepted");
+        assert_eq!(services[1].node, "second-node");
+        let configs = client
+            .decode_apply_configuration(
+                crate::proto::machine::ApplyConfigurationResponse {
+                    messages: vec![crate::proto::machine::ApplyConfiguration {
+                        metadata: mutation_ack("", None, "").metadata,
+                        mode_details: "configuration applied".to_string(),
+                        warnings: vec!["warning".to_string()],
+                        ..Default::default()
+                    }],
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(configs[0].node, "fixture-node");
+        assert_eq!(configs[0].mode_result, "configuration applied");
+        assert_eq!(configs[0].warnings, vec!["warning"]);
+        let reboot = client
+            .decode_reboot(crate::proto::machine::RebootResponse {
+                messages: vec![crate::proto::machine::Reboot {
+                    metadata: None,
+                    actor_id: "reboot-actor".to_string(),
+                }],
+            })
+            .unwrap();
+        assert!(reboot.success);
+        assert_eq!(reboot.node, "configured-node");
+        let shutdown = client
+            .decode_shutdown(crate::proto::machine::ShutdownResponse {
+                messages: vec![crate::proto::machine::Shutdown {
+                    metadata: mutation_ack("", None, "").metadata,
+                    actor_id: "shutdown-actor".to_string(),
+                }],
+            })
+            .unwrap();
+        assert!(shutdown.success);
+        assert_eq!(shutdown.node, "fixture-node");
     }
 
     #[tokio::test]
