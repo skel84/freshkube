@@ -32,10 +32,22 @@ struct Cli {
     #[arg(short, long, default_value = "500")]
     tail: i32,
 
-    /// Kubeconfig file to use for Kubernetes data (uses its current context,
-    /// which must belong to the same cluster as the Talos context)
+    /// Kubeconfig file to use for Kubernetes data. With Talos, its current
+    /// context must belong to the same cluster as the Talos context; in
+    /// Kubernetes-only mode its contexts are listed
     #[arg(long)]
     kubeconfig: Option<String>,
+
+    /// Browse Kubernetes only, from a kubeconfig, without Talos. Chosen by
+    /// itself when no Talos option is given and there is no talosconfig
+    /// (TALOSCONFIG or ~/.talos/config)
+    #[arg(long, conflicts_with_all = ["config", "context", "insecure"])]
+    kubernetes_only: bool,
+
+    /// Kubeconfig context to connect to; implies --kubernetes-only
+    /// (default: the kubeconfig's current context)
+    #[arg(long, conflicts_with_all = ["config", "context", "insecure"])]
+    kube_context: Option<String>,
 
     /// Connect without TLS client certificates (for maintenance mode nodes)
     #[arg(short, long)]
@@ -47,7 +59,9 @@ struct Cli {
 
     /// Show synthetic example data instead of connecting; no credentials or
     /// cluster are used
-    #[arg(long, conflicts_with_all = ["insecure", "kubeconfig", "config", "context"])]
+    #[arg(long, conflicts_with_all = [
+        "insecure", "kubeconfig", "config", "context", "kubernetes_only", "kube_context",
+    ])]
     fixture: bool,
 }
 
@@ -61,8 +75,17 @@ fn main() -> Result<()> {
         insecure,
         endpoint,
         kubeconfig,
+        kubernetes_only,
+        kube_context,
         fixture,
     } = Cli::parse();
+    let kubernetes_only = !fixture
+        && wants_kubernetes_only(
+            kubernetes_only,
+            kube_context.is_some(),
+            config.is_some() || context.is_some() || insecure,
+            freshkube_desktop::default_talosconfig_exists,
+        );
 
     // Fail before opening files or connecting.
     validate(insecure, endpoint.as_deref(), kubeconfig.as_deref())?;
@@ -97,7 +120,12 @@ fn main() -> Result<()> {
         .init();
 
     tracing::info!("Starting freshkube");
-    if insecure {
+    if kubernetes_only {
+        tracing::info!("Kubernetes-only mode");
+        if let Some(context) = &kube_context {
+            tracing::info!("Using kubeconfig context: {}", context);
+        }
+    } else if insecure {
         tracing::info!("Insecure mode enabled");
         if let Some(endpoint) = &endpoint {
             tracing::info!("Endpoint: {}", endpoint);
@@ -118,6 +146,8 @@ fn main() -> Result<()> {
         .build()?;
     let options = if fixture {
         GpuiOptions::fixture()
+    } else if kubernetes_only {
+        GpuiOptions::kubernetes_only(kubeconfig.map(PathBuf::from), kube_context, tail)
     } else {
         options(config, context, tail, kubeconfig, insecure, endpoint)
     };
@@ -141,6 +171,18 @@ fn validate(insecure: bool, endpoint: Option<&str>, kubeconfig: Option<&str>) ->
         }
     }
     Ok(())
+}
+
+/// Kubernetes-only when asked for, or when nothing names Talos and there is
+/// no default talosconfig to use. A named talosconfig that is missing stays
+/// Talos, which then says what's wrong with it.
+fn wants_kubernetes_only(
+    asked: bool,
+    kube_context: bool,
+    names_talos: bool,
+    default_talosconfig_exists: impl FnOnce() -> bool,
+) -> bool {
+    asked || kube_context || (!names_talos && !default_talosconfig_exists())
 }
 
 fn options(
@@ -296,6 +338,45 @@ mod tests {
                 .fixture
         );
         assert!(Cli::try_parse_from(["freshkube", "--fixture", "--context", "lab"]).is_err());
+    }
+
+    #[test]
+    fn kubernetes_only_is_asked_for_or_follows_a_missing_talosconfig() {
+        let cli = Cli::try_parse_from([
+            "freshkube",
+            "--kubeconfig",
+            "/tmp/kubeconfig",
+            "--kube-context",
+            "admin@lab",
+        ])
+        .unwrap();
+        assert_eq!(cli.kube_context.as_deref(), Some("admin@lab"));
+        assert!(!cli.kubernetes_only);
+        assert!(
+            Cli::try_parse_from(["freshkube", "--kubernetes-only"])
+                .unwrap()
+                .kubernetes_only
+        );
+        for talos in [
+            &["--kubernetes-only", "--context", "lab"][..],
+            &["--kubernetes-only", "--config", "/tmp/talosconfig"],
+            &["--kube-context", "admin@lab", "-c", "lab"],
+            &["--kube-context", "admin@lab", "-i", "-e", "192.0.2.10"],
+            &["--fixture", "--kubernetes-only"],
+            &["--fixture", "--kube-context", "admin@lab"],
+        ] {
+            let args = std::iter::once("freshkube").chain(talos.iter().copied());
+            assert!(Cli::try_parse_from(args).is_err(), "{talos:?}");
+        }
+
+        let never = || -> bool { panic!("the talosconfig needn't be looked for") };
+        assert!(wants_kubernetes_only(true, false, false, never));
+        assert!(wants_kubernetes_only(false, true, false, never));
+        // Nothing names Talos: the default talosconfig decides.
+        assert!(wants_kubernetes_only(false, false, false, || false));
+        assert!(!wants_kubernetes_only(false, false, false, || true));
+        // A named talosconfig or context stays Talos even when missing.
+        assert!(!wants_kubernetes_only(false, false, true, never));
     }
 
     #[test]

@@ -11,6 +11,8 @@ pub struct GpuiOptions {
     fixture: bool,
     kubeconfig_path: Option<PathBuf>,
     maintenance_endpoint: Option<String>,
+    kubernetes_only: bool,
+    kube_context: Option<String>,
 }
 
 impl GpuiOptions {
@@ -22,6 +24,23 @@ impl GpuiOptions {
             fixture: false,
             kubeconfig_path: None,
             maintenance_endpoint: None,
+            kubernetes_only: false,
+            kube_context: None,
+        }
+    }
+    /// Opens without Talos: the Kubernetes pages read `kubeconfig`, or the
+    /// files `KUBECONFIG` names, or `~/.kube/config`, connecting to `context`
+    /// or else the current context. Talos pages wait for a talosconfig.
+    pub fn kubernetes_only(
+        kubeconfig: Option<PathBuf>,
+        context: Option<String>,
+        tail: i32,
+    ) -> Self {
+        Self {
+            kubeconfig_path: kubeconfig,
+            kubernetes_only: true,
+            kube_context: context,
+            ..Self::new(None, None, tail)
         }
     }
     /// Starts with this kubeconfig file selected (its current context), as if
@@ -63,6 +82,19 @@ impl GpuiOptions {
     pub fn is_fixture(&self) -> bool {
         self.fixture
     }
+    pub fn is_kubernetes_only(&self) -> bool {
+        self.kubernetes_only
+    }
+    /// The kubeconfig context Kubernetes-only mode asked for.
+    pub fn kube_context(&self) -> Option<&str> {
+        self.kube_context.as_deref()
+    }
+}
+
+/// Whether the talosconfig used when none is named exists: `TALOSCONFIG`,
+/// else `~/.talos/config`.
+pub fn default_talosconfig_exists() -> bool {
+    talos_rs::config::TalosConfig::default_path().is_ok_and(|path| path.is_file())
 }
 
 /// Checks a maintenance `--endpoint` with the same rule every frontend uses

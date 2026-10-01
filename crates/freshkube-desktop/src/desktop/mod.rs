@@ -1,4 +1,5 @@
 mod kubeconfig;
+mod kubernetes_only;
 mod overview;
 mod services;
 mod shell;
@@ -383,6 +384,11 @@ pub(crate) struct Pilot {
     sidebar_reveal: Option<SidebarReveal>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
+    /// Set without Talos: contexts come from a kubeconfig and only the
+    /// Resources page reads.
+    kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
+    /// Whether the settings popover is open; a page can open it too.
+    settings_open: bool,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
     node_view: NodeView,
@@ -599,6 +605,8 @@ impl Pilot {
             sidebar_scroll: ScrollHandle::new(),
             sidebar_reveal: None,
             kubeconfig: KubeconfigSelection::Automatic,
+            kubernetes_only: None,
+            settings_open: false,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
             node_view: NodeView::Cards,
@@ -628,6 +636,12 @@ impl Pilot {
             view.applied.context = Some(view.contexts[0].clone());
             view.seed_fixture_history();
             view.refresh(window, cx);
+        } else if options.kubernetes_only {
+            view.kubernetes_only = Some(kubernetes_only::KubernetesOnly::new(
+                options.kubeconfig_path,
+                options.kube_context,
+            ));
+            view.load_kube_contexts(window, cx);
         } else {
             view.load_configuration(window, cx);
             if let Some(path) = options.kubeconfig_path {
@@ -636,6 +650,10 @@ impl Pilot {
         }
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&view.focus, cx);
+        // Without Talos, the one page that reads is the first one shown.
+        if view.kubernetes_only.is_some() {
+            view.navigate_from_keyboard(Page::Resources, window, cx);
+        }
         // Debug builds can open on a page by slug, for visual checks.
         #[cfg(debug_assertions)]
         if let Some(page) = std::env::var("FRESHKUBE_PAGE")
@@ -710,11 +728,19 @@ impl Pilot {
     }
 
     /// Applies the talosconfig path typed in Settings and reloads contexts.
+    /// Without Talos, a path switches the window to Talos.
     fn apply_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.fixture || self.config_loading {
             return;
         }
         let draft = self.path.read(cx).value().to_string();
+        if self.kubernetes_only.is_some() {
+            // The default talosconfig is what's missing.
+            if draft.trim().is_empty() {
+                return;
+            }
+            self.leave_kubernetes_only(window, cx);
+        }
         self.applied.path = if draft.trim().is_empty() {
             None
         } else {
@@ -844,6 +870,14 @@ impl Pilot {
     /// API of the Talos cluster. Its id covers what picks the cluster and
     /// its credentials, not the target node, so changing node keeps a watch.
     fn kube_source(&self) -> Option<KubeSource> {
+        if let Some(kube) = &self.kubernetes_only {
+            let access = kube.access()?.clone();
+            return Some(KubeSource {
+                id: access.id(),
+                context: access.context().to_owned(),
+                access: KubeAccess::Direct(access),
+            });
+        }
         let context = self.applied.context.clone()?;
         if self.fixture {
             return Some(KubeSource {
@@ -906,6 +940,10 @@ impl Pilot {
     }
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kubernetes_only.is_some() {
+            self.refresh_kubernetes(window, cx);
+            return;
+        }
         if self.config_loading || self.overview.is_loading() {
             return;
         }
@@ -1176,6 +1214,15 @@ impl Pilot {
     }
 
     fn select_context(&mut self, context: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kubernetes_only.is_some() {
+            // Choosing the context again retries one that failed.
+            if self.applied.context.as_ref() == Some(&context) {
+                self.refresh_kubernetes(window, cx);
+            } else {
+                self.use_kube_context(Some(context), window, cx);
+            }
+            return;
+        }
         if self.applied.context.as_ref() != Some(&context) {
             self.applied.context = Some(context);
             self.invalidate_target(window, cx);
@@ -1340,9 +1387,18 @@ impl Pilot {
         App::notify(cx, self.services_page.entity_id());
     }
 
+    /// Whether contexts or a connection are loading, for the refresh button.
+    fn loading(&self) -> bool {
+        let connecting = self
+            .kubernetes_only
+            .as_ref()
+            .is_some_and(|kube| kube.connection == kubernetes_only::KubeConnection::Connecting);
+        self.config_loading || self.overview.is_loading() || connecting
+    }
+
     /// How full the countdown ring is, and whether it shows at all.
     fn countdown_state(&self) -> (f32, bool) {
-        let loading = self.config_loading || self.overview.is_loading();
+        let loading = self.loading();
         (
             1. - self.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
             self.automatic && self.overview.data().is_some() && !loading,
@@ -1364,6 +1420,12 @@ impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let page = match self.page {
+            Page::Resources => self
+                .resources
+                .clone()
+                .cached(cached_page_style())
+                .into_any_element(),
+            _ if self.kubernetes_only.is_some() => self.render_needs_talosconfig(cx),
             Page::Overview => self
                 .overview_page
                 .clone()
@@ -1375,11 +1437,6 @@ impl Render for Pilot {
                 .cached(cached_page_style())
                 .into_any_element(),
             Page::Logs => self.render_logs_page(),
-            Page::Resources => self
-                .resources
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
             // Screens redraw when their own state changes, not with the shell.
             _ => self
                 .active_screen()

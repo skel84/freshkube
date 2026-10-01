@@ -722,6 +722,7 @@ mod desktop {
             self.showing = self.services.iter().cloned().collect();
             self.review = LogReview::new("fixture.invalid");
             self.review.append(events);
+            self.last_applied = Instant::now();
             self.review.set_service_filter(self.showing.clone());
             self.review_anchor = None;
             self.anchor_evicted = false;

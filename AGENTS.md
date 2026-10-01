@@ -22,6 +22,7 @@ Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. 
 cargo build
 cargo run -- --fixture            # synthetic example data, no credentials or cluster
 cargo run -- --config ~/.talos/config --context <name>
+cargo run -- --kubernetes-only --kubeconfig <file> --kube-context <name>   # no talosconfig
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
@@ -72,6 +73,8 @@ Headless UI tests render the real app, find elements by id and click or type int
 ### Visual checks
 
 macOS ignores synthetic keystrokes once the window loses focus, so driving the running app from outside is unreliable. Open the page you need with `FRESHKUBE_PAGE`, capture it, and keep interaction checks in UI tests.
+
+GPUI stops drawing a window that is covered or on a locked screen. Such a capture shows the first frames only, before any read finishes. Fixture pages still look right because their data is there at once. Live pages don't, so check that the screen is unlocked before trusting a capture of one.
 
 ## Talos Linux Reference
 

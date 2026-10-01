@@ -1,4 +1,5 @@
 //! Window chrome: title bar, sidebar, status bar and their popovers.
+use super::kubernetes_only::{self, KubeConnection};
 use super::{AUTO_REFRESH, Appearance, Page, Pilot, SIDEBAR_WIDTH, SidebarReveal, clock};
 use crate::mutation::Operations;
 use crate::palette::palette;
@@ -39,22 +40,30 @@ impl Pilot {
         } else {
             self.applied.context.clone().unwrap_or_else(|| "…".into())
         };
-        let applied = format!(
-            "Config: {} · Context: {} · Node: {}",
-            if self.fixture {
-                "Example data".into()
-            } else {
-                self.applied
-                    .path
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "Default talosconfig".into())
-            },
-            self.applied.context.as_deref().unwrap_or("Current context"),
-            self.selected_node.as_deref().unwrap_or("None")
-        );
+        let applied = if let Some(kube) = &self.kubernetes_only {
+            format!(
+                "Kubeconfig: {} · Context: {}",
+                kube.files(),
+                self.applied.context.as_deref().unwrap_or("None")
+            )
+        } else {
+            format!(
+                "Config: {} · Context: {} · Node: {}",
+                if self.fixture {
+                    "Example data".into()
+                } else {
+                    self.applied
+                        .path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "Default talosconfig".into())
+                },
+                self.applied.context.as_deref().unwrap_or("Current context"),
+                self.selected_node.as_deref().unwrap_or("None")
+            )
+        };
         let dark = cx.theme().mode.is_dark();
-        let loading = self.config_loading || self.overview.is_loading();
+        let loading = self.loading();
         let (remaining, ring_visible) = self.countdown_state();
         // The ring is a view of its own: hand it this frame's values without
         // notifying, since it draws right after the shell does.
@@ -95,8 +104,11 @@ impl Pilot {
                 h_flex()
                     .gap_2()
                     .pr_2()
-                    .child(ui::caption("Target", cx))
-                    .child(self.render_node_picker(cx))
+                    // Without Talos there are no nodes to target.
+                    .when(self.kubernetes_only.is_none(), |this| {
+                        this.child(ui::caption("Target", cx))
+                            .child(self.render_node_picker(cx))
+                    })
                     .child(
                         Button::new("theme-toggle")
                             .ghost()
@@ -414,9 +426,12 @@ impl Pilot {
                 .into_any_element()
         };
         let pilot = cx.entity().downgrade();
+        let open_pilot = pilot.clone();
         let path_input = self.path.clone();
         let path_label = if self.fixture {
             "Example data".to_owned()
+        } else if let Some(kube) = &self.kubernetes_only {
+            format!("Kubeconfig: {}", kube.files())
         } else {
             self.applied
                 .path
@@ -518,6 +533,14 @@ impl Pilot {
                 h_flex().child(
                     Popover::new("settings-popover")
                         .anchor(Anchor::BottomLeft)
+                        .open(self.settings_open)
+                        .on_open_change(move |open, _, cx| {
+                            let open = *open;
+                            _ = open_pilot.update(cx, |view, cx| {
+                                view.settings_open = open;
+                                cx.notify();
+                            });
+                        })
                         .trigger(
                             Button::new("settings")
                                 .ghost()
@@ -543,6 +566,8 @@ impl Pilot {
     ) -> AnyElement {
         let p = palette(cx);
         let active = self.page == page;
+        // Every page but Resources reads the Talos API.
+        let unavailable = self.kubernetes_only.is_some() && page != Page::Resources;
         h_flex()
             .id(SharedString::from(format!("nav-{}", page.slug())))
             .test_support()
@@ -566,6 +591,13 @@ impl Pilot {
                     .font_weight(FontWeight::SEMIBOLD)
             })
             .when(!active, |this| this.hover(|style| style.bg(p.hover)))
+            .when(unavailable && !active, |this| this.opacity(0.5))
+            .when(unavailable, |this| {
+                this.tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("Needs a talosconfig")
+                        .build(window, cx)
+                })
+            })
             .child(Icon::new(icon).with_size(px(16.)).text_color(if active {
                 p.accent
             } else {
@@ -706,8 +738,15 @@ impl Pilot {
     fn context_item(&self, ix: usize, context: &str, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let current = self.applied.context.as_deref() == Some(context);
+        let connection = self.kubernetes_only.as_ref().map(|kube| &kube.connection);
         let (dot, tip) = if !current {
             (None, "Not loaded yet")
+        } else if let Some(connection) = connection {
+            match connection {
+                KubeConnection::Connected { .. } => (Some(p.good), "Connected"),
+                KubeConnection::Failed(_) => (Some(p.crit), "Couldn't connect"),
+                KubeConnection::Idle | KubeConnection::Connecting => (None, "Connecting"),
+            }
         } else if self.overview.is_stale() {
             (Some(p.warn), "Last refresh failed")
         } else if self.overview.data().is_some() {
@@ -821,6 +860,8 @@ impl Pilot {
                         }),
                 )
                 .into_any_element()
+        } else if self.kubernetes_only.is_some() {
+            self.render_kubernetes_status(cx)
         } else if self.page == Page::Logs && self.config_error.is_none() {
             let logs = self.logs.read(cx);
             let line = logs.status_line();
@@ -899,42 +940,56 @@ impl Pilot {
                 .child(div().min_w_0().truncate().child(text))
                 .into_any_element()
         };
-        let right = h_flex()
-            .gap_3()
-            .flex_none()
-            .children(
-                self.overview
-                    .last_successful()
-                    .map(|time| div().child(format!("Last success {}", clock(time)))),
+        let right = if self.kubernetes_only.is_some() {
+            h_flex().flex_none().child(
+                div()
+                    .id("kubernetes-only")
+                    .tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(
+                            "Opened with a kubeconfig only: Talos pages need a talosconfig",
+                        )
+                        .build(window, cx)
+                    })
+                    .child(ui::tag(Tone::Outline, None, "Kubernetes only", cx)),
             )
-            .children(
-                self.overview
-                    .last_failure()
-                    .filter(|_| self.overview.is_stale())
-                    .map(|time| {
-                        div()
-                            .text_color(p.warn_ink)
-                            .child(format!("Failed {}", clock(time)))
-                    }),
-            )
-            .child(if self.automatic {
-                "Auto-refresh every 15 s"
-            } else {
-                "Auto-refresh off"
-            })
-            .when(self.fixture, |this| {
-                this.child(
-                    Button::new("fixture-fail")
-                        .ghost()
-                        .xsmall()
-                        .label("Simulate failure")
-                        .tooltip("Example only: pretend the next refresh failed")
-                        .on_click(cx.listener(|view, _, _, cx| view.simulate_failure(cx))),
+        } else {
+            h_flex()
+                .gap_3()
+                .flex_none()
+                .children(
+                    self.overview
+                        .last_successful()
+                        .map(|time| div().child(format!("Last success {}", clock(time)))),
                 )
-            })
-            .when(self.fixture, |this| {
-                this.child(ui::tag(Tone::Outline, None, "Example data", cx))
-            });
+                .children(
+                    self.overview
+                        .last_failure()
+                        .filter(|_| self.overview.is_stale())
+                        .map(|time| {
+                            div()
+                                .text_color(p.warn_ink)
+                                .child(format!("Failed {}", clock(time)))
+                        }),
+                )
+                .child(if self.automatic {
+                    "Auto-refresh every 15 s"
+                } else {
+                    "Auto-refresh off"
+                })
+                .when(self.fixture, |this| {
+                    this.child(
+                        Button::new("fixture-fail")
+                            .ghost()
+                            .xsmall()
+                            .label("Simulate failure")
+                            .tooltip("Example only: pretend the next refresh failed")
+                            .on_click(cx.listener(|view, _, _, cx| view.simulate_failure(cx))),
+                    )
+                })
+                .when(self.fixture, |this| {
+                    this.child(ui::tag(Tone::Outline, None, "Example data", cx))
+                })
+        };
         StatusBar::new()
             .h(px(28.))
             .px_3()
@@ -955,10 +1010,11 @@ fn settings_content(
     let Some(view) = pilot.upgrade() else {
         return div().into_any_element();
     };
-    let (fixture, loading, automatic, appearance) = {
+    let (fixture, kubernetes_only, loading, automatic, appearance) = {
         let view = view.read(cx);
         (
             view.fixture,
+            view.kubernetes_only.is_some(),
             view.config_loading,
             view.automatic,
             view.appearance,
@@ -1036,16 +1092,18 @@ fn settings_content(
                 )
                 .child(hint(if fixture {
                     "Example data doesn't read a talosconfig."
+                } else if kubernetes_only {
+                    "This window opened without one. Choosing a talosconfig switches it to Talos: its contexts replace the kubeconfig's."
                 } else {
                     "Browse loads the chosen file right away; a typed path loads when you press Apply. Leave it empty to use TALOSCONFIG or ~/.talos/config."
                 })),
         )
         .child(div().h(px(1.)).bg(p.line))
-        .child(super::kubeconfig::settings_section(
-            &view,
-            popover.clone(),
-            cx,
-        ))
+        .child(if kubernetes_only {
+            kubernetes_only::settings_section(&view, popover.clone(), cx)
+        } else {
+            super::kubeconfig::settings_section(&view, popover.clone(), cx).into_any_element()
+        })
         .child(div().h(px(1.)).bg(p.line))
         .child(
             h_flex()

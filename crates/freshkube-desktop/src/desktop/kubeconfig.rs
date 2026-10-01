@@ -135,7 +135,11 @@ impl Pilot {
                 return;
             };
             _ = this.update_in(cx, |view, window, cx| {
-                view.inspect_kubeconfig_file(path, window, cx)
+                if view.kubernetes_only.is_some() {
+                    view.use_kubeconfig_file(path, window, cx)
+                } else {
+                    view.inspect_kubeconfig_file(path, window, cx)
+                }
             });
         })
         .detach();

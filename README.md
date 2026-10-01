@@ -27,6 +27,8 @@ Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pil
 
 Maintenance mode (`--insecure --endpoint <node>`) opens a bootstrap wizard for nodes that have no configuration yet.
 
+Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. Talos pages ask for a talosconfig.
+
 The sidebar switches pages and Talos contexts; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
 
 ## Design philosophy
@@ -72,6 +74,9 @@ freshkube --config /path/to/talosconfig --context homelab
 
 # Use a specific kubeconfig for Kubernetes data
 freshkube --config /path/to/talosconfig --kubeconfig /path/to/kubeconfig
+
+# Browse Kubernetes only (also the default when no talosconfig is found)
+freshkube --kubernetes-only --kubeconfig /path/to/kubeconfig --kube-context admin@lab
 
 # Explore with synthetic example data; no credentials or cluster are used
 freshkube --fixture

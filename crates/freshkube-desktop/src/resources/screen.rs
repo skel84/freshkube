@@ -23,6 +23,7 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
+use super::direct::DirectAccess;
 use super::model::{
     ColumnKind, ReadState, ResourceIdentity, SortDirection, SortKey, StatusTone, natural_cmp,
     status_tone,
@@ -82,6 +83,8 @@ pub(crate) enum KubeAccess {
     Example,
     /// The Kubernetes client the Talos side sets up for its cluster.
     Talos(Box<LiveSource>),
+    /// A kubeconfig context, without Talos.
+    Direct(DirectAccess),
 }
 
 impl KubeAccess {
@@ -89,13 +92,18 @@ impl KubeAccess {
         match self {
             KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
             KubeAccess::Talos(live) => live.kubernetes().await,
+            KubeAccess::Direct(direct) => {
+                direct.connect().await.map(|connection| connection.client)
+            }
         }
     }
 
     /// Drops a reused client after a failure, so the next read rebuilds it.
     fn forget(&self) {
-        if let KubeAccess::Talos(live) = self {
-            live.forget_kubernetes();
+        match self {
+            KubeAccess::Example => {}
+            KubeAccess::Talos(live) => live.forget_kubernetes(),
+            KubeAccess::Direct(direct) => direct.forget(),
         }
     }
 }
@@ -1001,7 +1009,7 @@ impl ResourcesScreen {
                 ui::empty_state(
                     IconName::Unplug,
                     "Not connected to Kubernetes",
-                    "Resources are read through the cluster's Kubernetes API once the cluster has loaded. If it doesn't connect, check the kubeconfig in Settings.",
+                    "Resources are read through the cluster's Kubernetes API once a context is connected. If it doesn't connect, check the kubeconfig in Settings.",
                     None,
                     Vec::new(),
                     cx,
