@@ -61,6 +61,7 @@ kube = { version = "0.98", features = [
     "rustls-tls",
 ], default-features = false }
 k8s-openapi = { version = "0.24", features = ["latest"] }
+http = "1"
 
 # Certificate parsing
 x509-parser = "0.16"

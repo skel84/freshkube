@@ -19,6 +19,7 @@
 //! - [`network`] - Network analysis utilities (port mapping, connection classification)
 //! - [`diagnostics`] - Diagnostic types for health checks and CNI detection
 //! - [`constants`] - Shared constants (thresholds, CRD names, refresh intervals)
+//! - [`resources`] - Read-only listing and watching of any Kubernetes kind
 
 pub mod async_state;
 mod client_cache;
@@ -37,6 +38,7 @@ pub mod maintenance;
 pub mod network;
 pub mod operations;
 pub mod pcap;
+pub mod resources;
 pub mod security_lifecycle;
 pub mod selection;
 pub mod types;

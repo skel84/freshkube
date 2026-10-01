@@ -147,7 +147,7 @@ fn resolve_relative(path: &mut Option<String>, directory: &Path) -> Result<(), K
     Ok(())
 }
 
-fn read_selected_file(path: &Path) -> Result<Kubeconfig, K8sError> {
+pub(crate) fn read_selected_file(path: &Path) -> Result<Kubeconfig, K8sError> {
     let bytes = read_bounded_regular_file(path, MAX_CONFIG_BYTES)
         .map_err(|reason| K8sError::KubeconfigParse(reason.to_string()))?;
     let text =
