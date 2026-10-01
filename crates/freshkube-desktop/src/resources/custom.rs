@@ -512,7 +512,7 @@ mod tests {
 
         custom.update(cx, |custom, cx| custom.toggle(cx));
         custom.read_with(cx, |custom, _| {
-            assert_eq!(group_names(custom).len(), 6);
+            assert_eq!(group_names(custom).len(), 7);
             assert_eq!(kinds(custom, "cert-manager.io"), None);
         });
         custom.update(cx, |custom, cx| {

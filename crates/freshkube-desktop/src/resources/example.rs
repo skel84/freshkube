@@ -23,12 +23,14 @@ pub(crate) const KINDS: [&str; 7] = [
 
 /// The example cluster's custom API groups and their served versions,
 /// preferred first. Some fail or offer nothing listable, as real ones can.
-const CUSTOM_GROUPS: [(&str, &[&str]); 6] = [
+const CUSTOM_GROUPS: [(&str, &[&str]); 7] = [
     ("cert-manager.io", &["v1"]),
     ("cilium.io", &["v2", "v2alpha1"]),
     ("external.metrics.k8s.io", &["v1beta1"]),
     ("metrics.k8s.io", &["v1beta1"]),
-    ("monitoring.coreos.com", &["v1", "v1alpha1"]),
+    ("monitoring.coreos.com", &["v1", "v1alpha1", "v1beta1"]),
+    // Its definition was removed after discovery listed it.
+    ("traefik.containo.us", &["v1alpha1"]),
     ("velero.io", &["v1"]),
 ];
 
@@ -145,6 +147,12 @@ pub(crate) fn custom_groups() -> Vec<ApiGroup> {
 /// What discovering one example group finds, failures included.
 pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
     let unavailable = "the server is currently unable to handle the request";
+    let missing = || {
+        Failure::new(
+            FailureKind::NotFound,
+            "the server could not find the requested resource",
+        )
+    };
     match group {
         "velero.io" => Err(Failure::new(
             FailureKind::Forbidden,
@@ -155,10 +163,8 @@ pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
             unlistable: vec!["NodeMetrics".into(), "PodMetrics".into()],
             ..GroupKinds::default()
         }),
-        _ if !CUSTOM_GROUPS.iter().any(|(name, _)| *name == group) => Err(Failure::new(
-            FailureKind::NotFound,
-            "the server could not find the requested resource",
-        )),
+        "traefik.containo.us" => Err(missing()),
+        _ if !CUSTOM_GROUPS.iter().any(|(name, _)| *name == group) => Err(missing()),
         _ => Ok(GroupKinds {
             kinds: CUSTOM_KINDS
                 .iter()
@@ -169,13 +175,16 @@ pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
                 .collect(),
             unlistable: Vec::new(),
             failures: if group == "monitoring.coreos.com" {
-                vec![(
-                    "v1alpha1".into(),
-                    Failure::new(
-                        FailureKind::Timeout,
-                        "monitoring.coreos.com/v1alpha1 timed out",
+                vec![
+                    (
+                        "v1alpha1".into(),
+                        Failure::new(
+                            FailureKind::Timeout,
+                            "monitoring.coreos.com/v1alpha1 timed out",
+                        ),
                     ),
-                )]
+                    ("v1beta1".into(), missing()),
+                ]
             } else {
                 Vec::new()
             },
@@ -1256,7 +1265,11 @@ mod tests {
         assert_eq!(kind("widgets.example.com"), None);
         assert_eq!(
             group_kinds("monitoring.coreos.com").unwrap().failures.len(),
-            1
+            2
+        );
+        assert_eq!(
+            group_kinds("traefik.containo.us").unwrap_err().kind,
+            FailureKind::NotFound
         );
         assert!(group_kinds("metrics.k8s.io").unwrap().kinds.is_empty());
         assert_eq!(

@@ -885,6 +885,7 @@ fn custom_groups_say_why_they_show_no_kinds(cx: &mut TestAppContext) {
                 "external.metrics.k8s.io",
                 "metrics.k8s.io",
                 "monitoring.coreos.com",
+                "traefik.containo.us",
                 "velero.io",
             ] {
                 view.toggle_api_group(group, cx);
@@ -893,6 +894,12 @@ fn custom_groups_say_why_they_show_no_kinds(cx: &mut TestAppContext) {
         window.render_frame(cx);
         for (id, label, retry) in [
             ("nav-k8s-api-velero.io-status", "Not permitted", true),
+            // A group whose definition was removed after /apis listed it.
+            (
+                "nav-k8s-api-traefik.containo.us-status",
+                "No longer served",
+                true,
+            ),
             (
                 "nav-k8s-api-external.metrics.k8s.io-status",
                 "Couldn't discover",
@@ -903,10 +910,10 @@ fn custom_groups_say_why_they_show_no_kinds(cx: &mut TestAppContext) {
                 "Nothing to list",
                 false,
             ),
-            // A version that failed while another was read.
+            // Versions that failed while another was read.
             (
                 "nav-k8s-api-monitoring.coreos.com-partial",
-                "v1alpha1 unreadable",
+                "v1beta1 not served · v1alpha1 unreadable",
                 true,
             ),
         ] {

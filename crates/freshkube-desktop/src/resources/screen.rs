@@ -536,6 +536,21 @@ impl ResourcesScreen {
             .unwrap_or_else(|| self.kind.plural.clone())
     }
 
+    /// Why the kind isn't served. A custom kind's definition can be removed;
+    /// a built-in kind's version can be newer or older than the server.
+    fn not_served(&self, context: &str) -> String {
+        let why = if navigation::group_of(&self.kind.key()).is_some() {
+            "The server may predate that version, or no longer serve it."
+        } else {
+            "Its definition may have been removed, or that version is no longer served."
+        };
+        format!(
+            "The API server of {context} doesn't serve {} at {}. {why}",
+            self.noun(),
+            self.kind.api_version()
+        )
+    }
+
     /// Starts a new read session: forgets the rows, and when visible lists
     /// and watches the kind for the current connection and namespace.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1203,12 +1218,7 @@ impl ResourcesScreen {
                 ui::empty_state(
                     IconName::SearchX,
                     format!("{title} isn't served here"),
-                    format!(
-                        "The API server of {} doesn't serve {} at {}. Its definition may have been removed, or that version is no longer served.",
-                        source.context,
-                        self.noun(),
-                        self.kind.api_version()
-                    ),
+                    self.not_served(&source.context),
                     Some(reason.clone()),
                     vec![self.retry("resource-missing-retry", cx).into_any_element()],
                     cx,
@@ -1806,6 +1816,24 @@ mod ui_tests {
             window.render_frame(cx);
             assert!(window.try_find("resource-not-served").is_none());
             assert_eq!(screen.read(cx).store.len(), 5);
+            assert_eq!(
+                screen.read(cx).not_served("homelab"),
+                "The API server of homelab doesn't serve certificates at cert-manager.io/v1. \
+                 Its definition may have been removed, or that version is no longer served."
+            );
+
+            // A built-in kind has no definition to remove.
+            let bindings = "validatingadmissionpolicybindings.admissionregistration.k8s.io";
+            screen.update(cx, |screen, cx| screen.set_kind(kind(bindings), window, cx));
+            deliver(&screen, gone(), cx);
+            window.render_frame(cx);
+            assert!(window.find("resource-not-served").visible());
+            assert_eq!(
+                screen.read(cx).not_served("homelab"),
+                "The API server of homelab doesn't serve validating admission policy bindings \
+                 at admissionregistration.k8s.io/v1. The server may predate that version, or \
+                 no longer serve it."
+            );
         })
         .unwrap();
     }
