@@ -1,8 +1,9 @@
 //! Window chrome: title bar, sidebar, status bar and their popovers.
-use super::{AUTO_REFRESH, Appearance, Page, Pilot, SIDEBAR_WIDTH, clock};
+use super::{AUTO_REFRESH, Appearance, Page, Pilot, SIDEBAR_WIDTH, SidebarReveal, clock};
 use crate::mutation::Operations;
 use crate::palette::palette;
 use crate::presentation::{self, Role as NodeRole};
+use crate::resources::navigation::{self, NavGroup};
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -11,6 +12,7 @@ use gpui_kit::component::{
     h_flex,
     input::Input,
     popover::Popover,
+    scroll::{Scrollbar, ScrollbarMode},
     status_bar::StatusBar,
     switch::Switch,
     v_flex,
@@ -81,9 +83,12 @@ impl Pilot {
                     .child(div().text_color(p.faint).child("/"))
                     .child(
                         div()
+                            .id("page-title")
+                            .test_support()
+                            .aria_label(self.page_title())
                             .text_size(px(13.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(self.page.title()),
+                            .child(self.page_title()),
                     ),
             )
             .child(
@@ -142,9 +147,9 @@ impl Pilot {
                                         "Refresh now".into()
                                     })
                                     .disabled(loading)
-                                    .on_click(
-                                        cx.listener(|view, _, window, cx| view.refresh(window, cx)),
-                                    ),
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.refresh_now(window, cx)
+                                    })),
                             ),
                     ),
             )
@@ -269,7 +274,11 @@ impl Pilot {
             .into_any_element()
     }
 
-    pub(super) fn render_sidebar(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_sidebar(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
         let unhealthy = self
             .overview
@@ -306,7 +315,7 @@ impl Pilot {
         });
         let section =
             |label: &str, cx: &App| div().px_2().pt_3().pb_1().child(ui::caption(label, cx));
-        let nav = v_flex()
+        let talos = v_flex()
             .gap_0p5()
             .child(self.nav_item(
                 Page::Overview,
@@ -338,9 +347,47 @@ impl Pilot {
             .child(self.nav_item(Page::Etcd, IconName::Database, Some("8"), None, cx))
             .child(self.nav_item(Page::Workloads, IconName::Boxes, Some("9"), None, cx))
             .child(self.nav_item(Page::Security, IconName::ShieldCheck, None, None, cx))
-            .child(self.nav_item(Page::Lifecycle, IconName::Layers, None, None, cx))
-            .child(section("Maintain", cx))
-            .child(self.nav_item(Page::Operations, IconName::Wrench, None, None, cx));
+            .child(self.nav_item(Page::Lifecycle, IconName::Layers, None, None, cx));
+        // Kubernetes rows are children of the scrolling element, so one can
+        // be scrolled into view: the Talos block and the section caption
+        // come first.
+        // Scrolling needs the navigation's size, which the first frame of a
+        // window doesn't know yet; the reveal waits a frame then.
+        const FIRST_ROW: usize = 2;
+        if self.sidebar_reveal.is_some() {
+            if self.sidebar_scroll.bounds().size.height > px(0.) {
+                if let Some(row) = self
+                    .sidebar_reveal
+                    .take()
+                    .and_then(|reveal| self.kubernetes_row(reveal))
+                {
+                    self.sidebar_scroll.scroll_to_item(FIRST_ROW + row);
+                }
+            } else {
+                window.request_animation_frame();
+            }
+        }
+        let nav = v_flex()
+            .id("sidebar-scroll")
+            .test_support()
+            .aria_label("Screens")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.sidebar_scroll)
+            .gap_0p5()
+            .child(talos)
+            .child(section("Kubernetes", cx))
+            .children(
+                navigation::NAVIGATION
+                    .iter()
+                    .flat_map(|group| self.kubernetes_group(group, cx)),
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(section("Maintain", cx))
+                    .child(self.nav_item(Page::Operations, IconName::Wrench, None, None, cx)),
+            );
         let contexts = if self.config_loading {
             div()
                 .px_2()
@@ -424,32 +471,46 @@ impl Pilot {
                     ),
             )
             .child(
-                // Navigation and contexts scroll when the window is short.
+                // Navigation scrolls when the window is short or many
+                // Kubernetes groups are open; the bar shows there is more.
+                div().relative().flex_1().min_h_0().child(nav).child(
+                    Scrollbar::vertical(&self.sidebar_scroll)
+                        .id("sidebar-scrollbar")
+                        .mode(ScrollbarMode::Hover),
+                ),
+            )
+            .child(
+                // Contexts stay in view below the navigation, scrolling on
+                // their own when there are many.
                 v_flex()
-                    .id("sidebar-scroll")
-                    .test_support()
-                    .aria_label("Screens and contexts")
-                    .flex_1()
+                    .flex_none()
+                    .max_h(relative(0.4))
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .gap(px(22.))
-                    .child(nav)
+                    .gap_0p5()
+                    .pt(px(14.))
+                    .mt(px(-8.))
+                    .border_t_1()
+                    .border_color(cx.theme().sidebar_border)
                     .child(
-                        v_flex()
-                            .gap_0p5()
+                        h_flex()
+                            .justify_between()
+                            .px_2()
+                            .pb_1p5()
+                            .child(ui::caption("Contexts", cx))
                             .child(
                                 h_flex()
-                                    .justify_between()
-                                    .px_2()
-                                    .pb_1p5()
-                                    .child(ui::caption("Contexts", cx))
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .child(ui::keycap("⌥↑", cx))
-                                            .child(ui::keycap("⌥↓", cx)),
-                                    ),
-                            )
+                                    .gap_1()
+                                    .child(ui::keycap("⌥↑", cx))
+                                    .child(ui::keycap("⌥↓", cx)),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .id("context-scroll")
+                            .test_support()
+                            .aria_label("Contexts")
+                            .min_h_0()
+                            .overflow_y_scroll()
                             .child(contexts),
                     ),
             )
@@ -519,6 +580,126 @@ impl Pilot {
                     view.navigate_from_keyboard(page, window, cx)
                 }),
             )
+            .into_any_element()
+    }
+
+    /// A collapsible group of Kubernetes kinds, as Kubeli groups them.
+    /// Where a reveal lands among the Kubernetes rows, counting group
+    /// headers and the kinds of open groups.
+    fn kubernetes_row(&self, reveal: SidebarReveal) -> Option<usize> {
+        let mut row = 0;
+        for group in &navigation::NAVIGATION {
+            let header = row;
+            let open = self.kubernetes_groups.contains(group.slug);
+            let shown = if open { group.items.len() } else { 0 };
+            match reveal {
+                SidebarReveal::Kind(key) => {
+                    if let Some(ix) = group.items.iter().position(|(_, item)| *item == key) {
+                        return Some(if open { header + 1 + ix } else { header });
+                    }
+                }
+                SidebarReveal::Group(slug) if slug == group.slug => return Some(header + shown),
+                SidebarReveal::Group(_) => {}
+            }
+            row = header + 1 + shown;
+        }
+        None
+    }
+
+    /// A group's header, then its kinds while it is open; each a row of
+    /// the scrolling navigation.
+    fn kubernetes_group(
+        &self,
+        group: &'static NavGroup,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let p = palette(cx);
+        let open = self.kubernetes_groups.contains(group.slug);
+        let current = (self.page == Page::Resources).then_some(self.resource_kind);
+        // A closed group still shows that the page is one of its kinds.
+        let holds_current =
+            current.is_some_and(|key| group.items.iter().any(|(_, item)| *item == key));
+        let slug = group.slug;
+        let mut rows = vec![
+            h_flex()
+                .id(SharedString::from(format!("nav-k8s-group-{slug}")))
+                .test_support()
+                .role(Role::Button)
+                .aria_expanded(open)
+                .aria_label(group.label)
+                .tab_index(0)
+                .h(px(28.))
+                .flex_none()
+                .px_2()
+                .gap_2()
+                .rounded(px(7.))
+                .cursor_pointer()
+                .text_size(px(12.5))
+                .text_color(if holds_current && !open {
+                    p.ink
+                } else {
+                    p.ink_2
+                })
+                .when(holds_current && !open, |this| {
+                    this.font_weight(FontWeight::SEMIBOLD)
+                })
+                .hover(|style| style.bg(p.hover))
+                .child(
+                    Icon::new(if open {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .with_size(px(14.))
+                    .text_color(p.muted),
+                )
+                .child(group.label)
+                .on_click(cx.listener(move |view, _, _, cx| view.toggle_kubernetes_group(slug, cx)))
+                .into_any_element(),
+        ];
+        if open {
+            rows.extend(
+                group.items.iter().map(|(label, key)| {
+                    self.kubernetes_item(label, key, current == Some(*key), cx)
+                }),
+            );
+        }
+        rows
+    }
+
+    fn kubernetes_item(
+        &self,
+        label: &'static str,
+        key: &'static str,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = palette(cx);
+        h_flex()
+            .id(SharedString::from(format!("nav-k8s-{key}")))
+            .test_support()
+            .role(Role::Tab)
+            .aria_selected(active)
+            .aria_label(label)
+            .tab_index(0)
+            .h(px(28.))
+            .flex_none()
+            .pl(px(30.))
+            .pr_2()
+            .rounded(px(7.))
+            .cursor_pointer()
+            .text_size(px(12.5))
+            .text_color(if active { p.ink } else { p.ink_2 })
+            .when(active, |this| {
+                this.bg(cx.theme().sidebar_accent)
+                    .border_1()
+                    .border_color(p.line)
+                    .shadow_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+            })
+            .when(!active, |this| this.hover(|style| style.bg(p.hover)))
+            .child(div().min_w_0().truncate().child(label))
+            .on_click(cx.listener(move |view, _, window, cx| view.open_kind(key, window, cx)))
             .into_any_element()
     }
 

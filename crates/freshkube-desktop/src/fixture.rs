@@ -161,6 +161,27 @@ fn node_services(node: &NodeSpec) -> Vec<ServiceInfo> {
         .collect()
 }
 
+/// The example cluster's nodes as Kubernetes lists them.
+pub(crate) struct KubernetesNode {
+    pub(crate) name: &'static str,
+    pub(crate) address: &'static str,
+    pub(crate) control_plane: bool,
+    /// A node whose kubelet is down or unhealthy isn't ready.
+    pub(crate) ready: bool,
+}
+
+pub(crate) fn kubernetes_nodes(context: &str) -> Vec<KubernetesNode> {
+    specs(context)
+        .into_iter()
+        .map(|spec| KubernetesNode {
+            name: spec.name,
+            address: spec.address,
+            control_plane: spec.controlplane,
+            ready: spec.responding && !spec.unhealthy.contains(&"kubelet"),
+        })
+        .collect()
+}
+
 /// A deterministic wobble so repeated refreshes visibly move the load
 /// sparklines without any randomness in tests.
 fn wobble(tick: u64, phase: f64) -> f64 {

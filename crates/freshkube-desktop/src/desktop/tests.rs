@@ -605,6 +605,7 @@ fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
         for expected in [
             Page::Security,
             Page::Lifecycle,
+            Page::Resources,
             Page::Operations,
             Page::Overview,
         ] {
@@ -659,17 +660,143 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
             assert_eq!(view.read(cx).page, page);
         }
         // The short window scrolls the sidebar to reach the last sections.
-        window.scroll(
-            "sidebar-scroll",
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-400.))),
-            cx,
-        );
-        window.render_frame(cx);
-        for page in [Page::Security, Page::Lifecycle, Page::Operations] {
-            window.click(SharedString::from(format!("nav-{}", page.slug())), cx);
+        for page in [Page::Security, Page::Lifecycle] {
+            let nav = format!("nav-{}", page.slug());
+            reveal(window, cx, &nav);
+            window.click(SharedString::from(nav), cx);
             window.render_frame(cx);
             assert_eq!(view.read(cx).page, page);
         }
+        // Kubernetes kinds sit in collapsible groups below the cluster pages.
+        assert!(window.try_find("resources-page").is_none());
+        reveal(window, cx, "nav-k8s-pods");
+        window.click("nav-k8s-pods", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(window.find("nav-k8s-pods").selected(), Some(true));
+        assert!(window.find("resource-list").visible());
+        // Contexts stay in view below the scrolled navigation.
+        assert!(window.within("sidebar").find(("context", 0usize)).visible());
+        reveal(window, cx, "nav-operations");
+        window.click("nav-operations", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Operations);
+        assert!(window.try_find("resources-page").is_none());
+    })
+    .unwrap();
+}
+
+/// Scrolls the sidebar navigation down until `id` shows in full.
+fn reveal(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
+    for _ in 0..60 {
+        if shown_in_sidebar(window, id) {
+            return;
+        }
+        window.scroll(
+            "sidebar-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-40.))),
+            cx,
+        );
+        window.render_frame(cx);
+    }
+    panic!("{id} never scrolled into view");
+}
+
+/// Whether `id` shows in full inside the scrolled sidebar navigation.
+fn shown_in_sidebar(window: &mut gpui_kit::Window, id: &str) -> bool {
+    let area = window.find("sidebar-scroll").bounds();
+    window
+        .try_find(SharedString::from(id.to_owned()))
+        .is_some_and(|element| {
+            let bounds = element.bounds();
+            element.visible() && bounds.top() >= area.top() && bounds.bottom() <= area.bottom()
+        })
+}
+
+#[gpui_kit::test]
+fn opening_a_kind_scrolls_its_group_into_the_short_sidebar(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let key = "validatingadmissionpolicybindings.admissionregistration.k8s.io";
+        let nav = format!("nav-k8s-{key}");
+        assert!(window.try_find(SharedString::from(nav.clone())).is_none());
+        // As the keyboard or FRESHKUBE_KIND would open it.
+        view.update(cx, |view, cx| view.open_kind(key, window, cx));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(shown_in_sidebar(window, &nav));
+        assert_eq!(window.find(SharedString::from(nav)).selected(), Some(true));
+        assert_eq!(
+            window.find("page-title").label(),
+            Some("Validating Admission Policy Bindings")
+        );
+
+        // Opening a group from its header shows its kinds too.
+        view.update(cx, |view, cx| view.open_kind("pods", window, cx));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(shown_in_sidebar(window, "nav-k8s-pods"));
+        reveal(window, cx, "nav-k8s-group-storage");
+        window.click("nav-k8s-group-storage", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(shown_in_sidebar(window, "nav-k8s-csinodes.storage.k8s.io"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 1000.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Workloads starts open; the other groups start closed.
+        let workloads = window.find("nav-k8s-group-workloads");
+        assert_eq!(workloads.role(), Some(gpui_kit::Role::Button));
+        assert_eq!(workloads.expanded(), Some(true));
+        assert!(window.try_find("nav-k8s-deployments.apps").is_some());
+        assert_eq!(
+            window.find("nav-k8s-group-networking").expanded(),
+            Some(false)
+        );
+        assert!(window.try_find("nav-k8s-services").is_none());
+
+        reveal(window, cx, "nav-k8s-group-networking");
+        window.click("nav-k8s-group-networking", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("nav-k8s-group-networking").expanded(),
+            Some(true)
+        );
+        reveal(window, cx, "nav-k8s-services");
+        window.click("nav-k8s-services", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).resource_kind, "services");
+        assert_eq!(window.find("nav-k8s-services").selected(), Some(true));
+        assert_eq!(window.find("nav-k8s-group-workloads").selected(), None);
+        assert!(window.find("resource-list").visible());
+        assert_eq!(window.find("page-title").label(), Some("Services"));
+
+        // Collapsing the group of the open kind keeps the page.
+        reveal(window, cx, "nav-k8s-group-networking");
+        window.click("nav-k8s-group-networking", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("nav-k8s-services").is_none());
+        assert_eq!(view.read(cx).page, Page::Resources);
+
+        // Other pages hide the table, and coming back shows the same kind.
+        window.press("secondary-1", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("resources-page").is_none());
+        for _ in 0..11 {
+            window.press("ctrl-tab", cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(window.find("page-title").label(), Some("Services"));
+        assert!(window.find("resource-list").visible());
     })
     .unwrap();
 }

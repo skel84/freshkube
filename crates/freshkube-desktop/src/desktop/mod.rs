@@ -13,6 +13,7 @@ use crate::{
     maintenance::MaintenanceView,
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
+    resources::{self, KubeAccess, KubeSource, ResourcesScreen, navigation},
     screens::{
         DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
         OperationsScreen, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
@@ -32,7 +33,12 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::runtime::Handle;
 
@@ -78,12 +84,24 @@ pub(crate) enum Page {
     Workloads,
     Security,
     Lifecycle,
+    /// One Kubernetes kind; the shell knows which.
+    Resources,
     Operations,
+}
+
+/// A Kubernetes sidebar row to scroll into view; scrolling is minimal, so a
+/// row already in view stays put.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarReveal {
+    /// A kind's row, or its group's header while the group is closed.
+    Kind(&'static str),
+    /// The last kind of a group just opened, so its kinds show.
+    Group(&'static str),
 }
 
 impl Page {
     /// Every page, in sidebar order.
-    const ALL: [Page; 12] = [
+    const ALL: [Page; 13] = [
         Page::Overview,
         Page::Services,
         Page::Logs,
@@ -95,6 +113,7 @@ impl Page {
         Page::Workloads,
         Page::Security,
         Page::Lifecycle,
+        Page::Resources,
         Page::Operations,
     ];
 
@@ -128,9 +147,10 @@ impl Page {
             Page::Network => "Network",
             Page::Diagnostics => "Diagnostics",
             Page::Etcd => "etcd",
-            Page::Workloads => "Workloads",
+            Page::Workloads => "Workload health",
             Page::Security => "Security",
             Page::Lifecycle => "Lifecycle",
+            Page::Resources => "Resources",
             Page::Operations => "Operations",
         }
     }
@@ -149,6 +169,7 @@ impl Page {
             Page::Workloads => "workloads",
             Page::Security => "security",
             Page::Lifecycle => "lifecycle",
+            Page::Resources => "resources",
             Page::Operations => "operations",
         }
     }
@@ -352,6 +373,14 @@ pub(crate) struct Pilot {
     overview_page: Entity<PageHost>,
     services_page: Entity<PageHost>,
     screens: Vec<(Page, ScreenHandle)>,
+    resources: Entity<ResourcesScreen>,
+    /// The Kubernetes kind the Resources page shows, by kubectl key.
+    resource_kind: &'static str,
+    /// Kubernetes navigation groups shown open in the sidebar, by slug.
+    kubernetes_groups: BTreeSet<&'static str>,
+    sidebar_scroll: ScrollHandle,
+    /// A Kubernetes row to scroll into view on the next frame.
+    sidebar_reveal: Option<SidebarReveal>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
@@ -482,13 +511,18 @@ impl Pilot {
                     Page::Lifecycle => {
                         Self::screen::<LifecycleScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Operations | Page::Overview | Page::Services | Page::Logs => {
+                    Page::Operations
+                    | Page::Overview
+                    | Page::Services
+                    | Page::Logs
+                    | Page::Resources => {
                         Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
                     }
                 };
                 (page, handle)
             })
             .collect();
+        let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
         subscriptions.push(cx.observe_global::<Theme>(|view, cx| {
@@ -559,6 +593,11 @@ impl Pilot {
             overview_page,
             services_page,
             screens,
+            resources,
+            resource_kind: navigation::DEFAULT_KIND,
+            kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
+            sidebar_scroll: ScrollHandle::new(),
+            sidebar_reveal: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
@@ -604,6 +643,13 @@ impl Pilot {
             .and_then(|slug| Page::ALL.into_iter().find(|page| page.slug() == slug))
         {
             view.navigate(page, window, cx);
+        }
+        #[cfg(debug_assertions)]
+        if let Some(key) = std::env::var("FRESHKUBE_KIND")
+            .ok()
+            .and_then(|key| navigation::known(&key))
+        {
+            view.open_kind(key, window, cx);
         }
         view
     }
@@ -794,6 +840,40 @@ impl Pilot {
         })
     }
 
+    /// Where the Resources page reads: example objects, or the Kubernetes
+    /// API of the Talos cluster. Its id covers what picks the cluster and
+    /// its credentials, not the target node, so changing node keeps a watch.
+    fn kube_source(&self) -> Option<KubeSource> {
+        let context = self.applied.context.clone()?;
+        if self.fixture {
+            return Some(KubeSource {
+                id: resources::example::connection(&context),
+                context,
+                access: KubeAccess::Example,
+            });
+        }
+        let cluster = self.overview.data()?;
+        let mut collector =
+            ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
+        collector.set_kubeconfig_selection(self.kubeconfig.clone());
+        let path = self
+            .applied
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        Some(KubeSource {
+            id: format!("talos:{path}:{context}:{:?}", self.kubeconfig),
+            context: cluster.name.clone(),
+            access: KubeAccess::Talos(Box::new(LiveSource {
+                client: cluster.client.clone()?,
+                cluster: Arc::new(cluster.clone()),
+                collector,
+                config_path: self.applied.path.clone(),
+            })),
+        })
+    }
+
     fn active_screen(&self) -> Option<ScreenHandle> {
         self.screens
             .iter()
@@ -809,6 +889,19 @@ impl Pilot {
         }
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
+        }
+        let source = self.kube_source();
+        self.resources
+            .update(cx, |resources, cx| resources.set_source(source, window, cx));
+    }
+
+    /// A refresh the user asked for. Unlike the automatic one it also lists
+    /// the Resources page again; its watch keeps it current otherwise.
+    fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh(window, cx);
+        if self.page == Page::Resources {
+            self.resources
+                .update(cx, |resources, cx| resources.refresh(window, cx));
         }
     }
 
@@ -1121,13 +1214,51 @@ impl Pilot {
     /// screens load when shown and stay idle while hidden.
     fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
+        // However the page was reached, its kind shows in the sidebar.
+        if page == Page::Resources {
+            self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind));
+        }
         self.logs
             .update(cx, |logs, cx| logs.set_visible(page == Page::Logs, cx));
+        self.resources.update(cx, |resources, cx| {
+            resources.set_visible(page == Page::Resources, window, cx);
+            if page == Page::Resources {
+                resources.focus(window, cx);
+            }
+        });
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
             screen.focus(window, cx);
         }
         cx.notify();
+    }
+
+    /// Shows one Kubernetes kind, opening its sidebar group.
+    fn open_kind(&mut self, key: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.resource_kind = key;
+        if let Some(group) = navigation::group_of(key) {
+            self.kubernetes_groups.insert(group);
+        }
+        self.resources
+            .update(cx, |resources, cx| resources.set_kind(key, window, cx));
+        self.navigate_from_keyboard(Page::Resources, window, cx);
+    }
+
+    fn toggle_kubernetes_group(&mut self, slug: &'static str, cx: &mut Context<Self>) {
+        if !self.kubernetes_groups.remove(slug) {
+            self.kubernetes_groups.insert(slug);
+            // An opened group shows its kinds, not just its header.
+            self.sidebar_reveal = Some(SidebarReveal::Group(slug));
+        }
+        cx.notify();
+    }
+
+    /// The title bar's name for the page shown.
+    fn page_title(&self) -> &'static str {
+        match self.page {
+            Page::Resources => navigation::label(self.resource_kind).unwrap_or("Resources"),
+            page => page.title(),
+        }
     }
 
     fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1204,6 +1335,7 @@ impl Pilot {
             App::notify(cx, screen.view().entity_id());
         }
         App::notify(cx, self.logs.entity_id());
+        App::notify(cx, self.resources.entity_id());
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.services_page.entity_id());
     }
@@ -1243,6 +1375,11 @@ impl Render for Pilot {
                 .cached(cached_page_style())
                 .into_any_element(),
             Page::Logs => self.render_logs_page(),
+            Page::Resources => self
+                .resources
+                .clone()
+                .cached(cached_page_style())
+                .into_any_element(),
             // Screens redraw when their own state changes, not with the shell.
             _ => self
                 .active_screen()
@@ -1255,7 +1392,7 @@ impl Render for Pilot {
             .text_color(cx.theme().foreground)
             .key_context("Freshkube")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh(window, cx)))
+            .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
             .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
                 view.navigate_from_keyboard(Page::Overview, window, cx)
             }))

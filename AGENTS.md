@@ -27,7 +27,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `operations`). Use it for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `resources`, `operations`). `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
 
 ## Cluster safety
 
@@ -242,6 +242,10 @@ DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
 ```
 
 ---
+
+## Kubernetes resources
+
+`resources/` browses Kubernetes kinds on one `Page::Resources`; the sidebar's KUBERNETES groups pick the kind. It is not a `ScreenPanel`: it doesn't follow the target node, the shell owns it directly and tells it when it is visible, and only a visible page lists and watches. Rows are the server-printed table (wide columns hidden, Age computed locally) and are selected by identity (connection, resource, namespace, name, UID), never by position. The shell's automatic refresh never restarts the watch; only Refresh lists again.
 
 ## Adding a screen
 

@@ -2352,6 +2352,7 @@ dependencies = [
  "gpui-kit",
  "kube",
  "libc",
+ "serde_json",
  "talos-rs",
  "tokio",
 ]
