@@ -693,3 +693,75 @@ fn the_page_keeps_its_keys_while_no_rows_show(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let focused = |window: &mut gpui_kit::Window, id: &'static str| window.find(id).focused();
+    step(cx, &|window, cx| {
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+    });
+    step(cx, &|window, cx| {
+        // Enter on the list with nothing selected leaves it be.
+        window.press("enter", cx);
+        assert_eq!(shown(&screen, cx), None);
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    step(cx, &|window, cx| {
+        // Read at once, without waiting for the keys to pause, and the
+        // keyboard is on the pane.
+        let first = identity_at(&screen, 0, cx);
+        assert_eq!(shown(&screen, cx), Some(first));
+        assert!(window.try_find("detail-state").is_none());
+        assert_eq!(focused(window, "resource-detail"), Some(true));
+        window.press("secondary-}", cx);
+    });
+    step(cx, &|window, cx| {
+        assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
+        assert_eq!(focused(window, "resource-detail"), Some(true));
+        // Escape in the pane steps back to the list; the pane stays.
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        assert_eq!(focused(window, "resource-body"), Some(true));
+        assert!(shown(&screen, cx).is_some());
+        // From the list, the brackets switch the tab and keep the keyboard
+        // on the list. A pod's tabs wrap round to Logs.
+        window.press("secondary-}", cx);
+        assert_eq!(window.find("detail-tab-events").selected(), Some(true));
+        window.press("secondary-{", cx);
+        window.press("secondary-{", cx);
+        window.press("secondary-{", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
+        assert_eq!(focused(window, "resource-body"), Some(true));
+        // Enter on the open row hands the keyboard to the lines.
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(focused(window, "logs-viewport"), Some(true));
+        // With no line selected, Escape goes on to the pane, which steps
+        // back to the list.
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        assert_eq!(focused(window, "resource-body"), Some(true));
+        assert!(shown(&screen, cx).is_some());
+        // Escape in the list, with no filter, closes the pane.
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        assert!(window.try_find("resource-detail").is_none());
+        assert_eq!(shown(&screen, cx), None);
+        assert_eq!(focused(window, "resource-body"), Some(true));
+    });
+}

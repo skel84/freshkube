@@ -491,3 +491,32 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn escape_in_the_search_clears_it_then_hands_the_keyboard_to_the_lines(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("logs-search", cx);
+        window.input("needle", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(panel.read(cx).review.query, "needle");
+        window.press("escape", cx);
+        window.render_frame(cx);
+        // The first Escape clears the search and stays in it.
+        assert!(panel.read(cx).review.query.is_empty());
+        assert!(panel.read(cx).query.read(cx).value().is_empty());
+        assert!(!panel.read(cx).focus.is_focused(window));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        // The second hands the keyboard to the lines.
+        assert!(panel.read(cx).focus.is_focused(window));
+        window.press("down", cx);
+        assert_eq!(panel.read(cx).review.selected.len(), 1);
+    })
+    .unwrap();
+}

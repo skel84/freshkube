@@ -34,7 +34,7 @@ use std::{
 };
 
 use gpui_kit::{
-    AnyElement, AppContext, Bounds, ClipboardItem, Context, Entity, FocusHandle, Global,
+    AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Entity, FocusHandle, Global,
     KeyBinding, Pixels, Point, SharedString, Size, Subscription, Task, Window, actions,
     component::{
         VirtualListScrollHandle,
@@ -55,6 +55,8 @@ pub(crate) type LogPanel = LogView<TalosLogs>;
 
 /// The key context of every log view's line list.
 const CONTEXT: &str = "LogView";
+/// The key context around the search field.
+const SEARCH_CONTEXT: &str = "LogSearch";
 
 actions!(
     log_view,
@@ -70,7 +72,8 @@ actions!(
         PagePrevious,
         ClearSelection,
         FindNext,
-        FindPrevious
+        FindPrevious,
+        LeaveSearch
     ]
 );
 
@@ -238,6 +241,7 @@ impl<S: LogSource> LogView<S> {
                 KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
                 KeyBinding::new("f3", FindNext, Some(CONTEXT)),
                 KeyBinding::new("shift-f3", FindPrevious, Some(CONTEXT)),
+                KeyBinding::new("escape", LeaveSearch, Some(SEARCH_CONTEXT)),
             ]);
         }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search retained lines"));
@@ -458,6 +462,38 @@ impl<S: LogSource> LogView<S> {
         if self.manual_review.replace(false) {
             self.set_following(false, cx);
         }
+    }
+
+    /// Puts the keyboard on the lines.
+    pub(crate) fn focus_lines(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.focus, cx);
+    }
+
+    /// Escape in the search clears it; in an empty search it hands the
+    /// keyboard to the lines.
+    fn leave_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query.read(cx).value().is_empty() {
+            window.focus(&self.focus, cx);
+            return;
+        }
+        // Setting the value from code emits no change event.
+        self.query
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.review.query.clear();
+        self.review.current_match = None;
+        self.feedback = None;
+        cx.notify();
+    }
+
+    /// Escape drops the selection; with none, it goes to the page around.
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        if self.review.selected.is_empty() {
+            cx.propagate();
+            return;
+        }
+        self.review.selected.clear();
+        self.review.selection_anchor = None;
+        cx.notify();
     }
 
     fn search(&mut self, forward: bool, cx: &mut Context<Self>) {

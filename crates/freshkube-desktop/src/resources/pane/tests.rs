@@ -310,7 +310,8 @@ fn search_marks_matches_steps_through_them_and_escape_backs_out(cx: &mut TestApp
     step(cx, &|window, cx| window.click("detail-find-next", cx));
     assert_eq!(count(cx), Some(format!("1 of {found}")));
 
-    // Escape clears the search, then leaves it, then closes the pane.
+    // Escape clears the search, then leaves it, then steps back to the
+    // list with the pane still open.
     step(cx, &|window, cx| {
         let focus = pane.read(cx).find.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
@@ -321,7 +322,8 @@ fn search_marks_matches_steps_through_them_and_escape_backs_out(cx: &mut TestApp
     step(cx, &|window, cx| window.press("escape", cx));
     assert!(emitted.borrow().is_empty());
     step(cx, &|window, cx| window.press("escape", cx));
-    assert_eq!(*emitted.borrow(), [DetailEvent::Closed]);
+    assert_eq!(*emitted.borrow(), [DetailEvent::Leave]);
+    assert!(pane.read_with(cx, |pane, _| pane.detail.is_some()));
 }
 
 #[gpui_kit::test]
@@ -524,6 +526,56 @@ fn a_pods_log_streams_while_it_stays_open_on_any_tab(cx: &mut TestAppContext) {
         // Closing the pane ends it.
         pane.update(cx, |pane, cx| pane.close(cx));
         assert!(!logs.read(cx).streaming());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    let (deployment, _) = target("deployments.apps", |_, _| true);
+    let tab = |window: &mut gpui_kit::Window, id: &'static str| {
+        let tab = window.find(id);
+        (tab.selected(), tab.focused())
+    };
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        window.render_frame(cx);
+        // A click focuses the tab, and the arrows move along the tabs.
+        window.click("detail-tab-overview", cx);
+        window.render_frame(cx);
+        assert_eq!(tab(window, "detail-tab-overview"), (Some(true), Some(true)));
+        window.press("right", cx);
+        window.render_frame(cx);
+        assert_eq!(tab(window, "detail-tab-yaml"), (Some(true), Some(true)));
+        window.press("left", cx);
+        window.press("left", cx);
+        window.render_frame(cx);
+        // A pod's tabs wrap round to Logs.
+        assert_eq!(tab(window, "detail-tab-logs"), (Some(true), Some(true)));
+
+        // From the pane, Command-Shift-] and [ switch the tab and hand the
+        // keyboard to what it shows: the lines on Logs, the pane elsewhere.
+        pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Overview, cx));
+        let focus = pane.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+        window.press("secondary-{", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
+        assert_eq!(window.find("logs-viewport").focused(), Some(true));
+        window.press("secondary-}", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert_eq!(window.find("resource-detail").focused(), Some(true));
+
+        // Other kinds have three tabs.
+        open(&pane, &deployment, Duration::ZERO, cx);
+        window.render_frame(cx);
+        window.press("secondary-{", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-events").selected(), Some(true));
     })
     .unwrap();
 }

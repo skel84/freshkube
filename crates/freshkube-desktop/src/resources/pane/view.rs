@@ -11,7 +11,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{
-    CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, SelectAllLines, Tab,
+    CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, NextTab, PreviousTab,
+    SelectAllLines, TABS_CONTEXT, Tab,
 };
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
@@ -161,6 +162,8 @@ impl DetailPane {
                 .role(Role::Tab)
                 .aria_selected(active)
                 .aria_label(label.clone())
+                .track_focus(&self.tab_focus[tab.index()])
+                .focus_visible(|style| style.bg(p.hover))
                 .h(px(32.))
                 .px_2p5()
                 .gap_1p5()
@@ -189,6 +192,11 @@ impl DetailPane {
         };
         let warnings = events.warnings();
         h_flex()
+            .key_context(TABS_CONTEXT)
+            .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.move_tab(1, window, cx)))
+            .on_action(
+                cx.listener(|pane, _: &PreviousTab, window, cx| pane.move_tab(-1, window, cx)),
+            )
             .px_3()
             .gap_1()
             .border_b_1()
@@ -309,6 +317,10 @@ impl Render for DetailPane {
             .on_action(cx.listener(|pane, _: &SelectAllLines, _, cx| pane.select_all(cx)))
             .on_action(cx.listener(|pane, _: &CopyLines, _, cx| pane.copy_lines(cx)))
             .on_action(cx.listener(|pane, _: &Dismiss, window, cx| pane.dismiss(window, cx)))
+            .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.switch_tab(1, window, cx)))
+            .on_action(
+                cx.listener(|pane, _: &PreviousTab, window, cx| pane.switch_tab(-1, window, cx)),
+            )
             .size_full()
             .overflow_hidden()
             .child(self.header(detail, cx))

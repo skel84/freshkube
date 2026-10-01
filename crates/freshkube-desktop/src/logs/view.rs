@@ -19,8 +19,8 @@ use freshkube_core::types::LogLevel;
 
 use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
-    FirstLine, LastLine, LogSource, LogView, ManualReviewScroll, NextLine, PageNext, PagePrevious,
-    PreviousLine,
+    FirstLine, LastLine, LeaveSearch, LogSource, LogView, ManualReviewScroll, NextLine, PageNext,
+    PagePrevious, PreviousLine, SEARCH_CONTEXT,
 };
 use crate::palette::palette;
 use crate::ui;
@@ -309,13 +309,20 @@ impl<S: LogSource> LogView<S> {
                             .flex_1()
                             .min_w(px(220.))
                             .child(
-                                div().flex_1().min_w_0().child(
-                                    Input::new(&self.query)
-                                        .id("logs-search")
-                                        .aria_label("Search retained log lines")
-                                        .small()
-                                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
-                                ),
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .key_context(SEARCH_CONTEXT)
+                                    .on_action(cx.listener(|this, _: &LeaveSearch, window, cx| {
+                                        this.leave_search(window, cx)
+                                    }))
+                                    .child(
+                                        Input::new(&self.query)
+                                            .id("logs-search")
+                                            .aria_label("Search retained log lines")
+                                            .small()
+                                            .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                                    ),
                             )
                             .when(!self.review.query.is_empty(), |this| {
                                 this.child(
@@ -501,9 +508,7 @@ impl<S: LogSource> Render for LogView<S> {
             .on_action(cx.listener(|this, _: &LastLine, _, cx| this.navigate(isize::MAX, false, cx)))
             .on_action(cx.listener(|this, _: &FindNext, _, cx| this.search(true, cx)))
             .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.search(false, cx)))
-            .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
-                this.review.selected.clear(); this.review.selection_anchor = None; cx.notify();
-            }))
+            .on_action(cx.listener(|this, _: &ClearSelection, _, cx| this.clear_selection(cx)))
             .on_mouse_down(gpui_kit::MouseButton::Left, cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
             .on_prepaint(move |bounds, window, cx| {
                 let _ = entity.update(cx, |this, cx| {

@@ -39,6 +39,8 @@ use events::EventLine;
 use overview::Summary;
 
 const CONTEXT: &str = "KubeDetail";
+/// The key context of the tab strip, where the arrows move between tabs.
+const TABS_CONTEXT: &str = "KubeDetailTabs";
 /// How long one read of the object may take.
 const READ_DEADLINE: Duration = Duration::from_secs(30);
 /// Arrow keys open the row they land on once they pause this long, so
@@ -47,7 +49,14 @@ pub(crate) const KEYBOARD_PAUSE: Duration = Duration::from_millis(150);
 
 actions!(
     kube_detail,
-    [FindInYaml, SelectAllLines, CopyLines, Dismiss]
+    [
+        FindInYaml,
+        SelectAllLines,
+        CopyLines,
+        Dismiss,
+        NextTab,
+        PreviousTab
+    ]
 );
 
 /// What the pane asks of the page around it.
@@ -55,6 +64,8 @@ actions!(
 pub(crate) enum DetailEvent {
     /// The user closed the pane.
     Closed,
+    /// The user stepped back to the list; the pane stays open.
+    Leave,
     /// The user chose to open this object: the one now at the address of
     /// the deleted object the pane shows.
     Open(ResourceIdentity),
@@ -67,6 +78,14 @@ enum Tab {
     Events,
     /// Pods only.
     Logs,
+}
+
+impl Tab {
+    const ALL: [Tab; 4] = [Tab::Overview, Tab::Yaml, Tab::Events, Tab::Logs];
+
+    fn index(self) -> usize {
+        self as usize
+    }
 }
 
 fn local_time(time: DateTime<Utc>) -> String {
@@ -97,6 +116,8 @@ pub(crate) struct DetailPane {
     /// A read waiting for arrow keys to pause, or for the follow interval.
     timer: Option<Task<()>>,
     tab: Tab,
+    /// One per tab, in `Tab::ALL` order, so the arrows can move between them.
+    tab_focus: [FocusHandle; 4],
     find: Entity<InputState>,
     query: String,
     matches: Vec<(usize, Range<usize>)>,
@@ -137,6 +158,11 @@ impl DetailPane {
             KeyBinding::new("secondary-a", SelectAllLines, Some(CONTEXT)),
             KeyBinding::new("secondary-c", CopyLines, Some(CONTEXT)),
             KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
+            // Command-Shift-] and [, as macOS reports them.
+            KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
+            KeyBinding::new("right", NextTab, Some(TABS_CONTEXT)),
+            KeyBinding::new("left", PreviousTab, Some(TABS_CONTEXT)),
         ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
         let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
@@ -171,6 +197,7 @@ impl DetailPane {
             reveal_jobs: HashMap::new(),
             timer: None,
             tab: Tab::Overview,
+            tab_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
             find,
             query: String::new(),
             matches: Vec::new(),
@@ -209,6 +236,14 @@ impl DetailPane {
     ) {
         self.access = Some(access.clone());
         if self.target_identity() == Some(&target.identity) {
+            // Asked for at once while still waiting for the keys to pause.
+            let waiting = self
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.read == DocumentRead::Loading);
+            if delay.is_zero() && waiting && self.timer.is_some() {
+                self.start(cx);
+            }
             return;
         }
         self.stop_reads();
@@ -668,6 +703,48 @@ impl DetailPane {
         cx.notify();
     }
 
+    /// Moves `delta` tabs along, wrapping, from outside the pane.
+    pub(crate) fn turn_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
+        self.step_tab(delta, cx);
+    }
+
+    /// Moves `delta` tabs along, wrapping, and returns the tab now shown.
+    fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) -> Option<Tab> {
+        let detail = self.detail.as_ref()?;
+        let count = if detail.target.kind.is_pod() { 4 } else { 3 };
+        let next = (self.tab.index() as isize + delta).rem_euclid(count) as usize;
+        let tab = Tab::ALL[next];
+        self.set_tab(tab, cx);
+        Some(tab)
+    }
+
+    /// Puts the keyboard on what the current tab shows: the lines on the
+    /// Logs tab, the pane on the others.
+    pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tab == Tab::Logs {
+            self.logs
+                .update(cx, |logs, cx| logs.focus_lines(window, cx));
+        } else {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    /// Command-Shift-] and [ in the pane: the next tab, with the keyboard
+    /// on what it shows.
+    fn switch_tab(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.step_tab(delta, cx).is_some() {
+            self.focus(window, cx);
+        }
+    }
+
+    /// The arrows on a focused tab: the next tab, keeping the keyboard on
+    /// the tabs.
+    fn move_tab(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.step_tab(delta, cx) {
+            window.focus(&self.tab_focus[tab.index()], cx);
+        }
+    }
+
     /// Tells the logs whether they show, and asks for them the first time
     /// they do for this pod.
     fn show_tab(&mut self, cx: &mut Context<Self>) {
@@ -748,8 +825,8 @@ impl DetailPane {
         window.focus(&focus, cx);
     }
 
-    /// Escape: leaves the search, then drops a line selection, then closes
-    /// the pane.
+    /// Escape: leaves the search, then drops a line selection, then steps
+    /// back to the list.
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.find.read(cx).focus_handle(cx).is_focused(window) {
             if self.query.is_empty() {
@@ -760,10 +837,10 @@ impl DetailPane {
                     .update(cx, |input, cx| input.set_value("", window, cx));
                 self.set_query(String::new(), cx);
             }
-        } else if self.selection.take().is_some() {
+        } else if self.tab == Tab::Yaml && self.selection.take().is_some() {
             cx.notify();
         } else {
-            cx.emit(DetailEvent::Closed);
+            cx.emit(DetailEvent::Leave);
         }
     }
 }

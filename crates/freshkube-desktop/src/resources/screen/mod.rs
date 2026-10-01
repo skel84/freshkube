@@ -30,7 +30,7 @@ use super::model::{
     ColumnKind, ReadState, ResourceIdentity, SortDirection, SortKey, StatusTone, natural_cmp,
     status_tone,
 };
-use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE};
+use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
@@ -77,7 +77,8 @@ actions!(
         PreviousPage,
         FocusFilter,
         ClearFilter,
-        LeaveFilter
+        LeaveFilter,
+        OpenSelected
     ]
 );
 
@@ -338,6 +339,10 @@ impl ResourcesScreen {
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
             KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
+            KeyBinding::new("enter", OpenSelected, Some(CONTEXT)),
+            // Command-Shift-] and [, as macOS reports them.
+            KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
@@ -401,6 +406,7 @@ impl ResourcesScreen {
                         this.close_detail(cx);
                         window.focus(&this.focus, cx);
                     }
+                    DetailEvent::Leave => window.focus(&this.focus, cx),
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
                         this.open_detail(identity.clone(), Duration::ZERO, cx);
@@ -829,6 +835,27 @@ impl ResourcesScreen {
         self.open_detail(identity.clone(), Duration::ZERO, cx);
     }
 
+    /// Enter on the list opens the selected row at once and hands the
+    /// keyboard to it. Anywhere else, such as on a focused button, Enter
+    /// keeps its own meaning.
+    fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.projection.selected().cloned();
+        let Some(identity) = selected.filter(|_| self.focus.is_focused(window)) else {
+            cx.propagate();
+            return;
+        };
+        self.open_detail(identity, Duration::ZERO, cx);
+        self.detail
+            .update(cx, |detail, cx| detail.focus(window, cx));
+    }
+
+    /// Command-Shift-] and [ on the list switch the pane's tab and leave
+    /// the keyboard where it is.
+    fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
+        self.detail
+            .update(cx, |detail, cx| detail.turn_tab(delta, cx));
+    }
+
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         let count = self.projection.len();
         if count == 0 {
@@ -1191,6 +1218,11 @@ impl ResourcesScreen {
                 window.focus(&focus, cx);
             }))
             .on_action(cx.listener(|view, _: &ClearFilter, window, cx| view.escape(window, cx)))
+            .on_action(
+                cx.listener(|view, _: &OpenSelected, window, cx| view.open_selected(window, cx)),
+            )
+            .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
             .flex_1()
             .min_h_0()
             .min_w_0()
