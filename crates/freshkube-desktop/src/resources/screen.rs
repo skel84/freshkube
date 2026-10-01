@@ -15,6 +15,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState},
     v_flex,
 };
@@ -23,18 +24,20 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
+use super::detail::DetailTarget;
 use super::direct::DirectAccess;
 use super::model::{
     ColumnKind, ReadState, ResourceIdentity, SortDirection, SortKey, StatusTone, natural_cmp,
     status_tone,
 };
+use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE};
 use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
-use crate::screens::{LiveSource, SCREEN_DEADLINE, mono, panel};
+use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock};
 
 const CONTEXT: &str = "KubeResources";
@@ -50,6 +53,15 @@ const MIN_COLUMN: f32 = 64.;
 const MAX_COLUMN: f32 = 280.;
 const MAX_FLEXIBLE: f32 = 440.;
 const LIST_MIN_HEIGHT: f32 = 200.;
+/// Below this content width the detail pane stacks under the list.
+const SPLIT_WIDTH: f32 = 900.;
+const LIST_MIN_WIDTH: f32 = 320.;
+const PANE_WIDTH: f32 = 460.;
+const PANE_MIN_WIDTH: f32 = 320.;
+const PANE_HEIGHT: f32 = 380.;
+const PANE_MIN_HEIGHT: f32 = 220.;
+/// Space between the list and the pane, where the resize handle sits.
+const SPLIT_GAP: f32 = 14.;
 const ALL_NAMESPACES: &str = "All namespaces";
 
 actions!(
@@ -88,7 +100,7 @@ pub(crate) enum KubeAccess {
 }
 
 impl KubeAccess {
-    async fn client(&self) -> Result<kube::Client, String> {
+    pub(super) async fn client(&self) -> Result<kube::Client, String> {
         match self {
             KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
             KubeAccess::Talos(live) => live.kubernetes().await,
@@ -99,7 +111,7 @@ impl KubeAccess {
     }
 
     /// Drops a reused client after a failure, so the next read rebuilds it.
-    fn forget(&self) {
+    pub(super) fn forget(&self) {
         match self {
             KubeAccess::Example => {}
             KubeAccess::Talos(live) => live.forget_kubernetes(),
@@ -293,6 +305,10 @@ pub(crate) struct ResourcesScreen {
     watch: Option<(OwnedJob, Task<()>)>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
     tick: Option<Task<()>>,
+    /// The selected object in full, beside the list or below it.
+    detail: Entity<DetailPane>,
+    split: Entity<ResizableState>,
+    stacked: Entity<ResizableState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -309,6 +325,7 @@ impl ResourcesScreen {
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
+        let detail = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
         let namespace_select = cx.new(|cx| {
             SelectState::new(
                 namespace_choices(&[], None),
@@ -348,6 +365,20 @@ impl ResourcesScreen {
             // view is cached, so it has to hear about them.
             cx.observe(&query, |_, _, cx| cx.notify()),
             cx.observe(&namespace_select, |_, _, cx| cx.notify()),
+            cx.subscribe_in(
+                &detail,
+                window,
+                |this, _, event: &DetailEvent, window, cx| match event {
+                    DetailEvent::Closed => {
+                        this.close_detail(cx);
+                        window.focus(&this.focus, cx);
+                    }
+                    DetailEvent::Open(identity) => {
+                        this.select_identity(identity, window, cx);
+                        this.open_detail(identity.clone(), Duration::ZERO, cx);
+                    }
+                },
+            ),
         ];
         Self {
             runtime,
@@ -370,6 +401,9 @@ impl ResourcesScreen {
             watch: None,
             namespace_job: None,
             tick: None,
+            detail,
+            split: cx.new(|_| ResizableState::default()),
+            stacked: cx.new(|_| ResizableState::default()),
             _subscriptions: subscriptions,
         }
     }
@@ -386,8 +420,14 @@ impl ResourcesScreen {
             == source.as_ref().map(|source| &source.id);
         self.source = source;
         if same {
+            if let Some(source) = &self.source {
+                let access = source.access.clone();
+                self.detail
+                    .update(cx, |detail, _| detail.set_access(access));
+            }
             return;
         }
+        self.close_detail(cx);
         self.projection.select(&self.store, None);
         self.restore = None;
         self.namespace = None;
@@ -406,7 +446,7 @@ impl ResourcesScreen {
             return;
         }
         self.kind = kind;
-        self.projection.select(&self.store, None);
+        self.close_detail(cx);
         self.restore = None;
         self.projection.reset_sort();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -415,6 +455,11 @@ impl ResourcesScreen {
 
     /// Only a visible page reads: showing it lists again and watches,
     /// hiding it drops the watch.
+    /// The detail pane, which draws as a cached view of its own.
+    pub(crate) fn detail_view(&self) -> EntityId {
+        self.detail.entity_id()
+    }
+
     pub(crate) fn set_visible(
         &mut self,
         visible: bool,
@@ -425,6 +470,8 @@ impl ResourcesScreen {
             return;
         }
         self.visible = visible;
+        self.detail
+            .update(cx, |detail, cx| detail.set_active(visible, cx));
         if visible {
             self.restart(window, cx);
             self.tick = Some(cx.spawn(async move |this, cx| {
@@ -451,6 +498,7 @@ impl ResourcesScreen {
         }
         self.namespaces_for = None;
         self.restart(window, cx);
+        self.detail.update(cx, |detail, cx| detail.refresh(cx));
     }
 
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -544,6 +592,67 @@ impl ResourcesScreen {
                 }
             }
         }
+        self.follow_detail(cx);
+        cx.notify();
+    }
+
+    /// Tells the pane what the list now shows of its object: a new version,
+    /// or that it is gone. Only a list that shows rows can tell.
+    fn follow_detail(&mut self, cx: &mut Context<Self>) {
+        if !self.store.read_state().shows_rows() {
+            return;
+        }
+        let Some(target) = self.detail.read(cx).target_identity().cloned() else {
+            return;
+        };
+        match self.store.get(&target) {
+            Some(row) => {
+                let version = row.resource_version.clone();
+                self.detail
+                    .update(cx, |detail, cx| detail.observed(&version, cx));
+            }
+            None => {
+                let successor = self
+                    .store
+                    .entries()
+                    .iter()
+                    .map(|entry| &entry.row().identity)
+                    .find(|identity| {
+                        identity.namespace == target.namespace && identity.name == target.name
+                    })
+                    .cloned();
+                self.detail
+                    .update(cx, |detail, cx| detail.gone(successor, cx));
+            }
+        }
+    }
+
+    /// Shows `identity` in the pane, reading it after `delay`.
+    fn open_detail(&mut self, identity: ResourceIdentity, delay: Duration, cx: &mut Context<Self>) {
+        let Some(source) = self.source.as_ref() else {
+            return;
+        };
+        let version = self
+            .store
+            .get(&identity)
+            .map(|row| row.resource_version.clone())
+            .unwrap_or_default();
+        let target = DetailTarget {
+            identity,
+            kind: self.kind.clone(),
+        };
+        let access = source.access.clone();
+        self.detail.update(cx, |detail, cx| {
+            detail.open(target, access, &version, delay, cx)
+        });
+        cx.notify();
+    }
+
+    /// Closes the pane and clears the selection it showed.
+    fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.detail.update(cx, |detail, cx| detail.close(cx));
+        self.projection.select(&self.store, None);
+        self.restore = None;
         cx.notify();
     }
 
@@ -572,6 +681,7 @@ impl ResourcesScreen {
         self.sync_namespace_choices(window, cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         if self.kind.namespaced {
+            self.close_detail(cx);
             self.restart(window, cx);
         }
     }
@@ -650,6 +760,17 @@ impl ResourcesScreen {
         cx.notify();
     }
 
+    /// A click opens the row at once.
+    fn click_row(
+        &mut self,
+        identity: &ResourceIdentity,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_identity(identity, window, cx);
+        self.open_detail(identity.clone(), Duration::ZERO, cx);
+    }
+
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         let count = self.projection.len();
         if count == 0 {
@@ -663,6 +784,9 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        if let Some(identity) = self.projection.selected().cloned() {
+            self.open_detail(identity, KEYBOARD_PAUSE, cx);
+        }
         cx.notify();
     }
 
@@ -681,6 +805,15 @@ impl ResourcesScreen {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
         }
         cx.notify();
+    }
+
+    /// Escape clears the filter, or with none, closes the pane.
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.query.read(cx).value().is_empty() {
+            self.clear_filter(window, cx);
+        } else if self.detail.read(cx).target_identity().is_some() {
+            self.close_detail(cx);
+        }
     }
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -885,9 +1018,9 @@ impl ResourcesScreen {
         }
         Some(
             element
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.select_identity(&identity, window, cx)
-                }))
+                .on_click(
+                    cx.listener(move |view, _, window, cx| view.click_row(&identity, window, cx)),
+                )
                 .into_any_element(),
         )
     }
@@ -911,7 +1044,7 @@ impl ResourcesScreen {
             .test_support()
             .role(Role::ListBox)
             .aria_label(format!(
-                "{}; arrows select, slash filters, Escape clears the filter",
+                "{}; arrows select and show details, slash filters, Escape clears the filter or closes the details",
                 self.title()
             ))
             .key_context(CONTEXT)
@@ -926,9 +1059,7 @@ impl ResourcesScreen {
                 let focus = view.query.read(cx).focus_handle(cx);
                 window.focus(&focus, cx);
             }))
-            .on_action(
-                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
-            )
+            .on_action(cx.listener(|view, _: &ClearFilter, window, cx| view.escape(window, cx)))
             .flex_1()
             .min_h_0()
             .map(|this| match empty {
@@ -1166,9 +1297,50 @@ async fn watch(
 }
 
 impl Render for ResourcesScreen {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
-        let body = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
+        let list = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
+        let body = if self.detail.read(cx).target_identity().is_some() {
+            // Cached: list updates and age ticks don't redraw the pane.
+            let pane =
+                AnyView::from(self.detail.clone()).cached(StyleRefinement::default().size_full());
+            let split = if content_width(window) >= px(SPLIT_WIDTH) {
+                h_resizable("resource-split")
+                    .with_state(&self.split)
+                    .child(
+                        resizable_panel()
+                            .size_range(px(LIST_MIN_WIDTH)..Pixels::MAX)
+                            .child(list),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(px(PANE_WIDTH))
+                            .size_range(px(PANE_MIN_WIDTH)..Pixels::MAX)
+                            .flex_none()
+                            .pl(px(SPLIT_GAP))
+                            .child(pane),
+                    )
+            } else {
+                v_resizable("resource-split-stacked")
+                    .with_state(&self.stacked)
+                    .child(
+                        resizable_panel()
+                            .size_range(px(LIST_MIN_HEIGHT)..Pixels::MAX)
+                            .child(list),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(px(PANE_HEIGHT))
+                            .size_range(px(PANE_MIN_HEIGHT)..Pixels::MAX)
+                            .flex_none()
+                            .pt(px(SPLIT_GAP))
+                            .child(pane),
+                    )
+            };
+            v_flex().flex_1().min_h_0().child(split).into_any_element()
+        } else {
+            list
+        };
         v_flex()
             .id("resources-page")
             .size_full()
@@ -1191,9 +1363,9 @@ mod ui_tests {
     use tokio::runtime::Runtime;
 
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-    use super::{KubeAccess, KubeSource, ResourcesScreen, row_id};
+    use super::{KEYBOARD_PAUSE, KubeAccess, KubeSource, ResourcesScreen, row_id};
     use crate::resources::example;
-    use crate::resources::model::{ReadState, ResourceIdentity};
+    use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
     use crate::resources::store::{ResourceBatch, ResourceEvent};
 
     fn source(context: &str) -> KubeSource {
@@ -1255,6 +1427,10 @@ mod ui_tests {
 
     fn selected(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> Option<ResourceIdentity> {
         screen.read(cx).projection.selected().cloned()
+    }
+
+    fn shown(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> Option<ResourceIdentity> {
+        screen.read(cx).detail.read(cx).target_identity().cloned()
     }
 
     /// Applies events as if the current read delivered them.
@@ -1478,7 +1654,7 @@ mod ui_tests {
             assert_eq!(screen.read(cx).store.len(), 22);
 
             // Kinds the example lacks say so rather than listing nothing.
-            screen.update(cx, |screen, cx| screen.set_kind("secrets", window, cx));
+            screen.update(cx, |screen, cx| screen.set_kind("configmaps", window, cx));
             window.render_frame(cx);
             assert!(window.find("resource-not-in-example").visible());
 
@@ -1486,7 +1662,7 @@ mod ui_tests {
             deliver(
                 &screen,
                 vec![ResourceEvent::Read(ReadState::Refused(
-                    "secrets is forbidden".into(),
+                    "configmaps is forbidden".into(),
                 ))],
                 cx,
             );
@@ -1549,6 +1725,154 @@ mod ui_tests {
             assert_eq!(screen.read(cx).store.len(), 48);
             assert_eq!(selected(&screen, cx), None);
             assert!(window.try_find(row_id(&first)).is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppContext) {
+        // 1280 leaves the page 1000 wide, room for both; 760 leaves 480.
+        for (width, beside) in [(1280., true), (760., false)] {
+            let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), width);
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.try_find("resource-detail").is_none());
+                let third = identity_at(&screen, 2, cx);
+                window.click(row_id(&third), cx);
+                window.render_frame(cx);
+                assert_eq!(shown(&screen, cx), Some(third.clone()));
+                assert_eq!(
+                    window.find("detail-title").label(),
+                    Some(third.address().as_str())
+                );
+                let list = window.find("resource-list").bounds();
+                let pane = window.find("resource-detail").bounds();
+                if beside {
+                    assert!(pane.left() >= list.right(), "{list:?} {pane:?}");
+                    assert!(pane.size.width >= px(320.), "{pane:?}");
+                    assert!(list.size.width >= px(320.), "{list:?}");
+                } else {
+                    assert!(pane.top() >= list.bottom(), "{list:?} {pane:?}");
+                    assert!(pane.size.height >= px(220.), "{pane:?}");
+                }
+                assert!(pane.right() <= px(width), "{width}: {pane:?}");
+
+                // With no filter to clear, Escape closes the pane and drops
+                // the selection it showed.
+                window.press("escape", cx);
+                window.render_frame(cx);
+                assert!(window.try_find("resource-detail").is_none());
+                assert_eq!(shown(&screen, cx), None);
+                assert_eq!(selected(&screen, cx), None);
+            })
+            .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn arrow_keys_show_the_next_row_once_the_keyboard_pauses(cx: &mut TestAppContext) {
+        let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let first = identity_at(&screen, 0, cx);
+            window.click(row_id(&first), cx);
+            window.render_frame(cx);
+            assert!(window.try_find("detail-state").is_none());
+
+            window.press("down", cx);
+            window.press("down", cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), Some(identity_at(&screen, 2, cx)));
+            assert_eq!(window.find("detail-state").label(), Some("Reading"));
+        })
+        .unwrap();
+        cx.executor().advance_clock(KEYBOARD_PAUSE);
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("detail-state").is_none());
+            assert!(window.find("detail-overview").visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_deleted_row_marks_its_details_and_offers_the_new_object(cx: &mut TestAppContext) {
+        let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+        let successor = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let first = identity_at(&screen, 0, cx);
+                let row = screen.read(cx).store.get(&first).cloned().unwrap();
+                window.click(row_id(&first), cx);
+                deliver(&screen, vec![ResourceEvent::Delete(first.clone())], cx);
+                window.render_frame(cx);
+                assert!(window.find("detail-deleted").visible());
+                assert_eq!(window.find("detail-state").label(), Some("Deleted"));
+                assert!(window.try_find("detail-open-recreated").is_none());
+
+                // The same name again, with a new UID: another object.
+                let successor = ResourceIdentity {
+                    uid: "recreated".into(),
+                    ..first.clone()
+                };
+                let recreated = ResourceRow {
+                    identity: successor.clone(),
+                    ..row
+                };
+                deliver(&screen, vec![ResourceEvent::Upsert(recreated)], cx);
+                window.render_frame(cx);
+                assert_eq!(shown(&screen, cx), Some(first));
+                window.click("detail-open-recreated", cx);
+                successor
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, _, cx| {
+            assert_eq!(selected(&screen, cx), Some(successor.clone()));
+            assert_eq!(shown(&screen, cx), Some(successor));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn another_kind_namespace_or_connection_closes_the_details(cx: &mut TestAppContext) {
+        let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+        cx.update_window(handle, |_, window, cx| {
+            let open_first = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+                window.render_frame(cx);
+                window.click(row_id(&identity_at(&screen, 0, cx)), cx);
+                window.render_frame(cx);
+                assert!(window.find("resource-detail").visible());
+            };
+            open_first(window, cx);
+            screen.update(cx, |screen, cx| {
+                screen.set_kind("deployments.apps", window, cx)
+            });
+            window.render_frame(cx);
+            assert!(window.try_find("resource-detail").is_none());
+            assert_eq!(shown(&screen, cx), None);
+
+            open_first(window, cx);
+            screen.update(cx, |screen, cx| {
+                screen.set_namespace(Some("payments".into()), window, cx)
+            });
+            window.render_frame(cx);
+            assert!(window.try_find("resource-detail").is_none());
+
+            // The same connection again (new credentials) keeps it open.
+            open_first(window, cx);
+            screen.update(cx, |screen, cx| {
+                screen.set_source(Some(source("homelab")), window, cx)
+            });
+            window.render_frame(cx);
+            assert!(window.find("resource-detail").visible());
+            screen.update(cx, |screen, cx| {
+                screen.set_source(Some(source("staging-eu")), window, cx)
+            });
+            window.render_frame(cx);
+            assert!(window.try_find("resource-detail").is_none());
+            assert_eq!(shown(&screen, cx), None);
         })
         .unwrap();
     }

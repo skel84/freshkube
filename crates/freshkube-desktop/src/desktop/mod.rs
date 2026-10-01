@@ -1383,6 +1383,8 @@ impl Pilot {
         }
         App::notify(cx, self.logs.entity_id());
         App::notify(cx, self.resources.entity_id());
+        let detail = self.resources.read(cx).detail_view();
+        App::notify(cx, detail);
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.services_page.entity_id());
     }

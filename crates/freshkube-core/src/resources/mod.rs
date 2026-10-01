@@ -24,7 +24,7 @@ pub use failure::{Failure, FailureKind};
 pub use kinds::{ResourceKind, builtin};
 pub use object::{
     Condition, ObjectDocument, Overview, Owner, SecretKey, SecretSummary, SecretValue, get_object,
-    hidden_value, reveal_secret_value,
+    hidden_value, object_from_yaml, reveal_secret_value,
 };
 pub use table::{RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};

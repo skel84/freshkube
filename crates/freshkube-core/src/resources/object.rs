@@ -118,6 +118,14 @@ pub async fn get_object(
     document(kind, object)
 }
 
+/// Builds a document from an object written out as YAML, as example data
+/// does, exactly as if the server had returned it.
+pub fn object_from_yaml(kind: &ResourceKind, yaml: &str) -> Result<ObjectDocument, Failure> {
+    let object: Value = serde_yaml::from_str(yaml)
+        .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
+    document(kind, object)
+}
+
 pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectDocument, Failure> {
     if let Some(metadata) = object.get_mut("metadata").and_then(Value::as_mapping_mut) {
         metadata.remove("managedFields");
@@ -456,6 +464,20 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(gone.kind, FailureKind::NotFound);
+    }
+
+    #[test]
+    fn written_objects_read_like_served_ones() {
+        let yaml = "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\n  namespace: shop\n  uid: s-1\n  resourceVersion: '3'\ntype: Opaque\ndata:\n  password: aHVudGVyMg==\n";
+        let document = object_from_yaml(&builtin("secrets").unwrap(), yaml).unwrap();
+        assert_eq!(
+            (document.uid.as_str(), document.resource_version.as_str()),
+            ("s-1", "3")
+        );
+        assert!(document.yaml.starts_with("apiVersion: v1\nkind: Secret\n"));
+        assert!(!document.yaml.contains("aHVudGVyMg"));
+        assert_eq!(document.overview.secret.unwrap().keys[0].bytes, 7);
+        assert!(object_from_yaml(&builtin("pods").unwrap(), "a: [").is_err());
     }
 
     fn secret() -> serde_json::Value {

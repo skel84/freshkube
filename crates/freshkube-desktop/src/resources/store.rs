@@ -140,7 +140,6 @@ impl ResourceStore {
         self.index.get(identity).copied()
     }
 
-    #[cfg(test)]
     pub(crate) fn get(&self, identity: &ResourceIdentity) -> Option<&ResourceRow> {
         self.slot(identity).map(|slot| &self.entries[slot].row)
     }

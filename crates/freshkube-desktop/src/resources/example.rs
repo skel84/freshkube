@@ -1,19 +1,26 @@
 //! Example Kubernetes objects for the Resources page, made up from the
 //! example cluster's name. Nothing here reads a cluster or a kubeconfig.
 
-use freshkube_core::resources::builtin;
+use chrono::{DateTime, Utc};
+use freshkube_core::resources::{
+    ObjectDocument, ObjectEvent, SecretValue, builtin, object_from_yaml,
+};
 
 use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
-pub(crate) const KINDS: [&str; 5] = [
+pub(crate) const KINDS: [&str; 6] = [
     "pods",
     "deployments.apps",
     "services",
     "nodes",
     "namespaces",
+    "secrets",
 ];
+
+/// Every example object has this version; none changes by itself.
+const EXAMPLE_VERSION: &str = "1";
 
 const NAMESPACES: [&str; 7] = [
     "batch",
@@ -88,6 +95,7 @@ pub(crate) fn read(
         ),
         "services" => (service_columns(), services(&connection, now)),
         "nodes" => (node_columns(), nodes(&connection, context, now)),
+        "secrets" => (secret_columns(), secrets(&connection, now)),
         "namespaces" => (
             namespace_columns(),
             NAMESPACES
@@ -98,6 +106,7 @@ pub(crate) fn read(
                     cells: vec![(*name).into(), "Active".into(), String::new()],
                     created: Some(now - 400 * 86_400 + ix as i64 * 3_600),
                     terminating: false,
+                    resource_version: EXAMPLE_VERSION.into(),
                 })
                 .collect(),
         ),
@@ -206,6 +215,7 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
         ],
         created: Some(now - (ix as i64 * 7_919 % 2_000_000) - 120),
         terminating: false,
+        resource_version: EXAMPLE_VERSION.into(),
     }
 }
 
@@ -250,6 +260,7 @@ fn deployment(connection: &str, ix: usize, now: i64) -> ResourceRow {
         ],
         created: Some(now - 90 * 86_400 + ix as i64 * 86_400),
         terminating: false,
+        resource_version: EXAMPLE_VERSION.into(),
     }
 }
 
@@ -279,6 +290,7 @@ fn services(connection: &str, now: i64) -> Vec<ResourceRow> {
         ],
         created: Some(now - 400 * 86_400),
         terminating: false,
+        resource_version: EXAMPLE_VERSION.into(),
     }];
     for (ix, (namespace, app, ..)) in WORKLOADS.iter().enumerate() {
         if *namespace == "batch" {
@@ -302,6 +314,7 @@ fn services(connection: &str, now: i64) -> Vec<ResourceRow> {
             ],
             created: Some(now - 80 * 86_400 + ix as i64 * 86_400),
             terminating: false,
+            resource_version: EXAMPLE_VERSION.into(),
         });
     }
     rows
@@ -339,6 +352,7 @@ fn nodes(connection: &str, context: &str, now: i64) -> Vec<ResourceRow> {
             ],
             created: Some(now - 200 * 86_400 + ix as i64 * 600),
             terminating: false,
+            resource_version: EXAMPLE_VERSION.into(),
         })
         .collect()
 }
@@ -349,6 +363,510 @@ fn namespace_columns() -> Vec<ResourceColumn> {
         ResourceColumn::new("Status", ColumnKind::Text, false),
         ResourceColumn::new("Age", ColumnKind::Age, false),
     ]
+}
+
+/// A Secret's keys with their values.
+type SecretData = &'static [(&'static str, &'static [u8])];
+
+/// (namespace, name, type, keys with values). Made up for the example
+/// cluster; none of them is a real credential.
+const SECRETS: [(&str, &str, &str, SecretData); 4] = [
+    (
+        "kube-system",
+        "bootstrap-token-k3x9a1",
+        "bootstrap.kubernetes.io/token",
+        &[
+            ("token-id", b"k3x9a1"),
+            ("token-secret", b"example0secret00"),
+            ("usage-bootstrap-authentication", b"true"),
+        ],
+    ),
+    (
+        "monitoring",
+        "grafana-admin",
+        "Opaque",
+        &[
+            ("admin-user", b"admin"),
+            ("admin-password", b"example-only-password"),
+        ],
+    ),
+    (
+        "payments",
+        "ledger-database",
+        "Opaque",
+        &[
+            ("username", b"ledger"),
+            ("password", b"example-only-password"),
+            ("keystore.p12", &[0x30, 0x82, 0xff, 0xfe, 0x00, 0x01]),
+        ],
+    ),
+    (
+        "web",
+        "gateway-tls",
+        "kubernetes.io/tls",
+        &[
+            ("tls.crt", b"example certificate, not a real one\n"),
+            ("tls.key", b"example key, not a real one\n"),
+        ],
+    ),
+];
+
+fn secret_columns() -> Vec<ResourceColumn> {
+    vec![
+        ResourceColumn::new("Name", ColumnKind::Text, false),
+        ResourceColumn::new("Type", ColumnKind::Text, false),
+        ResourceColumn::new("Data", ColumnKind::Number, false),
+        ResourceColumn::new("Age", ColumnKind::Age, false),
+    ]
+}
+
+fn secrets(connection: &str, now: i64) -> Vec<ResourceRow> {
+    SECRETS
+        .iter()
+        .enumerate()
+        .map(|(ix, (namespace, name, secret_type, data))| ResourceRow {
+            identity: identity(connection, "secrets", namespace, name, ix),
+            cells: vec![
+                (*name).into(),
+                (*secret_type).into(),
+                data.len().to_string(),
+                String::new(),
+            ],
+            created: Some(now - 120 * 86_400 + ix as i64 * 86_400),
+            terminating: false,
+            resource_version: EXAMPLE_VERSION.into(),
+        })
+        .collect()
+}
+
+/// The example row an identity names, with the position its UID encodes.
+fn find(identity: &ResourceIdentity, now: i64) -> Option<(ResourceRow, usize)> {
+    let context = identity.connection.strip_prefix("example:")?;
+    let (_, rows) = read(context, &identity.resource, None, now)?;
+    let row = rows.into_iter().find(|row| row.identity == *identity)?;
+    let ix = usize::from_str_radix(identity.uid.rsplit('-').next()?, 16).ok()?;
+    Some((row, ix))
+}
+
+fn time(seconds: i64) -> Option<DateTime<Utc>> {
+    DateTime::from_timestamp(seconds, 0)
+}
+
+fn timestamp(seconds: i64) -> String {
+    time(seconds)
+        .unwrap_or_default()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// Standard base64, for Secret data.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let bits = chunk.iter().enumerate().fold(0u32, |bits, (ix, byte)| {
+            bits | u32::from(*byte) << (16 - 8 * ix)
+        });
+        for ix in 0..4 {
+            encoded.push(if ix <= chunk.len() {
+                ALPHABET[(bits >> (18 - 6 * ix) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    encoded
+}
+
+/// The metadata block every example object starts with.
+fn metadata(kind: &str, api_version: &str, row: &ResourceRow, extra: &str) -> String {
+    let identity = &row.identity;
+    let namespace = if identity.namespace.is_empty() {
+        String::new()
+    } else {
+        format!("  namespace: {}\n", identity.namespace)
+    };
+    format!(
+        "apiVersion: {api_version}\nkind: {kind}\nmetadata:\n  name: {}\n{namespace}  uid: {}\n  resourceVersion: '{}'\n  creationTimestamp: '{}'\n{extra}",
+        identity.name,
+        identity.uid,
+        row.resource_version,
+        timestamp(row.created.unwrap_or_default()),
+    )
+}
+
+/// The full object behind an example row, written as the server would
+/// return it. `None` for anything the example cluster doesn't have.
+pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument> {
+    let (row, ix) = find(identity, now)?;
+    let created = row.created.unwrap_or_default();
+    let yaml = match identity.resource.as_str() {
+        "pods" => pod_yaml(&row, ix, created),
+        "deployments.apps" => deployment_yaml(&row, ix, created),
+        "services" => service_yaml(&row, ix),
+        "nodes" => node_yaml(&row, created),
+        "namespaces" => format!(
+            "{}spec:\n  finalizers:\n  - kubernetes\nstatus:\n  phase: Active\n",
+            metadata(
+                "Namespace",
+                "v1",
+                &row,
+                &format!(
+                    "  labels:\n    kubernetes.io/metadata.name: {}\n",
+                    row.identity.name
+                ),
+            )
+        ),
+        "secrets" => {
+            let (_, _, secret_type, data) = SECRETS.get(ix)?;
+            let mut yaml = metadata("Secret", "v1", &row, "");
+            yaml.push_str(&format!("type: {secret_type}\ndata:\n"));
+            for (key, value) in *data {
+                yaml.push_str(&format!("  {key}: {}\n", base64(value)));
+            }
+            yaml
+        }
+        _ => return None,
+    };
+    object_from_yaml(&builtin(&identity.resource)?, &yaml).ok()
+}
+
+fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
+    let (_, app, image, _) = WORKLOADS[ix % WORKLOADS.len()];
+    let hash = format!("{:x}", 0x6c4f_8d9b + ix % WORKLOADS.len());
+    let status = row.cells[2].as_str();
+    let ready = row.cells[1].starts_with("1/");
+    let restarts: u32 = row.cells[3]
+        .split_whitespace()
+        .next()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    let labels = format!(
+        "  generateName: {app}-{hash}-\n  labels:\n    app: {app}\n    pod-template-hash: '{hash}'\n  ownerReferences:\n  - apiVersion: apps/v1\n    kind: ReplicaSet\n    name: {app}-{hash}\n    uid: {}-rs\n    controller: true\n    blockOwnerDeletion: true\n",
+        row.identity.uid
+    );
+    let scheduled = status != "Pending";
+    let mut yaml = metadata("Pod", "v1", row, &labels);
+    yaml.push_str(&format!(
+        "spec:\n  containers:\n  - name: {app}\n    image: {image}\n    ports:\n    - containerPort: 8080\n      protocol: TCP\n    resources:\n      requests:\n        cpu: 100m\n        memory: 128Mi\n      limits:\n        memory: 256Mi\n"
+    ));
+    if scheduled {
+        yaml.push_str(&format!("  nodeName: {}\n", row.cells[6]));
+    }
+    yaml.push_str("  restartPolicy: Always\n  serviceAccountName: default\nstatus:\n");
+    let phase = match status {
+        "Completed" => "Succeeded",
+        "Pending" | "ContainerCreating" => "Pending",
+        _ => "Running",
+    };
+    yaml.push_str(&format!("  phase: {phase}\n  conditions:\n"));
+    if scheduled {
+        yaml.push_str(&format!(
+            "  - type: Ready\n    status: '{}'\n    lastTransitionTime: '{}'\n{}  - type: PodScheduled\n    status: 'True'\n    lastTransitionTime: '{}'\n  podIP: {}\n  startTime: '{}'\n  containerStatuses:\n  - name: {app}\n    image: {image}\n    ready: {ready}\n    restartCount: {restarts}\n    state:\n",
+            if ready { "True" } else { "False" },
+            timestamp(created + 40),
+            if ready {
+                String::new()
+            } else {
+                format!("    reason: ContainersNotReady\n    message: 'containers with unready status: [{app}]'\n")
+            },
+            timestamp(created),
+            row.cells[5],
+            timestamp(created),
+        ));
+        yaml.push_str(&match status {
+            "Running" => format!("      running:\n        startedAt: '{}'\n", timestamp(created + 30)),
+            "Completed" => format!(
+                "      terminated:\n        exitCode: 0\n        reason: Completed\n        finishedAt: '{}'\n",
+                timestamp(created + 300)
+            ),
+            "CrashLoopBackOff" => "      waiting:\n        reason: CrashLoopBackOff\n        message: back-off 5m0s restarting failed container\n".into(),
+            other => format!("      waiting:\n        reason: {other}\n"),
+        });
+    } else {
+        yaml.push_str(&format!(
+            "  - type: PodScheduled\n    status: 'False'\n    reason: Unschedulable\n    message: '0/3 nodes are available: 3 Insufficient memory.'\n    lastTransitionTime: '{}'\n",
+            timestamp(created)
+        ));
+    }
+    yaml
+}
+
+fn deployment_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
+    let (_, app, image, _) = WORKLOADS[ix % WORKLOADS.len()];
+    let (replicas, available) = (&row.cells[2], &row.cells[3]);
+    let progressing = if replicas == available {
+        "NewReplicaSetAvailable"
+    } else {
+        "ReplicaSetUpdated"
+    };
+    format!(
+        "{}spec:\n  replicas: {replicas}\n  selector:\n    matchLabels:\n      app: {app}\n  strategy:\n    type: RollingUpdate\n    rollingUpdate:\n      maxSurge: 25%\n      maxUnavailable: 25%\n  template:\n    metadata:\n      labels:\n        app: {app}\n    spec:\n      containers:\n      - name: {app}\n        image: {image}\n        ports:\n        - containerPort: 8080\n          protocol: TCP\nstatus:\n  observedGeneration: 3\n  replicas: {replicas}\n  updatedReplicas: {replicas}\n  readyReplicas: {available}\n  availableReplicas: {available}\n  conditions:\n  - type: Available\n    status: '{}'\n    reason: {}\n    message: Deployment {}.\n    lastUpdateTime: '{}'\n    lastTransitionTime: '{}'\n  - type: Progressing\n    status: 'True'\n    reason: {progressing}\n    message: ReplicaSet \"{app}-{:x}\" has successfully progressed.\n    lastUpdateTime: '{}'\n    lastTransitionTime: '{}'\n",
+        metadata(
+            "Deployment",
+            "apps/v1",
+            row,
+            &format!(
+                "  generation: 3\n  labels:\n    app: {app}\n  annotations:\n    deployment.kubernetes.io/revision: '3'\n"
+            ),
+        ),
+        if replicas == available {
+            "True"
+        } else {
+            "False"
+        },
+        if replicas == available {
+            "MinimumReplicasAvailable"
+        } else {
+            "MinimumReplicasUnavailable"
+        },
+        if replicas == available {
+            "has minimum availability"
+        } else {
+            "does not have minimum availability"
+        },
+        timestamp(created + 120),
+        timestamp(created + 120),
+        0x6c4f_8d9b + ix % WORKLOADS.len(),
+        timestamp(created + 60),
+        timestamp(created),
+    )
+}
+
+fn service_yaml(row: &ResourceRow, ix: usize) -> String {
+    let (kind, cluster_ip) = (&row.cells[1], &row.cells[2]);
+    let selector = match ix.checked_sub(1).map(|ix| WORKLOADS[ix].1) {
+        Some(app) => format!("  selector:\n    app: {app}\n"),
+        None => String::new(),
+    };
+    let ports = if kind == "LoadBalancer" {
+        "  - name: http\n    port: 80\n    targetPort: 8080\n    nodePort: 31080\n    protocol: TCP\n  - name: https\n    port: 443\n    targetPort: 8443\n    nodePort: 31443\n    protocol: TCP\n"
+    } else if ix == 0 {
+        "  - name: https\n    port: 443\n    targetPort: 6443\n    protocol: TCP\n"
+    } else {
+        "  - name: http\n    port: 8080\n    targetPort: 8080\n    protocol: TCP\n"
+    };
+    let status = if kind == "LoadBalancer" {
+        format!(
+            "status:\n  loadBalancer:\n    ingress:\n    - ip: {}\n",
+            row.cells[3]
+        )
+    } else {
+        "status:\n  loadBalancer: {}\n".into()
+    };
+    format!(
+        "{}spec:\n  type: {kind}\n  clusterIP: {cluster_ip}\n  clusterIPs:\n  - {cluster_ip}\n  ports:\n{ports}{selector}  sessionAffinity: None\n{status}",
+        metadata("Service", "v1", row, ""),
+    )
+}
+
+fn node_yaml(row: &ResourceRow, created: i64) -> String {
+    let name = &row.identity.name;
+    let ready = row.cells[1] == "Ready";
+    let role = if row.cells[2] == "control-plane" {
+        "    node-role.kubernetes.io/control-plane: ''\n"
+    } else {
+        ""
+    };
+    let mut yaml = metadata(
+        "Node",
+        "v1",
+        row,
+        &format!(
+            "  labels:\n    beta.kubernetes.io/arch: amd64\n    beta.kubernetes.io/os: linux\n    kubernetes.io/arch: amd64\n    kubernetes.io/hostname: {name}\n    kubernetes.io/os: linux\n{role}  annotations:\n    node.alpha.kubernetes.io/ttl: '0'\n    volumes.kubernetes.io/controller-managed-attach-detach: 'true'\n"
+        ),
+    );
+    yaml.push_str(&format!(
+        "spec:\n  podCIDR: 10.244.0.0/24\nstatus:\n  addresses:\n  - type: InternalIP\n    address: {}\n  - type: Hostname\n    address: {name}\n  capacity:\n    cpu: '8'\n    memory: 32856156Ki\n    pods: '110'\n  conditions:\n",
+        row.cells[5]
+    ));
+    for (condition, healthy, reason) in [
+        ("MemoryPressure", "False", "KubeletHasSufficientMemory"),
+        ("DiskPressure", "False", "KubeletHasNoDiskPressure"),
+        ("PIDPressure", "False", "KubeletHasSufficientPID"),
+    ] {
+        yaml.push_str(&format!(
+            "  - type: {condition}\n    status: '{healthy}'\n    reason: {reason}\n    lastTransitionTime: '{}'\n",
+            timestamp(created + 30)
+        ));
+    }
+    yaml.push_str(&if ready {
+        format!(
+            "  - type: Ready\n    status: 'True'\n    reason: KubeletReady\n    message: kubelet is posting ready status\n    lastTransitionTime: '{}'\n",
+            timestamp(created + 60)
+        )
+    } else {
+        format!(
+            "  - type: Ready\n    status: Unknown\n    reason: NodeStatusUnknown\n    message: Kubelet stopped posting node status.\n    lastTransitionTime: '{}'\n",
+            timestamp(created + 86_400)
+        )
+    });
+    yaml.push_str(&format!(
+        "  nodeInfo:\n    architecture: amd64\n    containerRuntimeVersion: containerd://2.1.4\n    kernelVersion: 6.12.48-talos\n    kubeletVersion: {}\n    operatingSystem: linux\n    osImage: Talos (v1.11.2)\n",
+        row.cells[4]
+    ));
+    yaml
+}
+
+#[allow(clippy::too_many_arguments)]
+fn event(
+    identity: &ResourceIdentity,
+    n: usize,
+    warning: bool,
+    reason: &str,
+    message: String,
+    count: u32,
+    (first, last): (i64, i64),
+    source: String,
+) -> ObjectEvent {
+    ObjectEvent {
+        uid: format!("{}-event-{n}", identity.uid),
+        event_type: if warning { "Warning" } else { "Normal" }.into(),
+        reason: reason.into(),
+        message,
+        count,
+        first_seen: time(first),
+        last_seen: time(last),
+        source,
+        field_path: String::new(),
+    }
+}
+
+/// Events the example cluster recorded about an object, oldest first.
+pub(crate) fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> {
+    let Some((row, ix)) = find(identity, now) else {
+        return Vec::new();
+    };
+    let created = row.created.unwrap_or_default();
+    let address = identity.address();
+    match identity.resource.as_str() {
+        "pods" => {
+            let (_, app, image, _) = WORKLOADS[ix % WORKLOADS.len()];
+            let status = row.cells[2].as_str();
+            let node = &row.cells[6];
+            let kubelet = format!("kubelet on {node}");
+            if status == "Pending" {
+                return vec![event(
+                    identity,
+                    0,
+                    true,
+                    "FailedScheduling",
+                    "0/3 nodes are available: 3 Insufficient memory. preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.".into(),
+                    6,
+                    (created, now - 240),
+                    "default-scheduler".into(),
+                )];
+            }
+            let mut events = vec![event(
+                identity,
+                0,
+                false,
+                "Scheduled",
+                format!("Successfully assigned {address} to {node}"),
+                1,
+                (created, created),
+                "default-scheduler".into(),
+            )];
+            if status == "ContainerCreating" {
+                events.push(event(
+                    identity,
+                    1,
+                    false,
+                    "Pulling",
+                    format!("Pulling image \"{image}\""),
+                    1,
+                    (created + 2, created + 2),
+                    kubelet,
+                ));
+                return events;
+            }
+            for (n, (reason, message)) in [
+                (
+                    "Pulled",
+                    format!("Container image \"{image}\" already present on machine"),
+                ),
+                ("Created", format!("Created container: {app}")),
+                ("Started", format!("Started container {app}")),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let at = created + 5 + n as i64;
+                let mut event = event(
+                    identity,
+                    n + 1,
+                    false,
+                    reason,
+                    message,
+                    1,
+                    (at, at),
+                    kubelet.clone(),
+                );
+                event.field_path = format!("spec.containers{{{app}}}");
+                events.push(event);
+            }
+            if status == "CrashLoopBackOff" {
+                let mut event = event(
+                    identity,
+                    4,
+                    true,
+                    "BackOff",
+                    format!(
+                        "Back-off restarting failed container {app} in pod {}_{}({})",
+                        identity.name, identity.namespace, identity.uid
+                    ),
+                    14,
+                    (created + 600, now - 180),
+                    kubelet,
+                );
+                event.field_path = format!("spec.containers{{{app}}}");
+                events.push(event);
+            }
+            events
+        }
+        "deployments.apps" => {
+            let (_, app, ..) = WORKLOADS[ix % WORKLOADS.len()];
+            vec![event(
+                identity,
+                0,
+                false,
+                "ScalingReplicaSet",
+                format!(
+                    "Scaled up replica set {app}-{:x} from 0 to {}",
+                    0x6c4f_8d9b + ix % WORKLOADS.len(),
+                    row.cells[2]
+                ),
+                1,
+                (created + 60, created + 60),
+                "deployment-controller".into(),
+            )]
+        }
+        "nodes" if row.cells[1] != "Ready" => vec![event(
+            identity,
+            0,
+            true,
+            "NodeNotReady",
+            format!("Node {} status is now: NodeNotReady", identity.name),
+            1,
+            (now - 3_000, now - 3_000),
+            "node-controller".into(),
+        )],
+        _ => Vec::new(),
+    }
+}
+
+/// One value of an example Secret, as revealing it would read it.
+pub(crate) fn secret_value(
+    identity: &ResourceIdentity,
+    key: &str,
+    now: i64,
+) -> Option<SecretValue> {
+    let (_, ix) = find(identity, now)?;
+    let (_, _, _, data) = SECRETS.get(ix)?;
+    let (_, value) = data.iter().find(|(name, _)| *name == key)?;
+    Some(match String::from_utf8(value.to_vec()) {
+        Ok(text) => SecretValue::Text(text),
+        Err(error) => SecretValue::Binary(error.into_bytes().len()),
+    })
 }
 
 /// Test rows: a fixed clock and connection, so values are reproducible.
@@ -408,7 +926,74 @@ mod tests {
                 }
             }
         }
-        assert!(read("prod-fra", "secrets", None, TEST_NOW).is_none());
+        assert!(read("prod-fra", "configmaps", None, TEST_NOW).is_none());
+    }
+
+    #[test]
+    fn every_example_object_reads_in_full_with_its_events() {
+        for key in KINDS {
+            let (_, rows) = read("homelab", key, None, TEST_NOW).unwrap();
+            for row in &rows {
+                let identity = &row.identity;
+                let document = document(identity, TEST_NOW)
+                    .unwrap_or_else(|| panic!("{key} {}", identity.address()));
+                assert_eq!(document.uid, identity.uid);
+                assert_eq!(document.name, identity.name);
+                assert_eq!(document.namespace.unwrap_or_default(), identity.namespace);
+                assert_eq!(document.resource_version, row.resource_version);
+                assert!(document.overview.created.is_some(), "{key}");
+                for event in events(identity, TEST_NOW) {
+                    assert!(event.uid.starts_with(&identity.uid));
+                    assert!(event.last_seen >= event.first_seen);
+                }
+            }
+        }
+        // Not an example object, so nothing to read.
+        let mut stranger = pod_rows(1).remove(0).identity;
+        stranger.connection = connection("homelab");
+        assert!(document(&stranger, TEST_NOW).is_none());
+        assert!(events(&stranger, TEST_NOW).is_empty());
+
+        let (_, pods) = read("prod-fra", "pods", None, TEST_NOW).unwrap();
+        let crashing = pods
+            .iter()
+            .find(|row| row.cells[2] == "CrashLoopBackOff")
+            .unwrap();
+        assert!(
+            events(&crashing.identity, TEST_NOW)
+                .iter()
+                .any(ObjectEvent::is_warning)
+        );
+    }
+
+    #[test]
+    fn example_secrets_hide_values_until_one_is_revealed() {
+        let (_, secrets) = read("homelab", "secrets", Some("payments"), TEST_NOW).unwrap();
+        let identity = &secrets[0].identity;
+        let document = document(identity, TEST_NOW).unwrap();
+        assert!(!document.yaml.contains("example-only-password"));
+        assert!(!document.yaml.contains(&base64(b"example-only-password")));
+        let keys = &document.overview.secret.unwrap().keys;
+        assert_eq!(keys.len(), 3);
+        assert_eq!(
+            secret_value(identity, "password", TEST_NOW),
+            Some(SecretValue::Text("example-only-password".into()))
+        );
+        assert_eq!(
+            secret_value(identity, "keystore.p12", TEST_NOW),
+            Some(SecretValue::Binary(6))
+        );
+        assert_eq!(secret_value(identity, "missing", TEST_NOW), None);
+    }
+
+    #[test]
+    fn base64_matches_the_standard_alphabet_and_padding() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"a"), "YQ==");
+        assert_eq!(base64(b"ab"), "YWI=");
+        assert_eq!(base64(b"abc"), "YWJj");
+        assert_eq!(base64(b"hunter2"), "aHVudGVyMg==");
+        assert_eq!(base64(&[0xfb, 0xff]), "+/8=");
     }
 
     #[test]

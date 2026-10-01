@@ -61,6 +61,9 @@ pub(crate) struct ResourceRow {
     /// Creation time in Unix seconds, when known.
     pub(crate) created: Option<i64>,
     pub(crate) terminating: bool,
+    /// Changes whenever the object does, so an open detail pane knows to
+    /// read it again. Not part of identity.
+    pub(crate) resource_version: String,
 }
 
 impl ResourceRow {

@@ -46,6 +46,7 @@ pub(crate) fn row(connection: &str, resource: &str, row: &TableRow) -> Option<Re
             .as_deref()
             .and_then(parse_timestamp),
         terminating: metadata.deletion_timestamp.is_some(),
+        resource_version: metadata.resource_version.clone(),
     })
 }
 
@@ -158,6 +159,7 @@ mod tests {
         assert_eq!(first.cells, ["web", "3", "5d", ""]);
         assert_eq!(first.created, parse_timestamp("2026-09-30T10:00:00Z"));
         assert!(first.terminating);
+        assert_eq!(first.resource_version, "7");
         // Cluster-scoped rows have no namespace.
         let node = row("ctx", "nodes", &table.rows[1]).unwrap();
         assert_eq!(node.identity.namespace, "");
