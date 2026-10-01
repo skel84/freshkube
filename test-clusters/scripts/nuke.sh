@@ -3,9 +3,9 @@
 # Nuke Script - Complete cleanup of Talos test clusters
 #
 # This script removes:
-# - All talos-pilot Docker containers
-# - All talos-pilot Docker networks
-# - All talos-pilot talosconfig contexts
+# - All freshkube Docker containers
+# - All freshkube Docker networks
+# - All freshkube talosconfig contexts
 # - The talos clusters state directory
 # - Generated output files
 #
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # Configuration
-CLUSTER_NAME="${TALOS_CLUSTER_NAME:-talos-pilot}"
+CLUSTER_NAME="${TALOS_CLUSTER_NAME:-freshkube}"
 
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,10 +47,10 @@ OPTIONS:
     --dry-run       Show what would be deleted without actually deleting
 
 WHAT GETS CLEANED:
-    - Docker containers matching 'talos-pilot*'
-    - Docker networks matching 'talos-pilot*'
-    - All talosconfig contexts matching 'talos-pilot*'
-    - ~/.talos/clusters/talos-pilot directory
+    - Docker containers matching 'freshkube*'
+    - Docker networks matching 'freshkube*'
+    - All talosconfig contexts matching 'freshkube*'
+    - ~/.talos/clusters/freshkube directory
     - test-clusters/output/ generated files
 
 EOF
@@ -59,7 +59,7 @@ EOF
 nuke_docker() {
     log_info "Cleaning up Docker containers..."
 
-    # Find and remove talos-pilot containers
+    # Find and remove freshkube containers
     local containers
     containers=$(docker ps -a --filter "name=${CLUSTER_NAME}" -q 2>/dev/null || true)
 
@@ -77,7 +77,7 @@ nuke_docker() {
 
     log_info "Cleaning up Docker networks..."
 
-    # Find and remove talos-pilot networks
+    # Find and remove freshkube networks
     local networks
     networks=$(docker network ls --filter "name=${CLUSTER_NAME}" -q 2>/dev/null || true)
 
@@ -99,7 +99,7 @@ nuke_docker() {
 nuke_talosconfig() {
     log_info "Cleaning up talosconfig contexts..."
 
-    # Get all talos-pilot contexts
+    # Get all freshkube contexts
     local contexts
     contexts=$(talosctl config contexts 2>/dev/null | grep "${CLUSTER_NAME}" | awk '{print $1}' | grep -v "^CURRENT$" || true)
 

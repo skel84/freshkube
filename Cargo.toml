@@ -5,10 +5,10 @@ resolver = "2"
 [workspace.package]
 version = "0.1.11"
 edition = "2024"
-authors = ["Ken Udovic"]
+authors = ["Ken Udovic", "Francesco Cislaghi"]
 license = "MIT"
-repository = "https://github.com/Handfish/talos-pilot"
-homepage = "https://github.com/Handfish/talos-pilot"
+repository = "https://github.com/skel84/talos-pilot"
+homepage = "https://github.com/skel84/talos-pilot"
 
 [workspace.dependencies]
 # Async runtime
@@ -30,21 +30,6 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 rustls-pemfile = "2"
 rustls-pki-types = "1"
-
-# TUI
-ratatui = "0.29"
-crossterm = "0.28"
-tachyonfx = "0.9"
-
-# Desktop GUI
-eframe = { version = "=0.32.3", default-features = false, features = [
-    "accesskit",
-    "default_fonts",
-    "glow",
-    "x11",
-    "wayland",
-] }
-rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -82,35 +67,21 @@ x509-parser = "0.16"
 
 # Internal crates
 talos-rs = { path = "crates/talos-rs" }
-talos-pilot-core = { path = "crates/talos-pilot-core" }
-talos-pilot-tui = { path = "crates/talos-pilot-tui" }
-talos-pilot-gui = { path = "crates/talos-pilot-gui" }
-talos-pilot-dioxus = { path = "crates/talos-pilot-dioxus" }
-talos-pilot-gpui = { path = "crates/talos-pilot-gpui" }
+freshkube-core = { path = "crates/freshkube-core" }
+freshkube-desktop = { path = "crates/freshkube-desktop" }
 
 [package]
-name = "talos-pilot"
+name = "freshkube"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Terminal and native desktop interfaces for managing and monitoring Talos Linux Kubernetes clusters"
-
-[features]
-default = []
-# Experimental desktop frontend; leave system WebView dependencies opt-in.
-dioxus-ui = ["dep:talos-pilot-dioxus", "talos-pilot-dioxus/desktop"]
-# Readonly GPUI Kit prototype; native dependencies remain opt-in.
-gpui-ui = ["dep:talos-pilot-gpui", "talos-pilot-gpui/desktop"]
+description = "Native desktop app for Talos Linux and Kubernetes clusters"
 
 [dependencies]
-talos-pilot-tui.workspace = true
-talos-pilot-gui.workspace = true
-talos-pilot-dioxus = { workspace = true, optional = true }
-talos-pilot-gpui = { workspace = true, optional = true }
-talos-rs.workspace = true
+freshkube-desktop.workspace = true
 clap.workspace = true
 tokio.workspace = true
 color-eyre.workspace = true

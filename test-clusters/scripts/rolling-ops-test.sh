@@ -3,7 +3,7 @@
 # Rolling Operations Test Cluster
 #
 # Creates a 4-node Talos cluster (1 control plane + 3 workers) for testing
-# rolling operations in talos-pilot.
+# rolling operations in freshkube.
 #
 # Usage:
 #   ./rolling-ops-test.sh create     Create the test cluster
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Override defaults for rolling operations testing
 export TALOS_WORKERS=3
-export TALOS_CLUSTER_NAME="${TALOS_CLUSTER_NAME:-talos-pilot}"
+export TALOS_CLUSTER_NAME="${TALOS_CLUSTER_NAME:-freshkube}"
 
 # Colors
 RED='\033[0;31m'
@@ -56,9 +56,9 @@ TESTING ROLLING OPERATIONS:
 
 After cluster creation:
 
-1. Start talos-pilot:
+1. Start freshkube:
    export KUBECONFIG=test-clusters/output/kubeconfig
-   cargo run --bin talos-pilot
+   cargo run --
 
 2. Navigate to the cluster view (nodes list)
 
@@ -78,7 +78,7 @@ After cluster creation:
 NOTES:
 - Docker-based reboots are container restarts (~5-10 seconds)
 - PDB workloads may cause drain delays (tests PDB handling)
-- Audit log written to ~/.talos-pilot/audit.log
+- Audit log written to ~/.freshkube/audit.log
 
 EOF
 }
@@ -120,8 +120,8 @@ create_cluster() {
     echo "1. Export kubeconfig:"
     echo "   export KUBECONFIG=${OUTPUT_DIR}/kubeconfig"
     echo ""
-    echo "2. Start talos-pilot:"
-    echo "   cargo run --bin talos-pilot"
+    echo "2. Start freshkube:"
+    echo "   cargo run --"
     echo ""
     echo "3. Press 'O' (capital O) in cluster view for Rolling Operations"
     echo ""
@@ -177,7 +177,7 @@ show_status() {
     fi
 
     # Show audit log tail if it exists
-    local audit_log="${HOME}/.talos-pilot/audit.log"
+    local audit_log="${HOME}/.freshkube/audit.log"
     if [[ -f "${audit_log}" ]]; then
         echo -e "${BLUE}--- Recent Audit Log ---${NC}"
         tail -10 "${audit_log}" 2>/dev/null || true

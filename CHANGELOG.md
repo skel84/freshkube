@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased: Freshkube
+
+talos-pilot becomes **Freshkube**, a native desktop app for Talos Linux and Kubernetes clusters.
+
+- The GPUI Kit desktop frontend is now the only interface. The terminal UI, the egui GUI and the Dioxus prototype were removed; upstream [talos-pilot](https://github.com/Handfish/talos-pilot) keeps the terminal UI.
+- Crates renamed: `talos-pilot-core` → `freshkube-core`, `talos-pilot-gpui` → `freshkube-desktop`; the binary is `freshkube`. The `--ui` option is gone, and `--fixture` opens the app with synthetic example data.
+- Operations audit files move from `~/.talos-pilot/` to `~/.freshkube/`; debug pages open with `FRESHKUBE_PAGE` (was `TALOS_PILOT_GPUI_PAGE`).
+- UI tests no longer need a feature flag and run with reduced motion, which fixed two dialog tests that failed deterministically.
+- CI and release builds cover macOS only until GPUI's Linux and Windows builds are verified; Homebrew publishing to the upstream tap was removed.
+
+Entries below this one are talos-pilot's history.
+
 ## 0.1.11
 
 Reliability release: node enumeration no longer depends on the Talos discovery service, and Kubernetes views always target the launched cluster.

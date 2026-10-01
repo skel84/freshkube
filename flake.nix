@@ -1,5 +1,5 @@
 {
-  description = "Terminal and native desktop interfaces for Talos cluster monitoring.";
+  description = "Freshkube: native desktop app for Talos Linux and Kubernetes clusters.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -32,7 +32,7 @@
         rustPlatform.buildRustPackage rec {
           inherit (manifest.workspace.package) version;
 
-          pname = "talos-pilot";
+          pname = "freshkube";
           src = ./.;
 
           cargoDeps = rustPlatform.importCargoLock {
@@ -51,17 +51,17 @@
           ];
 
           meta = {
-            description = "Terminal and native desktop interfaces for Talos node monitoring, log streaming, etcd health, and diagnostics";
-            homepage = "https://github.com/Handfish/talos-pilot";
+            description = "Native desktop app for Talos Linux and Kubernetes clusters: node monitoring, log streaming, etcd health, diagnostics and resource browsing";
+            homepage = "https://github.com/skel84/talos-pilot";
             license = with lib.licenses; [ mit ];
-            mainProgram = "talos-pilot";
+            mainProgram = "freshkube";
           };
         };
     in
     {
       packages = forEachPkgs (pkgs: rec {
-        talos-pilot = pkgs.callPackage package { inherit (pkgs) protobuf; };
-        default = talos-pilot;
+        freshkube = pkgs.callPackage package { inherit (pkgs) protobuf; };
+        default = freshkube;
       });
       devShells = forEachPkgs (pkgs: {
         default = pkgs.mkShell {
@@ -70,7 +70,7 @@
         };
       });
       overlays.default = final: _: {
-        talos-pilot = final.callPackage package { };
+        freshkube = final.callPackage package { };
       };
     };
 }
