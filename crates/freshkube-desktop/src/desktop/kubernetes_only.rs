@@ -383,7 +383,7 @@ impl Pilot {
                             .outline()
                             .label("Browse Kubernetes")
                             .on_click(cx.listener(|view, _, window, cx| {
-                                view.open_kind(view.resource_kind, window, cx)
+                                view.open_kind(view.resource_kind.clone(), window, cx)
                             }))
                             .into_any_element(),
                     ],

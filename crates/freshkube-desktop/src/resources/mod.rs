@@ -1,6 +1,7 @@
 //! Kubernetes resource browsing: the server-printed table for a kind, kept
 //! live by a watch and shown as virtualized rows.
 
+pub(crate) mod custom;
 pub(crate) mod detail;
 pub(crate) mod direct;
 pub(crate) mod example;
@@ -12,4 +13,4 @@ pub(crate) mod projection;
 mod screen;
 pub(crate) mod store;
 
-pub(crate) use screen::{KubeAccess, KubeSource, ResourcesScreen};
+pub(crate) use screen::{KubeAccess, KubeSource, NotServed, ResourcesScreen, title};

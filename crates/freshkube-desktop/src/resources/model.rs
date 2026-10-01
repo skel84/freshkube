@@ -190,6 +190,10 @@ pub(crate) enum ReadState {
     Refused(String),
     /// The read failed and nothing was ever loaded.
     Failed(String),
+    /// The API server doesn't serve the kind: its definition was removed, or
+    /// the version read is no longer served. Retrying won't help until that
+    /// changes.
+    Missing(String),
     /// Rows from an earlier read are shown, but the watch has failed and is
     /// retrying, so they may be out of date.
     Stale(String),

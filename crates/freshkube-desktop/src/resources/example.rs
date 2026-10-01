@@ -3,20 +3,92 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::resources::{
-    ObjectDocument, ObjectEvent, SecretValue, builtin, object_from_yaml,
+    ApiGroup, Failure, FailureKind, GroupKinds, ObjectDocument, ObjectEvent, ResourceKind,
+    SecretValue, builtin, object_from_yaml,
 };
 
 use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
-pub(crate) const KINDS: [&str; 6] = [
+pub(crate) const KINDS: [&str; 7] = [
     "pods",
     "deployments.apps",
     "services",
     "nodes",
     "namespaces",
     "secrets",
+    "certificates.cert-manager.io",
+];
+
+/// The example cluster's custom API groups and their served versions,
+/// preferred first. Some fail or offer nothing listable, as real ones can.
+const CUSTOM_GROUPS: [(&str, &[&str]); 6] = [
+    ("cert-manager.io", &["v1"]),
+    ("cilium.io", &["v2", "v2alpha1"]),
+    ("external.metrics.k8s.io", &["v1beta1"]),
+    ("metrics.k8s.io", &["v1beta1"]),
+    ("monitoring.coreos.com", &["v1", "v1alpha1"]),
+    ("velero.io", &["v1"]),
+];
+
+/// (group, version, kind, plural, namespaced) of the custom kinds that
+/// discovery finds, each at the version that serves it.
+const CUSTOM_KINDS: [(&str, &str, &str, &str, bool); 9] = [
+    ("cert-manager.io", "v1", "Certificate", "certificates", true),
+    (
+        "cert-manager.io",
+        "v1",
+        "CertificateRequest",
+        "certificaterequests",
+        true,
+    ),
+    (
+        "cert-manager.io",
+        "v1",
+        "ClusterIssuer",
+        "clusterissuers",
+        false,
+    ),
+    ("cert-manager.io", "v1", "Issuer", "issuers", true),
+    (
+        "cilium.io",
+        "v2alpha1",
+        "CiliumLoadBalancerIPPool",
+        "ciliumloadbalancerippools",
+        false,
+    ),
+    (
+        "cilium.io",
+        "v2",
+        "CiliumNetworkPolicy",
+        "ciliumnetworkpolicies",
+        true,
+    ),
+    ("cilium.io", "v2", "CiliumNode", "ciliumnodes", false),
+    (
+        "monitoring.coreos.com",
+        "v1",
+        "PrometheusRule",
+        "prometheusrules",
+        true,
+    ),
+    (
+        "monitoring.coreos.com",
+        "v1",
+        "ServiceMonitor",
+        "servicemonitors",
+        true,
+    ),
+];
+
+/// (namespace, name, issuer, ready).
+const CERTIFICATES: [(&str, &str, &str, bool); 5] = [
+    ("kube-system", "webhook-ca", "selfsigned", true),
+    ("monitoring", "grafana-tls", "letsencrypt", true),
+    ("payments", "api-tls", "internal-ca", false),
+    ("payments", "ledger-tls", "internal-ca", true),
+    ("web", "gateway-tls", "letsencrypt", true),
 ];
 
 /// Every example object has this version; none changes by itself.
@@ -59,6 +131,70 @@ pub(crate) fn namespaces() -> Vec<String> {
 
 /// A kind's columns and rows as the server would print them, in one
 /// namespace or all. `None` when example data doesn't include the kind.
+/// The custom API groups discovery lists, by name.
+pub(crate) fn custom_groups() -> Vec<ApiGroup> {
+    CUSTOM_GROUPS
+        .iter()
+        .map(|(name, versions)| ApiGroup {
+            name: (*name).into(),
+            versions: versions.iter().map(|version| (*version).into()).collect(),
+        })
+        .collect()
+}
+
+/// What discovering one example group finds, failures included.
+pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
+    let unavailable = "the server is currently unable to handle the request";
+    match group {
+        "velero.io" => Err(Failure::new(
+            FailureKind::Forbidden,
+            "forbidden: User \"example-viewer\" cannot get path \"/apis/velero.io/v1\"",
+        )),
+        "external.metrics.k8s.io" => Err(Failure::new(FailureKind::Other, unavailable)),
+        "metrics.k8s.io" => Ok(GroupKinds {
+            unlistable: vec!["NodeMetrics".into(), "PodMetrics".into()],
+            ..GroupKinds::default()
+        }),
+        _ if !CUSTOM_GROUPS.iter().any(|(name, _)| *name == group) => Err(Failure::new(
+            FailureKind::NotFound,
+            "the server could not find the requested resource",
+        )),
+        _ => Ok(GroupKinds {
+            kinds: CUSTOM_KINDS
+                .iter()
+                .filter(|(name, ..)| *name == group)
+                .map(|(group, version, kind, plural, namespaced)| {
+                    ResourceKind::new(group, version, kind, plural, *namespaced)
+                })
+                .collect(),
+            unlistable: Vec::new(),
+            failures: if group == "monitoring.coreos.com" {
+                vec![(
+                    "v1alpha1".into(),
+                    Failure::new(
+                        FailureKind::Timeout,
+                        "monitoring.coreos.com/v1alpha1 timed out",
+                    ),
+                )]
+            } else {
+                Vec::new()
+            },
+        }),
+    }
+}
+
+/// An example kind by key: built in, or one discovery finds.
+pub(crate) fn kind(key: &str) -> Option<ResourceKind> {
+    builtin(key).or_else(|| {
+        CUSTOM_KINDS
+            .iter()
+            .map(|(group, version, kind, plural, namespaced)| {
+                ResourceKind::new(group, version, kind, plural, *namespaced)
+            })
+            .find(|kind| kind.key() == key)
+    })
+}
+
 pub(crate) fn read(
     context: &str,
     key: &str,
@@ -96,6 +232,7 @@ pub(crate) fn read(
         "services" => (service_columns(), services(&connection, now)),
         "nodes" => (node_columns(), nodes(&connection, context, now)),
         "secrets" => (secret_columns(), secrets(&connection, now)),
+        "certificates.cert-manager.io" => (certificate_columns(), certificates(&connection, now)),
         "namespaces" => (
             namespace_columns(),
             NAMESPACES
@@ -113,7 +250,7 @@ pub(crate) fn read(
         _ => return None,
     };
     // Like the server, a namespace narrows only namespaced kinds.
-    let namespaced = builtin(key).is_some_and(|kind| kind.namespaced);
+    let namespaced = kind(key).is_some_and(|kind| kind.namespaced);
     let rows = match namespace.filter(|_| namespaced) {
         Some(namespace) => rows
             .into_iter()
@@ -439,6 +576,84 @@ fn secrets(connection: &str, now: i64) -> Vec<ResourceRow> {
         .collect()
 }
 
+fn certificate_columns() -> Vec<ResourceColumn> {
+    vec![
+        ResourceColumn::new("Name", ColumnKind::Text, false),
+        ResourceColumn::new("Ready", ColumnKind::Text, false),
+        ResourceColumn::new("Secret", ColumnKind::Text, false),
+        ResourceColumn::new("Issuer", ColumnKind::Text, true),
+        ResourceColumn::new("Status", ColumnKind::Text, true),
+        ResourceColumn::new("Age", ColumnKind::Age, false),
+    ]
+}
+
+fn certificate_status(ready: bool) -> &'static str {
+    if ready {
+        "Certificate is up to date and has not expired"
+    } else {
+        "Issuing certificate as Secret does not exist"
+    }
+}
+
+fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
+    CERTIFICATES
+        .iter()
+        .enumerate()
+        .map(|(ix, (namespace, name, issuer, ready))| ResourceRow {
+            identity: identity(
+                connection,
+                "certificates.cert-manager.io",
+                namespace,
+                name,
+                ix,
+            ),
+            cells: vec![
+                (*name).into(),
+                if *ready { "True" } else { "False" }.into(),
+                (*name).into(),
+                (*issuer).into(),
+                certificate_status(*ready).into(),
+                String::new(),
+            ],
+            created: Some(now - 90 * 86_400 + ix as i64 * 86_400),
+            terminating: false,
+            resource_version: EXAMPLE_VERSION.into(),
+        })
+        .collect()
+}
+
+fn certificate_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
+    let (namespace, name, issuer, ready) = CERTIFICATES[ix];
+    let mut yaml = metadata(
+        "Certificate",
+        "cert-manager.io/v1",
+        row,
+        "  generation: 1\n",
+    );
+    yaml.push_str(&format!(
+        "spec:\n  secretName: {name}\n  dnsNames:\n  - {name}.{namespace}.example.internal\n  issuerRef:\n    group: cert-manager.io\n    kind: ClusterIssuer\n    name: {issuer}\n  privateKey:\n    algorithm: ECDSA\n    size: 256\nstatus:\n  conditions:\n  - type: Ready\n    status: '{}'\n    reason: {}\n    message: {}\n    lastTransitionTime: '{}'\n    observedGeneration: 1\n",
+        if ready { "True" } else { "False" },
+        if ready { "Ready" } else { "DoesNotExist" },
+        certificate_status(ready),
+        timestamp(created + 60),
+    ));
+    if ready {
+        yaml.push_str(&format!(
+            "  notBefore: '{}'\n  notAfter: '{}'\n  renewalTime: '{}'\n  revision: 1\n",
+            timestamp(created + 60),
+            timestamp(created + 60 + 90 * 86_400),
+            timestamp(created + 60 + 60 * 86_400),
+        ));
+    } else {
+        yaml.push_str(&format!(
+            "  - type: Issuing\n    status: 'True'\n    reason: DoesNotExist\n    message: {}\n    lastTransitionTime: '{}'\n    observedGeneration: 1\n",
+            certificate_status(ready),
+            timestamp(created + 60),
+        ));
+    }
+    yaml
+}
+
 /// The example row an identity names, with the position its UID encodes.
 fn find(identity: &ResourceIdentity, now: i64) -> Option<(ResourceRow, usize)> {
     let context = identity.connection.strip_prefix("example:")?;
@@ -525,9 +740,10 @@ pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDo
             }
             yaml
         }
+        "certificates.cert-manager.io" => certificate_yaml(&row, ix, created),
         _ => return None,
     };
-    object_from_yaml(&builtin(&identity.resource)?, &yaml).ok()
+    object_from_yaml(&kind(&identity.resource)?, &yaml).ok()
 }
 
 fn pod_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
@@ -850,6 +1066,44 @@ pub(crate) fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> 
             (now - 3_000, now - 3_000),
             "node-controller".into(),
         )],
+        "certificates.cert-manager.io" => {
+            let (_, name, ..) = CERTIFICATES[ix];
+            let issued = if row.cells[1] == "True" {
+                (
+                    "Issuing",
+                    "The certificate has been successfully issued".to_owned(),
+                )
+            } else {
+                (
+                    "Requested",
+                    format!("Created new CertificateRequest resource \"{name}-1\""),
+                )
+            };
+            [
+                ("Issuing", certificate_status(false).to_owned()),
+                (
+                    "Generated",
+                    "Stored new private key in temporary Secret resource".to_owned(),
+                ),
+                issued,
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(n, (reason, message))| {
+                let at = created + 60 + n as i64;
+                event(
+                    identity,
+                    n,
+                    false,
+                    reason,
+                    message,
+                    1,
+                    (at, at),
+                    "cert-manager-certificates-issuing".into(),
+                )
+            })
+            .collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -984,6 +1238,48 @@ mod tests {
             Some(SecretValue::Binary(6))
         );
         assert_eq!(secret_value(identity, "missing", TEST_NOW), None);
+    }
+
+    #[test]
+    fn example_discovery_covers_every_group_state() {
+        let groups = custom_groups();
+        assert_eq!(groups.len(), CUSTOM_GROUPS.len());
+        assert_eq!(groups[1].versions, ["v2", "v2alpha1"]);
+        let certs = group_kinds("cert-manager.io").unwrap();
+        assert_eq!(certs.kinds.len(), 4);
+        assert!(certs.failures.is_empty());
+        assert_eq!(
+            kind("certificates.cert-manager.io"),
+            Some(certs.kinds[0].clone())
+        );
+        assert_eq!(kind("pods"), builtin("pods"));
+        assert_eq!(kind("widgets.example.com"), None);
+        assert_eq!(
+            group_kinds("monitoring.coreos.com").unwrap().failures.len(),
+            1
+        );
+        assert!(group_kinds("metrics.k8s.io").unwrap().kinds.is_empty());
+        assert_eq!(
+            group_kinds("velero.io").unwrap_err().kind,
+            FailureKind::Forbidden
+        );
+        assert_eq!(
+            group_kinds("external.metrics.k8s.io").unwrap_err().kind,
+            FailureKind::Other
+        );
+        assert_eq!(
+            group_kinds("gone.example.com").unwrap_err().kind,
+            FailureKind::NotFound
+        );
+        // A namespace narrows a namespaced custom kind too.
+        let (_, payments) = read(
+            "homelab",
+            "certificates.cert-manager.io",
+            Some("payments"),
+            TEST_NOW,
+        )
+        .unwrap();
+        assert_eq!(payments.len(), 2);
     }
 
     #[test]

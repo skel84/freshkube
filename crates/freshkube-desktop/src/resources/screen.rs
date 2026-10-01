@@ -278,6 +278,18 @@ pub(crate) fn row_id(identity: &ResourceIdentity) -> ElementId {
     .into()
 }
 
+/// A kind's name for titles: the navigation's label, or a custom kind's
+/// own name.
+pub(crate) fn title(kind: &ResourceKind) -> SharedString {
+    navigation::label(&kind.key())
+        .map(SharedString::from)
+        .unwrap_or_else(|| kind.kind.clone().into())
+}
+
+/// The kind shown isn't served (404), so the sidebar's discovery of its
+/// group may be out of date.
+pub(crate) struct NotServed(pub(crate) ResourceKind);
+
 pub(crate) struct ResourcesScreen {
     runtime: Handle,
     source: Option<KubeSource>,
@@ -438,10 +450,13 @@ impl ResourcesScreen {
         self.restart(window, cx);
     }
 
-    pub(crate) fn set_kind(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(kind) = builtin(key) else {
-            return;
-        };
+    /// Shows another kind; the same kind at another version reads again.
+    pub(crate) fn set_kind(
+        &mut self,
+        kind: ResourceKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if kind == self.kind {
             return;
         }
@@ -510,9 +525,15 @@ impl ResourcesScreen {
     }
 
     fn title(&self) -> SharedString {
+        title(&self.kind)
+    }
+
+    /// The kind as a plural noun inside a sentence: the navigation's label,
+    /// or a custom kind's resource name ("certificates").
+    fn noun(&self) -> String {
         navigation::label(&self.kind.key())
-            .map(SharedString::from)
-            .unwrap_or_else(|| self.kind.kind.clone().into())
+            .map(str::to_lowercase)
+            .unwrap_or_else(|| self.kind.plural.clone())
     }
 
     /// Starts a new read session: forgets the rows, and when visible lists
@@ -575,8 +596,14 @@ impl ResourcesScreen {
             .events
             .iter()
             .any(|event| matches!(event, ResourceEvent::Reset { .. }));
+        let served = !matches!(self.store.read_state(), ReadState::Missing(_));
         if !self.store.apply(batch) {
             return;
+        }
+        if served && let ReadState::Missing(_) = self.store.read_state() {
+            // Nothing of the kind can be shown any more.
+            self.close_detail(cx);
+            cx.emit(NotServed(self.kind.clone()));
         }
         self.updated = Some(SystemTime::now());
         self.now = live::now();
@@ -838,6 +865,7 @@ impl ResourcesScreen {
             ReadState::Stale(_) => "reconnecting",
             ReadState::Refused(_) => "not permitted",
             ReadState::Failed(_) => "failed",
+            ReadState::Missing(_) => "not served",
         };
         let (total, shown) = (self.store.len(), self.projection.len());
         let scope = h_flex()
@@ -1028,7 +1056,7 @@ impl ResourcesScreen {
     fn table(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let count = self.projection.len();
-        let title = self.title().to_lowercase();
+        let title = self.noun();
         let empty = (count == 0).then(|| {
             if !self.store.is_empty() {
                 format!("No {title} match this filter.")
@@ -1163,10 +1191,26 @@ impl ResourcesScreen {
                     format!(
                         "The identity of {} may not list {} {scope}. That says nothing about whether any exist.",
                         source.context,
-                        title.to_lowercase()
+                        self.noun()
                     ),
                     Some(reason.clone()),
                     Vec::new(),
+                    cx,
+                ),
+            ),
+            ReadState::Missing(reason) => state(
+                "resource-not-served",
+                ui::empty_state(
+                    IconName::SearchX,
+                    format!("{title} isn't served here"),
+                    format!(
+                        "The API server of {} doesn't serve {} at {}. Its definition may have been removed, or that version is no longer served.",
+                        source.context,
+                        self.noun(),
+                        self.kind.api_version()
+                    ),
+                    Some(reason.clone()),
+                    vec![self.retry("resource-missing-retry", cx).into_any_element()],
                     cx,
                 ),
             ),
@@ -1189,9 +1233,10 @@ impl ResourcesScreen {
                 if self.store.columns().is_empty()
                     && matches!(source.access, KubeAccess::Example) =>
             {
-                let kinds: Vec<&str> = example::KINDS
+                let kinds: Vec<SharedString> = example::KINDS
                     .iter()
-                    .filter_map(|key| navigation::label(key))
+                    .filter_map(|key| example::kind(key))
+                    .map(|kind| self::title(&kind))
                     .collect();
                 state(
                     "resource-not-in-example",
@@ -1227,10 +1272,7 @@ impl ResourcesScreen {
                 .role(Role::Status)
                 .child(ui::warning_banner(
                     Some("The watch was interrupted; reconnecting.".into()),
-                    format!(
-                        "Showing {} as last seen{seen}. {reason}",
-                        self.title().to_lowercase()
-                    ),
+                    format!("Showing {} as last seen{seen}. {reason}", self.noun()),
                     Some(
                         self.retry("resource-stale-retry", cx)
                             .small()
@@ -1295,6 +1337,8 @@ async fn watch(
         forward
     );
 }
+
+impl EventEmitter<NotServed> for ResourcesScreen {}
 
 impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1363,10 +1407,20 @@ mod ui_tests {
     use tokio::runtime::Runtime;
 
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-    use super::{KEYBOARD_PAUSE, KubeAccess, KubeSource, ResourcesScreen, row_id};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use freshkube_core::resources::ResourceKind;
+
+    use super::{KEYBOARD_PAUSE, KubeAccess, KubeSource, NotServed, ResourcesScreen, row_id};
     use crate::resources::example;
     use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
     use crate::resources::store::{ResourceBatch, ResourceEvent};
+
+    /// A built-in or example custom kind by its kubectl key.
+    fn kind(key: &str) -> ResourceKind {
+        example::kind(key).unwrap()
+    }
 
     fn source(context: &str) -> KubeSource {
         KubeSource {
@@ -1575,7 +1629,7 @@ mod ui_tests {
             );
 
             // Cluster-scoped kinds have no namespace picker and list all.
-            screen.update(cx, |screen, cx| screen.set_kind("nodes", window, cx));
+            screen.update(cx, |screen, cx| screen.set_kind(kind("nodes"), window, cx));
             window.render_frame(cx);
             assert!(window.try_find("resource-namespace").is_none());
             assert!(!screen.read(cx).store.is_empty());
@@ -1583,7 +1637,7 @@ mod ui_tests {
 
             // Back on a namespaced kind, the namespace still applies.
             screen.update(cx, |screen, cx| {
-                screen.set_kind("deployments.apps", window, cx)
+                screen.set_kind(kind("deployments.apps"), window, cx)
             });
             window.render_frame(cx);
             assert!(window.find("resource-namespace").visible());
@@ -1654,7 +1708,9 @@ mod ui_tests {
             assert_eq!(screen.read(cx).store.len(), 22);
 
             // Kinds the example lacks say so rather than listing nothing.
-            screen.update(cx, |screen, cx| screen.set_kind("configmaps", window, cx));
+            screen.update(cx, |screen, cx| {
+                screen.set_kind(kind("configmaps"), window, cx)
+            });
             window.render_frame(cx);
             assert!(window.find("resource-not-in-example").visible());
 
@@ -1692,6 +1748,64 @@ mod ui_tests {
             window.click("resource-retry", cx);
             window.render_frame(cx);
             assert!(window.find("resource-not-in-example").visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_kind_no_longer_served_says_so_and_closes_its_details(cx: &mut TestAppContext) {
+        let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+        let missing = Rc::new(RefCell::new(Vec::new()));
+        let sink = missing.clone();
+        cx.update(|cx| {
+            cx.subscribe(&screen, move |_, NotServed(kind), _| {
+                sink.borrow_mut().push(kind.key())
+            })
+            .detach()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            // A custom kind lists through the same table.
+            screen.update(cx, |screen, cx| {
+                screen.set_kind(kind("certificates.cert-manager.io"), window, cx)
+            });
+            window.render_frame(cx);
+            assert_eq!(screen.read(cx).title(), "Certificate");
+            assert_eq!(screen.read(cx).noun(), "certificates");
+            assert_eq!(screen.read(cx).store.len(), 5);
+            let first = identity_at(&screen, 0, cx);
+            window.click(row_id(&first), cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), Some(first));
+        })
+        .unwrap();
+
+        // The definition was removed while the page watched it.
+        let gone = || {
+            vec![ResourceEvent::Read(ReadState::Missing(
+                "the server could not find the requested resource".into(),
+            ))]
+        };
+        cx.update_window(handle, |_, window, cx| {
+            deliver(&screen, gone(), cx);
+            window.render_frame(cx);
+            assert!(window.find("resource-not-served").visible());
+            assert!(window.try_find("resource-list").is_none());
+            assert!(window.try_find("resource-detail").is_none());
+            assert_eq!(shown(&screen, cx), None);
+        })
+        .unwrap();
+        // Events reach subscribers once the update is done.
+        assert_eq!(*missing.borrow(), ["certificates.cert-manager.io"]);
+        // Saying it again isn't news.
+        cx.update(|cx| deliver(&screen, gone(), cx));
+        assert_eq!(missing.borrow().len(), 1);
+
+        cx.update_window(handle, |_, window, cx| {
+            // Retry reads again; here the example still serves it.
+            window.click("resource-missing-retry", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("resource-not-served").is_none());
+            assert_eq!(screen.read(cx).store.len(), 5);
         })
         .unwrap();
     }
@@ -1847,7 +1961,7 @@ mod ui_tests {
             };
             open_first(window, cx);
             screen.update(cx, |screen, cx| {
-                screen.set_kind("deployments.apps", window, cx)
+                screen.set_kind(kind("deployments.apps"), window, cx)
             });
             window.render_frame(cx);
             assert!(window.try_find("resource-detail").is_none());

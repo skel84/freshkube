@@ -14,7 +14,10 @@ use crate::{
     maintenance::MaintenanceView,
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
-    resources::{self, KubeAccess, KubeSource, ResourcesScreen, navigation},
+    resources::{
+        self, KubeAccess, KubeSource, NotServed, ResourcesScreen, custom::CustomResources,
+        navigation,
+    },
     screens::{
         DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
         OperationsScreen, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
@@ -27,6 +30,7 @@ use crate::{
 use freshkube_core::cluster_overview::{
     ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
 };
+use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{
     ActiveTheme, Theme, ThemeMode, TitleBar,
     input::{InputEvent, InputState},
@@ -92,12 +96,17 @@ pub(crate) enum Page {
 
 /// A Kubernetes sidebar row to scroll into view; scrolling is minimal, so a
 /// row already in view stays put.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum SidebarReveal {
-    /// A kind's row, or its group's header while the group is closed.
-    Kind(&'static str),
+    /// A kind's row by kubectl key, or its group's header while the group
+    /// is closed.
+    Kind(String),
     /// The last kind of a group just opened, so its kinds show.
     Group(&'static str),
+    /// The last row of Custom Resources just opened, once discovered.
+    Custom,
+    /// The last row of a custom API group just opened, once discovered.
+    ApiGroup(String),
 }
 
 impl Page {
@@ -375,8 +384,10 @@ pub(crate) struct Pilot {
     services_page: Entity<PageHost>,
     screens: Vec<(Page, ScreenHandle)>,
     resources: Entity<ResourcesScreen>,
-    /// The Kubernetes kind the Resources page shows, by kubectl key.
-    resource_kind: &'static str,
+    /// The Kubernetes kind the Resources page shows.
+    resource_kind: ResourceKind,
+    /// The sidebar's Custom Resources, discovered when opened.
+    custom: Entity<CustomResources>,
     /// Kubernetes navigation groups shown open in the sidebar, by slug.
     kubernetes_groups: BTreeSet<&'static str>,
     sidebar_scroll: ScrollHandle,
@@ -529,6 +540,17 @@ impl Pilot {
             })
             .collect();
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        let custom = cx.new(|_| CustomResources::new(runtime.clone()));
+        subscriptions.extend([
+            cx.observe(&custom, |_, _, cx| cx.notify()),
+            // A kind that stopped being served may have taken its group's
+            // other kinds with it; discover the group again.
+            cx.subscribe(&resources, |view, _, NotServed(kind), cx| {
+                let group = kind.group.clone();
+                view.custom
+                    .update(cx, |custom, cx| custom.not_served(&group, cx));
+            }),
+        ]);
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
         subscriptions.push(cx.observe_global::<Theme>(|view, cx| {
@@ -600,7 +622,8 @@ impl Pilot {
             services_page,
             screens,
             resources,
-            resource_kind: navigation::DEFAULT_KIND,
+            resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
+            custom,
             kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
             sidebar_scroll: ScrollHandle::new(),
             sidebar_reveal: None,
@@ -662,12 +685,20 @@ impl Pilot {
         {
             view.navigate(page, window, cx);
         }
+        // Built-in kinds, and with example data its custom kinds too.
         #[cfg(debug_assertions)]
-        if let Some(key) = std::env::var("FRESHKUBE_KIND")
-            .ok()
-            .and_then(|key| navigation::known(&key))
+        if let Some(kind) =
+            std::env::var("FRESHKUBE_KIND")
+                .ok()
+                .and_then(|key| match navigation::known(&key) {
+                    Some(key) => builtin(key),
+                    None => view
+                        .fixture
+                        .then(|| resources::example::kind(&key))
+                        .flatten(),
+                })
         {
-            view.open_kind(key, window, cx);
+            view.open_kind(kind, window, cx);
         }
         view
     }
@@ -925,6 +956,8 @@ impl Pilot {
             screen.activate(window, cx);
         }
         let source = self.kube_source();
+        self.custom
+            .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
@@ -1263,7 +1296,7 @@ impl Pilot {
         self.page = page;
         // However the page was reached, its kind shows in the sidebar.
         if page == Page::Resources {
-            self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind));
+            self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind.key()));
         }
         self.logs
             .update(cx, |logs, cx| logs.set_visible(page == Page::Logs, cx));
@@ -1280,15 +1313,35 @@ impl Pilot {
         cx.notify();
     }
 
-    /// Shows one Kubernetes kind, opening its sidebar group.
-    fn open_kind(&mut self, key: &'static str, window: &mut Window, cx: &mut Context<Self>) {
-        self.resource_kind = key;
-        if let Some(group) = navigation::group_of(key) {
-            self.kubernetes_groups.insert(group);
+    /// Shows one Kubernetes kind, opening its sidebar group: a built-in
+    /// one, or Custom Resources and the kind's API group.
+    fn open_kind(&mut self, kind: ResourceKind, window: &mut Window, cx: &mut Context<Self>) {
+        match navigation::group_of(&kind.key()) {
+            Some(group) => {
+                self.kubernetes_groups.insert(group);
+            }
+            None => self
+                .custom
+                .update(cx, |custom, cx| custom.reveal(&kind, cx)),
         }
+        self.resource_kind = kind.clone();
         self.resources
-            .update(cx, |resources, cx| resources.set_kind(key, window, cx));
+            .update(cx, |resources, cx| resources.set_kind(kind, window, cx));
         self.navigate_from_keyboard(Page::Resources, window, cx);
+    }
+
+    /// Shows a kind of the built-in navigation by its kubectl key.
+    fn open_builtin(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(kind) = builtin(key) {
+            self.open_kind(kind, window, cx);
+        }
+    }
+
+    /// Shows a custom kind the sidebar listed, by its kubectl key.
+    fn open_custom(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(kind) = self.custom.read(cx).kind(key) {
+            self.open_kind(kind, window, cx);
+        }
     }
 
     fn toggle_kubernetes_group(&mut self, slug: &'static str, cx: &mut Context<Self>) {
@@ -1300,11 +1353,28 @@ impl Pilot {
         cx.notify();
     }
 
+    fn toggle_custom_resources(&mut self, cx: &mut Context<Self>) {
+        self.custom.update(cx, |custom, cx| custom.toggle(cx));
+        if self.custom.read(cx).is_open() {
+            self.sidebar_reveal = Some(SidebarReveal::Custom);
+        }
+        cx.notify();
+    }
+
+    fn toggle_api_group(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.custom
+            .update(cx, |custom, cx| custom.toggle_group(name, cx));
+        if self.custom.read(cx).is_group_open(name) {
+            self.sidebar_reveal = Some(SidebarReveal::ApiGroup(name.to_owned()));
+        }
+        cx.notify();
+    }
+
     /// The title bar's name for the page shown.
-    fn page_title(&self) -> &'static str {
+    fn page_title(&self) -> SharedString {
         match self.page {
-            Page::Resources => navigation::label(self.resource_kind).unwrap_or("Resources"),
-            page => page.title(),
+            Page::Resources => resources::title(&self.resource_kind),
+            page => page.title().into(),
         }
     }
 

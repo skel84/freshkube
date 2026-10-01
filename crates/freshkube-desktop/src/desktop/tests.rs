@@ -1,4 +1,4 @@
-use super::{GpuiOptions, NodeView, Page, Pilot};
+use super::{GpuiOptions, NodeView, Page, Pilot, SidebarReveal};
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
@@ -729,7 +729,7 @@ fn opening_a_kind_scrolls_its_group_into_the_short_sidebar(cx: &mut TestAppConte
         let nav = format!("nav-k8s-{key}");
         assert!(window.try_find(SharedString::from(nav.clone())).is_none());
         // As the keyboard or FRESHKUBE_KIND would open it.
-        view.update(cx, |view, cx| view.open_kind(key, window, cx));
+        view.update(cx, |view, cx| view.open_builtin(key, window, cx));
         window.render_frame(cx);
         window.render_frame(cx);
         assert!(shown_in_sidebar(window, &nav));
@@ -740,7 +740,7 @@ fn opening_a_kind_scrolls_its_group_into_the_short_sidebar(cx: &mut TestAppConte
         );
 
         // Opening a group from its header shows its kinds too.
-        view.update(cx, |view, cx| view.open_kind("pods", window, cx));
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
         window.render_frame(cx);
         window.render_frame(cx);
         assert!(shown_in_sidebar(window, "nav-k8s-pods"));
@@ -780,7 +780,7 @@ fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestApp
         window.click("nav-k8s-services", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);
-        assert_eq!(view.read(cx).resource_kind, "services");
+        assert_eq!(view.read(cx).resource_kind.key(), "services");
         assert_eq!(window.find("nav-k8s-services").selected(), Some(true));
         assert_eq!(window.find("nav-k8s-group-workloads").selected(), None);
         assert!(window.find("resource-list").visible());
@@ -804,6 +804,201 @@ fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestApp
         assert_eq!(view.read(cx).page, Page::Resources);
         assert_eq!(window.find("page-title").label(), Some("Services"));
         assert!(window.find("resource-list").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestAppContext) {
+    // The short window: opening the section or a group scrolls its rows in.
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("nav-k8s-group-custom").expanded(), Some(false));
+        assert!(view.read(cx).custom.read(cx).groups().is_none());
+
+        reveal(window, cx, "nav-k8s-group-custom");
+        window.click("nav-k8s-group-custom", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("nav-k8s-group-custom").expanded(), Some(true));
+        assert!(shown_in_sidebar(window, "nav-k8s-api-velero.io"));
+        let group = "nav-k8s-api-cert-manager.io";
+        assert_eq!(window.find(group).expanded(), Some(false));
+        assert!(
+            window
+                .try_find("nav-k8s-api-cert-manager.io-status")
+                .is_none()
+        );
+
+        reveal(window, cx, group);
+        window.click(group, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(group).expanded(), Some(true));
+        assert!(shown_in_sidebar(window, "nav-k8s-issuers.cert-manager.io"));
+
+        let certificates = "nav-k8s-certificates.cert-manager.io";
+        reveal(window, cx, certificates);
+        window.click(certificates, cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(
+            view.read(cx).resource_kind.key(),
+            "certificates.cert-manager.io"
+        );
+        assert_eq!(window.find(certificates).selected(), Some(true));
+        assert_eq!(window.find("page-title").label(), Some("Certificate"));
+        assert!(window.find("resource-list").visible());
+
+        // Collapsing the section keeps the page. Opening a kind again, as
+        // the keyboard or FRESHKUBE_KIND would, opens the section and group.
+        reveal(window, cx, "nav-k8s-group-custom");
+        window.click("nav-k8s-group-custom", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(certificates).is_none());
+        assert_eq!(view.read(cx).page, Page::Resources);
+        let kind = crate::resources::example::kind("certificaterequests.cert-manager.io").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let requests = "nav-k8s-certificaterequests.cert-manager.io";
+        assert!(shown_in_sidebar(window, requests));
+        assert_eq!(window.find(requests).selected(), Some(true));
+        assert_eq!(window.find(certificates).selected(), Some(false));
+        assert_eq!(
+            window.find("page-title").label(),
+            Some("CertificateRequest")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn custom_groups_say_why_they_show_no_kinds(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 1000.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        view.update(cx, |view, cx| {
+            view.toggle_custom_resources(cx);
+            for group in [
+                "external.metrics.k8s.io",
+                "metrics.k8s.io",
+                "monitoring.coreos.com",
+                "velero.io",
+            ] {
+                view.toggle_api_group(group, cx);
+            }
+        });
+        window.render_frame(cx);
+        for (id, label, retry) in [
+            ("nav-k8s-api-velero.io-status", "Not permitted", true),
+            (
+                "nav-k8s-api-external.metrics.k8s.io-status",
+                "Couldn't discover",
+                true,
+            ),
+            (
+                "nav-k8s-api-metrics.k8s.io-status",
+                "Nothing to list",
+                false,
+            ),
+            // A version that failed while another was read.
+            (
+                "nav-k8s-api-monitoring.coreos.com-partial",
+                "v1alpha1 unreadable",
+                true,
+            ),
+        ] {
+            reveal(window, cx, id);
+            let row = window.find(SharedString::from(id));
+            assert_eq!(row.role(), Some(gpui_kit::Role::Status), "{id}");
+            assert_eq!(row.label(), Some(label), "{id}");
+            assert_eq!(
+                window
+                    .try_find(SharedString::from(format!("{id}-retry")))
+                    .is_some(),
+                retry,
+                "{id}"
+            );
+        }
+        assert!(
+            window
+                .try_find("nav-k8s-servicemonitors.monitoring.coreos.com")
+                .is_some()
+        );
+        assert!(
+            window
+                .try_find("nav-k8s-api-cert-manager.io-status")
+                .is_none()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    let certificates = "nav-k8s-certificates.cert-manager.io";
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let kind = crate::resources::example::kind("certificates.cert-manager.io").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(shown_in_sidebar(window, certificates));
+        // Another connection discovers again.
+        window.press("alt-down", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging-eu"));
+        // The section and the group stay open, with the kinds found again.
+        assert_eq!(window.find("nav-k8s-group-custom").expanded(), Some(true));
+        assert_eq!(
+            window.find("nav-k8s-api-cert-manager.io").expanded(),
+            Some(true)
+        );
+        assert!(window.try_find(certificates).is_some());
+
+        // While the groups are read, the section says so and the reveal
+        // waits for them, unless the sidebar is scrolled by hand.
+        let reopen = |view: &mut Pilot, cx: &mut gpui_kit::Context<Pilot>| {
+            view.toggle_custom_resources(cx);
+            view.toggle_custom_resources(cx);
+        };
+        view.update(cx, |view, cx| {
+            view.custom
+                .update(cx, |custom, _| custom.hold_reading(None));
+            reopen(view, cx);
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("nav-k8s-custom-status").label(),
+            Some("Discovering…")
+        );
+        assert_eq!(view.read(cx).sidebar_reveal, Some(SidebarReveal::Custom));
+        window.scroll(
+            "sidebar-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(40.))),
+            cx,
+        );
+        assert_eq!(view.read(cx).sidebar_reveal, None);
+
+        view.update(cx, reopen);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).sidebar_reveal, Some(SidebarReveal::Custom));
+        view.update(cx, |view, cx| {
+            view.custom.update(cx, |custom, cx| custom.retry(cx))
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).sidebar_reveal, None);
+        assert!(shown_in_sidebar(window, "nav-k8s-api-velero.io"));
+        assert!(window.try_find(certificates).is_some());
     })
     .unwrap();
 }

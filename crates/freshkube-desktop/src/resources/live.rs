@@ -75,8 +75,9 @@ pub(crate) fn now() -> i64 {
 }
 
 /// One watch batch as store events. A reset also marks the read loaded; a
-/// refusal (403) is told apart from other failures, which the store shows as
-/// stale while rows remain.
+/// refusal (403) and a collection the server doesn't serve (404) are told
+/// apart from other failures, which the store shows as stale while rows
+/// remain.
 pub(crate) fn convert(
     connection: &str,
     resource: &str,
@@ -106,10 +107,10 @@ pub(crate) fn convert(
                 }
             }
             WatchEvent::Failed { failure, .. } => {
-                let state = if failure.kind == FailureKind::Forbidden {
-                    ReadState::Refused(failure.message)
-                } else {
-                    ReadState::Failed(failure.to_string())
+                let state = match failure.kind {
+                    FailureKind::Forbidden => ReadState::Refused(failure.message),
+                    FailureKind::NotFound => ReadState::Missing(failure.message),
+                    _ => ReadState::Failed(failure.to_string()),
                 };
                 converted.push(ResourceEvent::Read(state));
             }
@@ -202,6 +203,10 @@ mod tests {
                     failure: Failure::new(FailureKind::Unreachable, "down"),
                     retrying: true,
                 },
+                WatchEvent::Failed {
+                    failure: Failure::new(FailureKind::NotFound, "the server could not find"),
+                    retrying: false,
+                },
             ],
         );
         assert!(matches!(&events[0], ResourceEvent::Reset { rows, .. } if rows.len() == 2));
@@ -214,6 +219,11 @@ mod tests {
         assert!(
             matches!(&events[4], ResourceEvent::Read(ReadState::Failed(reason)) if reason == "Unreachable · down")
         );
-        assert_eq!(events.len(), 5);
+        // A collection the server doesn't serve (404) is told apart too.
+        assert!(matches!(
+            &events[5],
+            ResourceEvent::Read(ReadState::Missing(reason)) if reason == "the server could not find"
+        ));
+        assert_eq!(events.len(), 6);
     }
 }

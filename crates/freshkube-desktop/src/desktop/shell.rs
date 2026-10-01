@@ -4,8 +4,10 @@ use super::{AUTO_REFRESH, Appearance, Page, Pilot, SIDEBAR_WIDTH, SidebarReveal,
 use crate::mutation::Operations;
 use crate::palette::palette;
 use crate::presentation::{self, Role as NodeRole};
+use crate::resources::custom::{CustomGroup, Discovery};
 use crate::resources::navigation::{self, NavGroup};
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone};
+use freshkube_core::resources::{Failure, FailureKind};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, TitleBar,
@@ -16,15 +18,67 @@ use gpui_kit::component::{
     scroll::{Scrollbar, ScrollbarMode},
     status_bar::StatusBar,
     switch::Switch,
+    tooltip::Tooltip,
     v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+/// Most custom API groups, and kinds per group, the sidebar lists; a row
+/// says how many more there are.
+const MAX_SIDEBAR_GROUPS: usize = 300;
+const MAX_SIDEBAR_KINDS: usize = 200;
+
 fn role_icon(role: NodeRole) -> IconName {
     match role {
         NodeRole::ControlPlane => IconName::ServerCog,
         _ => IconName::Server,
+    }
+}
+
+/// What one Kubernetes sidebar row shows.
+struct NavRow {
+    id: SharedString,
+    label: SharedString,
+    tooltip: Option<SharedString>,
+    indent: Pixels,
+}
+
+impl NavRow {
+    fn new(id: impl Into<SharedString>, label: impl Into<SharedString>, indent: Pixels) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            tooltip: None,
+            indent,
+        }
+    }
+
+    fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+}
+
+type RowAction = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// Rows of the sidebar's Custom Resources, and where a reveal lands among
+/// them.
+struct CustomRows {
+    rows: Vec<AnyElement>,
+    reveal: Option<usize>,
+    /// False while the rows a reveal wants are still being discovered.
+    settled: bool,
+}
+
+/// Why discovery shows nothing, in a few words; the tooltip says more.
+fn failure_label(failure: &Failure) -> &'static str {
+    match failure.kind {
+        FailureKind::Forbidden => "Not permitted",
+        FailureKind::NotFound => "No longer served",
+        FailureKind::Timeout => "Timed out",
+        FailureKind::Unreachable => "Unreachable",
+        _ => "Couldn't discover",
     }
 }
 
@@ -363,17 +417,29 @@ impl Pilot {
         // Kubernetes rows are children of the scrolling element, so one can
         // be scrolled into view: the Talos block and the section caption
         // come first.
+        const FIRST_ROW: usize = 2;
+        let current = (self.page == Page::Resources).then(|| self.resource_kind.key());
+        let mut rows: Vec<AnyElement> = navigation::NAVIGATION
+            .iter()
+            .flat_map(|group| self.kubernetes_group(group, current.as_deref(), cx))
+            .collect();
+        let built_in = rows.len();
+        let custom = self.custom_resources(current.as_deref(), self.sidebar_reveal.as_ref(), cx);
+        rows.extend(custom.rows);
         // Scrolling needs the navigation's size, which the first frame of a
         // window doesn't know yet; the reveal waits a frame then.
-        const FIRST_ROW: usize = 2;
-        if self.sidebar_reveal.is_some() {
+        if let Some(reveal) = &self.sidebar_reveal {
             if self.sidebar_scroll.bounds().size.height > px(0.) {
                 if let Some(row) = self
-                    .sidebar_reveal
-                    .take()
-                    .and_then(|reveal| self.kubernetes_row(reveal))
+                    .kubernetes_row(reveal)
+                    .or(custom.reveal.map(|row| built_in + row))
                 {
                     self.sidebar_scroll.scroll_to_item(FIRST_ROW + row);
+                }
+                // Rows still being discovered will grow the block; it is
+                // revealed again once they arrive.
+                if custom.settled {
+                    self.sidebar_reveal = None;
                 }
             } else {
                 window.request_animation_frame();
@@ -386,14 +452,12 @@ impl Pilot {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.sidebar_scroll)
+            // Scrolling by hand cancels a reveal still waiting for discovery.
+            .on_scroll_wheel(cx.listener(|view, _, _, _| view.sidebar_reveal = None))
             .gap_0p5()
             .child(talos)
             .child(section("Kubernetes", cx))
-            .children(
-                navigation::NAVIGATION
-                    .iter()
-                    .flat_map(|group| self.kubernetes_group(group, cx)),
-            )
+            .children(rows)
             .child(
                 v_flex()
                     .gap_0p5()
@@ -615,10 +679,9 @@ impl Pilot {
             .into_any_element()
     }
 
-    /// A collapsible group of Kubernetes kinds, as Kubeli groups them.
-    /// Where a reveal lands among the Kubernetes rows, counting group
-    /// headers and the kinds of open groups.
-    fn kubernetes_row(&self, reveal: SidebarReveal) -> Option<usize> {
+    /// Where a reveal lands among the built-in Kubernetes rows, counting
+    /// group headers and the kinds of open groups.
+    fn kubernetes_row(&self, reveal: &SidebarReveal) -> Option<usize> {
         let mut row = 0;
         for group in &navigation::NAVIGATION {
             let header = row;
@@ -626,97 +689,325 @@ impl Pilot {
             let shown = if open { group.items.len() } else { 0 };
             match reveal {
                 SidebarReveal::Kind(key) => {
-                    if let Some(ix) = group.items.iter().position(|(_, item)| *item == key) {
+                    if let Some(ix) = group.items.iter().position(|(_, item)| item == key) {
                         return Some(if open { header + 1 + ix } else { header });
                     }
                 }
-                SidebarReveal::Group(slug) if slug == group.slug => return Some(header + shown),
-                SidebarReveal::Group(_) => {}
+                SidebarReveal::Group(slug) if *slug == group.slug => return Some(header + shown),
+                SidebarReveal::Group(_) | SidebarReveal::Custom | SidebarReveal::ApiGroup(_) => {}
             }
             row = header + 1 + shown;
         }
         None
     }
 
-    /// A group's header, then its kinds while it is open; each a row of
-    /// the scrolling navigation.
+    /// A collapsible group of Kubernetes kinds, as Kubeli groups them: its
+    /// header, then its kinds while it is open; each a row of the scrolling
+    /// navigation.
     fn kubernetes_group(
         &self,
         group: &'static NavGroup,
-        cx: &mut Context<Self>,
+        current: Option<&str>,
+        cx: &Context<Self>,
     ) -> Vec<AnyElement> {
-        let p = palette(cx);
         let open = self.kubernetes_groups.contains(group.slug);
-        let current = (self.page == Page::Resources).then_some(self.resource_kind);
         // A closed group still shows that the page is one of its kinds.
         let holds_current =
             current.is_some_and(|key| group.items.iter().any(|(_, item)| *item == key));
         let slug = group.slug;
-        let mut rows = vec![
-            h_flex()
-                .id(SharedString::from(format!("nav-k8s-group-{slug}")))
-                .test_support()
-                .role(Role::Button)
-                .aria_expanded(open)
-                .aria_label(group.label)
-                .tab_index(0)
-                .h(px(28.))
-                .flex_none()
-                .px_2()
-                .gap_2()
-                .rounded(px(7.))
-                .cursor_pointer()
-                .text_size(px(12.5))
-                .text_color(if holds_current && !open {
-                    p.ink
-                } else {
-                    p.ink_2
-                })
-                .when(holds_current && !open, |this| {
-                    this.font_weight(FontWeight::SEMIBOLD)
-                })
-                .hover(|style| style.bg(p.hover))
-                .child(
-                    Icon::new(if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    })
-                    .with_size(px(14.))
-                    .text_color(p.muted),
-                )
-                .child(group.label)
-                .on_click(cx.listener(move |view, _, _, cx| view.toggle_kubernetes_group(slug, cx)))
-                .into_any_element(),
-        ];
+        let mut rows = vec![self.nav_header(
+            NavRow::new(format!("nav-k8s-group-{slug}"), group.label, px(8.)),
+            open,
+            holds_current,
+            cx.listener(move |view, _, _, cx| view.toggle_kubernetes_group(slug, cx)),
+            cx,
+        )];
         if open {
-            rows.extend(
-                group.items.iter().map(|(label, key)| {
-                    self.kubernetes_item(label, key, current == Some(*key), cx)
-                }),
-            );
+            rows.extend(group.items.iter().map(|(label, key)| {
+                self.kubernetes_item(
+                    NavRow::new(format!("nav-k8s-{key}"), *label, px(30.)),
+                    current == Some(*key),
+                    cx.listener(move |view, _, window, cx| view.open_builtin(key, window, cx)),
+                    cx,
+                )
+            }));
         }
         rows
     }
 
-    fn kubernetes_item(
+    /// Custom Resources: discovery's state or one header per API group,
+    /// with the kinds of each open group. Also where `reveal` lands among
+    /// these rows, and whether discovery has settled enough to stop
+    /// revealing it.
+    fn custom_resources(
         &self,
-        label: &'static str,
-        key: &'static str,
-        active: bool,
-        cx: &mut Context<Self>,
+        current: Option<&str>,
+        reveal: Option<&SidebarReveal>,
+        cx: &Context<Self>,
+    ) -> CustomRows {
+        let custom = self.custom.read(cx);
+        let open = custom.is_open();
+        // The API group of the kind shown, when it is a custom kind.
+        let current_group = current
+            .filter(|key| navigation::group_of(key).is_none())
+            .map(|_| self.resource_kind.group.as_str());
+        // A custom kind to reveal, and the group it is in.
+        let reveal_kind = match reveal {
+            Some(SidebarReveal::Kind(key)) if navigation::group_of(key).is_none() => {
+                Some(key.as_str())
+            }
+            _ => None,
+        };
+        let reveal_group = match reveal {
+            Some(SidebarReveal::ApiGroup(name)) => Some(name.as_str()),
+            _ => reveal_kind.and_then(|key| key.split_once('.').map(|(_, group)| group)),
+        };
+        let mut out = CustomRows {
+            rows: vec![self.nav_header(
+                NavRow::new("nav-k8s-group-custom", "Custom Resources", px(8.)),
+                open,
+                current_group.is_some(),
+                cx.listener(|view, _, _, cx| view.toggle_custom_resources(cx)),
+                cx,
+            )],
+            reveal: None,
+            settled: true,
+        };
+        let revealing = matches!(reveal, Some(SidebarReveal::Custom)) || reveal_group.is_some();
+        if revealing {
+            out.reveal = Some(0);
+        }
+        if !open {
+            return out;
+        }
+        let status = |text: &'static str| NavRow::new("nav-k8s-custom-status", text, px(30.));
+        match custom.groups() {
+            None => out
+                .rows
+                .push(self.nav_status(status("Not connected"), None, cx)),
+            Some(Discovery::Reading) => {
+                out.settled = !revealing;
+                out.rows
+                    .push(self.nav_status(status("Discovering…"), None, cx));
+            }
+            Some(Discovery::Failed(failure)) => out.rows.push(self.nav_status(
+                status(failure_label(failure)).tooltip(failure.to_string()),
+                Some(Box::new(cx.listener(|view, _, _, cx| {
+                    view.custom.update(cx, |custom, cx| custom.retry(cx))
+                }))),
+                cx,
+            )),
+            Some(Discovery::Loaded(groups)) if groups.is_empty() => {
+                out.rows
+                    .push(self.nav_status(status("No custom resources"), None, cx));
+            }
+            Some(Discovery::Loaded(groups)) => {
+                for entry in groups.iter().take(MAX_SIDEBAR_GROUPS) {
+                    let name = entry.name.as_ref();
+                    let group_open = custom.is_group_open(name);
+                    if reveal_group == Some(name) {
+                        out.reveal = Some(out.rows.len());
+                    }
+                    let toggled = entry.name.clone();
+                    out.rows.push(
+                        self.nav_header(
+                            NavRow::new(entry.id.clone(), entry.name.clone(), px(30.))
+                                .tooltip(entry.tooltip.clone()),
+                            group_open,
+                            current_group == Some(name),
+                            cx.listener(move |view, _, _, cx| view.toggle_api_group(&toggled, cx)),
+                            cx,
+                        ),
+                    );
+                    if !group_open {
+                        continue;
+                    }
+                    let settled = matches!(
+                        entry.kinds,
+                        Some(Discovery::Loaded(_) | Discovery::Failed(_))
+                    );
+                    if reveal_group == Some(name) && !settled {
+                        out.settled = false;
+                    }
+                    let found = self.api_group_rows(entry, current, reveal_kind, cx);
+                    if let Some(row) = found.reveal {
+                        out.reveal = Some(out.rows.len() + row);
+                    } else if matches!(reveal, Some(SidebarReveal::ApiGroup(open)) if open == name)
+                    {
+                        out.reveal = Some(out.rows.len() + found.rows.len() - 1);
+                    }
+                    out.rows.extend(found.rows);
+                }
+                if groups.len() > MAX_SIDEBAR_GROUPS {
+                    out.rows.push(self.nav_status(
+                        NavRow::new(
+                            "nav-k8s-custom-more",
+                            format!(
+                                "{} more groups not shown",
+                                groups.len() - MAX_SIDEBAR_GROUPS
+                            ),
+                            px(30.),
+                        ),
+                        None,
+                        cx,
+                    ));
+                }
+            }
+        }
+        if matches!(reveal, Some(SidebarReveal::Custom)) {
+            out.reveal = Some(out.rows.len() - 1);
+        }
+        out
+    }
+
+    /// An open API group's kinds, or why it shows none, and whether a
+    /// version failed while others were read. `reveal` is a kind's row.
+    fn api_group_rows(
+        &self,
+        entry: &CustomGroup,
+        current: Option<&str>,
+        reveal_kind: Option<&str>,
+        cx: &Context<Self>,
+    ) -> CustomRows {
+        let id = &entry.id;
+        let mut out = CustomRows {
+            rows: Vec::new(),
+            reveal: None,
+            settled: true,
+        };
+        let status = |text: SharedString| NavRow::new(format!("{id}-status"), text, px(52.));
+        let retry = || -> Option<RowAction> {
+            let name = entry.name.clone();
+            Some(Box::new(cx.listener(move |view, _, _, cx| {
+                view.custom
+                    .update(cx, |custom, cx| custom.retry_group(&name, cx))
+            })))
+        };
+        let rows = match &entry.kinds {
+            None | Some(Discovery::Reading) => {
+                out.rows
+                    .push(self.nav_status(status("Discovering…".into()), None, cx));
+                return out;
+            }
+            Some(Discovery::Failed(failure)) => {
+                out.rows.push(self.nav_status(
+                    status(failure_label(failure).into()).tooltip(failure.to_string()),
+                    retry(),
+                    cx,
+                ));
+                return out;
+            }
+            Some(Discovery::Loaded(rows)) => rows,
+        };
+        for kind in rows.kinds.iter().take(MAX_SIDEBAR_KINDS) {
+            if reveal_kind == Some(kind.key.as_ref()) {
+                out.reveal = Some(out.rows.len());
+            }
+            let key = kind.key.clone();
+            out.rows.push(
+                self.kubernetes_item(
+                    NavRow::new(kind.id.clone(), kind.label.clone(), px(52.))
+                        .tooltip(kind.tooltip.clone()),
+                    current == Some(kind.key.as_ref()),
+                    cx.listener(move |view, _, window, cx| view.open_custom(&key, window, cx)),
+                    cx,
+                ),
+            );
+        }
+        if rows.kinds.len() > MAX_SIDEBAR_KINDS {
+            let more = rows.kinds.len() - MAX_SIDEBAR_KINDS;
+            out.rows.push(self.nav_status(
+                status(format!("{more} more kinds not shown").into()),
+                None,
+                cx,
+            ));
+        }
+        if let Some(why) = &rows.nothing {
+            out.rows.push(self.nav_status(
+                status("Nothing to list".into()).tooltip(why.clone()),
+                None,
+                cx,
+            ));
+        }
+        if let Some((label, detail)) = &rows.partial {
+            out.rows.push(
+                self.nav_status(
+                    NavRow::new(format!("{id}-partial"), label.clone(), px(52.))
+                        .tooltip(detail.clone()),
+                    retry(),
+                    cx,
+                ),
+            );
+        }
+        out
+    }
+
+    /// A row that opens and closes the rows below it.
+    fn nav_header(
+        &self,
+        row: NavRow,
+        open: bool,
+        holds_current: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
+        // A closed header still shows that the page is one of its kinds.
+        let marked = holds_current && !open;
         h_flex()
-            .id(SharedString::from(format!("nav-k8s-{key}")))
+            .id(row.id)
             .test_support()
-            .role(Role::Tab)
-            .aria_selected(active)
-            .aria_label(label)
+            .role(Role::Button)
+            .aria_expanded(open)
+            .aria_label(row.label.clone())
             .tab_index(0)
             .h(px(28.))
             .flex_none()
-            .pl(px(30.))
+            .pl(row.indent)
+            .pr_2()
+            .gap_2()
+            .rounded(px(7.))
+            .cursor_pointer()
+            .text_size(px(12.5))
+            .text_color(if marked { p.ink } else { p.ink_2 })
+            .when(marked, |this| this.font_weight(FontWeight::SEMIBOLD))
+            .hover(|style| style.bg(p.hover))
+            .when_some(row.tooltip, |this, tip| {
+                this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+            })
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .with_size(px(14.))
+                .text_color(p.muted)
+                .flex_none(),
+            )
+            .child(div().min_w_0().truncate().child(row.label))
+            .on_click(on_click)
+            .into_any_element()
+    }
+
+    fn kubernetes_item(
+        &self,
+        row: NavRow,
+        active: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let p = palette(cx);
+        h_flex()
+            .id(row.id)
+            .test_support()
+            .role(Role::Tab)
+            .aria_selected(active)
+            .aria_label(row.label.clone())
+            .tab_index(0)
+            .h(px(28.))
+            .flex_none()
+            .pl(row.indent)
             .pr_2()
             .rounded(px(7.))
             .cursor_pointer()
@@ -730,8 +1021,46 @@ impl Pilot {
                     .font_weight(FontWeight::SEMIBOLD)
             })
             .when(!active, |this| this.hover(|style| style.bg(p.hover)))
-            .child(div().min_w_0().truncate().child(label))
-            .on_click(cx.listener(move |view, _, window, cx| view.open_kind(key, window, cx)))
+            .when_some(row.tooltip, |this, tip| {
+                this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+            })
+            .child(div().min_w_0().truncate().child(row.label))
+            .on_click(on_click)
+            .into_any_element()
+    }
+
+    /// A line saying how discovery went where rows would be, with Retry
+    /// after a failure.
+    fn nav_status(&self, row: NavRow, retry: Option<RowAction>, cx: &Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let retry_id = SharedString::from(format!("{}-retry", row.id));
+        h_flex()
+            .id(row.id)
+            .test_support()
+            .role(Role::Status)
+            .aria_label(row.label.clone())
+            .h(px(28.))
+            .flex_none()
+            .pl(row.indent)
+            .pr_1()
+            .gap_1()
+            .text_size(px(12.))
+            .text_color(p.muted)
+            .when_some(row.tooltip, |this, tip| {
+                this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+            })
+            .child(div().flex_1().min_w_0().truncate().child(row.label))
+            .when_some(retry, |this, retry| {
+                this.child(
+                    Button::new(retry_id)
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::RefreshCw)
+                        .accessibility_label("Retry")
+                        .tooltip("Retry")
+                        .on_click(retry),
+                )
+            })
             .into_any_element()
     }
 
