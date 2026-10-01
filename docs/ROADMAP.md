@@ -23,23 +23,18 @@ These hold for every step until a later one deliberately changes them.
 | Logs resize | With wrapping on, a resize lays out only the log lines on screen and re-measures the rest once the width holds ([LONG_LISTS.md](LONG_LISTS.md#wrapped-rows-during-a-resize)) | `decdefa` |
 | 3. Detail pane | Overview, YAML and Events for the selected object, beside the list or below it in a narrow window. Reads on demand and follows the list's resourceVersion at most once a second; drops late answers; shows refused, failed, stale, deleted and recreated. YAML is a `uniform_list` with search, line selection and copy. Events match by UID. Secret values stay hidden until one key is revealed | `28bf866`, `f8546ef` |
 | 4. Custom resources | A Custom Resources sidebar section with one entry per API group, discovered when opened, and each group's kinds when the group opens; custom kinds list through the same Table path, with the server's printer columns. A refused, failed or listless group says why with Retry, never as an empty group; a version answering 404 shows as not served. A page kind the server stops serving says so and has its group discovered again. Checked live: 58 groups, a custom kind's rows, and an unserved version | `09fb6fd`, `c8547cb`, `7bdad9c`, `8e728bf` |
+| 5. Pod logs | A Logs tab in a pod's detail pane, on the shared log view. A container picker grouped into init, app and ephemeral containers; tail (100 to all), timestamps, Stop and Resume from the last line, and the previous instance as an explicit choice. A crash loop is offered, never substituted. Marker rows note restarts and reconnects, and copy and search skip them. Waiting, empty, ended, reconnecting and failed each say so. The stream lives while the pod stays open on any tab and is cancelled when another object opens, the pane closes, the scope changes, the page hides or the app quits. Checked live: a 500-line tail in batches, a previous instance read to its end, an ended container, a waiting one, and cancellation on close | `c8fb3ab`, `d316d13`, `d16bd54`, `eec2418` |
 
 ## Next: finish Kubernetes browsing
 
-### Step 5. Pod logs
-
-- Choose a container, including init containers. Offer follow, tail length, timestamps and the previous instance, chosen explicitly and never substituted silently.
-- Bounded retention and a virtualized view with search and copy. Following must not pull the view away from where the user scrolled or selected.
-- Cancel the stream when the pane closes, the scope changes or the app quits. Tell a normal end from a failure, and make reconnecting visible.
-- **Done: one shared log view** (commit "Share one log view between log sources"). Split `LogPanel` into a source-agnostic view (retention, search, selection, copy, level filter, follow and wrap, measured rows with the [wrapped-resize handling](LONG_LISTS.md#wrapped-rows-during-a-resize), hidden-batch coalescing) and the Talos source (service catalog, collection stream, per-service errors). Pod logs are a second source for the same view, so every log view behaves alike and a fix lands once. The Talos Logs page behaves the same; its UI tests pass with only field paths changed (`view.source.*`). Pod logs add a `LogSource`; see the Module layout section of AGENTS.md.
-- The core log model is already source-neutral: `ServiceId` is a plain label. Use it for container, or pod and container, and rename it if the Talos name misleads. Check `parse_log_line` against Kubernetes lines, which carry an RFC 3339 timestamp when timestamps are on.
-- Logs of several containers, or of a workload's pods, are the same view with several sources and the source filter. They can follow once single-container logs work.
+Steps 1 to 5 are done. What remains here is checking them against the live cluster.
 
 ### Open checks
 
 - Talos mode's Kubernetes pages against the live cluster. Only Kubernetes-only mode has been checked live so far.
 - Unserved CRD versions: legacy `/apis` discovery omits versions a CRD marks `served: false`, so the sidebar never offers them. What it does cover was checked live by asking for a version that doesn't exist (`FRESHKUBE_VERSION=v0` in `examples/probe.rs`, and the app opening a kind at it): a group version that answers 404 shows as not served, and a page kind that answers 404 shows as not served and has its group discovered again. A CRD actually removed or unserved while the app runs is covered by UI tests only, since a read-only check can't make one.
-- A visual pass of Kubernetes-only mode on a live cluster, including the detail pane and the Custom Resources section. The live checks ran with the screen locked, so they covered data, not drawing.
+- A visual pass of Kubernetes-only mode on a live cluster, including the detail pane, its Logs tab and the Custom Resources section. The live checks ran with the screen locked, so they covered data, not drawing.
+- Pod logs reconnecting after a dropped connection, and a restart while following, are covered by core and UI tests only. The live check saw streaming, ended, waiting and previous-instance logs.
 - The detail pane's re-read on a new version, and its deleted and recreated states, are covered by UI tests only. A read-only check can't make an object change, so they wait for one that changes on its own.
 - Launched as an app bundle, the app couldn't reach a LAN cluster that the terminal-launched binary reached. This is probably macOS Local Network privacy. Confirm before packaging, and add `NSLocalNetworkUsageDescription`.
 
@@ -52,6 +47,7 @@ These come from the GPUI evaluation plan (G09–G12) and the follow-ups it liste
 - **Performance and reliability.** Reproducible workloads (large tables, watch bursts, log floods) measured on release builds, since debug builds draw about 14× slower ([K12](GPUI_FRICTION.md#k12-unoptimised-builds-draw-about-14-slower)). Record demonstrated bottlenecks and fix those in scope.
 - **GPUI Kit evaluation.** A short report from the [friction log](GPUI_FRICTION.md): what the toolkit served well, what it cost, and whether to continue, contribute upstream or limit scope.
 - **Follow-ups**, each promoted to a step with acceptance criteria when it enters scope:
+  - logs of several containers, or of a workload's pods, in one view: the same `LogView` with several sources and its source filter;
   - port forwarding with an explicit session lifetime;
   - current CPU and memory from the metrics API;
   - YAML schema validation;

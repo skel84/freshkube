@@ -18,7 +18,7 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 | --- | --- | --- | --- |
 | Resources page (Kubernetes kinds) | up to thousands of rows | `uniform_list` | Fine |
 | Processes, Storage, Network and Workloads tables | hundreds to thousands | `uniform_list` | Fine |
-| Log views (`LogView`: Talos logs, later pod logs) | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)) |
+| Log views (`LogView`: Talos logs and pod logs) | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)) |
 | Detail pane YAML | thousands of lines for a large object | `uniform_list` of unwrapped lines, as wide as the longest line. A line draws at most 2,000 characters, and search marks at most 10,000 matches | Fine. Wrapping would need the measured approach below |
 | Detail pane Events and Overview | an object's events; its labels and annotations | plain children in a scroll area: the newest 200 events, at most 200 labels and 200 annotations | Fine while capped. The rest stay in the YAML |
 | Sidebar Custom Resources | one row per API group, tens on a typical cluster (58 on the live one), and the kinds of each open group | plain children of the sidebar's scroll area: at most 300 groups and 200 kinds per group, then a "more not shown" row. Labels, ids and tooltips are derived once when discovery answers | Fine while capped. A cluster with more groups would need the sidebar as a `uniform_list` |
