@@ -5,11 +5,13 @@
 //! for every kind, custom resources included. Clients come either from a
 //! kubeconfig context ([`connect`]) or from the Talos side of the app. One
 //! object is read in full on demand ([`get_object`]), with its events
-//! ([`watch_object_events`]).
+//! ([`watch_object_events`]). Custom kinds come from discovery
+//! ([`list_custom_groups`], [`list_group_kinds`]).
 //! Nothing here changes the cluster.
 
 mod connection;
 mod contexts;
+mod discovery;
 mod events;
 mod failure;
 mod kinds;
@@ -19,6 +21,7 @@ mod watch;
 
 pub use connection::{Connection, connect};
 pub use contexts::{KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources};
+pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
 pub use failure::{Failure, FailureKind};
 pub use kinds::{ResourceKind, builtin};

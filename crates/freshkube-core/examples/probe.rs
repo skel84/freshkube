@@ -10,14 +10,17 @@
 //!     cargo run -p freshkube-core --example probe -- pods [seconds]
 //! ```
 //!
-//! `FRESHKUBE_NAMESPACE` limits the listing to one namespace.
+//! `FRESHKUBE_NAMESPACE` limits the listing to one namespace. The kind
+//! `custom` instead prints the custom API groups and what each offers; a
+//! discovered key such as `certificates.cert-manager.io` lists that kind.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use freshkube_core::resources::{
-    EventScope, EventUpdate, WatchEvent, builtin, connect, discover_contexts, get_object,
-    kubeconfig_sources, watch_collection, watch_object_events,
+    EventScope, EventUpdate, ResourceKind, WatchEvent, builtin, connect, discover_contexts,
+    get_object, kubeconfig_sources, list_custom_groups, list_group_kinds, watch_collection,
+    watch_object_events,
 };
 
 #[tokio::main]
@@ -27,7 +30,6 @@ async fn main() {
     let seconds: u64 = args
         .next()
         .map_or(6, |value| value.parse().expect("seconds"));
-    let kind = builtin(&key).unwrap_or_else(|| panic!("unknown kind {key}"));
     let namespace = std::env::var("FRESHKUBE_NAMESPACE").ok();
     // Verification never falls back to the current context.
     let wanted = std::env::var("FRESHKUBE_CONTEXT").expect("set FRESHKUBE_CONTEXT");
@@ -57,6 +59,16 @@ async fn main() {
         started.elapsed(),
         connection.server_version
     );
+
+    // `custom` lists the custom groups and their kinds; other keys are a
+    // built-in kind or a discovered `plural.group`.
+    let kind = match builtin(&key) {
+        Some(kind) => kind,
+        None => match discover(&connection.client, &key).await {
+            Some(kind) => kind,
+            None => return,
+        },
+    };
 
     let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
     let watch = tokio::spawn(watch_collection(
@@ -209,4 +221,47 @@ async fn main() {
         }
     }
     events.abort();
+}
+
+/// Discovers custom groups. For `custom`, prints each group's kinds and
+/// returns nothing; otherwise returns the kind whose key is `key`.
+async fn discover(client: &kube::Client, key: &str) -> Option<ResourceKind> {
+    let started = std::time::Instant::now();
+    let groups = list_custom_groups(client).await.expect("discover groups");
+    println!(
+        "{} custom group(s) in {:?}",
+        groups.len(),
+        started.elapsed()
+    );
+    for group in &groups {
+        if key != "custom" && !key.ends_with(&format!(".{}", group.name)) {
+            continue;
+        }
+        match list_group_kinds(client, group).await {
+            Ok(found) => {
+                if key == "custom" {
+                    let kinds: Vec<_> = found
+                        .kinds
+                        .iter()
+                        .map(|kind| format!("{}@{}", kind.kind, kind.version))
+                        .collect();
+                    println!(
+                        "  {} [{}]: {}; unlistable {:?}; failed versions {:?}",
+                        group.name,
+                        group.versions.join(","),
+                        kinds.join(" "),
+                        found.unlistable,
+                        found.failures
+                    );
+                } else if let Some(kind) = found.kinds.into_iter().find(|kind| kind.key() == key) {
+                    return Some(kind);
+                }
+            }
+            Err(failure) => println!("  {}: {failure}", group.name),
+        }
+    }
+    if key != "custom" {
+        println!("no discovered kind {key}");
+    }
+    None
 }

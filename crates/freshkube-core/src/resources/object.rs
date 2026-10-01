@@ -95,7 +95,7 @@ impl fmt::Debug for SecretValue {
     }
 }
 
-fn json_get(path: String) -> Result<Request<Vec<u8>>, Failure> {
+pub(crate) fn json_get(path: String) -> Result<Request<Vec<u8>>, Failure> {
     Request::get(path)
         .header(header::ACCEPT, "application/json")
         .body(Vec::new())
