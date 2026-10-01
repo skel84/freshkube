@@ -30,7 +30,7 @@ Overview, YAML and Events for the selected object, beside the list and stacked b
 - Fetch the selected object's full representation on demand. Never rebuild it from a table row.
 - Drop late responses for another selection or UID. Show a deleted or recreated object as such instead of silently switching documents.
 - Show loading, refused and failed states, keeping a previous document visible and marked stale.
-- Read-only YAML viewer with copy and search. Editing waits for F06.
+- Read-only YAML viewer with copy and search. Editing waits for F06. A large object's YAML runs to thousands of lines, so it renders as a long list ([LONG_LISTS.md](LONG_LISTS.md)): `uniform_list` for unwrapped lines, measured rows if it wraps.
 - Events for the object, matched by its UID, newest first.
 - Decide before Secrets get a YAML view: is data hidden until revealed explicitly?
 
@@ -48,6 +48,7 @@ Done when a selected object's documents follow it through updates, deletion and 
 - Bounded retention and a virtualized view with search and copy. Following must not pull the view away from where the user scrolled or selected.
 - Cancel the stream when the pane closes, the scope changes or the app quits. Tell a normal end from a failure, and make reconnecting visible.
 - Reuse the Talos log panel's virtualized list and hidden-batch coalescing where they fit.
+- First apply the wrapped-resize change in [LONG_LISTS.md](LONG_LISTS.md#wrapped-rows-during-a-resize) to that shared view, with its test, so both Talos and pod logs resize smoothly. Measured in talos-pilot's frontend, it took a wrapped resize step from 115 ms to 44 ms at 5,000 lines.
 
 ### Open checks
 

@@ -4,7 +4,7 @@ This log records GPUI Kit and GPUI friction found while building Freshkube, and 
 
 Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a431fb1b82a6047e908de63913db3d4354` (version 0.7.0). This application uses the published `gpui-kit` 0.7.0 from crates.io. GPUI is the crates.io snapshot `gpui-pre` 0.3.7, and its paths are relative to that crate.
 
-**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (`freshkube`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K16 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`.
+**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K16 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`.
 
 | ID | Summary | Found in | Classification |
 | --- | --- | --- | --- |
