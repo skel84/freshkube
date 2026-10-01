@@ -453,13 +453,13 @@ impl ResourcesScreen {
         self.restart(window, cx);
     }
 
-    /// Only a visible page reads: showing it lists again and watches,
-    /// hiding it drops the watch.
     /// The detail pane, which draws as a cached view of its own.
     pub(crate) fn detail_view(&self) -> EntityId {
         self.detail.entity_id()
     }
 
+    /// Only a visible page reads: showing it lists again and watches,
+    /// hiding it drops the watch.
     pub(crate) fn set_visible(
         &mut self,
         visible: bool,
