@@ -256,10 +256,10 @@ fn wrap_and_rem_remeasure_real_rows_and_wheel_pauses_follow(cx: &mut TestAppCont
         assert!(window.find(SharedString::from("log-line-1-119")).visible());
         assert_eq!(window.find("logs-wrap").checked(), Some(true));
         panel.update(cx, |view, cx| {
-            let target = view.fixture_target.clone().unwrap();
+            let target = view.source.fixture_target.clone().unwrap();
             assert!(view.apply_batch(
                 &target,
-                view.stream_revision,
+                view.source.stream_revision,
                 vec![StreamEvent {
                     target: target.clone(),
                     service: ServiceId::from("apid"),
@@ -302,7 +302,10 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
         let offset = panel.read(cx).scroll.offset();
         let (target, revision) = {
             let view = panel.read(cx);
-            (view.fixture_target.clone().unwrap(), view.stream_revision)
+            (
+                view.source.fixture_target.clone().unwrap(),
+                view.source.stream_revision,
+            )
         };
         panel.update(cx, |view, cx| {
             assert!(view.apply_batch(
@@ -371,13 +374,13 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
                     .iter()
                     .all(|entry| { !entry.raw.contains("seq=") })
             );
-            let collected = view.collecting.clone();
+            let collected = view.source.collecting.clone();
             assert_eq!(collected.len(), 2);
             let initial_next_id = view.review.next_id;
             window.click("logs-collection", cx);
-            assert!(panel.read(cx).collection_active);
-            assert!(panel.read(cx).job.is_some());
-            assert!(panel.read(cx).delivery.is_some());
+            assert!(panel.read(cx).source.collection_active);
+            assert!(panel.read(cx).source.job.is_some());
+            assert!(panel.read(cx).source.delivery.is_some());
             (collected, initial_next_id)
         })
         .unwrap();
@@ -401,11 +404,11 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             assert!(panel.read(cx).following);
             window.click("logs-follow", cx);
             assert!(!panel.read(cx).following);
-            assert!(panel.read(cx).collection_active);
+            assert!(panel.read(cx).source.collection_active);
             window.click("show-apid", cx);
             let view = panel.read(cx);
             assert!(!view.showing.contains(&ServiceId::from("apid")));
-            assert_eq!(view.collecting, collected);
+            assert_eq!(view.source.collecting, collected);
             assert!(view.showing.contains(&ServiceId::from("kubelet")));
             assert!(
                 view.review
@@ -435,7 +438,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
     cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
         let view = panel.read(cx);
         assert!(!view.following);
-        assert!(view.collection_active);
+        assert!(view.source.collection_active);
         paused_counts.iter().all(|(service, previous_count)| {
             view.review
                 .logs
@@ -453,9 +456,9 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
         .update_window(handle.into(), |_, window, cx| {
             window.click("logs-collection", cx);
             let view = panel.read(cx);
-            assert!(!view.collection_active);
-            assert!(view.job.is_none());
-            assert!(view.delivery.is_none());
+            assert!(!view.source.collection_active);
+            assert!(view.source.job.is_none());
+            assert!(view.source.delivery.is_none());
             assert!(!view.following);
             view.review.next_id
         })
@@ -469,9 +472,9 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             // Use a monotonic arrival identity, not bounded buffer size,
             // and observe six real producer ticks with GPUI still driven.
             assert_eq!(view.review.next_id, stopped_next_id);
-            assert!(!view.collection_active);
-            assert!(view.job.is_none());
-            assert!(view.delivery.is_none());
+            assert!(!view.source.collection_active);
+            assert!(view.source.job.is_none());
+            assert!(view.source.delivery.is_none());
             assert_eq!(
                 window.find("logs-collection").label(),
                 Some("Start collecting")
@@ -483,7 +486,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
     cx.update_window(handle.into(), |_, window, cx| {
         window.click("logs-follow", cx);
         assert!(panel.read(cx).following);
-        assert!(!panel.read(cx).collection_active);
+        assert!(!panel.read(cx).source.collection_active);
         assert_eq!(panel.read(cx).review.next_id, stopped_next_id);
     })
     .unwrap();

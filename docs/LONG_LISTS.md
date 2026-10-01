@@ -18,8 +18,7 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 | --- | --- | --- | --- |
 | Resources page (Kubernetes kinds) | up to thousands of rows | `uniform_list` | Fine |
 | Processes, Storage, Network and Workloads tables | hundreds to thousands | `uniform_list` | Fine |
-| Talos logs panel | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)) |
-| Pod logs (roadmap step 5) | same as the logs panel | the shared log view, once extracted from the logs panel | Inherits the logs panel's measurement and resize handling |
+| Log views (`LogView`: Talos logs, later pod logs) | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)) |
 | Detail pane YAML | thousands of lines for a large object | `uniform_list` of unwrapped lines, as wide as the longest line. A line draws at most 2,000 characters, and search marks at most 10,000 matches | Fine. Wrapping would need the measured approach below |
 | Detail pane Events and Overview | an object's events; its labels and annotations | plain children in a scroll area: the newest 200 events, at most 200 labels and 200 annotations | Fine while capped. The rest stay in the YAML |
 | Sidebar Custom Resources | one row per API group, tens on a typical cluster (58 on the live one), and the kinds of each open group | plain children of the sidebar's scroll area: at most 300 groups and 200 kinds per group, then a "more not shown" row. Labels, ids and tooltips are derived once when discovery answers | Fine while capped. A cluster with more groups would need the sidebar as a `uniform_list` |
@@ -61,7 +60,7 @@ During a drag, every frame goes through `rebuild_sizes` and then lays out only t
 
 ### Implementation
 
-It lives on `LogPanel` in `crates/freshkube-desktop/src/logs/measure.rs`. Roadmap step 5 moves it, with the rest of the panel's list handling, into the log view shared with pod logs. Rows are still laid out exactly as the list draws them (`render_row(ix, true, cx).layout_as_root(..)`); the change limits when that runs. Nothing estimates heights from character counts, for the reason in rule 3.
+It lives on the shared `LogView` in `crates/freshkube-desktop/src/logs/measure.rs`, so every log source, Talos services and later pod logs, gets it. Rows are still laid out exactly as the list draws them (`render_row(ix, true, cx).layout_as_root(..)`); the change limits when that runs. Nothing estimates heights from character counts, for the reason in rule 3.
 
 | Piece | What it does |
 | --- | --- |
@@ -109,7 +108,7 @@ Profile a release build of the offline `fixture` example. It loads no cluster cr
 2. Build with `cargo build --release -p freshkube-desktop --example fixture`.
 3. Launch with `PERF_FIXTURE_LOGS=5000 FRESHKUBE_PAGE=logs target/release/examples/fixture &` and note the PID.
 4. Run the resize script below against that PID, with `sample <pid> 12 -file wrap.txt` running at the same time. The terminal needs Accessibility permission to drive System Events.
-5. In the sample, compare main-thread samples under `LogPanel::render` with idle samples under `__CFRunLoopServiceMachPort`.
+5. In the sample, compare main-thread samples under `LogView::render` with idle samples under `__CFRunLoopServiceMachPort`.
 6. After the sweep, resize once and run `top -l 4 -s 1 -pid <pid> -stats pid,cpu`. CPU should spike for about a second, then return to idle.
 
 The script targets the window by PID, so no other app is touched. It makes 306 resizes:

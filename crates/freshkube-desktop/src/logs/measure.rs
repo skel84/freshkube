@@ -5,10 +5,11 @@ use gpui_kit::{
 };
 
 use super::{
-    LogPanel, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE, RowMeasurement, review::VisibleDelta,
+    LogSource, LogView, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE, RowMeasurement,
+    review::VisibleDelta,
 };
 
-impl LogPanel {
+impl<S: LogSource> LogView<S> {
     pub(super) fn measure_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = MeasurementKey {
             width: self.width.unwrap_or_else(|| window.bounds().size.width),
@@ -51,12 +52,7 @@ impl LogPanel {
             self.restore_anchor();
         }
         if self.following {
-            self.pending_reveal = self
-                .review
-                .visible
-                .len()
-                .checked_sub(1)
-                .map(|ix| self.review.id(ix));
+            self.pending_reveal = self.last_row_id();
         }
     }
 

@@ -1,14 +1,21 @@
-//! The Logs page's panel: a bounded, virtualized review of streamed log
-//! lines with search, selection, copy, level and service filters.
+//! A bounded, virtualized review of streamed log lines with search,
+//! selection, copy, level and source filters, shared by every log source.
 //!
-//! This file holds the panel's state, key actions and review navigation
+//! [`LogView`] owns everything about reviewing lines: retention, search,
+//! selection, copy, the level and source filters, follow and wrap, measured
+//! rows, and coalescing batches while hidden. A [`LogSource`] owns where
+//! the lines come from: its stream, its catalog of sources, its failures
+//! and its own toolbar controls. The Talos Logs page is
+//! `LogView<TalosLogs>`, named [`LogPanel`].
+//!
+//! This file holds the view's state, key actions and review navigation
 //! (follow, scroll anchor, search, selection, copy). The rest is split by
-//! concern into child modules, which share the panel's private fields:
+//! concern into child modules, which share the view's private fields:
 //!
 //! - `review`: the line model (retention, visible rows, search, selection).
-//! - `talos`: collection from Talos services and stream delivery.
 //! - `measure`: measured row heights and the wrapped-resize handling.
 //! - `view`: rendering.
+//! - `talos`: the Talos source: service catalog, collection and delivery.
 
 mod measure;
 mod review;
@@ -20,14 +27,14 @@ mod tests;
 
 use std::{
     cell::Cell,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     rc::Rc,
     time::{Duration, Instant},
 };
 
 use gpui_kit::{
-    AppContext, Bounds, ClipboardItem, Context, Entity, FocusHandle, KeyBinding, Pixels, Point,
-    SharedString, Size, Subscription, Task, Window, actions,
+    AnyElement, AppContext, Bounds, ClipboardItem, Context, Entity, FocusHandle, Global,
+    KeyBinding, Pixels, Point, SharedString, Size, Subscription, Task, Window, actions,
     component::{
         VirtualListScrollHandle,
         input::{InputEvent, InputState},
@@ -35,16 +42,20 @@ use gpui_kit::{
     },
     point, px,
 };
-use talos_rs::TalosClient;
-use tokio::runtime::Handle;
 
-use freshkube_core::logs::ServiceId;
+use freshkube_core::logs::{LogEvent, ServiceId};
 
-use crate::backend::{OwnedJob, StreamEvent, Target};
 use review::LogReview;
+pub(crate) use talos::TalosLogs;
+
+/// The Talos Logs page.
+pub(crate) type LogPanel = LogView<TalosLogs>;
+
+/// The key context of every log view's line list.
+const CONTEXT: &str = "LogView";
 
 actions!(
-    talos_logs,
+    log_view,
     [
         CopySelected,
         NextLine,
@@ -60,6 +71,12 @@ actions!(
         FindPrevious
     ]
 );
+
+/// Marks the log view's key bindings as registered, so views made later,
+/// one per pane, don't add them again.
+struct KeysBound;
+
+impl Global for KeysBound {}
 
 #[derive(Clone, PartialEq)]
 struct MeasurementKey {
@@ -121,22 +138,38 @@ impl ScrollbarHandle for ManualReviewScroll {
 /// How often stream batches are applied while the page is hidden.
 const HIDDEN_APPLY_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) struct LogPanel {
-    runtime: Handle,
-    tail: i32,
-    target: Option<(Target, TalosClient)>,
-    fixture_target: Option<Target>,
-    services: Vec<ServiceId>,
-    collecting: BTreeSet<ServiceId>,
-    /// Whether the default collection was already offered for this target.
-    defaults_applied: bool,
+/// Where a log view's lines come from. The view calls these while it
+/// renders; the source feeds lines through [`LogView::ingest`] and keeps
+/// its stream, catalog and failures to itself.
+pub(crate) trait LogSource: Sized + 'static {
+    /// Lays out whatever `controls` needs measured, once per frame before
+    /// the toolbar is laid out. `width` is the panel's.
+    fn prepare_controls(
+        _view: &mut LogView<Self>,
+        _width: Pixels,
+        _window: &mut Window,
+        _cx: &mut Context<LogView<Self>>,
+    ) {
+    }
+
+    /// Toolbar rows above the shared filters, search and buttons.
+    fn controls(view: &LogView<Self>, cx: &mut Context<LogView<Self>>) -> Vec<AnyElement>;
+
+    /// What the list says while no line is visible.
+    fn empty_message(view: &LogView<Self>) -> &'static str;
+
+    /// Stream failures by source, shown above the lines.
+    fn errors(&self) -> &BTreeMap<ServiceId, String>;
+}
+
+pub(crate) struct LogView<S: LogSource> {
+    source: S,
+    /// Sources whose lines are shown; the others stay retained but hidden.
     showing: BTreeSet<ServiceId>,
     review: LogReview,
+    /// Bumped on every reset, so rows of an earlier review never share an
+    /// element id with the current one.
     generation: u64,
-    stream_revision: u64,
-    job: Option<OwnedJob>,
-    delivery: Option<Task<()>>,
-    collection_active: bool,
     following: bool,
     wrapped: bool,
     query: Entity<InputState>,
@@ -150,7 +183,7 @@ pub(crate) struct LogPanel {
     sizes: Rc<Vec<Size<Pixels>>>,
     /// Natural width of each row in `sizes`, for the unwrapped content width.
     row_widths: Vec<Pixels>,
-    row_measurements: std::collections::BTreeMap<u64, RowMeasurement>,
+    row_measurements: BTreeMap<u64, RowMeasurement>,
     /// Whether each row in `sizes` is measured at the current geometry.
     /// The others keep their last height as an estimate.
     row_exact: Vec<bool>,
@@ -162,36 +195,33 @@ pub(crate) struct LogPanel {
     review_anchor: Option<ReviewAnchor>,
     anchor_evicted: bool,
     feedback: Option<String>,
-    errors: std::collections::BTreeMap<ServiceId, String>,
-    /// Whether the Logs page is on screen. Collection continues either way,
-    /// but a hidden panel applies batches in coalesced groups and never
+    /// Whether the view is on screen. Its source keeps streaming either
+    /// way, but a hidden view applies lines in coalesced groups and never
     /// asks the window to redraw for them.
     visible: bool,
-    backlog: Vec<StreamEvent>,
+    backlog: Vec<LogEvent>,
     last_applied: Instant,
 }
 
-impl LogPanel {
-    pub(crate) fn new(
-        runtime: Handle,
-        tail: i32,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.bind_keys([
-            KeyBinding::new("secondary-c", CopySelected, Some("TalosLogs")),
-            KeyBinding::new("down", NextLine, Some("TalosLogs")),
-            KeyBinding::new("up", PreviousLine, Some("TalosLogs")),
-            KeyBinding::new("shift-down", ExtendNext, Some("TalosLogs")),
-            KeyBinding::new("shift-up", ExtendPrevious, Some("TalosLogs")),
-            KeyBinding::new("home", FirstLine, Some("TalosLogs")),
-            KeyBinding::new("end", LastLine, Some("TalosLogs")),
-            KeyBinding::new("pagedown", PageNext, Some("TalosLogs")),
-            KeyBinding::new("pageup", PagePrevious, Some("TalosLogs")),
-            KeyBinding::new("escape", ClearSelection, Some("TalosLogs")),
-            KeyBinding::new("f3", FindNext, Some("TalosLogs")),
-            KeyBinding::new("shift-f3", FindPrevious, Some("TalosLogs")),
-        ]);
+impl<S: LogSource> LogView<S> {
+    pub(crate) fn with_source(source: S, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        if !cx.has_global::<KeysBound>() {
+            cx.set_global(KeysBound);
+            cx.bind_keys([
+                KeyBinding::new("secondary-c", CopySelected, Some(CONTEXT)),
+                KeyBinding::new("down", NextLine, Some(CONTEXT)),
+                KeyBinding::new("up", PreviousLine, Some(CONTEXT)),
+                KeyBinding::new("shift-down", ExtendNext, Some(CONTEXT)),
+                KeyBinding::new("shift-up", ExtendPrevious, Some(CONTEXT)),
+                KeyBinding::new("home", FirstLine, Some(CONTEXT)),
+                KeyBinding::new("end", LastLine, Some(CONTEXT)),
+                KeyBinding::new("pagedown", PageNext, Some(CONTEXT)),
+                KeyBinding::new("pageup", PagePrevious, Some(CONTEXT)),
+                KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
+                KeyBinding::new("f3", FindNext, Some(CONTEXT)),
+                KeyBinding::new("shift-f3", FindPrevious, Some(CONTEXT)),
+            ]);
+        }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search retained lines"));
         let subscription = cx.subscribe_in(&query, window, |this, _, event, _, cx| match event {
             InputEvent::Change => {
@@ -204,20 +234,10 @@ impl LogPanel {
             _ => {}
         });
         Self {
-            runtime,
-            tail,
-            target: None,
-            fixture_target: None,
-            services: Vec::new(),
-            collecting: BTreeSet::new(),
-            defaults_applied: false,
+            source,
             showing: BTreeSet::new(),
             review: LogReview::new(""),
             generation: 0,
-            stream_revision: 0,
-            job: None,
-            delivery: None,
-            collection_active: false,
             following: true,
             wrapped: true,
             query,
@@ -231,7 +251,7 @@ impl LogPanel {
             row_widths: Vec::new(),
             pending_reveal: None,
             manual_review: Rc::new(Cell::new(false)),
-            row_measurements: std::collections::BTreeMap::new(),
+            row_measurements: BTreeMap::new(),
             row_exact: Vec::new(),
             settled: true,
             settle: None,
@@ -239,11 +259,104 @@ impl LogPanel {
             review_anchor: None,
             anchor_evicted: false,
             feedback: None,
-            errors: std::collections::BTreeMap::new(),
             visible: true,
             backlog: Vec::new(),
             last_applied: Instant::now(),
         }
+    }
+
+    /// Tells the view whether it is on screen. Showing it applies
+    /// everything received meanwhile.
+    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if visible {
+            self.flush_backlog(cx);
+            cx.notify();
+        }
+    }
+
+    /// Applies the lines held while hidden.
+    fn flush_backlog(&mut self, cx: &mut Context<Self>) {
+        if self.backlog.is_empty() {
+            return;
+        }
+        let lines = std::mem::take(&mut self.backlog);
+        self.apply_lines(lines, cx);
+    }
+
+    /// Takes lines the source accepted for its current stream. A hidden
+    /// view doesn't spend main-thread time per batch: it holds lines and
+    /// applies them in coalesced groups.
+    fn ingest(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
+        if !self.visible {
+            self.backlog.extend(lines);
+            if self.last_applied.elapsed() < HIDDEN_APPLY_INTERVAL {
+                return;
+            }
+            let lines = std::mem::take(&mut self.backlog);
+            self.apply_lines(lines, cx);
+            return;
+        }
+        self.apply_lines(lines, cx);
+    }
+
+    fn apply_lines(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
+        self.last_applied = Instant::now();
+        self.apply_manual_review(cx);
+        self.capture_anchor();
+        self.review.append(lines);
+        if self.following {
+            self.pending_reveal = self.last_row_id();
+        }
+        // A hidden view isn't drawn and nothing else shows what a batch
+        // changes, so only a visible one asks for a redraw.
+        if self.visible {
+            cx.notify();
+        }
+    }
+
+    /// Starts an empty review for a new source identity, such as another
+    /// node: lines, filters, scroll position and search all start over.
+    /// Measurements are keyed by line identity and stay cached.
+    fn reset(&mut self, address: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.backlog.clear();
+        self.generation += 1;
+        self.review = LogReview::new(address);
+        self.showing.clear();
+        self.review_anchor = None;
+        self.anchor_evicted = false;
+        self.feedback = None;
+        self.following = true;
+        self.measured = None;
+        self.sizes = Rc::new(Vec::new());
+        self.row_widths.clear();
+        self.row_exact.clear();
+        self.scroll = VirtualListScrollHandle::new();
+        self.manual_review = Rc::new(Cell::new(false));
+        self.query
+            .update(cx, |query, cx| query.set_value("", window, cx));
+    }
+
+    /// Shows or hides one source's lines without touching its stream.
+    fn toggle_shown(&mut self, source: &ServiceId, cx: &mut Context<Self>) {
+        self.capture_anchor();
+        if !self.showing.remove(source) {
+            self.showing.insert(source.clone());
+        }
+        self.review.set_service_filter(self.showing.clone());
+        cx.notify();
+    }
+
+    /// Identity of the last visible row, which following keeps in view.
+    fn last_row_id(&self) -> Option<u64> {
+        self.review
+            .visible
+            .len()
+            .checked_sub(1)
+            .map(|ix| self.review.id(ix))
     }
 
     fn capture_anchor(&mut self) {
@@ -294,12 +407,7 @@ impl LogPanel {
         if following {
             self.review_anchor = None;
             self.anchor_evicted = false;
-            self.pending_reveal = self
-                .review
-                .visible
-                .len()
-                .checked_sub(1)
-                .map(|ix| self.review.id(ix));
+            self.pending_reveal = self.last_row_id();
         } else {
             self.capture_anchor();
         }

@@ -1,14 +1,13 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     AvailableSpace, Context, FontWeight, ListSizingBehavior, Pixels, Render, Role, ScrollStrategy,
-    SharedString, TestSupportExt, Toggled, Window,
+    SharedString, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants, Toggle, ToggleVariants},
         h_flex,
         input::Input,
         scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
-        tooltip::Tooltip,
         v_flex, v_virtual_list,
     },
     div, point,
@@ -19,69 +18,20 @@ use gpui_kit::{
 use freshkube_core::types::LogLevel;
 
 use super::{
-    ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious, FirstLine,
-    LastLine, LogPanel, ManualReviewScroll, NextLine, PageNext, PagePrevious, PreviousLine,
-    review::MAX_SELECTED_LINES,
+    CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
+    FirstLine, LastLine, LogSource, LogView, ManualReviewScroll, NextLine, PageNext, PagePrevious,
+    PreviousLine,
 };
 use crate::palette::palette;
 use crate::ui;
 
-impl LogPanel {
-    /// One-line summary for the window status bar.
-    pub(crate) fn status_line(&self) -> String {
-        let mut parts = vec![
-            if self.collection_active {
-                if self.collecting.len() == 1 {
-                    "Collecting 1 service".to_owned()
-                } else {
-                    format!("Collecting {} services", self.collecting.len())
-                }
-            } else {
-                "Collection stopped".to_owned()
-            },
-            format!(
-                "{} visible / {} retained",
-                self.review.visible.len(),
-                self.review.logs.buffer().entries().len()
-            ),
-        ];
-        if !self.review.query.is_empty() {
-            let count = self.review.match_count();
-            parts.push(if count == 1 {
-                "1 match".into()
-            } else {
-                format!("{count} matches")
-            });
-        }
-        parts.push(format!("{} selected", self.review.selected.len()));
-        parts.push(if self.following {
-            "Following".into()
-        } else if self.collection_active {
-            "Paused, collection continues".into()
-        } else {
-            "Paused".into()
-        });
-        if self.review.evicted > 0 || self.review.omitted > 0 {
-            parts.push(format!(
-                "{} oldest lines evicted, {} over 64 KiB omitted",
-                self.review.evicted, self.review.omitted
-            ));
-        }
-        if self.anchor_evicted {
-            parts.push("Review position was evicted; showing the earliest line".into());
-        }
-        if self.review.selection_limited {
-            parts.push(format!("Selection limited to {MAX_SELECTED_LINES} lines"));
-        }
-        parts.join(" · ")
-    }
-
+impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
         &self,
         row_ix: usize,
         measuring: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> impl IntoElement + use<S> {
         let entry = self.review.entry(row_ix);
         let id = self.review.id(row_ix);
         let selected = self.review.selected.contains(&id);
@@ -195,123 +145,7 @@ impl LogPanel {
             )
     }
 
-    fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let p = palette(cx);
-        h_flex()
-            .flex_wrap()
-            .gap(px(6.))
-            .children(self.services.iter().map(|service| {
-                let collect_service = service.clone();
-                let show_service = service.clone();
-                let collecting = self.collecting.contains(service);
-                let showing = self.showing.contains(service);
-                let count = self.review.service_count(service);
-                let full = !collecting && self.collecting.len() >= 16;
-                h_flex()
-                    .h(px(26.))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(if collecting {
-                        p.accent_line
-                    } else {
-                        p.line_strong
-                    })
-                    .bg(if collecting { p.accent_soft } else { p.surface })
-                    .overflow_hidden()
-                    .child(
-                        h_flex()
-                            .id(SharedString::from(format!("collect-{}", service.as_str())))
-                            .test_support()
-                            .role(Role::CheckBox)
-                            .aria_toggled(if collecting {
-                                Toggled::True
-                            } else {
-                                Toggled::False
-                            })
-                            .aria_label(format!("Collect {}", service.as_str()))
-                            .tab_index(0)
-                            .h_full()
-                            .pl(px(10.))
-                            .pr(px(if collecting || count > 0 { 4. } else { 10. }))
-                            .gap(px(5.))
-                            .when(!full, |this| this.cursor_pointer())
-                            .when(full, |this| this.opacity(0.5))
-                            .font_family(ui::MONO_FONT)
-                            .text_size(px(12.))
-                            .text_color(if collecting { p.ink } else { p.muted })
-                            .when(collecting, |this| {
-                                this.child(
-                                    Icon::new(IconName::Check)
-                                        .with_size(px(13.))
-                                        .text_color(p.accent),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .when(!showing, |this| this.line_through().text_color(p.faint))
-                                    .child(service.as_str().to_owned()),
-                            )
-                            .when(count > 0, |this| {
-                                this.child(
-                                    div()
-                                        .text_size(px(10.5))
-                                        .text_color(p.muted)
-                                        .child(count.to_string()),
-                                )
-                            })
-                            .when(!full, |this| {
-                                this.on_click(cx.listener(move |this, _, _, cx| {
-                                    let checked = !this.collecting.contains(&collect_service);
-                                    this.toggle_collection(collect_service.clone(), checked, cx)
-                                }))
-                            }),
-                    )
-                    .when(collecting || count > 0, |this| {
-                        this.child(
-                            h_flex()
-                                .id(SharedString::from(format!("show-{}", service.as_str())))
-                                .test_support()
-                                .role(Role::CheckBox)
-                                .aria_toggled(if showing {
-                                    Toggled::True
-                                } else {
-                                    Toggled::False
-                                })
-                                .aria_label(format!(
-                                    "{} {} lines",
-                                    if showing { "Hide" } else { "Show" },
-                                    service.as_str()
-                                ))
-                                .tab_index(0)
-                                .h_full()
-                                .pl(px(4.))
-                                .pr(px(9.))
-                                .cursor_pointer()
-                                .child(
-                                    Icon::new(if showing {
-                                        IconName::Eye
-                                    } else {
-                                        IconName::EyeOff
-                                    })
-                                    .with_size(px(13.))
-                                    .text_color(p.muted),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.capture_anchor();
-                                    if this.showing.contains(&show_service) {
-                                        this.showing.remove(&show_service);
-                                    } else {
-                                        this.showing.insert(show_service.clone());
-                                    }
-                                    this.review.set_service_filter(this.showing.clone());
-                                    cx.notify();
-                                })),
-                        )
-                    })
-            }))
-    }
-
-    fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
         let p = palette(cx);
         let counts = self.review.level_counts(&self.showing);
         h_flex().gap_1().flex_wrap().children(
@@ -370,7 +204,7 @@ impl LogPanel {
                         .child(feedback),
                 )
             })
-            .children(self.errors.iter().map(|(service, error)| {
+            .children(self.source.errors().iter().map(|(service, error)| {
                 h_flex()
                     .items_start()
                     .gap_2()
@@ -386,19 +220,11 @@ impl LogPanel {
     }
 
     fn has_notices(&self) -> bool {
-        self.feedback.is_some() || !self.errors.is_empty()
+        self.feedback.is_some() || !self.source.errors().is_empty()
     }
 
-    fn render_toolbar_content(
-        &self,
-        catalog_height: Pixels,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::Div {
+    fn render_toolbar_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let p = palette(cx);
-        let (node, address) = self
-            .active_target()
-            .map(|target| (target.node.clone(), target.address.clone()))
-            .unwrap_or_else(|| ("no node".into(), String::new()));
         let match_count = self.review.match_count();
         let current_position = self.review.current_match.and_then(|id| {
             self.review
@@ -410,118 +236,7 @@ impl LogPanel {
         v_flex()
             .gap(px(12.))
             .pb(px(12.))
-            .child(
-                h_flex()
-                    .items_end()
-                    .gap_3()
-                    .flex_wrap()
-                    .child(
-                        v_flex()
-                            .gap(px(7.))
-                            .child(
-                                h_flex()
-                                    .gap_2p5()
-                                    .child(
-                                        div()
-                                            .font_family(ui::DISPLAY_FONT)
-                                            .text_size(px(28.))
-                                            .line_height(px(32.))
-                                            .child("Logs"),
-                                    )
-                                    .child(if self.collection_active {
-                                        ui::tag(ui::Tone::Good, None, "Collecting", cx)
-                                    } else {
-                                        ui::tag(ui::Tone::Unknown, Some(IconName::Pause), "Stopped", cx)
-                                    }),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .text_size(px(12.5))
-                                    .text_color(p.muted)
-                                    .child("on")
-                                    .child(
-                                        div()
-                                            .font_family(ui::MONO_FONT)
-                                            .text_size(px(12.))
-                                            .child(node),
-                                    )
-                                    .when(!address.is_empty(), |this| {
-                                        this.child("·").child(
-                                            div()
-                                                .font_family(ui::MONO_FONT)
-                                                .text_size(px(12.))
-                                                .child(address),
-                                        )
-                                    }),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("logs-collection")
-                            .small()
-                            .map(|button| {
-                                if self.collection_active {
-                                    button.outline()
-                                } else {
-                                    button.primary()
-                                }
-                            })
-                            .icon(if self.collection_active {
-                                IconName::Square
-                            } else {
-                                IconName::Play
-                            })
-                            .label(if self.collection_active {
-                                "Stop collecting"
-                            } else {
-                                "Start collecting"
-                            })
-                            .disabled(
-                                self.active_target().is_none()
-                                    || (!self.collection_active && self.collecting.is_empty()),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if this.collection_active {
-                                    this.stop(cx);
-                                } else {
-                                    this.start(cx);
-                                }
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("logs-services-label")
-                            .pt(px(6.))
-                            .tooltip(|window, cx| {
-                                Tooltip::new("Collect up to 16 services. The eye hides a service's lines without stopping collection.")
-                                    .build(window, cx)
-                            })
-                            .child(ui::caption("Services", cx)),
-                    )
-                    .child(
-                        div()
-                            .id("logs-services")
-                            .role(Role::Group)
-                            .aria_label("Services to collect and show")
-                            .flex_1()
-                            .min_w_0()
-                            .h(catalog_height)
-                            .min_h_0()
-                            .child(
-                                self.render_catalog_content(cx)
-                                    .h_full()
-                                    .min_h_0()
-                                    .overflow_y_scrollbar()
-                                    .id("logs-services-scroll"),
-                            ),
-                    ),
-            )
+            .children(S::controls(self, cx))
             .child(
                 h_flex()
                     .flex_wrap()
@@ -605,7 +320,11 @@ impl LogPanel {
                                     } else {
                                         IconName::Pause
                                     })
-                                    .label(if self.following { "Following" } else { "Paused" })
+                                    .label(if self.following {
+                                        "Following"
+                                    } else {
+                                        "Paused"
+                                    })
                                     .tooltip(if self.following {
                                         "Pause to review. Collection keeps running."
                                     } else {
@@ -634,7 +353,7 @@ impl LogPanel {
     }
 }
 
-impl Render for LogPanel {
+impl<S: LogSource> Render for LogView<S> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("logs");
         self.apply_manual_review(cx);
@@ -653,15 +372,7 @@ impl Render for LogPanel {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
         let p = palette(cx);
-        let empty = if self.active_target().is_none() {
-            "Select a connected node to view its logs."
-        } else if self.services.is_empty() {
-            "This node didn't report a service catalog."
-        } else if self.review.logs.buffer().entries().is_empty() {
-            "Choose services above, then start collecting."
-        } else {
-            "No retained lines pass the service and level filters."
-        };
+        let empty = S::empty_message(self);
         let entity = cx.entity().downgrade();
         let root_entity = cx.entity().downgrade();
         // Budget the pane's own allocation, not the native window before
@@ -688,19 +399,8 @@ impl Render for LogPanel {
             px(0.)
         };
         let toolbar_cap = chrome_budget - notices_height;
-        let mut catalog_content = self.render_catalog_content(cx).into_any_element();
-        let catalog_size = catalog_content.layout_as_root(
-            size(
-                AvailableSpace::Definite((panel_width - px(90.)).max(px(0.))),
-                AvailableSpace::MinContent,
-            ),
-            window,
-            cx,
-        );
-        let catalog_height = catalog_size.height.min(px(26. * 2. + 6.));
-        let mut toolbar_content = self
-            .render_toolbar_content(catalog_height, cx)
-            .into_any_element();
+        S::prepare_controls(self, panel_width, window, cx);
+        let mut toolbar_content = self.render_toolbar_content(cx).into_any_element();
         let toolbar_size = toolbar_content.layout_as_root(
             size(
                 AvailableSpace::Definite(panel_width),
@@ -719,7 +419,7 @@ impl Render for LogPanel {
         let viewport = div().id("logs-viewport").role(Role::ListBox)
             .aria_label("Retained log lines; arrows select, Shift arrows extend, Command or Control C copies selected complete lines")
             .test_support()
-            .track_focus(&self.focus).key_context("TalosLogs")
+            .track_focus(&self.focus).key_context(CONTEXT)
             .relative().flex_1().min_h(viewport_min).min_w_0().overflow_hidden()
             .bg(p.surface)
             .rounded_t(px(10.))
@@ -799,7 +499,7 @@ impl Render for LogPanel {
                     .min_h_0()
                     .max_h(toolbar_cap)
                     .child(
-                        self.render_toolbar_content(catalog_height, cx)
+                        self.render_toolbar_content(cx)
                             .h_full()
                             .min_h_0()
                             .overflow_y_scrollbar()
