@@ -78,7 +78,8 @@ actions!(
         FocusFilter,
         ClearFilter,
         LeaveFilter,
-        OpenSelected
+        OpenSelected,
+        ChooseNamespace
     ]
 );
 
@@ -341,6 +342,7 @@ impl ResourcesScreen {
             KeyBinding::new("secondary-f", FocusFilter, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
             KeyBinding::new("enter", OpenSelected, Some(CONTEXT)),
+            KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
@@ -850,6 +852,17 @@ impl ResourcesScreen {
             .update(cx, |detail, cx| detail.focus(window, cx));
     }
 
+    /// N on the list opens the namespace picker, as Enter on it would.
+    /// Choosing or cancelling hands the keyboard back to the list.
+    fn choose_namespace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.kind.namespaced {
+            return;
+        }
+        let focus = self.namespace_select.focus_handle(cx);
+        window.focus(&focus, cx);
+        focus.dispatch_action(&base::actions::Confirm { secondary: false }, window, cx);
+    }
+
     /// Command-Shift-] and [ on the list switch the pane's tab and leave
     /// the keyboard where it is.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -1222,6 +1235,9 @@ impl ResourcesScreen {
             .on_action(
                 cx.listener(|view, _: &OpenSelected, window, cx| view.open_selected(window, cx)),
             )
+            .on_action(cx.listener(|view, _: &ChooseNamespace, window, cx| {
+                view.choose_namespace(window, cx)
+            }))
             .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
             .flex_1()

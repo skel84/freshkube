@@ -1949,6 +1949,27 @@ fn kubernetes_status(window: &gpui_kit::Window) -> String {
 }
 
 #[gpui_kit::test]
+fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("ctrl-tab"), None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        // Every other page would only say it needs a talosconfig.
+        window.press("ctrl-tab", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        window.press("secondary-2", cx);
+        window.render_frame(cx);
+        assert!(window.find("needs-talosconfig").visible());
+        window.press("ctrl-shift-tab", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
     cx: &mut TestAppContext,
 ) {

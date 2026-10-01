@@ -163,6 +163,25 @@ impl Pilot {
         self.focus_page(window, cx);
     }
 
+    /// Whether `page` can show anything: in Kubernetes-only mode, only
+    /// Resources can.
+    fn page_loads(&self, page: Page) -> bool {
+        self.kubernetes_only.is_none() || page == Page::Resources
+    }
+
+    /// The next page in sidebar order, wrapping around, that can load.
+    pub(super) fn adjacent_page(&self, forward: bool) -> Page {
+        let step = if forward { 1 } else { -1 };
+        let mut page = self.page;
+        for _ in 0..Page::ALL.len() {
+            page = page.adjacent(step);
+            if self.page_loads(page) {
+                return page;
+            }
+        }
+        self.page
+    }
+
     /// Puts the keyboard on the page shown, as navigating to it does: its
     /// list, or the shell when it has none.
     pub(super) fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {

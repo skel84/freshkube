@@ -661,8 +661,12 @@ fn the_namespace_picker_hands_the_keyboard_back_to_the_list(cx: &mut TestAppCont
         assert_eq!(window.find("resource-body").focused(), Some(true));
         assert_eq!(screen.read(cx).namespace, None);
     });
-    // A choice applies, and the arrows move through the list again.
-    step(cx, &|window, cx| window.click("resource-namespace", cx));
+    // N on the list opens it too, and a choice applies; the arrows then
+    // move through the list again.
+    step(cx, &|window, cx| {
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+    });
+    step(cx, &|window, cx| window.press("n", cx));
     step(cx, &|window, cx| window.press("down", cx));
     step(cx, &|window, cx| window.press("enter", cx));
     step(cx, &|window, cx| {
@@ -765,4 +769,21 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert_eq!(shown(&screen, cx), None);
         assert_eq!(focused(window, "resource-body"), Some(true));
     });
+}
+
+#[gpui_kit::test]
+fn n_does_nothing_for_a_kind_without_namespaces(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("nodes"), window, cx);
+            screen.focus(window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("resource-namespace").is_none());
+        window.press("n", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+    })
+    .unwrap();
 }

@@ -1305,10 +1305,10 @@ impl Render for Pilot {
                 view.navigate_from_keyboard(Page::Workloads, window, cx)
             }))
             .on_action(cx.listener(|view, _: &NextScreen, window, cx| {
-                view.navigate_from_keyboard(view.page.adjacent(1), window, cx)
+                view.navigate_from_keyboard(view.adjacent_page(true), window, cx)
             }))
             .on_action(cx.listener(|view, _: &PreviousScreen, window, cx| {
-                view.navigate_from_keyboard(view.page.adjacent(-1), window, cx)
+                view.navigate_from_keyboard(view.adjacent_page(false), window, cx)
             }))
             .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
                 view.adjacent_context(false, window, cx)
