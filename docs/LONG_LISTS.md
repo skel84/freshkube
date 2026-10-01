@@ -20,7 +20,8 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 | Processes, Storage, Network and Workloads tables | hundreds to thousands | `uniform_list` | Fine |
 | Talos logs panel | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)) |
 | Pod logs (roadmap step 5) | same as the logs panel | the shared log view, once extracted from the logs panel | Inherits the logs panel's measurement and resize handling |
-| Detail pane YAML and Events (roadmap step 3) | thousands of lines for a large object | not built yet | Unwrapped lines can use `uniform_list`. Wrapped lines need the measured approach below |
+| Detail pane YAML | thousands of lines for a large object | `uniform_list` of unwrapped lines, as wide as the longest line. A line draws at most 2,000 characters, and search marks at most 10,000 matches | Fine. Wrapping would need the measured approach below |
+| Detail pane Events and Overview | an object's events; its labels and annotations | plain children in a scroll area: the newest 200 events, at most 200 labels and 200 annotations | Fine while capped. The rest stay in the YAML |
 | Diagnostics, Security, etcd, Lifecycle, Operations progress | bounded: usually tens of rows; at most 256 Lifecycle nodes or Operations lines | plain children in a scroll area | Fine while bounded |
 
 ## Wrapped rows during a resize

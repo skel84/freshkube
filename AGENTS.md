@@ -253,6 +253,8 @@ DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
 
 `resources/` browses Kubernetes kinds on one `Page::Resources`; the sidebar's KUBERNETES groups pick the kind. It is not a `ScreenPanel`: it doesn't follow the target node, the shell owns it directly and tells it when it is visible, and only a visible page lists and watches. Rows are the server-printed table (wide columns hidden, Age computed locally) and are selected by identity (connection, resource, namespace, name, UID), never by position. The shell's automatic refresh never restarts the watch; only Refresh lists again.
 
+Selecting a row opens the detail pane (`resources/pane.rs`, with its model in `resources/detail.rs`), a cached view in a resizable split beside or below the list. It reads the full object itself and watches its events; it doesn't watch the object. The list is its source of truth: the screen passes on each new `resourceVersion` the list sees, which triggers at most one read a second, and tells the pane when the row is gone. Every answer carries the request's sequence number and identity, and a stale one is dropped. Secret values never reach the document: `reveal_secret_value` reads one key again, and every revealed value is forgotten when the page hides or a new version arrives.
+
 ## Adding a screen
 
 1. Add the page to `Page` (`desktop/mod.rs`): `ALL`, `SCREENS` if it is a `ScreenPanel`, its slug, sidebar entry and shortcut.

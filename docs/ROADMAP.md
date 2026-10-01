@@ -21,21 +21,9 @@ These hold for every step until a later one deliberately changes them.
 | 2a. Browse | KUBERNETES sidebar groups in Kubeli's order; one Resources page with a live list and watch, namespace picker and filter; Talos mode reads through the Talos-derived Kubernetes client | `361b9d5` |
 | 2b. Kubernetes only | Works without a talosconfig: kubeconfig contexts in the sidebar, `--kubernetes-only`, `--kube-context`, one shared connection attempt per context, Talos pages ask for a talosconfig | `3bfb4d4` |
 | Logs resize | With wrapping on, a resize lays out only the log lines on screen and re-measures the rest once the width holds ([LONG_LISTS.md](LONG_LISTS.md#wrapped-rows-during-a-resize)) | `decdefa` |
+| 3. Detail pane | Overview, YAML and Events for the selected object, beside the list or below it in a narrow window. Reads on demand and follows the list's resourceVersion at most once a second; drops late answers; shows refused, failed, stale, deleted and recreated. YAML is a `uniform_list` with search, line selection and copy. Events match by UID. Secret values stay hidden until one key is revealed | `28bf866`, `f8546ef` |
 
 ## Next: finish Kubernetes browsing
-
-### Step 3. Detail pane
-
-Overview, YAML and Events for the selected object, beside the list and stacked below it in a narrow window.
-
-- Fetch the selected object's full representation on demand. Never rebuild it from a table row.
-- Drop late responses for another selection or UID. Show a deleted or recreated object as such instead of silently switching documents.
-- Show loading, refused and failed states, keeping a previous document visible and marked stale.
-- Read-only YAML viewer with copy and search. Editing waits for F06. A large object's YAML runs to thousands of lines, so it renders as a long list ([LONG_LISTS.md](LONG_LISTS.md)): `uniform_list` for unwrapped lines, measured rows if it wraps.
-- Events for the object, matched by its UID, newest first.
-- Decide before Secrets get a YAML view: is data hidden until revealed explicitly?
-
-Done when a selected object's documents follow it through updates, deletion and recreation, and a slow response can't show another object's YAML.
 
 ### Step 4. Custom resources
 
@@ -55,7 +43,8 @@ Done when a selected object's documents follow it through updates, deletion and 
 ### Open checks
 
 - Talos mode's Kubernetes pages against the live cluster. Only Kubernetes-only mode has been checked live so far.
-- A visual pass of Kubernetes-only mode on a live cluster. The live check ran with the screen locked, so it covered data, not drawing.
+- A visual pass of Kubernetes-only mode on a live cluster, including the detail pane. The live checks ran with the screen locked, so they covered data, not drawing.
+- The detail pane's re-read on a new version, and its deleted and recreated states, are covered by UI tests only. A read-only check can't make an object change, so they wait for one that changes on its own.
 - Launched as an app bundle, the app couldn't reach a LAN cluster that the terminal-launched binary reached. This is probably macOS Local Network privacy. Confirm before packaging, and add `NSLocalNetworkUsageDescription`.
 
 ## Then: a daily-use workflow
