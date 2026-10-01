@@ -1,5 +1,8 @@
 use std::fmt;
 
+/// The reason kube gives an error whose body it couldn't read as a Status.
+const UNPARSED: &str = "Failed to parse error data";
+
 /// What kind of failure a read hit, so a frontend can say something more
 /// useful than a raw error string and never mistake a refusal for an empty
 /// result.
@@ -54,10 +57,20 @@ impl Failure {
                     408 | 504 => FailureKind::Timeout,
                     _ => FailureKind::Other,
                 };
-                let message = if status.message.is_empty() {
-                    format!("API error {}", status.code)
+                // A body that isn't a Status (a proxy's or the mux's "404
+                // page not found") comes quoted, as Rust prints a string.
+                let message = if status.reason == UNPARSED {
+                    serde_json::from_str::<String>(&status.message)
+                        .unwrap_or(status.message)
+                        .trim()
+                        .to_owned()
                 } else {
                     status.message
+                };
+                let message = if message.is_empty() {
+                    format!("API error {}", status.code)
+                } else {
+                    message
                 };
                 Self::new(kind, message)
             }
@@ -132,5 +145,27 @@ mod tests {
         assert_eq!(Failure::from_kube(api(504, "x")).kind, FailureKind::Timeout);
         assert_eq!(Failure::from_kube(api(500, "x")).kind, FailureKind::Other);
         assert!(!FailureKind::Unreachable.is_permanent());
+    }
+
+    #[test]
+    fn a_body_that_is_not_a_status_reads_as_its_text() {
+        let unparsed = |message: &str| {
+            Failure::from_kube(kube::Error::Api(ErrorResponse {
+                status: "404 Not Found".into(),
+                // As kube-client 0.98 builds it from the body.
+                message: format!("{message:?}"),
+                reason: UNPARSED.into(),
+                code: 404,
+            }))
+        };
+        let missing = unparsed("404 page not found\n");
+        assert_eq!(missing.kind, FailureKind::NotFound);
+        assert_eq!(missing.to_string(), "Not found · 404 page not found");
+        assert_eq!(unparsed("\n").message, "API error 404");
+        // A Status message is kept as the server wrote it.
+        assert_eq!(
+            Failure::from_kube(api(404, "\"x\" not found")).message,
+            "\"x\" not found"
+        );
     }
 }

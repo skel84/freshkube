@@ -13,14 +13,17 @@
 //! `FRESHKUBE_NAMESPACE` limits the listing to one namespace. The kind
 //! `custom` instead prints the custom API groups and what each offers; a
 //! discovered key such as `certificates.cert-manager.io` lists that kind.
+//! `FRESHKUBE_VERSION` also asks each group for that version and lists a
+//! discovered kind at it, to show how a version the server doesn't serve is
+//! reported.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use freshkube_core::resources::{
-    EventScope, EventUpdate, ResourceKind, WatchEvent, builtin, connect, discover_contexts,
-    get_object, kubeconfig_sources, list_custom_groups, list_group_kinds, watch_collection,
-    watch_object_events,
+    ApiGroup, EventScope, EventUpdate, ResourceKind, WatchEvent, builtin, connect,
+    discover_contexts, get_object, kubeconfig_sources, list_custom_groups, list_group_kinds,
+    watch_collection, watch_object_events,
 };
 
 #[tokio::main]
@@ -233,11 +236,16 @@ async fn discover(client: &kube::Client, key: &str) -> Option<ResourceKind> {
         groups.len(),
         started.elapsed()
     );
+    let unserved = std::env::var("FRESHKUBE_VERSION").ok();
     for group in &groups {
         if key != "custom" && !key.ends_with(&format!(".{}", group.name)) {
             continue;
         }
-        match list_group_kinds(client, group).await {
+        let mut group = group.clone();
+        if let Some(version) = &unserved {
+            group.versions.push(version.clone());
+        }
+        match list_group_kinds(client, &group).await {
             Ok(found) => {
                 if key == "custom" {
                     let kinds: Vec<_> = found
@@ -253,7 +261,22 @@ async fn discover(client: &kube::Client, key: &str) -> Option<ResourceKind> {
                         found.unlistable,
                         found.failures
                     );
-                } else if let Some(kind) = found.kinds.into_iter().find(|kind| kind.key() == key) {
+                } else if let Some(mut kind) =
+                    found.kinds.into_iter().find(|kind| kind.key() == key)
+                {
+                    if let Some(version) = unserved {
+                        println!("failed versions {:?}", found.failures);
+                        // Only that version: what a group no longer served gives.
+                        let gone = ApiGroup {
+                            name: group.name.clone(),
+                            versions: vec![version.clone()],
+                        };
+                        match list_group_kinds(client, &gone).await {
+                            Ok(found) => println!("{version} alone: {} kind(s)", found.kinds.len()),
+                            Err(failure) => println!("{version} alone: {failure}"),
+                        }
+                        kind.version = version;
+                    }
                     return Some(kind);
                 }
             }
