@@ -1,0 +1,330 @@
+//! The pane's frame: header, notices, tabs, and what replaces a tab while
+//! there is no document.
+
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    Sizable,
+    button::{Button, ButtonVariants},
+    h_flex, v_flex,
+};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
+
+use super::{
+    CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, SelectAllLines, Tab,
+};
+use crate::palette::palette;
+use crate::resources::detail::{Detail, DocumentRead, EventsRead};
+use crate::screens::panel;
+use crate::ui::{self, MONO_FONT, Tone};
+
+impl DetailPane {
+    fn header(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
+        let state = match &detail.read {
+            DocumentRead::Loading => Some((Tone::Unknown, "Reading")),
+            DocumentRead::Loaded => None,
+            DocumentRead::Refused(_) => Some((Tone::Crit, "Not permitted")),
+            DocumentRead::Failed(_) => Some((Tone::Crit, "Failed")),
+            DocumentRead::Stale(_) => Some((Tone::Warn, "Stale")),
+            DocumentRead::Deleted => Some((Tone::Crit, "Deleted")),
+        };
+        h_flex()
+            .items_start()
+            .gap_2()
+            .px_4()
+            .pt_3()
+            .pb_2()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(ui::caption(&detail.target.kind.kind, cx))
+                    .child(
+                        div()
+                            .id("detail-title")
+                            .test_support()
+                            .aria_label(self.title.clone())
+                            .font_family(MONO_FONT)
+                            .text_size(px(13.5))
+                            .truncate()
+                            .child(self.title.clone()),
+                    ),
+            )
+            .children(state.map(|(tone, text)| {
+                div()
+                    .id("detail-state")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(text)
+                    .mt(px(14.))
+                    .child(ui::tag(tone, None, text, cx))
+            }))
+            .when(detail.view.is_some(), |this| {
+                this.child(
+                    div().flex_none().mt(px(10.)).child(
+                        Button::new("detail-copy-yaml")
+                            .outline()
+                            .xsmall()
+                            .icon(IconName::Copy)
+                            .label("Copy YAML")
+                            .tooltip("Copies the whole document as read; Secret values stay hidden")
+                            .on_click(cx.listener(|pane, _, _, cx| pane.copy_document(cx))),
+                    ),
+                )
+            })
+            .child(
+                div().flex_none().mt(px(10.)).child(
+                    Button::new("detail-close")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::X)
+                        .tooltip("Close")
+                        .accessibility_label("Close details")
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailEvent::Closed))),
+                ),
+            )
+    }
+
+    /// Deleted and stale documents say so above the tabs.
+    fn notice(&self, detail: &Detail, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (id, banner) = match (&detail.read, &detail.recreated) {
+            (DocumentRead::Deleted, Some(successor)) => {
+                let successor = successor.clone();
+                (
+                    "detail-deleted",
+                    ui::warning_banner(
+                        Some("Deleted and created again.".into()),
+                        "An object with this name exists again, with a new UID. This pane still shows the one that was deleted.",
+                        Some(
+                            Button::new("detail-open-recreated")
+                                .outline()
+                                .small()
+                                .label("Open the new one")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(DetailEvent::Open(successor.clone()))
+                                }))
+                                .into_any_element(),
+                        ),
+                        cx,
+                    ),
+                )
+            }
+            (DocumentRead::Deleted, None) if detail.view.is_some() => (
+                "detail-deleted",
+                ui::warning_banner(
+                    Some("This object was deleted.".into()),
+                    "Showing it as last read.",
+                    None,
+                    cx,
+                ),
+            ),
+            (DocumentRead::Stale(reason), _) => (
+                "detail-stale",
+                ui::warning_banner(
+                    Some("Couldn't read it again.".into()),
+                    format!("Showing it as last read. {reason}"),
+                    Some(
+                        Button::new("detail-stale-retry")
+                            .outline()
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .label("Retry")
+                            .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx)))
+                            .into_any_element(),
+                    ),
+                    cx,
+                ),
+            ),
+            _ => return None,
+        };
+        Some(
+            div()
+                .id(id)
+                .test_support()
+                .role(Role::Status)
+                .px_4()
+                .pb_2()
+                .child(banner)
+                .into_any_element(),
+        )
+    }
+
+    fn tabs(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
+        let p = palette(cx);
+        let events = &detail.events;
+        let tab = |id: &'static str, tab: Tab, label: SharedString, extra: Option<Div>| {
+            let active = self.tab == tab;
+            h_flex()
+                .id(id)
+                .test_support()
+                .role(Role::Tab)
+                .aria_selected(active)
+                .aria_label(label.clone())
+                .h(px(32.))
+                .px_2p5()
+                .gap_1p5()
+                .cursor_pointer()
+                .text_size(px(12.5))
+                .border_b_2()
+                .map(|this| {
+                    if active {
+                        this.border_color(p.accent)
+                            .text_color(p.ink)
+                            .font_weight(FontWeight::SEMIBOLD)
+                    } else {
+                        this.border_color(ui::transparent())
+                            .text_color(p.muted)
+                            .hover(|style| style.text_color(p.ink))
+                    }
+                })
+                .child(label)
+                .children(extra)
+                .on_click(cx.listener(move |pane, _, _, cx| pane.set_tab(tab, cx)))
+                .into_any_element()
+        };
+        let count = match events.read() {
+            EventsRead::Loaded | EventsRead::Stale(_) => Some(events.len()),
+            _ => None,
+        };
+        let warnings = events.warnings();
+        h_flex()
+            .px_3()
+            .gap_1()
+            .border_b_1()
+            .border_color(p.line)
+            .child(tab(
+                "detail-tab-overview",
+                Tab::Overview,
+                "Overview".into(),
+                None,
+            ))
+            .child(tab("detail-tab-yaml", Tab::Yaml, "YAML".into(), None))
+            .child(tab(
+                "detail-tab-events",
+                Tab::Events,
+                match count {
+                    Some(count) => format!("Events {count}").into(),
+                    None => "Events".into(),
+                },
+                (warnings > 0).then(|| {
+                    ui::tag(
+                        Tone::Warn,
+                        None,
+                        match warnings {
+                            1 => "1 warning".to_owned(),
+                            count => format!("{count} warnings"),
+                        },
+                        cx,
+                    )
+                }),
+            ))
+    }
+
+    /// What replaces the overview and YAML while there is no document.
+    fn document_state(&self, detail: &Detail, cx: &mut Context<Self>) -> AnyElement {
+        let kind = detail.target.kind.kind.to_lowercase();
+        let state = |id: &'static str, element: Div| {
+            element
+                .id(id)
+                .test_support()
+                .role(Role::Status)
+                .into_any_element()
+        };
+        match &detail.read {
+            DocumentRead::Refused(reason) => state(
+                "detail-refused",
+                ui::empty_state(
+                    IconName::ShieldX,
+                    format!("Not permitted to read this {kind}"),
+                    "The identity may list these objects but not read this one in full. Its events may still be readable.",
+                    Some(reason.clone()),
+                    Vec::new(),
+                    cx,
+                ),
+            ),
+            DocumentRead::Failed(reason) => state(
+                "detail-failed",
+                ui::empty_state(
+                    IconName::CircleDashed,
+                    format!("Couldn't read this {kind}"),
+                    "Nothing was read, so nothing is shown.",
+                    Some(reason.clone()),
+                    vec![
+                        Button::new("detail-retry")
+                            .primary()
+                            .icon(IconName::RefreshCw)
+                            .label("Retry")
+                            .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx)))
+                            .into_any_element(),
+                    ],
+                    cx,
+                ),
+            ),
+            DocumentRead::Deleted => state(
+                "detail-gone",
+                ui::empty_state(
+                    IconName::Trash,
+                    format!("This {kind} was deleted"),
+                    "It was deleted before it could be read.",
+                    None,
+                    Vec::new(),
+                    cx,
+                ),
+            ),
+            DocumentRead::Loading | DocumentRead::Loaded | DocumentRead::Stale(_) => state(
+                "detail-loading",
+                v_flex()
+                    .p_4()
+                    .gap_3()
+                    .children((0..8).map(|_| ui::skeleton(relative(0.7), px(12.)))),
+            ),
+        }
+    }
+}
+
+impl Render for DetailPane {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::desktop::probe::hit("resource-detail");
+        let Some(detail) = self.detail.as_ref() else {
+            return div().into_any_element();
+        };
+        let p = palette(cx);
+        let body = match (self.tab, &detail.view, &self.summary) {
+            (Tab::Overview, Some(_), Some(summary)) => self.overview(detail, summary, cx),
+            (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
+            (Tab::Events, ..) => self.events(detail, cx),
+            _ => self.document_state(detail, cx),
+        };
+        panel(cx)
+            .id("resource-detail")
+            .test_support()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|pane, _: &FindInYaml, window, cx| pane.focus_find(window, cx)))
+            .on_action(cx.listener(|pane, _: &SelectAllLines, _, cx| pane.select_all(cx)))
+            .on_action(cx.listener(|pane, _: &CopyLines, _, cx| pane.copy_lines(cx)))
+            .on_action(cx.listener(|pane, _: &Dismiss, window, cx| pane.dismiss(window, cx)))
+            .size_full()
+            .overflow_hidden()
+            .child(self.header(detail, cx))
+            .children(self.notice(detail, cx))
+            .child(self.tabs(detail, cx))
+            .child(div().flex_1().min_h_0().child(body))
+            .children(self.feedback.clone().map(|feedback| {
+                div()
+                    .id("detail-feedback")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(feedback.clone())
+                    .px_4()
+                    .py_1p5()
+                    .border_t_1()
+                    .border_color(p.line)
+                    .text_size(px(12.))
+                    .text_color(p.muted)
+                    .child(feedback)
+            }))
+            .into_any_element()
+    }
+}
