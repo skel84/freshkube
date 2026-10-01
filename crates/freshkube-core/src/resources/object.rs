@@ -11,6 +11,7 @@ use serde_yaml::Value;
 
 use super::failure::{Failure, FailureKind};
 use super::kinds::ResourceKind;
+use super::pod_logs::{PodContainers, pod_containers};
 
 /// kubectl apply stores the whole applied object here, a Secret's data
 /// included.
@@ -46,6 +47,8 @@ pub struct Overview {
     pub conditions: Vec<Condition>,
     /// Present for a Secret: its type and the size of each value.
     pub secret: Option<SecretSummary>,
+    /// Present for a Pod: its containers, for choosing a log.
+    pub pod: Option<PodContainers>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,6 +136,7 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     let secret = kind.is_secret().then(|| hide_secret(&mut object));
     let mut overview = overview(&object);
     overview.secret = secret;
+    overview.pod = kind.is_pod().then(|| pod_containers(&object));
     let yaml = serde_yaml::to_string(&object)
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
     let metadata = object.get("metadata");
@@ -262,7 +266,7 @@ fn decoded_len(encoded: &str) -> usize {
     (encoded.len() / 4 * 3).saturating_sub(padding.min(2))
 }
 
-fn text(value: Option<&Value>) -> String {
+pub(super) fn text(value: Option<&Value>) -> String {
     value.map(scalar).unwrap_or_default()
 }
 
@@ -279,14 +283,14 @@ fn scalar(value: &Value) -> String {
     }
 }
 
-fn time(value: Option<&Value>) -> Option<DateTime<Utc>> {
+pub(super) fn time(value: Option<&Value>) -> Option<DateTime<Utc>> {
     let text = value?.as_str()?;
     DateTime::parse_from_rfc3339(text)
         .ok()
         .map(|time| time.with_timezone(&Utc))
 }
 
-fn sequence(value: Option<&Value>) -> &[Value] {
+pub(super) fn sequence(value: Option<&Value>) -> &[Value] {
     value
         .and_then(Value::as_sequence)
         .map(Vec::as_slice)
@@ -340,6 +344,7 @@ fn overview(object: &Value) -> Overview {
             })
             .collect(),
         secret: None,
+        pod: None,
     }
 }
 

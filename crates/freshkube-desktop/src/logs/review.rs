@@ -99,10 +99,12 @@ impl LogReview {
         // and applies both retention limits, reporting what it did.
         let outcome = self.logs.append_bounded(accepted, MAX_RETAINED_BYTES);
         self.next_id += outcome.added.len() as u64;
+        // Markers are notes, not lines, so no level counts them.
         for (service, level) in &outcome.added {
+            let Some(level) = level else { continue };
             self.counts.entry(service.clone()).or_default()[level_slot(level)] += 1;
         }
-        for entry in &outcome.evicted {
+        for entry in outcome.evicted.iter().filter(|entry| !entry.is_marker()) {
             if let Some(counts) = self.counts.get_mut(&entry.service) {
                 let slot = &mut counts[level_slot(&entry.level)];
                 *slot = slot.saturating_sub(1);

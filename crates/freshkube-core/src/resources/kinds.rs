@@ -62,6 +62,11 @@ impl ResourceKind {
     pub fn is_secret(&self) -> bool {
         self.group.is_empty() && self.plural == "secrets"
     }
+
+    /// Core v1 Pods, which have containers with logs.
+    pub fn is_pod(&self) -> bool {
+        self.group.is_empty() && self.plural == "pods"
+    }
 }
 
 /// Built-in kinds that Freshkube's navigation offers, by kubectl key.

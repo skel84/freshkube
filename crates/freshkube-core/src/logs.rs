@@ -4,7 +4,7 @@
 //! worker can turn received Talos log lines into [`LogEvent`] values, while a UI
 //! owns one of the buffers and applies those immutable events on its own thread.
 
-use chrono::{DateTime, NaiveDateTime};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use std::collections::BTreeSet;
 
 use crate::{constants::MAX_LOG_ENTRIES, types::LogLevel};
@@ -75,6 +75,9 @@ pub struct LogTimestamp {
 pub struct LogEvent {
     pub service: ServiceId,
     pub line: String,
+    /// A note from the viewer, such as "the container restarted", rather
+    /// than a line the source wrote. See [`LogEvent::marker`].
+    pub marker: bool,
 }
 
 impl LogEvent {
@@ -82,6 +85,25 @@ impl LogEvent {
         Self {
             service: service.into(),
             line: line.into(),
+            marker: false,
+        }
+    }
+
+    /// A note placed among the lines at `time`, which keeps it in order with
+    /// them. It has no level, never matches a search and is never copied.
+    pub fn marker(
+        service: impl Into<ServiceId>,
+        time: DateTime<Utc>,
+        text: impl AsRef<str>,
+    ) -> Self {
+        Self {
+            service: service.into(),
+            line: format!(
+                "{} {}",
+                time.to_rfc3339_opts(SecondsFormat::Nanos, true),
+                text.as_ref()
+            ),
+            marker: true,
         }
     }
 }
@@ -98,6 +120,9 @@ pub struct LogEntry {
     pub message: String,
     search_text: String,
     sequence: u64,
+    /// Where `raw` continues after a leading RFC 3339 timestamp, or 0.
+    body: usize,
+    marker: bool,
 }
 
 impl LogEntry {
@@ -106,15 +131,27 @@ impl LogEntry {
         &self.raw
     }
 
+    /// The line without the RFC 3339 timestamp it starts with, if any, as
+    /// Kubernetes writes when asked for timestamps.
+    pub fn text_without_timestamp(&self) -> &str {
+        &self.raw[self.body..]
+    }
+
+    /// Whether this is a viewer's note rather than a logged line.
+    pub fn is_marker(&self) -> bool {
+        self.marker
+    }
+
     /// Checks a case-insensitive query without rebuilding the line text.
+    /// Markers never match.
     pub fn matches_query(&self, query: &str) -> bool {
-        self.search_text.contains(&query.to_lowercase())
+        self.matches_lowercase_query(&query.to_lowercase())
     }
 
     /// Like [`Self::matches_query`] for a query the caller already lowercased,
     /// so scanning many entries lowercases the query once.
     pub fn matches_lowercase_query(&self, lowercase_query: &str) -> bool {
-        self.search_text.contains(lowercase_query)
+        !self.marker && self.search_text.contains(lowercase_query)
     }
 
     /// Arrival number within the buffer that retained this entry. Unique per
@@ -124,14 +161,23 @@ impl LogEntry {
     }
 }
 
-/// Parse one Talos, klog, JSON, or containerd log line.
+/// Parse one Talos, Kubernetes, klog, JSON, or containerd log line.
 pub fn parse_log_line(service: impl Into<ServiceId>, line: impl AsRef<str>) -> LogEntry {
     parse_log_line_with_sequence(service.into(), line.as_ref(), 0)
 }
 
 fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -> LogEntry {
     let raw = line.trim().to_owned();
-    let (timestamp, remainder) = extract_timestamp(&raw);
+    // A leading RFC 3339 timestamp, as Kubernetes and Talos write, takes
+    // precedence over any time the rest of the line carries.
+    let (timestamp, body) = match extract_rfc3339_prefix(&raw) {
+        Some((timestamp, body)) => (Some(timestamp), body),
+        None => (None, 0),
+    };
+    let (timestamp, remainder) = match timestamp {
+        Some(timestamp) => (Some(timestamp), &raw[body..]),
+        None => extract_timestamp(&raw),
+    };
 
     LogEntry {
         service,
@@ -141,7 +187,19 @@ fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -
         raw,
         timestamp,
         sequence,
+        body,
+        marker: false,
     }
+}
+
+fn parse_event(event: LogEvent, sequence: u64) -> LogEntry {
+    let mut entry = parse_log_line_with_sequence(event.service, &event.line, sequence);
+    if event.marker {
+        entry.marker = true;
+        entry.level = LogLevel::Unknown;
+        entry.message = entry.text_without_timestamp().to_owned();
+    }
+    entry
 }
 
 /// Classify a line with the same precedence as the existing log viewers.
@@ -217,7 +275,7 @@ impl LogFilters {
         self.services
             .as_ref()
             .is_none_or(|services| services.contains(&entry.service))
-            && self.levels.accepts(&entry.level)
+            && (entry.marker || self.levels.accepts(&entry.level))
     }
 }
 
@@ -396,8 +454,7 @@ impl LogBuffer {
     /// Whether an entry passes service, level, and query filtering.
     pub fn accepts(&self, entry: &LogEntry) -> bool {
         self.filters.accepts(entry)
-            && (self.query_lower.is_empty()
-                || entry.search_text.contains(self.query_lower.as_str()))
+            && (self.query_lower.is_empty() || entry.matches_lowercase_query(&self.query_lower))
     }
 
     /// Entry indices that pass service, level, and query filtering in entry order.
@@ -471,7 +528,7 @@ impl LogBuffer {
         if event.line.trim().is_empty() {
             return false;
         }
-        let entry = parse_log_line_with_sequence(event.service, &event.line, self.next_sequence);
+        let entry = parse_event(event, self.next_sequence);
         self.retained_bytes += entry.raw.len();
         self.entries.push(entry);
         self.next_sequence = self.next_sequence.wrapping_add(1);
@@ -591,7 +648,10 @@ impl MultiServiceLogs {
         for event in events {
             if self.buffer.append_unbounded(event) {
                 let entry = &self.buffer.entries[self.buffer.entries.len() - 1];
-                added.push((entry.service.clone(), entry.level.clone()));
+                added.push((
+                    entry.service.clone(),
+                    (!entry.marker).then(|| entry.level.clone()),
+                ));
             }
         }
         let mut outcome = AppendOutcome {
@@ -668,8 +728,8 @@ pub struct AppendOutcome {
     /// Lowest entry index (before evictions) whose entry is new or moved;
     /// equals `previous_len` when the batch only extended the end.
     pub first_changed: usize,
-    /// Service and level of each accepted line.
-    pub added: Vec<(ServiceId, LogLevel)>,
+    /// Service and level of each accepted line; a marker has no level.
+    pub added: Vec<(ServiceId, Option<LogLevel>)>,
     /// Entries dropped from the front by the entry and byte limits.
     pub evicted: Vec<LogEntry>,
 }
@@ -757,6 +817,22 @@ fn extract_quoted_timestamp(line: &str, marker: &str) -> Option<LogTimestamp> {
     let start = line.find(marker)? + marker.len();
     let end = line[start..].find('"')? + start;
     timestamp_from_text(&line[start..end])
+}
+
+/// A line that starts with a complete RFC 3339 timestamp and a space, as
+/// Kubernetes writes with `timestamps=true`: the timestamp, kept as written
+/// for display and to the second for ordering, and where the rest begins.
+fn extract_rfc3339_prefix(line: &str) -> Option<(LogTimestamp, usize)> {
+    let token = line.split(' ').next()?;
+    let time = DateTime::parse_from_rfc3339(token).ok()?;
+    let body = (token.len() + 1).min(line.len());
+    Some((
+        LogTimestamp {
+            display: time.format("%H:%M:%S").to_string(),
+            sort_key: time.timestamp(),
+        },
+        body,
+    ))
 }
 
 fn extract_leading_timestamp(line: &str) -> (Option<LogTimestamp>, &str) {
@@ -933,6 +1009,103 @@ mod tests {
         );
         assert_eq!(containerd.timestamp.unwrap().display, "16:42:01");
         assert_eq!(containerd.level, LogLevel::Warning);
+    }
+
+    #[test]
+    fn kubernetes_lines_take_their_rfc3339_prefix() {
+        // The text after the timestamp starts with digits, dots and spaces,
+        // which a looser scan would take for more of the time.
+        let access = parse_log_line(
+            "nginx",
+            r#"2026-10-01T12:04:51.902118344Z 10.0.4.17 - - "GET /healthz HTTP/1.1" 200"#,
+        );
+        let time = access.timestamp.clone().unwrap();
+        assert_eq!(time.display, "12:04:51");
+        assert_eq!(time.sort_key, 1_790_856_291);
+        assert_eq!(
+            access.text_without_timestamp(),
+            r#"10.0.4.17 - - "GET /healthz HTTP/1.1" 200"#
+        );
+        assert!(access.message.starts_with("10.0.4.17 - -"));
+        assert_eq!(access.selectable_text(), access.raw);
+
+        // The prefix wins over a time the application wrote itself, and its
+        // level comes from the rest of the line.
+        let own_time = parse_log_line(
+            "app",
+            "2026-10-01T12:00:00Z 2026/10/01 11:59:58 [error] upstream timed out",
+        );
+        assert_eq!(own_time.timestamp.as_ref().unwrap().display, "12:00:00");
+        assert_eq!(own_time.level, LogLevel::Error);
+        assert_eq!(
+            own_time.text_without_timestamp(),
+            "2026/10/01 11:59:58 [error] upstream timed out"
+        );
+
+        // An offset is shown as written and ordered as the instant it is.
+        let offset = parse_log_line("app", "2026-10-01T14:00:00.5+02:00 WARN slow");
+        let time = offset.timestamp.unwrap();
+        assert_eq!(time.display, "14:00:00");
+        assert_eq!(time.sort_key, 1_790_856_000);
+        assert_eq!(offset.level, LogLevel::Warning);
+
+        // An empty line keeps its timestamp; a line without one is unchanged.
+        let empty = parse_log_line("app", "2026-10-01T12:00:00.000000001Z");
+        assert_eq!(empty.text_without_timestamp(), "");
+        assert!(empty.timestamp.is_some());
+        let plain = parse_log_line("app", "listening on :8080");
+        assert!(plain.timestamp.is_none());
+        assert_eq!(plain.text_without_timestamp(), "listening on :8080");
+        // Not a complete RFC 3339 time: the older scan still reads it.
+        let spaced = parse_log_line("app", "2026-10-01 12:00:00 INFO up");
+        assert_eq!(spaced.timestamp.as_ref().unwrap().display, "12:00:00");
+        assert_eq!(spaced.text_without_timestamp(), spaced.raw);
+    }
+
+    #[test]
+    fn markers_keep_their_place_but_never_match_count_or_filter() {
+        let time = DateTime::parse_from_rfc3339("2026-10-01T12:00:01Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut logs = MultiServiceLogs::new("pod");
+        let outcome = logs.append_bounded(
+            [
+                LogEvent::new("app", "2026-10-01T12:00:02Z ERROR after"),
+                LogEvent::marker("app", time, "app restarted (exit 1 Error)"),
+                LogEvent::new("app", "2026-10-01T12:00:00Z INFO before"),
+            ],
+            usize::MAX,
+        );
+        let marker_levels: Vec<_> = outcome
+            .added
+            .iter()
+            .map(|(_, level)| level.clone())
+            .collect();
+        assert_eq!(
+            marker_levels,
+            [Some(LogLevel::Error), None, Some(LogLevel::Info)]
+        );
+        let entries = logs.buffer().entries();
+        let order: Vec<_> = entries
+            .iter()
+            .map(LogEntry::text_without_timestamp)
+            .collect();
+        assert_eq!(
+            order,
+            ["INFO before", "app restarted (exit 1 Error)", "ERROR after"]
+        );
+        let marker = &entries[1];
+        assert!(marker.is_marker());
+        assert_eq!(marker.message, "app restarted (exit 1 Error)");
+        assert!(!marker.matches_query("restarted"));
+        let filters = LogFilters {
+            levels: LevelFilter {
+                unknown: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(filters.accepts(marker));
     }
 
     #[test]
