@@ -122,6 +122,7 @@ FRESHKUBE_PAGE=diagnostics cargo run -- --fixture        # debug builds open a p
 ```
 
 - [AGENTS.md](AGENTS.md) holds the development rules, including how to work with GPUI.
+- [docs/ROADMAP.md](docs/ROADMAP.md) records what has landed and what comes next; [docs/FUTURE_IDEAS.md](docs/FUTURE_IDEAS.md) holds the longer-term backlog.
 - [docs/GPUI_FRICTION.md](docs/GPUI_FRICTION.md) records GPUI Kit friction and strengths.
 - [test-clusters/](test-clusters/) creates local Talos clusters for testing.
 

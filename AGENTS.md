@@ -14,6 +14,8 @@ src/main.rs              the `freshkube` binary: CLI options → desktop app
 
 Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary.
 
+[docs/ROADMAP.md](docs/ROADMAP.md) sets the order of work and its ground rules. When a step lands, move it to Done with its commit in the same change. [docs/REFERENCES.md](docs/REFERENCES.md) maps the reference checkouts and the source-reuse policy.
+
 ## Build, run and test
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
