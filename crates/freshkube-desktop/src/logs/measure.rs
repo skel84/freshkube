@@ -1,0 +1,284 @@
+use std::{collections::BTreeSet, rc::Rc, time::Instant};
+
+use gpui_kit::{
+    AvailableSpace, Context, Pixels, Size, Window, component::ActiveTheme, prelude::*, px, size,
+};
+
+use super::{
+    LogPanel, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE, RowMeasurement, review::VisibleDelta,
+};
+
+impl LogPanel {
+    pub(super) fn measure_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let key = MeasurementKey {
+            width: self.width.unwrap_or_else(|| window.bounds().size.width),
+            rem: window.rem_size(),
+            font: cx.theme().mono_font_family.clone(),
+            wrapped: self.wrapped,
+            revision: self.review.revision,
+        };
+        let unchanged = self.measured.as_ref() == Some(&key);
+        if unchanged && !self.row_exact.contains(&false) {
+            return;
+        }
+        if unchanged {
+            // Only estimated rows are left: a scroll may have exposed some,
+            // or the resize settled. Anchor on what is on screen now.
+            if self.pending_reveal.is_none() {
+                self.capture_anchor();
+            }
+        } else {
+            self.rebuild_sizes(&key, window, cx);
+        }
+        let mut changed = !unchanged;
+        changed |= self.measure_viewport(&key, window, cx);
+        if self.settled {
+            changed |= self.remeasure_estimates(&key, window, cx);
+            if self.row_exact.contains(&false) {
+                window.request_animation_frame();
+            }
+        }
+        let width = key.width;
+        self.measured = Some(key);
+        if !changed {
+            return;
+        }
+        self.unwrapped_width = self
+            .row_widths
+            .iter()
+            .fold(width, |widest, width| widest.max(*width));
+        if !self.following && self.pending_reveal.is_none() {
+            self.restore_anchor();
+        }
+        if self.following {
+            self.pending_reveal = self
+                .review
+                .visible
+                .len()
+                .checked_sub(1)
+                .map(|ix| self.review.id(ix));
+        }
+    }
+
+    /// Rebuilds `sizes` for a new revision or geometry. Rows already
+    /// measured at another wrap width keep that height as an estimate.
+    fn rebuild_sizes(&mut self, key: &MeasurementKey, window: &mut Window, cx: &mut Context<Self>) {
+        let previous = self.measured.as_ref();
+        let measurements_stale = previous.is_none_or(|previous| {
+            previous.rem != key.rem || previous.font != key.font || previous.wrapped != key.wrapped
+        });
+        let resized = previous.is_some_and(|previous| previous.width != key.width);
+        if measurements_stale {
+            self.row_measurements.clear();
+        } else if resized && key.wrapped {
+            // A live resize changes the width every frame; reshaping every
+            // retained row each time is what made it sluggish.
+            self.settled = false;
+            self.settle = Some(cx.spawn(async move |weak, cx| {
+                cx.background_executor().timer(RESIZE_SETTLE).await;
+                let _ = weak.update(cx, |this, cx| {
+                    this.settled = true;
+                    cx.notify();
+                });
+            }));
+        }
+        let delta = self.review.take_delta();
+        // Measurements of evicted lines are dead weight; sweep them only
+        // once they outnumber what could be live.
+        if self.row_measurements.len() > self.review.logs.buffer().entries().len() {
+            let retained: BTreeSet<_> = self
+                .review
+                .logs
+                .buffer()
+                .entries()
+                .iter()
+                .map(|entry| entry.sequence())
+                .collect();
+            self.row_measurements.retain(|id, _| retained.contains(id));
+        }
+        // Rows that left the front and ones that joined the end are the
+        // only changes between batches; the sizes in between still hold.
+        let rows = self.review.visible.len();
+        let kept = match delta {
+            VisibleDelta::Extended { dropped, added }
+                if !measurements_stale
+                    && dropped <= self.sizes.len()
+                    && self.sizes.len() - dropped + added == rows
+                    && self.row_widths.len() == self.sizes.len()
+                    && self.row_exact.len() == self.sizes.len() =>
+            {
+                Some((dropped, rows - added))
+            }
+            _ => None,
+        };
+        let first_new = match kept {
+            Some((dropped, first_new)) => {
+                let sizes = Rc::make_mut(&mut self.sizes);
+                sizes.drain(..dropped);
+                self.row_widths.drain(..dropped);
+                self.row_exact.drain(..dropped);
+                if resized {
+                    for row in sizes.iter_mut() {
+                        row.width = key.width;
+                    }
+                    // Unwrapped rows keep their natural width at any pane width.
+                    if key.wrapped {
+                        self.row_exact.fill(false);
+                    }
+                }
+                first_new
+            }
+            None => {
+                self.sizes = Rc::new(Vec::with_capacity(rows));
+                self.row_widths.clear();
+                self.row_exact.clear();
+                0
+            }
+        };
+        let wrap_width = key.wrapped.then_some(key.width);
+        for ix in first_new..rows {
+            let (measured, exact) = match self.row_measurements.get(&self.review.id(ix)) {
+                Some(cached) => (cached.size, cached.wrap_width == wrap_width),
+                None => (self.measure_row(ix, key, window, cx), true),
+            };
+            self.row_widths.push(measured.width);
+            self.row_exact.push(exact);
+            Rc::make_mut(&mut self.sizes).push(size(key.width, measured.height));
+        }
+    }
+
+    /// Lays out row `ix` as the list draws it and caches its size.
+    /// VirtualList trusts supplied heights, so this measures the actual
+    /// styled row, not character counts.
+    fn measure_row(
+        &mut self,
+        ix: usize,
+        key: &MeasurementKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Size<Pixels> {
+        crate::desktop::probe::hit("logs.measure");
+        let available = size(
+            if key.wrapped {
+                AvailableSpace::Definite(key.width)
+            } else {
+                AvailableSpace::MaxContent
+            },
+            AvailableSpace::MinContent,
+        );
+        let mut row = self.render_row(ix, true, cx).into_any_element();
+        let measured = row.layout_as_root(available, window, cx);
+        self.row_measurements.insert(
+            self.review.id(ix),
+            RowMeasurement {
+                wrap_width: key.wrapped.then_some(key.width),
+                size: measured,
+            },
+        );
+        measured
+    }
+
+    /// Replaces row `ix`'s estimated height with its measured one and
+    /// returns whether the height changed.
+    fn settle_row(
+        &mut self,
+        ix: usize,
+        key: &MeasurementKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.row_exact[ix] {
+            return false;
+        }
+        let wrap_width = key.wrapped.then_some(key.width);
+        let measured = match self.row_measurements.get(&self.review.id(ix)) {
+            Some(cached) if cached.wrap_width == wrap_width => cached.size,
+            _ => self.measure_row(ix, key, window, cx),
+        };
+        self.row_exact[ix] = true;
+        self.row_widths[ix] = measured.width;
+        let row = &mut Rc::make_mut(&mut self.sizes)[ix];
+        let changed = row.height != measured.height;
+        row.height = measured.height;
+        changed
+    }
+
+    /// Settles every estimated row the next frame can show, so neither a
+    /// live resize nor a scroll paints an estimated height.
+    fn measure_viewport(
+        &mut self,
+        key: &MeasurementKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let rows = self.sizes.len();
+        if rows == 0 || !self.row_exact.contains(&false) {
+            return false;
+        }
+        // Where the frame will scroll to: the tail, a revealed row, the
+        // review anchor (row 0 once evicted), or the current offset.
+        let (first, within) = if self.following {
+            (rows - 1, px(0.))
+        } else if let Some(ix) = self
+            .pending_reveal
+            .and_then(|id| self.review.row_for_id(id))
+        {
+            (ix, px(0.))
+        } else if let Some(anchor) = self.review_anchor {
+            self.review
+                .row_for_id(anchor.id)
+                .map_or((0, px(0.)), |ix| (ix, anchor.within_row))
+        } else {
+            let mut offset = -self.scroll.offset().y;
+            let mut ix = 0;
+            while ix + 1 < rows && offset >= self.sizes[ix].height {
+                offset -= self.sizes[ix].height;
+                ix += 1;
+            }
+            (ix, offset.max(px(0.)))
+        };
+        // The whole panel bounds the viewport, whatever chrome is open;
+        // measure that much on both sides of where the frame lands.
+        let span = self
+            .panel_height
+            .unwrap_or_else(|| window.bounds().size.height);
+        let mut changed = false;
+        let mut covered = -within;
+        let mut ix = first;
+        while ix < rows && covered < span {
+            changed |= self.settle_row(ix, key, window, cx);
+            covered += self.sizes[ix].height;
+            ix += 1;
+        }
+        let mut covered = px(0.);
+        let mut ix = first;
+        while ix > 0 && covered < span {
+            ix -= 1;
+            changed |= self.settle_row(ix, key, window, cx);
+            covered += self.sizes[ix].height;
+        }
+        changed
+    }
+
+    /// Settles estimated rows off screen within a frame budget, once the
+    /// width has held.
+    fn remeasure_estimates(
+        &mut self,
+        key: &MeasurementKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let started = Instant::now();
+        let mut changed = false;
+        for ix in 0..self.sizes.len() {
+            if self.row_exact[ix] {
+                continue;
+            }
+            changed |= self.settle_row(ix, key, window, cx);
+            if started.elapsed() >= REMEASURE_BUDGET {
+                break;
+            }
+        }
+        changed
+    }
+}

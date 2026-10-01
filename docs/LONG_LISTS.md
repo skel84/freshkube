@@ -29,7 +29,7 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 
 With line wrapping on, the logs panel used to re-lay out every retained line on each resize step. In talos-pilot's GPUI frontend, where Freshkube's logs panel comes from, that cost about 115 ms per step at 5,000 lines. Measuring only the rows that can be on screen, then re-measuring the rest once the width holds, brought it to 44 ms, the profiling harness's floor. Rows on screen keep exact heights.
 
-The change was built and measured in that frontend on 2026-10-01, then applied to Freshkube's `crates/freshkube-desktop/src/logs.rs` unchanged except for names. The numbers below come from that measurement and have not been repeated on Freshkube's build.
+The change was built and measured in that frontend on 2026-10-01, then applied to Freshkube's logs panel (then `logs.rs`, now the `logs/` module) unchanged except for names. The numbers below come from that measurement and have not been repeated on Freshkube's build.
 
 ### Results
 
@@ -61,7 +61,7 @@ During a drag, every frame goes through `rebuild_sizes` and then lays out only t
 
 ### Implementation
 
-It lives on `LogPanel` in `crates/freshkube-desktop/src/logs.rs`. Roadmap step 5 moves it, with the rest of the panel's list handling, into the log view shared with pod logs. Rows are still laid out exactly as the list draws them (`render_row(ix, true, cx).layout_as_root(..)`); the change limits when that runs. Nothing estimates heights from character counts, for the reason in rule 3.
+It lives on `LogPanel` in `crates/freshkube-desktop/src/logs/measure.rs`. Roadmap step 5 moves it, with the rest of the panel's list handling, into the log view shared with pod logs. Rows are still laid out exactly as the list draws them (`render_row(ix, true, cx).layout_as_root(..)`); the change limits when that runs. Nothing estimates heights from character counts, for the reason in rule 3.
 
 | Piece | What it does |
 | --- | --- |
@@ -88,7 +88,7 @@ Most of the risk is in the scroll anchor. Keep these rules:
 
 ### Test
 
-`live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards` in `logs.rs`'s `mod ui_tests` covers the behavior, with a `settle` helper that advances the fake clock past `RESIZE_SETTLE` and delivers frames until no row is estimated. GPUI's test text system gives every character a fixed advance, so wrapping is real, and row 90 of the test fixture, a long line, really changes height with width.
+`live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards` in `logs/tests.rs` covers the behavior, with a `settle` helper that advances the fake clock past `RESIZE_SETTLE` and delivers frames until no row is estimated. GPUI's test text system gives every character a fixed advance, so wrapping is real, and row 90 of the test fixture, a long line, really changes height with width.
 
 The test reviews from the top so row 90 is off screen, then checks four things:
 
