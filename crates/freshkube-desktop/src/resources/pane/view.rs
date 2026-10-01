@@ -5,7 +5,9 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
-    h_flex, v_flex,
+    h_flex,
+    tooltip::Tooltip,
+    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -80,7 +82,7 @@ impl DetailPane {
                         .ghost()
                         .xsmall()
                         .icon(IconName::X)
-                        .tooltip("Close")
+                        .tooltip("Close (Escape from the list)")
                         .accessibility_label("Close details")
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailEvent::Closed))),
                 ),
@@ -183,6 +185,13 @@ impl DetailPane {
                 })
                 .child(label)
                 .children(extra)
+                .tooltip(|window, cx| {
+                    let m = ui::modifier();
+                    Tooltip::new(format!(
+                        "{m}⇧[ and {m}⇧] switch tabs; ← and → move between them"
+                    ))
+                    .build(window, cx)
+                })
                 .on_click(cx.listener(move |pane, _, _, cx| pane.set_tab(tab, cx)))
                 .into_any_element()
         };

@@ -17,7 +17,7 @@ use gpui_kit::*;
 use super::DetailPane;
 use crate::palette::{Palette, palette};
 use crate::resources::detail::{DocumentView, MAX_MATCHES, YamlLine};
-use crate::ui::MONO_FONT;
+use crate::ui::{self, MONO_FONT};
 
 const LINE_HEIGHT: f32 = 20.;
 
@@ -102,7 +102,7 @@ impl DetailPane {
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronUp)
-                    .tooltip("Previous match")
+                    .tooltip(format!("Previous match (Shift Enter, {}⇧G)", ui::modifier()))
                     .on_click(cx.listener(|pane, _, _, cx| pane.step_match(-1, cx))),
             )
             .child(
@@ -110,7 +110,7 @@ impl DetailPane {
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronDown)
-                    .tooltip("Next match")
+                    .tooltip(format!("Next match (Enter, {}G)", ui::modifier()))
                     .on_click(cx.listener(|pane, _, _, cx| pane.step_match(1, cx))),
             )
             .children(selected.map(|lines| {

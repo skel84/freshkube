@@ -529,7 +529,7 @@ pub(crate) fn failure_banner<V: ScreenPanel, T: Send + 'static>(
             Button::new("screen-retry")
                 .small()
                 .icon(IconName::RefreshCw)
-                .label("Retry now")
+                .label("Retry")
                 .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
                 .into_any_element(),
         ),

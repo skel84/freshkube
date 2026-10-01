@@ -348,7 +348,7 @@ impl ResourcesScreen {
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
         let detail = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
         let namespace_select = cx.new(|cx| {
             SelectState::new(
@@ -1002,7 +1002,7 @@ impl ResourcesScreen {
                     .child(
                         Input::new(&self.query)
                             .id("resource-filter")
-                            .aria_label("Filter by name, namespace or any column")
+                            .aria_label("Filter by name, namespace or any column; Escape clears it, then returns to the list")
                             .small()
                             .cleanable(true)
                             .prefix(Icon::new(IconName::Search).with_size(px(14.))),
@@ -1161,7 +1161,7 @@ impl ResourcesScreen {
             .test_support()
             .role(Role::ListBox)
             .aria_label(format!(
-                "{}; arrows select and show details, slash filters, Escape clears the filter or closes the details",
+                "{}; arrows select and show details, Enter moves to them, slash or Command-F filters, N chooses the namespace, Escape clears the filter, then closes the details",
                 self.title()
             ))
             .flex_1()
@@ -1251,7 +1251,7 @@ impl ResourcesScreen {
     fn retry(&self, id: &'static str, cx: &mut Context<Self>) -> Button {
         Button::new(id)
             .icon(IconName::RefreshCw)
-            .label("Retry now")
+            .label("Retry")
             .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
     }
 
@@ -1325,7 +1325,7 @@ impl ResourcesScreen {
                 ui::empty_state(
                     IconName::CircleDashed,
                     format!("Couldn't list {title}"),
-                    "Nothing is known yet, so nothing is shown as missing. A failed list retries by itself; Retry now starts over.",
+                    "Nothing is known yet, so nothing is shown as missing. A failed list retries by itself; Retry starts over.",
                     Some(reason.clone()),
                     vec![
                         self.retry("resource-retry", cx)

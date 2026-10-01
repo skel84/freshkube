@@ -343,7 +343,10 @@ impl<S: LogSource> LogView<S> {
                                     .small()
                                     .icon(IconName::ChevronUp)
                                     .accessibility_label("Previous match")
-                                    .tooltip("Previous match (Shift Enter)")
+                                    .tooltip(format!(
+                                        "Previous match (Shift Enter, {}⇧G)",
+                                        ui::modifier()
+                                    ))
                                     .disabled(self.review.query.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| this.search(false, cx))),
                             )
@@ -353,7 +356,7 @@ impl<S: LogSource> LogView<S> {
                                     .small()
                                     .icon(IconName::ChevronDown)
                                     .accessibility_label("Next match")
-                                    .tooltip("Next match (Enter)")
+                                    .tooltip(format!("Next match (Enter, {}G)", ui::modifier()))
                                     .disabled(self.review.query.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| this.search(true, cx))),
                             ),
@@ -486,7 +489,7 @@ impl<S: LogSource> Render for LogView<S> {
             requested: self.manual_review.clone(),
         };
         let viewport = div().id("logs-viewport").role(Role::ListBox)
-            .aria_label("Retained log lines; arrows select, Shift arrows extend, Command or Control C copies selected complete lines")
+            .aria_label("Retained log lines; arrows select, Shift arrows extend, Command or Control A selects the newest, C copies selected complete lines, F searches")
             .test_support()
             .track_focus(&self.focus).key_context(CONTEXT)
             .relative().flex_1().min_h(viewport_min).min_w_0().overflow_hidden()
