@@ -596,6 +596,64 @@ fn named_keys_navigate_all_screens_and_configured_contexts(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
+fn shell_keys_work_while_a_kind_shows_no_rows(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The example data has no config maps, so a message replaces the rows.
+        let kind = crate::resources::example::kind("configmaps").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+        window.render_frame(cx);
+        assert!(window.find("resource-not-in-example").visible());
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        window.press("secondary-2", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Services);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn another_context_hands_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let kind = crate::resources::example::kind("pods").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+        window.render_frame(cx);
+        window.press("alt-down", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging-eu"));
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        assert!(window.try_find("detail-close").is_none());
+        window.press("down", cx);
+    })
+    .unwrap();
+    // The arrow selected a row, whose details open once the keys pause.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("detail-close").visible());
+        // Clicking a context in the sidebar hands the keyboard back too.
+        window.within("sidebar").click(("context", 2usize), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("homelab"));
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {

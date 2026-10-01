@@ -160,7 +160,19 @@ impl Pilot {
             (current + self.contexts.len() - 1) % self.contexts.len()
         };
         self.select_context(self.contexts[next_ix].clone(), window, cx);
+        self.focus_page(window, cx);
+    }
+
+    /// Puts the keyboard on the page shown, as navigating to it does: its
+    /// list, or the shell when it has none.
+    pub(super) fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        if self.page == Page::Resources {
+            self.resources
+                .update(cx, |resources, cx| resources.focus(window, cx));
+        } else if let Some(screen) = self.active_screen() {
+            screen.focus(window, cx);
+        }
     }
 
     pub(super) fn navigate_from_keyboard(

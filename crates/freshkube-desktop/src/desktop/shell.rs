@@ -1133,7 +1133,7 @@ impl Pilot {
             }))
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.select_context(chosen.clone(), window, cx);
-                window.focus(&view.focus, cx);
+                view.focus_page(window, cx);
             }))
             .into_any_element()
     }

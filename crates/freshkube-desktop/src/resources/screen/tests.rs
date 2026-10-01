@@ -601,3 +601,95 @@ fn another_kind_namespace_or_connection_closes_the_details(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn escape_in_the_filter_clears_it_then_returns_to_the_list(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+    });
+    step(cx, &|window, cx| window.press("/", cx));
+    step(cx, &|window, cx| window.input("coredns", cx));
+    step(cx, &|window, cx| {
+        assert_eq!(screen.read(cx).projection.len(), 2);
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        // The first Escape clears the text and stays in the filter.
+        assert_eq!(screen.read(cx).projection.len(), 22);
+        assert!(screen.read(cx).query.read(cx).value().is_empty());
+        assert_eq!(window.find("resource-body").focused(), Some(false));
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        // The second hands the keyboard back to the list.
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        window.press("down", cx);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 0, cx)));
+    });
+}
+
+#[gpui_kit::test]
+fn the_namespace_picker_hands_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // Escape closes the menu without a choice.
+    step(cx, &|window, cx| window.click("resource-namespace", cx));
+    step(cx, &|window, cx| {
+        assert_eq!(window.find("resource-body").focused(), Some(false));
+        window.press("escape", cx);
+    });
+    step(cx, &|window, cx| {
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        assert_eq!(screen.read(cx).namespace, None);
+    });
+    // A choice applies, and the arrows move through the list again.
+    step(cx, &|window, cx| window.click("resource-namespace", cx));
+    step(cx, &|window, cx| window.press("down", cx));
+    step(cx, &|window, cx| window.press("enter", cx));
+    step(cx, &|window, cx| {
+        let chosen = screen.read(cx).namespace.clone();
+        assert!(chosen.is_some());
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        window.press("down", cx);
+        let first = identity_at(&screen, 0, cx);
+        assert_eq!(Some(first.namespace.clone()), chosen);
+        assert_eq!(selected(&screen, cx), Some(first));
+    });
+}
+
+#[gpui_kit::test]
+fn the_page_keeps_its_keys_while_no_rows_show(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("configmaps"), window, cx);
+            screen.focus(window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-not-in-example").visible());
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        // The list's keys still answer: slash goes to the filter.
+        window.press("/", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("resource-body").focused(), Some(false));
+    })
+    .unwrap();
+}

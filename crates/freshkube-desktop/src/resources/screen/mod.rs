@@ -41,6 +41,8 @@ use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock};
 
 const CONTEXT: &str = "KubeResources";
+/// The key context around the filter input, which sits outside the list's.
+const FILTER_CONTEXT: &str = "KubeResourcesFilter";
 const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Ages are redrawn this often while the page is visible.
@@ -74,7 +76,8 @@ actions!(
         NextPage,
         PreviousPage,
         FocusFilter,
-        ClearFilter
+        ClearFilter,
+        LeaveFilter
     ]
 );
 
@@ -335,6 +338,7 @@ impl ResourcesScreen {
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
             KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
+            KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
         let detail = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
@@ -377,6 +381,18 @@ impl ResourcesScreen {
             // view is cached, so it has to hear about them.
             cx.observe(&query, |_, _, cx| cx.notify()),
             cx.observe(&namespace_select, |_, _, cx| cx.notify()),
+            // The picker takes focus back when its menu closes by choice or
+            // Escape; the keyboard belongs to the list then. A menu closed
+            // by clicking elsewhere leaves focus where the click put it.
+            cx.subscribe_in(
+                &namespace_select,
+                window,
+                |this, select, _: &DismissEvent, window, cx| {
+                    if select.focus_handle(cx).is_focused(window) {
+                        window.focus(&this.focus, cx);
+                    }
+                },
+            ),
             cx.subscribe_in(
                 &detail,
                 window,
@@ -858,6 +874,16 @@ impl ResourcesScreen {
         }
     }
 
+    /// Escape in the filter clears it; in an empty filter it hands the
+    /// keyboard back to the list.
+    fn leave_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query.read(cx).value().is_empty() {
+            window.focus(&self.focus, cx);
+        } else {
+            self.clear_filter(window, cx);
+        }
+    }
+
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Setting the value from code emits no change event.
         self.query
@@ -925,14 +951,21 @@ impl ResourcesScreen {
                 )
             })
             .child(
-                div().w(px(240.)).min_w(px(120.)).child(
-                    Input::new(&self.query)
-                        .id("resource-filter")
-                        .aria_label("Filter by name, namespace or any column")
-                        .small()
-                        .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
-                ),
+                div()
+                    .w(px(240.))
+                    .min_w(px(120.))
+                    .key_context(FILTER_CONTEXT)
+                    .on_action(cx.listener(|view, _: &LeaveFilter, window, cx| {
+                        view.leave_filter(window, cx)
+                    }))
+                    .child(
+                        Input::new(&self.query)
+                            .id("resource-filter")
+                            .aria_label("Filter by name, namespace or any column")
+                            .small()
+                            .cleanable(true)
+                            .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                    ),
             )
             .child(
                 div().flex_none().child(
@@ -1090,19 +1123,6 @@ impl ResourcesScreen {
                 "{}; arrows select and show details, slash filters, Escape clears the filter or closes the details",
                 self.title()
             ))
-            .key_context(CONTEXT)
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
-            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
-            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
-            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
-            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
-                let focus = view.query.read(cx).focus_handle(cx);
-                window.focus(&focus, cx);
-            }))
-            .on_action(cx.listener(|view, _: &ClearFilter, window, cx| view.escape(window, cx)))
             .flex_1()
             .min_h_0()
             .map(|this| match empty {
@@ -1149,6 +1169,33 @@ impl ResourcesScreen {
                             .child(list),
                     ),
             )
+            .into_any_element()
+    }
+
+    /// The list's keys and the page's focus, around the table or whatever
+    /// replaces it, so the keyboard keeps working while no rows show.
+    fn keyed(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .id("resource-body")
+            .test_support()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+                let focus = view.query.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+            }))
+            .on_action(cx.listener(|view, _: &ClearFilter, window, cx| view.escape(window, cx)))
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .w_full()
+            .child(body)
             .into_any_element()
     }
 
@@ -1354,6 +1401,7 @@ impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
         let list = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
+        let list = self.keyed(list, cx);
         let body = if self.detail.read(cx).target_identity().is_some() {
             // Cached: list updates and age ticks don't redraw the pane.
             let pane =
