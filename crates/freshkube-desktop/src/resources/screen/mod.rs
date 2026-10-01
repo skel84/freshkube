@@ -338,6 +338,7 @@ impl ResourcesScreen {
             KeyBinding::new("pagedown", NextPage, Some(CONTEXT)),
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
             KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
+            KeyBinding::new("secondary-f", FocusFilter, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
             KeyBinding::new("enter", OpenSelected, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.

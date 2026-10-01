@@ -47,7 +47,7 @@ use gpui_kit::{
 use freshkube_core::logs::{LogEvent, ServiceId};
 
 pub(crate) use pod::PodLogView;
-use review::LogReview;
+use review::{LogReview, MAX_SELECTED_LINES};
 pub(crate) use talos::TalosLogs;
 
 /// The Talos Logs page.
@@ -57,6 +57,8 @@ pub(crate) type LogPanel = LogView<TalosLogs>;
 const CONTEXT: &str = "LogView";
 /// The key context around the search field.
 const SEARCH_CONTEXT: &str = "LogSearch";
+/// The key context of the whole panel: toolbar, search and lines.
+const PANEL_CONTEXT: &str = "LogPanel";
 
 actions!(
     log_view,
@@ -73,7 +75,9 @@ actions!(
         ClearSelection,
         FindNext,
         FindPrevious,
-        LeaveSearch
+        LeaveSearch,
+        FocusSearch,
+        SelectAll
     ]
 );
 
@@ -239,9 +243,13 @@ impl<S: LogSource> LogView<S> {
                 KeyBinding::new("pagedown", PageNext, Some(CONTEXT)),
                 KeyBinding::new("pageup", PagePrevious, Some(CONTEXT)),
                 KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
-                KeyBinding::new("f3", FindNext, Some(CONTEXT)),
-                KeyBinding::new("shift-f3", FindPrevious, Some(CONTEXT)),
+                KeyBinding::new("secondary-a", SelectAll, Some(CONTEXT)),
                 KeyBinding::new("escape", LeaveSearch, Some(SEARCH_CONTEXT)),
+                KeyBinding::new("secondary-f", FocusSearch, Some(PANEL_CONTEXT)),
+                KeyBinding::new("secondary-g", FindNext, Some(PANEL_CONTEXT)),
+                KeyBinding::new("secondary-shift-g", FindPrevious, Some(PANEL_CONTEXT)),
+                KeyBinding::new("f3", FindNext, Some(PANEL_CONTEXT)),
+                KeyBinding::new("shift-f3", FindPrevious, Some(PANEL_CONTEXT)),
             ]);
         }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search retained lines"));
@@ -467,6 +475,28 @@ impl<S: LogSource> LogView<S> {
     /// Puts the keyboard on the lines.
     pub(crate) fn focus_lines(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.focus, cx);
+    }
+
+    /// Puts the keyboard in the search.
+    pub(crate) fn focus_search(&self, window: &mut Window, cx: &mut App) {
+        let focus = gpui_kit::Focusable::focus_handle(self.query.read(cx), cx);
+        window.focus(&focus, cx);
+    }
+
+    /// The next or previous retained line that matches the search.
+    pub(crate) fn find_next(&mut self, forward: bool, cx: &mut Context<Self>) {
+        self.search(forward, cx);
+    }
+
+    /// Selects every visible line, up to the selection limit, newest
+    /// first.
+    pub(crate) fn select_all(&mut self, cx: &mut Context<Self>) {
+        let count = self.review.select_all();
+        self.feedback = self
+            .review
+            .selection_limited
+            .then(|| format!("Selected the newest {MAX_SELECTED_LINES} of {count} lines"));
+        cx.notify();
     }
 
     /// Escape in the search clears it; in an empty search it hands the

@@ -19,8 +19,8 @@ use freshkube_core::types::LogLevel;
 
 use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
-    FirstLine, LastLine, LeaveSearch, LogSource, LogView, ManualReviewScroll, NextLine, PageNext,
-    PagePrevious, PreviousLine, SEARCH_CONTEXT,
+    FirstLine, FocusSearch, LastLine, LeaveSearch, LogSource, LogView, ManualReviewScroll,
+    NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine, SEARCH_CONTEXT, SelectAll,
 };
 use crate::palette::palette;
 use crate::ui;
@@ -506,8 +506,7 @@ impl<S: LogSource> Render for LogView<S> {
             .on_action(cx.listener(|this, _: &PagePrevious, _, cx| this.navigate(-20, false, cx)))
             .on_action(cx.listener(|this, _: &FirstLine, _, cx| this.navigate(isize::MIN, false, cx)))
             .on_action(cx.listener(|this, _: &LastLine, _, cx| this.navigate(isize::MAX, false, cx)))
-            .on_action(cx.listener(|this, _: &FindNext, _, cx| this.search(true, cx)))
-            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.search(false, cx)))
+            .on_action(cx.listener(|this, _: &SelectAll, _, cx| this.select_all(cx)))
             .on_action(cx.listener(|this, _: &ClearSelection, _, cx| this.clear_selection(cx)))
             .on_mouse_down(gpui_kit::MouseButton::Left, cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
             .on_prepaint(move |bounds, window, cx| {
@@ -540,6 +539,12 @@ impl<S: LogSource> Render for LogView<S> {
             .role(Role::Group)
             .aria_label("Live logs panel")
             .test_support()
+            .key_context(PANEL_CONTEXT)
+            .on_action(
+                cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &FindNext, _, cx| this.search(true, cx)))
+            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.search(false, cx)))
             .flex()
             .flex_col()
             .size_full()

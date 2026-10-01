@@ -11,8 +11,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{
-    CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, NextTab, PreviousTab,
-    SelectAllLines, TABS_CONTEXT, Tab,
+    CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, FindNextMatch,
+    FindPreviousMatch, NextTab, PreviousTab, SelectAllLines, TABS_CONTEXT, Tab,
 };
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
@@ -317,6 +317,8 @@ impl Render for DetailPane {
             .on_action(cx.listener(|pane, _: &SelectAllLines, _, cx| pane.select_all(cx)))
             .on_action(cx.listener(|pane, _: &CopyLines, _, cx| pane.copy_lines(cx)))
             .on_action(cx.listener(|pane, _: &Dismiss, window, cx| pane.dismiss(window, cx)))
+            .on_action(cx.listener(|pane, _: &FindNextMatch, _, cx| pane.find_match(true, cx)))
+            .on_action(cx.listener(|pane, _: &FindPreviousMatch, _, cx| pane.find_match(false, cx)))
             .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.switch_tab(1, window, cx)))
             .on_action(
                 cx.listener(|pane, _: &PreviousTab, window, cx| pane.switch_tab(-1, window, cx)),

@@ -617,7 +617,8 @@ fn escape_in_the_filter_clears_it_then_returns_to_the_list(cx: &mut TestAppConte
     step(cx, &|window, cx| {
         screen.update(cx, |screen, cx| screen.focus(window, cx));
     });
-    step(cx, &|window, cx| window.press("/", cx));
+    // Command-F reaches the filter as the slash does.
+    step(cx, &|window, cx| window.press("secondary-f", cx));
     step(cx, &|window, cx| window.input("coredns", cx));
     step(cx, &|window, cx| {
         assert_eq!(screen.read(cx).projection.len(), 2);

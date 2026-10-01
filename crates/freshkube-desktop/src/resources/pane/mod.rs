@@ -55,7 +55,9 @@ actions!(
         CopyLines,
         Dismiss,
         NextTab,
-        PreviousTab
+        PreviousTab,
+        FindNextMatch,
+        FindPreviousMatch
     ]
 );
 
@@ -161,6 +163,10 @@ impl DetailPane {
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-g", FindNextMatch, Some(CONTEXT)),
+            KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some(CONTEXT)),
+            KeyBinding::new("f3", FindNextMatch, Some(CONTEXT)),
+            KeyBinding::new("shift-f3", FindPreviousMatch, Some(CONTEXT)),
             KeyBinding::new("right", NextTab, Some(TABS_CONTEXT)),
             KeyBinding::new("left", PreviousTab, Some(TABS_CONTEXT)),
         ]);
@@ -805,7 +811,20 @@ impl DetailPane {
         cx.notify();
     }
 
+    /// Command-G and F3: the next match in the tab's search.
+    fn find_match(&mut self, forward: bool, cx: &mut Context<Self>) {
+        match self.tab {
+            Tab::Yaml => self.step_match(if forward { 1 } else { -1 }, cx),
+            Tab::Logs => self.logs.update(cx, |logs, cx| logs.find_next(forward, cx)),
+            Tab::Overview | Tab::Events => {}
+        }
+    }
+
     fn select_all(&mut self, cx: &mut Context<Self>) {
+        if self.tab == Tab::Logs {
+            self.logs.update(cx, |logs, cx| logs.select_all(cx));
+            return;
+        }
         let Some(count) = self.view().map(|view| view.lines.len()) else {
             return;
         };
@@ -819,7 +838,13 @@ impl DetailPane {
         cx.notify();
     }
 
+    /// Command-F: the log search on the Logs tab, the YAML search elsewhere.
     fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tab == Tab::Logs {
+            self.logs
+                .update(cx, |logs, cx| logs.focus_search(window, cx));
+            return;
+        }
         self.set_tab(Tab::Yaml, cx);
         let focus = self.find.read(cx).focus_handle(cx);
         window.focus(&focus, cx);

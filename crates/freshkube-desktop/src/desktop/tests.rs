@@ -654,6 +654,26 @@ fn another_context_hands_the_keyboard_back_to_the_list(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
+fn the_logs_page_puts_the_keyboard_on_its_lines(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-3", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Logs);
+        assert_eq!(window.find("logs-viewport").focused(), Some(true));
+        // Command-F finds in the logs, and the shell's keys still work.
+        window.press("secondary-f", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("logs-viewport").focused(), Some(false));
+        window.press("secondary-1", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Overview);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {

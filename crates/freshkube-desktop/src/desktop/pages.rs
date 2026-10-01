@@ -170,6 +170,9 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
+        } else if self.page == Page::Logs {
+            self.logs
+                .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen() {
             screen.focus(window, cx);
         }
@@ -194,8 +197,12 @@ impl Pilot {
         if page == Page::Resources {
             self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind.key()));
         }
-        self.logs
-            .update(cx, |logs, cx| logs.set_visible(page == Page::Logs, cx));
+        self.logs.update(cx, |logs, cx| {
+            logs.set_visible(page == Page::Logs, cx);
+            if page == Page::Logs {
+                logs.focus_lines(window, cx);
+            }
+        });
         self.resources.update(cx, |resources, cx| {
             resources.set_visible(page == Page::Resources, window, cx);
             if page == Page::Resources {

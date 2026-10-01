@@ -520,3 +520,48 @@ fn escape_in_the_search_clears_it_then_hands_the_keyboard_to_the_lines(cx: &mut 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn command_f_g_and_a_find_and_select_from_the_lines_or_the_search(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let lines = panel.read(cx).focus.clone();
+        window.focus(&lines, cx);
+        // Command-A selects every visible line; the fixture is under the
+        // limit, so nothing is said.
+        window.press("secondary-a", cx);
+        assert_eq!(panel.read(cx).review.selected.len(), 120);
+        assert_eq!(panel.read(cx).feedback, None);
+        window.press("escape", cx);
+        assert!(panel.read(cx).review.selected.is_empty());
+        // Command-F goes from the lines to the search.
+        window.press("secondary-f", cx);
+        assert!(!panel.read(cx).focus.is_focused(window));
+        window.input("needle", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let current = |cx: &mut gpui_kit::App| panel.read(cx).review.current_match;
+        // From the search, Command-G and Shift-Command-G step through the
+        // matches, as F3 and Shift-F3 do from the lines.
+        window.press("secondary-g", cx);
+        assert_eq!(current(cx), Some(10));
+        window.press("secondary-g", cx);
+        assert_eq!(current(cx), Some(90));
+        window.press("secondary-shift-g", cx);
+        assert_eq!(current(cx), Some(10));
+        let lines = panel.read(cx).focus.clone();
+        window.focus(&lines, cx);
+        window.press("f3", cx);
+        assert_eq!(current(cx), Some(90));
+        window.press("shift-f3", cx);
+        assert_eq!(current(cx), Some(10));
+        window.press("secondary-g", cx);
+        assert_eq!(current(cx), Some(90));
+    })
+    .unwrap();
+}

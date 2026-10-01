@@ -579,3 +579,64 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn find_keys_follow_the_tab_shown(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    let step = |cx: &mut TestAppContext, act: &dyn Fn(&mut gpui_kit::Window, &mut App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let count = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .try_find("detail-find-count")
+                .and_then(|count| count.label().map(str::to_owned))
+        })
+        .unwrap()
+    };
+    let focus_pane = |window: &mut gpui_kit::Window, cx: &mut App| {
+        let focus = pane.read(cx).focus.clone();
+        window.focus(&focus, cx);
+    };
+    step(cx, &|window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        window.render_frame(cx);
+        focus_pane(window, cx);
+        window.press("secondary-f", cx);
+    });
+    step(cx, &|window, cx| window.input("CONTAINER", cx));
+    let found = pane.read_with(cx, |pane, _| pane.matches.len());
+    assert!(found > 2, "{found}");
+    // Command-G and F3 step through the YAML matches from the pane.
+    step(cx, &|window, cx| {
+        focus_pane(window, cx);
+        window.press("secondary-g", cx);
+    });
+    assert_eq!(count(cx), Some(format!("2 of {found}")));
+    step(cx, &|window, cx| window.press("f3", cx));
+    assert_eq!(count(cx), Some(format!("3 of {found}")));
+    step(cx, &|window, cx| window.press("secondary-shift-g", cx));
+    step(cx, &|window, cx| window.press("shift-f3", cx));
+    assert_eq!(count(cx), Some(format!("1 of {found}")));
+
+    // On the Logs tab, Command-F goes to the log search, not the YAML.
+    step(cx, &|window, cx| {
+        window.click("detail-tab-logs", cx);
+        window.render_frame(cx);
+        focus_pane(window, cx);
+        window.press("secondary-f", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
+        let yaml = pane.read(cx).find.read(cx).focus_handle(cx);
+        assert!(!yaml.is_focused(window));
+        assert!(!pane.read(cx).focus.is_focused(window));
+        assert!(pane.read(cx).focus.contains_focused(window, cx));
+    });
+}

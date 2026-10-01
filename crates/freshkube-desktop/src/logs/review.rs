@@ -317,6 +317,21 @@ impl LogReview {
         self.cursor = Some(id);
     }
 
+    /// Selects every visible line, or the newest `MAX_SELECTED_LINES` of
+    /// them. Returns how many lines are visible.
+    pub(super) fn select_all(&mut self) -> usize {
+        let count = self.visible.len();
+        if count == 0 {
+            return 0;
+        }
+        let start = count.saturating_sub(MAX_SELECTED_LINES);
+        self.selected = (start..count).map(|ix| self.id(ix)).collect();
+        self.selection_limited = start > 0;
+        self.selection_anchor = Some(self.id(start));
+        self.cursor = Some(self.id(count - 1));
+        count
+    }
+
     pub(super) fn move_selection(&mut self, delta: isize, extend: bool) -> Option<u64> {
         if self.visible.is_empty() {
             return None;
@@ -504,5 +519,26 @@ mod model_tests {
         assert_eq!(review.move_selection(isize::MAX, false), Some(2));
         assert_eq!(review.move_selection(isize::MIN, false), Some(0));
         assert_eq!(review.move_selection(isize::MAX, false), Some(2));
+    }
+
+    #[test]
+    fn select_all_takes_every_visible_line_or_the_newest_up_to_the_limit() {
+        let mut review = LogReview::new("node");
+        assert_eq!(review.select_all(), 0);
+        assert!(review.selected.is_empty());
+        review.append((0..5).map(|ix| LogEvent::new("apid", format!("info line {ix}"))));
+        assert_eq!(review.select_all(), 5);
+        assert_eq!(review.selected.len(), 5);
+        assert!(!review.selection_limited);
+
+        review.append((5..250).map(|ix| LogEvent::new("apid", format!("info line {ix}"))));
+        assert_eq!(review.select_all(), 250);
+        assert_eq!(review.selected.len(), MAX_SELECTED_LINES);
+        assert!(review.selection_limited);
+        assert!(!review.selected.contains(&review.id(49)));
+        assert!(review.selected.contains(&review.id(50)));
+        assert!(review.selected.contains(&review.id(249)));
+        // Shift and an arrow carry on from the newest line.
+        assert_eq!(review.move_selection(-1, false), Some(review.id(248)));
     }
 }
