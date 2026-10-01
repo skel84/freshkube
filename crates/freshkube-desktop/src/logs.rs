@@ -427,6 +427,20 @@ mod desktop {
         within_row: Pixels,
     }
 
+    /// A row's size and the wrap width it was measured at; `None` when
+    /// unwrapped, where rows take their natural width whatever the pane's.
+    #[derive(Clone, Copy)]
+    struct RowMeasurement {
+        wrap_width: Option<Pixels>,
+        size: Size<Pixels>,
+    }
+
+    /// How long a wrapped pane's width must hold before rows off screen are
+    /// remeasured. Until then a live resize lays out only the rows it shows.
+    const RESIZE_SETTLE: Duration = Duration::from_millis(150);
+    /// Main-thread time per frame for remeasuring rows off screen.
+    const REMEASURE_BUDGET: Duration = Duration::from_millis(8);
+
     /// Only the visible scrollbar gets this adapter. VirtualList and application
     /// requests retain the raw handle, so their offsets are not manual review.
     /// This scalar intent flag owns no entity or async task.
@@ -487,7 +501,13 @@ mod desktop {
         sizes: Rc<Vec<Size<Pixels>>>,
         /// Natural width of each row in `sizes`, for the unwrapped content width.
         row_widths: Vec<Pixels>,
-        row_measurements: std::collections::BTreeMap<u64, Size<Pixels>>,
+        row_measurements: std::collections::BTreeMap<u64, RowMeasurement>,
+        /// Whether each row in `sizes` is measured at the current geometry.
+        /// The others keep their last height as an estimate.
+        row_exact: Vec<bool>,
+        /// Whether estimated rows may be remeasured: no resize is in progress.
+        settled: bool,
+        settle: Option<Task<()>>,
         unwrapped_width: Pixels,
         pending_reveal: Option<u64>,
         review_anchor: Option<ReviewAnchor>,
@@ -565,6 +585,9 @@ mod desktop {
                 pending_reveal: None,
                 manual_review: Rc::new(Cell::new(false)),
                 row_measurements: std::collections::BTreeMap::new(),
+                row_exact: Vec::new(),
+                settled: true,
+                settle: None,
                 unwrapped_width: px(0.),
                 review_anchor: None,
                 anchor_evicted: false,
@@ -631,6 +654,7 @@ mod desktop {
                 self.measured = None;
                 self.sizes = Rc::new(Vec::new());
                 self.row_widths.clear();
+                self.row_exact.clear();
                 self.scroll = VirtualListScrollHandle::new();
                 self.manual_review = Rc::new(Cell::new(false));
                 self.query
@@ -734,6 +758,7 @@ mod desktop {
             self.measured = None;
             self.sizes = Rc::new(Vec::new());
             self.row_widths.clear();
+            self.row_exact.clear();
             self.pending_reveal = self
                 .review
                 .visible
@@ -1318,17 +1343,77 @@ mod desktop {
                 wrapped: self.wrapped,
                 revision: self.review.revision,
             };
-            if self.measured.as_ref() == Some(&key) {
+            let unchanged = self.measured.as_ref() == Some(&key);
+            if unchanged && !self.row_exact.contains(&false) {
                 return;
             }
-            let geometry_changed = self.measured.as_ref().is_none_or(|previous| {
-                previous.width != key.width
-                    || previous.rem != key.rem
+            if unchanged {
+                // Only estimated rows are left: a scroll may have exposed some,
+                // or the resize settled. Anchor on what is on screen now.
+                if self.pending_reveal.is_none() {
+                    self.capture_anchor();
+                }
+            } else {
+                self.rebuild_sizes(&key, window, cx);
+            }
+            let mut changed = !unchanged;
+            changed |= self.measure_viewport(&key, window, cx);
+            if self.settled {
+                changed |= self.remeasure_estimates(&key, window, cx);
+                if self.row_exact.contains(&false) {
+                    window.request_animation_frame();
+                }
+            }
+            let width = key.width;
+            self.measured = Some(key);
+            if !changed {
+                return;
+            }
+            self.unwrapped_width = self
+                .row_widths
+                .iter()
+                .fold(width, |widest, width| widest.max(*width));
+            if !self.following && self.pending_reveal.is_none() {
+                self.restore_anchor();
+            }
+            if self.following {
+                self.pending_reveal = self
+                    .review
+                    .visible
+                    .len()
+                    .checked_sub(1)
+                    .map(|ix| self.review.id(ix));
+            }
+        }
+
+        /// Rebuilds `sizes` for a new revision or geometry. Rows already
+        /// measured at another wrap width keep that height as an estimate.
+        fn rebuild_sizes(
+            &mut self,
+            key: &MeasurementKey,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            let previous = self.measured.as_ref();
+            let measurements_stale = previous.is_none_or(|previous| {
+                previous.rem != key.rem
                     || previous.font != key.font
                     || previous.wrapped != key.wrapped
             });
-            if geometry_changed {
+            let resized = previous.is_some_and(|previous| previous.width != key.width);
+            if measurements_stale {
                 self.row_measurements.clear();
+            } else if resized && key.wrapped {
+                // A live resize changes the width every frame; reshaping every
+                // retained row each time is what made it sluggish.
+                self.settled = false;
+                self.settle = Some(cx.spawn(async move |weak, cx| {
+                    cx.background_executor().timer(RESIZE_SETTLE).await;
+                    let _ = weak.update(cx, |this, cx| {
+                        this.settled = true;
+                        cx.notify();
+                    });
+                }));
             }
             let delta = self.review.take_delta();
             // Measurements of evicted lines are dead weight; sweep them only
@@ -1344,23 +1429,16 @@ mod desktop {
                     .collect();
                 self.row_measurements.retain(|id, _| retained.contains(id));
             }
-            let available = size(
-                if self.wrapped {
-                    AvailableSpace::Definite(key.width)
-                } else {
-                    AvailableSpace::MaxContent
-                },
-                AvailableSpace::MinContent,
-            );
             // Rows that left the front and ones that joined the end are the
             // only changes between batches; the sizes in between still hold.
             let rows = self.review.visible.len();
             let kept = match delta {
                 VisibleDelta::Extended { dropped, added }
-                    if !geometry_changed
+                    if !measurements_stale
                         && dropped <= self.sizes.len()
                         && self.sizes.len() - dropped + added == rows
-                        && self.row_widths.len() == self.sizes.len() =>
+                        && self.row_widths.len() == self.sizes.len()
+                        && self.row_exact.len() == self.sizes.len() =>
                 {
                     Some((dropped, rows - added))
                 }
@@ -1368,48 +1446,173 @@ mod desktop {
             };
             let first_new = match kept {
                 Some((dropped, first_new)) => {
-                    Rc::make_mut(&mut self.sizes).drain(..dropped);
+                    let sizes = Rc::make_mut(&mut self.sizes);
+                    sizes.drain(..dropped);
                     self.row_widths.drain(..dropped);
+                    self.row_exact.drain(..dropped);
+                    if resized {
+                        for row in sizes.iter_mut() {
+                            row.width = key.width;
+                        }
+                        // Unwrapped rows keep their natural width at any pane width.
+                        if key.wrapped {
+                            self.row_exact.fill(false);
+                        }
+                    }
                     first_new
                 }
                 None => {
                     self.sizes = Rc::new(Vec::with_capacity(rows));
                     self.row_widths.clear();
+                    self.row_exact.clear();
                     0
                 }
             };
-            // VirtualList trusts supplied heights; measure the actual styled
-            // row, not character counts. Cache by domain ID and resolved width,
-            // font, rem and wrap mode; only newly arrived rows need reshaping.
+            let wrap_width = key.wrapped.then_some(key.width);
             for ix in first_new..rows {
-                let id = self.review.id(ix);
-                let measured = if let Some(measured) = self.row_measurements.get(&id) {
-                    *measured
-                } else {
-                    let mut row = self.render_row(ix, true, cx).into_any_element();
-                    let measured = row.layout_as_root(available, window, cx);
-                    self.row_measurements.insert(id, measured);
-                    measured
+                let (measured, exact) = match self.row_measurements.get(&self.review.id(ix)) {
+                    Some(cached) => (cached.size, cached.wrap_width == wrap_width),
+                    None => (self.measure_row(ix, key, window, cx), true),
                 };
                 self.row_widths.push(measured.width);
+                self.row_exact.push(exact);
                 Rc::make_mut(&mut self.sizes).push(size(key.width, measured.height));
             }
-            self.unwrapped_width = self
-                .row_widths
-                .iter()
-                .fold(key.width, |widest, width| widest.max(*width));
-            self.measured = Some(key);
-            if !self.following && self.pending_reveal.is_none() {
-                self.restore_anchor();
+        }
+
+        /// Lays out row `ix` as the list draws it and caches its size.
+        /// VirtualList trusts supplied heights, so this measures the actual
+        /// styled row, not character counts.
+        fn measure_row(
+            &mut self,
+            ix: usize,
+            key: &MeasurementKey,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> Size<Pixels> {
+            crate::desktop::probe::hit("logs.measure");
+            let available = size(
+                if key.wrapped {
+                    AvailableSpace::Definite(key.width)
+                } else {
+                    AvailableSpace::MaxContent
+                },
+                AvailableSpace::MinContent,
+            );
+            let mut row = self.render_row(ix, true, cx).into_any_element();
+            let measured = row.layout_as_root(available, window, cx);
+            self.row_measurements.insert(
+                self.review.id(ix),
+                RowMeasurement {
+                    wrap_width: key.wrapped.then_some(key.width),
+                    size: measured,
+                },
+            );
+            measured
+        }
+
+        /// Replaces row `ix`'s estimated height with its measured one and
+        /// returns whether the height changed.
+        fn settle_row(
+            &mut self,
+            ix: usize,
+            key: &MeasurementKey,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> bool {
+            if self.row_exact[ix] {
+                return false;
             }
-            if self.following {
-                self.pending_reveal = self
-                    .review
-                    .visible
-                    .len()
-                    .checked_sub(1)
-                    .map(|ix| self.review.id(ix));
+            let wrap_width = key.wrapped.then_some(key.width);
+            let measured = match self.row_measurements.get(&self.review.id(ix)) {
+                Some(cached) if cached.wrap_width == wrap_width => cached.size,
+                _ => self.measure_row(ix, key, window, cx),
+            };
+            self.row_exact[ix] = true;
+            self.row_widths[ix] = measured.width;
+            let row = &mut Rc::make_mut(&mut self.sizes)[ix];
+            let changed = row.height != measured.height;
+            row.height = measured.height;
+            changed
+        }
+
+        /// Settles every estimated row the next frame can show, so neither a
+        /// live resize nor a scroll paints an estimated height.
+        fn measure_viewport(
+            &mut self,
+            key: &MeasurementKey,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> bool {
+            let rows = self.sizes.len();
+            if rows == 0 || !self.row_exact.contains(&false) {
+                return false;
             }
+            // Where the frame will scroll to: the tail, a revealed row, the
+            // review anchor (row 0 once evicted), or the current offset.
+            let (first, within) = if self.following {
+                (rows - 1, px(0.))
+            } else if let Some(ix) = self
+                .pending_reveal
+                .and_then(|id| self.review.row_for_id(id))
+            {
+                (ix, px(0.))
+            } else if let Some(anchor) = self.review_anchor {
+                self.review
+                    .row_for_id(anchor.id)
+                    .map_or((0, px(0.)), |ix| (ix, anchor.within_row))
+            } else {
+                let mut offset = -self.scroll.offset().y;
+                let mut ix = 0;
+                while ix + 1 < rows && offset >= self.sizes[ix].height {
+                    offset -= self.sizes[ix].height;
+                    ix += 1;
+                }
+                (ix, offset.max(px(0.)))
+            };
+            // The whole panel bounds the viewport, whatever chrome is open;
+            // measure that much on both sides of where the frame lands.
+            let span = self
+                .panel_height
+                .unwrap_or_else(|| window.bounds().size.height);
+            let mut changed = false;
+            let mut covered = -within;
+            let mut ix = first;
+            while ix < rows && covered < span {
+                changed |= self.settle_row(ix, key, window, cx);
+                covered += self.sizes[ix].height;
+                ix += 1;
+            }
+            let mut covered = px(0.);
+            let mut ix = first;
+            while ix > 0 && covered < span {
+                ix -= 1;
+                changed |= self.settle_row(ix, key, window, cx);
+                covered += self.sizes[ix].height;
+            }
+            changed
+        }
+
+        /// Settles estimated rows off screen within a frame budget, once the
+        /// width has held.
+        fn remeasure_estimates(
+            &mut self,
+            key: &MeasurementKey,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> bool {
+            let started = Instant::now();
+            let mut changed = false;
+            for ix in 0..self.sizes.len() {
+                if self.row_exact[ix] {
+                    continue;
+                }
+                changed |= self.settle_row(ix, key, window, cx);
+                if started.elapsed() >= REMEASURE_BUDGET {
+                    break;
+                }
+            }
+            changed
         }
 
         fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -2096,6 +2299,103 @@ mod desktop {
                 Root::new(view, window, cx)
             });
             (runtime, panel.unwrap(), handle)
+        }
+
+        /// Lets a resize settle, then delivers frames until no row is estimated.
+        fn settle(cx: &mut TestAppContext, panel: &Entity<LogPanel>, handle: WindowHandle<Root>) {
+            cx.executor().advance_clock(super::RESIZE_SETTLE);
+            cx.run_until_parked();
+            for _ in 0..64 {
+                let settled = cx
+                    .update_window(handle.into(), |_, window, cx| {
+                        window.simulate_next_frame(cx);
+                        window.render_frame(cx);
+                        !panel.read(cx).row_exact.contains(&false)
+                    })
+                    .unwrap();
+                if settled {
+                    return;
+                }
+            }
+            panic!("estimated rows never settled");
+        }
+
+        #[gpui_kit::test]
+        fn live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards(
+            cx: &mut TestAppContext,
+        ) {
+            let (_runtime, panel, handle) = mount(cx);
+            let measured = || crate::desktop::probe::count("logs.measure");
+            let tall = SharedString::from("log-line-1-90");
+            let mut original = Vec::new();
+            let mut before = 0;
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                // Review from the top, so the tall row 90 is off screen.
+                panel.update(cx, |view, cx| view.navigate(isize::MIN, false, cx));
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let view = panel.read(cx);
+                assert!(!view.following);
+                assert_eq!(view.scroll.offset().y, px(0.));
+                assert!(window.try_find(tall.clone()).is_none());
+                original = view.sizes.iter().map(|row| row.height).collect::<Vec<_>>();
+                before = measured();
+            })
+            .unwrap();
+            cx.simulate_window_resize(handle.into(), size(px(900.), px(760.)));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let view = panel.read(cx);
+                let laid_out = measured() - before;
+                assert!(
+                    laid_out > 0 && laid_out < original.len() / 2,
+                    "a resize frame laid out {laid_out} of {} rows",
+                    original.len()
+                );
+                assert!(!view.settled);
+                // Off screen, the tall row keeps its last height until the
+                // width holds.
+                assert!(!view.row_exact[90]);
+                assert_eq!(view.sizes[90].height, original[90]);
+                assert_eq!(view.scroll.offset().y, px(0.));
+                let mut shown = 0;
+                for ix in 0..view.sizes.len() {
+                    let id = SharedString::from(format!("log-line-1-{}", view.review.id(ix)));
+                    if window.try_find(id).is_some_and(|row| row.visible()) {
+                        assert!(view.row_exact[ix], "row {ix} is on screen with an estimate");
+                        shown += 1;
+                    }
+                }
+                assert!(shown > 10);
+            })
+            .unwrap();
+            settle(cx, &panel, handle);
+            cx.update_window(handle.into(), |_, _, cx| {
+                let view = panel.read(cx);
+                assert!(view.settled);
+                assert!(view.sizes[90].height < original[90]);
+                // Settling rows below the review position never moves it.
+                assert_eq!(view.scroll.offset().y, px(0.));
+            })
+            .unwrap();
+            cx.simulate_window_resize(handle.into(), size(px(620.), px(760.)));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx, &panel, handle);
+            cx.update_window(handle.into(), |_, _, cx| {
+                let heights: Vec<_> = panel.read(cx).sizes.iter().map(|row| row.height).collect();
+                assert_eq!(
+                    heights, original,
+                    "settled heights differ from a fresh layout"
+                );
+            })
+            .unwrap();
         }
 
         #[gpui_kit::test]

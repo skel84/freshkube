@@ -11,6 +11,7 @@ talos-pilot becomes **Freshkube**, a native desktop app for Talos Linux and Kube
 - CI and release builds cover macOS only until GPUI's Linux and Windows builds are verified; Homebrew publishing to the upstream tap was removed.
 - Kubernetes resource browsing, read-only and in progress: a KUBERNETES sidebar section groups kinds as Kubeli does, and the Resources page lists any kind through the server's table view, kept current by a watch, with a namespace picker and filter. In Talos mode it uses the cluster's Kubernetes connection from Talos.
 - Kubernetes-only mode: without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names; a named context that is missing is reported, never replaced. Talos pages ask for a talosconfig.
+- With wrapping on, resizing the logs panel lays out only the lines on screen and catches up the rest once the width holds, instead of every retained line on every step. [docs/LONG_LISTS.md](docs/LONG_LISTS.md) sets the rules for long lists.
 - [docs/ROADMAP.md](docs/ROADMAP.md) records what comes next.
 
 Entries below this one are talos-pilot's history.

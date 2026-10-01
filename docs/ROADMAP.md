@@ -47,8 +47,9 @@ Done when a selected object's documents follow it through updates, deletion and 
 - Choose a container, including init containers. Offer follow, tail length, timestamps and the previous instance, chosen explicitly and never substituted silently.
 - Bounded retention and a virtualized view with search and copy. Following must not pull the view away from where the user scrolled or selected.
 - Cancel the stream when the pane closes, the scope changes or the app quits. Tell a normal end from a failure, and make reconnecting visible.
-- Reuse the Talos log panel's virtualized list and hidden-batch coalescing where they fit.
-- First apply the wrapped-resize change in [LONG_LISTS.md](LONG_LISTS.md#wrapped-rows-during-a-resize) to that shared view, with its test, so both Talos and pod logs resize smoothly. Measured in talos-pilot's frontend, it took a wrapped resize step from 115 ms to 44 ms at 5,000 lines.
+- **Start by extracting one shared log view.** Split `LogPanel` into a source-agnostic view (retention, search, selection, copy, level filter, follow and wrap, measured rows with the [wrapped-resize handling](LONG_LISTS.md#wrapped-rows-during-a-resize), hidden-batch coalescing) and the Talos source (service catalog, collection stream, per-service errors). Pod logs are a second source for the same view, so every log view behaves alike and a fix lands once. The Talos Logs page must behave the same before and after; its UI tests guard that.
+- The core log model is already source-neutral: `ServiceId` is a plain label. Use it for container, or pod and container, and rename it if the Talos name misleads. Check `parse_log_line` against Kubernetes lines, which carry an RFC 3339 timestamp when timestamps are on.
+- Logs of several containers, or of a workload's pods, are the same view with several sources and the source filter. They can follow once single-container logs work.
 
 ### Open checks
 
