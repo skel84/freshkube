@@ -41,7 +41,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `resources`, `operations`). `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `resources`, `operations`). `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
 
 ## Cluster safety
 
@@ -81,6 +81,14 @@ Documentation is thin. Before using an API, read the source of the pinned versio
 - macOS reports Command-Shift-] as `}` with Command alone, so bind `secondary-}`, not `secondary-shift-]`. Command-Shift with a letter keeps Shift: `secondary-shift-g`.
 - A deeper context's binding wins. A handler that calls `cx.propagate()` lets the key reach raw listeners, which is how Enter still presses a focused button.
 - `FocusHandle::dispatch_action` runs at once on that node; `window.dispatch_action` is deferred. A Kit dialog remembers what had focus when it opens, so focus its content after `open_dialog`.
+
+### Sizes
+
+The user chooses the text size (`text_size.rs`), which becomes the window's rem size, and the whole layout scales with it.
+
+- Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 14 px, as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
+- Keep borders, hairlines, corner radii and shadows in `px`, as Kit does.
+- Compare breakpoints in `dp`: `screens::content_width` and `table_width` return them, so a larger text size picks the narrower layout, as a narrower window would.
 
 ### UI tests
 

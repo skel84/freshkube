@@ -33,6 +33,14 @@ impl Global for TextSize {}
 /// shortcuts. Call it once, after `theme::install`.
 pub(crate) fn install(preferences: Option<PathBuf>, cx: &mut App) {
     let size = preferences.as_deref().and_then(saved).unwrap_or(BASE_TEXT);
+    // Debug builds can start at a size, for visual checks, without
+    // saving it.
+    #[cfg(debug_assertions)]
+    let size = std::env::var("FRESHKUBE_TEXT_SIZE")
+        .ok()
+        .and_then(|size| size.parse::<f32>().ok())
+        .filter(|size| STEPS.contains(size))
+        .unwrap_or(size);
     cx.set_global(TextSize { size, preferences });
     cx.bind_keys([
         KeyBinding::new("secondary-=", LargerText, None),
