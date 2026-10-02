@@ -2282,3 +2282,24 @@ fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_resources_page_scales_with_the_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        reveal(window, cx, "nav-k8s-pods");
+        window.click("nav-k8s-pods", cx);
+        window.render_frame(cx);
+        let namespace = window.find("resource-namespace").bounds().size.width;
+        assert_eq!(namespace, px(200.));
+        window.press("secondary--", cx);
+        window.render_frame(cx);
+        let smaller = window.find("resource-namespace").bounds().size.width;
+        assert!(
+            (smaller / namespace - 12. / 14.).abs() < 0.01,
+            "{smaller:?}"
+        );
+    })
+    .unwrap();
+}

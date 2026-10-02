@@ -100,13 +100,13 @@ impl LogSource for TalosLogs {
         let mut catalog_content = view.render_catalog_content(cx).into_any_element();
         let catalog_size = catalog_content.layout_as_root(
             size(
-                AvailableSpace::Definite((width - px(90.)).max(px(0.))),
+                AvailableSpace::Definite((width - ui::dp_px(90., window)).max(px(0.))),
                 AvailableSpace::MinContent,
             ),
             window,
             cx,
         );
-        view.source.catalog_height = catalog_size.height.min(px(26. * 2. + 6.));
+        view.source.catalog_height = catalog_size.height.min(ui::dp_px(26. * 2. + 6., window));
     }
 
     fn controls(view: &LogPanel, cx: &mut Context<LogPanel>) -> Vec<AnyElement> {
@@ -580,15 +580,15 @@ impl LogView<TalosLogs> {
             .flex_wrap()
             .child(
                 v_flex()
-                    .gap(px(7.))
+                    .gap(ui::dp(7.))
                     .child(
                         h_flex()
                             .gap_2p5()
                             .child(
                                 div()
                                     .font_family(ui::DISPLAY_FONT)
-                                    .text_size(px(28.))
-                                    .line_height(px(32.))
+                                    .text_size(ui::dp(28.))
+                                    .line_height(ui::dp(32.))
                                     .child("Logs"),
                             )
                             .child(if self.source.collection_active {
@@ -600,20 +600,20 @@ impl LogView<TalosLogs> {
                     .child(
                         h_flex()
                             .gap_1p5()
-                            .text_size(px(12.5))
+                            .text_size(ui::dp(12.5))
                             .text_color(p.muted)
                             .child("on")
                             .child(
                                 div()
                                     .font_family(ui::MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(ui::dp(12.))
                                     .child(node),
                             )
                             .when(!address.is_empty(), |this| {
                                 this.child("·").child(
                                     div()
                                         .font_family(ui::MONO_FONT)
-                                        .text_size(px(12.))
+                                        .text_size(ui::dp(12.))
                                         .child(address),
                                 )
                             }),
@@ -664,7 +664,7 @@ impl LogView<TalosLogs> {
             .child(
                 div()
                     .id("logs-services-label")
-                    .pt(px(6.))
+                    .pt(ui::dp(6.))
                     .tooltip(|window, cx| {
                         Tooltip::new("Collect up to 16 services. The eye hides a service's lines without stopping collection.")
                             .build(window, cx)
@@ -694,7 +694,7 @@ impl LogView<TalosLogs> {
         let p = palette(cx);
         h_flex()
             .flex_wrap()
-            .gap(px(6.))
+            .gap(ui::dp(6.))
             .children(self.source.services.iter().map(|service| {
                 let collect_service = service.clone();
                 let show_service = service.clone();
@@ -703,7 +703,7 @@ impl LogView<TalosLogs> {
                 let count = self.review.service_count(service);
                 let full = !collecting && self.source.collecting.len() >= 16;
                 h_flex()
-                    .h(px(26.))
+                    .h(ui::dp(26.))
                     .rounded_full()
                     .border_1()
                     .border_color(if collecting {
@@ -726,18 +726,18 @@ impl LogView<TalosLogs> {
                             .aria_label(format!("Collect {}", service.as_str()))
                             .tab_index(0)
                             .h_full()
-                            .pl(px(10.))
-                            .pr(px(if collecting || count > 0 { 4. } else { 10. }))
-                            .gap(px(5.))
+                            .pl(ui::dp(10.))
+                            .pr(ui::dp(if collecting || count > 0 { 4. } else { 10. }))
+                            .gap(ui::dp(5.))
                             .when(!full, |this| this.cursor_pointer())
                             .when(full, |this| this.opacity(0.5))
                             .font_family(ui::MONO_FONT)
-                            .text_size(px(12.))
+                            .text_size(ui::dp(12.))
                             .text_color(if collecting { p.ink } else { p.muted })
                             .when(collecting, |this| {
                                 this.child(
                                     Icon::new(IconName::Check)
-                                        .with_size(px(13.))
+                                        .size(ui::dp(13.))
                                         .text_color(p.accent),
                                 )
                             })
@@ -749,7 +749,7 @@ impl LogView<TalosLogs> {
                             .when(count > 0, |this| {
                                 this.child(
                                     div()
-                                        .text_size(px(10.5))
+                                        .text_size(ui::dp(10.5))
                                         .text_color(p.muted)
                                         .child(count.to_string()),
                                 )
@@ -780,8 +780,8 @@ impl LogView<TalosLogs> {
                                 ))
                                 .tab_index(0)
                                 .h_full()
-                                .pl(px(4.))
-                                .pr(px(9.))
+                                .pl(ui::dp(4.))
+                                .pr(ui::dp(9.))
                                 .cursor_pointer()
                                 .child(
                                     Icon::new(if showing {
@@ -789,7 +789,7 @@ impl LogView<TalosLogs> {
                                     } else {
                                         IconName::EyeOff
                                     })
-                                    .with_size(px(13.))
+                                    .size(ui::dp(13.))
                                     .text_color(p.muted),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {

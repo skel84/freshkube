@@ -17,7 +17,7 @@ use gpui_kit::*;
 use super::DetailPane;
 use crate::palette::{Palette, palette};
 use crate::resources::detail::{DocumentView, MAX_MATCHES, YamlLine};
-use crate::ui::{self, MONO_FONT};
+use crate::ui::{self, MONO_FONT, dp};
 
 const LINE_HEIGHT: f32 = 20.;
 
@@ -84,7 +84,7 @@ impl DetailPane {
                         .aria_label("Find in the YAML; Enter for the next match, Shift-Enter for the previous")
                         .small()
                         .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
                 ),
             )
             .children(counter.map(|counter| {
@@ -93,7 +93,7 @@ impl DetailPane {
                     .test_support()
                     .aria_label(counter.clone())
                     .flex_none()
-                    .text_size(px(11.5))
+                    .text_size(dp(11.5))
                     .text_color(p.muted)
                     .child(counter)
             }))
@@ -126,7 +126,7 @@ impl DetailPane {
             }));
         let lines = view.lines.len();
         // Room for the widest line number.
-        let gutter = px(lines.to_string().len() as f32 * 7.2 + 20.);
+        let gutter = dp(lines.to_string().len() as f32 * 7.2 + 20.);
         v_flex()
             .size_full()
             .child(toolbar)
@@ -161,7 +161,7 @@ impl DetailPane {
             .into_any_element()
     }
 
-    fn render_line(&self, ix: usize, gutter: Pixels, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_line(&self, ix: usize, gutter: Rems, cx: &mut Context<Self>) -> Option<AnyElement> {
         let view = self.view()?;
         let line: &YamlLine = view.lines.get(ix)?;
         let p = palette(cx);
@@ -187,9 +187,9 @@ impl DetailPane {
                 .aria_selected(selected)
                 .aria_label(view.line(ix).to_owned())
                 .w_full()
-                .h(px(LINE_HEIGHT))
+                .h(dp(LINE_HEIGHT))
                 .font_family(MONO_FONT)
-                .text_size(px(12.))
+                .text_size(dp(12.))
                 .whitespace_nowrap()
                 .cursor_text()
                 .when(selected, |this| this.bg(p.accent_soft))

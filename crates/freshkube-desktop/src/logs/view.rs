@@ -23,7 +23,7 @@ use super::{
     NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine, SEARCH_CONTEXT, SelectAll,
 };
 use crate::palette::palette;
-use crate::ui;
+use crate::ui::{self, dp};
 
 impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
@@ -228,15 +228,15 @@ impl<S: LogSource> LogView<S> {
                     .tooltip(format!("Show {label} lines"))
                     .child(
                         h_flex()
-                            .gap(px(5.))
-                            .px(px(3.))
+                            .gap(dp(5.))
+                            .px(dp(3.))
                             .when_some(dot, |this, color| {
-                                this.child(div().size(px(7.)).rounded_full().bg(color))
+                                this.child(div().size(dp(7.)).rounded_full().bg(color))
                             })
                             .child(label)
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(dp(11.))
                                     .text_color(p.muted)
                                     .child(counts[ix].to_string()),
                             ),
@@ -254,8 +254,8 @@ impl<S: LogSource> LogView<S> {
         let p = palette(cx);
         v_flex()
             .gap_1()
-            .text_size(px(12.))
-            .line_height(px(18.))
+            .text_size(dp(12.))
+            .line_height(dp(18.))
             .when_some(self.feedback.clone(), |element, feedback| {
                 element.child(
                     div()
@@ -270,7 +270,7 @@ impl<S: LogSource> LogView<S> {
                     .items_start()
                     .gap_2()
                     .text_color(p.crit_ink)
-                    .child(Icon::new(IconName::CircleX).with_size(px(14.)).mt(px(2.)))
+                    .child(Icon::new(IconName::CircleX).size(dp(14.)).mt(dp(2.)))
                     .child(
                         div()
                             .flex_1()
@@ -295,8 +295,8 @@ impl<S: LogSource> LogView<S> {
         });
         let selected = self.review.selected.len();
         v_flex()
-            .gap(px(12.))
-            .pb(px(12.))
+            .gap(dp(12.))
+            .pb(dp(12.))
             .children(S::controls(self, cx))
             .child(
                 h_flex()
@@ -307,7 +307,7 @@ impl<S: LogSource> LogView<S> {
                         h_flex()
                             .gap_1()
                             .flex_1()
-                            .min_w(px(220.))
+                            .min_w(dp(220.))
                             .child(
                                 div()
                                     .flex_1()
@@ -321,14 +321,14 @@ impl<S: LogSource> LogView<S> {
                                             .id("logs-search")
                                             .aria_label("Search retained log lines")
                                             .small()
-                                            .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                                            .prefix(Icon::new(IconName::Search).size(dp(14.))),
                                     ),
                             )
                             .when(!self.review.query.is_empty(), |this| {
                                 this.child(
                                     div()
                                         .flex_none()
-                                        .text_size(px(11.))
+                                        .text_size(dp(11.))
                                         .text_color(p.muted)
                                         .child(match (match_count, current_position) {
                                             (0, _) => "No matches".to_owned(),
@@ -383,7 +383,7 @@ impl<S: LogSource> LogView<S> {
                                 Button::new("logs-follow")
                                     .outline()
                                     .small()
-                                    .w(px(104.))
+                                    .w(dp(104.))
                                     .disabled(!S::live(self))
                                     .toggled(self.following)
                                     .selected(self.following)
@@ -534,7 +534,7 @@ impl<S: LogSource> Render for LogView<S> {
                     }
                 });
             })
-            .when(self.review.visible.is_empty(), |element| element.child(div().id("logs-empty").test_support().role(Role::Status).aria_label(empty.clone()).p_4().text_size(px(12.5)).text_color(p.muted).child(empty)))
+            .when(self.review.visible.is_empty(), |element| element.child(div().id("logs-empty").test_support().role(Role::Status).aria_label(empty.clone()).p_4().text_size(dp(12.5)).text_color(p.muted).child(empty)))
             .when(!self.review.visible.is_empty(), |element| {
                 element.child(v_virtual_list(cx.entity(), ("log-list", self.generation), self.sizes.clone(), |this, range, _, cx| {
                     range.map(|ix| this.render_row(ix, false, cx)).collect::<Vec<_>>()

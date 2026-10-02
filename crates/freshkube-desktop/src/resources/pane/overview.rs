@@ -15,7 +15,7 @@ use super::{DetailPane, local_time};
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentView, Reveal};
 use crate::screens::field;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const LABELS_SHOWN: usize = 12;
 const ANNOTATIONS_SHOWN: usize = 6;
@@ -211,7 +211,7 @@ impl DetailPane {
         let p = palette(cx);
         let identity = &detail.target.identity;
         let section = |title: &str, cx: &App| v_flex().gap_2().child(ui::caption(title, cx));
-        let mut body = v_flex().gap(px(18.)).child(
+        let mut body = v_flex().gap(dp(18.)).child(
             v_flex()
                 .gap_2()
                 .child(field("Kind", summary.kind.clone(), cx))
@@ -222,7 +222,7 @@ impl DetailPane {
                     "UID",
                     div()
                         .font_family(MONO_FONT)
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .child(identity.uid.clone()),
                     cx,
                 ))
@@ -261,9 +261,9 @@ impl DetailPane {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .w(px(132.))
+                                        .w(dp(132.))
                                         .flex_none()
-                                        .text_size(px(12.5))
+                                        .text_size(dp(12.5))
                                         .child(condition.kind.clone()),
                                 )
                                 .child(ui::tag(condition.tone, None, condition.status.clone(), cx))
@@ -271,7 +271,7 @@ impl DetailPane {
                                     v_flex()
                                         .flex_1()
                                         .min_w_0()
-                                        .text_size(px(12.))
+                                        .text_size(dp(12.))
                                         .children(condition.detail.clone())
                                         .children(condition.changed.clone().map(|changed| {
                                             div().text_color(p.muted).child(changed)
@@ -288,7 +288,7 @@ impl DetailPane {
                     summary
                         .owners
                         .iter()
-                        .map(|owner| div().text_size(px(12.5)).child(owner.clone())),
+                        .map(|owner| div().text_size(dp(12.5)).child(owner.clone())),
                 ),
             );
         }
@@ -316,7 +316,7 @@ impl DetailPane {
                                     .border_1()
                                     .border_color(p.line)
                                     .font_family(MONO_FONT)
-                                    .text_size(px(11.5))
+                                    .text_size(dp(11.5))
                                     .truncate()
                                     .child(label.clone())
                             })),
@@ -350,7 +350,7 @@ impl DetailPane {
                                     .child(
                                         div()
                                             .font_family(MONO_FONT)
-                                            .text_size(px(11.5))
+                                            .text_size(dp(11.5))
                                             .text_color(p.ink_2)
                                             .truncate()
                                             .child(key.clone()),
@@ -358,7 +358,7 @@ impl DetailPane {
                                     .child(
                                         div()
                                             .font_family(MONO_FONT)
-                                            .text_size(px(11.5))
+                                            .text_size(dp(11.5))
                                             .child(value.clone()),
                                     )
                             })),
@@ -378,7 +378,7 @@ impl DetailPane {
                 section("Finalizers", cx).children(summary.finalizers.iter().map(|finalizer| {
                     div()
                         .font_family(MONO_FONT)
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .child(finalizer.clone())
                 })),
             );
@@ -411,7 +411,7 @@ impl DetailPane {
         if shown == MAX_SHOWN {
             return Some(
                 div()
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(format!("{} more in the YAML", total - shown))
                     .into_any_element(),
@@ -445,7 +445,7 @@ impl DetailPane {
             .gap_2()
             .child(ui::caption("Secret data", cx))
             .child(field("Type", secret_type.clone(), cx))
-            .child(div().text_size(px(12.)).text_color(p.muted).child(
+            .child(div().text_size(dp(12.)).text_color(p.muted).child(
                 "Values are hidden. Reveal reads one value afresh; Copy YAML never includes them.",
             ))
             .children(keys.iter().enumerate().map(|(ix, key)| {
@@ -507,14 +507,14 @@ impl DetailPane {
                         div()
                             .id(("detail-secret-value", ix))
                             .test_support()
-                            .max_h(px(160.))
+                            .max_h(dp(160.))
                             .overflow_y_scroll()
                             .px_2()
                             .py_1p5()
                             .rounded(px(6.))
                             .bg(p.surface_2)
                             .font_family(MONO_FONT)
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .child(match text.char_indices().nth(VALUE_CHARS) {
                                 Some((cut, _)) => {
                                     format!("{}… (Copy takes the whole value)", &text[..cut])
@@ -527,7 +527,7 @@ impl DetailPane {
                         div()
                             .id(("detail-secret-value", ix))
                             .test_support()
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(p.muted)
                             .child(format!("Binary data, {}; not shown.", byte_size(*bytes)))
                             .into_any_element(),
@@ -536,7 +536,7 @@ impl DetailPane {
                         div()
                             .id(("detail-secret-error", ix))
                             .test_support()
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(p.crit_ink)
                             .child(reason.clone())
                             .into_any_element(),
@@ -555,14 +555,14 @@ impl DetailPane {
                                     .flex_1()
                                     .min_w_0()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.5))
+                                    .text_size(dp(12.5))
                                     .truncate()
                                     .child(key.name.clone()),
                             )
                             .child(
                                 div()
                                     .flex_none()
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .text_color(p.muted)
                                     .child(key.size.clone()),
                             )

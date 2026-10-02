@@ -19,7 +19,7 @@ use super::{
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
 use crate::screens::panel;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 impl DetailPane {
     fn header(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
@@ -49,7 +49,7 @@ impl DetailPane {
                             .test_support()
                             .aria_label(self.title.clone())
                             .font_family(MONO_FONT)
-                            .text_size(px(13.5))
+                            .text_size(dp(13.5))
                             .truncate()
                             .child(self.title.clone()),
                     ),
@@ -60,12 +60,12 @@ impl DetailPane {
                     .test_support()
                     .role(Role::Status)
                     .aria_label(text)
-                    .mt(px(14.))
+                    .mt(dp(14.))
                     .child(ui::tag(tone, None, text, cx))
             }))
             .when(detail.view.is_some(), |this| {
                 this.child(
-                    div().flex_none().mt(px(10.)).child(
+                    div().flex_none().mt(dp(10.)).child(
                         Button::new("detail-copy-yaml")
                             .outline()
                             .xsmall()
@@ -77,7 +77,7 @@ impl DetailPane {
                 )
             })
             .child(
-                div().flex_none().mt(px(10.)).child(
+                div().flex_none().mt(dp(10.)).child(
                     Button::new("detail-close")
                         .ghost()
                         .xsmall()
@@ -166,11 +166,11 @@ impl DetailPane {
                 .aria_label(label.clone())
                 .track_focus(&self.tab_focus[tab.index()])
                 .focus_visible(|style| style.bg(p.hover))
-                .h(px(32.))
+                .h(dp(32.))
                 .px_2p5()
                 .gap_1p5()
                 .cursor_pointer()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .border_b_2()
                 .map(|this| {
                     if active {
@@ -297,7 +297,7 @@ impl DetailPane {
                 v_flex()
                     .p_4()
                     .gap_3()
-                    .children((0..8).map(|_| ui::skeleton(relative(0.7), px(12.)))),
+                    .children((0..8).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
             ),
         }
     }
@@ -348,7 +348,7 @@ impl Render for DetailPane {
                     .py_1p5()
                     .border_t_1()
                     .border_color(p.line)
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(feedback)
             }))

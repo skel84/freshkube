@@ -38,7 +38,7 @@ use crate::backend::{self, OwnedJob};
 use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
 use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock};
+use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
@@ -989,7 +989,7 @@ impl ResourcesScreen {
             .test_support()
             .gap_1p5()
             .flex_wrap()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .text_color(p.muted)
             .map(|this| match &self.source {
                 Some(source) => this.child("in").child(mono(source.context.clone())),
@@ -1018,8 +1018,8 @@ impl ResourcesScreen {
                         Select::new(&self.namespace_select)
                             .id("resource-namespace")
                             .small()
-                            .w(px(200.))
-                            .menu_width(px(260.))
+                            .w(dp(200.))
+                            .menu_width(dp(260.))
                             .search_placeholder("Find a namespace")
                             .accessibility_label("Namespace"),
                     ),
@@ -1027,8 +1027,8 @@ impl ResourcesScreen {
             })
             .child(
                 div()
-                    .w(px(240.))
-                    .min_w(px(120.))
+                    .w(dp(240.))
+                    .min_w(dp(120.))
                     .key_context(FILTER_CONTEXT)
                     .on_action(cx.listener(|view, _: &LeaveFilter, window, cx| {
                         view.leave_filter(window, cx)
@@ -1039,7 +1039,7 @@ impl ResourcesScreen {
                             .aria_label("Filter by name, namespace or any column; Escape clears it, then returns to the list")
                             .small()
                             .cleanable(true)
-                            .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                            .prefix(Icon::new(IconName::Search).size(dp(14.))),
                     ),
             )
             .child(
@@ -1059,15 +1059,15 @@ impl ResourcesScreen {
             .child(
                 v_flex()
                     .flex_1()
-                    .min_w(px(240.))
-                    .gap(px(7.))
+                    .min_w(dp(240.))
+                    .gap(dp(7.))
                     .child(
                         div()
                             .id("resource-title")
                             .test_support()
                             .font_family(DISPLAY_FONT)
-                            .text_size(px(28.))
-                            .line_height(px(32.))
+                            .text_size(dp(28.))
+                            .line_height(dp(32.))
                             .child(self.title()),
                     )
                     .child(scope),
@@ -1080,7 +1080,7 @@ impl ResourcesScreen {
         let (key, direction) = self.projection.sort_state();
         h_flex()
             .w_full()
-            .py(px(7.))
+            .py(dp(7.))
             .border_b_1()
             .border_color(p.line)
             .children(self.layout.columns.iter().enumerate().map(|(ix, column)| {
@@ -1107,9 +1107,7 @@ impl ResourcesScreen {
                     .cursor_pointer()
                     .child(ui::caption(&column.label, cx))
                     .children(
-                        order.map(|(_, icon)| {
-                            Icon::new(icon).with_size(px(12.)).text_color(p.muted)
-                        }),
+                        order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)),
                     )
                     .on_click(cx.listener(move |view, _, _, cx| view.sort_by(sort, cx)))
             }))
@@ -1131,9 +1129,9 @@ impl ResourcesScreen {
                 row.cells.join(" · ")
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(row.terminating, |this| this.text_color(p.muted))
             .when(selected, |this| this.bg(p.accent_soft))
@@ -1207,7 +1205,7 @@ impl ResourcesScreen {
                         .test_support()
                         .px_3()
                         .py_3p5()
-                        .text_size(px(12.5))
+                        .text_size(dp(12.5))
                         .text_color(p.muted)
                         .child(text),
                 ),
@@ -1227,7 +1225,7 @@ impl ResourcesScreen {
             });
         panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(
                 div()
@@ -1239,7 +1237,7 @@ impl ResourcesScreen {
                         v_flex()
                             .h_full()
                             .w_full()
-                            .min_w(px(self.layout.width))
+                            .min_w(dp(self.layout.width))
                             .child(self.head(cx))
                             .child(list),
                     ),
@@ -1326,7 +1324,7 @@ impl ResourcesScreen {
                 panel(cx)
                     .p_3()
                     .gap_3()
-                    .children((0..9).map(|_| ui::skeleton(relative(0.7), px(12.)))),
+                    .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
             ),
             ReadState::Refused(reason) => state(
                 "resource-refused",
@@ -1428,9 +1426,9 @@ impl ResourcesScreen {
 fn cell(column: &DisplayColumn) -> Div {
     let cell = div().px_3().min_w_0().whitespace_nowrap().truncate();
     if column.flexible {
-        cell.flex_1().min_w(px(column.width))
+        cell.flex_1().min_w(dp(column.width))
     } else {
-        cell.flex_none().w(px(column.width))
+        cell.flex_none().w(dp(column.width))
     }
 }
 
@@ -1495,15 +1493,15 @@ impl Render for ResourcesScreen {
                     .with_state(&self.split)
                     .child(
                         resizable_panel()
-                            .size_range(px(LIST_MIN_WIDTH)..Pixels::MAX)
+                            .size_range(dp_px(LIST_MIN_WIDTH, window)..Pixels::MAX)
                             .child(list),
                     )
                     .child(
                         resizable_panel()
-                            .size(px(PANE_WIDTH))
-                            .size_range(px(PANE_MIN_WIDTH)..Pixels::MAX)
+                            .size(dp_px(PANE_WIDTH, window))
+                            .size_range(dp_px(PANE_MIN_WIDTH, window)..Pixels::MAX)
                             .flex_none()
-                            .pl(px(SPLIT_GAP))
+                            .pl(dp(SPLIT_GAP))
                             .child(pane),
                     )
             } else {
@@ -1511,15 +1509,15 @@ impl Render for ResourcesScreen {
                     .with_state(&self.stacked)
                     .child(
                         resizable_panel()
-                            .size(px(STACKED_LIST_HEIGHT))
-                            .size_range(px(LIST_MIN_HEIGHT)..Pixels::MAX)
+                            .size(dp_px(STACKED_LIST_HEIGHT, window))
+                            .size_range(dp_px(LIST_MIN_HEIGHT, window)..Pixels::MAX)
                             .child(list),
                     )
                     .child(
                         resizable_panel()
-                            .size(px(PANE_HEIGHT))
-                            .size_range(px(PANE_MIN_HEIGHT)..Pixels::MAX)
-                            .pt(px(SPLIT_GAP))
+                            .size(dp_px(PANE_HEIGHT, window))
+                            .size_range(dp_px(PANE_MIN_HEIGHT, window)..Pixels::MAX)
+                            .pt(dp(SPLIT_GAP))
                             .child(pane),
                     )
             };
@@ -1531,10 +1529,10 @@ impl Render for ResourcesScreen {
             .id("resources-page")
             .size_full()
             .min_h_0()
-            .px(px(PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(self.header(cx))
             .children(self.stale_banner(cx))
             .child(body)

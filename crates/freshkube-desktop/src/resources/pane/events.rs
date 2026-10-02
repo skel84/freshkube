@@ -9,7 +9,7 @@ use gpui_kit::*;
 use super::{DetailPane, local_time};
 use crate::palette::palette;
 use crate::resources::detail::{Detail, EventsRead, MAX_EVENTS};
-use crate::ui::{self, Tone};
+use crate::ui::{self, Tone, dp};
 
 /// One event as listed, derived when the events change.
 pub(super) struct EventLine {
@@ -64,7 +64,7 @@ impl DetailPane {
                     v_flex()
                         .p_4()
                         .gap_3()
-                        .children((0..4).map(|_| ui::skeleton(relative(0.8), px(12.)))),
+                        .children((0..4).map(|_| ui::skeleton(relative(0.8), dp(12.)))),
                 );
             }
             EventsRead::Refused(reason) => {
@@ -114,7 +114,7 @@ impl DetailPane {
             div()
                 .id("detail-events-empty")
                 .test_support()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child("No events recorded. Kubernetes keeps events for about an hour, so a quiet object has none.")
                 .into_any_element()
@@ -142,15 +142,15 @@ impl DetailPane {
                                 })
                                 .child(
                                     div()
-                                        .text_size(px(12.5))
+                                        .text_size(dp(12.5))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(line.reason.clone()),
                                 ),
                         )
-                        .child(div().text_size(px(12.5)).child(line.message.clone()))
+                        .child(div().text_size(dp(12.5)).child(line.message.clone()))
                         .child(
                             div()
-                                .text_size(px(11.5))
+                                .text_size(dp(11.5))
                                 .text_color(p.muted)
                                 .child(line.detail.clone()),
                         )
@@ -160,7 +160,7 @@ impl DetailPane {
                         div()
                             .id("detail-events-capped")
                             .test_support()
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(p.muted)
                             .child(format!(
                                 "Showing the newest {MAX_EVENTS} of {} events.",

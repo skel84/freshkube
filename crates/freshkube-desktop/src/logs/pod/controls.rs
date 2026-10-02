@@ -21,7 +21,7 @@ use freshkube_core::resources::ContainerRole;
 
 use super::{PodLogView, StreamState, TAILS};
 use crate::palette::palette;
-use crate::ui;
+use crate::ui::{self, dp};
 
 /// `Last 1,000`, or `All lines`.
 fn tail_label(tail: Option<i64>) -> String {
@@ -205,8 +205,8 @@ impl PodLogView {
             .role(Role::Status)
             .aria_label(status.label.clone())
             .gap_2()
-            .min_h(px(22.))
-            .text_size(px(12.))
+            .min_h(dp(22.))
+            .text_size(dp(12.))
             .text_color(palette(cx).muted)
             .when(!status.tag.is_empty(), |this| {
                 this.child(ui::tag(status.tone, icon, status.tag.clone(), cx))
@@ -235,13 +235,13 @@ impl PodLogView {
                     .border_1()
                     .border_color(p.crit.opacity(0.45))
                     .bg(p.crit_soft)
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.ink)
                     .child(
                         Icon::new(IconName::CircleX)
-                            .with_size(px(16.))
+                            .size(dp(16.))
                             .text_color(p.crit_ink)
-                            .mt(px(1.)),
+                            .mt(dp(1.)),
                     )
                     .child(
                         div()
