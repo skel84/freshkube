@@ -45,6 +45,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout 3. Shell view preparation | Move the shell Render implementation into its own child module, with unchanged navigation and UI tests before the sidebar changes. | the commit that adds this row |
 | Holistic layout 3. Lifecycle module preparation | Lifecycle separates rendering, example data and sibling UI tests before routing its Open node action; behavior and tests are unchanged. | the commit that adds this row |
 | Holistic layout 3. Sidebar and navigation | Nine pages, Cluster/Resources/Control plane navigation, cluster-wide System services without new reads, context popover with measured middle truncation, breadcrumbs, version status, Settings version, fixed numbered and cycle keys, and node-pane event routing. Existing navigation, target, focus, theme and page-order tests moved to the new controls; new tests cover long names at 14/20 and both cluster-service actions. | the commit that adds this row |
+| Holistic layout 4. Presentation module preparation | Move the presentation types and helpers to mod.rs and unchanged tests to a sibling tests.rs before adding shared attention rows. | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
