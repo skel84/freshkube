@@ -54,14 +54,14 @@ Requirements:
 - `protoc`, the protobuf compiler, used to generate the Talos gRPC client: `brew install protobuf`
 - macOS 15 or later with the Xcode command line tools (see GPUI Kit's [platform prerequisites](https://gpui-kit.com/docs/installation))
 
+Build from an existing checkout. The intended GitHub destination, `skel84/freshkube`, has not been published yet.
+
 ```bash
-git clone https://github.com/skel84/talos-pilot freshkube
-cd freshkube
 cargo build --release
 ./target/release/freshkube
 ```
 
-There are no prebuilt Freshkube releases yet. A Nix flake is included (`nix run .` or `nix develop`).
+There are no published Freshkube releases yet. The [macOS packaging guide](docs/MACOS_PACKAGING.md) covers local `.app` builds, CI artifacts and signing prerequisites. CI produces ad-hoc signed development bundles for Apple Silicon and Intel; these are not notarized. A Nix flake is included (`nix run .` or `nix develop`).
 
 ## Usage
 
@@ -130,7 +130,7 @@ Contributions should follow the design philosophy above: check real system state
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Freshkube includes talos-pilot, copyright Ken Udovic. [NOTICE](NOTICE) lists the third-party components the app ships and their licences: the `alacritty_terminal` terminal emulator under Apache-2.0 ([licenses/Apache-2.0.txt](licenses/Apache-2.0.txt)), and the embedded JetBrains Mono and IBM Plex Sans Condensed fonts under the SIL Open Font License 1.1 (`crates/freshkube-desktop/assets/fonts`).
+MIT; see [LICENSE](LICENSE). Freshkube includes talos-pilot, copyright Ken Udovic. [NOTICE](NOTICE) lists the third-party components the app ships and their licences: the `alacritty_terminal` terminal emulator under Apache-2.0 ([licenses/Apache-2.0.txt](licenses/Apache-2.0.txt)), the Lucide/Feather icons ([licences](licenses/Lucide.txt)), and the embedded JetBrains Mono and IBM Plex Sans Condensed fonts under the SIL Open Font License 1.1 (`crates/freshkube-desktop/assets/fonts`).
 
 ## Acknowledgments
 

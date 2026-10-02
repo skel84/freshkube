@@ -1,10 +1,14 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,21 +36,5 @@ jobs:
         run: cargo test --workspace --locked
 
   build:
-    name: Release build (${{ matrix.target }})
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Install build tools
-        run: brew install protobuf
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+    name: macOS application bundles
+    uses: ./.github/workflows/macos-app.yml

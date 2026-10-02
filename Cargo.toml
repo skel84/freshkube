@@ -7,8 +7,8 @@ version = "0.1.11"
 edition = "2024"
 authors = ["Ken Udovic", "Francesco Cislaghi"]
 license = "MIT"
-repository = "https://github.com/skel84/talos-pilot"
-homepage = "https://github.com/skel84/talos-pilot"
+repository = "https://github.com/skel84/freshkube"
+homepage = "https://github.com/skel84/freshkube"
 
 [workspace.dependencies]
 # Async runtime
@@ -97,8 +97,3 @@ tracing-subscriber.workspace = true
 [profile.dev.package."*"]
 opt-level = 3
 debug = "line-tables-only"
-
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"

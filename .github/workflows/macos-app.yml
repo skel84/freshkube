@@ -1,0 +1,58 @@
+name: macOS application bundles
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: '15.0'
+
+jobs:
+  package:
+    name: Package (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Standard native runners; see docs/MACOS_PACKAGING.md for sources.
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Confirm native architecture
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$TARGET"
+      - name: Install build tools
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app-${{ matrix.target }}
+      - name: Build, bundle, ad-hoc sign and verify archive
+        env:
+          TARGET: ${{ matrix.target }}
+        run: python3 scripts/package-macos.py --target "$TARGET" --build-number "$GITHUB_RUN_NUMBER"
+      # Upload the ditto archive, not the raw .app: artifact upload strips modes.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freshkube-${{ matrix.target }}
+          path: |
+            target/macos/${{ matrix.target }}/*.zip
+            target/macos/${{ matrix.target }}/*.sha256
+            target/macos/${{ matrix.target }}/*.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

@@ -20,3 +20,17 @@ IBM Plex Sans Condensed
   Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
   Licensed under the SIL Open Font License, Version 1.1; see
   crates/freshkube-desktop/assets/fonts/OFL-IBMPlexSansCondensed.txt.
+
+GPUI Kit 0.7.0 and gpui-pre 0.3.7
+  The native UI toolkit and framework, used as libraries.
+  https://github.com/longbridge/gpui-kit
+  https://crates.io/crates/gpui-pre
+  Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+
+Lucide icons, embedded through gpui-kit-assets 0.7.0
+  https://lucide.dev
+  Copyright (c) 2026 Lucide Icons and Contributors
+  ISC; icons derived from Feather also retain the MIT notice of
+  Copyright (c) 2013-present Cole Bemis. Both texts and the upstream list of
+  Feather-derived icons are in licenses/Lucide.txt, copied unmodified from
+  gpui-kit-assets 0.7.0's LICENSE-LUCIDE.
