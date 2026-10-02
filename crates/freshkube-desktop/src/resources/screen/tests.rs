@@ -1016,3 +1016,62 @@ fn node_pods_are_filtered_across_namespaces_and_do_not_open_a_nested_pane(cx: &m
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount(cx, Some("prod-fra"));
+    cx.update_window(handle, |_, window, cx| {
+        let identity = screen
+            .read(cx)
+            .identity_named("payments", "worker-5d7c9-7rr9b")
+            .unwrap_or_else(|| {
+                screen
+                    .read(cx)
+                    .store
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.row().identity.namespace == "payments")
+                    .unwrap()
+                    .row()
+                    .identity
+                    .clone()
+            });
+        screen.update(cx, |screen, cx| {
+            screen.set_namespace(Some("payments".into()), window, cx);
+            screen.set_filter(&identity.name, window, cx);
+            screen.open_identity_on(
+                identity.clone(),
+                crate::resources::Tab::Overview,
+                window,
+                cx,
+            );
+        });
+        assert_eq!(screen.read(cx).namespace.as_deref(), Some("payments"));
+        assert_eq!(screen.read(cx).query.read(cx).value(), identity.name);
+        assert_eq!(shown(&screen, cx), Some(identity.clone()));
+        screen.update(cx, |screen, cx| {
+            screen.set_namespace(Some("batch".into()), window, cx);
+            screen.set_filter("does-not-match", window, cx);
+            screen.open_identity_on(identity.clone(), crate::resources::Tab::Logs, window, cx);
+        });
+        assert!(screen.read(cx).namespace.is_none());
+        assert!(screen.read(cx).query.read(cx).value().is_empty());
+        assert_eq!(shown(&screen, cx), Some(identity));
+        assert_eq!(
+            screen.read(cx).detail.read(cx).tab(),
+            crate::resources::Tab::Logs
+        );
+        let missing = ResourceIdentity {
+            name: "absent-from-list".into(),
+            uid: "missing-uid".into(),
+            ..identity_at(&screen, 0, cx)
+        };
+        screen.update(cx, |screen, cx| {
+            screen.open_identity_on(missing.clone(), crate::resources::Tab::Overview, window, cx)
+        });
+        assert_eq!(shown(&screen, cx), Some(missing));
+    })
+    .unwrap();
+}

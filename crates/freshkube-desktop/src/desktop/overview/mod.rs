@@ -1,37 +1,18 @@
-//! Overview screen: cluster header, summary tiles and one card per node.
-use super::{NextNode, NodeView, PAGE_PADDING, Pilot, PreviousNode, clock};
+//! Cluster cards and shared attention subjects.
+use super::{PAGE_PADDING, Pilot, clock};
 use crate::palette::palette;
-use crate::presentation::{self, ClusterSummary, NodeSummary, Role as NodeRole, Roster};
+use crate::presentation::{attention::Destination, overview::CardTarget};
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
-use freshkube_core::formatting::format_bytes;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon, Selectable, Sizable,
-    button::{Button, ButtonGroup, ButtonVariants},
+    Sizable,
+    button::{Button, ButtonVariants},
     h_flex,
     tooltip::Tooltip,
     v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-
-const CARD_MIN_WIDTH: f32 = 290.;
-const GAP: f32 = 12.;
-
-fn role_icon(role: NodeRole) -> IconName {
-    match role {
-        NodeRole::ControlPlane => IconName::ServerCog,
-        _ => IconName::Server,
-    }
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{count} {many}")
-    }
-}
 
 impl Pilot {
     pub(super) fn page_scroll(&self, id: &'static str) -> Stateful<Div> {
@@ -136,490 +117,329 @@ impl Pilot {
         if let Some(error) = self.config_error.clone() {
             return self.config_error_state(error, cx);
         }
-        let Some(cluster) = self.overview.data() else {
-            if let Some(error) = self
+        if self.kubernetes_only.is_none()
+            && self.overview.data().is_none()
+            && let Some(error) = self
                 .overview
                 .error()
                 .filter(|_| !self.overview.is_loading())
-            {
-                return self.unreachable_state(error.to_owned(), cx);
-            }
-            return self.overview_skeleton(window, cx);
-        };
+        {
+            return self.unreachable_state(error.to_owned(), cx);
+        }
         let p = palette(cx);
-        let summary = presentation::cluster_summary(cluster, &self.nodes);
-        let roster = if self.fixture {
-            Roster::Fixture
-        } else if !cluster.discovery_members.is_empty() {
-            Roster::Discovery
-        } else {
-            Roster::FallbackOrEndpoints
-        };
-        let roster_tip = match roster {
-            Roster::FallbackOrEndpoints => format!(
-                "Node list from the Kubernetes API or the configured endpoints; the collector doesn't say which. Kubernetes access: {}.",
-                cluster
-                    .kubeconfig_source
-                    .as_deref()
-                    .unwrap_or("not available")
-            ),
-            _ => format!(
-                "Node list from {}. Kubernetes access: {}.",
-                roster.label(),
-                cluster
-                    .kubeconfig_source
-                    .as_deref()
-                    .unwrap_or("not available")
-            ),
-        };
-        let warnings: Vec<String> = [&cluster.discovery_warning, &cluster.kubeconfig_warning]
-            .into_iter()
-            .flatten()
-            .cloned()
-            .collect();
-        let stale = self.overview.is_stale();
-        let versions = summary.versions.clone();
+        let context = self.applied.context.clone().unwrap_or_default();
+        let display = &self.overview_display;
+        let tip = display.roster_tip.clone();
+        let drift_tip = display.drift_tip.clone();
         let header = v_flex()
             .gap(dp(7.))
             .child(
                 h_flex()
-                    .gap_2p5()
+                    .gap(dp(10.))
                     .flex_wrap()
                     .child(
                         div()
                             .font_family(DISPLAY_FONT)
                             .text_size(dp(28.))
-                            .line_height(dp(32.))
-                            .child(cluster.name.clone()),
+                            .child(context),
                     )
-                    .child(if stale {
-                        ui::tag(Tone::Warn, Some(IconName::Clock), "Stale snapshot", cx)
-                    } else {
-                        ui::tag(Tone::Good, Some(IconName::Plug), "Connected", cx)
-                    })
-                    .when(versions.len() > 1, |this| {
-                        let tip = format!("Nodes run {}", versions.join(" and "));
+                    .child(ui::tag(
+                        if self.overview.is_stale() || self.kubernetes_summary.is_stale() {
+                            Tone::Warn
+                        } else {
+                            Tone::Good
+                        },
+                        None,
+                        if self.overview.is_stale() || self.kubernetes_summary.is_stale() {
+                            "Stale snapshot"
+                        } else {
+                            "Connected"
+                        },
+                        cx,
+                    ))
+                    .when_some(display.drift.clone(), |this, drift| {
                         this.child(
                             div()
                                 .id("version-drift")
                                 .tooltip(move |window, cx| {
-                                    Tooltip::new(tip.clone()).build(window, cx)
+                                    Tooltip::new(drift_tip.clone()).build(window, cx)
                                 })
-                                .child(ui::tag(
-                                    Tone::Warn,
-                                    Some(IconName::TriangleAlert),
-                                    format!("{} Talos versions", versions.len()),
-                                    cx,
-                                )),
+                                .child(ui::tag(Tone::Warn, None, drift, cx)),
                         )
                     }),
             )
+            .child(div().text_color(p.muted).child(display.subtitle.clone()))
             .child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .text_size(dp(12.5))
-                    .text_color(p.muted)
-                    .when(!summary.versions.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .font_family(MONO_FONT)
-                                .text_size(dp(12.))
-                                .child(format!("Talos {}", summary.versions.join(" / "))),
-                        )
-                        .child("·")
-                    })
-                    .when(
-                        !summary.platforms.is_empty() || !summary.arches.is_empty(),
-                        |this| {
-                            let mut parts = summary.platforms.clone();
-                            parts.extend(summary.arches.clone());
-                            this.child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(12.))
-                                    .child(parts.join(" · ")),
-                            )
-                            .child("·")
-                        },
-                    )
-                    .child(
-                        h_flex()
-                            .id("roster")
-                            .test_support()
-                            .aria_label(roster_tip.clone())
-                            .h(dp(22.))
-                            .px_2()
-                            .gap_1p5()
-                            .rounded_full()
+                div()
+                    .id("roster")
+                    .test_support()
+                    .aria_label(tip.clone())
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .child(ui::tag(Tone::Outline, None, display.roster.clone(), cx)),
+            );
+        let cards =
+            div()
+                .id("overview-cards")
+                .test_support()
+                .grid()
+                .grid_cols(if Self::content_width(window) < 900. {
+                    2
+                } else {
+                    4
+                })
+                .gap(dp(12.))
+                .children(display.cards.iter().map(|card| {
+                    let target = card.target.clone();
+                    let content =
+                        v_flex()
+                            .w_full()
+                            .whitespace_normal()
+                            .min_w_0()
+                            .p(dp(14.))
+                            .gap(dp(8.))
                             .border_1()
                             .border_color(p.line)
+                            .rounded(px(10.))
                             .bg(p.surface)
-                            .text_color(p.ink_2)
-                            .text_size(dp(12.))
-                            .tooltip(move |window, cx| {
-                                Tooltip::new(roster_tip.clone()).build(window, cx)
+                            .hover(|style| style.border_color(p.line_strong))
+                            .child(ui::caption(card.label, cx))
+                            .child(
+                                div()
+                                    .font_family(DISPLAY_FONT)
+                                    .text_size(dp(25.))
+                                    .text_color(match card.tone {
+                                        Tone::Good => p.good_ink,
+                                        Tone::Crit => p.crit_ink,
+                                        Tone::Warn => p.warn_ink,
+                                        _ => p.muted,
+                                    })
+                                    .child(card.figure.clone()),
+                            )
+                            .child(h_flex().gap(dp(3.)).flex_wrap().children(
+                                card.segments.iter().map(|tone| {
+                                    div().w(dp(16.)).h(dp(6.)).rounded(px(2.)).bg(match tone {
+                                        Tone::Good => p.good,
+                                        Tone::Crit => p.crit,
+                                        Tone::Warn => p.warn,
+                                        _ => p.unk,
+                                    })
+                                }),
+                            ))
+                            .when_some(card.meter, |this, (percent, level)| {
+                                this.child(ui::meter(percent, level, cx))
                             })
-                            .child(Icon::new(IconName::Info).size(dp(13.)).text_color(p.muted))
-                            .child(format!("Roster: {}", roster.label())),
-                    ),
-            );
-        let width = Self::content_width(window);
+                            .child(
+                                div()
+                                    .text_size(dp(12.))
+                                    .text_color(p.muted)
+                                    .child(card.detail.clone()),
+                            );
+                    Button::new(card.id)
+                        .accessibility_label(card.label)
+                        .outline()
+                        .border_0()
+                        .h_auto()
+                        .w_full()
+                        .min_w_0()
+                        .p_0()
+                        .child(content)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_card(target.clone(), window, cx)
+                        }))
+                }));
+        let warnings = display
+            .warnings
+            .iter()
+            .map(|warning| ui::warning_banner(None, warning.clone(), None, cx))
+            .collect::<Vec<_>>();
+        let attention = self.render_attention(None, cx);
         let body = self
             .page_body()
             .children(self.stale_banner(cx))
             .child(header)
-            .children(
-                warnings
-                    .into_iter()
-                    .map(|warning| ui::warning_banner(None, warning, None, cx)),
-            )
-            .child(self.summary_tiles(&summary, width, cx))
-            .child(self.nodes_section(&summary, width, cx));
+            .children(warnings)
+            .child(cards)
+            .child(attention);
         self.page_scroll("overview-page")
+            .test_support()
             .child(body)
             .into_any_element()
     }
 
-    fn overview_skeleton(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let width = Self::content_width(window);
-        let count = self
-            .applied
-            .context
-            .as_ref()
-            .and_then(|context| self.context_nodes.get(context))
-            .copied()
-            .unwrap_or(3)
-            .max(1);
-        let tile = || {
-            v_flex()
-                .gap_2()
-                .p_3()
-                .rounded(px(10.))
-                .border_1()
-                .border_color(p.line)
-                .bg(p.surface)
-                .child(ui::skeleton(dp(64.), dp(11.)))
-                .child(ui::skeleton(dp(96.), dp(25.)))
-                .child(ui::skeleton(relative(0.7), dp(11.)))
-        };
-        let card = || {
-            v_flex()
-                .gap_3()
-                .p(dp(14.))
-                .rounded(px(10.))
-                .border_1()
-                .border_color(p.line)
-                .bg(p.surface)
-                .child(ui::skeleton(dp(110.), dp(11.)))
-                .child(ui::skeleton(relative(0.7), dp(15.)))
-                .child(ui::skeleton(relative(1.), dp(32.)))
-                .child(ui::skeleton(relative(1.), dp(6.)))
-                .child(ui::skeleton(relative(0.6), dp(10.)))
-        };
-        let body = self
-            .page_body()
-            .child(
-                v_flex()
-                    .gap_2p5()
-                    .child(ui::skeleton(dp(190.), dp(28.)))
-                    .child(ui::skeleton(dp(320.), dp(13.))),
-            )
-            .child(
-                div()
-                    .grid()
-                    .grid_cols(tile_columns(width))
-                    .gap(dp(GAP))
-                    .children((0..4).map(|_| tile())),
-            )
-            .child(
-                div()
-                    .grid()
-                    .grid_cols(card_columns(width))
-                    .gap(dp(GAP))
-                    .children((0..count).map(|_| card())),
-            );
-        self.page_scroll("overview-page")
-            .child(body)
-            .into_any_element()
+    fn open_card(&mut self, target: CardTarget, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            CardTarget::Page(page) => {
+                self.navigate_from_keyboard(page, window, cx);
+                if page == super::Page::Health
+                    && let Some(screen) = self.active_screen()
+                    && let Ok(health) = screen.view().downcast::<crate::screens::WorkloadsScreen>()
+                {
+                    health.update(cx, |health, cx| health.set_only_unhealthy(true, cx));
+                }
+            }
+            CardTarget::Kind(key, filter) => {
+                self.open_builtin(key, window, cx);
+                self.resources.update(cx, |resources, cx| {
+                    resources.set_filter(&filter, window, cx)
+                });
+            }
+            CardTarget::Destination(target) => self.open_destination(target, window, cx),
+            CardTarget::Services => {
+                self.navigate_from_keyboard(super::Page::SystemServices, window, cx);
+                self.system_services
+                    .update(cx, |services, cx| services.show_unhealthy(window, cx));
+            }
+        }
     }
 
-    fn tile(
+    pub(in crate::desktop) fn open_destination(
+        &mut self,
+        target: Destination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            Destination::Page(page) => self.navigate_from_keyboard(page, window, cx),
+            Destination::Node(key, tab) => {
+                self.open_node(key, window, cx);
+                self.show_node_tab(tab, window, cx);
+            }
+            Destination::Object(key, object, tab) => {
+                if let Some(kind) = freshkube_core::resources::builtin(key) {
+                    self.open_object(kind, object, tab, window, cx);
+                }
+            }
+            Destination::Service {
+                node,
+                service,
+                logs,
+            } => {
+                self.open_node_by_name(
+                    &node,
+                    if logs {
+                        super::nodes::NodeTab::Logs
+                    } else {
+                        super::nodes::NodeTab::Services
+                    },
+                    window,
+                    cx,
+                );
+                self.selected_service = Some(service.clone());
+                if logs {
+                    self.logs
+                        .update(cx, |view, cx| view.open_service(service, window, cx));
+                }
+            }
+        }
+    }
+
+    pub(in crate::desktop) fn render_attention(
         &self,
-        id: &'static str,
-        icon: IconName,
-        label: &str,
-        interactive: bool,
-        cx: &App,
-    ) -> Stateful<Div> {
-        let p = palette(cx);
-        v_flex()
-            .id(id)
-            .gap(dp(7.))
-            .px(dp(14.))
-            .pt(dp(12.))
-            .pb(dp(13.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(p.line)
-            .bg(p.surface)
-            .min_w_0()
-            .when(interactive, |this| {
-                this.cursor_pointer()
-                    .tab_index(0)
-                    .hover(|style| style.border_color(p.line_strong))
-            })
-            .child(
-                h_flex()
-                    .gap(dp(7.))
-                    .text_color(p.muted)
-                    .child(Icon::new(icon).size(dp(15.)).text_color(p.muted))
-                    .child(ui::caption(label, cx))
-                    .when(interactive, |this| {
-                        this.child(div().flex_1()).child(
-                            Icon::new(IconName::ChevronRight)
-                                .size(dp(15.))
-                                .text_color(p.muted),
-                        )
-                    }),
-            )
-    }
-
-    fn figure(text: impl Into<SharedString>, color: Option<Hsla>) -> Div {
-        div()
-            .font_family(DISPLAY_FONT)
-            .text_size(dp(25.))
-            .line_height(dp(28.))
-            .when_some(color, |this, color| this.text_color(color))
-            .child(text.into())
-    }
-
-    fn summary_tiles(
-        &self,
-        summary: &ClusterSummary,
-        width: f32,
+        node: Option<&str>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
-        let small = |text: String| {
-            div()
-                .text_size(dp(12.))
-                .text_color(p.muted)
-                .min_w_0()
-                .child(text)
+        let rows = node
+            .and_then(|node| self.attention.by_node.get(node))
+            .map(Vec::as_slice)
+            .unwrap_or(if node.is_some() {
+                &[]
+            } else {
+                &self.attention.rows
+            });
+        let count = if self.attention_expanded || node.is_some() {
+            rows.len()
+        } else {
+            rows.len().min(8)
         };
-        let nodes_tile = self
-            .tile("tile-nodes", IconName::Server, "Nodes", false, cx)
-            .aria_label(format!(
-                "{} of {} nodes responding",
-                summary.responding, summary.total
-            ))
+        v_flex()
+            .id("needs-attention")
+            .test_support()
+            .gap(dp(10.))
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(Self::figure(
-                        format!("{} / {}", summary.responding, summary.total),
-                        None,
-                    ))
-                    .child(small("responding".into())),
+                div()
+                    .font_family(DISPLAY_FONT)
+                    .text_size(dp(20.))
+                    .child("Needs attention"),
             )
-            .child(
-                h_flex()
-                    .gap(dp(3.))
-                    .flex_wrap()
-                    .children(self.nodes.iter().map(|node| {
-                        div().w(dp(16.)).h(dp(6.)).rounded(px(2.)).map(|this| {
-                            if node.responding {
-                                this.bg(p.good)
-                            } else {
-                                this.border(px(1.5)).border_color(p.unk)
-                            }
-                        })
-                    })),
-            )
-            .child(small(format!(
-                "{} · {}",
-                plural(summary.control_planes, "control plane", "control planes"),
-                plural(summary.workers, "worker", "workers")
-            )));
-        let etcd_tile = {
-            let tile = self.tile("tile-etcd", IconName::Database, "etcd", false, cx);
-            match &summary.etcd {
-                Some(etcd) => {
-                    let tolerance = presentation::etcd_failure_tolerance(etcd.total);
-                    tile.child(
+            .when(rows.is_empty(), |this| {
+                this.child(div().text_color(p.muted).child("No problems reported"))
+            })
+            .children(rows[..count].iter().map(|row| {
+                let open = row.open.clone();
+                let logs = row.logs.clone();
+                let node = row.open_node.clone();
+                v_flex()
+                    .id(row.id.clone())
+                    .test_support()
+                    .min_w_0()
+                    .p(dp(10.))
+                    .gap(dp(6.))
+                    .border_b_1()
+                    .border_color(p.line)
+                    .child(
                         h_flex()
-                            .gap_2()
-                            .child(Self::figure(
-                                format!("{} / {}", etcd.healthy, etcd.total),
-                                None,
-                            ))
-                            .child(if etcd.has_quorum {
-                                ui::tag(Tone::Good, Some(IconName::CircleCheck), "Quorum", cx)
-                            } else {
-                                // `healthy` counts members that answered the
-                                // status request; silence isn't a failure.
-                                ui::tag(
-                                    Tone::Warn,
-                                    Some(IconName::CircleAlert),
-                                    "Quorum unconfirmed",
-                                    cx,
+                            .gap(dp(8.))
+                            .flex_wrap()
+                            .child(ui::tag(row.tone, None, row.kind, cx))
+                            .child(div().font_family(MONO_FONT).child(row.name.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_color(p.muted)
+                            .text_size(dp(12.))
+                            .child(row.reason.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(dp(6.))
+                            .child(
+                                Button::new("attention-open")
+                                    .small()
+                                    .label("Open")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_destination(open.clone(), window, cx)
+                                    })),
+                            )
+                            .when_some(logs, |this, logs| {
+                                this.child(
+                                    Button::new("attention-logs")
+                                        .small()
+                                        .label("Logs")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_destination(logs.clone(), window, cx)
+                                        })),
+                                )
+                            })
+                            .when_some(node, |this, node| {
+                                this.child(
+                                    Button::new("attention-open-node")
+                                        .small()
+                                        .label("Open node")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_destination(node.clone(), window, cx)
+                                        })),
                                 )
                             }),
                     )
-                    .child(small(if !etcd.has_quorum {
-                        format!(
-                            "{} of {} answered; quorum needs {}",
-                            etcd.healthy,
-                            plural(etcd.total, "member", "members"),
-                            etcd.total / 2 + 1
-                        )
-                    } else if etcd.total <= 1 {
-                        "Single member, so no failure tolerance".into()
-                    } else {
-                        format!(
-                            "Tolerates {}",
-                            plural(tolerance, "member failure", "member failures")
-                        )
-                    }))
-                }
-                None => tile
-                    .child(Self::figure("—", Some(p.muted)))
-                    .child(small("No etcd status reported".into())),
-            }
-        };
-        let services_tile = match summary.first_unhealthy.clone() {
-            Some((node, service)) => {
-                let target = node.clone();
-                let chosen = service.clone();
-                self.tile("tile-services", IconName::HeartPulse, "Services", true, cx)
-                    .aria_label(format!("{} unhealthy services", summary.services.unhealthy))
-                    .child(Self::figure(
-                        format!("{} unhealthy", summary.services.unhealthy),
-                        Some(p.crit_ink),
-                    ))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .text_size(dp(12.))
-                            .text_color(p.muted)
-                            .child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(11.5))
-                                    .child(service),
-                            )
-                            .child("on")
-                            .child(div().font_family(MONO_FONT).text_size(dp(11.5)).child(node)),
+            }))
+            .when(
+                node.is_none() && !self.attention_expanded && self.attention.total > 8,
+                |this| {
+                    this.child(
+                        Button::new("attention-show-all")
+                            .small()
+                            .label(self.attention.more.clone())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.attention_expanded = true;
+                                cx.notify();
+                            })),
                     )
-                    .child(small(format!(
-                        "{} healthy · {} not reported",
-                        summary.services.healthy, summary.services.unknown
-                    )))
-                    .on_click(cx.listener(move |view, _, window, cx| {
-                        view.select_node_by_name(target.clone(), window, cx);
-                        view.selected_service = Some(chosen.clone());
-                        view.health_filter = super::HealthFilter::All;
-                        if let Some(node) = view.selected_node.clone() {
-                            view.open_node_by_name(
-                                &node,
-                                crate::desktop::nodes::NodeTab::Services,
-                                window,
-                                cx,
-                            );
-                        }
-                    }))
-            }
-            None => {
-                let total = summary.services.healthy + summary.services.unknown;
-                self.tile("tile-services", IconName::HeartPulse, "Services", false, cx)
-                    .child(if total == 0 {
-                        Self::figure("—", Some(p.muted))
-                    } else {
-                        Self::figure("All healthy", Some(p.good_ink))
-                    })
-                    .child(small(if total == 0 {
-                        "No services reported".into()
-                    } else {
-                        format!(
-                            "{} healthy · {} not reported",
-                            summary.services.healthy, summary.services.unknown
-                        )
-                    }))
-            }
-        };
-        let memory_tile = match summary.peak_memory.clone() {
-            Some((node, percent)) => {
-                let level = presentation::memory_level(percent);
-                let target = node.clone();
-                self.tile(
-                    "tile-memory",
-                    IconName::MemoryStick,
-                    "Peak memory",
-                    true,
-                    cx,
-                )
-                .aria_label(format!("Peak memory {percent:.0} percent on {node}"))
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Self::figure(format!("{percent:.0} %"), None))
-                        .children(ui::memory_tone(level).map(|(tone, text)| {
-                            ui::tag(tone, Some(IconName::TriangleAlert), text, cx)
-                        })),
-                )
-                .child(ui::meter(percent, level, cx))
-                .child(
-                    div()
-                        .font_family(MONO_FONT)
-                        .text_size(dp(11.5))
-                        .text_color(p.muted)
-                        .child(node),
-                )
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.select_node_by_name(target.clone(), window, cx);
-                }))
-            }
-            None => self
-                .tile(
-                    "tile-memory",
-                    IconName::MemoryStick,
-                    "Peak memory",
-                    false,
-                    cx,
-                )
-                .child(Self::figure("—", Some(p.muted)))
-                .child(small("No memory data reported".into())),
-        };
-        div()
-            .grid()
-            .grid_cols(tile_columns(width))
-            .gap(dp(GAP))
-            .child(nodes_tile.test_support())
-            .child(etcd_tile.test_support())
-            .child(services_tile.test_support())
-            .child(memory_tile.test_support())
+                },
+            )
             .into_any_element()
     }
 }
 
-mod nodes;
-
-/// Columns for the summary tiles at a content width in `dp`.
-fn tile_columns(width: f32) -> u16 {
-    if width >= 880. {
-        4
-    } else if width >= 400. {
-        2
-    } else {
-        1
-    }
-}
-
-/// Columns for the node cards at a content width in `dp`.
-fn card_columns(width: f32) -> u16 {
-    let fit = ((width + GAP) / (CARD_MIN_WIDTH + GAP)).floor() as u16;
-    fit.clamp(1, 3)
-}
+#[cfg(test)]
+mod tests;

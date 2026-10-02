@@ -352,6 +352,7 @@ impl Pilot {
                 .child(
                     v_flex()
                         .gap(dp(12.))
+                        .child(self.render_attention(Some(row.name.as_ref()), cx))
                         .children(
                             row.problems
                                 .iter()

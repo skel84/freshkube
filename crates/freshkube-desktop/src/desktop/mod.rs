@@ -2,7 +2,7 @@ mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
-mod nodes;
+pub(crate) mod nodes;
 mod overview;
 mod pages;
 mod services;
@@ -287,6 +287,9 @@ pub(crate) struct Pilot {
     summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
     summary_job: Option<OwnedJob>,
     summary_task: Option<Task<()>>,
+    object_open_job: Option<OwnedJob>,
+    object_open_task: Option<Task<()>>,
+    object_open_sequence: u64,
     services: Snapshot<Vec<ServiceInfo>, Target>,
     service_display: services::ServiceDisplay,
     nodes: Vec<NodeSummary>,
@@ -326,7 +329,9 @@ pub(crate) struct Pilot {
     settings_open: bool,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
-    node_view: NodeView,
+    overview_display: crate::presentation::overview::Overview,
+    attention: crate::presentation::attention::Attention,
+    attention_expanded: bool,
     health_filter: HealthFilter,
     appearance: Appearance,
     automatic: bool,
@@ -444,12 +449,13 @@ impl Pilot {
                 resources::NodePodsEvent::Back => this.node_back(window, cx),
                 resources::NodePodsEvent::Open(identity) => {
                     let identity = identity.clone();
-                    this.unless_shell(window, cx, move |this, window, cx| {
-                        this.open_builtin("pods", window, cx);
-                        this.resources.update(cx, |resources, cx| {
-                            resources.open_identity(identity, window, cx)
-                        });
-                    });
+                    this.open_object(
+                        builtin("pods").expect("pod kind"),
+                        identity.into(),
+                        resources::Tab::Overview,
+                        window,
+                        cx,
+                    );
                 }
             },
         ));
@@ -583,6 +589,9 @@ impl Pilot {
             summary_health: None,
             summary_job: None,
             summary_task: None,
+            object_open_job: None,
+            object_open_task: None,
+            object_open_sequence: 0,
             services: Snapshot::default(),
             service_display: services::ServiceDisplay::default(),
             nodes: Vec::new(),
@@ -612,7 +621,9 @@ impl Pilot {
             settings_open: false,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
-            node_view: NodeView::Cards,
+            overview_display: Default::default(),
+            attention: Default::default(),
+            attention_expanded: false,
             health_filter: HealthFilter::All,
             appearance: Appearance::System,
             automatic: true,
@@ -739,6 +750,10 @@ impl Pilot {
         self.summary_health = None;
         self.summary_job = None;
         self.summary_task = None;
+        self.attention_expanded = false;
+        self.object_open_job = None;
+        self.object_open_task = None;
+        self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
         self.services = Snapshot::default();
         self.rebuild_service_rows(cx);
         self.logs
@@ -1200,22 +1215,6 @@ impl Pilot {
         {
             self.select_node(Some(name), window, cx);
         }
-    }
-
-    fn step_node(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nodes.is_empty() {
-            return;
-        }
-        let current = self
-            .nodes
-            .iter()
-            .position(|node| Some(&node.name) == self.selected_node.as_ref());
-        let next = match current {
-            Some(ix) => ix.saturating_add_signed(delta).min(self.nodes.len() - 1),
-            None => 0,
-        };
-        let name = self.nodes[next].name.clone();
-        self.select_node_by_name(name, window, cx);
     }
 
     fn refresh_services(&mut self, window: &mut Window, cx: &mut Context<Self>) {

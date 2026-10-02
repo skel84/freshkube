@@ -106,6 +106,8 @@ pub struct ClusterOverview {
     pub discovery_members: Vec<DiscoveryMember>,
     /// etcd quorum state for the cluster header.
     pub etcd_summary: Option<EtcdSummary>,
+    /// Alarms from the overview cycle; an unavailable answer stays unknown.
+    pub etcd_alarms: Option<Vec<talos_rs::EtcdAlarm>>,
     /// Hostname-to-IP map used for node-targeted detail operations.
     pub node_ips: HashMap<String, String>,
     /// Non-fatal warning when the worker roster could not be discovered.
@@ -534,7 +536,12 @@ impl ClusterOverviewCollector {
                 .iter()
                 .filter_map(|member| member.ip_address())
                 .collect::<Vec<_>>();
-            if let Ok(statuses) = client.etcd_status_for_nodes(&control_plane_ips).await {
+            let (statuses, alarms) = tokio::join!(
+                client.etcd_status_for_nodes(&control_plane_ips),
+                tokio::time::timeout(NODE_CALL_TIMEOUT, client.etcd_alarms()),
+            );
+            cluster.etcd_alarms = alarms.ok().and_then(Result::ok);
+            if let Ok(statuses) = statuses {
                 let total = cluster.etcd_members.len();
                 let healthy = statuses.len();
                 let quorum_needed = total / 2 + 1;

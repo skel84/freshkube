@@ -10,7 +10,7 @@ use crate::{
     ui,
 };
 use gpui_kit::{component::resizable::ResizableState, *};
-use join::{NodeKey, NodeRow};
+pub(crate) use join::{NodeKey, NodeRow};
 use std::{sync::Arc, time::Duration};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub(super) struct Nodes {
     tabs: Vec<NodeTab>,
     inline_tabs: Vec<NodeTab>,
     more: bool,
-    view: NodeView,
+    pub(super) view: NodeView,
     tab_focus: FocusHandle,
     tab_scroll: ScrollHandle,
     scroll: UniformListScrollHandle,
@@ -220,6 +220,24 @@ impl Pilot {
             None
         };
         self.node_workspace.sync_tabs();
+        self.overview_display = crate::presentation::overview::Overview::build(
+            &self.node_workspace.rows,
+            &self.nodes,
+            self.kubernetes_summary
+                .data()
+                .map(|summary| summary.as_ref()),
+            self.overview.data(),
+            self.fixture,
+            self.kubernetes_only.is_some(),
+        );
+        self.attention = crate::presentation::attention::build(
+            &self.node_workspace.rows,
+            self.kubernetes_summary
+                .data()
+                .map(|summary| summary.as_ref()),
+            self.overview.data(),
+            chrono::Utc::now(),
+        );
     }
 
     pub(super) fn open_node(&mut self, key: NodeKey, window: &mut Window, cx: &mut Context<Self>) {

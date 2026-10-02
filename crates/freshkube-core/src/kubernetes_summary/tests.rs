@@ -105,6 +105,15 @@ fn issue_caps_keep_newest_and_preserve_counts() {
     );
     assert_eq!(data.pods.loaded().unwrap().total, 250);
     assert_eq!(data.pods.loaded().unwrap().issues.len(), ISSUE_LIMIT);
+    assert_eq!(
+        data.pods
+            .loaded()
+            .unwrap()
+            .issues_by_status
+            .values()
+            .sum::<usize>(),
+        250
+    );
     assert_eq!(data.pods.loaded().unwrap().issues[0].name, "pod-249");
     assert_eq!(data.claims.loaded().unwrap().pending_count, 250);
     assert_eq!(data.claims.loaded().unwrap().pending.len(), ISSUE_LIMIT);
@@ -174,5 +183,41 @@ fn warning_cap_does_not_remove_a_pending_claims_reason() {
     assert_eq!(
         data.claims.loaded().unwrap().pending[0].reason,
         "StorageClass fast not found"
+    );
+}
+
+#[test]
+fn summary_retains_only_issue_identities() {
+    let data = summary(
+        json!([]),
+        json!([
+            {"metadata":{"name":"pending","namespace":"batch","uid":"pending-uid"},"spec":{"containers":[]},"status":{"phase":"Pending"}},
+            {"metadata":{"name":"healthy","namespace":"batch","uid":"healthy-uid"},"spec":{"containers":[]},"status":{"phase":"Succeeded"}}
+        ]),
+        Part::Loaded(vec![]),
+        json!([
+            {"metadata":{"name":"claim","namespace":"batch","uid":"claim-uid"},"spec":{},"status":{"phase":"Pending"}}
+        ]),
+    );
+    assert_eq!(
+        data.references
+            .get(&("pods".into(), "batch".into(), "pending".into()))
+            .map(String::as_str),
+        Some("pending-uid")
+    );
+    assert_eq!(
+        data.references
+            .get(&(
+                "persistentvolumeclaims".into(),
+                "batch".into(),
+                "claim".into()
+            ))
+            .map(String::as_str),
+        Some("claim-uid")
+    );
+    assert!(
+        !data
+            .references
+            .contains_key(&("pods".into(), "batch".into(), "healthy".into()))
     );
 }

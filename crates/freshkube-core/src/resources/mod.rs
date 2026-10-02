@@ -20,6 +20,7 @@ mod exec;
 mod failure;
 mod forward;
 mod kinds;
+mod metadata;
 mod object;
 mod pod_logs;
 mod table;
@@ -50,3 +51,5 @@ pub use pod_logs::{
 };
 pub use table::{RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
+
+pub use metadata::get_metadata;

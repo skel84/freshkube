@@ -486,9 +486,44 @@ impl ResourcesScreen {
         self.restart(window, cx);
     }
 
-    pub(crate) fn open_identity(
+    #[cfg(test)]
+    pub(crate) fn filter_value(&self, cx: &App) -> String {
+        self.query.read(cx).value().to_string()
+    }
+    #[cfg(test)]
+    pub(crate) fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
+        self.detail.read(cx).tab()
+    }
+
+    /// Called only after the shell's navigation question has been accepted.
+    pub(crate) fn close_for_link(&mut self, cx: &mut Context<Self>) {
+        self.close_detail(cx);
+    }
+
+    pub(crate) fn identity_named(&self, namespace: &str, name: &str) -> Option<ResourceIdentity> {
+        self.store
+            .entries()
+            .iter()
+            .find(|entry| {
+                entry.row().identity.namespace == namespace && entry.row().identity.name == name
+            })
+            .map(|entry| entry.row().identity.clone())
+    }
+    pub(crate) fn showing(&self, identity: &ResourceIdentity, cx: &App) -> bool {
+        self.detail.read(cx).target_identity() == Some(identity)
+    }
+    pub(crate) fn set_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query
+            .update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+        self.projection.filter(&self.store, text);
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+    pub(crate) fn open_identity_on(
         &mut self,
         identity: ResourceIdentity,
+        tab: crate::resources::Tab,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -499,15 +534,26 @@ impl ResourcesScreen {
         {
             self.set_namespace(None, window, cx);
         }
-        self.clear_filter(window, cx);
+        let query = self.query.read(cx).value().to_lowercase();
+        let shown = self
+            .store
+            .entries()
+            .iter()
+            .find(|entry| entry.row().identity == identity)
+            .is_some_and(|entry| entry.search_key().contains(&query));
+        if !shown {
+            self.clear_filter(window, cx);
+        }
         self.select_identity(&identity, window, cx);
         self.restore = Some(identity.clone());
         self.open_now(
             identity,
             window,
-            |this, window, cx| {
-                this.detail
-                    .update(cx, |detail, cx| detail.focus(window, cx))
+            move |this, window, cx| {
+                this.detail.update(cx, |detail, cx| {
+                    detail.set_tab(tab, cx);
+                    detail.focus(window, cx);
+                })
             },
             cx,
         );

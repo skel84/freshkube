@@ -118,6 +118,17 @@ impl SystemServices {
         self.badge = self.unhealthy.to_string().into();
         self.rebuild(cx);
     }
+    #[cfg(test)]
+    pub(super) fn is_unhealthy_filter(&self) -> bool {
+        self.health == Some(Health::Unhealthy)
+    }
+    pub(super) fn show_unhealthy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.health = Some(Health::Unhealthy);
+        self.node = None;
+        self.filter
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.rebuild(cx);
+    }
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let query = self.filter.read(cx).value().to_lowercase();
         self.visible = self

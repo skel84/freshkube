@@ -547,7 +547,7 @@ impl WorkloadsScreen {
         cx.notify();
     }
 
-    fn set_only_unhealthy(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub(crate) fn set_only_unhealthy(&mut self, on: bool, cx: &mut Context<Self>) {
         self.only_unhealthy = on;
         self.rows(cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);

@@ -88,6 +88,7 @@ impl NodeSummary {
 pub struct PodSummary {
     pub total: usize,
     pub phases: BTreeMap<String, usize>,
+    pub issues_by_status: BTreeMap<String, usize>,
     pub on_not_ready: usize,
     pub issues: Vec<PodInfo>,
 }
@@ -131,6 +132,8 @@ pub struct ClaimSummary {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct KubernetesSummary {
+    /// Identities of subjects retained by the summary; no full objects remain.
+    pub references: BTreeMap<(String, String, String), String>,
     pub version: Part<String>,
     pub nodes: Part<Vec<NodeSummary>>,
     pub pods: Part<PodSummary>,
@@ -256,6 +259,31 @@ pub fn derive(
     events: Part<Vec<Event>>,
     now: DateTime<Utc>,
 ) -> KubernetesSummary {
+    let mut references = BTreeMap::new();
+    fn remember<T: Resource>(
+        kind: &str,
+        part: &Part<Vec<T>>,
+        out: &mut BTreeMap<(String, String, String), String>,
+    ) {
+        for object in part.loaded().into_iter().flatten() {
+            let meta = object.meta();
+            if let (Some(name), Some(uid)) = (&meta.name, &meta.uid) {
+                out.insert(
+                    (
+                        kind.into(),
+                        meta.namespace.clone().unwrap_or_default(),
+                        name.clone(),
+                    ),
+                    uid.clone(),
+                );
+            }
+        }
+    }
+    remember("pods", &pods, &mut references);
+    remember("deployments.apps", &deployments, &mut references);
+    remember("statefulsets.apps", &statefulsets, &mut references);
+    remember("daemonsets.apps", &daemonsets, &mut references);
+    remember("persistentvolumeclaims", &claims, &mut references);
     let mut errors = Vec::new();
     for (source, error) in [
         (WorkloadSource::Pods, pods.error()),
@@ -323,7 +351,44 @@ pub fn derive(
             unavailable: errors,
         }
     };
+    let mut kept = std::collections::BTreeSet::new();
+    if let Some(pods) = pod_summary.loaded() {
+        kept.extend(
+            pods.issues
+                .iter()
+                .map(|pod| ("pods".to_owned(), pod.namespace.clone(), pod.name.clone())),
+        );
+    }
+    if let Some(snapshot) = workloads.snapshot() {
+        for namespace in &snapshot.namespaces {
+            for workload in &namespace.workloads {
+                if workload.health != workloads::HealthState::Healthy {
+                    let kind = match workload.kind {
+                        workloads::WorkloadKind::Deployment => "deployments.apps",
+                        workloads::WorkloadKind::StatefulSet => "statefulsets.apps",
+                        workloads::WorkloadKind::DaemonSet => "daemonsets.apps",
+                    };
+                    kept.insert((
+                        kind.into(),
+                        workload.namespace.clone(),
+                        workload.name.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(claims) = claims.loaded() {
+        kept.extend(claims.pending.iter().map(|claim| {
+            (
+                "persistentvolumeclaims".to_owned(),
+                claim.namespace.clone(),
+                claim.name.clone(),
+            )
+        }));
+    }
+    references.retain(|key, _| kept.contains(key));
     KubernetesSummary {
+        references,
         version,
         nodes,
         pods: pod_summary,
@@ -429,6 +494,10 @@ fn summarize_pods(pods: &[Pod], nodes: &[NodeSummary]) -> PodSummary {
         }
         let (restarts, issue) = workloads::analyze_pod(pod);
         if let Some(issue) = issue {
+            *summary
+                .issues_by_status
+                .entry(issue.label().into())
+                .or_default() += 1;
             summary.issues.push(PodInfo {
                 name: pod.metadata.name.clone().unwrap_or_default(),
                 namespace: pod.metadata.namespace.clone().unwrap_or_default(),

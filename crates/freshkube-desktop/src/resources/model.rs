@@ -289,3 +289,20 @@ mod tests {
         );
     }
 }
+
+/// An object link may carry a UID from metadata or a summary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObjectRef {
+    pub(crate) namespace: String,
+    pub(crate) name: String,
+    pub(crate) uid: String,
+}
+impl From<ResourceIdentity> for ObjectRef {
+    fn from(identity: ResourceIdentity) -> Self {
+        Self {
+            namespace: identity.namespace,
+            name: identity.name,
+            uid: identity.uid,
+        }
+    }
+}

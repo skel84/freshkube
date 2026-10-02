@@ -385,3 +385,7 @@ These have a default, so they don't block a step. Change one only by updating th
 - **Context rows** use a 360 dp popover with wrapped full names. Clicking a node tab focuses its content; the tab strip remains in the keyboard order for arrow navigation.
 
 - **Narrow node headers** keep chips and tabs in horizontally scrolling rows, so the inspection view retains height at the minimum window size and at 20 px. Keyboard tab changes reveal the active button.
+
+- **Attention ages** use the Ready transition for nodes and the creation time for Pending claims. Pod creation time orders issues when the API has no issue transition; services and workloads with no transition time follow dated subjects, then sort by name. It does not label a pod’s age as the duration of its failure.
+- **etcd attention** merges quorum and deduplicated alarms into one cluster subject. The existing Talos overview cycle reads alarms alongside status; an unavailable alarm response stays unknown. Node attention retains up to fifty rows for each node independently of the cluster list’s fifty-row cap.
+- **Workload card counts** call Pending workloads progressing; Degraded and Failing count as unhealthy. Their first problem follows the core health order.

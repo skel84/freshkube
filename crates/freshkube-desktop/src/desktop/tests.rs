@@ -229,9 +229,12 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
 fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(FIRST_NODE));
-        window.within("nodes-region").click(FIRST_NODE, cx);
+        window
+            .within("nodes-page")
+            .click("node-talos-cp-fra1-01", cx);
         window.press("down", cx);
     })
     .unwrap();
@@ -244,13 +247,16 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         );
         assert_eq!(
             window
-                .within("nodes-region")
-                .find("talos-cp-fra1-02")
+                .within("nodes-page")
+                .find("node-talos-cp-fra1-02")
                 .selected(),
             Some(true)
         );
         assert_eq!(
-            window.within("nodes-region").find(FIRST_NODE).selected(),
+            window
+                .within("nodes-page")
+                .find("node-talos-cp-fra1-01")
+                .selected(),
             Some(false)
         );
         assert!(
@@ -492,7 +498,14 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
                 .contains("Stale")
         );
         assert!(window.find("retry").visible());
-        assert!(window.within("nodes-region").find(DEGRADED_NODE).visible());
+        assert!(window.find("tile-services").visible());
+        assert!(
+            view.read(cx)
+                .attention
+                .rows
+                .iter()
+                .any(|row| row.name.contains(DEGRADED_NODE))
+        );
         window.click("refresh", cx);
         window.render_frame(cx);
         assert!(!view.read(cx).overview.is_stale());
@@ -533,9 +546,13 @@ fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
         window.click("tile-services", cx);
         window.render_frame(cx);
         let pilot = view.read(cx);
-        assert_eq!(pilot.page, Page::Nodes);
-        assert_eq!(pilot.selected_node.as_deref(), Some(DEGRADED_NODE));
-        assert_eq!(pilot.selected_service.as_deref(), Some("kubelet"));
+        assert_eq!(pilot.page, Page::SystemServices);
+        assert_eq!(pilot.selected_node.as_deref(), Some("talos-wk-fra1-01"));
+        assert!(
+            window
+                .find("system-service-talos-wk-fra1-02-kubelet")
+                .visible()
+        );
     })
     .unwrap();
 }
@@ -545,7 +562,9 @@ fn silent_node_is_unknown_not_failed(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let card = window.within("nodes-region").find(SILENT_NODE);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let card = window.find("node-talos-wk-fra1-03");
         assert!(card.label().unwrap().contains(SILENT_NODE));
         pick_target(window, cx, 5);
         open_node_tab(window, cx, super::nodes::NodeTab::Services);
@@ -565,26 +584,35 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("view-table", cx);
+        window.click("nav-nodes", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).node_view, NodeView::Table);
+        window.click("nodes-view-table", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).node_workspace.view, NodeView::Table);
         assert_eq!(
-            window.within("nodes-region").find(FIRST_NODE).selected(),
-            Some(true)
+            window
+                .within("nodes-page")
+                .find("node-talos-cp-fra1-01")
+                .selected(),
+            Some(false)
         );
-        window.within("nodes-region").click("talos-wk-fra1-01", cx);
+        window
+            .within("nodes-page")
+            .click("node-talos-wk-fra1-01", cx);
         window.render_frame(cx);
         assert_eq!(
             view.read(cx).selected_node.as_deref(),
             Some("talos-wk-fra1-01")
         );
-        window.click("view-cards", cx);
+        window.click("node-close", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).node_view, NodeView::Cards);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).node_workspace.view, NodeView::Cards);
         assert_eq!(
             window
-                .within("nodes-region")
-                .find("talos-wk-fra1-01")
+                .within("nodes-page")
+                .find("node-talos-wk-fra1-01")
                 .selected(),
             Some(true)
         );
@@ -601,8 +629,8 @@ fn narrow_window_keeps_screens_and_actions_reachable(cx: &mut TestAppContext) {
         assert!(window.find("theme-toggle").visible());
         assert!(window.find("theme-toggle").bounds().right() <= px(760.));
         assert!(window.find("context-switcher").bounds().right() <= px(760.));
-        assert!(window.find("nodes-region").visible());
-        assert!(window.find("nodes-region").bounds().right() <= px(760.));
+        assert!(window.find("overview-cards").visible());
+        assert!(window.find("overview-cards").bounds().right() <= px(760.));
         open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         assert!(window.find("theme-toggle").visible());

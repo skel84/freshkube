@@ -799,6 +799,11 @@ impl DetailPane {
         cx.notify();
     }
 
+    #[cfg(test)]
+    pub(crate) fn tab(&self) -> Tab {
+        self.tab
+    }
+
     pub(crate) fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.feedback = None;

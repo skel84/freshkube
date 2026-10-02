@@ -3,6 +3,7 @@
 use super::Pilot;
 use crate::resources::{self, navigation, shell};
 use freshkube_core::resources::{ResourceKind, builtin};
+use gpui_kit::component::WindowExt;
 use gpui_kit::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,6 +265,9 @@ impl Pilot {
     /// Log collection keeps running in the background across screens; other
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        self.object_open_job = None;
+        self.object_open_task = None;
+        self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
         self.page = page;
         self.sync_node_visibility(window, cx);
         if let Some(screen) = self.active_screen() {
@@ -372,6 +376,123 @@ impl Pilot {
             }
             self.logs
                 .update(cx, |logs, cx| logs.open_service(service, window, cx));
+        }
+    }
+}
+
+impl Pilot {
+    /// Every object link follows this path and the existing shell pin.
+    pub(crate) fn open_object(
+        &mut self,
+        kind: ResourceKind,
+        object: resources::model::ObjectRef,
+        tab: resources::Tab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.kube_source() else {
+            self.open_kind(kind, window, cx);
+            return;
+        };
+        let identity = resources::model::ResourceIdentity {
+            connection: source.id.clone(),
+            resource: kind.key(),
+            namespace: object.namespace.clone(),
+            name: object.name.clone(),
+            uid: object.uid.clone(),
+        };
+        let same = self.resources.read(cx).showing(&identity, cx);
+        let open = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            if !same {
+                this.resources
+                    .update(cx, |resources, cx| resources.close_for_link(cx));
+            }
+            this.open_kind(kind.clone(), window, cx);
+            this.object_open_job = None;
+            this.object_open_task = None;
+            this.object_open_sequence = this.object_open_sequence.wrapping_add(1);
+            let mut identity = identity;
+            if identity.uid.is_empty() {
+                if let Some(found) = this
+                    .resources
+                    .read(cx)
+                    .identity_named(&object.namespace, &object.name)
+                {
+                    identity = found;
+                } else if this.fixture
+                    && let Some((_, rows)) = resources::example::read(
+                        &source.context,
+                        &kind.key(),
+                        Some(&object.namespace),
+                        chrono::Utc::now().timestamp(),
+                    )
+                    && let Some(row) = rows
+                        .into_iter()
+                        .find(|row| row.identity.name == object.name)
+                {
+                    identity = row.identity;
+                }
+            }
+            if !identity.uid.is_empty() {
+                this.resources.update(cx, |resources, cx| {
+                    resources.open_identity_on(identity, tab, window, cx)
+                });
+                return;
+            }
+            let sequence = this.object_open_sequence;
+            let epoch = this.epoch;
+            let (job, receiver) = crate::backend::spawn_job(
+                &this.runtime,
+                std::time::Duration::from_secs(15),
+                "Resolving the object's identity timed out".into(),
+                async move {
+                    let client = source.access.client().await?;
+                    freshkube_core::resources::get_metadata(
+                        &client,
+                        &kind,
+                        (!object.namespace.is_empty()).then_some(object.namespace.as_str()),
+                        &object.name,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                },
+            );
+            this.object_open_job = Some(job);
+            this.object_open_task = Some(cx.spawn_in(window, async move |this, cx| {
+                let result = receiver
+                    .await
+                    .unwrap_or_else(|_| Err("The identity worker stopped".into()));
+                _ = this.update_in(cx, |this, window, cx| {
+                    if this.epoch != epoch || this.object_open_sequence != sequence {
+                        return;
+                    }
+                    this.object_open_job = None;
+                    if let Ok(metadata) = &result
+                        && let Some(uid) = metadata.uid.clone()
+                    {
+                        identity.uid = uid;
+                        this.resources.update(cx, |resources, cx| {
+                            resources.open_identity_on(identity, tab, window, cx)
+                        });
+                    } else {
+                        window.push_notification(
+                            format!(
+                                "Can’t open {}: {}",
+                                identity.name,
+                                result
+                                    .err()
+                                    .unwrap_or_else(|| "The API returned no UID".into())
+                            ),
+                            cx,
+                        );
+                    }
+                });
+            }));
+        };
+        if same {
+            open(self, window, cx);
+        } else {
+            self.unless_shell(window, cx, open);
         }
     }
 }

@@ -13,7 +13,7 @@ Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pil
 | Page | What it shows |
 | --- | --- |
 | **Nodes** | Kubernetes and Talos machines in one table or card grid; open a node for its summary, Pods, system services, processes, storage, network, diagnostics, logs, Events and YAML |
-| **Overview** | Cluster summary (nodes responding, etcd quorum, service health, peak memory) and a card or table row per node with a load sparkline and memory use |
+| **Overview** | Eight cards for Kubernetes and Talos, plus Needs attention with links to objects, logs and node inspection; Kubernetes-only mode has four cards |
 | **System services** | Cluster service health with filters and links to the node pane; per-node details and restart stay in Nodes |
 | **Node Logs** | Live, interleaved logs from several services: level filters, search, follow or pause, wrapping, selection and copy |
 | **Processes** | Process list and tree with CPU and memory sorting |

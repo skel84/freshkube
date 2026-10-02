@@ -1,3 +1,6 @@
+pub(crate) mod attention;
+pub(crate) mod overview;
+
 use freshkube_core::cluster_overview::{ClusterOverview, EtcdSummary};
 use freshkube_core::constants::{MEMORY_CRITICAL_PERCENT, MEMORY_WARNING_PERCENT};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
