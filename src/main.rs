@@ -39,8 +39,8 @@ struct Cli {
     kubeconfig: Option<String>,
 
     /// Browse Kubernetes only, from a kubeconfig, without Talos. Chosen by
-    /// itself when no Talos option is given and there is no talosconfig
-    /// (TALOSCONFIG or ~/.talos/config)
+    /// itself when no Talos option or remembered selection is available and
+    /// there is no talosconfig (TALOSCONFIG or ~/.talos/config)
     #[arg(long, conflicts_with_all = ["config", "context", "insecure"])]
     kubernetes_only: bool,
 
@@ -79,6 +79,17 @@ fn main() -> Result<()> {
         kube_context,
         fixture,
     } = Cli::parse();
+    // A terminal's explicit Talos environment overrides a remembered GUI
+    // selection. Finder launches use the saved selection or the default file.
+    let config = if fixture || kubernetes_only || kube_context.is_some() || insecure {
+        config
+    } else {
+        config.or_else(|| {
+            std::env::var("TALOSCONFIG")
+                .ok()
+                .filter(|path| !path.is_empty())
+        })
+    };
     let kubernetes_only = !fixture
         && wants_kubernetes_only(
             kubernetes_only,

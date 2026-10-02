@@ -1,3 +1,4 @@
+mod connection;
 mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
@@ -11,6 +12,7 @@ mod tests;
 use crate::{
     GpuiOptions,
     backend::{self, AppliedConfig, OwnedJob, Target},
+    connection_preferences::ConnectionStore,
     fixture,
     forwards::ForwardsIndicator,
     logs::LogPanel,
@@ -266,6 +268,9 @@ fn cached_page_style() -> StyleRefinement {
 
 pub(crate) struct Pilot {
     runtime: Handle,
+    connection_store: Option<ConnectionStore>,
+    /// The absolute path of the last successfully parsed Talos configuration.
+    loaded_config_path: Option<PathBuf>,
     applied: AppliedConfig,
     path: Entity<InputState>,
     service_filter: Entity<InputState>,
@@ -510,6 +515,8 @@ impl Pilot {
         });
         let mut view = Self {
             runtime,
+            connection_store: options.preferences.as_deref().map(ConnectionStore::new),
+            loaded_config_path: None,
             applied: AppliedConfig {
                 path: options.config_path,
                 context: options.context,
@@ -645,6 +652,7 @@ impl Pilot {
         self.invalidate_target(window, cx);
         self.contexts.clear();
         self.context_nodes.clear();
+        self.loaded_config_path = None;
         self.config_error = None;
         self.config_loading = true;
         let (job, receiver) = backend::load_contexts(self.runtime.clone(), self.applied.clone());
@@ -661,10 +669,12 @@ impl Pilot {
                 view.config_job = None;
                 match result {
                     Ok(catalog) => {
+                        view.loaded_config_path = Some(catalog.path);
                         view.contexts = catalog.names;
                         if view.applied.context.is_none() {
                             view.applied.context = Some(catalog.current);
                         }
+                        view.remember_connection(window, cx);
                         view.refresh(window, cx);
                     }
                     Err(error) => view.config_error = Some(error),

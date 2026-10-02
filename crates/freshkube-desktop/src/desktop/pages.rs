@@ -134,6 +134,7 @@ impl Pilot {
                 return;
             }
             this.applied.context = Some(context);
+            this.remember_connection(window, cx);
             this.invalidate_target(window, cx);
             if this.fixture {
                 this.seed_fixture_history();

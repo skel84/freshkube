@@ -40,6 +40,7 @@ pub(crate) struct AppliedConfig {
 
 #[derive(Debug)]
 pub(crate) struct ContextCatalog {
+    pub(crate) path: PathBuf,
     pub(crate) names: Vec<String>,
     pub(crate) current: String,
 }
@@ -142,6 +143,8 @@ fn read_applied_config_with_identity(
         Some(path) => path,
         None => TalosConfig::default_path().map_err(|error| error.to_string())?,
     };
+    let path = std::path::absolute(path)
+        .map_err(|error| format!("Cannot resolve talosconfig path: {error}"))?;
     let (loaded, identity) = read_config_file_with_identity(&path)?;
     let current = applied.context.unwrap_or_else(|| loaded.context.clone());
     if !loaded.contexts.contains_key(&current) {
@@ -149,7 +152,16 @@ fn read_applied_config_with_identity(
     }
     let mut names: Vec<_> = loaded.contexts.keys().cloned().collect();
     names.sort();
-    Ok((path, loaded, ContextCatalog { names, current }, identity))
+    Ok((
+        path.clone(),
+        loaded,
+        ContextCatalog {
+            path,
+            names,
+            current,
+        },
+        identity,
+    ))
 }
 
 /// All path resolution, bounded reading, parsing, and validation is off GPUI.

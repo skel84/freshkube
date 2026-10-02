@@ -81,9 +81,21 @@ impl GpuiOptions {
             ..Self::new(None, None, 100)
         }
     }
-    /// Remembers preferences, such as the text size, in this file between
-    /// launches. Without one they last for the session.
+    /// Remembers preferences between launches. A saved Talos selection is
+    /// restored when no explicit config is supplied; fixture, maintenance and
+    /// Kubernetes-only launches keep their requested mode.
     pub fn with_preferences(mut self, path: Option<PathBuf>) -> Self {
+        if !self.fixture
+            && !self.kubernetes_only
+            && self.maintenance_endpoint.is_none()
+            && self.config_path.is_none()
+            && let Some(saved) = path.as_deref().and_then(connection_preferences::load)
+        {
+            self.config_path = Some(saved.path);
+            if self.context.is_none() {
+                self.context = Some(saved.context);
+            }
+        }
         self.preferences = path;
         self
     }
@@ -99,10 +111,15 @@ impl GpuiOptions {
     }
 }
 
-/// Whether the talosconfig used when none is named exists: `TALOSCONFIG`,
-/// else `~/.talos/config`.
+/// Whether a Talos launch is available when none is named: a remembered
+/// selection, or `TALOSCONFIG` / `~/.talos/config`. A missing remembered file
+/// stays in Talos mode so the app reports it and offers a new file picker.
 pub fn default_talosconfig_exists() -> bool {
-    talos_rs::config::TalosConfig::default_path().is_ok_and(|path| path.is_file())
+    preferences_path()
+        .as_deref()
+        .and_then(connection_preferences::load)
+        .is_some()
+        || talos_rs::config::TalosConfig::default_path().is_ok_and(|path| path.is_file())
 }
 
 /// Checks a maintenance `--endpoint` with the same rule every frontend uses
@@ -114,6 +131,7 @@ pub fn validate_maintenance_endpoint(endpoint: &str) -> color_eyre::Result<()> {
 
 mod actions;
 mod backend;
+mod connection_preferences;
 mod desktop;
 mod fixture;
 mod forwards;
@@ -150,6 +168,58 @@ pub fn preferences_path() -> Option<PathBuf> {
 
 pub fn run(options: GpuiOptions, runtime: tokio::runtime::Handle) -> color_eyre::Result<()> {
     desktop::run(options, runtime)
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+    use crate::connection_preferences::{ConnectionStore, Selection};
+
+    #[test]
+    fn explicit_launch_options_override_a_remembered_selection() {
+        let directory =
+            std::env::temp_dir().join(format!("freshkube-launch-selection-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        let selected = directory.join("selected-talosconfig");
+        let store = ConnectionStore::new(&preferences);
+        store.remember(Selection {
+            path: selected.clone(),
+            context: "remembered".into(),
+        });
+        store.save_latest().unwrap();
+
+        // Even a missing remembered file stays selected for visible recovery.
+        assert!(!selected.exists());
+        let restored =
+            GpuiOptions::new(None, None, 100).with_preferences(Some(preferences.clone()));
+        assert_eq!(restored.config_path(), Some(selected.as_path()));
+        assert_eq!(restored.context(), Some("remembered"));
+        let named = GpuiOptions::new(None, Some("named".into()), 100)
+            .with_preferences(Some(preferences.clone()));
+        assert_eq!(named.config_path(), Some(selected.as_path()));
+        assert_eq!(named.context(), Some("named"));
+
+        let explicit = directory.join("explicit-talosconfig");
+        let named_file = GpuiOptions::new(Some(explicit.clone()), None, 100)
+            .with_preferences(Some(preferences.clone()));
+        assert_eq!(named_file.config_path(), Some(explicit.as_path()));
+        assert_eq!(named_file.context(), None);
+        let kube = GpuiOptions::kubernetes_only(None, Some("kube".into()), 100)
+            .with_preferences(Some(preferences.clone()));
+        assert!(kube.is_kubernetes_only());
+        assert_eq!(kube.config_path(), None);
+        assert_eq!(kube.kube_context(), Some("kube"));
+        let fixture = GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
+        assert!(fixture.is_fixture());
+        assert_eq!(fixture.config_path(), None);
+        let maintenance = GpuiOptions::new(None, None, 100)
+            .with_maintenance_endpoint("192.0.2.1".into())
+            .with_preferences(Some(preferences));
+        assert_eq!(maintenance.maintenance_endpoint(), Some("192.0.2.1"));
+        assert_eq!(maintenance.config_path(), None);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 #[cfg(feature = "stress")]

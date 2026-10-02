@@ -68,7 +68,7 @@ There are no published Freshkube releases yet. The [macOS packaging guide](docs/
 ## Usage
 
 ```bash
-# Use the default context from ~/.talos/config
+# Use the remembered Talos selection, or the default from ~/.talos/config
 freshkube
 
 # Use a specific talosconfig and context

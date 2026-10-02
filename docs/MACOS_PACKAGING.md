@@ -113,8 +113,19 @@ For a cluster-free launch check through LaunchServices:
 open -n /Applications/Freshkube.app --args --fixture
 ```
 
-For real use, select your credentials and context in the app, or pass explicit
-paths and a named context with `open -n ... --args --config <path> --context <name>`
+For real use, click `Freshkube.app`, open **Settings → Talosconfig → Browse…**,
+choose your talosconfig, then select its context in the sidebar. If the default
+config cannot connect, **Choose talosconfig…** on the failure screen opens the
+same native file picker. The selected file and context are remembered for the
+next launch; you do not need a terminal command. The app saves only the absolute
+file path and context name in
+`~/Library/Application Support/Freshkube/connection.json`, without copying
+certificates, private keys or file contents. A file that cannot be read or parsed
+does not replace the last valid selection. A missing remembered file stays selected and offers
+Browse for recovery.
+
+You can also pass explicit paths and a named context with
+`open -n ... --args --config <path> --context <name>`
 or `--kubernetes-only --kubeconfig <path> --kube-context <name>`. No credentials
 are included in artifacts. LaunchServices does not inherit a terminal's usual
 environment or working directory. Use an absolute config path when passing it
@@ -124,12 +135,13 @@ to a bundle launch:
 open -n /Applications/Freshkube.app --args --config /absolute/path/to/talosconfig --context '<context>'
 ```
 
-The current build does not remember a selected Talos config path or context
-between launches. Settings → Browse selects a file for the current session;
-without explicit startup options, the app reads the default `~/.talos/config`
-(or `TALOSCONFIG` when present) and its contexts. Keeping a remembered connection
-selection is an application followup. Do not replace a default config containing
-other clusters just to work around this limitation.
+Explicit `--config` and `TALOSCONFIG` take precedence over the remembered file;
+`--context` takes precedence over the remembered context. With an explicit
+config but no context, the file's current context is used. Without a saved
+selection or explicit startup options, the app reads `~/.talos/config`.
+Kubernetes-only, fixture and maintenance launches do not restore a Talos
+selection over their requested mode. Preferences for text size remain in the
+separate `preferences.json` file.
 
 Most browsing uses the built-in Talos and Kubernetes clients;
 `talosctl` is used by particular COSI queries and maintenance features, and a
@@ -254,3 +266,10 @@ running `/Applications/Freshkube.app/Contents/MacOS/freshkube` from the terminal
 with an explicit config path and the `kubernetes` context. The same explicit
 selection through LaunchServices remains to be checked. The terminal result
 does not prove a bundle privacy fix or the cause of the original TLS error.
+
+The subsequent Finder-startup fix passed local formatting, Clippy with warnings
+denied, 683 workspace tests and 11 doctests. Its UI regression failed before the
+fix and passed afterward: choosing a file and context, then constructing a new
+launch without arguments, restores both. Additional coverage checks the picker
+on a connection failure, cancellation, recovery from an unreadable/malformed
+file, startup overrides and keeping credentials out of saved preferences.

@@ -1215,6 +1215,73 @@ fn browse_is_unavailable_for_example_data(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-connection-restore-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let preferences = directory.join("preferences.json");
+    let chosen = directory.join("talosconfig");
+    // Invalid synthetic certificates stop before any network connection.
+    std::fs::write(&chosen, "context: alpha\ncontexts:\n  alpha: &entry\n    endpoints: [192.0.2.1]\n    ca: YQ==\n    crt: Yg==\n    key: Yw==\n  beta: *entry\n").unwrap();
+    let options = GpuiOptions::new(Some(directory.join("missing")), None, 100)
+        .with_preferences(Some(preferences.clone()));
+    let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("browse-config-empty", cx);
+    })
+    .unwrap();
+    cx.simulate_path_prompt_response(|_| Some(vec![chosen.clone()]));
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).contexts == ["alpha", "beta"]
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("context", 1usize), cx);
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("beta"));
+    })
+    .unwrap();
+    let saved_path = directory.join("connection.json");
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+        std::fs::read_to_string(&saved_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|saved| saved["context"] == "beta")
+    })
+    .await;
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&saved_path).unwrap()).unwrap();
+    assert_eq!(saved["talosconfig"], chosen.display().to_string());
+    assert!(saved.get("ca").is_none() && saved.get("crt").is_none() && saved.get("key").is_none());
+
+    let restored = GpuiOptions::new(None, None, 100).with_preferences(Some(preferences));
+    let (_runtime2, handle2, view2) = mount(cx, restored, 1280., 820.);
+    cx.wait_for(handle2, std::time::Duration::from_secs(2), |_, cx| {
+        view2.read(cx).contexts == ["alpha", "beta"]
+    })
+    .await;
+    cx.update_window(handle2, |_, window, cx| {
+        window.render_frame(cx);
+        let pilot = view2.read(cx);
+        assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));
+        assert_eq!(pilot.applied.context.as_deref(), Some("beta"));
+        assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
+    })
+    .unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui_kit::test]
 async fn kubeconfig_file_applies_its_current_context_then_a_chosen_one(cx: &mut TestAppContext) {
     use freshkube_core::cluster_overview::KubeconfigSelection;
     // Inspection runs on Tokio; let GPUI park for its completion.
@@ -1287,6 +1354,84 @@ async fn kubeconfig_file_applies_its_current_context_then_a_chosen_one(cx: &mut 
     })
     .unwrap();
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[gpui_kit::test]
+async fn connection_failure_offers_a_picker_and_bad_files_do_not_replace_saved_selection(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-connection-picker-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let preferences = directory.join("preferences.json");
+    let first = directory.join("first");
+    let second = directory.join("second");
+    let invalid = directory.join("invalid");
+    // These synthetic certificates fail parsing before a network dial.
+    for (path, context) in [(&first, "alpha"), (&second, "beta")] {
+        std::fs::write(path, format!("context: {context}\ncontexts:\n  {context}:\n    endpoints: [192.0.2.1]\n    ca: YQ==\n    crt: Yg==\n    key: Yw==\n")).unwrap();
+    }
+    std::fs::write(&invalid, "not a talosconfig").unwrap();
+    let options = GpuiOptions::new(Some(first.clone()), None, 100)
+        .with_preferences(Some(preferences.clone()));
+    let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |window, _| {
+        window.try_find("browse-config-unreachable").is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("browse-config-unreachable", cx);
+    })
+    .unwrap();
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|_| None);
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).applied.path.as_deref(), Some(first.as_path())));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("browse-config-unreachable", cx);
+    })
+    .unwrap();
+    cx.simulate_path_prompt_response(|_| Some(vec![invalid.clone()]));
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    let saved_path = directory.join("connection.json");
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+        std::fs::read_to_string(&saved_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|saved| saved["context"] == "alpha")
+    })
+    .await;
+    let restored = GpuiOptions::new(None, None, 100).with_preferences(Some(preferences.clone()));
+    assert_eq!(restored.config_path(), Some(first.as_path()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("browse-config-empty", cx);
+    })
+    .unwrap();
+    cx.simulate_path_prompt_response(|_| Some(vec![second.clone()]));
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).contexts == ["beta"]
+    })
+    .await;
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+        std::fs::read_to_string(&saved_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|saved| saved["context"] == "beta")
+    })
+    .await;
+    let restored = GpuiOptions::new(None, None, 100).with_preferences(Some(preferences));
+    assert_eq!(restored.config_path(), Some(second.as_path()));
+    assert_eq!(restored.context(), Some("beta"));
+    cx.run_until_parked();
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[gpui_kit::test]

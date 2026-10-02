@@ -79,7 +79,7 @@ impl Pilot {
         ui::empty_state(
             IconName::Unplug,
             format!("Can't reach {context}"),
-            "No endpoint in this context answered. Check the network path to the Talos API (port 50000), then retry.",
+            "Check the selected talosconfig, context and network access to the Talos API (port 50000), then retry.",
             Some(error),
             vec![
                 Button::new("retry")
@@ -87,6 +87,12 @@ impl Pilot {
                     .icon(IconName::RefreshCw)
                     .label("Retry")
                     .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
+                    .into_any_element(),
+                Button::new("browse-config-unreachable")
+                    .outline()
+                    .icon(IconName::FolderOpen)
+                    .label("Choose talosconfig…")
+                    .on_click(cx.listener(|view, _, window, cx| view.browse_config(window, cx)))
                     .into_any_element(),
             ],
             cx,
