@@ -59,6 +59,8 @@ kube = { version = "0.98", features = [
     "config",
     "runtime",
     "rustls-tls",
+    # Pod exec runs over a websocket (docs/POD_EXEC.md).
+    "ws",
 ], default-features = false }
 k8s-openapi = { version = "0.24", features = ["latest"] }
 http = "1"

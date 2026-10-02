@@ -8,12 +8,14 @@
 //! ([`watch_object_events`]). Custom kinds come from discovery
 //! ([`list_custom_groups`], [`list_group_kinds`]). A pod's containers come with its
 //! overview, and their logs from [`follow_pod_log`].
-//! Nothing here changes the cluster.
+//! Nothing here changes the cluster, except [`start_exec`], which runs a
+//! shell in a container only when the user starts one.
 
 mod connection;
 mod contexts;
 mod discovery;
 mod events;
+mod exec;
 mod failure;
 mod kinds;
 mod object;
@@ -25,6 +27,10 @@ pub use connection::{Connection, connect};
 pub use contexts::{KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources};
 pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
+pub use exec::{
+    BATCH_BYTES, BATCH_TIME, ExecEnd, ExecFailure, ExecFailureKind, ExecGuard, ExecInput,
+    ExecOutput, ExecRequest, ExecSession, ExecSize, SHELL, start_exec,
+};
 pub use failure::{Failure, FailureKind};
 pub use kinds::{ResourceKind, builtin};
 pub use object::{
