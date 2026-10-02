@@ -1,6 +1,8 @@
 //! Kubernetes-only mode: no talosconfig. The kubeconfig's contexts fill the
 //! contexts list, the Resources page reads the chosen one directly, and the
 //! Talos pages wait for a talosconfig.
+use crate::state::Snapshot;
+
 use super::{PAGE_PADDING, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
@@ -177,6 +179,11 @@ impl Pilot {
         kube.access = context
             .clone()
             .map(|context| DirectAccess::new(kube.sources.clone(), context));
+        self.epoch = self.epoch.wrapping_add(1);
+        self.kubernetes_summary = Snapshot::default();
+        self.summary_health = None;
+        self.summary_job = None;
+        self.summary_task = None;
         self.applied.context = context;
         self.push_source(window, cx);
         self.check_kube_connection(window, cx);
@@ -220,6 +227,7 @@ impl Pilot {
                 match result {
                     Ok(version) => {
                         kube.connection = KubeConnection::Connected { version };
+                        view.refresh_summary(window, cx);
                         if recovering {
                             view.resources
                                 .update(cx, |resources, cx| resources.refresh(window, cx));

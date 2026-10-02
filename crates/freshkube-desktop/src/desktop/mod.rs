@@ -1,6 +1,7 @@
 mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
+mod kubernetes_summary;
 mod overview;
 mod pages;
 mod services;
@@ -277,6 +278,10 @@ pub(crate) struct Pilot {
     config_generation: u64,
     epoch: u64,
     overview: Snapshot<ClusterOverview>,
+    kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
+    summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
+    summary_job: Option<OwnedJob>,
+    summary_task: Option<Task<()>>,
     services: Snapshot<Vec<ServiceInfo>, Target>,
     nodes: Vec<NodeSummary>,
     load_history: LoadHistory,
@@ -523,6 +528,10 @@ impl Pilot {
             config_generation: 0,
             epoch: 0,
             overview: Snapshot::default(),
+            kubernetes_summary: Snapshot::default(),
+            summary_health: None,
+            summary_job: None,
+            summary_task: None,
             services: Snapshot::default(),
             nodes: Vec::new(),
             load_history: LoadHistory::default(),
@@ -631,6 +640,10 @@ impl Pilot {
         self.nodes.clear();
         self.load_history.clear();
         self.overview = Snapshot::default();
+        self.kubernetes_summary = Snapshot::default();
+        self.summary_health = None;
+        self.summary_job = None;
+        self.summary_task = None;
         self.services = Snapshot::default();
         self.logs
             .update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
@@ -770,6 +783,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         match event {
+            ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
             ScreenEvent::OpenLogs(service) => {
                 self.selected_service = Some(service.clone());
                 self.open_logs(window, cx);
@@ -873,6 +887,9 @@ impl Pilot {
         for (_, screen) in &self.screens {
             screen.set_source(source.clone(), window, cx);
         }
+        if let Some(data) = self.summary_health.clone() {
+            self.deliver_workloads(data, cx);
+        }
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
         }
@@ -896,6 +913,7 @@ impl Pilot {
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.kubernetes_only.is_some() {
             self.refresh_kubernetes(window, cx);
+            self.refresh_summary(window, cx);
             return;
         }
         if self.config_loading || self.overview.is_loading() {
@@ -911,6 +929,7 @@ impl Pilot {
             self.overview_succeeded();
             self.sync_nodes(window, cx);
             self.refresh_services(window, cx);
+            self.refresh_summary(window, cx);
             self.refresh_screen(window, cx);
             cx.notify();
             return;
@@ -944,6 +963,7 @@ impl Pilot {
                     view.sync_nodes(window, cx);
                     if fresh {
                         view.refresh_services(window, cx);
+                        view.refresh_summary(window, cx);
                     }
                 }
                 cx.notify();
@@ -953,6 +973,9 @@ impl Pilot {
     }
 
     fn refresh_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Workloads {
+            return;
+        }
         if let Some(screen) = self.active_screen() {
             screen.refresh(window, cx);
         }
@@ -1014,6 +1037,15 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.epoch = self.epoch.wrapping_add(1);
+        if self.kubernetes_summary.is_loading() {
+            self.summary_job = None;
+            self.summary_task = None;
+            let request = self.kubernetes_summary.begin(self.applied.clone());
+            self.kubernetes_summary.apply(
+                &request,
+                Err("Node changed; waiting for the next summary refresh".into()),
+            );
+        }
         // Cancel rather than let an old foreground node refresh keep loading.
         if self.overview.is_loading() {
             self.overview_job = None;
@@ -1279,7 +1311,9 @@ impl Render for Pilot {
                 .clone()
                 .cached(cached_page_style())
                 .into_any_element(),
-            _ if self.kubernetes_only.is_some() => self.render_needs_talosconfig(cx),
+            _ if self.kubernetes_only.is_some() && self.page != Page::Workloads => {
+                self.render_needs_talosconfig(cx)
+            }
             Page::Overview => self
                 .overview_page
                 .clone()

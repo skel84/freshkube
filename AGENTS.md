@@ -72,7 +72,7 @@ GPUI has its own executor; tonic and kube need Tokio. The binary owns the Tokio 
 
 - Run cluster I/O on Tokio, send the result back to a GPUI task, and update entities there. Never block the UI thread.
 - Tie each request to its target (the epoch in `Target`) and keep its handle (`OwnedJob`) on the entity that needs the result. Replacing or dropping the handle cancels the work; a result for a target that is no longer current is ignored.
-- Hidden screens never contact the cluster.
+- Hidden screens never contact the cluster. The shell's Kubernetes summary is the exception: it reads cache-backed cluster facts on the overview's 15 s cycle on every page; Health uses that snapshot.
 
 ### Learning the API
 

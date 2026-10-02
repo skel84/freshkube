@@ -56,3 +56,5 @@ pub use types::*;
 
 // Network is not re-exported at root to avoid name conflicts
 // Use freshkube_core::network::* explicitly
+
+pub mod kubernetes_summary;

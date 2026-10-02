@@ -151,3 +151,20 @@ A reset now arrives ready to swap in. Where the list is read, on Tokio, core's r
 | 50,000 | 257 ms | 1.1 ms |
 
 What is left is the projection's first sort, which is quick for the default order because a list arrives in it. A Refresh still drops the old rows on the main thread.
+
+
+### Kubernetes summary
+
+The shell reads the Kubernetes summary from the API server cache on its 15 s cycle on every page. `scripts/stress.sh summary-20k summary` serves 20,000 pods, 2,000 deployments and 5,000 warning events through the real client. Typed objects are discarded on Tokio after deriving the summary and Health data.
+
+Release build, 40 s, with the first 5 s left out; two periodic refreshes, while the macOS packaging worktree was also compiling. The run opened Health. Timings include the synthetic server's JSON generation and client decoding.
+
+| Span | Median / 99th / max |
+| --- | --- |
+| Collection and derivation on Tokio | 1,337.90 / 1,337.90 / 1,337.90 ms |
+| Apply on the main thread | 2.45 / 2.45 / 2.45 ms |
+| Main-thread stalls | 0.61 / 1.42 / 12.62 ms |
+
+Process CPU was 4.76% at the median and 106.01% at the 99th percentile; resident memory ended at 397 MB and peaked at 404 MB, including the synthetic server in the same process. With only two refresh samples the percentiles select the larger sample, as the stress reporter does; this is a cost gate, not a latency distribution.
+
+The main-thread apply stayed under its 16 ms budget, so the summary keeps its all-page refresh. No visibility fallback was needed. The raw report is `target/stress/summary-20k.log`.

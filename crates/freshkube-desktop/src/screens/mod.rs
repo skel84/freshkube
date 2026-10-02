@@ -23,7 +23,7 @@ pub(crate) use operations::OperationsScreen;
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
-pub(crate) use workloads::WorkloadsScreen;
+pub(crate) use workloads::{WorkloadData, WorkloadsScreen};
 
 use std::{future::Future, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
@@ -138,6 +138,8 @@ impl LiveSource {
 /// Requests a screen makes of the shell.
 #[derive(Clone, Debug)]
 pub(crate) enum ScreenEvent {
+    /// Refresh the shell's shared Kubernetes facts.
+    RefreshSummary,
     /// Collect this service's logs on the target node and show the Logs page.
     OpenLogs(String),
     /// Make this node the target.
@@ -149,6 +151,14 @@ pub(crate) enum ScreenEvent {
 
 /// The contract between the shell and a screen.
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
+    fn set_workloads(
+        &mut self,
+        _context: &str,
+        _data: Result<Arc<WorkloadData>, String>,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Called whenever the target or its cluster snapshot changes. A different
@@ -175,6 +185,7 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
+type WorkloadsFn = Rc<dyn Fn(&str, Result<Arc<WorkloadData>, String>, &mut App)>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -184,6 +195,7 @@ pub(crate) struct ScreenHandle {
     activate: WindowFn,
     refresh: WindowFn,
     focus: WindowFn,
+    workloads: WorkloadsFn,
 }
 
 impl ScreenHandle {
@@ -194,7 +206,11 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
+        let workloads = entity.clone();
         Self {
+            workloads: Rc::new(move |context, data, cx| {
+                workloads.update(cx, |screen, cx| screen.set_workloads(context, data, cx))
+            }),
             view: entity.into(),
             set_source: Rc::new(
                 move |source: Option<ScreenSource>, window: &mut Window, cx: &mut App| {
@@ -211,6 +227,15 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
+    }
+
+    pub(crate) fn set_workloads(
+        &self,
+        context: &str,
+        data: Result<Arc<WorkloadData>, String>,
+        cx: &mut App,
+    ) {
+        (self.workloads)(context, data, cx)
     }
 
     pub(crate) fn view(&self) -> AnyView {

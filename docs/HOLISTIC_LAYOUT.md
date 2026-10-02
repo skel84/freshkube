@@ -376,3 +376,5 @@ These have a default, so they don't block a step. Change one only by updating th
 - **Expand's key** is Command-Shift-Return. If a terminal or text field needs it, pick another and say so.
 - **No uptime chip** in the node pane header unless Talos data the app already reads carries the boot time.
 - **No Command-Enter in search.** Enter opens, focusing the pane for objects.
+
+- **The batch example** gains a Deployment for `report`, so its pod → ReplicaSet → Deployment chain resolves in the same example store.

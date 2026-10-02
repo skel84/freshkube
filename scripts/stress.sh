@@ -4,6 +4,7 @@
 #
 #   scripts/stress.sh <label> <scenario> [args...]
 #   scripts/stress.sh table-20k table 20000
+#   scripts/stress.sh summary-20k summary
 #   FRESHKUBE_STRESS_SECONDS=60 scripts/stress.sh logs-20k pod-logs 20000
 #
 # GPUI stops drawing a covered window or one on a locked screen, so run it

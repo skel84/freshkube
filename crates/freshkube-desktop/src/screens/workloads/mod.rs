@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use freshkube_core::constants::HIGH_RESTART_THRESHOLD;
 use freshkube_core::workloads::{
     HealthState, NamespaceSummary, PodInfo, PodIssue, WorkloadCollectionOutcome, WorkloadInfo,
-    WorkloadKind, WorkloadSnapshot, WorkloadSource, WorkloadSourceError, collect_workloads,
+    WorkloadKind, WorkloadSnapshot, WorkloadSource, WorkloadSourceError,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -88,6 +88,7 @@ actions!(
 pub(crate) struct WorkloadData {
     snapshot: WorkloadSnapshot,
     unavailable: Vec<WorkloadSourceError>,
+    missing_notice: Vec<String>,
 }
 
 impl WorkloadData {
@@ -227,7 +228,8 @@ struct RowSettings {
 }
 
 pub(crate) struct WorkloadsScreen {
-    runtime: Handle,
+    _runtime: Handle,
+    summary_managed: bool,
     source: Option<ScreenSource>,
     loader: Loader<Arc<WorkloadData>>,
     selected: Option<ItemKey>,
@@ -245,7 +247,54 @@ pub(crate) struct WorkloadsScreen {
 
 impl EventEmitter<ScreenEvent> for WorkloadsScreen {}
 
+impl WorkloadData {
+    pub(crate) fn from_outcome(outcome: &WorkloadCollectionOutcome) -> Result<Arc<Self>, String> {
+        match outcome.snapshot() {
+            Some(snapshot) => Ok(Arc::new(Self {
+                snapshot: snapshot.clone(),
+                unavailable: outcome.unavailable().to_vec(),
+                missing_notice: outcome
+                    .unavailable()
+                    .iter()
+                    .map(|error| format!("{}: {}", error.source.label(), error.message))
+                    .collect(),
+            })),
+            None => Err(outcome
+                .unavailable()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")),
+        }
+    }
+}
+
 impl ScreenPanel for WorkloadsScreen {
+    fn set_workloads(
+        &mut self,
+        context: &str,
+        data: Result<Arc<WorkloadData>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.summary_managed = true;
+        if self.source.is_none() {
+            self.source = Some(ScreenSource {
+                target: crate::backend::Target {
+                    epoch: 0,
+                    context: context.into(),
+                    node: String::new(),
+                    address: String::new(),
+                },
+                nodes: Arc::default(),
+                live: None,
+            });
+        }
+        let source = self.source.as_ref().unwrap();
+        self.loader.resolve(source.target.clone(), data);
+        self.rows(cx);
+        cx.notify();
+    }
+
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
@@ -275,13 +324,17 @@ impl ScreenPanel for WorkloadsScreen {
             }
         });
         Self {
-            runtime,
+            _runtime: runtime,
+            summary_managed: false,
             source: None,
             loader: Loader::default(),
             selected: None,
             collapsed: HashSet::new(),
             only_unhealthy: false,
-            _query_observer: cx.observe(&query, |_, _, cx| cx.notify()),
+            _query_observer: cx.observe(&query, |this, _, cx| {
+                this.rows(cx);
+                cx.notify();
+            }),
             query,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -315,51 +368,22 @@ impl ScreenPanel for WorkloadsScreen {
     }
 
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if self.summary_managed {
+            cx.emit(ScreenEvent::RefreshSummary);
+            return;
+        }
         let Some(source) = self.source.clone() else {
             return;
         };
         if self.loader.is_loading() {
             return;
         }
-        let Some(live) = source.live.clone() else {
-            self.loader
-                .resolve(source.target.clone(), Ok(Arc::new(example(&source))));
-            cx.notify();
+        if source.live.is_some() {
             return;
-        };
-        let context = source.target.context.clone();
-        self.loader.load(
-            source.target.clone(),
-            &self.runtime,
-            "workloads",
-            async move {
-                let client = live.kubernetes().await?;
-                match collect_workloads(context, client).await {
-                    WorkloadCollectionOutcome::Complete(snapshot) => Ok(Arc::new(WorkloadData {
-                        snapshot,
-                        unavailable: Vec::new(),
-                    })),
-                    WorkloadCollectionOutcome::Partial {
-                        snapshot,
-                        unavailable,
-                    } => Ok(Arc::new(WorkloadData {
-                        snapshot,
-                        unavailable,
-                    })),
-                    WorkloadCollectionOutcome::Unavailable { errors, .. } => {
-                        // The next refresh revalidates instead of reusing this client.
-                        live.forget_kubernetes();
-                        Err(errors
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join("; "))
-                    }
-                }
-            },
-            |screen: &mut Self| &mut screen.loader,
-            cx,
-        );
+        }
+        self.loader
+            .resolve(source.target.clone(), Ok(Arc::new(example(&source))));
+        self.rows(cx);
         cx.notify();
     }
 }
@@ -519,11 +543,13 @@ impl WorkloadsScreen {
         if !self.collapsed.remove(&namespace) {
             self.collapsed.insert(namespace);
         }
+        self.rows(cx);
         cx.notify();
     }
 
     fn set_only_unhealthy(&mut self, on: bool, cx: &mut Context<Self>) {
         self.only_unhealthy = on;
+        self.rows(cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
     }
@@ -532,6 +558,7 @@ impl WorkloadsScreen {
         self.query
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.only_unhealthy = false;
+        self.rows(cx);
         cx.notify();
     }
 
@@ -935,8 +962,8 @@ fn pod_matches(pod: &PodInfo, query: &str) -> bool {
         .contains(query)
 }
 
-impl Render for WorkloadsScreen {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl WorkloadsScreen {
+    fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::desktop::probe::hit("workloads");
         // No data and the load failed: the Kubernetes API isn't reachable.
         // Nothing is known, so nothing is shown as failed.
@@ -983,16 +1010,17 @@ impl Render for WorkloadsScreen {
             return div().into_any_element();
         };
         let p = palette(cx);
-        let rows = self.rows(cx);
+        let rows = self
+            .rows
+            .borrow()
+            .as_ref()
+            .map(|cache| cache.rows.clone())
+            .unwrap_or_default();
         let row_count = rows.len();
         let width = content_width(window);
         let show_issue = width >= ISSUE_COLUMN;
         let wide = width >= Self::width_beside_details(show_issue) + DETAILS_WIDTH + GAP;
-        let missing: Vec<String> = data
-            .unavailable
-            .iter()
-            .map(|error| format!("{}: {}", error.source.label(), error.message))
-            .collect();
+        let missing = data.missing_notice.clone();
         let empty = if data.snapshot.namespaces.is_empty() {
             "No workloads found in this cluster."
         } else {
@@ -1012,29 +1040,6 @@ impl Render for WorkloadsScreen {
                     .aria_label(
                         "Namespaces, workloads and pods needing attention; arrows select, Enter opens or closes a namespace, U shows only unhealthy",
                     )
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
-                    .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
-                    .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
-                    .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-                    .on_action(
-                        cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|view, _: &ToggleExpanded, _, cx| view.toggle_expanded(cx)),
-                    )
-                    .on_action(cx.listener(|view, _: &ToggleUnhealthy, _, cx| {
-                        view.set_only_unhealthy(!view.only_unhealthy, cx)
-                    }))
-                    .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
-                        let focus = view.query.read(cx).focus_handle(cx);
-                        window.focus(&focus, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &ClearFilter, window, cx| {
-                        view.clear_filter(window, cx)
-                    }))
                     .flex_1()
                     .min_h_0()
                     .map(|this| {
@@ -1368,8 +1373,39 @@ fn example(source: &ScreenSource) -> WorkloadData {
     WorkloadData {
         snapshot,
         unavailable: Vec::new(),
+        missing_notice: Vec::new(),
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+impl Render for WorkloadsScreen {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.render_content(window, cx);
+        div()
+            .id("health-body")
+            .test_support()
+            .size_full()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &ToggleExpanded, _, cx| view.toggle_expanded(cx)))
+            .on_action(cx.listener(|view, _: &ToggleUnhealthy, _, cx| {
+                view.set_only_unhealthy(!view.only_unhealthy, cx)
+            }))
+            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+                let focus = view.query.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+            }))
+            .on_action(
+                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
+            )
+            .child(content)
+    }
+}

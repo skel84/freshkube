@@ -582,13 +582,16 @@ fn named_keys_navigate_all_screens_and_configured_contexts(cx: &mut TestAppConte
         window.press("alt-up", cx);
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("prod-fra"));
         window.press("alt-up", cx);
-        assert_eq!(view.read(cx).applied.context.as_deref(), Some("homelab"));
+        assert_eq!(
+            view.read(cx).applied.context.as_deref(),
+            Some("talos-production-frankfurt-equinix-fr5-baremetal-b7")
+        );
         window.render_frame(cx);
         assert!(window.within("sidebar").find(("context", 0usize)).visible());
         assert_eq!(
             window
                 .within("sidebar")
-                .find(("context", 2usize))
+                .find(("context", 3usize))
                 .selected(),
             Some(true)
         );
@@ -1956,10 +1959,10 @@ fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);
-        // Every other page would only say it needs a talosconfig.
+        // Health is cluster-wide and uses the shared Kubernetes summary.
         window.press("ctrl-tab", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).page, Page::Workloads);
         window.press("secondary-2", cx);
         window.render_frame(cx);
         assert!(window.find("needs-talosconfig").visible());
@@ -2032,7 +2035,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         window.render_frame(cx);
         for page in Page::ALL
             .into_iter()
-            .filter(|page| *page != Page::Resources)
+            .filter(|page| !matches!(page, Page::Resources | Page::Workloads))
         {
             let nav = format!("nav-{}", page.slug());
             reveal(window, cx, &nav);
@@ -2431,4 +2434,63 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         })
         .unwrap();
     assert!(close && !cx.has_pending_prompt());
+}
+
+#[gpui_kit::test]
+fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppContext) {
+    use freshkube_core::kubernetes_summary::Part;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            let mut summary = (**view.kubernetes_summary.data().unwrap()).clone();
+            summary.events = Part::Refused("Can't list events: forbidden".into());
+            let health = crate::screens::WorkloadData::from_outcome(&summary.workloads);
+            let request = view.kubernetes_summary.begin(view.applied.clone());
+            view.kubernetes_summary
+                .apply(&request, Ok(std::sync::Arc::new(summary)));
+            view.summary_health = Some(health.clone());
+            view.deliver_workloads(health, cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.click("nav-workloads", cx);
+        window.find("workload-list");
+        let summary = view.read(cx).kubernetes_summary.data().unwrap();
+        assert!(summary.pods.loaded().is_some());
+        assert!(summary.nodes.loaded().is_some());
+        assert_eq!(summary.events.error(), Some("Can't list events: forbidden"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let previous = cx.update(|cx| view.read(cx).kubernetes_summary.data().unwrap().clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-workloads", cx);
+        window.click("screen-refresh", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!std::sync::Arc::ptr_eq(
+            &previous,
+            view.read(cx).kubernetes_summary.data().unwrap()
+        ));
+        view.update(cx, |view, cx| {
+            let request = view.kubernetes_summary.begin(view.applied.clone());
+            view.select_context("staging-eu".into(), window, cx);
+            assert!(
+                !view
+                    .kubernetes_summary
+                    .apply(&request, Ok(previous.clone()))
+            );
+            assert_eq!(view.applied.context.as_deref(), Some("staging-eu"));
+        });
+    })
+    .unwrap();
 }

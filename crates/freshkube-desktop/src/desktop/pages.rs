@@ -180,7 +180,7 @@ impl Pilot {
     /// Whether `page` can show anything: in Kubernetes-only mode, only
     /// Resources can.
     fn page_loads(&self, page: Page) -> bool {
-        self.kubernetes_only.is_none() || page == Page::Resources
+        self.kubernetes_only.is_none() || matches!(page, Page::Resources | Page::Workloads)
     }
 
     /// The next page in sidebar order, wrapping around, that can load.

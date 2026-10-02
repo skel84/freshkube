@@ -92,7 +92,9 @@ impl Fake {
             }
         });
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let config = kube::Config::new(format!("http://{address}").parse().unwrap());
+        let mut config = kube::Config::new(format!("http://{address}").parse().unwrap());
+        // The loopback HTTP fixture needs no system trust store.
+        config.root_cert = Some(Vec::new());
         let client = Client::try_from(config).unwrap();
         Self {
             state,

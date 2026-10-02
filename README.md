@@ -138,3 +138,5 @@ MIT; see [LICENSE](LICENSE). Freshkube includes talos-pilot, copyright Ken Udovi
 - [Talos Linux](https://www.talos.dev/) by Sidero Labs
 - [GPUI Kit](https://gpui-kit.com) by Longbridge, and [GPUI](https://www.gpui.rs/) by Zed Industries
 - [Kubeli](https://github.com/atilladeniz/Kubeli) and [k9s](https://k9scli.io/) for Kubernetes browsing ideas
+
+The shell refreshes Kubernetes health alongside the Talos overview every 15 s, from the API server cache. Workload health uses that shared snapshot, including in Kubernetes-only mode. A refused list leaves the other summary parts available.
