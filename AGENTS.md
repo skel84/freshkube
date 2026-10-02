@@ -46,7 +46,9 @@ Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `services`
 ## Cluster safety
 
 - Read-only by default. Checks against a real cluster list, watch and read; they never create, change or delete resources.
-- Pod exec (`resources/exec/`) is the one exception: it creates a `pods/exec`. The app starts one only from an explicit Start, and a live check runs one only on a pod and container the user named, with harmless commands ([docs/POD_EXEC.md](docs/POD_EXEC.md)).
+- Pod exec and port forwarding are the two exceptions, and each starts only from an explicit action.
+  - Pod exec (`resources/exec/`) creates a `pods/exec`. The app starts one only from an explicit Start, and a live check runs one only on a pod and container the user named, with harmless commands ([docs/POD_EXEC.md](docs/POD_EXEC.md)).
+  - Port forwarding (`resources/forward/`) creates a `pods/portforward`. It changes no objects, but it reaches whatever the port serves. The app starts one only from an explicit Forward, and a live check forwards only a pod and port the user named ([docs/PORT_FORWARD.md](docs/PORT_FORWARD.md)).
 - Never run Operations or maintenance actions (drain, reboot, upgrade, apply config, reset) during verification unless the user asked for that specific action on a node they named as disposable.
 - Use the context the user chose. Never fall back to whatever kubeconfig or talosconfig context is current.
 - Never print or commit credentials: talosconfig and kubeconfig contents, tokens, Secret values, keys. Redact them in logs, screenshots and evidence.

@@ -6,7 +6,7 @@ What has landed, what comes next and in what order. Update this file in the same
 
 These hold for every step until a later one deliberately changes them.
 
-- **Read-only Kubernetes.** The app lists, watches, gets and streams logs. Changing the cluster waits for a reviewed change workflow ([F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes)). Talos node operations stay on the Operations page behind their own preflight and confirmation. The one exception is pod exec: a shell starts only from an explicit Start on a chosen pod and container ([POD_EXEC.md](POD_EXEC.md#decisions)).
+- **Read-only Kubernetes.** The app lists, watches, gets and streams logs. Changing the cluster waits for a reviewed change workflow ([F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes)). Talos node operations stay on the Operations page behind their own preflight and confirmation. There are two exceptions, and each starts only from an explicit action. Pod exec creates a `pods/exec`: a shell starts only from Start on a chosen pod and container ([POD_EXEC.md](POD_EXEC.md#decisions)). Port forwarding creates a `pods/portforward`: a forward starts only from Forward on a chosen port. It changes no objects, but it reaches whatever that port serves, admin endpoints included ([PORT_FORWARD.md](PORT_FORWARD.md#decisions)).
 - **The chosen context only.** Connect to the context the user named, or the one the kubeconfig marks as current. When a named context is missing, report it; never swap in another.
 - **Identity, not position.** Rows and documents are identified by connection, resource, namespace, name and UID. A response for another selection or object incarnation is dropped.
 - **Honest states.** Loading, loaded, refused, failed and stale are distinct. An unreadable collection is never shown as empty, and failed refreshes keep the previous data marked stale.
@@ -52,9 +52,9 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 These come from the GPUI evaluation plan (G09–G12) and the follow-ups it listed.
 
 - **Pod exec.** A Shell tab in a pod's pane, on an explicitly chosen container; node-debug pods stay out. Feasibility is settled: `alacritty_terminal` (Apache-2.0) with our own GPUI drawing keeps 60 frames a second through a 5 MB/s stream. The decisions and the four-step build order are in [POD_EXEC.md](POD_EXEC.md). All four steps are done, the live check included.
+- **Port forwarding.** A Ports tab in the pane of a pod, Service or workload, and every forward in the status bar. A forward lives until Stop, through page, pane and context changes, and binds only the loopback on a port derived from the remote one (3306 → 13306). The source review, the decisions and the three-step build order are in [PORT_FORWARD.md](PORT_FORWARD.md).
 - **Follow-ups**, each promoted to a step with acceptance criteria when it enters scope:
   - logs of several containers, or of a workload's pods, in one view: the same `LogView` with several sources and its source filter;
-  - port forwarding with an explicit session lifetime;
   - current CPU and memory from the metrics API;
   - YAML schema validation;
   - packaging, signing and kubeconfig auth plugins (exec and OIDC);

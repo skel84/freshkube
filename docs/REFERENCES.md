@@ -36,7 +36,7 @@ The inspected Kit manifest declares version 0.7.0 and the workspace pins matchin
 | Logs | [Log commands](../../Kubeli/src-tauri/src/commands/logs.rs) | Retain container selection, previous logs, batching, and terminal events; define retention in the native view |
 | Exec | [Shell commands](../../Kubeli/src-tauri/src/commands/shell.rs) | Separate pod exec from node-debug workflows; preserve byte ordering, input, resize, and cleanup. Report Connected only after exec succeeds, send the first terminal size, and read the exit status ([POD_EXEC.md](POD_EXEC.md#references)) |
 | Errors | [Structured error mapping](../../Kubeli/src-tauri/src/error.rs) | Keep failure categories available to the UI rather than reducing every error to a string |
-| Port forwarding | [Forwarding commands](../../Kubeli/src-tauri/src/commands/portforward.rs) | Later feature; separate session ownership from selected cluster |
+| Port forwarding | [Forwarding commands](../../Kubeli/src-tauri/src/commands/portforward.rs) | Separate session ownership from selected cluster. Keep binding before reporting a port, and Service targetPort resolution; avoid ignoring the port's error channel and `SO_REUSEADDR` binds ([PORT_FORWARD.md](PORT_FORWARD.md#references)) |
 | Metrics | [Metrics commands](../../Kubeli/src-tauri/src/commands/metrics.rs) | Later feature; metrics API access does not provide historical provider queries |
 
 Important scope corrections from the review:
