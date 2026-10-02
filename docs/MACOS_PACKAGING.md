@@ -273,3 +273,12 @@ fix and passed afterward: choosing a file and context, then constructing a new
 launch without arguments, restores both. Additional coverage checks the picker
 on a connection failure, cancellation, recovery from an unreadable/malformed
 file, startup overrides and keeping credentials out of saved preferences.
+
+The [updated hosted candidate](https://github.com/skel84/freshkube/actions/runs/37069573594)
+at `a8e8a5c` also passed formatting, Clippy, all 683 tests and 11 doctests,
+and native packaging for ARM and Intel. Both downloaded artifacts passed the
+same checksum, revision, architecture, metadata, notice, executable mode and
+signature checks; the Intel executable ran locally, and each runner checked
+its native executable. Clicking the updated ARM app and connecting with the
+chosen file on the user's Mac remains the live check. The pipeline still signs
+ad-hoc and does not notarize or publish releases.
