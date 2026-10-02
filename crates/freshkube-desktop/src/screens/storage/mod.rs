@@ -24,7 +24,7 @@ use tokio::runtime::Handle;
 
 use super::{
     Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page, header, mono, panel, partial_notice, stat,
+    failure_banner, field, gated_page_mode, mono, panel, partial_notice, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -122,6 +122,7 @@ struct StorageData {
 }
 
 pub(crate) struct StorageScreen {
+    embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<StorageData>,
@@ -136,6 +137,10 @@ pub(crate) struct StorageScreen {
 impl EventEmitter<ScreenEvent> for StorageScreen {}
 
 impl ScreenPanel for StorageScreen {
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
+    }
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextRow, Some(CONTEXT)),
@@ -147,6 +152,7 @@ impl ScreenPanel for StorageScreen {
             KeyBinding::new("tab", SwitchView, Some(CONTEXT)),
         ]);
         Self {
+            embedded: false,
             runtime,
             source: None,
             loader: Loader::default(),
@@ -689,13 +695,14 @@ impl StorageScreen {
 
 impl Render for StorageScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(page) = gated_page(
+        if let Some(page) = gated_page_mode(
             "storage-page",
             "Storage",
             Scope::Node,
             self.source.as_ref(),
             &self.loader,
             "disks and volumes",
+            self.embedded,
             cx,
         ) {
             return page;
@@ -872,7 +879,14 @@ impl Render for StorageScreen {
             .pt(dp(22.))
             .pb(dp(18.))
             .gap(dp(14.))
-            .child(header("Storage", &source, Scope::Node, &self.loader, cx))
+            .child(super::header_mode(
+                "Storage",
+                &source,
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                cx,
+            ))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))
             .child(self.summary(&data, cx))

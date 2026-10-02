@@ -40,7 +40,7 @@ use tokio::runtime::Handle;
 
 use super::{
     Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page, header, mono, panel, partial_notice,
+    failure_banner, field, gated_page_mode, mono, panel, partial_notice,
 };
 use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -233,6 +233,7 @@ struct InterfaceRows {
 }
 
 pub(crate) struct NetworkScreen {
+    embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<Arc<NetworkData>>,
@@ -266,6 +267,10 @@ pub(crate) struct NetworkScreen {
 impl EventEmitter<ScreenEvent> for NetworkScreen {}
 
 impl ScreenPanel for NetworkScreen {
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
+    }
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextRow, Some(CONTEXT)),
@@ -296,6 +301,7 @@ impl ScreenPanel for NetworkScreen {
             }
         });
         Self {
+            embedded: false,
             runtime,
             source: None,
             loader: Loader::default(),
@@ -964,6 +970,14 @@ impl NetworkScreen {
     }
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.embedded
+            && self.query.read(cx).value().is_empty()
+            && self.state_filter == StateFilter::All
+            && self.iface_filter.is_none()
+        {
+            cx.emit(ScreenEvent::Back);
+            return;
+        }
         self.query
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.state_filter = StateFilter::All;

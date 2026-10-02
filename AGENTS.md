@@ -41,7 +41,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `resources`, `operations`). `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `resources`, `operations`). `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
 
 ## Cluster safety
 
@@ -354,3 +354,5 @@ cargo test --workspace
 5. **Formatting:** `cargo fmt --all -- --check` should pass
 
 ---
+
+The Nodes workspace (`desktop/nodes/`) joins both summaries when they change. Its retained pane embeds the existing node screens and log view. Its Pods list has its own field selector and filter, drops a previous node's watch by epoch, and opens objects in the main Resources pane. Node Events and YAML use a separate resource pane limited to those views.

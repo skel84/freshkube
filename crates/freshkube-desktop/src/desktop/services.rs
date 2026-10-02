@@ -125,26 +125,28 @@ impl Pilot {
                             .line_height(dp(32.))
                             .child("Services"),
                     )
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .text_size(dp(12.5))
-                            .text_color(p.muted)
-                            .child("on")
-                            .child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(12.))
-                                    .child(node.name.clone()),
-                            )
-                            .child("·")
-                            .child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(12.))
-                                    .child(node.address.clone()),
-                            ),
-                    ),
+                    .when(self.page != Page::Nodes, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1p5()
+                                .text_size(dp(12.5))
+                                .text_color(p.muted)
+                                .child("on")
+                                .child(
+                                    div()
+                                        .font_family(MONO_FONT)
+                                        .text_size(dp(12.))
+                                        .child(node.name.clone()),
+                                )
+                                .child("·")
+                                .child(
+                                    div()
+                                        .font_family(MONO_FONT)
+                                        .text_size(dp(12.))
+                                        .child(node.address.clone()),
+                                ),
+                        )
+                    }),
             )
             .child(div().flex_1())
             .child(
@@ -157,47 +159,50 @@ impl Pilot {
                     .disabled(self.services.is_loading() || self.selected_node.is_none())
                     .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
             );
-        let notice = elsewhere.first().cloned().map(|(other, service)| {
-            let more = elsewhere.len() - 1;
-            let target = other.clone();
-            let chosen = service.clone();
-            h_flex()
-                .gap_2()
-                .flex_wrap()
-                .px_3()
-                .py_2()
-                .rounded(px(8.))
-                .border_1()
-                .border_color(p.line)
-                .bg(p.surface)
-                .text_size(dp(12.5))
-                .child(
-                    Icon::new(IconName::CircleX)
-                        .size(dp(15.))
-                        .text_color(p.crit_ink),
-                )
-                .child(
-                    div()
-                        .font_family(MONO_FONT)
-                        .text_size(dp(12.))
-                        .child(service),
-                )
-                .child("is unhealthy on")
-                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child(other))
-                .when(more > 0, |this| this.child(format!("and {more} more")))
-                .child(
-                    Button::new("show-other-unhealthy")
-                        .link()
-                        .small()
-                        .label("Show it")
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.health_filter = HealthFilter::All;
-                            view.select_node_by_name(target.clone(), window, cx);
-                            view.selected_service = Some(chosen.clone());
-                            cx.notify();
-                        })),
-                )
-        });
+        let notice = (self.page != Page::Nodes)
+            .then(|| elsewhere.first().cloned())
+            .flatten()
+            .map(|(other, service)| {
+                let more = elsewhere.len() - 1;
+                let target = other.clone();
+                let chosen = service.clone();
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(p.line)
+                    .bg(p.surface)
+                    .text_size(dp(12.5))
+                    .child(
+                        Icon::new(IconName::CircleX)
+                            .size(dp(15.))
+                            .text_color(p.crit_ink),
+                    )
+                    .child(
+                        div()
+                            .font_family(MONO_FONT)
+                            .text_size(dp(12.))
+                            .child(service),
+                    )
+                    .child("is unhealthy on")
+                    .child(div().font_family(MONO_FONT).text_size(dp(12.)).child(other))
+                    .when(more > 0, |this| this.child(format!("and {more} more")))
+                    .child(
+                        Button::new("show-other-unhealthy")
+                            .link()
+                            .small()
+                            .label("Show it")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.health_filter = HealthFilter::All;
+                                view.select_node_by_name(target.clone(), window, cx);
+                                view.selected_service = Some(chosen.clone());
+                                cx.notify();
+                            })),
+                    )
+            });
         let filter = self.health_filter;
         let toolbar = h_flex()
             .gap_2p5()

@@ -115,12 +115,17 @@ pub async fn list_table(
     client: &Client,
     kind: &ResourceKind,
     namespace: Option<&str>,
+    field_selector: Option<&str>,
 ) -> Result<Table, Failure> {
     let base = kind.collection_path(namespace);
     let mut table = Table::default();
     let mut continue_token = String::new();
     loop {
         let mut path = format!("{base}?includeObject=Metadata&limit={PAGE_SIZE}");
+        if let Some(selector) = field_selector {
+            path.push_str("&fieldSelector=");
+            path.push_str(&query_value(selector));
+        }
         if !continue_token.is_empty() {
             path.push_str("&continue=");
             path.push_str(&query_value(&continue_token));
@@ -147,13 +152,18 @@ pub(crate) async fn watch_table(
     client: &Client,
     kind: &ResourceKind,
     namespace: Option<&str>,
+    field_selector: Option<&str>,
     resource_version: &str,
 ) -> Result<impl Stream<Item = kube::Result<WatchEvent<Table>>> + use<>, Failure> {
-    let path = format!(
+    let mut path = format!(
         "{}?watch=1&includeObject=Metadata&resourceVersion={}&timeoutSeconds={WATCH_SECONDS}",
         kind.collection_path(namespace),
         query_value(resource_version)
     );
+    if let Some(selector) = field_selector {
+        path.push_str("&fieldSelector=");
+        path.push_str(&query_value(selector));
+    }
     client
         .request_events::<Table>(table_request(path)?)
         .await

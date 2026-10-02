@@ -127,6 +127,7 @@ impl Pilot {
             |label: &str, cx: &App| div().px_2().pt_3().pb_1().child(ui::caption(label, cx));
         let talos = v_flex()
             .gap_0p5()
+            .child(self.nav_item(Page::Nodes, IconName::Server, None, None, cx))
             .child(self.nav_item(
                 Page::Overview,
                 IconName::LayoutDashboard,
@@ -375,7 +376,8 @@ impl Pilot {
         let p = palette(cx);
         let active = self.page == page;
         // Every page but Resources reads the Talos API.
-        let unavailable = self.kubernetes_only.is_some() && page != Page::Resources;
+        let unavailable = self.kubernetes_only.is_some()
+            && !matches!(page, Page::Resources | Page::Workloads | Page::Nodes);
         h_flex()
             .id(SharedString::from(format!("nav-{}", page.slug())))
             .test_support()

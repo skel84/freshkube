@@ -13,5 +13,5 @@ pub(crate) mod projection;
 mod screen;
 pub(crate) mod store;
 
-pub(crate) use pane::shell;
-pub(crate) use screen::{KubeAccess, KubeSource, NotServed, ResourcesScreen, title};
+pub(crate) use pane::{DetailPane, Tab, shell};
+pub(crate) use screen::{KubeAccess, KubeSource, NodePodsEvent, NotServed, ResourcesScreen, title};

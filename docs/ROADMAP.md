@@ -41,6 +41,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout 2. Concurrent forward binds | Checks, IPv4/IPv6 binds and their reservation are atomic, so another bind cannot probe a forward before it is registered. A 32-way regression test checks that neither listener receives a connection; the existing exact websocket assertions stay | the commit that adds this row |
 | Holistic layout 2. Node screen modules | Processes, Storage, Network and Diagnostics use mod.rs and sibling UI test files. Network and Diagnostics separate rendering and example data, with unchanged behavior and tests before embedding | the commit that adds this row |
 | Holistic layout 2. Shell module preparation | Split the title bar, node picker, status bar and Settings content from sidebar rendering without changing behavior; existing UI tests cover the same paths. | the commit that adds this row |
+| Holistic layout 2. Nodes and the node pane | Joined Kubernetes and Talos rows, Table/Cards, retained split and expanded panes, Kubernetes-only tabs, embedded Talos screens and logs, Node Events/YAML, and all-namespace Pods by field selector. Unit and UI tests cover join precedence, pagination/watch/relist selectors, node changes and old batches, retained tabs and selection, target changes, narrow Back, keys and context isolation. | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 

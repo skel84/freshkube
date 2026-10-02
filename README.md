@@ -12,6 +12,7 @@ Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pil
 
 | Page | What it shows |
 | --- | --- |
+| **Nodes** | Kubernetes and Talos machines in one table or card grid; open a node for its summary, Pods, system services, processes, storage, network, diagnostics, logs, Events and YAML |
 | **Overview** | Cluster summary (nodes responding, etcd quorum, service health, peak memory) and a card or table row per node with a load sparkline and memory use |
 | **Services** | Talos services per node with health and detail, linked to their logs |
 | **Logs** | Live, interleaved logs from several services: level filters, search, follow or pause, wrapping, selection and copy |
@@ -140,3 +141,5 @@ MIT; see [LICENSE](LICENSE). Freshkube includes talos-pilot, copyright Ken Udovi
 - [Kubeli](https://github.com/atilladeniz/Kubeli) and [k9s](https://k9scli.io/) for Kubernetes browsing ideas
 
 The shell refreshes Kubernetes health alongside the Talos overview every 15 s, from the API server cache. Workload health uses that shared snapshot, including in Kubernetes-only mode. A refused list leaves the other summary parts available.
+
+Nodes joins names first and addresses second. Its pane follows the selected Talos target, remembers its tab across nodes, and expands with Command-Shift-Return. Below the split width it shows a Back button. The Pods tab lists across namespaces with `spec.nodeName` and opens a pod on Resources through the shell confirmation guard.

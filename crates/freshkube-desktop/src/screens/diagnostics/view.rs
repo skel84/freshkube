@@ -344,13 +344,14 @@ impl DiagnosticsScreen {
 
 impl Render for DiagnosticsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(page) = gated_page(
+        if let Some(page) = gated_page_mode(
             "diagnostics-page",
             "Diagnostics",
             Scope::Node,
             self.source.as_ref(),
             &self.loader,
             "the diagnostics",
+            self.embedded,
             cx,
         ) {
             return page;
@@ -499,11 +500,12 @@ impl Render for DiagnosticsScreen {
             .pt(dp(22.))
             .pb(dp(18.))
             .gap(dp(14.))
-            .child(header(
+            .child(crate::screens::header_mode(
                 "Diagnostics",
                 &source,
                 Scope::Node,
                 &self.loader,
+                self.embedded,
                 cx,
             ))
             .children(failure_banner(&self.loader, cx))

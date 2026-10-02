@@ -43,6 +43,7 @@ impl Pilot {
             let health = WorkloadData::from_outcome(&summary.workloads);
             self.kubernetes_summary
                 .apply(&request, Ok(Arc::new(summary)));
+            self.rebuild_joined_nodes();
             self.summary_health = Some(health.clone());
             self.deliver_workloads(health, cx);
             cx.notify();
@@ -95,6 +96,7 @@ impl Pilot {
                     }
                 };
                 view.kubernetes_summary.apply(&request, result);
+                view.rebuild_joined_nodes();
                 cx.notify();
             });
         }));

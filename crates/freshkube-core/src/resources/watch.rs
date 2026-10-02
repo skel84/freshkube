@@ -54,12 +54,14 @@ pub async fn watch_collection(
     client: Client,
     kind: ResourceKind,
     namespace: Option<String>,
+    field_selector: Option<String>,
     mut sink: mpsc::Sender<WatchBatch>,
 ) {
     let namespace = namespace.as_deref();
+    let field_selector = field_selector.as_deref();
     let mut backoff = MIN_BACKOFF;
     loop {
-        let table = match list_table(&client, &kind, namespace).await {
+        let table = match list_table(&client, &kind, namespace, field_selector).await {
             Ok(table) => table,
             Err(failure) => {
                 if !fail(&mut sink, failure, &mut backoff).await {
@@ -84,7 +86,16 @@ pub async fn watch_collection(
         // Watch until the version expires or the watch fails, then list again.
         loop {
             let started = Instant::now();
-            match watch_once(&client, &kind, namespace, &mut resource_version, &mut sink).await {
+            match watch_once(
+                &client,
+                &kind,
+                namespace,
+                field_selector,
+                &mut resource_version,
+                &mut sink,
+            )
+            .await
+            {
                 WatchEnd::Resume => {
                     if started.elapsed() < MIN_WATCH {
                         tokio::time::sleep(backoff).await;
@@ -136,10 +147,12 @@ async fn watch_once(
     client: &Client,
     kind: &ResourceKind,
     namespace: Option<&str>,
+    field_selector: Option<&str>,
     resource_version: &mut String,
     sink: &mut mpsc::Sender<WatchBatch>,
 ) -> WatchEnd {
-    let stream = match watch_table(client, kind, namespace, resource_version).await {
+    let stream = match watch_table(client, kind, namespace, field_selector, resource_version).await
+    {
         Ok(stream) => stream,
         Err(failure) => return WatchEnd::Failed(failure),
     };
@@ -295,6 +308,54 @@ pub(super) mod tests {
         events
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn field_selector_survives_pagination_watch_and_expiration() {
+        let lists = Arc::new(Mutex::new(0));
+        let count = lists.clone();
+        let (client, seen) = server(move |uri| {
+            if uri.contains("watch=1") {
+                return if uri.contains("resourceVersion=10") {
+                    (410, status(410, "Expired"))
+                } else {
+                    (403, status(403, "Forbidden"))
+                };
+            }
+            if uri.contains("continue=") {
+                return (200, list("10", "", &["b"]));
+            }
+            let mut count = count.lock().unwrap();
+            *count += 1;
+            if *count == 1 {
+                (200, list("10", "next", &["a"]))
+            } else {
+                (200, list("20", "", &["c"]))
+            }
+        });
+        let (sender, receiver) = mpsc::channel(8);
+        tokio::spawn(watch_collection(
+            client,
+            builtin("pods").unwrap(),
+            None,
+            Some("spec.nodeName=worker+/01".into()),
+            sender,
+        ));
+        let events = drain(receiver).await;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, WatchEvent::Reset { .. }))
+                .count(),
+            2
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 5);
+        assert!(
+            seen.iter()
+                .all(|uri| uri.contains("fieldSelector=spec.nodeName%3Dworker%2B%2F01")),
+            "{seen:?}"
+        );
+    }
+
     #[tokio::test]
     async fn list_table_follows_encoded_continue_tokens() {
         let (client, seen) = server(|uri| {
@@ -305,7 +366,9 @@ pub(super) mod tests {
             }
         });
         let pods = builtin("pods").unwrap();
-        let table = list_table(&client, &pods, Some("default")).await.unwrap();
+        let table = list_table(&client, &pods, Some("default"), None)
+            .await
+            .unwrap();
         assert_eq!(names(&table.rows), ["a", "b", "c"]);
         assert_eq!(table.metadata.resource_version, "7");
         assert_eq!(table.column_definitions.len(), 2);
@@ -349,6 +412,7 @@ pub(super) mod tests {
         tokio::spawn(watch_collection(
             client,
             builtin("pods").unwrap(),
+            None,
             None,
             sender,
         ));
@@ -405,6 +469,7 @@ pub(super) mod tests {
             client,
             builtin("pods").unwrap(),
             None,
+            None,
             sender,
         ));
         let events = drain(receiver).await;
@@ -429,6 +494,7 @@ pub(super) mod tests {
         let task = tokio::spawn(watch_collection(
             client,
             builtin("pods").unwrap(),
+            None,
             None,
             sender,
         ));

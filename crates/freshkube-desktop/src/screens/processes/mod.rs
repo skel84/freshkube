@@ -31,7 +31,7 @@ use tokio::runtime::Handle;
 
 use super::{
     Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page, header, mono, panel, partial_notice,
+    failure_banner, field, gated_page_mode, mono, panel, partial_notice,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -133,6 +133,7 @@ struct RowSettings {
 }
 
 pub(crate) struct ProcessesScreen {
+    embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<Arc<ProcessInspectionSnapshot>>,
@@ -154,6 +155,10 @@ pub(crate) struct ProcessesScreen {
 impl EventEmitter<ScreenEvent> for ProcessesScreen {}
 
 impl ScreenPanel for ProcessesScreen {
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
+    }
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextProcess, Some(CONTEXT)),
@@ -185,6 +190,7 @@ impl ScreenPanel for ProcessesScreen {
             }
         });
         Self {
+            embedded: false,
             runtime,
             source: None,
             loader: Loader::default(),
@@ -388,6 +394,13 @@ impl ProcessesScreen {
     }
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.embedded
+            && self.query.read(cx).value().is_empty()
+            && self.state_filter == StateFilter::All
+        {
+            cx.emit(ScreenEvent::Back);
+            return;
+        }
         self.query
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.state_filter = StateFilter::All;
@@ -798,13 +811,14 @@ fn tree_prefix(row: &ProcessDisplayRow) -> String {
 impl Render for ProcessesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("processes");
-        if let Some(page) = gated_page(
+        if let Some(page) = gated_page_mode(
             "processes-page",
             "Processes",
             Scope::Node,
             self.source.as_ref(),
             &self.loader,
             "the process list",
+            self.embedded,
             cx,
         ) {
             return page;
@@ -971,7 +985,14 @@ impl Render for ProcessesScreen {
             .pt(dp(22.))
             .pb(dp(18.))
             .gap(dp(14.))
-            .child(header("Processes", &source, Scope::Node, &self.loader, cx))
+            .child(super::header_mode(
+                "Processes",
+                &source,
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                cx,
+            ))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))
             .child(summary)

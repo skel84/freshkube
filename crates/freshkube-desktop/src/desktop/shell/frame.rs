@@ -311,7 +311,12 @@ impl Pilot {
                 .into_any_element()
         } else if self.kubernetes_only.is_some() {
             self.render_kubernetes_status(cx)
-        } else if self.page == Page::Logs && self.config_error.is_none() {
+        } else if (self.page == Page::Logs
+            || (self.page == Page::Nodes
+                && self.node_workspace.open
+                && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs))
+            && self.config_error.is_none()
+        {
             let logs = self.logs.read(cx);
             let line = logs.status_line();
             h_flex()

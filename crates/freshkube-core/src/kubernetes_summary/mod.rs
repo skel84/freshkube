@@ -59,6 +59,7 @@ pub struct NodeCondition {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct NodeSummary {
+    pub uid: String,
     pub name: String,
     pub conditions: Vec<NodeCondition>,
     pub unschedulable: bool,
@@ -359,6 +360,7 @@ fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary> {
             let spec = node.spec.unwrap_or_default();
             let name = node.metadata.name.unwrap_or_default();
             NodeSummary {
+                uid: node.metadata.uid.clone().unwrap_or_default(),
                 pods: counts.get(name.as_str()).copied().unwrap_or_default(),
                 name,
                 conditions: status

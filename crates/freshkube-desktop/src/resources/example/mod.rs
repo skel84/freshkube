@@ -718,3 +718,21 @@ pub(crate) fn deployment_rows(count: usize) -> Vec<ResourceRow> {
 
 #[cfg(test)]
 mod tests;
+
+/// Node lists use the same objects as the all-namespace resource list.
+pub(crate) fn read_filtered(
+    context: &str,
+    key: &str,
+    namespace: Option<&str>,
+    selector: Option<&str>,
+    now: i64,
+) -> Option<(Vec<ResourceColumn>, Vec<ResourceRow>)> {
+    let (columns, mut rows) = read(context, key, namespace, now)?;
+    if key == "pods"
+        && let Some(node) = selector.and_then(|selector| selector.strip_prefix("spec.nodeName="))
+    {
+        let column = columns.iter().position(|column| column.name == "Node")?;
+        rows.retain(|row| row.cells.get(column).is_some_and(|value| value == node));
+    }
+    Some((columns, rows))
+}

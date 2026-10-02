@@ -1313,13 +1313,14 @@ fn health_text(health: &ServiceHealth) -> &'static str {
 impl Render for NetworkScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("network");
-        if let Some(page) = gated_page(
+        if let Some(page) = gated_page_mode(
             "network-page",
             "Network",
             Scope::Node,
             self.source.as_ref(),
             &self.loader,
             "network statistics",
+            self.embedded,
             cx,
         ) {
             return page;
@@ -1356,7 +1357,14 @@ impl Render for NetworkScreen {
             .pt(dp(22.))
             .pb(dp(18.))
             .gap(dp(14.))
-            .child(header("Network", &source, Scope::Node, &self.loader, cx))
+            .child(crate::screens::header_mode(
+                "Network",
+                &source,
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                cx,
+            ))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))
             .child(self.summary(&data, cx))

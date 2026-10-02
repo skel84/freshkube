@@ -30,6 +30,11 @@ const DEPLOYMENTS: &str = "/apis/apps/v1/namespaces/shop/deployments";
 /// How long a test waits for something that should happen at once.
 const SOON: Duration = Duration::from_secs(5);
 
+// These fixtures share the automatic local port candidates. Keep one case
+// from taking a port another case has just released before its assertion.
+// Concurrent connections and forwards within each fixture still run together.
+static PORT_CASE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// How a pod answers a forward.
 #[derive(Clone)]
 enum Answer {
@@ -63,12 +68,14 @@ struct State {
 
 #[derive(Clone)]
 struct Fake {
+    _case: Arc<tokio::sync::MutexGuard<'static, ()>>,
     state: Arc<Mutex<State>>,
     watches: PodWatches,
 }
 
 impl Fake {
     async fn start() -> Self {
+        let case = Arc::new(PORT_CASE.lock().await);
         let state = Arc::new(Mutex::new(State::default()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -97,6 +104,7 @@ impl Fake {
         config.root_cert = Some(Vec::new());
         let client = Client::try_from(config).unwrap();
         Self {
+            _case: case,
             state,
             watches: PodWatches::new(client),
         }

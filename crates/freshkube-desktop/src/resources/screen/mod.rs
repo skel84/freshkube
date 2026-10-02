@@ -43,6 +43,7 @@ use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
+const EMBEDDED_CONTEXT: &str = "NodePods";
 const FILTER_CONTEXT: &str = "KubeResourcesFilter";
 const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
@@ -305,6 +306,8 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
+    field_selector: Option<String>,
+    embedded: bool,
     runtime: Handle,
     source: Option<KubeSource>,
     kind: ResourceKind,
@@ -356,6 +359,18 @@ impl ResourcesScreen {
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
+        ]);
+        cx.bind_keys([
+            KeyBinding::new("down", NextItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("up", PreviousItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("home", FirstItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("end", LastItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("pagedown", NextPage, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("pageup", PreviousPage, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("/", FocusFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("secondary-f", FocusFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("escape", ClearFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("enter", OpenSelected, Some(EMBEDDED_CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
         let detail = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
@@ -424,6 +439,8 @@ impl ResourcesScreen {
             ),
         ];
         Self {
+            field_selector: None,
+            embedded: false,
             runtime,
             source: None,
             kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
@@ -449,6 +466,51 @@ impl ResourcesScreen {
             stacked: cx.new(|_| ResizableState::default()),
             _subscriptions: subscriptions,
         }
+    }
+
+    pub(crate) fn set_node(
+        &mut self,
+        name: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.embedded = true;
+        let selector = name.map(|name| format!("spec.nodeName={name}"));
+        if self.field_selector == selector {
+            return;
+        }
+        self.field_selector = selector;
+        self.namespace = None;
+        self.restore = None;
+        self.projection.select(&self.store, None);
+        self.restart(window, cx);
+    }
+
+    pub(crate) fn open_identity(
+        &mut self,
+        identity: ResourceIdentity,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .namespace
+            .as_ref()
+            .is_some_and(|namespace| namespace != &identity.namespace)
+        {
+            self.set_namespace(None, window, cx);
+        }
+        self.clear_filter(window, cx);
+        self.select_identity(&identity, window, cx);
+        self.restore = Some(identity.clone());
+        self.open_now(
+            identity,
+            window,
+            |this, window, cx| {
+                this.detail
+                    .update(cx, |detail, cx| detail.focus(window, cx))
+            },
+            cx,
+        );
     }
 
     /// A source with the same `id` only refreshes the handles; another one
@@ -601,18 +663,25 @@ impl ResourcesScreen {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.load_namespaces(window, cx);
+        if !self.embedded {
+            self.load_namespaces(window, cx);
+        }
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
         if let KubeAccess::Example = source.access {
-            let events =
-                match example::read(&source.context, &kind.key(), namespace.as_deref(), self.now) {
-                    Some((columns, rows)) => vec![
-                        ResourceEvent::reset(columns, rows),
-                        ResourceEvent::Read(ReadState::Loaded),
-                    ],
-                    None => vec![ResourceEvent::Read(ReadState::Loaded)],
-                };
+            let events = match example::read_filtered(
+                &source.context,
+                &kind.key(),
+                namespace.as_deref(),
+                self.field_selector.as_deref(),
+                self.now,
+            ) {
+                Some((columns, rows)) => vec![
+                    ResourceEvent::reset(columns, rows),
+                    ResourceEvent::Read(ReadState::Loaded),
+                ],
+                None => vec![ResourceEvent::Read(ReadState::Loaded)],
+            };
             self.apply(ResourceBatch { epoch, events }, cx);
             return;
         }
@@ -621,6 +690,7 @@ impl ResourcesScreen {
             source.access,
             kind,
             namespace,
+            self.field_selector.clone(),
             source.id,
             sender,
         )));
@@ -743,6 +813,9 @@ impl ResourcesScreen {
 
     /// Shows `identity` in the pane, reading it after `delay`.
     fn open_detail(&mut self, identity: ResourceIdentity, delay: Duration, cx: &mut Context<Self>) {
+        if self.embedded {
+            return;
+        }
         let Some(source) = self.source.as_ref() else {
             return;
         };
@@ -870,7 +943,7 @@ impl ResourcesScreen {
             async move {
                 let client = access.client().await?;
                 let kind = builtin("namespaces").ok_or("Namespaces aren't a known kind")?;
-                let table = list_table(&client, &kind, None)
+                let table = list_table(&client, &kind, None, None)
                     .await
                     .map_err(|failure| failure.to_string())?;
                 let mut names: Vec<String> = table
@@ -929,6 +1002,10 @@ impl ResourcesScreen {
         cx: &mut Context<Self>,
     ) {
         self.select_identity(identity, window, cx);
+        if self.embedded {
+            cx.emit(NodePodsEvent::Open(identity.clone()));
+            return;
+        }
         self.open_now(identity.clone(), window, |_, _, _| {}, cx);
     }
 
@@ -941,6 +1018,10 @@ impl ResourcesScreen {
             cx.propagate();
             return;
         };
+        if self.embedded {
+            cx.emit(NodePodsEvent::Open(identity));
+            return;
+        }
         self.open_now(
             identity,
             window,
@@ -955,7 +1036,7 @@ impl ResourcesScreen {
     /// N on the list opens the namespace picker, as Enter on it would.
     /// Choosing or cancelling hands the keyboard back to the list.
     fn choose_namespace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.kind.namespaced {
+        if !self.kind.namespaced || self.embedded {
             return;
         }
         let focus = self.namespace_select.focus_handle(cx);
@@ -1012,6 +1093,8 @@ impl ResourcesScreen {
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.query.read(cx).value().is_empty() {
             self.clear_filter(window, cx);
+        } else if self.embedded {
+            cx.emit(NodePodsEvent::Back);
         } else if self.detail.read(cx).target_identity().is_some() {
             self.close_pane(window, cx);
         }
@@ -1042,6 +1125,7 @@ async fn watch(
     access: KubeAccess,
     kind: ResourceKind,
     namespace: Option<String>,
+    field_selector: Option<String>,
     connection: String,
     sender: mpsc::Sender<Vec<ResourceEvent>>,
 ) {
@@ -1075,12 +1159,18 @@ async fn watch(
         }
     };
     tokio::join!(
-        watch_collection(client, kind, namespace, raw_sender),
+        watch_collection(client, kind, namespace, field_selector, raw_sender),
         forward
     );
 }
 
 impl EventEmitter<NotServed> for ResourcesScreen {}
+
+pub(crate) enum NodePodsEvent {
+    Open(ResourceIdentity),
+    Back,
+}
+impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
 mod view;
 

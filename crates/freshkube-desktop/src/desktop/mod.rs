@@ -2,6 +2,7 @@ mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
+mod nodes;
 mod overview;
 mod pages;
 mod services;
@@ -254,6 +255,7 @@ impl Render for PageHost {
         self.pilot
             .update(cx, |pilot, cx| match page {
                 Page::Overview => pilot.render_overview(window, cx),
+                Page::Nodes => pilot.render_nodes(window, cx),
                 _ => pilot.render_services(window, cx),
             })
             .unwrap_or_else(|_| div().into_any_element())
@@ -293,6 +295,9 @@ pub(crate) struct Pilot {
     forwards: Entity<ForwardsIndicator>,
     overview_page: Entity<PageHost>,
     services_page: Entity<PageHost>,
+    nodes_page: Entity<PageHost>,
+    node_workspace: nodes::Nodes,
+    node_pods: Entity<ResourcesScreen>,
     screens: Vec<(Page, ScreenHandle)>,
     resources: Entity<ResourcesScreen>,
     /// The Kubernetes kind the Resources page shows.
@@ -392,6 +397,12 @@ impl Pilot {
             pilot: pilot.clone(),
             page: Page::Overview,
         });
+        let nodes_page = cx.new(|_| PageHost {
+            pilot: pilot.clone(),
+            page: Page::Nodes,
+        });
+        let node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let services_page = cx.new(|_| PageHost {
             pilot,
             page: Page::Services,
@@ -399,7 +410,11 @@ impl Pilot {
         let mut subscriptions = Vec::new();
         // The hosted pages read the shell's state, so whatever notifies the
         // shell redraws them; the countdown tick notifies only its ring.
-        let hosted = [overview_page.clone(), services_page.clone()];
+        let hosted = [
+            overview_page.clone(),
+            services_page.clone(),
+            nodes_page.clone(),
+        ];
         subscriptions.push(cx.observe(&cx.entity(), move |_, _, cx| {
             for page in &hosted {
                 page.update(cx, |_, cx| cx.notify());
@@ -416,6 +431,37 @@ impl Pilot {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
         });
+        subscriptions.push(cx.subscribe_in(
+            &node_pods,
+            window,
+            |this, _, event: &resources::NodePodsEvent, window, cx| match event {
+                resources::NodePodsEvent::Back => this.node_back(window, cx),
+                resources::NodePodsEvent::Open(identity) => {
+                    let identity = identity.clone();
+                    this.unless_shell(window, cx, move |this, window, cx| {
+                        this.open_builtin("pods", window, cx);
+                        this.resources.update(cx, |resources, cx| {
+                            resources.open_identity(identity, window, cx)
+                        });
+                    });
+                }
+            },
+        ));
+        cx.bind_keys([
+            KeyBinding::new("down", NextNode, Some("NodeWorkspace")),
+            KeyBinding::new("up", PreviousNode, Some("NodeWorkspace")),
+            KeyBinding::new("enter", nodes::OpenNode, Some("NodeWorkspace")),
+            KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
+            KeyBinding::new(
+                "secondary-shift-enter",
+                nodes::ExpandNode,
+                Some("NodeWorkspace"),
+            ),
+            KeyBinding::new("secondary-}", nodes::NextNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("secondary-{", nodes::PreviousNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
+            KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
+        ]);
         let screens = Page::SCREENS
             .into_iter()
             .map(|page| {
@@ -447,6 +493,7 @@ impl Pilot {
                     }
                     Page::Operations
                     | Page::Overview
+                    | Page::Nodes
                     | Page::Services
                     | Page::Logs
                     | Page::Resources => {
@@ -542,6 +589,9 @@ impl Pilot {
             forwards: cx.new(ForwardsIndicator::new),
             overview_page,
             services_page,
+            nodes_page,
+            node_workspace,
+            node_pods,
             screens,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
@@ -641,6 +691,11 @@ impl Pilot {
         self.load_history.clear();
         self.overview = Snapshot::default();
         self.kubernetes_summary = Snapshot::default();
+        self.rebuild_joined_nodes();
+        self.node_workspace
+            .document
+            .update(cx, |pane, cx| pane.close(cx));
+        self.sync_node_visibility(window, cx);
         self.summary_health = None;
         self.summary_job = None;
         self.summary_task = None;
@@ -783,6 +838,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         match event {
+            ScreenEvent::Back => self.node_back(window, cx),
             ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
             ScreenEvent::OpenLogs(service) => {
                 self.selected_service = Some(service.clone());
@@ -875,9 +931,14 @@ impl Pilot {
     }
 
     fn active_screen(&self) -> Option<ScreenHandle> {
+        let page = if self.page == Page::Nodes && self.node_workspace.open {
+            self.node_workspace.tab.page()?
+        } else {
+            self.page
+        };
         self.screens
             .iter()
-            .find(|(page, _)| *page == self.page)
+            .find(|(candidate, _)| *candidate == page)
             .map(|(_, handle)| handle.clone())
     }
 
@@ -896,6 +957,9 @@ impl Pilot {
         let source = self.kube_source();
         self.custom
             .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
+        self.node_pods.update(cx, |resources, cx| {
+            resources.set_source(source.clone(), window, cx)
+        });
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
@@ -1023,6 +1087,7 @@ impl Pilot {
                     .or_else(|| self.nodes.first())
                     .map(|node| node.name.clone())
             });
+        self.rebuild_joined_nodes();
         if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
             self.select_node(selected, window, cx);
         } else {
@@ -1271,6 +1336,9 @@ impl Pilot {
         App::notify(cx, detail);
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.services_page.entity_id());
+        App::notify(cx, self.nodes_page.entity_id());
+        App::notify(cx, self.node_pods.entity_id());
+        App::notify(cx, self.node_workspace.document.entity_id());
     }
 
     /// Whether contexts or a connection are loading, for the refresh button.
@@ -1311,9 +1379,16 @@ impl Render for Pilot {
                 .clone()
                 .cached(cached_page_style())
                 .into_any_element(),
-            _ if self.kubernetes_only.is_some() && self.page != Page::Workloads => {
+            _ if self.kubernetes_only.is_some()
+                && !matches!(self.page, Page::Workloads | Page::Nodes) =>
+            {
                 self.render_needs_talosconfig(cx)
             }
+            Page::Nodes => self
+                .nodes_page
+                .clone()
+                .cached(cached_page_style())
+                .into_any_element(),
             Page::Overview => self
                 .overview_page
                 .clone()

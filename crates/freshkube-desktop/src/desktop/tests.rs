@@ -8,7 +8,7 @@ use gpui_kit::{
 use std::cell::Cell;
 use std::rc::Rc;
 
-fn fixture(
+pub(super) fn fixture(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
@@ -879,7 +879,7 @@ fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestApp
         window.press("secondary-1", cx);
         window.render_frame(cx);
         assert!(window.try_find("resources-page").is_none());
-        for _ in 0..11 {
+        for _ in 0..12 {
             window.press("ctrl-tab", cx);
             window.render_frame(cx);
         }
@@ -1962,10 +1962,17 @@ fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext)
         // Health is cluster-wide and uses the shared Kubernetes summary.
         window.press("ctrl-tab", cx);
         window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert!(window.find("nodes-page").visible());
+        window.press("ctrl-tab", cx);
+        window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Workloads);
         window.press("secondary-2", cx);
         window.render_frame(cx);
         assert!(window.find("needs-talosconfig").visible());
+        window.press("ctrl-shift-tab", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Nodes);
         window.press("ctrl-shift-tab", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);
@@ -2035,7 +2042,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         window.render_frame(cx);
         for page in Page::ALL
             .into_iter()
-            .filter(|page| !matches!(page, Page::Resources | Page::Workloads))
+            .filter(|page| !matches!(page, Page::Resources | Page::Workloads | Page::Nodes))
         {
             let nav = format!("nav-{}", page.slug());
             reveal(window, cx, &nav);

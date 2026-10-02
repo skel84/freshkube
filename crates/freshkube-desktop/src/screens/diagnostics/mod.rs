@@ -27,7 +27,7 @@ use tokio::runtime::Handle;
 
 use super::{
     Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page, header, mono, panel, partial_notice, stat, table_head,
+    failure_banner, field, gated_page_mode, mono, panel, partial_notice, stat, table_head,
     table_width,
 };
 use crate::actions;
@@ -311,6 +311,7 @@ struct FixNotice {
 }
 
 pub(crate) struct DiagnosticsScreen {
+    embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<DiagnosticSnapshot>,
@@ -325,6 +326,10 @@ pub(crate) struct DiagnosticsScreen {
 impl EventEmitter<ScreenEvent> for DiagnosticsScreen {}
 
 impl ScreenPanel for DiagnosticsScreen {
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
+    }
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextCheck, Some(CONTEXT)),
@@ -334,6 +339,7 @@ impl ScreenPanel for DiagnosticsScreen {
             KeyBinding::new("p", ToggleProblems, Some(CONTEXT)),
         ]);
         Self {
+            embedded: false,
             runtime,
             source: None,
             loader: Loader::default(),

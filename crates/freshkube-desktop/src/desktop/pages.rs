@@ -8,6 +8,7 @@ use gpui_kit::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Page {
     Overview,
+    Nodes,
     Services,
     Logs,
     Processes,
@@ -40,8 +41,9 @@ pub(super) enum SidebarReveal {
 
 impl Page {
     /// Every page, in sidebar order.
-    pub(super) const ALL: [Page; 13] = [
+    pub(super) const ALL: [Page; 14] = [
         Page::Overview,
+        Page::Nodes,
         Page::Services,
         Page::Logs,
         Page::Processes,
@@ -79,6 +81,7 @@ impl Page {
     pub(super) fn title(self) -> &'static str {
         match self {
             Page::Overview => "Overview",
+            Page::Nodes => "Nodes",
             Page::Services => "Services",
             Page::Logs => "Logs",
             Page::Processes => "Processes",
@@ -98,6 +101,7 @@ impl Page {
     pub(crate) fn slug(self) -> &'static str {
         match self {
             Page::Overview => "overview",
+            Page::Nodes => "nodes",
             Page::Services => "services",
             Page::Logs => "logs",
             Page::Processes => "processes",
@@ -180,7 +184,8 @@ impl Pilot {
     /// Whether `page` can show anything: in Kubernetes-only mode, only
     /// Resources can.
     fn page_loads(&self, page: Page) -> bool {
-        self.kubernetes_only.is_none() || matches!(page, Page::Resources | Page::Workloads)
+        self.kubernetes_only.is_none()
+            || matches!(page, Page::Resources | Page::Workloads | Page::Nodes)
     }
 
     /// The next page in sidebar order, wrapping around, that can load.
@@ -226,6 +231,10 @@ impl Pilot {
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
+        self.sync_node_visibility(window, cx);
+        if let Some(screen) = self.active_screen() {
+            screen.set_embedded(page == Page::Nodes, cx);
+        }
         // However the page was reached, its kind shows in the sidebar.
         if page == Page::Resources {
             self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind.key()));
@@ -246,6 +255,7 @@ impl Pilot {
             screen.activate(window, cx);
             screen.focus(window, cx);
         }
+        self.sync_node_visibility(window, cx);
         cx.notify();
     }
 

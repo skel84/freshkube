@@ -79,7 +79,7 @@ pub(crate) enum DetailEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tab {
+pub(crate) enum Tab {
     Overview,
     Yaml,
     Events,
@@ -128,6 +128,7 @@ fn local_time(time: DateTime<Utc>) -> String {
 type Job = (OwnedJob, Task<()>);
 
 pub(crate) struct DetailPane {
+    embedded_node: bool,
     runtime: Handle,
     access: Option<KubeAccess>,
     /// Only an active pane, on a visible page, reads.
@@ -204,6 +205,13 @@ impl DetailPane {
             KeyBinding::new("right", NextTab, Some(TABS_CONTEXT)),
             KeyBinding::new("left", PreviousTab, Some(TABS_CONTEXT)),
         ]);
+        cx.bind_keys([
+            KeyBinding::new("secondary-f", FindInYaml, Some("NodeDocument")),
+            KeyBinding::new("secondary-a", SelectAllLines, Some("NodeDocument")),
+            KeyBinding::new("secondary-c", CopyLines, Some("NodeDocument")),
+            KeyBinding::new("secondary-g", FindNextMatch, Some("NodeDocument")),
+            KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some("NodeDocument")),
+        ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
         let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
         let shell = cx.new(|cx| ShellView::new(runtime.clone(), window, cx));
@@ -230,6 +238,7 @@ impl DetailPane {
             cx.observe(&find, |_, _, cx| cx.notify()),
         ];
         Self {
+            embedded_node: false,
             runtime,
             access: None,
             active: false,
@@ -261,6 +270,11 @@ impl DetailPane {
             ports,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub(crate) fn embed_node(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.embedded_node = true;
+        self.set_tab(tab, cx);
     }
 
     pub(crate) fn target_identity(&self) -> Option<&ResourceIdentity> {
@@ -785,7 +799,7 @@ impl DetailPane {
         cx.notify();
     }
 
-    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+    pub(crate) fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.feedback = None;
         self.show_tab(cx);

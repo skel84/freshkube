@@ -378,3 +378,6 @@ These have a default, so they don't block a step. Change one only by updating th
 - **No Command-Enter in search.** Enter opens, focusing the pane for objects.
 
 - **The batch example** gains a Deployment for `report`, so its pod → ReplicaSet → Deployment chain resolves in the same example store.
+
+- **Nodes starts in Table view.** It matches screen 02; the Cards toggle keeps the load history and memory bars in a virtualized grid.
+- **Node Events and YAML** use an embedded `DetailPane` with its own header and tab strip hidden; reads run only on those tabs.

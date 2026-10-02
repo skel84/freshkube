@@ -954,3 +954,65 @@ fn a_forward_runs_on_through_another_context_and_names_its_own(cx: &mut TestAppC
         assert_eq!(forward.display.context.as_ref(), "homelab");
     });
 }
+
+#[gpui_kit::test]
+fn node_pods_are_filtered_across_namespaces_and_do_not_open_a_nested_pane(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("prod-fra"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_node(Some("talos-wk-fra1-02"), window, cx)
+        });
+        window.render_frame(cx);
+        let read = screen.read(cx);
+        assert!(!read.store.is_empty());
+        let column = read
+            .store
+            .columns()
+            .iter()
+            .position(|column| column.name == "Node")
+            .unwrap();
+        assert!(
+            read.store
+                .entries()
+                .iter()
+                .all(|entry| entry.row().cells[column] == "talos-wk-fra1-02")
+        );
+        let old_epoch = read.store.epoch();
+        let old_rows = read
+            .store
+            .entries()
+            .iter()
+            .map(|entry| entry.row().clone())
+            .collect::<Vec<_>>();
+        assert!(window.try_find("resource-namespace").is_none());
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert!(shown(&screen, cx).is_none());
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(shown(&screen, cx).is_none());
+        screen.update(cx, |screen, cx| {
+            screen.set_node(Some("talos-wk-fra1-01"), window, cx);
+            screen.apply(
+                ResourceBatch {
+                    epoch: old_epoch,
+                    events: vec![ResourceEvent::reset(
+                        screen.store.columns().to_vec(),
+                        old_rows,
+                    )],
+                },
+                cx,
+            );
+        });
+        assert!(
+            screen
+                .read(cx)
+                .store
+                .entries()
+                .iter()
+                .all(|entry| entry.row().cells[column] == "talos-wk-fra1-01")
+        );
+    })
+    .unwrap();
+}

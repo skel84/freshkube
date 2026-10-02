@@ -47,13 +47,13 @@ impl ResourcesScreen {
         // be measured without its gaps and wrap early, so this is decided
         // here.)
         let one_row = CONTROLS_MIN_WIDTH
-            + if self.kind.namespaced {
+            + if self.kind.namespaced && !self.embedded {
                 NAMESPACE_WIDTH + 8.
             } else {
                 0.
             };
         let stacked = content_width(window) < one_row;
-        let namespace = self.kind.namespaced.then(|| {
+        let namespace = (self.kind.namespaced && !self.embedded).then(|| {
             div()
                 .when_else(
                     stacked,
@@ -317,7 +317,11 @@ impl ResourcesScreen {
         v_flex()
             .id("resource-body")
             .test_support()
-            .key_context(CONTEXT)
+            .key_context(if self.embedded {
+                EMBEDDED_CONTEXT
+            } else {
+                CONTEXT
+            })
             .track_focus(&self.focus)
             .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))

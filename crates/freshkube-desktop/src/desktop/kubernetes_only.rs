@@ -181,6 +181,11 @@ impl Pilot {
             .map(|context| DirectAccess::new(kube.sources.clone(), context));
         self.epoch = self.epoch.wrapping_add(1);
         self.kubernetes_summary = Snapshot::default();
+        self.rebuild_joined_nodes();
+        self.node_workspace
+            .document
+            .update(cx, |pane, cx| pane.close(cx));
+        self.sync_node_visibility(window, cx);
         self.summary_health = None;
         self.summary_job = None;
         self.summary_task = None;
