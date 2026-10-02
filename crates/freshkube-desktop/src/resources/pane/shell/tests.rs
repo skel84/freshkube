@@ -189,6 +189,11 @@ fn typing_reaches_the_shell_and_its_exit_ends_the_session(cx: &mut TestAppContex
     shell.type_line(cx, "exit 3");
     assert_eq!(shell.state(cx), ShellState::Ended);
     assert_eq!(shell.status(cx), "Ended: The shell exited with code 3.");
+    let ended =
+        |cx: &mut TestAppContext| cx.read(|cx| shell.shell.read(cx).terminal.read(cx).ended());
+    // The screen stays without a cursor, which would suggest it still
+    // takes input.
+    assert!(ended(cx));
     shell.step(cx, |window, _| {
         assert!(window.try_find("detail-shell-running").is_none());
     });
@@ -203,6 +208,7 @@ fn typing_reaches_the_shell_and_its_exit_ends_the_session(cx: &mut TestAppContex
     assert!(!screen.contains("hello from the pod"), "{screen}");
     assert_eq!(screen.matches("Example shell in").count(), 1);
     assert_eq!(shell.state(cx), ShellState::Running);
+    assert!(!ended(cx));
 }
 
 #[gpui_kit::test]

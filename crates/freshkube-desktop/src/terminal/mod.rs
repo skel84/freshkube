@@ -133,6 +133,8 @@ pub(crate) struct TerminalView {
     wheel: f32,
     /// Text an input method is composing, drawn at the cursor.
     marked: Option<String>,
+    /// The program ended: the screen stays, without a cursor.
+    ended: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -172,6 +174,7 @@ impl TerminalView {
             selecting: false,
             wheel: 0.,
             marked: None,
+            ended: false,
             _subscriptions: subscriptions,
         };
         view.refresh(cx);
@@ -207,10 +210,24 @@ impl TerminalView {
         self.selecting = false;
         self.wheel = 0.;
         self.marked = None;
+        self.ended = false;
         if self.title.take().is_some() {
             cx.emit(TerminalEvent::Title(None));
         }
         self.refresh(cx);
+    }
+
+    /// The program ended, so the screen no longer takes input: it stops
+    /// drawing the cursor until `reset`.
+    pub(crate) fn end(&mut self, cx: &mut Context<Self>) {
+        if !std::mem::replace(&mut self.ended, true) {
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ended(&self) -> bool {
+        self.ended
     }
 
     /// The grid's size, which the program should be told about.
@@ -365,6 +382,7 @@ impl Render for TerminalView {
                 snapshot: self.snapshot.clone(),
                 focus: self.focus.clone(),
                 marked: self.marked.clone(),
+                ended: self.ended,
                 fonts,
                 selection,
                 thumb: thumb.opacity(0.35),

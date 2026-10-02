@@ -439,6 +439,7 @@ impl ShellView {
     /// The session ended. Its screen stays until a new one starts.
     fn finish(&mut self, end: ExecEnd, cx: &mut Context<Self>) {
         self.drop_session();
+        self.terminal.update(cx, |terminal, cx| terminal.end(cx));
         if self.state == ShellState::Ended {
             // The user ended it, and has been told.
             return;
@@ -458,6 +459,7 @@ impl ShellView {
 
     fn fail(&mut self, failure: ExecFailure, cx: &mut Context<Self>) {
         self.drop_session();
+        self.terminal.update(cx, |terminal, cx| terminal.end(cx));
         self.state = ShellState::Failed;
         let tag = match failure.kind {
             ExecFailureKind::Request(FailureKind::Forbidden | FailureKind::Unauthorized) => {
@@ -491,6 +493,7 @@ impl ShellView {
                     Some(Session::Live { input, .. }) => drop(input.take()),
                     _ => self.drop_session(),
                 }
+                self.terminal.update(cx, |terminal, cx| terminal.end(cx));
                 self.state = ShellState::Ended;
                 self.describe(Some("You ended the shell.".to_owned()));
             }

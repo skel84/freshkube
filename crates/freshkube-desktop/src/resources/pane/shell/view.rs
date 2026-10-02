@@ -104,8 +104,7 @@ impl ShellView {
             .text_size(dp(12.))
             .text_color(palette(cx).muted)
             .when(!status.tag.is_empty(), |this| {
-                let icon = (self.state == ShellState::Ended).then_some(IconName::Square);
-                this.child(ui::tag(status.tone, icon, status.tag.clone(), cx))
+                this.child(ui::tag(status.tone, None, status.tag.clone(), cx))
             })
             .when(!failed, |this| {
                 this.child(

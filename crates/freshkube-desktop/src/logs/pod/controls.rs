@@ -184,7 +184,6 @@ impl PodLogView {
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let status = &self.source.status;
         let icon = match self.source.state {
-            StreamState::Ended(_) | StreamState::Stopped => Some(IconName::Square),
             StreamState::Reconnecting { .. } => Some(IconName::TriangleAlert),
             _ => None,
         };

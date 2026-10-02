@@ -82,6 +82,8 @@ pub(super) struct Grid {
     pub(super) snapshot: Rc<Snapshot>,
     pub(super) focus: FocusHandle,
     pub(super) marked: Option<String>,
+    /// The program ended: no cursor.
+    pub(super) ended: bool,
     pub(super) fonts: Fonts,
     pub(super) selection: Hsla,
     pub(super) thumb: Hsla,
@@ -167,7 +169,9 @@ fn paint(grid: &Grid, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App)
                 );
             }
         }
-        paint_cursor(grid, &at, cell, window, cx);
+        if !grid.ended {
+            paint_cursor(grid, &at, cell, window, cx);
+        }
         paint_scroll_position(grid, bounds, window);
     });
     listen(grid, bounds, window, cx);
