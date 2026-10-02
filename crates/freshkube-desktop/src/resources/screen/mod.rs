@@ -54,6 +54,11 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
 /// Advance of one character in the 12 px table font.
 const CHAR_WIDTH: f32 = 7.2;
+/// The namespace picker's width in the toolbar.
+const NAMESPACE_WIDTH: f32 = 200.;
+/// The narrowest one-row toolbar without the namespace picker: the
+/// filter at its narrowest, the Refresh button and the gap between them.
+const CONTROLS_MIN_WIDTH: f32 = 120. + 8. + 96.;
 const CELL_PADDING: f32 = 24.;
 const AGE_WIDTH: f32 = 76.;
 const MIN_COLUMN: f32 = 64.;
@@ -967,7 +972,7 @@ impl ResourcesScreen {
         cx.notify();
     }
 
-    fn header(&self, cx: &mut Context<Self>) -> Div {
+    fn header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let example = self
             .source
@@ -1007,27 +1012,41 @@ impl ResourcesScreen {
                 this.child("·").child(clock(time))
             });
         // The controls keep to one row: beside the title when they fit,
-        // below it otherwise, where a narrow page shrinks the filter. (A
-        // wrapping row would be measured without its gaps and wrap early.)
-        let controls = h_flex()
-            .max_w_full()
-            .gap_2()
-            .when(self.kind.namespaced, |this| {
-                this.child(
-                    div().flex_none().child(
-                        Select::new(&self.namespace_select)
-                            .id("resource-namespace")
-                            .small()
-                            .w(dp(200.))
-                            .menu_width(dp(260.))
-                            .search_placeholder("Find a namespace")
-                            .accessibility_label("Namespace"),
-                    ),
+        // below it otherwise, where a narrow page shrinks the filter. A page
+        // too narrow even for that, such as a small window at a large text
+        // size, puts the filter on a line of its own. (A wrapping row would
+        // be measured without its gaps and wrap early, so this is decided
+        // here.)
+        let one_row = CONTROLS_MIN_WIDTH
+            + if self.kind.namespaced {
+                NAMESPACE_WIDTH + 8.
+            } else {
+                0.
+            };
+        let stacked = content_width(window) < one_row;
+        let namespace = self.kind.namespaced.then(|| {
+            div()
+                .when_else(
+                    stacked,
+                    |this| this.flex_1().min_w_0(),
+                    |this| this.flex_none(),
                 )
-            })
-            .child(
-                div()
-                    .w(dp(240.))
+                .child(
+                    Select::new(&self.namespace_select)
+                        .id("resource-namespace")
+                        .small()
+                        .when_else(
+                            stacked,
+                            |this| this.w_full(),
+                            |this| this.w(dp(NAMESPACE_WIDTH)),
+                        )
+                        .menu_width(dp(260.))
+                        .search_placeholder("Find a namespace")
+                        .accessibility_label("Namespace"),
+                )
+        });
+        let filter = div()
+                    .when_else(stacked, |this| this.w_full(), |this| this.w(dp(240.)))
                     .min_w(dp(120.))
                     .key_context(FILTER_CONTEXT)
                     .on_action(cx.listener(|view, _: &LeaveFilter, window, cx| {
@@ -1040,18 +1059,36 @@ impl ResourcesScreen {
                             .small()
                             .cleanable(true)
                             .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                    ),
-            )
-            .child(
-                div().flex_none().child(
-                    Button::new("resource-refresh")
-                        .outline()
-                        .small()
-                        .icon(IconName::RefreshCw)
-                        .label("Refresh")
-                        .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
-                ),
-            );
+                    );
+        let refresh = div().flex_none().child(
+            Button::new("resource-refresh")
+                .outline()
+                .small()
+                .icon(IconName::RefreshCw)
+                .label("Refresh")
+                .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
+        );
+        let controls = if stacked {
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .children(namespace)
+                        .when(!self.kind.namespaced, |this| this.child(div().flex_1()))
+                        .child(refresh),
+                )
+                .child(filter)
+        } else {
+            h_flex()
+                .max_w_full()
+                .gap_2()
+                .children(namespace)
+                .child(filter)
+                .child(refresh)
+        };
         h_flex()
             .items_end()
             .gap_3()
@@ -1533,7 +1570,7 @@ impl Render for ResourcesScreen {
             .pt(dp(22.))
             .pb(dp(18.))
             .gap(dp(14.))
-            .child(self.header(cx))
+            .child(self.header(window, cx))
             .children(self.stale_banner(cx))
             .child(body)
     }

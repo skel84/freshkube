@@ -96,9 +96,9 @@ fn deliver(screen: &Entity<ResourcesScreen>, events: Vec<ResourceEvent>, cx: &mu
 
 #[gpui_kit::test]
 fn header_controls_share_one_row_and_fit_a_narrow_page(cx: &mut TestAppContext) {
-    // The page alone: 1050 is a wide window less the sidebar, 480 the
-    // narrowest window less the sidebar.
-    for (width, beside_title) in [(1050., true), (480., false)] {
+    // The page alone, in windows as wide as the app's: breakpoints leave
+    // out the sidebar, so 760, the narrowest window, leaves the page 480.
+    for (width, beside_title) in [(1280., true), (760., false)] {
         let (_runtime, _screen, handle) = mount_sized(cx, Some("homelab"), width);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);

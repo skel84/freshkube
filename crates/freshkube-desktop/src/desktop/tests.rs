@@ -2284,6 +2284,44 @@ fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_resources_toolbar_wraps_rather_than_clip_at_a_large_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        reveal(window, cx, "nav-k8s-pods");
+        window.click("nav-k8s-pods", cx);
+        window.render_frame(cx);
+        let controls = ["resource-namespace", "resource-filter", "resource-refresh"];
+        let fit = |window: &mut gpui_kit::Window| {
+            for id in controls {
+                let bounds = window.find(id).bounds();
+                assert!(
+                    bounds.right() <= px(760.),
+                    "{id} ends at {:?}",
+                    bounds.right()
+                );
+                assert!(bounds.size.width > px(0.), "{id}");
+            }
+        };
+        // At the default size the controls share one row.
+        fit(window);
+        let filter = window.find("resource-filter").bounds();
+        let refresh = window.find("resource-refresh").bounds();
+        assert_eq!(filter.top(), refresh.top());
+        for _ in 0..3 {
+            window.press("secondary-=", cx);
+        }
+        window.render_frame(cx);
+        fit(window);
+        // The filter moves to a line of its own, below the other two.
+        let filter = window.find("resource-filter").bounds();
+        let refresh = window.find("resource-refresh").bounds();
+        assert!(filter.top() >= refresh.bottom(), "{filter:?} {refresh:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn the_resources_page_scales_with_the_text_size(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
