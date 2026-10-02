@@ -25,7 +25,7 @@ use tokio::{runtime::Handle, sync::mpsc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::{LogPanel, LogSource, LogView, review::MAX_SELECTED_LINES};
-use crate::backend::{self, OwnedJob, StreamEvent, Target};
+use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
 use crate::palette::palette;
 use crate::ui;
 
@@ -331,7 +331,7 @@ impl LogView<TalosLogs> {
             return;
         }
         let (target, job, receiver) = if let Some(target) = self.source.fixture_target.clone() {
-            let (sender, receiver) = mpsc::channel(256);
+            let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
             let services: Vec<_> = self.source.collecting.iter().cloned().collect();
             let event_target = target.clone();
             let initial_sequence = self.review.next_id;
@@ -392,9 +392,9 @@ impl LogView<TalosLogs> {
         self.source.delivery = Some(cx.spawn(async move |weak, cx| {
             while let Some(first) = receiver.recv().await {
                 let mut batch = vec![first];
-                // At most 64 lines per turn; yield between turns even when
-                // a busy service keeps the bounded channel continuously full.
-                for _ in 1..64 {
+                // At most a full queue per turn; yield between turns even
+                // when a busy service keeps the queue full.
+                for _ in 1..STREAM_QUEUE_CAPACITY {
                     let Ok(event) = receiver.try_recv() else {
                         break;
                     };

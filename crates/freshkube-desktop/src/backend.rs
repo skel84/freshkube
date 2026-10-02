@@ -20,7 +20,11 @@ use tokio::{
     task::{JoinHandle, JoinSet},
 };
 
-pub(crate) const STREAM_QUEUE_CAPACITY: usize = 256;
+/// Room for log lines between a stream's task and the view, and the most the
+/// view takes in one turn. Turns come every 16 ms, so up to about 64,000
+/// lines a second reach the view, and one turn's append stays within a few
+/// milliseconds.
+pub(crate) const STREAM_QUEUE_CAPACITY: usize = 1024;
 pub(crate) const MAX_STREAM_SERVICES: usize = 16;
 const MAX_LINE_BYTES: usize = 64 * 1024;
 const MAX_TAIL_LINES: i32 = 1000;

@@ -1,6 +1,6 @@
 # Long lists
 
-A list that can outgrow a screen renders only the rows a frame can show. Fixed-height rows use `uniform_list`, which lays out one row and multiplies. Rows whose height depends on the width, such as wrapped log lines, use `VirtualList` with measured heights. During a live resize they measure only the rows on screen and catch up the rest once the width holds.
+A list that can outgrow a screen renders only the rows a frame can show. Fixed-height rows use `uniform_list`, which lays out one row and multiplies. Rows whose height depends on the width, such as wrapped log lines, use `VirtualList` with measured heights. During a live resize or a flood of new lines they measure only the rows on screen and catch up the rest once the width or the stream holds.
 
 ## Rules for every long list
 
@@ -18,7 +18,7 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 | --- | --- | --- | --- |
 | Resources page (Kubernetes kinds) | up to thousands of rows | `uniform_list` | Fine |
 | Processes, Storage, Network and Workloads tables | hundreds to thousands | `uniform_list` | Fine |
-| Log views (`LogView`: Talos logs and pod logs) | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)) |
+| Log views (`LogView`: Talos logs and pod logs) | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize or a flood of lines lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)); 10,000 lines a second keep up ([PERFORMANCE.md](PERFORMANCE.md#logs-keep-up-with-a-flood)) |
 | Detail pane YAML | thousands of lines for a large object | `uniform_list` of unwrapped lines, as wide as the longest line. A line draws at most 2,000 characters, and search marks at most 10,000 matches | Fine. Wrapping would need the measured approach below |
 | Detail pane Events and Overview | an object's events; its labels and annotations | plain children in a scroll area: the newest 200 events, at most 200 labels and 200 annotations | Fine while capped. The rest stay in the YAML |
 | Sidebar Custom Resources | one row per API group, tens on a typical cluster (58 on the live one), and the kinds of each open group | plain children of the sidebar's scroll area: at most 300 groups and 200 kinds per group, then a "more not shown" row. Labels, ids and tooltips are derived once when discovery answers | Fine while capped. A cluster with more groups would need the sidebar as a `uniform_list` |
@@ -66,10 +66,12 @@ It lives on the shared `LogView` in `crates/freshkube-desktop/src/logs/measure.r
 | Piece | What it does |
 | --- | --- |
 | `RowMeasurement` | A cached row size with the wrap width it was measured at, `None` when unwrapped |
-| `row_exact`, `settled`, `settle` | Whether each row is measured at the current geometry or keeps an old height as an estimate; whether a resize is in progress, and its timer |
+| `row_exact`, `settled`, `settle` | Whether each row is measured at the current geometry or keeps an old height as an estimate; whether a resize or a stream of new lines is in progress, and its timer (`defer_settling`) |
+| `mean_height` | The mean height of the rows measured at the current geometry: the estimate for new lines not yet measured |
 | `measure_rows` | Runs from `render`. Rebuilds sizes only when the measurement key changed, then settles the rows on screen. Once settled, it catches up the rest and requests another frame while estimates remain. It restores the scroll anchor only when a height changed |
 | `rebuild_sizes` | Only a rem, font or wrap-mode change clears the cache. A wrapped width change keeps old heights as estimates, sets `settled = false` and replaces the `RESIZE_SETTLE` (150 ms) timer; dropping the old `Task` cancels it. The batch fast path (`VisibleDelta::Extended`) survives a width change |
 | `measure_row` | The only place a row is laid out. Counts `probe::hit("logs.measure")` |
+| `apply_lines` | Drops the measurements of the lines the buffer evicted, by the ids it reports |
 | `settle_row` | Swaps one estimate for an exact height, from the cache when it already holds the current wrap width |
 | `measure_viewport` | Works out where the frame lands (the tail, a revealed row, the review anchor or the current offset) and settles one panel height of rows each way. The panel height bounds the viewport whatever toolbar and notices are open |
 | `remeasure_estimates` | Settles rows off screen for up to `REMEASURE_BUDGET` (8 ms) per frame. The buffer keeps up to 8 MiB (`MAX_RETAINED_BYTES`), too many lines for one frame |

@@ -1,12 +1,12 @@
-use std::{collections::BTreeSet, rc::Rc, time::Instant};
+use std::{rc::Rc, time::Instant};
 
 use gpui_kit::{
     AvailableSpace, Context, Pixels, Size, Window, component::ActiveTheme, prelude::*, px, size,
 };
 
 use super::{
-    LogSource, LogView, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE, RowMeasurement,
-    review::VisibleDelta,
+    LogSource, LogView, MeanHeight, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE,
+    RowMeasurement, review::VisibleDelta,
 };
 
 impl<S: LogSource> LogView<S> {
@@ -23,6 +23,7 @@ impl<S: LogSource> LogView<S> {
         if unchanged && !self.row_exact.contains(&false) {
             return;
         }
+        let mut estimated = false;
         if unchanged {
             // Only estimated rows are left: a scroll may have exposed some,
             // or the resize settled. Anchor on what is on screen now.
@@ -30,10 +31,15 @@ impl<S: LogSource> LogView<S> {
                 self.capture_anchor();
             }
         } else {
-            self.rebuild_sizes(&key, window, cx);
+            estimated = self.rebuild_sizes(&key, window, cx);
         }
         let mut changed = !unchanged;
         changed |= self.measure_viewport(&key, window, cx);
+        if estimated && self.row_exact.contains(&false) {
+            // Lines arrive faster than frames show them: measure the rest
+            // once they stop.
+            self.defer_settling(cx);
+        }
         if self.settled {
             changed |= self.remeasure_estimates(&key, window, cx);
             if self.row_exact.contains(&false) {
@@ -58,8 +64,15 @@ impl<S: LogSource> LogView<S> {
     }
 
     /// Rebuilds `sizes` for a new revision or geometry. Rows already
-    /// measured at another wrap width keep that height as an estimate.
-    fn rebuild_sizes(&mut self, key: &MeasurementKey, window: &mut Window, cx: &mut Context<Self>) {
+    /// measured at another wrap width keep that height as an estimate, and
+    /// rows never measured get the mean height. Returns whether any row
+    /// was never measured.
+    fn rebuild_sizes(
+        &mut self,
+        key: &MeasurementKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let previous = self.measured.as_ref();
         let measurements_stale = previous.is_none_or(|previous| {
             previous.rem != key.rem
@@ -73,30 +86,12 @@ impl<S: LogSource> LogView<S> {
         } else if resized && key.wrapped {
             // A live resize changes the width every frame; reshaping every
             // retained row each time is what made it sluggish.
-            self.settled = false;
-            self.settle = Some(cx.spawn(async move |weak, cx| {
-                cx.background_executor().timer(RESIZE_SETTLE).await;
-                let _ = weak.update(cx, |this, cx| {
-                    this.settled = true;
-                    cx.notify();
-                });
-            }));
+            self.defer_settling(cx);
+        }
+        if resized || measurements_stale {
+            self.mean_height = MeanHeight::default();
         }
         let delta = self.review.take_delta();
-        // Measurements of evicted lines are dead weight; sweep them only
-        // once they outnumber what could be live.
-        if self.row_measurements.len() > self.review.logs.buffer().entries().len() {
-            let _span = crate::perf::span("logs.sweep");
-            let retained: BTreeSet<_> = self
-                .review
-                .logs
-                .buffer()
-                .entries()
-                .iter()
-                .map(|entry| entry.sequence())
-                .collect();
-            self.row_measurements.retain(|id, _| retained.contains(id));
-        }
         // Rows that left the front and ones that joined the end are the
         // only changes between batches; the sizes in between still hold.
         let rows = self.review.visible.len();
@@ -137,15 +132,40 @@ impl<S: LogSource> LogView<S> {
             }
         };
         let wrap_width = key.wrapped.then_some(key.width);
+        // A row never measured is estimated until a frame shows it, so a
+        // flood of lines costs layout only for the rows on screen.
+        let estimate = match self.mean_height.get() {
+            Some(height) => height,
+            None if first_new < rows => self.measure_row(rows - 1, key, window, cx).height,
+            None => px(0.),
+        };
+        let mut estimated = false;
         for ix in first_new..rows {
             let (measured, exact) = match self.row_measurements.get(&self.review.id(ix)) {
                 Some(cached) => (cached.size, cached.wrap_width == wrap_width),
-                None => (self.measure_row(ix, key, window, cx), true),
+                None => {
+                    estimated = true;
+                    (size(px(0.), estimate), false)
+                }
             };
             self.row_widths.push(measured.width);
             self.row_exact.push(exact);
             Rc::make_mut(&mut self.sizes).push(size(key.width, measured.height));
         }
+        estimated
+    }
+
+    /// Holds off measuring rows off screen until nothing has changed the
+    /// rows' geometry or added rows for `RESIZE_SETTLE`.
+    fn defer_settling(&mut self, cx: &mut Context<Self>) {
+        self.settled = false;
+        self.settle = Some(cx.spawn(async move |weak, cx| {
+            cx.background_executor().timer(RESIZE_SETTLE).await;
+            let _ = weak.update(cx, |this, cx| {
+                this.settled = true;
+                cx.notify();
+            });
+        }));
     }
 
     /// Lays out row `ix` as the list draws it and caches its size.
@@ -170,6 +190,7 @@ impl<S: LogSource> LogView<S> {
         );
         let mut row = self.render_row(ix, true, cx).into_any_element();
         let measured = row.layout_as_root(available, window, cx);
+        self.mean_height.add(measured.height);
         self.row_measurements.insert(
             self.review.id(ix),
             RowMeasurement {

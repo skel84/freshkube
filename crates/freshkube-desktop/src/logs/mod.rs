@@ -119,8 +119,28 @@ struct RowMeasurement {
     size: Size<Pixels>,
 }
 
-/// How long a wrapped pane's width must hold before rows off screen are
-/// remeasured. Until then a live resize lays out only the rows it shows.
+/// The mean height of the rows measured at the current geometry: the
+/// estimate for a row the frame hasn't shown yet.
+#[derive(Clone, Copy, Default)]
+struct MeanHeight {
+    total: f32,
+    rows: u32,
+}
+
+impl MeanHeight {
+    fn add(&mut self, height: Pixels) {
+        self.total += f32::from(height);
+        self.rows += 1;
+    }
+
+    fn get(&self) -> Option<Pixels> {
+        (self.rows > 0).then(|| px(self.total / self.rows as f32))
+    }
+}
+
+/// How long a wrapped pane's width, or a stream of new lines, must hold
+/// before rows off screen are measured. Until then a frame lays out only the
+/// rows it shows.
 const RESIZE_SETTLE: Duration = Duration::from_millis(150);
 /// Main-thread time per frame for remeasuring rows off screen.
 const REMEASURE_BUDGET: Duration = Duration::from_millis(8);
@@ -210,9 +230,12 @@ pub(crate) struct LogView<S: LogSource> {
     row_widths: Vec<Pixels>,
     row_measurements: BTreeMap<u64, RowMeasurement>,
     /// Whether each row in `sizes` is measured at the current geometry.
-    /// The others keep their last height as an estimate.
+    /// The others keep their last height, or a row never measured the mean
+    /// height, as an estimate.
     row_exact: Vec<bool>,
-    /// Whether estimated rows may be remeasured: no resize is in progress.
+    mean_height: MeanHeight,
+    /// Whether estimated rows off screen may be measured: neither a resize
+    /// nor a stream of new lines is in progress.
     settled: bool,
     settle: Option<Task<()>>,
     unwrapped_width: Pixels,
@@ -287,6 +310,7 @@ impl<S: LogSource> LogView<S> {
             manual_review: Rc::new(Cell::new(false)),
             row_measurements: BTreeMap::new(),
             row_exact: Vec::new(),
+            mean_height: MeanHeight::default(),
             settled: true,
             settle: None,
             unwrapped_width: px(0.),
@@ -346,7 +370,9 @@ impl<S: LogSource> LogView<S> {
         self.last_applied = cx.background_executor().now();
         self.apply_manual_review(cx);
         self.capture_anchor();
-        self.review.append(lines);
+        for id in self.review.append(lines) {
+            self.row_measurements.remove(&id);
+        }
         if self.following {
             self.pending_reveal = self.last_row_id();
         }

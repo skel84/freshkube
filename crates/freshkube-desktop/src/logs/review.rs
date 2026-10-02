@@ -83,7 +83,9 @@ impl LogReview {
         }
     }
 
-    pub(super) fn append(&mut self, events: impl IntoIterator<Item = LogEvent>) {
+    /// Appends a batch and returns the identities of the lines retention
+    /// evicted to make room.
+    pub(super) fn append(&mut self, events: impl IntoIterator<Item = LogEvent>) -> Vec<u64> {
         let mut accepted = Vec::new();
         for event in events {
             if event.line.len() > MAX_LINE_BYTES {
@@ -112,8 +114,9 @@ impl LogReview {
         }
         let evicted = outcome.evicted.len();
         self.evicted += evicted;
+        let gone: Vec<u64> = outcome.evicted.iter().map(LogEntry::sequence).collect();
         if evicted > 0 {
-            let gone: HashSet<u64> = outcome.evicted.iter().map(LogEntry::sequence).collect();
+            let gone: HashSet<u64> = gone.iter().copied().collect();
             self.selected.retain(|id| !gone.contains(id));
             self.cursor = self.cursor.filter(|id| !gone.contains(id));
             self.selection_anchor = self.selection_anchor.filter(|id| !gone.contains(id));
@@ -150,6 +153,7 @@ impl LogReview {
         } else {
             self.rebuild_visible();
         }
+        gone
     }
 
     fn rebuild_visible(&mut self) {
@@ -489,7 +493,9 @@ mod model_tests {
         review.append((0..128).map(|_| LogEvent::new("apid", "x".repeat(MAX_LINE_BYTES))));
         review.select(127, false, false);
         let survivor = review.id(127);
-        review.append((0..72).map(|_| LogEvent::new("kubelet", "y".repeat(MAX_LINE_BYTES))));
+        let gone =
+            review.append((0..72).map(|_| LogEvent::new("kubelet", "y".repeat(MAX_LINE_BYTES))));
+        assert_eq!(gone, (0..72).collect::<Vec<u64>>());
         assert_eq!(review.logs.buffer().entries().len(), 128);
         assert_eq!(review.evicted, 72);
         assert_eq!(review.row_for_id(0), None);

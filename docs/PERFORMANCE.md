@@ -41,7 +41,6 @@ The `stress` feature turns on spans around the work that matters (`crate::perf`)
 | `logs.lag` | how far behind its due time the newest line of a batch is when it is appended |
 | `logs.measure`, `logs.measure_row` | laying out log rows for their heights, per frame and per row |
 | `logs.chrome` | laying out the log toolbar and notices |
-| `logs.sweep` | dropping the measurements of evicted lines |
 
 When a number looks wrong, profile the run with macOS `sample`:
 
@@ -92,6 +91,20 @@ Memory stayed flat in every run: resident memory held between 90 and 115 MB thro
 ## Fixes
 
 Each fix is its own commit, with the workload that showed the problem run again after it.
+
+### Logs keep up with a flood
+
+A log view now lays out only the new lines a frame can show, as it already did during a resize, and gives the rest the mean height of the rows measured so far. Once lines stop arriving for 150 ms it measures the rest within its 8 ms a frame. Both log sources hand the view up to 1,024 lines a turn instead of 64, and the buffer reports the lines it evicts, so their measurements are dropped without a pass over every retained line.
+
+| Workload | Lines appended a second, before | After | Behind: median / 99th / max, after | Render median, after | CPU, after |
+| --- | --- | --- | --- | --- | --- |
+| Pod log, 10,000 a second | 1,970 | 10,300 | 6 ms / 10–70 ms / 113 ms | 9 | 100% |
+| Pod log, 50,000 a second | 2,020 | 34,900 | 4.0 s / 8.4 s / 8.4 s, growing | 5.7 | 103% |
+| Talos logs, 10,000 a second | 1,720 | 10,630 | 7 ms / 42 ms / 83 ms | 11.4 | 45% |
+
+At 10,000 lines a second both logs keep up, a few milliseconds behind. At 50,000 every turn takes the full 1,024 lines and the pod log falls behind by about 0.3 s a second. Memory held between 74 and 116 MB.
+
+The main thread is still busy throughout a flood: frames come about 15 times a second, and a key press can wait up to about 130 ms. A profile of the Talos run put 35% of the main thread in `CAMetalLayer nextDrawable`, waiting for the GPU to hand back a drawable, 23% shaping the text of new rows on screen, about 27% in GPUI's layout and paint, and 5% appending lines. Shaping is the cost of drawing new text at all; the drawable wait is inside GPUI's Metal renderer.
 
 ### A first list no longer stops the window
 

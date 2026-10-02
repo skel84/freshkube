@@ -26,7 +26,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use super::{Columns, LogSource, LogView};
-use crate::backend::OwnedJob;
+use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example, live};
 use crate::ui::Tone;
@@ -624,7 +624,7 @@ impl LogView<PodLogs> {
             tail: self.source.tail,
             resume,
         };
-        let (sender, mut receiver) = mpsc::channel(256);
+        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
         let job = self.source.runtime.spawn(async move {
             match access.client().await {
                 Ok(client) => follow_pod_log(client, request, sender).await,
@@ -639,9 +639,9 @@ impl LogView<PodLogs> {
         self.source.delivery = Some(cx.spawn(async move |weak, cx| {
             while let Some(first) = receiver.recv().await {
                 let mut batch = vec![first];
-                // At most 64 updates per turn, then yield, however busy
+                // At most a full queue per turn, then yield, however busy
                 // the container.
-                for _ in 1..64 {
+                for _ in 1..STREAM_QUEUE_CAPACITY {
                     let Ok(update) = receiver.try_recv() else {
                         break;
                     };
