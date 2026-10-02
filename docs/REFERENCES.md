@@ -34,7 +34,7 @@ The inspected Kit manifest declares version 0.7.0 and the workspace pins matchin
 | Pod list and detail | [Resource commands](../../Kubeli/src-tauri/src/commands/resources.rs) | Extract only required operations and mappers from the large command module |
 | Watches | [Watch commands](../../Kubeli/src-tauri/src/commands/watch.rs) | Retain cancellation and initial/resync behavior; replace Tauri emission with bounded transport |
 | Logs | [Log commands](../../Kubeli/src-tauri/src/commands/logs.rs) | Retain container selection, previous logs, batching, and terminal events; define retention in the native view |
-| Exec | [Shell commands](../../Kubeli/src-tauri/src/commands/shell.rs) | Separate pod exec from node-debug workflows; preserve byte ordering, input, resize, and cleanup |
+| Exec | [Shell commands](../../Kubeli/src-tauri/src/commands/shell.rs) | Separate pod exec from node-debug workflows; preserve byte ordering, input, resize, and cleanup. Report Connected only after exec succeeds, send the first terminal size, and read the exit status ([POD_EXEC.md](POD_EXEC.md#references)) |
 | Errors | [Structured error mapping](../../Kubeli/src-tauri/src/error.rs) | Keep failure categories available to the UI rather than reducing every error to a string |
 | Port forwarding | [Forwarding commands](../../Kubeli/src-tauri/src/commands/portforward.rs) | Later feature; separate session ownership from selected cluster |
 | Metrics | [Metrics commands](../../Kubeli/src-tauri/src/commands/metrics.rs) | Later feature; metrics API access does not provide historical provider queries |
@@ -71,6 +71,8 @@ Current Rubick already includes substantive Cilium and CloudNativePG behavior. A
 The checked-in [Kubeli license](../../Kubeli/LICENSE) is MIT. [GPUI Kit's manifest](../../gpui-kit/crates/kit/Cargo.toml) declares Apache-2.0. [Rubick's licensing history](../../rubick/LICENSE-HISTORY.md) records MIT releases through 3.1.0 and GPL-3.0-or-later afterward. This records source metadata, not a legal review of a future distribution.
 
 Freshkube inherits talos-pilot's MIT license. When reusing Kubeli implementation, retain applicable copyright/license notices and record source revision, path, adaptations, and associated tests in a NOTICE file created with the first extraction. So far only Kubeli's sidebar grouping has been followed; no code has been taken.
+
+Pod exec will depend on `alacritty_terminal` (Apache-2.0) as a library. Ship its licence text with the app's notices when it lands. `gpui_xterm` (MIT) is read for its approach to drawing the grid, not copied ([POD_EXEC.md](POD_EXEC.md)).
 
 Study current Rubick to understand behavior, then implement future features from Kubernetes/operator specifications and independently constructed fixtures. Do not copy its current implementation, tests, or documentation into the proposed permissive codebase. Reuse of an older MIT release requires verifying the exact source and its license; it is not part of the current plan.
 

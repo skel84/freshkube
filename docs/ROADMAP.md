@@ -6,7 +6,7 @@ What has landed, what comes next and in what order. Update this file in the same
 
 These hold for every step until a later one deliberately changes them.
 
-- **Read-only Kubernetes.** The app lists, watches, gets and streams logs. Changing the cluster waits for a reviewed change workflow ([F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes)). Talos node operations stay on the Operations page behind their own preflight and confirmation.
+- **Read-only Kubernetes.** The app lists, watches, gets and streams logs. Changing the cluster waits for a reviewed change workflow ([F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes)). Talos node operations stay on the Operations page behind their own preflight and confirmation. The one exception is pod exec, once it lands: a shell starts only from an explicit Start on a chosen pod and container ([POD_EXEC.md](POD_EXEC.md#decisions)).
 - **The chosen context only.** Connect to the context the user named, or the one the kubeconfig marks as current. When a named context is missing, report it; never swap in another.
 - **Identity, not position.** Rows and documents are identified by connection, resource, namespace, name and UID. A response for another selection or object incarnation is dropped.
 - **Honest states.** Loading, loaded, refused, failed and stale are distinct. An unreadable collection is never shown as empty, and failed refreshes keep the previous data marked stale.
@@ -45,7 +45,7 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 
 These come from the GPUI evaluation plan (G09–G12) and the follow-ups it listed.
 
-- **Pod exec.** Settle feasibility first: pick a terminal emulator and renderer, check its license and test it with synthetic byte streams. Then add exec on an explicitly chosen pod and container. Node-debug pods stay out.
+- **Pod exec.** A Shell tab in a pod's pane, on an explicitly chosen container; node-debug pods stay out. Feasibility is settled: `alacritty_terminal` (Apache-2.0) with our own GPUI drawing keeps 60 frames a second through a 5 MB/s stream. The decisions and the four-step build order are in [POD_EXEC.md](POD_EXEC.md). Its live check writes to the cluster, so it waits for the user's go-ahead on a pod they name.
 - **GPUI Kit evaluation.** A short report from the [friction log](GPUI_FRICTION.md): what the toolkit served well, what it cost, and whether to continue, contribute upstream or limit scope.
 - **Follow-ups**, each promoted to a step with acceptance criteria when it enters scope:
   - logs of several containers, or of a workload's pods, in one view: the same `LogView` with several sources and its source filter;
