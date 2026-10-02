@@ -126,7 +126,7 @@ Core gets `kubernetes_summary.rs`. It provides `collect_kubernetes_summary(clien
   - In Talos mode it reads through `LiveSource::kubernetes()`, in Kubernetes-only mode through the context's `DirectAccess`.
   - Display rows are built on Tokio, as first lists are today, so the main thread only swaps them in.
 - **Health reads the summary's workloads** instead of making its own lists. So it also works in Kubernetes-only mode, and the two never disagree.
-- **Cost gate.** `scripts/stress.sh` gains a `summary` workload: the synthetic API serves 20,000 pods, 2,000 deployments and 5,000 warning events. `docs/PERFORMANCE.md` records the time on Tokio, the main-thread time per refresh (budget 16 ms) and the memory. If it misses the budget, the step stops and reports instead of shipping.
+- **Cost gate.** `scripts/stress.sh` gains a `summary` workload: the synthetic API serves 20,000 pods, 2,000 deployments and 5,000 warning events. `docs/PERFORMANCE.md` records the time on Tokio, the main-thread time per refresh (budget 16 ms) and the memory. If it misses the budget, the summary refreshes only while Overview, Nodes or Health shows, the badges keep their last value marked stale, and PERFORMANCE.md says why.
 
 ### Nodes and the node pane
 
