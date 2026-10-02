@@ -243,9 +243,11 @@ impl Pilot {
                         kube.connection = KubeConnection::Failed(error);
                     }
                 }
+                view.prepare_context_display(window, cx);
                 cx.notify();
             });
         }));
+        self.prepare_context_display(window, cx);
         cx.notify();
     }
 

@@ -73,6 +73,7 @@ actions!(
 struct LifecycleView {
     snapshot: LifecycleSnapshot,
     kubelets: SourceSnapshot<Vec<KubeletEntry>>,
+    display: LifecycleDisplay,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,7 +147,7 @@ impl ScreenPanel for LifecycleScreen {
             return;
         }
         let Some(live) = source.live.clone() else {
-            self.loader.resolve(source.target.clone(), example(&source));
+            self.resolve(source.target.clone(), example(&source));
             cx.notify();
             return;
         };
@@ -167,7 +168,12 @@ impl ScreenPanel for LifecycleScreen {
                     // The reused client failed; revalidate and rebuild next time.
                     live.forget_kubernetes();
                 }
-                Ok(LifecycleView { snapshot, kubelets })
+                Ok(LifecycleView {
+                    snapshot,
+                    kubelets,
+                    display: Default::default(),
+                }
+                .prepare())
             },
             |screen: &mut Self| &mut screen.loader,
             cx,
@@ -834,12 +840,15 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 
 impl LifecycleScreen {
     fn rows_and_alerts(&self) -> (Vec<NodeRow>, Vec<AlertRow>) {
-        let Some(view) = self.loader.data() else {
-            return (Vec::new(), Vec::new());
-        };
-        let rows = node_rows(view);
-        let alerts = alert_rows(view, &rows);
-        (rows, alerts)
+        self.loader
+            .data()
+            .map(|view| (view.display.rows.clone(), view.display.alerts.clone()))
+            .unwrap_or_default()
+    }
+
+    fn resolve(&mut self, target: crate::backend::Target, result: Result<LifecycleView, String>) {
+        self.loader
+            .resolve(target, result.map(LifecycleView::prepare));
     }
 
     /// Nodes first, then alerts: the order they appear in.
@@ -876,9 +885,9 @@ impl LifecycleScreen {
     }
 
     fn can_target(&self, node: &str) -> bool {
-        self.source.as_ref().is_some_and(|source| {
-            source.target.node != node && source.nodes.iter().any(|known| known.name == node)
-        })
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.nodes.iter().any(|known| known.name == node))
     }
 }
 
@@ -889,3 +898,61 @@ use example::example;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod ui_tests;
+
+#[derive(Clone, Debug, Default)]
+struct LifecycleDisplay {
+    rows: Vec<NodeRow>,
+    alerts: Vec<AlertRow>,
+    missing: Vec<String>,
+    summary_labels: [String; 3],
+}
+impl LifecycleView {
+    fn prepare(mut self) -> Self {
+        self.display.rows = node_rows(&self);
+        self.display.alerts = alert_rows(&self, &self.display.rows);
+        self.display.missing = unavailable_sources(&self, &self.display.rows);
+        fn distinct(values: impl Iterator<Item = String>) -> String {
+            let mut values: Vec<_> = values.collect();
+            values.sort();
+            values.dedup();
+            if values.is_empty() {
+                "not reported".into()
+            } else {
+                values.join(", ")
+            }
+        }
+        let warnings = self
+            .display
+            .alerts
+            .iter()
+            .filter(|alert| {
+                matches!(
+                    alert.health,
+                    HealthIndicator::Warning | HealthIndicator::Error
+                )
+            })
+            .count();
+        self.display.summary_labels = [
+            distinct(
+                self.display
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.talos.as_ref().ok().cloned()),
+            ),
+            distinct(
+                self.display
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.kubelet.as_ref().ok().cloned()),
+            ),
+            if self.display.alerts.is_empty() {
+                "none".into()
+            } else if warnings == self.display.alerts.len() {
+                warnings.to_string()
+            } else {
+                format!("{} ({warnings} to review)", self.display.alerts.len())
+            },
+        ];
+        self
+    }
+}

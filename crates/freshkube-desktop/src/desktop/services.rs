@@ -40,6 +40,12 @@ struct RestartNotices(Option<RestartNotice>);
 
 impl Global for RestartNotices {}
 
+#[derive(Default)]
+pub(super) struct ServiceDisplay {
+    pub(super) visible: Vec<talos_rs::ServiceInfo>,
+    pub(super) labels: [SharedString; 3],
+}
+
 impl Pilot {
     pub(super) fn render_services(
         &mut self,
@@ -64,7 +70,7 @@ impl Pilot {
             return ui::empty_state(
                 IconName::Server,
                 "No node selected",
-                "Pick a target node in the title bar to see its services.",
+                "Open a node in Nodes to see its services.",
                 None,
                 Vec::new(),
                 cx,
@@ -76,7 +82,7 @@ impl Pilot {
                 IconName::Unplug,
                 format!("{} isn't responding", node.name),
                 format!(
-                    "Services need the Talos API at {}:50000. Pick another target node in the title bar, or wait for the next refresh.",
+                    "Services need the Talos API at {}:50000. Open another node in Nodes, or wait for the next refresh.",
                     node.address
                 ),
                 None,
@@ -93,24 +99,7 @@ impl Pilot {
             .into_any_element();
         }
         let all = self.services.data().cloned().unwrap_or_default();
-        let visible = self.visible_services(cx);
-        let count = |health: Health| {
-            all.iter()
-                .filter(|service| presentation::service_health(service) == health)
-                .count()
-        };
-        let (unhealthy_count, unknown_count) = (count(Health::Unhealthy), count(Health::Unknown));
-        let elsewhere = self
-            .nodes
-            .iter()
-            .filter(|other| other.name != node.name && other.responding)
-            .flat_map(|other| {
-                other
-                    .unhealthy_services()
-                    .map(|service| (other.name.clone(), service.id.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+        let visible = self.service_display.visible.clone();
         let header = h_flex()
             .items_end()
             .gap_3()
@@ -159,50 +148,6 @@ impl Pilot {
                     .disabled(self.services.is_loading() || self.selected_node.is_none())
                     .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
             );
-        let notice = (self.page != Page::Nodes)
-            .then(|| elsewhere.first().cloned())
-            .flatten()
-            .map(|(other, service)| {
-                let more = elsewhere.len() - 1;
-                let target = other.clone();
-                let chosen = service.clone();
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .px_3()
-                    .py_2()
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(p.line)
-                    .bg(p.surface)
-                    .text_size(dp(12.5))
-                    .child(
-                        Icon::new(IconName::CircleX)
-                            .size(dp(15.))
-                            .text_color(p.crit_ink),
-                    )
-                    .child(
-                        div()
-                            .font_family(MONO_FONT)
-                            .text_size(dp(12.))
-                            .child(service),
-                    )
-                    .child("is unhealthy on")
-                    .child(div().font_family(MONO_FONT).text_size(dp(12.)).child(other))
-                    .when(more > 0, |this| this.child(format!("and {more} more")))
-                    .child(
-                        Button::new("show-other-unhealthy")
-                            .link()
-                            .small()
-                            .label("Show it")
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                view.health_filter = HealthFilter::All;
-                                view.select_node_by_name(target.clone(), window, cx);
-                                view.selected_service = Some(chosen.clone());
-                                cx.notify();
-                            })),
-                    )
-            });
         let filter = self.health_filter;
         let toolbar = h_flex()
             .gap_2p5()
@@ -222,17 +167,17 @@ impl Pilot {
                     .small()
                     .child(
                         Button::new("health-all")
-                            .label(format!("All {}", all.len()))
+                            .label(self.service_display.labels[0].clone())
                             .selected(filter == HealthFilter::All),
                     )
                     .child(
                         Button::new("health-unhealthy")
-                            .label(format!("Unhealthy {unhealthy_count}"))
+                            .label(self.service_display.labels[1].clone())
                             .selected(filter == HealthFilter::Unhealthy),
                     )
                     .child(
                         Button::new("health-unknown")
-                            .label(format!("Not reported {unknown_count}"))
+                            .label(self.service_display.labels[2].clone())
                             .selected(filter == HealthFilter::Unknown),
                     )
                     .on_click(cx.listener(|view, selected: &Vec<usize>, _, cx| {
@@ -241,6 +186,7 @@ impl Pilot {
                             Some(2) => HealthFilter::Unknown,
                             _ => HealthFilter::All,
                         };
+                        view.rebuild_service_rows(cx);
                         cx.notify();
                     })),
             );
@@ -360,7 +306,6 @@ impl Pilot {
                         )
                     }),
             )
-            .children(notice)
             .child(toolbar)
             .child(split);
         self.page_scroll("services-page")

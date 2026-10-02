@@ -41,7 +41,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `services`, `logs`, `processes`, `storage`, `network`, `diagnostics`, `etcd`, `workloads`, `security`, `lifecycle`, `resources`, `operations`). `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
 
 ## Cluster safety
 
@@ -283,7 +283,7 @@ DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
 
 ## Kubernetes resources
 
-`resources/` browses Kubernetes kinds on one `Page::Resources`; the sidebar's KUBERNETES groups pick the kind. It is not a `ScreenPanel`: it doesn't follow the target node, the shell owns it directly and tells it when it is visible, and only a visible page lists and watches. Rows are the server-printed table (wide columns hidden, Age computed locally) and are selected by identity (connection, resource, namespace, name, UID), never by position. The shell's automatic refresh never restarts the watch; only Refresh lists again.
+`resources/` browses Kubernetes kinds on one `Page::Resources`; the sidebar's Resources groups pick the kind. It is not a `ScreenPanel`: it doesn't follow the target node, the shell owns it directly and tells it when it is visible, and only a visible page lists and watches. Rows are the server-printed table (wide columns hidden, Age computed locally) and are selected by identity (connection, resource, namespace, name, UID), never by position. The shell's automatic refresh never restarts the watch; only Refresh lists again.
 
 The sidebar's Custom Resources section is `resources/custom.rs`, an entity the shell owns. It discovers the API groups when the section opens and a group's kinds when the group opens, keeps what it found until the connection changes or the user retries, and reads nothing while closed. It derives the rows' labels, ids and tooltips when an answer arrives, so the sidebar's `render` only reads them. A failed group shows why, never an empty group. When the page's kind answers 404, the screen shows it as not served and emits `NotServed`, and the group is discovered again.
 
@@ -299,7 +299,7 @@ The keyboard follows one path through the page, and each level owns a key contex
 
 ## Adding a screen
 
-1. Add the page to `Page` (`desktop/pages.rs`): `ALL`, `SCREENS` if it is a `ScreenPanel`, its slug, sidebar entry and shortcut.
+1. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, sidebar entry and shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
 2. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
 3. Put cluster logic in `freshkube-core` and keep the screen to presentation.
 4. Add UI tests for loading, empty, failure and the main interactions.
@@ -356,3 +356,5 @@ cargo test --workspace
 ---
 
 The Nodes workspace (`desktop/nodes/`) joins both summaries when they change. Its retained pane embeds the existing node screens and log view. Its Pods list has its own field selector and filter, drops a previous node's watch by epoch, and opens objects in the main Resources pane. Node Events and YAML use a separate resource pane limited to those views.
+
+The sidebar groups Cluster (Overview, Nodes, Namespaces and Events), Resources (Health first under Workloads), and Control plane (etcd, System services, Security, Lifecycle and Operations). Command-1 through Command-9 follow the numbered rows; Control-Tab also visits the last other kind. Kubernetes-only mode starts on Overview and skips Control plane. Node inspection and service logs live in the node pane; the context switcher sits above navigation and Settings holds the app version. `ScreenKind` retains the inspection panels independently of `Page`.

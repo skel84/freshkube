@@ -406,6 +406,7 @@ impl Pilot {
                     .min_w_0()
                     .font_family(MONO_FONT)
                     .text_size(dp(20.))
+                    .truncate()
                     .child(row.name.clone()),
             )
             .child(ui::tag(row.tone, None, row.ready, cx))
@@ -433,8 +434,11 @@ impl Pilot {
             .id("node-tabs")
             .key_context("NodeWorkspaceTabs")
             .track_focus(&self.node_workspace.tab_focus)
+            .tab_index(0)
             .gap(dp(4.))
-            .flex_wrap()
+            .flex_none()
+            .overflow_x_scroll()
+            .track_scroll(&self.node_workspace.tab_scroll)
             .children(self.node_workspace.inline_tabs.iter().map(|tab| {
                 Button::new(tab.id())
                     .small()
@@ -444,6 +448,7 @@ impl Pilot {
                         tab.label().into()
                     })
                     .selected(*tab == self.node_workspace.tab)
+                    .toggled(*tab == self.node_workspace.tab)
                     .when(
                         *tab == NodeTab::Logs && self.logs.read(cx).collecting_count() > 0,
                         |this| {
@@ -465,7 +470,6 @@ impl Pilot {
                         let tab = *tab;
                         move |view, _, window, cx| {
                             view.show_node_tab(tab, window, cx);
-                            window.focus(&view.node_workspace.tab_focus, cx);
                         }
                     }))
             }))
@@ -507,11 +511,17 @@ impl Pilot {
             .pl(dp(12.))
             .child(header)
             .child(
-                h_flex().gap(dp(6.)).flex_wrap().children(
-                    row.chips
-                        .iter()
-                        .map(|chip| ui::tag(ui::Tone::Outline, None, chip.clone(), cx)),
-                ),
+                h_flex()
+                    .id("node-chips")
+                    .flex_none()
+                    .h(dp(26.))
+                    .overflow_x_scroll()
+                    .gap(dp(6.))
+                    .children(
+                        row.chips
+                            .iter()
+                            .map(|chip| ui::tag(ui::Tone::Outline, None, chip.clone(), cx)),
+                    ),
             )
             .child(tabs)
             .child(div().flex_1().min_h_0().child(body))

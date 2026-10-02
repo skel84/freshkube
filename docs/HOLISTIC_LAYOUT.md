@@ -381,3 +381,7 @@ These have a default, so they don't block a step. Change one only by updating th
 
 - **Nodes starts in Table view.** It matches screen 02; the Cards toggle keeps the load history and memory bars in a virtualized grid.
 - **Node Events and YAML** use an embedded `DetailPane` with its own header and tab strip hidden; reads run only on those tabs.
+
+- **Context rows** use a 360 dp popover with wrapped full names. Clicking a node tab focuses its content; the tab strip remains in the keyboard order for arrow navigation.
+
+- **Narrow node headers** keep chips and tabs in horizontally scrolling rows, so the inspection view retains height at the minimum window size and at 20 px. Keyboard tab changes reveal the active button.

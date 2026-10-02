@@ -978,6 +978,7 @@ impl Render for ProcessesScreen {
         };
         v_flex()
             .id("processes-page")
+            .test_support()
             .size_full()
             .min_h_0()
             .overflow_y_scroll()

@@ -8,7 +8,7 @@ pub(crate) struct NavGroup {
     pub(crate) items: &'static [(&'static str, &'static str)],
 }
 
-pub(crate) const NAVIGATION: [NavGroup; 7] = [
+pub(crate) const NAVIGATION: [NavGroup; 6] = [
     NavGroup {
         label: "Workloads",
         slug: "workloads",
@@ -20,16 +20,6 @@ pub(crate) const NAVIGATION: [NavGroup; 7] = [
             ("StatefulSets", "statefulsets.apps"),
             ("Jobs", "jobs.batch"),
             ("CronJobs", "cronjobs.batch"),
-        ],
-    },
-    NavGroup {
-        label: "Cluster",
-        slug: "cluster",
-        items: &[
-            ("Nodes", "nodes"),
-            ("Events", "events"),
-            ("Namespaces", "namespaces"),
-            ("Leases", "leases.coordination.k8s.io"),
         ],
     },
     NavGroup {
@@ -110,15 +100,25 @@ pub(crate) const NAVIGATION: [NavGroup; 7] = [
                 "Validating Admission Policy Bindings",
                 "validatingadmissionpolicybindings.admissionregistration.k8s.io",
             ),
+            ("Leases", "leases.coordination.k8s.io"),
         ],
     },
 ];
 
 /// The page a fresh window shows for Kubernetes.
+pub(crate) const CLUSTER: [(&str, &str); 3] = [
+    ("Nodes", "nodes"),
+    ("Namespaces", "namespaces"),
+    ("Events", "events"),
+];
+
 pub(crate) const DEFAULT_KIND: &str = "pods";
 
 /// The navigation's own copy of a resource key, if it offers that kind.
 pub(crate) fn known(key: &str) -> Option<&'static str> {
+    if let Some((_, key)) = CLUSTER.iter().find(|(_, item)| *item == key) {
+        return Some(*key);
+    }
     NAVIGATION
         .iter()
         .flat_map(|group| group.items.iter())
@@ -128,6 +128,9 @@ pub(crate) fn known(key: &str) -> Option<&'static str> {
 
 /// The navigation label for a resource key.
 pub(crate) fn label(key: &str) -> Option<&'static str> {
+    if let Some((label, _)) = CLUSTER.iter().find(|(_, item)| *item == key) {
+        return Some(*label);
+    }
     NAVIGATION
         .iter()
         .flat_map(|group| group.items.iter())
@@ -156,6 +159,10 @@ mod tests {
                 assert!(builtin(key).is_some(), "{label}: {key}");
                 assert!(keys.insert(*key), "duplicate {key}");
             }
+        }
+        for (_, key) in CLUSTER {
+            assert!(builtin(key).is_some());
+            assert!(keys.insert(key));
         }
         assert_eq!(keys.len(), 40);
         assert_eq!(label(DEFAULT_KIND), Some("Pods"));

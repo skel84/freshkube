@@ -43,7 +43,7 @@ impl NodeTab {
             Self::Yaml => "YAML",
         }
     }
-    fn id(self) -> &'static str {
+    pub(super) fn id(self) -> &'static str {
         match self {
             Self::Overview => "node-tab-overview",
             Self::Pods => "node-tab-pods",
@@ -57,12 +57,12 @@ impl NodeTab {
             Self::Yaml => "node-tab-yaml",
         }
     }
-    pub(super) fn page(self) -> Option<Page> {
+    pub(super) fn screen(self) -> Option<super::pages::ScreenKind> {
         match self {
-            Self::Processes => Some(Page::Processes),
-            Self::Storage => Some(Page::Storage),
-            Self::Network => Some(Page::Network),
-            Self::Diagnostics => Some(Page::Diagnostics),
+            Self::Processes => Some(super::pages::ScreenKind::Processes),
+            Self::Storage => Some(super::pages::ScreenKind::Storage),
+            Self::Network => Some(super::pages::ScreenKind::Network),
+            Self::Diagnostics => Some(super::pages::ScreenKind::Diagnostics),
             _ => None,
         }
     }
@@ -80,6 +80,7 @@ pub(super) struct Nodes {
     more: bool,
     view: NodeView,
     tab_focus: FocusHandle,
+    tab_scroll: ScrollHandle,
     scroll: UniformListScrollHandle,
     split: Entity<ResizableState>,
     pub(super) document: Entity<DetailPane>,
@@ -106,6 +107,7 @@ impl Nodes {
             more: false,
             view: NodeView::Table,
             tab_focus: cx.focus_handle(),
+            tab_scroll: ScrollHandle::new(),
             scroll: UniformListScrollHandle::new(),
             split: cx.new(|_| ResizableState::default()),
             document: cx.new(|cx| DetailPane::new(runtime, window, cx)),
@@ -152,6 +154,28 @@ impl Nodes {
 }
 
 impl Pilot {
+    pub(super) fn open_node_by_name(
+        &mut self,
+        name: &str,
+        tab: NodeTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(key) = self
+            .node_workspace
+            .rows
+            .iter()
+            .find(|row| {
+                row.key.talos.as_deref() == Some(name)
+                    || row.key.kubernetes.as_deref() == Some(name)
+            })
+            .map(|row| row.key.clone())
+        {
+            self.open_node(key, window, cx);
+            self.show_node_tab(tab, window, cx);
+        }
+    }
+
     pub(super) fn rebuild_joined_nodes(&mut self) {
         let kubernetes = self
             .kubernetes_summary
@@ -229,6 +253,14 @@ impl Pilot {
             return;
         }
         self.node_workspace.tab = tab;
+        if let Some(index) = self
+            .node_workspace
+            .inline_tabs
+            .iter()
+            .position(|candidate| *candidate == tab)
+        {
+            self.node_workspace.tab_scroll.scroll_to_item(index);
+        }
         self.activate_node_tab(window, cx);
         cx.notify();
     }
@@ -249,10 +281,7 @@ impl Pilot {
             )
         });
         self.logs.update(cx, |logs, cx| {
-            logs.set_visible(
-                self.page == Page::Logs || (shown && self.node_workspace.tab == NodeTab::Logs),
-                cx,
-            )
+            logs.set_visible(shown && self.node_workspace.tab == NodeTab::Logs, cx)
         });
     }
 
@@ -291,7 +320,14 @@ impl Pilot {
             screen.set_embedded(true, cx);
             screen.activate(window, cx);
         }
-        window.focus(&self.node_focus, cx);
+        if self.node_workspace.tab == NodeTab::Logs {
+            self.logs
+                .update(cx, |logs, cx| logs.focus_lines(window, cx));
+        } else if let Some(screen) = self.active_screen() {
+            screen.focus(window, cx);
+        } else {
+            window.focus(&self.node_focus, cx);
+        }
     }
 
     pub(super) fn step_joined_node(

@@ -165,6 +165,9 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
         assert!(!pilot.read(cx).node_workspace.expanded);
         window.click("node-tab-processes", cx);
         window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            window.focus(&pilot.node_workspace.tab_focus, cx)
+        });
         window.press("right", cx);
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Storage);

@@ -10,7 +10,7 @@ impl Render for Pilot {
                 .cached(cached_page_style())
                 .into_any_element(),
             _ if self.kubernetes_only.is_some()
-                && !matches!(self.page, Page::Workloads | Page::Nodes) =>
+                && !matches!(self.page, Page::Overview | Page::Health | Page::Nodes) =>
             {
                 self.render_needs_talosconfig(cx)
             }
@@ -24,12 +24,12 @@ impl Render for Pilot {
                 .clone()
                 .cached(cached_page_style())
                 .into_any_element(),
-            Page::Services => self
+            Page::SystemServices => self
                 .services_page
                 .clone()
                 .cached(cached_page_style())
                 .into_any_element(),
-            Page::Logs => self.render_logs_page(),
+
             // Screens redraw when their own state changes, not with the shell.
             _ => self
                 .active_screen()
@@ -43,38 +43,32 @@ impl Render for Pilot {
             .key_context("Freshkube")
             .track_focus(&self.focus)
             .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
-            .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
-                view.navigate_from_keyboard(Page::Overview, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowServices, window, cx| {
-                view.navigate_from_keyboard(Page::Services, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowLogs, window, cx| {
-                view.navigate_from_keyboard(Page::Logs, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowProcesses, window, cx| {
-                view.navigate_from_keyboard(Page::Processes, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowStorage, window, cx| {
-                view.navigate_from_keyboard(Page::Storage, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowNetwork, window, cx| {
-                view.navigate_from_keyboard(Page::Network, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowDiagnostics, window, cx| {
-                view.navigate_from_keyboard(Page::Diagnostics, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowEtcd, window, cx| {
-                view.navigate_from_keyboard(Page::Etcd, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowWorkloads, window, cx| {
-                view.navigate_from_keyboard(Page::Workloads, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &NextScreen, window, cx| {
-                view.navigate_from_keyboard(view.adjacent_page(true), window, cx)
-            }))
+            .on_action(
+                cx.listener(|view, _: &ShowOverview, window, cx| view.show_row(0, window, cx)),
+            )
+            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| view.show_row(1, window, cx)))
+            .on_action(
+                cx.listener(|view, _: &ShowNamespaces, window, cx| view.show_row(2, window, cx)),
+            )
+            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| view.show_row(3, window, cx)))
+            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| view.show_row(4, window, cx)))
+            .on_action(cx.listener(|view, _: &ShowEtcd, window, cx| view.show_row(6, window, cx)))
+            .on_action(
+                cx.listener(|view, _: &ShowSystemServices, window, cx| {
+                    view.show_row(7, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|view, _: &ShowSecurity, window, cx| view.show_row(8, window, cx)),
+            )
+            .on_action(
+                cx.listener(|view, _: &ShowLifecycle, window, cx| view.show_row(9, window, cx)),
+            )
+            .on_action(
+                cx.listener(|view, _: &NextScreen, window, cx| view.adjacent_row(true, window, cx)),
+            )
             .on_action(cx.listener(|view, _: &PreviousScreen, window, cx| {
-                view.navigate_from_keyboard(view.adjacent_page(false), window, cx)
+                view.adjacent_row(false, window, cx)
             }))
             .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
                 view.adjacent_context(false, window, cx)

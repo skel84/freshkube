@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 use freshkube_core::kubernetes_summary::{KubernetesSummary, collect_kubernetes_summary};
 use gpui_kit::{Context, Window};
 
-use super::{Page, Pilot};
+use super::Pilot;
 use crate::{
     backend,
     resources::{KubeAccess, example},
@@ -20,7 +20,7 @@ impl Pilot {
         if let Some((_, screen)) = self
             .screens
             .iter()
-            .find(|(page, _)| *page == Page::Workloads)
+            .find(|(page, _)| *page == super::pages::ScreenKind::Health)
         {
             screen.set_workloads(
                 self.applied.context.as_deref().unwrap_or_default(),
@@ -44,6 +44,7 @@ impl Pilot {
             self.kubernetes_summary
                 .apply(&request, Ok(Arc::new(summary)));
             self.rebuild_joined_nodes();
+            self.prepare_context_display(window, cx);
             self.summary_health = Some(health.clone());
             self.deliver_workloads(health, cx);
             cx.notify();
@@ -67,7 +68,7 @@ impl Pilot {
             let answer = receiver
                 .await
                 .unwrap_or_else(|_| Err("The summary worker stopped".into()));
-            _ = this.update_in(cx, |view, _, cx| {
+            _ = this.update_in(cx, |view, window, cx| {
                 if view.epoch != epoch {
                     return;
                 }
@@ -97,6 +98,7 @@ impl Pilot {
                 };
                 view.kubernetes_summary.apply(&request, result);
                 view.rebuild_joined_nodes();
+                view.prepare_context_display(window, cx);
                 cx.notify();
             });
         }));

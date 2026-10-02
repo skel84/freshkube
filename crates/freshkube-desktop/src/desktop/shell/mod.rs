@@ -3,11 +3,10 @@ use super::kubernetes_only::{self, KubeConnection};
 use super::{AUTO_REFRESH, Appearance, Page, Pilot, SIDEBAR_WIDTH, SidebarReveal, clock};
 use crate::mutation::Operations;
 use crate::palette::palette;
-use crate::presentation::{self, Role as NodeRole};
 use crate::resources::custom::{CustomGroup, Discovery};
 use crate::resources::navigation::{self, NavGroup};
 use crate::text_size;
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::resources::{Failure, FailureKind};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -30,19 +29,13 @@ use gpui_kit::*;
 const MAX_SIDEBAR_GROUPS: usize = 300;
 const MAX_SIDEBAR_KINDS: usize = 200;
 
-fn role_icon(role: NodeRole) -> IconName {
-    match role {
-        NodeRole::ControlPlane => IconName::ServerCog,
-        _ => IconName::Server,
-    }
-}
-
 /// What one Kubernetes sidebar row shows.
 struct NavRow {
     id: SharedString,
     label: SharedString,
     tooltip: Option<SharedString>,
     indent: Rems,
+    key: Option<&'static str>,
 }
 
 impl NavRow {
@@ -52,7 +45,13 @@ impl NavRow {
             label: label.into(),
             tooltip: None,
             indent,
+            key: None,
         }
+    }
+
+    fn key(mut self, key: &'static str) -> Self {
+        self.key = Some(key);
+        self
     }
 
     fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
@@ -90,17 +89,8 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
-        let unhealthy = self
-            .overview
-            .data()
-            .map(|cluster| {
-                presentation::cluster_summary(cluster, &self.nodes)
-                    .services
-                    .unhealthy
-            })
-            .unwrap_or(0);
-        let collecting = self.logs.read(cx).collecting_count();
-        let services_suffix = (unhealthy > 0).then(|| {
+        let services = self.system_services.read(cx);
+        let services_suffix = (services.unhealthy > 0).then(|| {
             div()
                 .min_w(dp(18.))
                 .h(dp(18.))
@@ -109,25 +99,14 @@ impl Pilot {
                 .bg(p.crit)
                 .text_color(gpui_kit::white())
                 .text_size(dp(11.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(unhealthy.to_string())
-                .into_any_element()
-        });
-        let logs_suffix = (collecting > 0).then(|| {
-            div()
-                .size(dp(7.))
-                .rounded_full()
-                .bg(p.good)
+                .child(services.badge.clone())
                 .into_any_element()
         });
         let section =
             |label: &str, cx: &App| div().px_2().pt_3().pb_1().child(ui::caption(label, cx));
-        let talos = v_flex()
+        let cluster = v_flex()
             .gap_0p5()
-            .child(self.nav_item(Page::Nodes, IconName::Server, None, None, cx))
+            .child(section("Cluster", cx))
             .child(self.nav_item(
                 Page::Overview,
                 IconName::LayoutDashboard,
@@ -135,30 +114,9 @@ impl Pilot {
                 None,
                 cx,
             ))
-            .child(self.nav_item(
-                Page::Services,
-                IconName::HeartPulse,
-                Some("2"),
-                services_suffix,
-                cx,
-            ))
-            .child(self.nav_item(Page::Logs, IconName::ScrollText, Some("3"), logs_suffix, cx))
-            .child(section("Node", cx))
-            .child(self.nav_item(Page::Processes, IconName::Cpu, Some("4"), None, cx))
-            .child(self.nav_item(Page::Storage, IconName::HardDrive, Some("5"), None, cx))
-            .child(self.nav_item(Page::Network, IconName::Network, Some("6"), None, cx))
-            .child(self.nav_item(
-                Page::Diagnostics,
-                IconName::Stethoscope,
-                Some("7"),
-                None,
-                cx,
-            ))
-            .child(section("Cluster", cx))
-            .child(self.nav_item(Page::Etcd, IconName::Database, Some("8"), None, cx))
-            .child(self.nav_item(Page::Workloads, IconName::Boxes, Some("9"), None, cx))
-            .child(self.nav_item(Page::Security, IconName::ShieldCheck, None, None, cx))
-            .child(self.nav_item(Page::Lifecycle, IconName::Layers, None, None, cx));
+            .child(self.nav_item(Page::Nodes, IconName::Server, Some("2"), None, cx))
+            .child(self.cluster_kind("namespaces", "Namespaces", "3", cx))
+            .child(self.cluster_kind("events", "Events", "4", cx));
         // Kubernetes rows are children of the scrolling element, so one can
         // be scrolled into view: the Talos block and the section caption
         // come first.
@@ -190,6 +148,45 @@ impl Pilot {
                 window.request_animation_frame();
             }
         }
+        let control_plane = if self.kubernetes_only.is_some() {
+            v_flex()
+                .px_2()
+                .pt_3()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(dp(11.))
+                        .text_color(p.muted)
+                        .child("Talos views need a talosconfig"),
+                )
+                .child(
+                    Button::new("add-talosconfig")
+                        .ghost()
+                        .small()
+                        .label("Add a talosconfig")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.settings_open = true;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        } else {
+            v_flex()
+                .gap_0p5()
+                .child(section("Control plane", cx))
+                .child(self.nav_item(Page::Etcd, IconName::Database, Some("6"), None, cx))
+                .child(self.nav_item(
+                    Page::SystemServices,
+                    IconName::HeartPulse,
+                    Some("7"),
+                    services_suffix,
+                    cx,
+                ))
+                .child(self.nav_item(Page::Security, IconName::ShieldCheck, Some("8"), None, cx))
+                .child(self.nav_item(Page::Lifecycle, IconName::Layers, Some("9"), None, cx))
+                .child(self.nav_item(Page::Operations, IconName::Wrench, None, None, cx))
+                .into_any_element()
+        };
         let nav = v_flex()
             .id("sidebar-scroll")
             .test_support()
@@ -197,43 +194,12 @@ impl Pilot {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.sidebar_scroll)
-            // Scrolling by hand cancels a reveal still waiting for discovery.
             .on_scroll_wheel(cx.listener(|view, _, _, _| view.sidebar_reveal = None))
             .gap_0p5()
-            .child(talos)
-            .child(section("Kubernetes", cx))
+            .child(cluster)
+            .child(section("Resources", cx))
             .children(rows)
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(section("Maintain", cx))
-                    .child(self.nav_item(Page::Operations, IconName::Wrench, None, None, cx)),
-            );
-        let contexts = if self.config_loading {
-            div()
-                .px_2()
-                .text_size(dp(12.))
-                .text_color(p.muted)
-                .child("Loading contexts…")
-                .into_any_element()
-        } else if self.config_error.is_some() || self.contexts.is_empty() {
-            div()
-                .px_2()
-                .text_size(dp(12.))
-                .text_color(p.muted)
-                .child("No contexts loaded")
-                .into_any_element()
-        } else {
-            v_flex()
-                .gap_0p5()
-                .children(
-                    self.contexts
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, context)| self.context_item(ix, context, cx)),
-                )
-                .into_any_element()
-        };
+            .child(control_plane);
         let pilot = cx.entity().downgrade();
         let open_pilot = pilot.clone();
         let path_input = self.path.clone();
@@ -260,38 +226,15 @@ impl Pilot {
             .pt_4()
             .pb_2p5()
             .gap(dp(22.))
+            .child(self.render_context_switcher(cx))
             .child(
-                h_flex()
-                    .gap_2p5()
-                    .px_1p5()
-                    .child(
-                        div()
-                            .size(dp(28.))
-                            .rounded(px(7.))
-                            .bg(p.accent)
-                            .text_color(cx.theme().primary_foreground)
-                            .font_family(DISPLAY_FONT)
-                            .text_size(dp(16.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child("F"),
-                    )
-                    .child(
-                        v_flex()
-                            .child(
-                                div()
-                                    .font_family(DISPLAY_FONT)
-                                    .text_size(dp(15.))
-                                    .child("Freshkube"),
-                            )
-                            .child(div().text_size(dp(11.5)).text_color(p.muted).child(
-                                if self.fixture {
-                                    "Example data"
-                                } else {
-                                    concat!("v", env!("CARGO_PKG_VERSION"))
-                                },
-                            )),
+                Button::new("search-everything")
+                    .outline()
+                    .small()
+                    .icon(IconName::Search)
+                    .label("Search everything")
+                    .on_click(
+                        cx.listener(|view, _, window, cx| view.open_kind_switcher(window, cx)),
                     ),
             )
             .child(
@@ -302,41 +245,6 @@ impl Pilot {
                         .id("sidebar-scrollbar")
                         .mode(ScrollbarMode::Hover),
                 ),
-            )
-            .child(
-                // Contexts stay in view below the navigation, scrolling on
-                // their own when there are many.
-                v_flex()
-                    .flex_none()
-                    .max_h(relative(0.4))
-                    .min_h_0()
-                    .gap_0p5()
-                    .pt(dp(14.))
-                    .mt(dp(-8.))
-                    .border_t_1()
-                    .border_color(cx.theme().sidebar_border)
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .px_2()
-                            .pb_1p5()
-                            .child(ui::caption("Contexts", cx))
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(ui::keycap("⌥↑", cx))
-                                    .child(ui::keycap("⌥↓", cx)),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .id("context-scroll")
-                            .test_support()
-                            .aria_label("Contexts")
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(contexts),
-                    ),
             )
             .child(
                 h_flex().child(
@@ -365,19 +273,134 @@ impl Pilot {
             .into_any_element()
     }
 
+    fn cluster_kind(
+        &self,
+        key: &'static str,
+        label: &'static str,
+        shortcut: &'static str,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        self.kubernetes_item(
+            NavRow::new(format!("nav-k8s-{key}"), label, dp(8.)).key(shortcut),
+            self.page == Page::Resources && self.resource_kind.key() == key,
+            cx.listener(move |view, _, window, cx| view.open_builtin(key, window, cx)),
+            cx,
+        )
+        .into_any_element()
+    }
+
+    fn render_context_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let pilot = cx.entity().downgrade();
+        let full = self
+            .applied
+            .context
+            .clone()
+            .unwrap_or_else(|| "No context".into());
+        let open_pilot = pilot.clone();
+        let label = self.context_display.name.clone();
+        let detail = self.context_display.detail.clone();
+        let dot = match self.context_display.state {
+            1 => p.good,
+            2 => p.crit,
+            _ => p.unk,
+        };
+        Popover::new("context-popover")
+            .open(self.context_display.open)
+            .on_open_change(move |open, _, cx| {
+                _ = open_pilot.update(cx, |view, cx| {
+                    view.context_display.open = *open;
+                    cx.notify();
+                });
+            })
+            .anchor(Anchor::TopLeft)
+            .trigger(
+                Button::new("context-switcher")
+                    .ghost()
+                    .w_full()
+                    .h(dp(58.))
+                    .accessibility_label(full.clone())
+                    .tooltip(full)
+                    .dropdown_caret(true)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .size(dp(26.))
+                                    .flex_none()
+                                    .rounded(px(6.))
+                                    .bg(p.accent)
+                                    .text_color(cx.theme().primary_foreground)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child("F"),
+                            )
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(div().size(dp(6.)).rounded_full().bg(dot))
+                                            .child(
+                                                div()
+                                                    .id("context-short-name")
+                                                    .test_support()
+                                                    .aria_label(label.clone())
+                                                    .font_family(MONO_FONT)
+                                                    .text_size(dp(12.))
+                                                    .child(label),
+                                            ),
+                                    )
+                                    .child(
+                                        div().text_size(dp(10.)).text_color(p.muted).child(detail),
+                                    ),
+                            ),
+                    ),
+            )
+            .content(move |_, _, cx| {
+                let popover = cx.entity().downgrade();
+                pilot
+                    .update(cx, |view, cx| {
+                        v_flex()
+                            .id("context-options")
+                            .w(dp(360.))
+                            .max_h(dp(400.))
+                            .overflow_y_scroll()
+                            .gap_1()
+                            .child(ui::caption("Change context · ⌥↑ ⌥↓", cx))
+                            .children(view.contexts.iter().enumerate().map(|(ix, name)| {
+                                view.context_item(ix, name, popover.clone(), cx)
+                                    .into_any_element()
+                            }))
+                            .into_any_element()
+                    })
+                    .unwrap_or_else(|_| div().into_any_element())
+            })
+            .into_any_element()
+    }
+
     fn nav_item(
         &self,
         page: Page,
         icon: IconName,
         key: Option<&str>,
         suffix: Option<AnyElement>,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
         let active = self.page == page;
         // Every page but Resources reads the Talos API.
         let unavailable = self.kubernetes_only.is_some()
-            && !matches!(page, Page::Resources | Page::Workloads | Page::Nodes);
+            && !matches!(
+                page,
+                Page::Overview | Page::Resources | Page::Health | Page::Nodes
+            );
         h_flex()
             .id(SharedString::from(format!("nav-{}", page.slug())))
             .test_support()
@@ -432,11 +455,19 @@ impl Pilot {
         for group in &navigation::NAVIGATION {
             let header = row;
             let open = self.kubernetes_groups.contains(group.slug);
-            let shown = if open { group.items.len() } else { 0 };
+            let shown = if open {
+                group.items.len() + usize::from(group.slug == "workloads")
+            } else {
+                0
+            };
             match reveal {
                 SidebarReveal::Kind(key) => {
                     if let Some(ix) = group.items.iter().position(|(_, item)| item == key) {
-                        return Some(if open { header + 1 + ix } else { header });
+                        return Some(if open {
+                            header + 1 + ix + usize::from(group.slug == "workloads")
+                        } else {
+                            header
+                        });
                     }
                 }
                 SidebarReveal::Group(slug) if *slug == group.slug => return Some(header + shown),
@@ -469,6 +500,9 @@ impl Pilot {
             cx,
         )];
         if open {
+            if group.slug == "workloads" {
+                rows.push(self.nav_item(Page::Health, IconName::HeartPulse, Some("5"), None, cx));
+            }
             rows.extend(group.items.iter().map(|(label, key)| {
                 self.kubernetes_item(
                     NavRow::new(format!("nav-k8s-{key}"), *label, dp(30.)),
@@ -771,6 +805,11 @@ impl Pilot {
                 this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             })
             .child(div().min_w_0().truncate().child(row.label))
+            .child(div().flex_1())
+            .children(
+                row.key
+                    .map(|key| ui::keycap(format!("{}{key}", ui::modifier()), cx)),
+            )
             .on_click(on_click)
             .into_any_element()
     }
@@ -810,7 +849,13 @@ impl Pilot {
             .into_any_element()
     }
 
-    fn context_item(&self, ix: usize, context: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn context_item(
+        &self,
+        ix: usize,
+        context: &str,
+        popover: WeakEntity<gpui_kit::component::popover::PopoverState>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
         let current = self.applied.context.as_deref() == Some(context);
         let connection = self.kubernetes_only.as_ref().map(|kube| &kube.connection);
@@ -837,7 +882,8 @@ impl Pilot {
             .aria_selected(current)
             .aria_label(context.to_owned())
             .tab_index(0)
-            .h(dp(32.))
+            .min_h(dp(32.))
+            .py_1()
             .px_2()
             .gap_2p5()
             .rounded(px(7.))
@@ -862,28 +908,33 @@ impl Pilot {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .truncate()
+                    .whitespace_normal()
                     .font_family(MONO_FONT)
                     .text_size(dp(12.5))
                     .child(context.to_owned()),
             )
-            .children(self.context_nodes.get(context).map(|count| {
+            .children(self.context_display.counts.get(context).map(|label| {
                 div()
                     .text_size(dp(11.5))
                     .text_color(p.muted)
-                    .child(if *count == 1 {
-                        "1 node".to_owned()
-                    } else {
-                        format!("{count} nodes")
-                    })
+                    .child(label.clone())
             }))
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.select_context(chosen.clone(), window, cx);
                 view.focus_page(window, cx);
+                let handle = window.window_handle();
+                let popover = popover.clone();
+                cx.defer(move |cx| {
+                    _ = handle.update(cx, |_, window, cx| {
+                        _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
+                    });
+                });
             }))
             .into_any_element()
     }
 }
 
+mod context;
+pub(super) use context::ContextDisplay;
 mod frame;
 use frame::settings_content;

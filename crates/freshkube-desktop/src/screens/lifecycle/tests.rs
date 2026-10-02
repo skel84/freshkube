@@ -219,7 +219,7 @@ fn unavailable_source_is_named_in_the_partial_notice(cx: &mut TestAppContext) {
                 reason: "kubeconfig example".into(),
             };
             let target = screen.source.as_ref().unwrap().target.clone();
-            screen.loader.resolve(target, Ok(view));
+            screen.resolve(target, Ok(view));
             cx.notify();
         });
         window.render_frame(cx);

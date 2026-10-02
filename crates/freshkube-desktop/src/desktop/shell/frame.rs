@@ -34,6 +34,7 @@ impl Pilot {
                 self.selected_node.as_deref().unwrap_or("None")
             )
         };
+        let applied = format!("{applied} · Page: {}", self.page_title());
         let dark = cx.theme().mode.is_dark();
         let loading = self.loading();
         let (remaining, ring_visible) = self.countdown_state();
@@ -59,6 +60,8 @@ impl Pilot {
                             .font_family(MONO_FONT)
                             .text_size(dp(12.5))
                             .text_color(p.muted)
+                            .max_w(dp(220.))
+                            .truncate()
                             .child(context),
                     )
                     .child(div().text_color(p.faint).child("/"))
@@ -69,18 +72,39 @@ impl Pilot {
                             .aria_label(self.page_title())
                             .text_size(dp(13.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(self.page_title()),
+                            .child(self.page_title())
+                            .when(self.page == Page::Nodes, |this| {
+                                this.cursor_pointer().on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|view, _, window, cx| view.close_node(window, cx)),
+                                )
+                            }),
+                    )
+                    .when(
+                        self.page == Page::Nodes && self.node_workspace.open,
+                        |this| {
+                            this.child(div().text_color(p.faint).child("/"))
+                                .child(
+                                    div().font_family(MONO_FONT).text_size(dp(12.)).child(
+                                        self.node_workspace
+                                            .row()
+                                            .map(|row| row.name.clone())
+                                            .unwrap_or_default(),
+                                    ),
+                                )
+                                .child(div().text_color(p.faint).child("/"))
+                                .child(
+                                    div()
+                                        .text_size(dp(12.))
+                                        .child(self.node_workspace.tab.label()),
+                                )
+                        },
                     ),
             )
             .child(
                 h_flex()
                     .gap_2()
                     .pr_2()
-                    // Without Talos there are no nodes to target.
-                    .when(self.kubernetes_only.is_none(), |this| {
-                        this.child(ui::caption("Target", cx))
-                            .child(self.render_node_picker(cx))
-                    })
                     .child(
                         Button::new("theme-toggle")
                             .ghost()
@@ -140,124 +164,6 @@ impl Pilot {
             .into_any_element()
     }
 
-    fn render_node_picker(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let pilot = cx.entity().downgrade();
-        let options: Vec<_> = self
-            .nodes
-            .iter()
-            .map(|node| {
-                (
-                    node.name.clone(),
-                    node.address.clone(),
-                    node.role,
-                    node.responding,
-                )
-            })
-            .collect();
-        let selected = self.selected_node.clone();
-        let context = self.applied.context.clone().unwrap_or_default();
-        let trigger = match self.selected_summary() {
-            Some(node) => Button::new("target-node")
-                .outline()
-                .small()
-                .icon(role_icon(node.role))
-                .label(node.name.clone())
-                .accessibility_label(format!("Target node {}", node.name))
-                .tooltip(format!("{} · {}", node.name, node.address))
-                .dropdown_caret(true)
-                .max_w(dp(380.)),
-            None => Button::new("target-node")
-                .outline()
-                .small()
-                .label("No node")
-                .disabled(true),
-        };
-        Popover::new("target-node-popover")
-            .anchor(Anchor::TopRight)
-            .trigger(trigger)
-            .content(move |_, _, cx| {
-                let popover = cx.entity();
-                v_flex()
-                    .id("target-options")
-                    .w(dp(340.))
-                    .gap_0p5()
-                    .child(
-                        div()
-                            .px_2()
-                            .pt_1()
-                            .pb_1p5()
-                            .child(ui::caption(&format!("Target node · {context}"), cx)),
-                    )
-                    .children(options.iter().enumerate().map(
-                        |(ix, (name, address, role, responding))| {
-                            let chosen = selected.as_ref() == Some(name);
-                            let pick = name.clone();
-                            let pilot = pilot.clone();
-                            let popover = popover.clone();
-                            h_flex()
-                                .id(("target-option", ix))
-                                .test_support()
-                                .role(Role::ListBoxOption)
-                                .aria_selected(chosen)
-                                .aria_label(name.clone())
-                                .tab_index(0)
-                                .gap_2p5()
-                                .px_2()
-                                .py_1p5()
-                                .rounded(px(6.))
-                                .cursor_pointer()
-                                .when(chosen, |this| this.bg(p.accent_soft))
-                                .hover(|this| this.bg(p.hover))
-                                .child(
-                                    Icon::new(role_icon(*role))
-                                        .size(dp(15.))
-                                        .text_color(p.muted),
-                                )
-                                .child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(
-                                            div()
-                                                .font_family(MONO_FONT)
-                                                .text_size(dp(12.5))
-                                                .child(name.clone()),
-                                        )
-                                        .child(
-                                            div().text_size(dp(11.5)).text_color(p.muted).child(
-                                                format!(
-                                                    "{address} · {}",
-                                                    if *responding {
-                                                        role.label()
-                                                    } else {
-                                                        "No response"
-                                                    }
-                                                ),
-                                            ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .size(dp(8.))
-                                        .rounded_full()
-                                        .when(*responding, |this| this.bg(p.good))
-                                        .when(!*responding, |this| {
-                                            this.border(px(1.5)).border_color(p.unk)
-                                        }),
-                                )
-                                .on_click(move |_, window, cx| {
-                                    let _ = pilot.update(cx, |view, cx| {
-                                        view.select_node_by_name(pick.clone(), window, cx)
-                                    });
-                                    popover.update(cx, |state, cx| state.dismiss(window, cx));
-                                })
-                        },
-                    ))
-            })
-            .into_any_element()
-    }
-
     pub(in crate::desktop) fn render_status_bar(
         &mut self,
         _: &mut Window,
@@ -311,10 +217,9 @@ impl Pilot {
                 .into_any_element()
         } else if self.kubernetes_only.is_some() {
             self.render_kubernetes_status(cx)
-        } else if (self.page == Page::Logs
-            || (self.page == Page::Nodes
-                && self.node_workspace.open
-                && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs))
+        } else if (self.page == Page::Nodes
+            && self.node_workspace.open
+            && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs)
             && self.config_error.is_none()
         {
             let logs = self.logs.read(cx);
@@ -365,14 +270,7 @@ impl Pilot {
             } else if self.overview.data().is_some() {
                 (
                     dot(Some(p.good)).into_any_element(),
-                    format!(
-                        "Connected to {context} · {}",
-                        if self.nodes.len() == 1 {
-                            "1 node".to_owned()
-                        } else {
-                            format!("{} nodes", self.nodes.len())
-                        }
-                    ),
+                    self.context_display.status.to_string(),
                 )
             } else {
                 (
@@ -502,7 +400,7 @@ pub(super) fn settings_content(
         .overflow_y_scroll()
         .p_1()
         .gap_3p5()
-        .child(ui::caption("Settings", cx))
+        .child(h_flex().justify_between().child(ui::caption("Settings", cx)).child(hint(concat!("Freshkube v", env!("CARGO_PKG_VERSION")))))
         .child(
             v_flex()
                 .gap_1p5()

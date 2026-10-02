@@ -9,19 +9,41 @@ use gpui_kit::*;
 pub(crate) enum Page {
     Overview,
     Nodes,
-    Services,
-    Logs,
+    Health,
+    Resources,
+    Etcd,
+    SystemServices,
+    Security,
+    Lifecycle,
+    Operations,
+}
+
+/// The retained inspection views, including those embedded in the node pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScreenKind {
     Processes,
     Storage,
     Network,
     Diagnostics,
     Etcd,
-    Workloads,
+    Health,
     Security,
     Lifecycle,
-    /// One Kubernetes kind; the shell knows which.
-    Resources,
     Operations,
+}
+
+impl ScreenKind {
+    pub(super) const ALL: [Self; 9] = [
+        Self::Processes,
+        Self::Storage,
+        Self::Network,
+        Self::Diagnostics,
+        Self::Etcd,
+        Self::Health,
+        Self::Security,
+        Self::Lifecycle,
+        Self::Operations,
+    ];
 }
 
 /// A Kubernetes sidebar row to scroll into view; scrolling is minimal, so a
@@ -40,80 +62,52 @@ pub(super) enum SidebarReveal {
 }
 
 impl Page {
-    /// Every page, in sidebar order.
-    pub(super) const ALL: [Page; 14] = [
-        Page::Overview,
-        Page::Nodes,
-        Page::Services,
-        Page::Logs,
-        Page::Processes,
-        Page::Storage,
-        Page::Network,
-        Page::Diagnostics,
-        Page::Etcd,
-        Page::Workloads,
-        Page::Security,
-        Page::Lifecycle,
-        Page::Resources,
-        Page::Operations,
+    pub(super) const ALL: [Page; 9] = [
+        Self::Overview,
+        Self::Nodes,
+        Self::Health,
+        Self::Resources,
+        Self::Etcd,
+        Self::SystemServices,
+        Self::Security,
+        Self::Lifecycle,
+        Self::Operations,
     ];
 
-    /// The page `step` places away in sidebar order, wrapping around.
-    pub(super) fn adjacent(self, step: isize) -> Page {
-        let count = Self::ALL.len() as isize;
-        let current = Self::ALL.iter().position(|page| *page == self).unwrap_or(0) as isize;
-        Self::ALL[(current + step).rem_euclid(count) as usize]
-    }
-
-    /// Pages backed by a [`ScreenPanel`], in sidebar order.
-    pub(crate) const SCREENS: [Page; 9] = [
-        Page::Processes,
-        Page::Storage,
-        Page::Network,
-        Page::Diagnostics,
-        Page::Etcd,
-        Page::Workloads,
-        Page::Security,
-        Page::Lifecycle,
-        Page::Operations,
-    ];
-
-    pub(super) fn title(self) -> &'static str {
+    pub(super) fn screen(self) -> Option<ScreenKind> {
         match self {
-            Page::Overview => "Overview",
-            Page::Nodes => "Nodes",
-            Page::Services => "Services",
-            Page::Logs => "Logs",
-            Page::Processes => "Processes",
-            Page::Storage => "Storage",
-            Page::Network => "Network",
-            Page::Diagnostics => "Diagnostics",
-            Page::Etcd => "etcd",
-            Page::Workloads => "Workload health",
-            Page::Security => "Security",
-            Page::Lifecycle => "Lifecycle",
-            Page::Resources => "Resources",
-            Page::Operations => "Operations",
+            Self::Etcd => Some(ScreenKind::Etcd),
+            Self::Health => Some(ScreenKind::Health),
+            Self::Security => Some(ScreenKind::Security),
+            Self::Lifecycle => Some(ScreenKind::Lifecycle),
+            Self::Operations => Some(ScreenKind::Operations),
+            _ => None,
         }
     }
-
-    /// Element id suffix: `nav-<slug>`.
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Nodes => "Nodes",
+            Self::Health => "Health",
+            Self::Resources => "Resources",
+            Self::Etcd => "etcd",
+            Self::SystemServices => "System services",
+            Self::Security => "Security",
+            Self::Lifecycle => "Lifecycle",
+            Self::Operations => "Operations",
+        }
+    }
     pub(crate) fn slug(self) -> &'static str {
         match self {
-            Page::Overview => "overview",
-            Page::Nodes => "nodes",
-            Page::Services => "services",
-            Page::Logs => "logs",
-            Page::Processes => "processes",
-            Page::Storage => "storage",
-            Page::Network => "network",
-            Page::Diagnostics => "diagnostics",
-            Page::Etcd => "etcd",
-            Page::Workloads => "workloads",
-            Page::Security => "security",
-            Page::Lifecycle => "lifecycle",
-            Page::Resources => "resources",
-            Page::Operations => "operations",
+            Self::Overview => "overview",
+            Self::Nodes => "nodes",
+            Self::Health => "health",
+            Self::Resources => "resources",
+            Self::Etcd => "etcd",
+            Self::SystemServices => "system-services",
+            Self::Security => "security",
+            Self::Lifecycle => "lifecycle",
+            Self::Operations => "operations",
         }
     }
 }
@@ -143,6 +137,7 @@ impl Pilot {
                 this.seed_fixture_history();
             }
             this.refresh(window, cx);
+            this.prepare_context_display(window, cx);
         });
     }
 
@@ -181,24 +176,58 @@ impl Pilot {
         self.focus_page(window, cx);
     }
 
-    /// Whether `page` can show anything: in Kubernetes-only mode, only
-    /// Resources can.
-    fn page_loads(&self, page: Page) -> bool {
-        self.kubernetes_only.is_none()
-            || matches!(page, Page::Resources | Page::Workloads | Page::Nodes)
+    /// The fixed sidebar rows include two kinds and remember the last other kind.
+    pub(super) fn adjacent_row(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = match self.page {
+            Page::Overview => 0,
+            Page::Nodes => 1,
+            Page::Resources if self.resource_kind.key() == "namespaces" => 2,
+            Page::Resources if self.resource_kind.key() == "events" => 3,
+            Page::Health => 4,
+            Page::Resources => 5,
+            Page::Etcd => 6,
+            Page::SystemServices => 7,
+            Page::Security => 8,
+            Page::Lifecycle => 9,
+            Page::Operations => 10,
+        };
+        let count = if self.kubernetes_only.is_some() {
+            6
+        } else {
+            11
+        };
+        let next = (current as isize + if forward { 1 } else { -1 }).rem_euclid(count) as usize;
+        self.show_row(next, window, cx);
     }
 
-    /// The next page in sidebar order, wrapping around, that can load.
-    pub(super) fn adjacent_page(&self, forward: bool) -> Page {
-        let step = if forward { 1 } else { -1 };
-        let mut page = self.page;
-        for _ in 0..Page::ALL.len() {
-            page = page.adjacent(step);
-            if self.page_loads(page) {
-                return page;
-            }
+    pub(super) fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kubernetes_only.is_some() && row >= 6 {
+            return;
         }
-        self.page
+        match row {
+            2 => self.open_builtin("namespaces", window, cx),
+            3 => self.open_builtin("events", window, cx),
+            5 => self.open_kind(self.last_kind.clone(), window, cx),
+            _ => self.navigate_from_keyboard(
+                match row {
+                    0 => Page::Overview,
+                    1 => Page::Nodes,
+                    4 => Page::Health,
+                    6 => Page::Etcd,
+                    7 => Page::SystemServices,
+                    8 => Page::Security,
+                    9 => Page::Lifecycle,
+                    _ => Page::Operations,
+                },
+                window,
+                cx,
+            ),
+        }
     }
 
     /// Puts the keyboard on the page shown, as navigating to it does: its
@@ -208,11 +237,16 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
-        } else if self.page == Page::Logs {
+        } else if self.page == Page::Nodes
+            && self.node_workspace.open
+            && self.node_workspace.tab == super::nodes::NodeTab::Logs
+        {
             self.logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen() {
             screen.focus(window, cx);
+        } else if self.page == Page::Nodes {
+            window.focus(&self.node_focus, cx);
         }
     }
 
@@ -239,12 +273,6 @@ impl Pilot {
         if page == Page::Resources {
             self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind.key()));
         }
-        self.logs.update(cx, |logs, cx| {
-            logs.set_visible(page == Page::Logs, cx);
-            if page == Page::Logs {
-                logs.focus_lines(window, cx);
-            }
-        });
         self.resources.update(cx, |resources, cx| {
             resources.set_visible(page == Page::Resources, window, cx);
             if page == Page::Resources {
@@ -256,6 +284,7 @@ impl Pilot {
             screen.focus(window, cx);
         }
         self.sync_node_visibility(window, cx);
+        self.focus_page(window, cx);
         cx.notify();
     }
 
@@ -267,6 +296,13 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if kind.key() == "nodes" {
+            self.navigate_from_keyboard(Page::Nodes, window, cx);
+            return;
+        }
+        if !matches!(kind.key().as_str(), "namespaces" | "events") {
+            self.last_kind = kind.clone();
+        }
         match navigation::group_of(&kind.key()) {
             Some(group) => {
                 self.kubernetes_groups.insert(group);
@@ -331,7 +367,9 @@ impl Pilot {
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(service) = self.selected_service.clone() {
-            self.navigate(Page::Logs, window, cx);
+            if let Some(name) = self.selected_node.clone() {
+                self.open_node_by_name(&name, super::nodes::NodeTab::Logs, window, cx);
+            }
             self.logs
                 .update(cx, |logs, cx| logs.open_service(service, window, cx));
         }

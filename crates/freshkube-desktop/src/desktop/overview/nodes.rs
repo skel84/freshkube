@@ -331,7 +331,14 @@ impl Pilot {
                     .on_click(cx.listener(move |view, _, window, cx| {
                         cx.stop_propagation();
                         view.select_node_by_name(services_target.clone(), window, cx);
-                        view.navigate(Page::Services, window, cx);
+                        if let Some(node) = view.selected_node.clone() {
+                            view.open_node_by_name(
+                                &node,
+                                super::super::nodes::NodeTab::Services,
+                                window,
+                                cx,
+                            );
+                        }
                     })),
             )
             .child(
@@ -342,8 +349,12 @@ impl Pilot {
                     .label("Logs")
                     .on_click(cx.listener(move |view, _, window, cx| {
                         cx.stop_propagation();
-                        view.select_node_by_name(logs_target.clone(), window, cx);
-                        view.navigate(Page::Logs, window, cx);
+                        view.open_node_by_name(
+                            &logs_target,
+                            super::super::nodes::NodeTab::Logs,
+                            window,
+                            cx,
+                        );
                     })),
             );
         card.child(load)

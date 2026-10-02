@@ -7,7 +7,7 @@ impl LifecycleScreen {
             .outline()
             .xsmall()
             .icon(IconName::Crosshair)
-            .label(format!("Target {node}"))
+            .label("Open node")
             .on_click(cx.listener(move |_, _, _, cx| {
                 cx.emit(ScreenEvent::SelectNode(name.clone()));
             }))
@@ -16,67 +16,24 @@ impl LifecycleScreen {
     fn summary(
         &self,
         view: &LifecycleView,
-        rows: &[NodeRow],
-        alerts: &[AlertRow],
+        _rows: &[NodeRow],
+        _alerts: &[AlertRow],
         cx: &App,
     ) -> Stateful<Div> {
-        let distinct = |values: Vec<&String>| -> String {
-            let mut unique: Vec<&String> = values;
-            unique.sort();
-            unique.dedup();
-            if unique.is_empty() {
-                "not reported".into()
-            } else {
-                unique
-                    .into_iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
-        };
-        let talos = distinct(
-            rows.iter()
-                .filter_map(|row| row.talos.as_ref().ok())
-                .collect(),
-        );
-        let kubelet = distinct(
-            rows.iter()
-                .filter_map(|row| row.kubelet.as_ref().ok())
-                .collect(),
-        );
         let etcd = etcd_verdict(&view.snapshot.etcd_pre_operation);
         let etcd_short = match etcd.tone {
             Tone::Good => "Safe",
             Tone::Warn => "Not safe",
             _ => "Not reported",
         };
-        let warnings = alerts
-            .iter()
-            .filter(|alert| {
-                matches!(
-                    alert.health,
-                    HealthIndicator::Warning | HealthIndicator::Error
-                )
-            })
-            .count();
         h_flex()
             .id("lifecycle-summary")
             .gap_2p5()
             .flex_wrap()
-            .child(stat("Talos", talos, cx))
-            .child(stat("Kubelet", kubelet, cx))
+            .child(stat("Talos", view.display.summary_labels[0].clone(), cx))
+            .child(stat("Kubelet", view.display.summary_labels[1].clone(), cx))
             .child(stat("etcd pre-check", etcd_short, cx))
-            .child(stat(
-                "Alerts",
-                if alerts.is_empty() {
-                    "none".to_owned()
-                } else if warnings == alerts.len() {
-                    alerts.len().to_string()
-                } else {
-                    format!("{} ({warnings} to review)", alerts.len())
-                },
-                cx,
-            ))
+            .child(stat("Alerts", view.display.summary_labels[2].clone(), cx))
     }
 
     fn render_row(
@@ -687,9 +644,9 @@ impl Render for LifecycleScreen {
         let (Some(source), Some(view)) = (self.source.clone(), self.loader.data()) else {
             return div().into_any_element();
         };
-        let rows = node_rows(view);
-        let alerts = alert_rows(view, &rows);
-        let missing = unavailable_sources(view, &rows);
+        let rows = view.display.rows.clone();
+        let alerts = view.display.alerts.clone();
+        let missing = view.display.missing.clone();
         let summary = self.summary(view, &rows, &alerts, cx);
         let nodes = self.nodes_panel(&rows, cx);
         let alerts_panel = self.alerts_panel(&alerts, cx);

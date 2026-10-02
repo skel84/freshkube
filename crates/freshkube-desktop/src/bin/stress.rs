@@ -93,7 +93,7 @@ impl Scenario {
     fn defaults(self) -> Vec<(&'static str, String)> {
         let pods = ("FRESHKUBE_KIND", "pods".to_owned());
         match self {
-            Scenario::Summary => vec![("FRESHKUBE_PAGE", "workloads".into())],
+            Scenario::Summary => vec![("FRESHKUBE_PAGE", "health".into())],
             Scenario::Table { .. } => vec![
                 pods,
                 (
@@ -111,7 +111,7 @@ impl Scenario {
                 ),
             ],
             Scenario::TalosLogs { rate } => vec![
-                ("FRESHKUBE_PAGE", "logs".into()),
+                ("FRESHKUBE_PAGE", "node-logs".into()),
                 ("FRESHKUBE_STRESS_TALOS_RATE", rate.to_string()),
             ],
             Scenario::Terminal { .. } | Scenario::TerminalTop | Scenario::TerminalSample => {

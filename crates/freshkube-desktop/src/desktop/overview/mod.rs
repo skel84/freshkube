@@ -1,5 +1,5 @@
 //! Overview screen: cluster header, summary tiles and one card per node.
-use super::{NextNode, NodeView, PAGE_PADDING, Page, Pilot, PreviousNode, clock};
+use super::{NextNode, NodeView, PAGE_PADDING, Pilot, PreviousNode, clock};
 use crate::palette::palette;
 use crate::presentation::{self, ClusterSummary, NodeSummary, Role as NodeRole, Roster};
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
@@ -522,7 +522,14 @@ impl Pilot {
                         view.select_node_by_name(target.clone(), window, cx);
                         view.selected_service = Some(chosen.clone());
                         view.health_filter = super::HealthFilter::All;
-                        view.navigate(Page::Services, window, cx);
+                        if let Some(node) = view.selected_node.clone() {
+                            view.open_node_by_name(
+                                &node,
+                                crate::desktop::nodes::NodeTab::Services,
+                                window,
+                                cx,
+                            );
+                        }
                     }))
             }
             None => {

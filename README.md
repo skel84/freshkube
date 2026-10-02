@@ -14,23 +14,23 @@ Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pil
 | --- | --- |
 | **Nodes** | Kubernetes and Talos machines in one table or card grid; open a node for its summary, Pods, system services, processes, storage, network, diagnostics, logs, Events and YAML |
 | **Overview** | Cluster summary (nodes responding, etcd quorum, service health, peak memory) and a card or table row per node with a load sparkline and memory use |
-| **Services** | Talos services per node with health and detail, linked to their logs |
-| **Logs** | Live, interleaved logs from several services: level filters, search, follow or pause, wrapping, selection and copy |
+| **System services** | Cluster service health with filters and links to the node pane; per-node details and restart stay in Nodes |
+| **Node Logs** | Live, interleaved logs from several services: level filters, search, follow or pause, wrapping, selection and copy |
 | **Processes** | Process list and tree with CPU and memory sorting |
 | **Storage** | Disks with size, transport, serial and system-disk indicators |
 | **Network** | Interface traffic, connections, KubeSpan peers and packet capture |
 | **Diagnostics** | Automated health checks (system, Kubernetes components, CNI, addons, services) with actionable fixes |
 | **etcd** | Quorum health, members, alarms and leader |
-| **Workloads** | Deployments, StatefulSets, DaemonSets and pods by namespace, with issues highlighted |
+| **Health** | Deployments, StatefulSets, DaemonSets and pods by namespace, with issues highlighted |
 | **Security** | PKI certificate expiry and encryption status |
 | **Lifecycle** | Talos and Kubernetes versions, configuration drift and alerts |
 | **Operations** | Cordon, uncordon, drain, reboot and shutdown of one node or a rolling selection, with a preflight preview, etcd safety checks, confirmation and an audit log |
 
 Maintenance mode (`--insecure --endpoint <node>`) opens a bootstrap wizard for nodes that have no configuration yet.
 
-Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. Talos pages ask for a talosconfig.
+Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. It starts on Overview; Control plane is replaced by an Add a talosconfig link. Talos views reached another way ask for a talosconfig.
 
-The sidebar switches pages and Talos contexts; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
+The context switcher sits above Cluster, Resources and Control plane navigation. Node inspection views and logs are tabs in Nodes; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
 
 ## Design philosophy
 
@@ -93,7 +93,7 @@ freshkube --debug
 
 | Key | Action |
 | --- | --- |
-| ⌘1 … ⌘9 | Overview, Services, Logs, Processes, Storage, Network, Diagnostics, etcd, Workloads |
+| ⌘1 … ⌘9 | Overview, Nodes, Namespaces, Events, Health, etcd, System services, Security, Lifecycle |
 | Ctrl-Tab / Ctrl-Shift-Tab | Next or previous page |
 | Alt-↑ / Alt-↓ | Previous or next Talos context |
 | ⌘R | Refresh |

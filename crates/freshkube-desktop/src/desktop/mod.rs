@@ -7,6 +7,7 @@ mod overview;
 mod pages;
 mod services;
 mod shell;
+mod system_services;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -80,7 +81,7 @@ pub(crate) mod probe {
 }
 
 pub(crate) use pages::Page;
-use pages::SidebarReveal;
+use pages::{ScreenKind, SidebarReveal};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 pub(crate) const SIDEBAR_WIDTH: f32 = 228.;
@@ -122,14 +123,14 @@ gpui_kit::actions!(
         Quit,
         Refresh,
         ShowOverview,
-        ShowServices,
-        ShowLogs,
-        ShowProcesses,
-        ShowStorage,
-        ShowNetwork,
-        ShowDiagnostics,
+        ShowNodes,
+        ShowNamespaces,
+        ShowEvents,
+        ShowHealth,
         ShowEtcd,
-        ShowWorkloads,
+        ShowSystemServices,
+        ShowSecurity,
+        ShowLifecycle,
         NextScreen,
         PreviousScreen,
         PreviousContext,
@@ -257,7 +258,7 @@ impl Render for PageHost {
             .update(cx, |pilot, cx| match page {
                 Page::Overview => pilot.render_overview(window, cx),
                 Page::Nodes => pilot.render_nodes(window, cx),
-                _ => pilot.render_services(window, cx),
+                _ => pilot.system_services.clone().into_any_element(),
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
@@ -276,6 +277,7 @@ pub(crate) struct Pilot {
     contexts: Vec<String>,
     /// Node counts for contexts that loaded at least once this session.
     context_nodes: BTreeMap<String, usize>,
+    context_display: shell::ContextDisplay,
     config_error: Option<String>,
     config_loading: bool,
     config_generation: u64,
@@ -286,6 +288,7 @@ pub(crate) struct Pilot {
     summary_job: Option<OwnedJob>,
     summary_task: Option<Task<()>>,
     services: Snapshot<Vec<ServiceInfo>, Target>,
+    service_display: services::ServiceDisplay,
     nodes: Vec<NodeSummary>,
     load_history: LoadHistory,
     selected_node: Option<String>,
@@ -299,10 +302,12 @@ pub(crate) struct Pilot {
     nodes_page: Entity<PageHost>,
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
-    screens: Vec<(Page, ScreenHandle)>,
+    screens: Vec<(ScreenKind, ScreenHandle)>,
     resources: Entity<ResourcesScreen>,
     /// The Kubernetes kind the Resources page shows.
     resource_kind: ResourceKind,
+    last_kind: ResourceKind,
+    system_services: Entity<system_services::SystemServices>,
     /// The sidebar's Custom Resources, discovered when opened.
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
@@ -350,14 +355,14 @@ impl Pilot {
     ) -> Self {
         cx.bind_keys([
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
-            KeyBinding::new("secondary-2", ShowServices, Some("Freshkube")),
-            KeyBinding::new("secondary-3", ShowLogs, Some("Freshkube")),
-            KeyBinding::new("secondary-4", ShowProcesses, Some("Freshkube")),
-            KeyBinding::new("secondary-5", ShowStorage, Some("Freshkube")),
-            KeyBinding::new("secondary-6", ShowNetwork, Some("Freshkube")),
-            KeyBinding::new("secondary-7", ShowDiagnostics, Some("Freshkube")),
-            KeyBinding::new("secondary-8", ShowEtcd, Some("Freshkube")),
-            KeyBinding::new("secondary-9", ShowWorkloads, Some("Freshkube")),
+            KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
+            KeyBinding::new("secondary-3", ShowNamespaces, Some("Freshkube")),
+            KeyBinding::new("secondary-4", ShowEvents, Some("Freshkube")),
+            KeyBinding::new("secondary-5", ShowHealth, Some("Freshkube")),
+            KeyBinding::new("secondary-6", ShowEtcd, Some("Freshkube")),
+            KeyBinding::new("secondary-7", ShowSystemServices, Some("Freshkube")),
+            KeyBinding::new("secondary-8", ShowSecurity, Some("Freshkube")),
+            KeyBinding::new("secondary-9", ShowLifecycle, Some("Freshkube")),
             // Reaches the screens without a number of their own.
             KeyBinding::new("ctrl-tab", NextScreen, Some("Freshkube")),
             KeyBinding::new("ctrl-shift-tab", PreviousScreen, Some("Freshkube")),
@@ -406,7 +411,7 @@ impl Pilot {
         let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let services_page = cx.new(|_| PageHost {
             pilot,
-            page: Page::Services,
+            page: Page::SystemServices,
         });
         let mut subscriptions = Vec::new();
         // The hosted pages read the shell's state, so whatever notifies the
@@ -463,41 +468,36 @@ impl Pilot {
             KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
             KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
         ]);
-        let screens = Page::SCREENS
+        let screens = ScreenKind::ALL
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    Page::Processes => {
+                    ScreenKind::Processes => {
                         Self::screen::<ProcessesScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Storage => {
+                    ScreenKind::Storage => {
                         Self::screen::<StorageScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Network => {
+                    ScreenKind::Network => {
                         Self::screen::<NetworkScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Diagnostics => {
+                    ScreenKind::Diagnostics => {
                         Self::screen::<DiagnosticsScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Etcd => {
+                    ScreenKind::Etcd => {
                         Self::screen::<EtcdScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Workloads => {
+                    ScreenKind::Health => {
                         Self::screen::<WorkloadsScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Security => {
+                    ScreenKind::Security => {
                         Self::screen::<SecurityScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Lifecycle => {
+                    ScreenKind::Lifecycle => {
                         Self::screen::<LifecycleScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Operations
-                    | Page::Overview
-                    | Page::Nodes
-                    | Page::Services
-                    | Page::Logs
-                    | Page::Resources => {
+                    ScreenKind::Operations => {
                         Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
                     }
                 };
@@ -518,13 +518,15 @@ impl Pilot {
         ]);
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
-        subscriptions.push(cx.observe_global::<Theme>(|view, cx| {
+        subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            view.prepare_context_display(window, cx);
             view.notify_cached(cx);
             cx.notify();
         }));
         subscriptions.extend([
-            cx.subscribe_in(&service_filter, window, |_, _, event, _, cx| {
+            cx.subscribe_in(&service_filter, window, |view, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
+                    view.rebuild_service_rows(cx);
                     cx.notify();
                 }
             }),
@@ -571,6 +573,7 @@ impl Pilot {
             service_filter,
             contexts: Vec::new(),
             context_nodes: BTreeMap::new(),
+            context_display: shell::ContextDisplay::default(),
             config_error: None,
             config_loading: false,
             config_generation: 0,
@@ -581,6 +584,7 @@ impl Pilot {
             summary_job: None,
             summary_task: None,
             services: Snapshot::default(),
+            service_display: services::ServiceDisplay::default(),
             nodes: Vec::new(),
             load_history: LoadHistory::default(),
             selected_node: None,
@@ -596,6 +600,8 @@ impl Pilot {
             screens,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
+            last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
+            system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
             kind_switcher: cx.new(|cx| CommandState::new(window, cx)),
             kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
@@ -645,11 +651,32 @@ impl Pilot {
                 view.inspect_kubeconfig_file(path, window, cx);
             }
         }
+        view._subscriptions.push(cx.subscribe_in(
+            &view.system_services,
+            window,
+            |this, _, event: &system_services::ServiceEvent, window, cx| {
+                let (node, service, tab) = match event {
+                    system_services::ServiceEvent::Logs(node, service) => {
+                        (node, service, nodes::NodeTab::Logs)
+                    }
+                    system_services::ServiceEvent::Open(node, service) => {
+                        (node, service, nodes::NodeTab::Services)
+                    }
+                };
+                this.open_node_by_name(node, tab, window, cx);
+                this.selected_service = Some(service.clone());
+                if tab == nodes::NodeTab::Logs {
+                    this.open_logs(window, cx);
+                }
+                cx.notify();
+            },
+        ));
+        view.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&view.focus, cx);
         // Without Talos, the one page that reads is the first one shown.
         if view.kubernetes_only.is_some() {
-            view.navigate_from_keyboard(Page::Resources, window, cx);
+            view.navigate_from_keyboard(Page::Overview, window, cx);
         }
         // Debug builds can open on a page by slug, for visual checks, and
         // so can the stress example.
@@ -659,6 +686,12 @@ impl Pilot {
             .and_then(|slug| Page::ALL.into_iter().find(|page| page.slug() == slug))
         {
             view.navigate(page, window, cx);
+        }
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        if std::env::var("FRESHKUBE_PAGE").ok().as_deref() == Some("node-logs")
+            && let Some(node) = view.selected_node.clone()
+        {
+            view.open_node_by_name(&node, nodes::NodeTab::Logs, window, cx);
         }
         // Built-in kinds, and with example data its custom kinds too.
         #[cfg(any(debug_assertions, feature = "stress"))]
@@ -689,10 +722,16 @@ impl Pilot {
         self.selected_node = None;
         self.selected_service = None;
         self.nodes.clear();
+        self.system_services
+            .update(cx, |services, cx| services.set_nodes(&[], cx));
+        self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
         self.kubernetes_summary = Snapshot::default();
+        self.system_services
+            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes();
+        self.prepare_context_display(window, cx);
         self.node_workspace
             .document
             .update(cx, |pane, cx| pane.close(cx));
@@ -701,6 +740,7 @@ impl Pilot {
         self.summary_job = None;
         self.summary_task = None;
         self.services = Snapshot::default();
+        self.rebuild_service_rows(cx);
         self.logs
             .update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
         self.push_source(window, cx);
@@ -845,12 +885,14 @@ impl Pilot {
                 self.selected_service = Some(service.clone());
                 self.open_logs(window, cx);
             }
-            ScreenEvent::SelectNode(node) => self.select_node_by_name(node.clone(), window, cx),
+            ScreenEvent::SelectNode(node) => {
+                self.open_node_by_name(node, nodes::NodeTab::Overview, window, cx)
+            }
             ScreenEvent::OpenLogsOn { node, service } => {
                 if !self.nodes.iter().any(|known| &known.name == node) {
                     return;
                 }
-                self.select_node_by_name(node.clone(), window, cx);
+                self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);
                 self.selected_service = Some(service.clone());
                 self.open_logs(window, cx);
             }
@@ -933,9 +975,9 @@ impl Pilot {
 
     fn active_screen(&self) -> Option<ScreenHandle> {
         let page = if self.page == Page::Nodes && self.node_workspace.open {
-            self.node_workspace.tab.page()?
+            self.node_workspace.tab.screen()?
         } else {
-            self.page
+            self.page.screen()?
         };
         self.screens
             .iter()
@@ -1038,7 +1080,7 @@ impl Pilot {
     }
 
     fn refresh_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page == Page::Workloads {
+        if self.page == Page::Health {
             return;
         }
         if let Some(screen) = self.active_screen() {
@@ -1088,7 +1130,10 @@ impl Pilot {
                     .or_else(|| self.nodes.first())
                     .map(|node| node.name.clone())
             });
+        self.system_services
+            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes();
+        self.prepare_context_display(window, cx);
         if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
             self.select_node(selected, window, cx);
         } else {
@@ -1125,6 +1170,7 @@ impl Pilot {
         self.service_task = None;
         self.service_job = None;
         self.services = Snapshot::default();
+        self.rebuild_service_rows(cx);
         if self.fixture {
             let context = self.applied.context.clone().unwrap_or_default();
             let node = self.selected_node.clone().unwrap_or_default();
@@ -1192,6 +1238,7 @@ impl Pilot {
             };
             self.services.apply(&request, result);
             self.retain_selected_service();
+            self.rebuild_service_rows(cx);
             return;
         }
         let Some((target, client)) = self.target() else {
@@ -1211,6 +1258,7 @@ impl Pilot {
                 view.service_job = None;
                 if view.services.apply(&request, result) {
                     view.retain_selected_service();
+                    view.rebuild_service_rows(cx);
                     let catalog = view.services.data().cloned().unwrap_or_default();
                     let current = view.target();
                     view.logs
@@ -1227,6 +1275,28 @@ impl Pilot {
         if presentation::selected_service(&services, self.selected_service.as_deref()).is_none() {
             self.selected_service = None;
         }
+    }
+
+    fn rebuild_service_rows(&mut self, cx: &App) {
+        self.service_display.visible = self.visible_services(cx);
+        let all = self.services.data().map(Vec::as_slice).unwrap_or_default();
+        self.service_display.labels = [
+            format!("All {}", all.len()).into(),
+            format!(
+                "Unhealthy {}",
+                all.iter()
+                    .filter(|service| presentation::service_health(service) == Health::Unhealthy)
+                    .count()
+            )
+            .into(),
+            format!(
+                "Not reported {}",
+                all.iter()
+                    .filter(|service| presentation::service_health(service) == Health::Unknown)
+                    .count()
+            )
+            .into(),
+        ];
     }
 
     /// Services on the target node that pass the name and health filters.
