@@ -67,19 +67,16 @@ runner architecture.
 [Package release candidate](../.github/workflows/release.yml) runs **only** via
 `workflow_dispatch` and invokes the same checks and packaging at the selected
 branch or existing tag. In Actions, choose that workflow, **Run workflow**, and
-the branch to review. Once the destination exists, an existing tag can be selected
+the branch to review. An existing tag can be selected
 with `gh workflow run release.yml --repo skel84/freshkube --ref <tag>`. A candidate is acceptable only when the whole run is green;
 artifacts from an otherwise failed CI run are diagnostic builds. Version tags
 alone trigger nothing. The old cargo-dist publishing workflow, shell installer,
 updater configuration and dist profile have been removed; do not regenerate the
 legacy workflow with `cargo dist init`.
 
-The intended destination is `skel84/freshkube`. Cargo metadata and artifact
-manifests refer to that destination; it has not been created or published by this
-work. Repository visibility, creation, remote migration and the first push still
-need a decision. The existing local `origin` is left unchanged. Once the chosen
-repository contains the workflow on its default branch, the manual workflow is
-available in Actions. Private repositories use the account's Actions minutes.
+The destination is the public [skel84/freshkube repository](https://github.com/skel84/freshkube).
+Cargo metadata and artifact manifests refer to that destination. The manual
+workflow is available from its default branch in [Actions](https://github.com/skel84/freshkube/actions).
 
 Both workflows have only `contents: read` permission and need no Apple secrets.
 Each architecture uploads a `freshkube-<target>` artifact for 14 days, containing
@@ -163,7 +160,7 @@ No cluster context was supplied for this task, so no live connection was made.
 
 Before claiming a release is ready for ordinary download:
 
-1. Choose the repository visibility, release policy and a permanent bundle ID.
+1. Choose the release policy and confirm a permanent bundle ID.
 2. Obtain Apple Developer Program membership and a **Developer ID Application**
    certificate with its private key. Import it into a temporary CI keychain using
    restricted secrets. Sign the final bundle with hardened runtime and a secure

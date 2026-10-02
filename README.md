@@ -54,9 +54,11 @@ Requirements:
 - `protoc`, the protobuf compiler, used to generate the Talos gRPC client: `brew install protobuf`
 - macOS 15 or later with the Xcode command line tools (see GPUI Kit's [platform prerequisites](https://gpui-kit.com/docs/installation))
 
-Build from an existing checkout. The intended GitHub destination, `skel84/freshkube`, has not been published yet.
+Clone the public [Freshkube repository](https://github.com/skel84/freshkube) and build:
 
 ```bash
+git clone https://github.com/skel84/freshkube.git
+cd freshkube
 cargo build --release
 ./target/release/freshkube
 ```
