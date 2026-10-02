@@ -1707,7 +1707,8 @@ fn hidden_log_batches_do_not_redraw_the_window(cx: &mut TestAppContext) {
         assert_eq!(now, applied);
         assert_eq!(held, 50);
         // Past the coalescing interval the whole backlog lands at once.
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        cx.background_executor()
+            .advance_clock(std::time::Duration::from_millis(300));
         assert!(logs.update(cx, |logs, cx| {
             logs.push_fixture_batch(vec!["level=info late".into()], cx)
         }));

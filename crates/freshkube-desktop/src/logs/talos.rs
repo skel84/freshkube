@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use gpui_kit::assets::IconName;
@@ -252,7 +252,7 @@ impl LogView<TalosLogs> {
         self.source.errors.clear();
         self.showing = self.source.services.iter().cloned().collect();
         self.review.append(events);
-        self.last_applied = Instant::now();
+        self.last_applied = cx.background_executor().now();
         self.review.set_service_filter(self.showing.clone());
         self.pending_reveal = self.last_row_id();
         cx.notify();

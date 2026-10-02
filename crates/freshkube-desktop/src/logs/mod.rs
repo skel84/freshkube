@@ -295,7 +295,7 @@ impl<S: LogSource> LogView<S> {
             feedback: None,
             visible: true,
             backlog: Vec::new(),
-            last_applied: Instant::now(),
+            last_applied: cx.background_executor().now(),
         }
     }
 
@@ -327,7 +327,9 @@ impl<S: LogSource> LogView<S> {
     fn ingest(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
         if !self.visible {
             self.backlog.extend(lines);
-            if self.last_applied.elapsed() < HIDDEN_APPLY_INTERVAL {
+            // The executor's clock, so tests can step it.
+            let now = cx.background_executor().now();
+            if now.saturating_duration_since(self.last_applied) < HIDDEN_APPLY_INTERVAL {
                 return;
             }
             let lines = std::mem::take(&mut self.backlog);
@@ -338,7 +340,7 @@ impl<S: LogSource> LogView<S> {
     }
 
     fn apply_lines(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
-        self.last_applied = Instant::now();
+        self.last_applied = cx.background_executor().now();
         self.apply_manual_review(cx);
         self.capture_anchor();
         self.review.append(lines);
