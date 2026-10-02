@@ -181,7 +181,7 @@ None of Developer ID signing, notarization, stapling, Gatekeeper acceptance or
 live LAN access has been verified by the ad-hoc pipeline. An ad-hoc certificate
 cannot substitute for Developer ID notarization.
 
-## Local validation
+## Validation
 
 On 2 October 2026, an Intel Mac running macOS 15.2 built the release binary and
 packaged the real app. Architecture, deployment target, UUID, system-only dynamic
@@ -193,6 +193,13 @@ also covered a wrong architecture, wrong minimum OS and a private dylib.
 
 Formatting, Clippy with warnings denied, the workspace tests (including headless
 UI tests and doctests), and workflow validation with actionlint 1.7.12 passed. The release build emitted an existing unused `navigation::known`
-warning, and Cargo reported future incompatibility in `block` 0.1.6. Apple Silicon
-build/execution and hosted Actions were not run in this local-only task. The
-trusted-distribution and LAN checks above remain open.
+warning, and Cargo reported future incompatibility in `block` 0.1.6.
+
+The [hosted candidate run](https://github.com/skel84/freshkube/actions/runs/37063705491)
+at `77dcb1e` passed formatting, Clippy and the workspace tests, and successfully
+packaged both architectures with Rust 1.99.0. Each native runner verified CLI
+execution and the archived bundle. Both downloaded
+artifacts passed checksum, revision, architecture, metadata, licence/resource,
+executable mode and signature checks on this Intel Mac; its downloaded Intel
+executable also passed the CLI smoke test. Graphical launch on Apple Silicon,
+trusted distribution and live LAN access remain unverified.
