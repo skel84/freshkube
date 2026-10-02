@@ -6,6 +6,7 @@ use crate::palette::palette;
 use crate::presentation::{self, Role as NodeRole};
 use crate::resources::custom::{CustomGroup, Discovery};
 use crate::resources::navigation::{self, NavGroup};
+use crate::text_size;
 use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone};
 use freshkube_core::resources::{Failure, FailureKind};
 use gpui_kit::assets::IconName;
@@ -1349,6 +1350,7 @@ fn settings_content(
             view.appearance,
         )
     };
+    let text_size = text_size::current(cx);
     let popover = cx.entity();
     let apply_pilot = pilot.clone();
     let apply_popover = popover.clone();
@@ -1492,6 +1494,32 @@ fn settings_content(
                             let _ = appearance_pilot.update(cx, |view, cx| {
                                 view.set_appearance(choice, window, cx)
                             });
+                        }),
+                ),
+        )
+        .child(
+            h_flex()
+                .justify_between()
+                .gap_3()
+                .child(field_label("Text size"))
+                .child(
+                    text_size::STEPS
+                        .iter()
+                        .fold(
+                            ButtonGroup::new("text-size").outline().small(),
+                            |group, size| {
+                                group.child(
+                                    Button::new(("text-size", *size as usize))
+                                        .label(format!("{size:.0}"))
+                                        .selected(*size == text_size)
+                                        .tooltip("Command-= and Command-- step the size; Command-0 resets it"),
+                                )
+                            },
+                        )
+                        .on_click(|selected: &Vec<usize>, _, cx| {
+                            if let Some(size) = selected.first().and_then(|ix| text_size::STEPS.get(*ix)) {
+                                text_size::set(*size, cx);
+                            }
                         }),
                 ),
         )

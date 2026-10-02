@@ -13,6 +13,7 @@ pub struct GpuiOptions {
     maintenance_endpoint: Option<String>,
     kubernetes_only: bool,
     kube_context: Option<String>,
+    preferences: Option<PathBuf>,
 }
 
 impl GpuiOptions {
@@ -26,6 +27,7 @@ impl GpuiOptions {
             maintenance_endpoint: None,
             kubernetes_only: false,
             kube_context: None,
+            preferences: None,
         }
     }
     /// Opens without Talos: the Kubernetes pages read `kubeconfig`, or the
@@ -79,6 +81,12 @@ impl GpuiOptions {
             ..Self::new(None, None, 100)
         }
     }
+    /// Remembers preferences, such as the text size, in this file between
+    /// launches. Without one they last for the session.
+    pub fn with_preferences(mut self, path: Option<PathBuf>) -> Self {
+        self.preferences = path;
+        self
+    }
     pub fn is_fixture(&self) -> bool {
         self.fixture
     }
@@ -121,8 +129,22 @@ mod screens;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
+mod text_size;
 mod theme;
 mod ui;
+
+/// Where the app keeps its preferences:
+/// `~/Library/Application Support/Freshkube/preferences.json`.
+pub fn preferences_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").filter(|home| !home.is_empty())?;
+    Some(
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Freshkube")
+            .join("preferences.json"),
+    )
+}
 
 pub fn run(options: GpuiOptions, runtime: tokio::runtime::Handle) -> color_eyre::Result<()> {
     desktop::run(options, runtime)

@@ -144,12 +144,15 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    // Example data starts at the default text size, so captures are comparable.
     let options = if fixture {
         GpuiOptions::fixture()
     } else if kubernetes_only {
         GpuiOptions::kubernetes_only(kubeconfig.map(PathBuf::from), kube_context, tail)
+            .with_preferences(freshkube_desktop::preferences_path())
     } else {
         options(config, context, tail, kubeconfig, insecure, endpoint)
+            .with_preferences(freshkube_desktop::preferences_path())
     };
     freshkube_desktop::run(options, runtime.handle().clone())?;
 

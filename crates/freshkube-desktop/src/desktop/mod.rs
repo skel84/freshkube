@@ -26,7 +26,7 @@ use crate::{
         SecurityScreen, StorageScreen, WorkloadsScreen,
     },
     state::Snapshot,
-    theme,
+    text_size, theme,
     ui::clock,
 };
 use freshkube_core::cluster_overview::{
@@ -146,6 +146,7 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::install(cx);
+            text_size::install(options.preferences.clone(), cx);
             cx.bind_keys([
                 KeyBinding::new("secondary-q", Quit, None),
                 KeyBinding::new("secondary-r", Refresh, Some("Freshkube")),

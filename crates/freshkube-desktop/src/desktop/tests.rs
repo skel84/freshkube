@@ -25,6 +25,7 @@ fn mount(
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
+        crate::text_size::install(None, cx);
         Theme::change(ThemeMode::Light, None, cx);
         // Dialogs animate on the real clock, which the test clock can't
         // advance; reduced motion opens and closes them immediately.
@@ -2215,4 +2216,41 @@ fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext)
         assert!(lines.size.height >= px(54.), "{lines:?}");
         assert!(lines.bottom() <= pane.bottom(), "{lines:?} {pane:?}");
     });
+}
+
+#[gpui_kit::test]
+fn text_size_steps_by_shortcut_and_settings_and_survives_appearance(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let rem = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        window.render_frame(cx);
+        window.rem_size()
+    };
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(rem(window, cx), px(14.));
+        window.press("secondary-=", cx);
+        assert_eq!(rem(window, cx), px(16.));
+        for _ in 0..3 {
+            window.press("secondary-=", cx);
+        }
+        // The largest step holds.
+        assert_eq!(rem(window, cx), px(20.));
+        assert_eq!(Theme::global(cx).mono_font_size, px(20. * 12. / 14.));
+        window.press("secondary-0", cx);
+        assert_eq!(rem(window, cx), px(14.));
+        window.press("secondary--", cx);
+        window.press("secondary--", cx);
+        assert_eq!(rem(window, cx), px(12.));
+
+        window.click("settings", cx);
+        window.render_frame(cx);
+        window.click(("text-size", 18usize), cx);
+        assert_eq!(rem(window, cx), px(18.));
+        // Kit reloads the theme's font size with its colors.
+        view.update(cx, |view, cx| {
+            view.set_appearance(super::Appearance::Dark, window, cx)
+        });
+        assert_eq!(Theme::global(cx).mode, ThemeMode::Dark);
+        assert_eq!(rem(window, cx), px(18.));
+    })
+    .unwrap();
 }

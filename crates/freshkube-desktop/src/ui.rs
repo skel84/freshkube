@@ -21,6 +21,9 @@ pub(crate) const DISPLAY_FONT: &str = "IBM Plex Sans Condensed SemiBold";
 /// Monospace face for hostnames, addresses, versions and logs.
 pub(crate) const MONO_FONT: &str = "JetBrains Mono";
 
+/// The theme's base text size at the default text size, in pixels.
+pub(crate) const BASE_TEXT: f32 = 14.;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tone {
     Good,
