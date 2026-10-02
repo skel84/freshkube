@@ -34,7 +34,7 @@ use crate::actions;
 use crate::backend::spawn_job;
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
-use crate::ui::{self, Tone};
+use crate::ui::{self, Tone, dp};
 use std::time::Duration;
 
 const CONTEXT: &str = "TalosDiagnostics";
@@ -743,7 +743,7 @@ impl DiagnosticsScreen {
             .flex_wrap()
             .child(
                 div()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.muted)
                     .child(format!("{shown} of {total} checks")),
             )
@@ -784,9 +784,9 @@ impl DiagnosticsScreen {
             .aria_selected(selected)
             .aria_label(format!("{} · {} · {}", check.name, status, check.message))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .flex_none()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -843,7 +843,7 @@ impl DiagnosticsScreen {
             .border_color(p.line)
             .child(
                 Icon::new(section_icon(category))
-                    .with_size(px(13.))
+                    .size(dp(13.))
                     .text_color(p.muted),
             )
             .child(ui::caption(&title, cx))
@@ -861,7 +861,7 @@ impl DiagnosticsScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("Select a check to see its details.");
         };
         let (tone, icon, status) = status_tone(&check.status);
@@ -889,7 +889,7 @@ impl DiagnosticsScreen {
                             .id("diagnostic-detail-title")
                             .test_support()
                             .aria_label(check.name.clone())
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(check.name.clone()),
@@ -941,7 +941,7 @@ impl DiagnosticsScreen {
             })
             .when(check.status == CheckStatus::Unknown, |this| {
                 this.child(
-                    div().text_size(px(12.5)).text_color(p.muted).child(
+                    div().text_size(dp(12.5)).text_color(p.muted).child(
                         "Nothing is known about this source, so nothing is shown as failed.",
                     ),
                 )
@@ -958,7 +958,7 @@ impl DiagnosticsScreen {
                         .child(ui::caption("Suggested fix", cx))
                         .child(
                             div()
-                                .text_size(px(13.))
+                                .text_size(dp(13.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(fix.description.clone()),
                         )
@@ -968,7 +968,7 @@ impl DiagnosticsScreen {
                                     .gap_1()
                                     .child(
                                         div()
-                                            .text_size(px(12.))
+                                            .text_size(dp(12.))
                                             .text_color(p.muted)
                                             .child(fix.label),
                                     )
@@ -987,7 +987,7 @@ impl DiagnosticsScreen {
                             )
                         })
                         .when_some(fix.note, |this, note| {
-                            this.child(div().text_size(px(12.5)).text_color(p.warn_ink).child(note))
+                            this.child(div().text_size(dp(12.5)).text_color(p.warn_ink).child(note))
                         })
                         .when(applicable, |this| {
                             this.child(
@@ -1010,7 +1010,7 @@ impl DiagnosticsScreen {
                         .when(!applicable, |this| {
                             this.child(
                                 div()
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .text_color(p.muted)
                                     .child("Guidance only; this fix can't be applied from here."),
                             )
@@ -1031,7 +1031,7 @@ impl DiagnosticsScreen {
                                     .gap_2()
                                     .child(ui::tag(tone, Some(icon), lead, cx))
                                     .child(
-                                        div().flex_1().min_w_0().text_size(px(12.5)).child(text),
+                                        div().flex_1().min_w_0().text_size(dp(12.5)).child(text),
                                     ),
                             )
                         }),
@@ -1117,7 +1117,7 @@ impl Render for DiagnosticsScreen {
         };
         let list = panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(table_head(columns, cx))
             .child(
@@ -1145,7 +1145,7 @@ impl Render for DiagnosticsScreen {
                             div()
                                 .px_3()
                                 .py_3p5()
-                                .text_size(px(12.5))
+                                .text_size(dp(12.5))
                                 .text_color(p.muted)
                                 .child(empty),
                         )
@@ -1161,14 +1161,14 @@ impl Render for DiagnosticsScreen {
         let split = if wide {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT))
                 .items_stretch()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
                 .child(
                     div()
                         .id("diagnostic-details")
-                        .w(px(DETAILS_WIDTH))
+                        .w(dp(DETAILS_WIDTH))
                         .flex_none()
                         .overflow_y_scroll()
                         .child(details),
@@ -1176,12 +1176,12 @@ impl Render for DiagnosticsScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
                 .child(
-                    v_flex().size_full().gap(px(14.)).child(list).child(
+                    v_flex().size_full().gap(dp(14.)).child(list).child(
                         div()
                             .id("diagnostic-details")
-                            .h(px(DETAILS_HEIGHT))
+                            .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
                             .child(details),
@@ -1193,10 +1193,10 @@ impl Render for DiagnosticsScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header(
                 "Diagnostics",
                 &source,

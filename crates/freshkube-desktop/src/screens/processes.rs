@@ -34,7 +34,7 @@ use super::{
     failure_banner, field, gated_page, header, mono, panel, partial_notice,
 };
 use crate::palette::palette;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosProcesses";
 const ROW_HEIGHT: f32 = 28.;
@@ -440,7 +440,7 @@ impl ProcessesScreen {
             .gap_x_5()
             .gap_y_1()
             .flex_wrap()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .child(item("CPU", cpu))
             .child(item("Memory", memory))
             .child(item("Load", load))
@@ -462,13 +462,13 @@ impl ProcessesScreen {
             .gap_2p5()
             .flex_wrap()
             .child(
-                div().flex_1().min_w(px(180.)).max_w(px(320.)).child(
+                div().flex_1().min_w(dp(180.)).max_w(dp(320.)).child(
                     Input::new(&self.query)
                         .id("process-filter")
                         .aria_label("Filter processes by command, path or arguments")
                         .small()
                         .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
                 ),
             )
             .child(
@@ -540,7 +540,7 @@ impl ProcessesScreen {
         let p = palette(cx);
         let current = self.sort;
         h_flex()
-            .py(px(7.))
+            .py(dp(7.))
             .border_b_1()
             .border_color(p.line)
             .children(COLUMNS.iter().enumerate().map(|(ix, column)| {
@@ -571,7 +571,7 @@ impl ProcessesScreen {
                                     .when(active, |this| {
                                         this.child(
                                             Icon::new(IconName::ArrowDown)
-                                                .with_size(px(11.))
+                                                .size(dp(11.))
                                                 .text_color(p.accent),
                                         )
                                     })
@@ -623,9 +623,9 @@ impl ProcessesScreen {
                 entry.resident_memory_display()
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -658,7 +658,7 @@ impl ProcessesScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child(if self.selected.is_some() {
                     "The selected process exited before the latest sample."
                 } else {
@@ -692,7 +692,7 @@ impl ProcessesScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(process.command.clone()),
@@ -773,7 +773,7 @@ impl ProcessesScreen {
                     .test_support()
                     .aria_label(process.display_command().to_owned())
                     .font_family(MONO_FONT)
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .child(process.display_command().to_owned()),
                 cx,
             ))
@@ -834,7 +834,7 @@ impl Render for ProcessesScreen {
         };
         let list = panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(self.head(cx))
             .child(
@@ -898,7 +898,7 @@ impl Render for ProcessesScreen {
                                 div()
                                     .px_3()
                                     .py_3p5()
-                                    .text_size(px(12.5))
+                                    .text_size(dp(12.5))
                                     .text_color(p.muted)
                                     .child(empty),
                             )
@@ -935,14 +935,14 @@ impl Render for ProcessesScreen {
         let split = if wide {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT))
                 .items_stretch()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
                 .child(
                     div()
                         .id("process-details")
-                        .w(px(340.))
+                        .w(dp(340.))
                         .flex_none()
                         .overflow_y_scroll()
                         .child(details),
@@ -950,12 +950,12 @@ impl Render for ProcessesScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
                 .child(
-                    v_flex().size_full().gap(px(14.)).child(list).child(
+                    v_flex().size_full().gap(dp(14.)).child(list).child(
                         div()
                             .id("process-details")
-                            .h(px(DETAILS_HEIGHT))
+                            .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
                             .child(details),
@@ -967,10 +967,10 @@ impl Render for ProcessesScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header("Processes", &source, Scope::Node, &self.loader, cx))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))

@@ -26,7 +26,7 @@ use super::{
 };
 use crate::palette::palette;
 use crate::presentation::{self, Health};
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosEtcd";
 const ROW_HEIGHT: f32 = 32.;
@@ -377,7 +377,7 @@ impl EtcdScreen {
                     .child(ui::tag(quorum.tone, Some(quorum.icon), quorum.label, cx))
                     .child(
                         div()
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(quorum.detail),
                     ),
@@ -501,9 +501,9 @@ impl EtcdScreen {
                 issues_count
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -561,7 +561,7 @@ impl EtcdScreen {
                                 div()
                                     .px_3()
                                     .py_3p5()
-                                    .text_size(px(12.5))
+                                    .text_size(dp(12.5))
                                     .text_color(p.muted)
                                     .child("etcd reported no members."),
                             )
@@ -578,7 +578,7 @@ impl EtcdScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child(if self.selected.is_some() {
                     "The selected member is no longer in the roster."
                 } else {
@@ -621,7 +621,7 @@ impl EtcdScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(info.hostname.clone()),
@@ -894,20 +894,20 @@ impl Render for EtcdScreen {
         let body = if wide {
             h_flex()
                 .items_start()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .gap(px(14.))
+                        .gap(dp(14.))
                         .child(list)
                         .child(alarms),
                 )
-                .child(div().w(px(DETAILS_WIDTH)).flex_none().child(details))
+                .child(div().w(dp(DETAILS_WIDTH)).flex_none().child(details))
                 .into_any_element()
         } else {
             v_flex()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(list)
                 .child(details)
                 .child(alarms)
@@ -918,10 +918,10 @@ impl Render for EtcdScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header("etcd", &source, Scope::Cluster, &self.loader, cx))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))

@@ -27,7 +27,7 @@ use super::{
     failure_banner, field, gated_page, header, mono, panel, partial_notice, stat,
 };
 use crate::palette::palette;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosStorage";
 const ROW_HEIGHT: f32 = 28.;
@@ -482,9 +482,9 @@ impl StorageScreen {
                 if disk.readonly { " · read-only" } else { "" }
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -536,9 +536,9 @@ impl StorageScreen {
                 encryption(volume)
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -569,7 +569,7 @@ impl StorageScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("No disk selected.")
                 .into_any_element();
         };
@@ -591,7 +591,7 @@ impl StorageScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(disk.dev_path.clone()),
@@ -628,7 +628,7 @@ impl StorageScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("No volume selected.")
                 .into_any_element();
         };
@@ -651,7 +651,7 @@ impl StorageScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(volume.id.clone()),
@@ -740,7 +740,7 @@ impl Render for StorageScreen {
         };
         let empty = self.empty_message(what, &source_state);
         let head = {
-            let line = h_flex().py(px(7.)).border_b_1().border_color(p.line);
+            let line = h_flex().py(dp(7.)).border_b_1().border_color(p.line);
             line.children(head_columns.iter().enumerate().map(|(ix, column)| {
                 cell(*column)
                     .when(ix == 1, |this| this.text_right())
@@ -751,7 +751,7 @@ impl Render for StorageScreen {
             div()
                 .px_3()
                 .py_3p5()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child(empty)
                 .into_any_element()
@@ -797,7 +797,7 @@ impl Render for StorageScreen {
         };
         let list = panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(head)
             .child(
@@ -836,14 +836,14 @@ impl Render for StorageScreen {
         let split = if wide {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT))
                 .items_stretch()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
                 .child(
                     div()
                         .id("storage-details")
-                        .w(px(340.))
+                        .w(dp(340.))
                         .flex_none()
                         .overflow_y_scroll()
                         .child(details),
@@ -851,12 +851,12 @@ impl Render for StorageScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
                 .child(
-                    v_flex().size_full().gap(px(14.)).child(list).child(
+                    v_flex().size_full().gap(dp(14.)).child(list).child(
                         div()
                             .id("storage-details")
-                            .h(px(DETAILS_HEIGHT))
+                            .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
                             .child(details),
@@ -868,10 +868,10 @@ impl Render for StorageScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header("Storage", &source, Scope::Node, &self.loader, cx))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))

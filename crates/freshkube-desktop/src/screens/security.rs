@@ -13,7 +13,7 @@ use freshkube_core::security_lifecycle::{
     VolumeEncryptionAudit,
 };
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
@@ -23,7 +23,7 @@ use super::{
     gated_page, header, mono, panel, partial_notice, stat,
 };
 use crate::palette::palette;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosSecurity";
 const ROW_HEIGHT: f32 = 34.;
@@ -530,7 +530,7 @@ impl SecurityScreen {
                 .gap_x_5()
                 .gap_y_1()
                 .flex_wrap()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child(
                     h_flex()
                         .gap_1p5()
@@ -622,15 +622,15 @@ impl SecurityScreen {
                 item.name, item.status, item.summary
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .flex_none()
             .gap_3()
             .px_3()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-            .child(div().w(px(112.)).flex_none().child(ui::tag(
+            .child(div().w(dp(112.)).flex_none().child(ui::tag(
                 tone,
                 None,
                 item.status.clone(),
@@ -646,10 +646,10 @@ impl SecurityScreen {
             )
             .child(
                 div()
-                    .max_w(px(220.))
+                    .max_w(dp(220.))
                     .truncate()
                     .font_family(MONO_FONT)
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .when(!selected, |this| this.text_color(p.muted))
                     .child(item.summary.clone()),
             )
@@ -676,11 +676,7 @@ impl SecurityScreen {
             .pb_1()
             .border_b_1()
             .border_color(p.line)
-            .child(
-                Icon::new(section.icon())
-                    .with_size(px(13.))
-                    .text_color(p.muted),
-            )
+            .child(Icon::new(section.icon()).size(dp(13.)).text_color(p.muted))
             .child(ui::caption(section.title(), cx))
     }
 
@@ -690,7 +686,7 @@ impl SecurityScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("Select an item to see its details.");
         };
         let (tone, icon) = item.verdict.tone();
@@ -706,7 +702,7 @@ impl SecurityScreen {
                             .id("security-detail-title")
                             .test_support()
                             .aria_label(item.name.clone())
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(item.name.clone()),
@@ -724,7 +720,7 @@ impl SecurityScreen {
                         .id("security-detail-note")
                         .test_support()
                         .aria_label(note.clone())
-                        .text_size(px(12.5))
+                        .text_size(dp(12.5))
                         .text_color(p.muted)
                         .child(note),
                 )
@@ -779,7 +775,7 @@ impl Render for SecurityScreen {
 
         let list = panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(
                 v_flex()
@@ -805,7 +801,7 @@ impl Render for SecurityScreen {
                             div()
                                 .px_3()
                                 .py_3p5()
-                                .text_size(px(12.5))
+                                .text_size(dp(12.5))
                                 .text_color(p.muted)
                                 .child("The audit reported nothing."),
                         )
@@ -817,14 +813,14 @@ impl Render for SecurityScreen {
         let split = if wide {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT))
                 .items_stretch()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
                 .child(
                     div()
                         .id("security-details")
-                        .w(px(380.))
+                        .w(dp(380.))
                         .flex_none()
                         .overflow_y_scroll()
                         .child(details),
@@ -832,12 +828,12 @@ impl Render for SecurityScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
                 .child(
-                    v_flex().size_full().gap(px(14.)).child(list).child(
+                    v_flex().size_full().gap(dp(14.)).child(list).child(
                         div()
                             .id("security-details")
-                            .h(px(DETAILS_HEIGHT))
+                            .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
                             .child(details),
@@ -849,10 +845,10 @@ impl Render for SecurityScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header(
                 "Security",
                 &source,

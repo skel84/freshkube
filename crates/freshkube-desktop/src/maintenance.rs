@@ -47,7 +47,7 @@ use crate::{
     mutation::{self, Confirmation, Operations},
     palette::palette,
     screens::{field, mono, page_body, page_scroll, panel},
-    ui::{self, DISPLAY_FONT, MONO_FONT, Tone},
+    ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp},
 };
 
 /// Cooperative cancellation handed to a runner; checked before each step.
@@ -923,7 +923,7 @@ fn readiness_rows(evidence: &BootstrapReadinessEvidence) -> Vec<(&'static str, T
 fn heading(text: &'static str) -> Div {
     div()
         .font_family(DISPLAY_FONT)
-        .text_size(px(16.))
+        .text_size(dp(16.))
         .child(text)
 }
 
@@ -954,8 +954,8 @@ impl MaintenanceView {
     fn title_bar(&self, cx: &App) -> AnyElement {
         let p = palette(cx);
         TitleBar::new()
-            .h(px(44.))
-            .when(cfg!(target_os = "macos"), |bar| bar.pl(px(92.)))
+            .h(dp(44.))
+            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(92.)))
             .child(
                 h_flex()
                     .id("maint-title")
@@ -967,14 +967,14 @@ impl MaintenanceView {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(self.draft.endpoint.clone()),
                     )
                     .child(div().text_color(p.faint).child("/"))
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(dp(13.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Maintenance"),
                     )
@@ -1073,7 +1073,7 @@ impl MaintenanceView {
                         "Authenticated talosconfig: {}/talosconfig",
                         self.draft.output
                     ))
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(palette(cx).muted)
                     .child(format!(
                         "Authenticated talosconfig: {}/talosconfig",
@@ -1103,7 +1103,7 @@ impl MaintenanceView {
             ))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(palette(cx).muted)
                     .child("A selected kubeconfig must match the CA/TLS identity of this authenticated Talos node before any credentials or plugins are used. Rejection means unavailable, never an ambient fallback."),
             )
@@ -1225,7 +1225,7 @@ impl MaintenanceView {
                             .flex_1()
                             .min_w_0()
                             .child(mono(format!("{} / {}", disk.dev_path, disk.id)))
-                            .child(div().text_size(px(12.)).text_color(p.muted).child(detail)),
+                            .child(div().text_size(dp(12.)).text_color(p.muted).child(detail)),
                     )
                     .when(disk.readonly, |row| {
                         row.child(ui::tag(Tone::Warn, None, "Read-only", cx))
@@ -1264,7 +1264,7 @@ impl MaintenanceView {
             .child(fact("maint-volumes", "Volumes", volumes))
             .child(if snapshot.disks.is_empty() {
                 div()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.muted)
                     .child("Talos reported no disks.")
             } else {
@@ -1289,7 +1289,7 @@ impl MaintenanceView {
                 .child(heading("Exact generated YAML (contains secrets; do not share)"))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .text_color(p.muted)
                         .child(format!(
                             "Long lines wrap every {REVIEW_ROW_CHARS} characters for display only; the reviewed bytes are unchanged."
@@ -1301,7 +1301,7 @@ impl MaintenanceView {
                         .test_support()
                         .role(Role::Group)
                         .aria_label("Exact generated YAML review (contains secrets)")
-                        .h(px(340.))
+                        .h(dp(340.))
                         .rounded(px(8.))
                         .border_1()
                         .border_color(p.line)
@@ -1318,11 +1318,11 @@ impl MaintenanceView {
                                         .filter_map(|ix| {
                                             review.rows.get(ix).map(|row| {
                                                 div()
-                                                    .h(px(REVIEW_ROW_HEIGHT))
+                                                    .h(dp(REVIEW_ROW_HEIGHT))
                                                     .px_3()
                                                     .whitespace_nowrap()
                                                     .font_family(MONO_FONT)
-                                                    .text_size(px(12.))
+                                                    .text_size(dp(12.))
                                                     .child(review.text[row.clone()].to_owned())
                                             })
                                         })
@@ -1357,9 +1357,9 @@ impl MaintenanceView {
                     .items_start()
                     .child(
                         div()
-                            .w(px(100.))
+                            .w(dp(100.))
                             .flex_none()
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(palette(cx).muted)
                             .child(label),
                     )
@@ -1373,7 +1373,7 @@ impl MaintenanceView {
                         },
                         cx,
                     ))
-                    .child(div().min_w_0().flex_1().text_size(px(13.)).child(text))
+                    .child(div().min_w_0().flex_1().text_size(dp(13.)).child(text))
             }))
     }
 
@@ -1383,7 +1383,7 @@ impl MaintenanceView {
         let Some(session) = &self.session else {
             return panel(cx).p_4().gap_2().child(heading("Workflow")).child(
                 div()
-                    .text_size(px(13.))
+                    .text_size(dp(13.))
                     .text_color(p.muted)
                     .child("Choose cluster settings, then collect hardware. An install disk must be selected explicitly before generation. Nothing changes the node automatically."),
             );
@@ -1422,7 +1422,7 @@ impl MaintenanceView {
                             .test_support()
                             .role(Role::Status)
                             .aria_label(message.clone())
-                            .text_size(px(13.))
+                            .text_size(dp(13.))
                             .child(message),
                     )
                 }),
@@ -1528,7 +1528,7 @@ impl MaintenanceView {
                         .p_4()
                         .gap_2()
                         .child(heading("Separate cluster bootstrap confirmation"))
-                        .child(div().text_size(px(13.)).child("The secure Talos API answered from the explicit node. Bootstrap initializes etcd and must run on the intended first control plane only."))
+                        .child(div().text_size(dp(13.)).child("The secure Talos API answered from the explicit node. Bootstrap initializes etcd and must run on the intended first control plane only."))
                         .child(
                             div().child(
                                 Button::new("maint-bootstrap")
@@ -1617,14 +1617,14 @@ impl MaintenanceView {
             .children(if lines.is_empty() {
                 vec![
                     div()
-                        .text_size(px(12.5))
+                        .text_size(dp(12.5))
                         .text_color(p.muted)
                         .child("No progress recorded yet."),
                 ]
             } else {
                 lines
                     .into_iter()
-                    .map(|line| div().text_size(px(12.5)).child(line))
+                    .map(|line| div().text_size(dp(12.5)).child(line))
                     .collect()
             })
     }
@@ -1653,7 +1653,7 @@ impl MaintenanceView {
             .gap_2()
             .border_t_1()
             .border_color(p.line)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .text_color(p.muted)
             .child(line)
             .into_any_element()
@@ -1702,7 +1702,7 @@ impl Render for MaintenanceView {
                                         .rounded(px(8.))
                                         .bg(p.crit_soft)
                                         .text_color(p.crit_ink)
-                                        .text_size(px(13.))
+                                        .text_size(dp(13.))
                                         .child(error),
                                 )
                             })
@@ -1711,11 +1711,11 @@ impl Render for MaintenanceView {
                                     .items_start()
                                     .gap_5()
                                     .flex_wrap()
-                                    .child(div().w(px(440.)).flex_none().child(form))
+                                    .child(div().w(dp(440.)).flex_none().child(form))
                                     .child(
                                         v_flex()
                                             .flex_1()
-                                            .min_w(px(420.))
+                                            .min_w(dp(420.))
                                             .gap_4()
                                             .child(workflow)
                                             .child(progress),

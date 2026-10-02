@@ -27,7 +27,7 @@ use super::{
     table_width,
 };
 use crate::palette::palette;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosLifecycle";
 const ROW_HEIGHT: f32 = 30.;
@@ -1005,9 +1005,9 @@ impl LifecycleScreen {
                 presence_text(row.in_kubernetes, "Kubernetes"),
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -1044,7 +1044,7 @@ impl LifecycleScreen {
             div()
                 .px_3()
                 .py_3p5()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child(
                     "No node roster is available, so versions, time and configuration are unknown.",
@@ -1069,7 +1069,7 @@ impl LifecycleScreen {
                 // max-content width and a long node name pushes columns out.
                 v_flex()
                     .w_full()
-                    .min_w(crate::ui::dp(table_width(&COLUMNS)))
+                    .min_w(dp(table_width(&COLUMNS)))
                     .child(table_head(&COLUMNS, cx))
                     .child(
                         div()
@@ -1092,7 +1092,7 @@ impl LifecycleScreen {
                 .id("lifecycle-no-alerts")
                 .px_3()
                 .py_3()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child("No lifecycle alerts. Sources that didn't answer stay unknown, they aren't alerts.")
                 .into_any_element()
@@ -1111,7 +1111,7 @@ impl LifecycleScreen {
                         .gap_2p5()
                         .px_3()
                         .py_2()
-                        .text_size(px(12.5))
+                        .text_size(dp(12.5))
                         .cursor_pointer()
                         .when(selected, |this| this.bg(p.accent_soft))
                         .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -1127,7 +1127,7 @@ impl LifecycleScreen {
             .child(
                 div()
                     .px_3()
-                    .py(px(9.))
+                    .py(dp(9.))
                     .border_b_1()
                     .border_color(p.line)
                     .child(ui::caption("Alerts", cx)),
@@ -1167,20 +1167,20 @@ impl LifecycleScreen {
             )
             .child(
                 div()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .child(verdict.detail.clone()),
             )
             .when(!warnings.is_empty(), |this| {
                 this.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .text_color(p.muted)
                         .child(warnings.clone()),
                 )
             })
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child("A snapshot, not permission to act. Repeat the check right before any disruptive operation."),
             ).into_any_element()
@@ -1191,7 +1191,7 @@ impl LifecycleScreen {
         let snapshot = &view.snapshot;
         let status = |text: String, known: bool| {
             div()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .when(!known, |this| this.text_color(p.unk_ink))
                 .child(text)
         };
@@ -1316,7 +1316,7 @@ impl LifecycleScreen {
                 .aria_label(text)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child(text)
                 .into_any_element()
         };
@@ -1350,7 +1350,7 @@ impl LifecycleScreen {
                 .child(div().text_color(p.unk_ink).child("Not reported"))
                 .child(
                     div()
-                        .text_size(px(11.5))
+                        .text_size(dp(11.5))
                         .text_color(p.muted)
                         .child(reason.to_owned()),
                 )
@@ -1436,7 +1436,7 @@ impl LifecycleScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(row.name.clone()),
@@ -1457,7 +1457,7 @@ impl LifecycleScreen {
             .when(!reported, |this| {
                 this.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .text_color(p.muted)
                         .child("No Talos answer was received from this node. That doesn't mean it is down; nothing positively reported a failure."),
                 )
@@ -1485,7 +1485,7 @@ impl LifecycleScreen {
             ))
             .child(
                 div()
-                    .text_size(px(11.5))
+                    .text_size(dp(11.5))
                     .text_color(p.muted)
                     .child("Config is the machineconfig resource version. A difference is a drift indicator, not a diff; nodes may legitimately differ."),
             ).into_any_element()
@@ -1509,13 +1509,13 @@ impl LifecycleScreen {
             .child(h_flex().gap_2().child(ui::tag(tone, Some(icon), label, cx)))
             .child(
                 div()
-                    .text_size(px(13.5))
+                    .text_size(dp(13.5))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(alert.message.clone()),
             )
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(alert.origin),
             )
@@ -1527,11 +1527,11 @@ impl LifecycleScreen {
                             .items_start()
                             .child(
                                 div()
-                                    .w(px(150.))
+                                    .w(dp(150.))
                                     .flex_none()
                                     .min_w_0()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .truncate()
                                     .child(label.clone()),
                             )
@@ -1539,7 +1539,7 @@ impl LifecycleScreen {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(value.clone()),
                             )
                     }))
@@ -1582,22 +1582,22 @@ impl Render for LifecycleScreen {
         let body = if wide {
             h_flex()
                 .items_start()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .gap(px(14.))
+                        .gap(dp(14.))
                         .child(nodes)
                         .child(alerts_panel)
                         .child(etcd)
                         .child(sources),
                 )
-                .child(div().w(px(DETAILS_WIDTH)).flex_none().child(details))
+                .child(div().w(dp(DETAILS_WIDTH)).flex_none().child(details))
                 .into_any_element()
         } else {
             v_flex()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(nodes)
                 .child(details)
                 .child(alerts_panel)
@@ -1610,10 +1610,10 @@ impl Render for LifecycleScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header(
                 "Lifecycle",
                 &source,

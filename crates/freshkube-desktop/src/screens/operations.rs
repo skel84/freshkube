@@ -71,7 +71,7 @@ use crate::backend::{self, OwnedJob};
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::Role as NodeRole;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosOperations";
 const ROW_HEIGHT: f32 = 30.;
@@ -2121,12 +2121,12 @@ fn chip(
         .aria_toggled(if on { Toggled::True } else { Toggled::False })
         .aria_label(label.clone())
         .tab_index(0)
-        .h(px(28.))
-        .px(px(11.))
-        .gap(px(6.))
+        .h(dp(28.))
+        .px(dp(11.))
+        .gap(dp(6.))
         .rounded(px(6.))
         .border_1()
-        .text_size(px(12.5))
+        .text_size(dp(12.5))
         .cursor_pointer()
         .whitespace_nowrap()
         .when(on, |this| {
@@ -2144,7 +2144,7 @@ fn chip(
         .when(on, |this| {
             this.child(
                 Icon::new(IconName::Check)
-                    .with_size(px(13.))
+                    .size(dp(13.))
                     .text_color(p.accent),
             )
         })
@@ -2186,7 +2186,7 @@ impl OperationsScreen {
                 )
                 .child(
                     div()
-                        .text_size(px(12.5))
+                        .text_size(dp(12.5))
                         .text_color(p.muted)
                         .child(kind_blurb(self.operation)),
                 ),
@@ -2220,7 +2220,7 @@ impl OperationsScreen {
             h_flex()
                 .gap_1p5()
                 .items_center()
-                .child(div().text_size(px(12.5)).text_color(p.muted).child(label))
+                .child(div().text_size(dp(12.5)).text_color(p.muted).child(label))
                 .child(
                     Button::new(dec)
                         .outline()
@@ -2233,10 +2233,10 @@ impl OperationsScreen {
                 )
                 .child(
                     div()
-                        .min_w(px(54.))
+                        .min_w(dp(54.))
                         .text_center()
                         .font_family(MONO_FONT)
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .child(value),
                 )
                 .child(
@@ -2368,7 +2368,7 @@ impl OperationsScreen {
                 .when(empty, |this| {
                     this.child(
                         div()
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(format!("{} has no options.", kind_title(kind))),
                     )
@@ -2409,9 +2409,9 @@ impl OperationsScreen {
                 }
             ))
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(on, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!on, |this| this.hover(|style| style.bg(p.hover)))
@@ -2438,7 +2438,7 @@ impl OperationsScreen {
             div()
                 .px_3()
                 .py_3p5()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child("No node roster is available, so there is nothing to select.")
                 .into_any_element()
@@ -2460,7 +2460,7 @@ impl OperationsScreen {
                 .child(
                     v_flex()
                         .w_full()
-                        .min_w(crate::ui::dp(table_width(&COLUMNS)))
+                        .min_w(dp(table_width(&COLUMNS)))
                         .child(table_head(&COLUMNS, cx))
                         .child(
                             div()
@@ -2511,14 +2511,14 @@ impl OperationsScreen {
                     .child(ui::tag(v.tone, Some(v.icon), v.label, cx))
                     .child(
                         div()
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(v.detail),
                     ),
             )
             .children(state.map(|state| {
                 div()
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(format!("Kubernetes: {state}"))
             }))
@@ -2556,7 +2556,7 @@ impl OperationsScreen {
                             .items_center()
                             .child(
                                 div()
-                                    .w(px(22.))
+                                    .w(dp(22.))
                                     .flex_none()
                                     .font_family(MONO_FONT)
                                     .text_color(p.muted)
@@ -2568,7 +2568,7 @@ impl OperationsScreen {
                                     .min_w_0()
                                     .truncate()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(format!("{} · {}", target.name, target.address)),
                             )
                             .when(count > 1, |this| {
@@ -2601,12 +2601,12 @@ impl OperationsScreen {
             .collect::<Vec<_>>();
         let status: AnyElement = match &self.preview {
             PreviewState::Idle => div()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child("Select nodes in the roster to see what the operation would do.")
                 .into_any_element(),
             PreviewState::Loading(_) => div()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child("Checking Kubernetes and etcd. Nothing is changed by this.")
                 .into_any_element(),
@@ -2631,7 +2631,7 @@ impl OperationsScreen {
                     PdbNote::NotNeeded => {}
                 }
                 div()
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(notes.join(" "))
                     .into_any_element()
@@ -2760,7 +2760,7 @@ impl OperationsScreen {
                 .gap_2()
                 .items_center()
                 .child(ui::tag(tone, Some(icon), "Finished", cx))
-                .child(div().text_size(px(12.5)).child(text))
+                .child(div().text_size(dp(12.5)).child(text))
                 .into_any_element()
         } else {
             let label = if run.cancel_requested {
@@ -2830,26 +2830,26 @@ impl OperationsScreen {
                         .child(
                             div()
                                 .font_family(MONO_FONT)
-                                .text_size(px(12.))
+                                .text_size(dp(12.))
                                 .child(format!(
                                     "{} · {}",
                                     result.target.name, result.target.address
                                 )),
                         ),
                 )
-                .child(div().text_size(px(12.5)).child(result.message.clone()))
+                .child(div().text_size(dp(12.5)).child(result.message.clone()))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .text_color(p.muted)
                         .child(scheduling),
                 )
                 .children(
-                    drain.map(|drain| div().text_size(px(12.)).text_color(p.muted).child(drain)),
+                    drain.map(|drain| div().text_size(dp(12.)).text_color(p.muted).child(drain)),
                 )
                 .children(result.audit_error.clone().map(|error| {
                     div()
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .text_color(p.warn_ink)
                         .child(format!("Audit record not saved: {error}"))
                 }))
@@ -2859,13 +2859,13 @@ impl OperationsScreen {
             .test_support()
             .role(Role::Log)
             .aria_label("Operation progress")
-            .max_h(px(220.))
+            .max_h(dp(220.))
             .overflow_y_scroll()
             .px_3()
             .py_2()
             .gap_0p5()
             .font_family(MONO_FONT)
-            .text_size(px(11.5))
+            .text_size(dp(11.5))
             .text_color(p.ink_2)
             .when(run.dropped > 0, |this| {
                 this.child(div().text_color(p.muted).child(format!(
@@ -2891,7 +2891,7 @@ impl OperationsScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .child(heading),
                     )
                     .child(
@@ -2904,7 +2904,7 @@ impl OperationsScreen {
                                 run.context,
                                 if run.context == current { "" } else { ", not the context shown now" }
                             ))
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(p.muted)
                             .child(if run.context == current {
                                 format!("in context {}", run.context)
@@ -2918,7 +2918,7 @@ impl OperationsScreen {
                     .when(run.example, |this| {
                         this.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(dp(12.))
                                 .text_color(p.muted)
                                 .child("Simulated with example data. Nothing was sent to a cluster."),
                         )
@@ -2936,7 +2936,7 @@ impl OperationsScreen {
                     .py_2()
                     .border_t_1()
                     .border_color(p.line)
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(format!(
                         "Waiting: {}",
@@ -2972,7 +2972,7 @@ impl OperationsScreen {
                             .aria_label(note.clone())
                             .px_3()
                             .pb_2()
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(p.muted)
                             .child(note),
                     )
@@ -3004,10 +3004,10 @@ impl OperationsScreen {
                             .py_1p5()
                             .border_t_1()
                             .border_color(p.line)
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .child(
                                 div()
-                                    .w(px(124.))
+                                    .w(dp(124.))
                                     .flex_none()
                                     .font_family(MONO_FONT)
                                     .text_color(p.muted)
@@ -3039,7 +3039,7 @@ impl OperationsScreen {
             (None, None) => div()
                 .px_3()
                 .pb_3()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child("Reading the audit log…")
                 .into_any_element(),
@@ -3114,13 +3114,13 @@ impl Render for OperationsScreen {
         let selection = if wide {
             h_flex()
                 .items_start()
-                .gap(px(GAP))
+                .gap(dp(GAP))
                 .child(div().flex_1().min_w_0().child(nodes))
-                .child(div().w(px(PLAN_WIDTH)).flex_none().child(plan))
+                .child(div().w(dp(PLAN_WIDTH)).flex_none().child(plan))
                 .into_any_element()
         } else {
             v_flex()
-                .gap(px(GAP))
+                .gap(dp(GAP))
                 .child(nodes)
                 .child(plan)
                 .into_any_element()
@@ -3137,16 +3137,16 @@ impl Render for OperationsScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(GAP))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(GAP))
             .child(header("Operations", &source, Scope::Cluster, &self.audit, cx))
             .children(busy_banner)
             .children(notice)
             .child(
                 div()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.muted)
                     .child("Changes the cluster. Every operation is previewed, confirmed and recorded in the audit log."),
             )
@@ -3175,7 +3175,7 @@ impl Render for OperationsScreen {
                     }))
                     .child(
                         v_flex()
-                            .gap(px(GAP))
+                            .gap(dp(GAP))
                             .child(kinds)
                             .child(options)
                             .child(selection),

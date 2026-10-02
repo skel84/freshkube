@@ -43,7 +43,7 @@ use super::{
     failure_banner, field, gated_page, header, mono, panel, partial_notice,
 };
 use crate::palette::{Palette, palette};
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosNetwork";
 const ROW_HEIGHT: f32 = 28.;
@@ -1073,7 +1073,7 @@ impl NetworkScreen {
             .gap_x_5()
             .gap_y_1()
             .flex_wrap()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .child(item("Throughput", throughput, None))
             .child(item(
                 "Errors",
@@ -1229,13 +1229,13 @@ impl NetworkScreen {
             .gap_2p5()
             .flex_wrap()
             .child(
-                div().flex_1().min_w(px(180.)).max_w(px(320.)).child(
+                div().flex_1().min_w(dp(180.)).max_w(dp(320.)).child(
                     Input::new(&self.query)
                         .id("network-filter")
                         .aria_label("Filter connections by address, service, process or state")
                         .small()
                         .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
                 ),
             )
             .when_some(self.iface_filter.clone(), |this, iface| {
@@ -1291,7 +1291,7 @@ impl NetworkScreen {
     ) -> Div {
         let p = palette(cx);
         h_flex()
-            .py(px(7.))
+            .py(dp(7.))
             .border_b_1()
             .border_color(p.line)
             .children(columns.iter().enumerate().map(|(ix, (column, sort))| {
@@ -1319,7 +1319,7 @@ impl NetworkScreen {
                                     .when(active, |this| {
                                         this.child(
                                             Icon::new(IconName::ArrowDown)
-                                                .with_size(px(11.))
+                                                .size(dp(11.))
                                                 .text_color(p.accent),
                                         )
                                     })
@@ -1344,7 +1344,7 @@ impl NetworkScreen {
     ) -> Div {
         panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(head)
             .child(
@@ -1409,7 +1409,7 @@ impl NetworkScreen {
         div()
             .px_3()
             .py_3p5()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .text_color(p.muted)
             .child(text.into())
             .into_any_element()
@@ -1421,16 +1421,16 @@ impl NetworkScreen {
         if wide {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT))
                 .items_stretch()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
                 .child(
                     div()
                         .id(details_id)
                         .test_support()
                         .aria_label("Details of the selected row")
-                        .w(px(340.))
+                        .w(dp(340.))
                         .flex_none()
                         .overflow_y_scroll()
                         .child(details),
@@ -1438,14 +1438,14 @@ impl NetworkScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
                 .child(
-                    v_flex().size_full().gap(px(14.)).child(list).child(
+                    v_flex().size_full().gap(dp(14.)).child(list).child(
                         div()
                             .id(details_id)
                             .test_support()
                             .aria_label("Details of the selected row")
-                            .h(px(DETAILS_HEIGHT))
+                            .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
                             .child(details),
@@ -1467,9 +1467,9 @@ impl NetworkScreen {
             .role(Role::ListBoxOption)
             .aria_selected(selected)
             .aria_label(label)
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -1618,7 +1618,7 @@ impl NetworkScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("Select an interface to see its counters.");
         };
         let stats = &interface.stats;
@@ -1656,7 +1656,7 @@ impl NetworkScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(name.clone()),
@@ -1718,7 +1718,7 @@ impl NetworkScreen {
             .when(has_errors, |this| {
                 this.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .text_color(p.warn_ink)
                         .child("Counters are totals since boot. If they keep rising, check the cable, driver or hardware."),
                 )
@@ -1932,7 +1932,7 @@ impl NetworkScreen {
         let details = self.connection_details(cx);
         v_flex()
             .flex_1()
-            .gap(px(14.))
+            .gap(dp(14.))
             .child(toolbar)
             .child(self.split(details_id, list, details, wide))
     }
@@ -1943,7 +1943,7 @@ impl NetworkScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("Select a connection to see its details.");
         };
         let info = &conn.connection;
@@ -1989,7 +1989,7 @@ impl NetworkScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(local_text(info)),
@@ -2102,10 +2102,10 @@ impl NetworkScreen {
                 .child(
                     h_flex()
                         .gap_2()
-                        .child(Icon::new(icon).with_size(px(16.)).text_color(p.muted))
+                        .child(Icon::new(icon).size(dp(16.)).text_color(p.muted))
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(title)),
                 )
-                .child(div().text_size(px(12.5)).text_color(p.muted).child(detail))
+                .child(div().text_size(dp(12.5)).text_color(p.muted).child(detail))
                 .into_any_element()
         };
         let Some(state) = self.kubespan.data() else {
@@ -2196,13 +2196,13 @@ impl NetworkScreen {
         let details = self.peer_details(selected, cx);
         v_flex()
             .flex_1()
-            .gap(px(14.))
+            .gap(dp(14.))
             .child(
                 div()
                     .id("kubespan-summary")
                     .test_support()
                     .aria_label(format!("{up} of {} peers up", peers.len()))
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(if up == peers.len() {
                         p.good_ink
                     } else {
@@ -2272,7 +2272,7 @@ impl NetworkScreen {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child("Select a peer to see its details.");
         };
         panel(cx)
@@ -2285,7 +2285,7 @@ impl NetworkScreen {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(peer.label.clone()),
@@ -2379,10 +2379,10 @@ impl Render for NetworkScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header("Network", &source, Scope::Node, &self.loader, cx))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))

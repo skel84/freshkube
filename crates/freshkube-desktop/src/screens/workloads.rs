@@ -31,7 +31,7 @@ use super::{
     retry_button, table_width,
 };
 use crate::palette::palette;
-use crate::ui::{self, MONO_FONT, Tone};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosWorkloads";
 const ROW_HEIGHT: f32 = 28.;
@@ -582,7 +582,7 @@ impl WorkloadsScreen {
             .gap_x_5()
             .gap_y_1p5()
             .flex_wrap()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .child(item(
                 "Deployments",
                 count(snapshot.total_deployments, WorkloadSource::Deployments),
@@ -610,13 +610,13 @@ impl WorkloadsScreen {
             .gap_2p5()
             .flex_wrap()
             .child(
-                div().flex_1().min_w(px(180.)).max_w(px(320.)).child(
+                div().flex_1().min_w(dp(180.)).max_w(dp(320.)).child(
                     Input::new(&self.query)
                         .id("workload-filter")
                         .aria_label("Filter workloads by namespace, name, kind, node or issue")
                         .small()
                         .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
                 ),
             )
             .child(
@@ -658,9 +658,9 @@ impl WorkloadsScreen {
             .aria_selected(selected)
             .aria_label(aria)
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(dp(ROW_HEIGHT))
             .font_family(MONO_FONT)
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .cursor_pointer()
             .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
             .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
@@ -675,12 +675,9 @@ impl WorkloadsScreen {
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .when(view.nested, |this| this.pl(px(28.)))
+                    .when(view.nested, |this| this.pl(dp(28.)))
                     .when(is_namespace, |this| this.font_weight(FontWeight::SEMIBOLD))
-                    .children(
-                        view.chevron
-                            .map(|chevron| Icon::new(chevron).with_size(px(13.))),
-                    )
+                    .children(view.chevron.map(|chevron| Icon::new(chevron).size(dp(13.))))
                     // Without `min_w_0` a long pod name widens the column
                     // and shifts every later cell in its row.
                     .child(div().flex_1().min_w_0().truncate().child(view.name)),
@@ -720,7 +717,7 @@ impl WorkloadsScreen {
 
     fn head(&self, show_issue: bool, cx: &App) -> Div {
         let p = palette(cx);
-        let mut head = h_flex().py(px(7.)).border_b_1().border_color(p.line);
+        let mut head = h_flex().py(dp(7.)).border_b_1().border_color(p.line);
         let mut columns = vec![STATUS, NAME, KIND, READY];
         if show_issue {
             columns.push(ISSUE);
@@ -737,7 +734,7 @@ impl WorkloadsScreen {
             panel(cx)
                 .p_4()
                 .text_color(p.muted)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child(text)
         };
         let (Some(key), Some(data)) = (self.selected.as_ref(), self.loader.data()) else {
@@ -756,7 +753,7 @@ impl WorkloadsScreen {
                 .child(
                     div()
                         .font_family(MONO_FONT)
-                        .text_size(px(14.))
+                        .text_size(dp(14.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .truncate()
                         .child(name),
@@ -1004,7 +1001,7 @@ impl Render for WorkloadsScreen {
         let summary = self.summary(data, cx);
         let list = panel(cx)
             .flex_1()
-            .min_h(px(LIST_MIN_HEIGHT))
+            .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
             .child(self.head(show_issue, cx))
             .child(
@@ -1046,7 +1043,7 @@ impl Render for WorkloadsScreen {
                                 div()
                                     .px_3()
                                     .py_3p5()
-                                    .text_size(px(12.5))
+                                    .text_size(dp(12.5))
                                     .text_color(p.muted)
                                     .child(empty),
                             )
@@ -1082,15 +1079,15 @@ impl Render for WorkloadsScreen {
         let split = if wide {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT))
                 .items_stretch()
-                .gap(px(GAP))
+                .gap(dp(GAP))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
                 .child(
                     div()
                         .id("workload-details")
                         .test_support()
-                        .w(px(DETAILS_WIDTH))
+                        .w(dp(DETAILS_WIDTH))
                         .flex_none()
                         .overflow_y_scroll()
                         .child(details),
@@ -1098,13 +1095,13 @@ impl Render for WorkloadsScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(px(LIST_MIN_HEIGHT + GAP + DETAILS_HEIGHT))
+                .min_h(dp(LIST_MIN_HEIGHT + GAP + DETAILS_HEIGHT))
                 .child(
-                    v_flex().size_full().gap(px(GAP)).child(list).child(
+                    v_flex().size_full().gap(dp(GAP)).child(list).child(
                         div()
                             .id("workload-details")
                             .test_support()
-                            .h(px(DETAILS_HEIGHT))
+                            .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
                             .child(details),
@@ -1116,10 +1113,10 @@ impl Render for WorkloadsScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(crate::desktop::PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(18.))
-            .gap(px(14.))
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
             .child(header(
                 "Workloads",
                 &source,

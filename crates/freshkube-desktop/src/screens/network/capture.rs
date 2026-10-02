@@ -35,7 +35,7 @@ use super::{NetworkScreen, effective};
 use crate::backend::{OwnedJob, Target};
 use crate::palette::palette;
 use crate::screens::{ScreenSource, mono, panel};
-use crate::ui::{self, Tone};
+use crate::ui::{self, Tone, dp};
 
 /// Opening the capture stream is one RPC; this only bounds a node that never answers.
 const OPEN_DEADLINE: Duration = Duration::from_secs(12);
@@ -469,7 +469,7 @@ impl NetworkScreen {
                     .flex_wrap()
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Packet capture"),
                     )
@@ -480,7 +480,7 @@ impl NetworkScreen {
             )
             .child(
                 div()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.muted)
                     .child(format!(
                         "Captures whole packets on one interface of {} ({}) into memory. Captured traffic can contain secrets; no promiscuous mode, and nothing leaves this machine until you save it.",
@@ -491,7 +491,7 @@ impl NetworkScreen {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(div().text_size(px(12.)).text_color(p.muted).child("Interface"))
+                    .child(div().text_size(dp(12.)).text_color(p.muted).child("Interface"))
                     .child(
                         div()
                             .id("capture-interface")
@@ -503,7 +503,7 @@ impl NetworkScreen {
                             .child(match shown {
                                 Some(name) => mono(name).font_weight(FontWeight::SEMIBOLD),
                                 None => div()
-                                    .text_size(px(12.5))
+                                    .text_size(dp(12.5))
                                     .text_color(p.muted)
                                     .child("Select an interface in the table"),
                             }),
@@ -514,7 +514,7 @@ impl NetworkScreen {
                     .gap_1p5()
                     .flex_wrap()
                     .items_center()
-                    .child(div().text_size(px(12.)).text_color(p.muted).child("Filter"))
+                    .child(div().text_size(dp(12.)).text_color(p.muted).child("Filter"))
                     .child(
                         option("capture-exclude-api")
                             .selected(self.capture.exclude_api)
@@ -531,7 +531,7 @@ impl NetworkScreen {
                     .gap_1p5()
                     .flex_wrap()
                     .items_center()
-                    .child(div().text_size(px(12.)).text_color(p.muted).child("Keep at most"))
+                    .child(div().text_size(dp(12.)).text_color(p.muted).child("Keep at most"))
                     .children(LIMITS_MIB.iter().map(|mib| {
                         let mib = *mib;
                         Button::new(("capture-limit", mib))
@@ -553,7 +553,7 @@ impl NetworkScreen {
                     .gap_1p5()
                     .flex_wrap()
                     .items_center()
-                    .child(div().text_size(px(12.)).text_color(p.muted).child("Stop"))
+                    .child(div().text_size(dp(12.)).text_color(p.muted).child("Stop"))
                     .children(DURATIONS.iter().map(|(seconds, label)| {
                         let seconds = *seconds;
                         Button::new(("capture-duration", seconds as usize))
@@ -608,7 +608,7 @@ impl NetworkScreen {
                     .test_support()
                     .role(Role::Status)
                     .aria_label(summary.clone())
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.ink_2)
                     .child(summary),
             )
@@ -635,7 +635,7 @@ impl NetworkScreen {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .child(text),
                     )
             }))

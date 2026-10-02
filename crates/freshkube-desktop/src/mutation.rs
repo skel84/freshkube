@@ -3,7 +3,7 @@
 //! audit trail, and a window that won't close while an operation runs.
 
 use crate::palette::palette;
-use crate::ui::{self, Tone};
+use crate::ui::{self, Tone, dp};
 use freshkube_core::operations::{AuditLog, default_audit_path};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -208,7 +208,7 @@ enum Blocked {
 pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) {
     let request = Rc::new(request);
     let blocked = Rc::new(Cell::new(None::<Blocked>));
-    window.open_dialog(cx, move |dialog, _, cx| {
+    window.open_dialog(cx, move |dialog, window, cx| {
         let p = palette(cx);
         let reason = blocked.get();
         let ok = {
@@ -266,7 +266,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                 .child(ui::warning_banner(None, text, None, cx))
         });
         dialog
-            .w(px(480.))
+            .w(ui::dp_px(480., window))
             .overlay_closable(false)
             .title(request.title.clone())
             .child(
@@ -276,7 +276,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     .role(Role::Dialog)
                     .aria_label(request.title.clone())
                     .gap_3()
-                    .text_size(px(13.))
+                    .text_size(dp(13.))
                     .child(request.summary.clone())
                     .when(!request.facts.is_empty(), |this| {
                         this.child(v_flex().gap_1p5().children(request.facts.iter().map(
@@ -285,7 +285,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                                     .gap_3()
                                     .child(
                                         div()
-                                            .w(px(150.))
+                                            .w(dp(150.))
                                             .flex_none()
                                             .text_color(p.muted)
                                             .child(label.clone()),
