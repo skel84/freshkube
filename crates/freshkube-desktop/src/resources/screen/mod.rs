@@ -47,6 +47,11 @@ const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Ages are redrawn this often while the page is visible.
 const AGE_TICK: Duration = Duration::from_secs(5);
+/// The least time between two watch batches applied during a burst. A change
+/// after a quiet spell shows at once; while changes keep coming, they are
+/// gathered and applied together, so a churning list re-sorts and redraws at
+/// most ten times a second instead of once per batch core sends.
+const WATCH_COALESCE: Duration = Duration::from_millis(100);
 /// Advance of one character in the 12 px table font.
 const CHAR_WIDTH: f32 = 7.2;
 const CELL_PADDING: f32 = 24.;
@@ -608,7 +613,7 @@ impl ResourcesScreen {
             self.apply(ResourceBatch { epoch, events }, cx);
             return;
         }
-        let (sender, mut receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::channel(8);
         let job = OwnedJob::new(self.runtime.spawn(watch(
             source.access,
             kind,
@@ -616,17 +621,40 @@ impl ResourcesScreen {
             source.id,
             sender,
         )));
-        let task = cx.spawn(async move |this, cx| {
-            while let Some(events) = receiver.recv().await {
+        let task = self.receive(epoch, receiver, cx);
+        self.watch = Some((job, task));
+    }
+
+    /// Applies what a read sends until it stops, at most once per
+    /// `WATCH_COALESCE`: a batch arriving sooner waits, and everything sent
+    /// meanwhile is applied with it.
+    fn receive(
+        &self,
+        epoch: u64,
+        mut receiver: mpsc::Receiver<Vec<ResourceEvent>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            let mut last_applied = None;
+            while let Some(mut events) = receiver.recv().await {
+                if let Some(due) = last_applied.map(|at| at + WATCH_COALESCE) {
+                    let now = cx.background_executor().now();
+                    if now < due {
+                        cx.background_executor().timer(due - now).await;
+                    }
+                }
+                while let Ok(more) = receiver.try_recv() {
+                    events.extend(more);
+                }
                 let applied = this.update(cx, |view, cx| {
                     view.apply(ResourceBatch { epoch, events }, cx)
                 });
                 if applied.is_err() {
                     break;
                 }
+                last_applied = Some(cx.background_executor().now());
             }
-        });
-        self.watch = Some((job, task));
+        })
     }
 
     fn apply(&mut self, batch: ResourceBatch, cx: &mut Context<Self>) {

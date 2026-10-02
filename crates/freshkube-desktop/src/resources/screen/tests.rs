@@ -9,7 +9,9 @@ use std::rc::Rc;
 
 use freshkube_core::resources::ResourceKind;
 
-use super::{KEYBOARD_PAUSE, KubeAccess, KubeSource, NotServed, ResourcesScreen, row_id};
+use super::{
+    KEYBOARD_PAUSE, KubeAccess, KubeSource, NotServed, ResourcesScreen, WATCH_COALESCE, row_id,
+};
 use crate::resources::example;
 use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
 use crate::resources::store::{ResourceBatch, ResourceEvent};
@@ -419,6 +421,40 @@ fn a_kind_no_longer_served_says_so_and_closes_its_details(cx: &mut TestAppContex
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_watch_burst_applies_at_most_once_per_coalesce_window(cx: &mut TestAppContext) {
+    let (_runtime, screen, _handle) = mount(cx, Some("homelab"));
+    let (sender, receiver) = tokio::sync::mpsc::channel(8);
+    let _task = screen.update(cx, |screen, cx| {
+        let epoch = screen.store.epoch();
+        screen.receive(epoch, receiver, cx)
+    });
+    let rows = |cx: &mut TestAppContext| screen.read_with(cx, |screen, _| screen.store.len());
+    let upsert = |n| vec![ResourceEvent::Upsert(example::inserted_pod(n))];
+    let listed = rows(cx);
+
+    // After a quiet spell a change shows at once.
+    sender.try_send(upsert(1)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+
+    // More within the window wait for it, then apply together.
+    sender.try_send(upsert(2)).unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(WATCH_COALESCE / 2);
+    sender.try_send(upsert(3)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+    cx.executor().advance_clock(WATCH_COALESCE / 2);
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 3);
+
+    cx.executor().advance_clock(WATCH_COALESCE * 2);
+    sender.try_send(upsert(4)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 4);
 }
 
 #[gpui_kit::test]

@@ -92,6 +92,16 @@ Memory stayed flat in every run: resident memory held between 90 and 115 MB thro
 
 Each fix is its own commit, with the workload that showed the problem run again after it.
 
+### Watch bursts apply at most ten times a second
+
+A watch batch that arrives within 100 ms of the last one applied now waits for the rest of that window, and everything that arrived meanwhile is applied with it. A change after a quiet spell still shows at once. The list re-sorts and redraws about 10 times a second during a burst instead of 50, and is never more than 100 ms behind.
+
+| Changes a second, on 20,000 pods | Batches a second, before → after | Batch median / max, after | Main thread busy, before → after | CPU, before → after |
+| --- | --- | --- | --- | --- |
+| 1,000 | 51 → 9.6 | 2.2 / 8.8 | 25 → 5.0 s | 111% → 23% |
+| 2,000 | 50 → 9.6 | 2.6 / 6.3 | 18 → 4.8 s | 95% → 26% |
+| 5,000 | 50 → 9.4 | 3.9 / 9.4 | 16 → 5.1 s | 98% → 37% |
+
 ### Logs keep up with a flood
 
 A log view now lays out only the new lines a frame can show, as it already did during a resize, and gives the rest the mean height of the rows measured so far. Once lines stop arriving for 150 ms it measures the rest within its 8 ms a frame. Both log sources hand the view up to 1,024 lines a turn instead of 64, and the buffer reports the lines it evicts, so their measurements are dropped without a pass over every retained line.
