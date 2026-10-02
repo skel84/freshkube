@@ -2345,11 +2345,15 @@ dependencies = [
 name = "freshkube-desktop"
 version = "0.1.11"
 dependencies = [
+ "bytes",
  "chrono",
  "color-eyre",
  "freshkube-core",
  "futures",
  "gpui-kit",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "kube",
  "libc",
  "serde_json",

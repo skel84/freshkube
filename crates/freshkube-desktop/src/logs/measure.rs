@@ -86,6 +86,7 @@ impl<S: LogSource> LogView<S> {
         // Measurements of evicted lines are dead weight; sweep them only
         // once they outnumber what could be live.
         if self.row_measurements.len() > self.review.logs.buffer().entries().len() {
+            let _span = crate::perf::span("logs.sweep");
             let retained: BTreeSet<_> = self
                 .review
                 .logs
@@ -158,6 +159,7 @@ impl<S: LogSource> LogView<S> {
         cx: &mut Context<Self>,
     ) -> Size<Pixels> {
         crate::desktop::probe::hit("logs.measure");
+        let _span = crate::perf::span("logs.measure_row");
         let available = size(
             if key.wrapped {
                 AvailableSpace::Definite(key.width)

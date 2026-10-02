@@ -335,26 +335,29 @@ impl LogView<TalosLogs> {
             let services: Vec<_> = self.source.collecting.iter().cloned().collect();
             let event_target = target.clone();
             let initial_sequence = self.review.next_id;
-            let job = self.source.runtime.spawn(async move {
-                let mut tick = tokio::time::interval(Duration::from_millis(250));
-                let mut sequence = initial_sequence;
-                loop {
-                    tick.tick().await;
-                    let service = services[sequence as usize % services.len()].clone();
-                    let line = crate::fixture::stream_line(service.as_str(), sequence);
-                    if sender
-                        .send(StreamEvent {
-                            target: event_target.clone(),
-                            service,
-                            result: Ok(line),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
+            let flood = stress_flood(&self.source.runtime, &sender, &event_target, &services);
+            let job = flood.unwrap_or_else(|| {
+                self.source.runtime.spawn(async move {
+                    let mut tick = tokio::time::interval(Duration::from_millis(250));
+                    let mut sequence = initial_sequence;
+                    loop {
+                        tick.tick().await;
+                        let service = services[sequence as usize % services.len()].clone();
+                        let line = crate::fixture::stream_line(service.as_str(), sequence);
+                        if sender
+                            .send(StreamEvent {
+                                target: event_target.clone(),
+                                service,
+                                result: Ok(line),
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        sequence += 1;
                     }
-                    sequence += 1;
-                }
+                })
             });
             (target, OwnedJob::new(job), receiver)
         } else if let Some((target, client)) = &self.source.target {
@@ -493,6 +496,11 @@ impl LogView<TalosLogs> {
         self.source.collecting = TalosLogs::default_collection(&self.source.services);
         self.showing = self.source.services.iter().cloned().collect();
         self.review.set_service_filter(self.showing.clone());
+        // A stress run floods at once, without a click.
+        #[cfg(feature = "stress")]
+        if crate::stress::talos_rate().is_some() && !self.source.collection_active {
+            self.start(cx);
+        }
         cx.notify();
     }
 
@@ -791,4 +799,32 @@ impl LogView<TalosLogs> {
                     })
             }))
     }
+}
+
+/// The stress binary can make the example services write faster than their
+/// usual line every 250 ms.
+#[cfg(feature = "stress")]
+fn stress_flood(
+    runtime: &Handle,
+    sender: &mpsc::Sender<StreamEvent>,
+    target: &Target,
+    services: &[ServiceId],
+) -> Option<tokio::task::JoinHandle<()>> {
+    let rate = crate::stress::talos_rate()?;
+    Some(runtime.spawn(crate::stress::talos_flood(
+        rate,
+        sender.clone(),
+        target.clone(),
+        services.to_vec(),
+    )))
+}
+
+#[cfg(not(feature = "stress"))]
+fn stress_flood(
+    _: &Handle,
+    _: &mpsc::Sender<StreamEvent>,
+    _: &Target,
+    _: &[ServiceId],
+) -> Option<tokio::task::JoinHandle<()>> {
+    None
 }

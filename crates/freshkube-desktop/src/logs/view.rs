@@ -428,8 +428,11 @@ impl<S: LogSource> LogView<S> {
 impl<S: LogSource> Render for LogView<S> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("logs");
+        let _span = crate::perf::span("logs.render");
         self.apply_manual_review(cx);
+        let measuring = crate::perf::span("logs.measure");
         self.measure_rows(window, cx);
+        drop(measuring);
         if self.following {
             self.pending_reveal = None;
             let height: Pixels = self.sizes.iter().map(|row| row.height).sum();
@@ -455,6 +458,7 @@ impl<S: LogSource> Render for LogView<S> {
         let panel_width = self
             .width
             .map_or(window.bounds().size.width, |width| width + px(2.));
+        let chrome = crate::perf::span("logs.chrome");
         let notices_cap = (chrome_budget * 0.25).min(chrome_budget);
         let notices_height = if self.has_notices() {
             let mut notices = self.render_notices(cx).into_any_element();
@@ -484,6 +488,7 @@ impl<S: LogSource> Render for LogView<S> {
         // Every Scrollable area has a definite measured owner. Percentage
         // scroll-area wrappers cannot establish an auto-height ancestor.
         let toolbar_height = (toolbar_size.height + px(1.)).min(toolbar_cap);
+        drop(chrome);
         let manual_scroll = ManualReviewScroll {
             base: self.scroll.clone(),
             requested: self.manual_review.clone(),

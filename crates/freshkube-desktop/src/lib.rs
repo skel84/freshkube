@@ -112,12 +112,15 @@ mod logs;
 mod maintenance;
 mod mutation;
 mod palette;
+mod perf;
 mod presentation;
 mod resources;
 // Framework pieces land before the screens that use them; drop this once
 // every screen is built.
 mod screens;
 mod state;
+#[cfg(feature = "stress")]
+mod stress;
 mod theme;
 mod ui;
 

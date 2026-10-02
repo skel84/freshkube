@@ -340,6 +340,9 @@ impl<S: LogSource> LogView<S> {
     }
 
     fn apply_lines(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
+        let _span = crate::perf::span("logs.apply");
+        crate::perf::value("logs.batch", lines.len() as f64);
+        crate::perf::line_lag("logs.lag", lines.last().map(|event| event.line.as_str()));
         self.last_applied = cx.background_executor().now();
         self.apply_manual_review(cx);
         self.capture_anchor();

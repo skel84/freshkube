@@ -579,8 +579,9 @@ impl Pilot {
         if view.kubernetes_only.is_some() {
             view.navigate_from_keyboard(Page::Resources, window, cx);
         }
-        // Debug builds can open on a page by slug, for visual checks.
-        #[cfg(debug_assertions)]
+        // Debug builds can open on a page by slug, for visual checks, and
+        // so can the stress example.
+        #[cfg(any(debug_assertions, feature = "stress"))]
         if let Some(page) = std::env::var("FRESHKUBE_PAGE")
             .ok()
             .and_then(|slug| Page::ALL.into_iter().find(|page| page.slug() == slug))
@@ -588,7 +589,7 @@ impl Pilot {
             view.navigate(page, window, cx);
         }
         // Built-in kinds, and with example data its custom kinds too.
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "stress"))]
         if let Some(kind) =
             std::env::var("FRESHKUBE_KIND")
                 .ok()
@@ -602,6 +603,8 @@ impl Pilot {
         {
             view.open_kind(kind, window, cx);
         }
+        #[cfg(feature = "stress")]
+        crate::stress::start(window, cx);
         view
     }
 

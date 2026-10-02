@@ -61,6 +61,7 @@ GPUI suits Rust well: views are entities changed through `update`, `cx.notify()`
 - Don't run app-wide timers that notify a large view. Give periodic updates (clocks, "updated 5 s ago", ages) to the smallest entity that shows them. A 1-second timer on the shell once redrew everything and made the app feel slow.
 - Render only the rows a frame can show. Use `uniform_list` for fixed-height rows. For rows whose height depends on the width, use `VirtualList` with heights measured by layout, never computed. A plain list needs a hard cap. [docs/LONG_LISTS.md](docs/LONG_LISTS.md) has the rules and the state of each list.
 - Keep `[profile.dev.package."*"] opt-level = 3` in the workspace manifest. Unoptimised GPUI draws a frame about 14× slower, so debug builds without it give a false picture of performance.
+- Measure before and after a change that could cost time. `scripts/stress.sh` runs list, watch-burst and log-flood workloads on a release build against a synthetic API and prints per-span timings, CPU and memory; [docs/PERFORMANCE.md](docs/PERFORMANCE.md) has the workloads and the numbers so far.
 
 ### Async: two executors
 

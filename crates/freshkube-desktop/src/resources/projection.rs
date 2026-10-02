@@ -132,6 +132,7 @@ impl ResourceProjection {
     /// current revision. A selection that is no longer visible is cleared,
     /// never moved to whatever now occupies its old position.
     pub(crate) fn rebuild(&mut self, store: &ResourceStore) {
+        let _span = crate::perf::span("table.rebuild");
         let entries = store.entries();
         let query = self.query.as_str();
         self.visible.clear();

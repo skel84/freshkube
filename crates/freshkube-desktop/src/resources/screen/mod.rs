@@ -636,12 +636,18 @@ impl ResourcesScreen {
     }
 
     fn apply(&mut self, batch: ResourceBatch, cx: &mut Context<Self>) {
+        let _span = crate::perf::span("table.apply");
+        crate::perf::value("table.batch", batch.events.len() as f64);
         let reset = batch
             .events
             .iter()
             .any(|event| matches!(event, ResourceEvent::Reset { .. }));
         let served = !matches!(self.store.read_state(), ReadState::Missing(_));
-        if !self.store.apply(batch) {
+        let stored = {
+            let _span = crate::perf::span("table.store");
+            self.store.apply(batch)
+        };
+        if !stored {
             return;
         }
         if served && let ReadState::Missing(_) = self.store.read_state() {
@@ -653,7 +659,9 @@ impl ResourcesScreen {
         self.now = live::now();
         self.projection.rebuild(&self.store);
         if reset {
+            let _span = crate::perf::span("table.layout");
             self.layout = TableLayout::new(&self.store, self.lists_all_namespaces());
+            drop(_span);
             // A restarted read selects the same object again if it still
             // exists; only its first list can tell.
             if let Some(identity) = self.restore.take() {
@@ -1453,6 +1461,7 @@ impl EventEmitter<NotServed> for ResourcesScreen {}
 impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
+        let _span = crate::perf::span("table.render");
         let list = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
         let list = self.keyed(list, cx);
         let body = if self.detail.read(cx).target_identity().is_some() {
