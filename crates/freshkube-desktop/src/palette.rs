@@ -113,3 +113,38 @@ pub(crate) fn palette(cx: &App) -> Palette {
         light()
     }
 }
+
+/// The terminal's colours: the 16 ANSI colours, then its own foreground
+/// and background, as `0xRRGGBB`. Tuned for contrast on the terminal's
+/// background, so yellow and white stay readable on a white terminal.
+pub(crate) struct TerminalColors {
+    pub(crate) ansi: [u32; 16],
+    pub(crate) foreground: u32,
+    pub(crate) background: u32,
+}
+
+const TERMINAL_LIGHT: TerminalColors = TerminalColors {
+    ansi: [
+        0x10141B, 0xB02727, 0x0A760A, 0x8A5800, 0x2B59E0, 0x8E3AB8, 0x0B7A85, 0x8A93A2, 0x5C6574,
+        0xD03B3B, 0x0CA30C, 0xB07A00, 0x4A72F0, 0xA855D0, 0x1496A3, 0x394150,
+    ],
+    foreground: 0x10141B,
+    background: 0xFFFFFF,
+};
+
+const TERMINAL_DARK: TerminalColors = TerminalColors {
+    ansi: [
+        0x232A34, 0xE05A5A, 0x2FB52F, 0xE0A010, 0x7C9BFF, 0xC07EE8, 0x3FB8C4, 0xC1C8D3, 0x5F6979,
+        0xFF7070, 0x3FCC3F, 0xFAB219, 0xA3B9FF, 0xD6A3F5, 0x6FD3DC, 0xE3E7EE,
+    ],
+    foreground: 0xE3E7EE,
+    background: 0x151A21,
+};
+
+pub(crate) fn terminal_colors(cx: &App) -> &'static TerminalColors {
+    if cx.theme().mode.is_dark() {
+        &TERMINAL_DARK
+    } else {
+        &TERMINAL_LIGHT
+    }
+}

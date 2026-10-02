@@ -80,6 +80,7 @@ Documentation is thin. Before using an API, read the source of the pinned versio
 - When the focused element isn't drawn, key dispatch starts from the window root and the page's bindings stop working. Give a page's key context to a wrapper that is drawn in every state, not to a list that a placeholder replaces.
 - macOS reports Command-Shift-] as `}` with Command alone, so bind `secondary-}`, not `secondary-shift-]`. Command-Shift with a letter keeps Shift: `secondary-shift-g`.
 - A deeper context's binding wins. A handler that calls `cx.propagate()` lets the key reach raw listeners, which is how Enter still presses a focused button.
+- A focused terminal (`terminal/`) takes every key without Command before any binding runs, through a keystroke interceptor, so a shell gets Escape, Tab and Control-Tab. Give terminal-wide shortcuts Command, as the pane's tab keys have.
 - `FocusHandle::dispatch_action` runs at once on that node; `window.dispatch_action` is deferred. A Kit dialog remembers what had focus when it opens, so focus its content after `open_dialog`.
 
 ### Sizes

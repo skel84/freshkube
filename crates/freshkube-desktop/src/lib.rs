@@ -129,6 +129,10 @@ mod screens;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
+// The pod shell (docs/POD_EXEC.md) uses it from step 3; until then only the
+// tests and the stress harness do, so drop this then.
+#[allow(dead_code)]
+mod terminal;
 mod text_size;
 mod theme;
 mod ui;
@@ -148,4 +152,14 @@ pub fn preferences_path() -> Option<PathBuf> {
 
 pub fn run(options: GpuiOptions, runtime: tokio::runtime::Handle) -> color_eyre::Result<()> {
     desktop::run(options, runtime)
+}
+
+#[cfg(feature = "stress")]
+pub use stress::TerminalWorkload;
+
+/// Opens a window with only a terminal, fed a synthetic stream, for the
+/// stress harness and visual checks.
+#[cfg(feature = "stress")]
+pub fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()> {
+    stress::run_terminal(workload)
 }

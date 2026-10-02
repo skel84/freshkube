@@ -18,6 +18,7 @@ scripts/stress.sh table-20k table 20000
 scripts/stress.sh burst-2k burst 20000 2000
 scripts/stress.sh pod-logs-10k pod-logs 10000
 scripts/stress.sh talos-logs-10k talos-logs 10000
+scripts/stress.sh terminal-50k terminal 50000
 ```
 
 | Scenario | What it does |
@@ -26,6 +27,9 @@ scripts/stress.sh talos-logs-10k talos-logs 10000
 | `burst <pods> <changes/s>` | lists the pods, then the watch changes them at that rate: one change in ten deletes a pod and adds another, the rest flip a pod between Running and CrashLoopBackOff |
 | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate; every 50th line carries 300 more characters |
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
+| `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
+| `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
+| `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
 
 A run lasts `FRESHKUBE_STRESS_SECONDS` (30) and leaves the first `FRESHKUBE_STRESS_WARMUP` (5) seconds out of its summary. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
 
@@ -41,6 +45,9 @@ The `stress` feature turns on spans around the work that matters (`crate::perf`)
 | `logs.lag` | how far behind its due time the newest line of a batch is when it is appended |
 | `logs.measure`, `logs.measure_row` | laying out log rows for their heights, per frame and per row |
 | `logs.chrome` | laying out the log toolbar and notices |
+| `terminal.feed`, `terminal.bytes` | parsing a chunk of bytes into the terminal grid, and its size |
+| `terminal.snapshot` | copying the visible rows into style runs, at most once per batch of chunks |
+| `terminal.paint` | painting the grid; its count a second is the frame rate |
 
 When a number looks wrong, profile the run with macOS `sample`:
 
@@ -87,6 +94,24 @@ No log keeps up: the lag grows by the second for as long as the stream runs. A 6
 - Once the buffer evicts, every batch rebuilds a set of every retained line to drop dead measurements (`logs.sweep`, 0.6 ms now and growing with retention).
 
 Memory stayed flat in every run: resident memory held between 90 and 115 MB through a 60-second flood that filled the 8 MiB log buffer.
+
+### Terminal floods
+
+The terminal view (`terminal/`, step 1 of [pod exec](POD_EXEC.md)) in a 1150 × 790 window at the default text size, about 155 × 44 cells. Release build, 30 s runs with the first 5 left out.
+
+| Workload | Frames/s | Fed | Paint: median / 99th / max | Snapshot median | Feed median | CPU | Memory |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `terminal 10000` | 60 | 1.1 MB/s | 6.0 / 14.1 / 70.5 | 0.57 | 0.24 | 63% | 91 MB |
+| `terminal 50000` | 60 | 5.3 MB/s | 5.8 / 11.1 / 17.6 | 0.48 | 1.31 | 69% | 91 MB |
+| `terminal-top` | 50, the source's rate | 0.2 MB/s | 5.0 / 10.0 / 13.4 | 0.47 | 0.11 | 46% | 50 MB |
+
+Every workload keeps the frame rate its source allows, with paint well inside a frame. Memory holds at the 10,000-line scrollback. A shell at rest costs nothing: the view rebuilds and redraws only when bytes arrive.
+
+Against the spike's 60 frames a second at 5 MB/s and about 2 ms of paint:
+
+- **The spike's flood repeated itself.** It sent the same numbered lines every tick, so GPUI's line cache shaped almost nothing. Fed those repeating lines, the view paints in 1.2 ms median and 2.1 ms at the 99th percentile, at 40% CPU. New text each frame, as real output brings, costs about 5 ms more for shaping.
+- **Ligatures doubled the cost of shaping.** JetBrains Mono's contextual alternates were most of the paint in a profile of `terminal-top` (9.8 ms median, 75% CPU). The terminal draws without them, as the user chose, which halved both.
+- Shaping each row once, rather than each style run, could cut the remaining cost. It isn't needed for the frame rate, so it waits until a real session shows a need.
 
 ## Fixes
 

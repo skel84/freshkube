@@ -72,7 +72,7 @@ The checked-in [Kubeli license](../../Kubeli/LICENSE) is MIT. [GPUI Kit's manife
 
 Freshkube inherits talos-pilot's MIT license. When reusing Kubeli implementation, retain applicable copyright/license notices and record source revision, path, adaptations, and associated tests in a NOTICE file created with the first extraction. So far only Kubeli's sidebar grouping has been followed; no code has been taken.
 
-Pod exec will depend on `alacritty_terminal` (Apache-2.0) as a library. Ship its licence text with the app's notices when it lands. `gpui_xterm` (MIT) is read for its approach to drawing the grid, not copied ([POD_EXEC.md](POD_EXEC.md)).
+Pod exec depends on `alacritty_terminal` (Apache-2.0) as a library; its licence text is in `licenses/Apache-2.0.txt`, listed in the root `NOTICE`. `gpui_xterm` (MIT) is read for its approach to drawing the grid, not copied ([POD_EXEC.md](POD_EXEC.md)).
 
 Study current Rubick to understand behavior, then implement future features from Kubernetes/operator specifications and independently constructed fixtures. Do not copy its current implementation, tests, or documentation into the proposed permissive codebase. Reuse of an older MIT release requires verifying the exact source and its license; it is not part of the current plan.
 

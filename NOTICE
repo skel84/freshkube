@@ -1,0 +1,22 @@
+Freshkube is licensed under the MIT License; see LICENSE. It includes
+talos-pilot, copyright Ken Udovic, under the same licence.
+
+The application ships the following third-party components.
+
+alacritty_terminal 0.26.0
+  The terminal emulator behind the pod shell.
+  https://github.com/alacritty/alacritty
+  Copyright 2020 The Alacritty Project
+  Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+  Used unmodified, as a library.
+
+JetBrains Mono
+  https://github.com/JetBrains/JetBrainsMono
+  Copyright 2020 The JetBrains Mono Project Authors
+  Licensed under the SIL Open Font License, Version 1.1; see
+  crates/freshkube-desktop/assets/fonts/OFL-JetBrainsMono.txt.
+
+IBM Plex Sans Condensed
+  Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
+  Licensed under the SIL Open Font License, Version 1.1; see
+  crates/freshkube-desktop/assets/fonts/OFL-IBMPlexSansCondensed.txt.

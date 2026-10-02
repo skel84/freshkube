@@ -52,7 +52,7 @@ Taken with the user on 2 October 2026.
   - **State.** It owns `Term` and the `vte` processor, with 10,000 lines of scrollback.
   - **Snapshot.** When bytes arrive, it feeds them and rebuilds the visible rows' runs, so `render` only paints. It redraws at most once a frame.
   - **Size.** The grid follows the element's bounds: rows and columns from the cell size, the cell from the theme's monospace font, so the text size scales the terminal too. A size change resizes `Term` and emits the new size, at most every 100 ms during a drag.
-  - **Keys.** The view encodes keys from `TermMode`: application cursor keys, keypad mode, bracketed paste.
+  - **Keys.** The view encodes keys from `TermMode`: application cursor keys and bracketed paste. A keystroke interceptor hands a focused terminal every key without Command ahead of the app's bindings, so Escape, Tab and Control-Tab reach the program. Typed text, Option characters, dead keys and input methods come through the platform input handler. GPUI reports keypad keys as their main-keyboard twins, so application keypad mode can't be honoured: the keypad types digits and Enter, as most terminals do by default.
   - **Mouse and scrollback.** It handles selection by dragging, double-click for a word and triple-click for a line. The wheel scrolls the scrollback; on the alternate screen it sends arrow keys, as Alacritty's alternate-scroll mode does. Mouse reporting to the program waits for a later step.
   - **Events.** The emulator's events go through an `EventListener`:
     - `PtyWrite` replies go back to stdin;
@@ -61,6 +61,7 @@ Taken with the user on 2 October 2026.
     - `Title` sets the tab's tooltip;
     - `Bell` is ignored.
   - **Theme.** The 16 ANSI colours come from the theme, in light and dark.
+  - **Landed in step 1** (`crates/freshkube-desktop/src/terminal/`): `mod.rs` holds the view, its size and its events (`Output`, `Resize`, `Title`, `Leave`); `snapshot.rs` the style runs; `paint.rs` the canvas; `input.rs` keys, paste and the input handler; `mouse.rs` selection and the wheel; `listener.rs` the emulator's requests; `streams.rs` the synthetic streams for tests and `stress terminal`. The colours are a tuned pair in `palette.rs`. Small choices made with the user: a block cursor, hollow without focus, following the program's shape and never blinking; output keeps a scrolled-back view in place and a key or paste returns to the bottom; three lines a wheel notch; Command-C without a selection does nothing and the selection stays after copying; bold is SemiBold, never bright; no ligatures, which also halves the cost of shaping; a thin thumb at the right edge only while scrolled back.
 - **`resources/pane/shell/`** is the Shell tab: the container picker, Start, End, the session's state, and the confirmations. Its states are Idle, Connecting, Running, Ended (with the exit code or reason), and Failed (with the failure's category and Retry).
   - The tab shows for pods only, next to Logs.
   - An ended session's screen stays visible and selectable until a new one starts, which begins with a fresh terminal.

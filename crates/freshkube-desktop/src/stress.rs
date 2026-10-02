@@ -16,14 +16,13 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::{Context, Keystroke, Window};
 
-use crate::desktop::Pilot;
 use crate::perf;
 
 /// How often the stall monitor asks to run. Anything later than this is time
 /// the main thread spent on something else.
 const STALL_TICK: Duration = Duration::from_millis(4);
 
-pub(crate) fn start(window: &mut Window, cx: &mut Context<Pilot>) {
+pub(crate) fn start<V: 'static>(window: &mut Window, cx: &mut Context<V>) {
     let seconds = env_u64("FRESHKUBE_STRESS_SECONDS", 30);
     let warmup = env_u64("FRESHKUBE_STRESS_WARMUP", 5);
     let keys = std::env::var("FRESHKUBE_STRESS_KEYS").unwrap_or_default();
@@ -186,6 +185,123 @@ impl Usage {
             resident_max: 0,
         }
     }
+}
+
+/// What the terminal-only window draws.
+#[derive(Clone, Copy, Debug)]
+pub enum TerminalWorkload {
+    /// Coloured log lines at this many a second, sent every 10 ms.
+    Flood { lines_per_second: u32 },
+    /// A `top`-like redraw of the whole screen, about 60 times a second.
+    Top,
+    /// One screen of colours, styles and wide characters, for looking at.
+    Sample,
+}
+
+/// Opens a window with only a terminal and feeds it `workload` from another
+/// thread, as an exec stream would arrive. `FRESHKUBE_STRESS_APPEARANCE`
+/// (`light` or `dark`) picks the appearance; a debug build also takes
+/// `FRESHKUBE_TEXT_SIZE`.
+pub(crate) fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use futures::StreamExt;
+    use gpui_kit::component::{Theme, ThemeMode};
+    use gpui_kit::{AppContext, Focusable, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+
+    use crate::terminal::{TerminalEvent, TerminalView, streams};
+
+    gpui_kit::application()
+        .with_assets(crate::theme::AppAssets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            match std::env::var("FRESHKUBE_STRESS_APPEARANCE").as_deref() {
+                Ok("light") => Theme::change(ThemeMode::Light, None, cx),
+                Ok("dark") => Theme::change(ThemeMode::Dark, None, cx),
+                _ => {}
+            }
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1150.), px(790.)), cx)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Freshkube terminal".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let Ok((_, view)) = gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| {
+                    let view = TerminalView::new(window, cx);
+                    view.focus_handle(cx).focus(window, cx);
+                    start(window, cx);
+                    view
+                })
+            }) else {
+                return cx.quit();
+            };
+            cx.activate(true);
+
+            // The producer follows the grid's size, as a program would.
+            let grid = Arc::new(AtomicU32::new(0));
+            let size = view.read(cx).size();
+            grid.store(
+                u32::from(size.columns) << 16 | u32::from(size.rows),
+                Ordering::Relaxed,
+            );
+            let seen = grid.clone();
+            cx.subscribe(&view, move |_, event: &TerminalEvent, _| {
+                if let TerminalEvent::Resize(size) = event {
+                    seen.store(
+                        u32::from(size.columns) << 16 | u32::from(size.rows),
+                        Ordering::Relaxed,
+                    );
+                }
+            })
+            .detach();
+
+            let (sender, mut receiver) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+            std::thread::spawn(move || {
+                let send = |bytes| sender.unbounded_send(bytes).is_ok();
+                match workload {
+                    TerminalWorkload::Flood { lines_per_second } => {
+                        let per_tick = (lines_per_second as usize / 100).max(1);
+                        let mut from = 0;
+                        while send(streams::coloured(from, per_tick)) {
+                            from += per_tick;
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                    TerminalWorkload::Top => {
+                        for frame in 0.. {
+                            let size = grid.load(Ordering::Relaxed);
+                            let (columns, rows) = ((size >> 16) as usize, (size & 0xffff) as usize);
+                            if !send(streams::top_frame(frame, columns, rows)) {
+                                return;
+                            }
+                            std::thread::sleep(Duration::from_millis(16));
+                        }
+                    }
+                    TerminalWorkload::Sample => {
+                        send(streams::sample());
+                    }
+                }
+            });
+            cx.spawn(async move |cx| {
+                while let Some(bytes) = receiver.next().await {
+                    view.update(cx, |view, cx| {
+                        view.feed(&bytes, cx);
+                        // Whatever else has arrived joins the same frame.
+                        while let Ok(bytes) = receiver.try_recv() {
+                            view.feed(&bytes, cx);
+                        }
+                    });
+                }
+            })
+            .detach();
+        });
+    Ok(())
 }
 
 /// `FRESHKUBE_STRESS_TALOS_RATE`: lines a second for example Talos logs.
