@@ -38,6 +38,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout 1. Module preparation | Workload UI tests live in a sibling tests.rs; example rows and object documents have separate modules, with unchanged behavior and tests | the commit that adds this row |
 | Holistic layout 1. Kubernetes summary | Independent cache-backed lists and bounded derived issues; the shell refreshes with its epoch and Health consumes the result, including without Talos. Example ReplicaSets, Events, claims, volumes and a fourth context share the browsing store. Unit and UI tests cover partial refusal, stale context answers and Refresh; the 20,000-pod stress apply was 2.45 ms against a 16 ms budget | the commit that adds this row |
 | Holistic layout 2. Module preparation | Resource rendering and overview node views have child modules, with unchanged behavior and tests before the node pane work | the commit that adds this row |
+| Holistic layout 2. Concurrent forward binds | Checks, IPv4/IPv6 binds and their reservation are atomic, so another bind cannot probe a forward before it is registered. A 32-way regression test checks that neither listener receives a connection; the existing exact websocket assertions stay | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
