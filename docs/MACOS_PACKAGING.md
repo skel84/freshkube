@@ -156,6 +156,32 @@ and retry behavior without exposing credentials or Secret values. A Terminal
 execution of `Contents/MacOS/freshkube` cannot prove the bundle's privacy path.
 No cluster context was supplied for this task, so no live connection was made.
 
+## Investigate a TLS connection failure
+
+`invalid peer certificate: BadSignature` is a TLS peer-verification error from
+Rustls, separate from the `.app` code signature. It can arise while checking a
+certificate or a TLS handshake signature. A peer responded far enough to start
+TLS; this error alone does not establish a Local Network permission problem or
+an architecture-specific bug. See Rustls's [certificate errors](https://docs.rs/rustls/0.23.36/rustls/enum.CertificateError.html).
+
+Compare on the affected Mac with the **same explicit file and context**. A
+talosconfig can contain multiple contexts, and a Finder launch does not inherit
+`TALOSCONFIG` from a terminal. Substitute the actual path, selected Talos context
+and installed app path below; `version` is a read-only request:
+
+```sh
+talosctl --talosconfig /path/to/talosconfig --context <context> version
+/path/to/Freshkube.app/Contents/MacOS/freshkube --config /path/to/talosconfig --context <context>
+```
+
+Quit the app between launch comparisons. If both clients fail, investigate the
+selected context's CA, endpoint and network route. If `talosctl` succeeds but
+both app launch methods fail, investigate Rust TLS verification and the peer's
+certificate/signature algorithm. If only the bundle launch fails, investigate
+launch environment and Local Network permissions. These comparisons narrow the
+cause; none alone proves it. Share the context name and outcomes, without
+pasting talosconfig contents, private keys or credentials.
+
 ## Trusted distribution prerequisites
 
 Before claiming a release is ready for ordinary download:
@@ -201,5 +227,11 @@ packaged both architectures with Rust 1.99.0. Each native runner verified CLI
 execution and the archived bundle. Both downloaded
 artifacts passed checksum, revision, architecture, metadata, licence/resource,
 executable mode and signature checks on this Intel Mac; its downloaded Intel
-executable also passed the CLI smoke test. Graphical launch on Apple Silicon,
-trusted distribution and live LAN access remain unverified.
+executable also passed the CLI smoke test. Trusted distribution and live LAN
+access remain unverified.
+
+The user subsequently reported the downloaded ARM bundle rendering fixture data
+on their Mac.
+A real Talos connection on that Mac reported `invalid peer certificate:
+BadSignature`; its cause remains under investigation. This confirms an ARM
+fixture launch, while successful live connectivity remains unverified.
