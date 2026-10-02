@@ -90,6 +90,7 @@ Headless UI tests render the real app, find elements by id and click or type int
 - Element snapshots can't tell whether a button is disabled. Assert the outcome instead: click it and check that nothing changed.
 - Setting an input's value from code does not emit its change event. Type into it with real input events (`window.input`) when the change handler matters.
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
+- Time anything a test depends on with the executor's clock (`cx.background_executor().now()`), not `Instant::now()`, so tests step it with `advance_clock` instead of sleeping. Example data dated from the wall clock must not be generated again for a stream already read: a second later it passes for new lines. Both made tests fail on a loaded machine.
 
 ### Visual checks
 
