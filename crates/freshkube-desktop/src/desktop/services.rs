@@ -5,7 +5,7 @@ use crate::backend;
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::{self, Health};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone};
+use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -117,31 +117,31 @@ impl Pilot {
             .flex_wrap()
             .child(
                 v_flex()
-                    .gap(px(7.))
+                    .gap(dp(7.))
                     .child(
                         div()
                             .font_family(DISPLAY_FONT)
-                            .text_size(px(28.))
-                            .line_height(px(32.))
+                            .text_size(dp(28.))
+                            .line_height(dp(32.))
                             .child("Services"),
                     )
                     .child(
                         h_flex()
                             .gap_1p5()
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child("on")
                             .child(
                                 div()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(node.name.clone()),
                             )
                             .child("·")
                             .child(
                                 div()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(node.address.clone()),
                             ),
                     ),
@@ -170,20 +170,20 @@ impl Pilot {
                 .border_1()
                 .border_color(p.line)
                 .bg(p.surface)
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .child(
                     Icon::new(IconName::CircleX)
-                        .with_size(px(15.))
+                        .size(dp(15.))
                         .text_color(p.crit_ink),
                 )
                 .child(
                     div()
                         .font_family(MONO_FONT)
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .child(service),
                 )
                 .child("is unhealthy on")
-                .child(div().font_family(MONO_FONT).text_size(px(12.)).child(other))
+                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child(other))
                 .when(more > 0, |this| this.child(format!("and {more} more")))
                 .child(
                     Button::new("show-other-unhealthy")
@@ -203,12 +203,12 @@ impl Pilot {
             .gap_2p5()
             .flex_wrap()
             .child(
-                div().w(px(240.)).child(
+                div().w(dp(240.)).child(
                     Input::new(&self.service_filter)
                         .id("service-filter")
                         .aria_label("Filter services by name")
                         .small()
-                        .prefix(Icon::new(IconName::Search).with_size(px(14.))),
+                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
                 ),
             )
             .child(
@@ -248,7 +248,7 @@ impl Pilot {
             .on_action(cx.listener(|view, _: &PreviousService, _, cx| view.step_service(-1, cx)))
             .on_action(cx.listener(|view, _: &NextService, _, cx| view.step_service(1, cx)))
             .p_1()
-            .gap(px(1.))
+            .gap(dp(1.))
             .rounded(px(10.))
             .border_1()
             .border_color(p.line)
@@ -279,7 +279,7 @@ impl Pilot {
                         service.state,
                         presentation::health_text(&health)
                     ))
-                    .min_h(px(32.))
+                    .min_h(dp(32.))
                     .px_2p5()
                     .py_1()
                     .gap_2p5()
@@ -291,7 +291,7 @@ impl Pilot {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .when(selected, |this| {
                                 this.text_color(p.accent).font_weight(FontWeight::SEMIBOLD)
                             })
@@ -302,7 +302,7 @@ impl Pilot {
                         Health::Unhealthy => this.child(ui::tag(Tone::Crit, None, "Unhealthy", cx)),
                         Health::Unknown => this.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(dp(12.))
                                 .text_color(p.muted)
                                 .child("Not reported"),
                         ),
@@ -310,8 +310,8 @@ impl Pilot {
                     })
                     .child(
                         div()
-                            .min_w(px(52.))
-                            .text_size(px(12.))
+                            .min_w(dp(52.))
+                            .text_size(dp(12.))
                             .text_color(p.muted)
                             .text_right()
                             .child(service.state.clone()),
@@ -323,17 +323,17 @@ impl Pilot {
                     }))
             }));
         let detail = self.service_detail(&node, cx);
-        let wide = Self::content_width(window) >= px(760.);
+        let wide = Self::content_width(window) >= 760.;
         let split = if wide {
             h_flex()
                 .items_start()
-                .gap(px(14.))
-                .child(div().w(px(LIST_WIDTH)).flex_none().child(list))
+                .gap(dp(14.))
+                .child(div().w(dp(LIST_WIDTH)).flex_none().child(list))
                 .child(div().flex_1().min_w_0().child(detail))
                 .into_any_element()
         } else {
             v_flex()
-                .gap(px(14.))
+                .gap(dp(14.))
                 .child(list)
                 .child(detail)
                 .into_any_element()
@@ -372,9 +372,9 @@ impl Pilot {
         let frame = v_flex()
             .id("selected-service")
             .test_support()
-            .gap(px(18.))
-            .px(px(20.))
-            .py(px(18.))
+            .gap(dp(18.))
+            .px(dp(20.))
+            .py(dp(18.))
             .rounded(px(10.))
             .border_1()
             .border_color(p.line)
@@ -392,7 +392,7 @@ impl Pilot {
                 .aria_label("No service selected")
                 .child(
                     div()
-                        .text_size(px(12.5))
+                        .text_size(dp(12.5))
                         .text_color(p.muted)
                         .child("Select a service with the arrow keys or a click to see its full health message."),
                 )
@@ -417,14 +417,14 @@ impl Pilot {
                 .gap_4()
                 .child(
                     div()
-                        .w(px(118.))
+                        .w(dp(118.))
                         .flex_none()
-                        .pt(px(1.))
-                        .text_size(px(12.))
+                        .pt(dp(1.))
+                        .text_size(dp(12.))
                         .text_color(p.muted)
                         .child(label),
                 )
-                .child(div().flex_1().min_w_0().text_size(px(13.)).child(value))
+                .child(div().flex_1().min_w_0().text_size(dp(13.)).child(value))
         };
         let copy = message.clone();
         let restart_notice = cx
@@ -463,7 +463,7 @@ impl Pilot {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(19.))
+                            .text_size(dp(19.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(service.id.clone()),
                     )
@@ -476,7 +476,7 @@ impl Pilot {
             )
             .child(
                 v_flex()
-                    .gap(px(11.))
+                    .gap(dp(11.))
                     .child(row(
                         "State",
                         div().child(service.state.clone()).into_any_element(),
@@ -502,8 +502,8 @@ impl Pilot {
                             .rounded(px(6.))
                             .bg(p.surface_2)
                             .font_family(MONO_FONT)
-                            .text_size(px(12.))
-                            .line_height(px(19.))
+                            .text_size(dp(12.))
+                            .line_height(dp(19.))
                             .child(message)
                             .into_any_element(),
                     ))
@@ -515,14 +515,14 @@ impl Pilot {
                             .child(
                                 div()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(node.name.clone()),
                             )
                             .child("·")
                             .child(
                                 div()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(node.address.clone()),
                             )
                             .into_any_element(),
@@ -593,7 +593,7 @@ impl Pilot {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .child(notice.text),
                     )
             }))
@@ -607,23 +607,23 @@ impl Pilot {
             .child(
                 v_flex()
                     .gap_2p5()
-                    .child(ui::skeleton(px(150.), px(28.)))
-                    .child(ui::skeleton(px(240.), px(13.))),
+                    .child(ui::skeleton(dp(150.), dp(28.)))
+                    .child(ui::skeleton(dp(240.), dp(13.))),
             )
             .child(
                 h_flex()
                     .items_start()
-                    .gap(px(14.))
+                    .gap(dp(14.))
                     .child(
                         v_flex()
-                            .w(px(LIST_WIDTH))
+                            .w(dp(LIST_WIDTH))
                             .p_2()
                             .gap_3()
                             .rounded(px(10.))
                             .border_1()
                             .border_color(p.line)
                             .bg(p.surface)
-                            .children((0..9).map(|_| ui::skeleton(relative(0.6), px(12.)))),
+                            .children((0..9).map(|_| ui::skeleton(relative(0.6), dp(12.)))),
                     )
                     .child(
                         v_flex()
@@ -634,8 +634,8 @@ impl Pilot {
                             .border_1()
                             .border_color(p.line)
                             .bg(p.surface)
-                            .child(ui::skeleton(px(120.), px(19.)))
-                            .child(ui::skeleton(relative(1.), px(90.))),
+                            .child(ui::skeleton(dp(120.), dp(19.)))
+                            .child(ui::skeleton(relative(1.), dp(90.))),
                     ),
             );
         self.page_scroll("services-page")

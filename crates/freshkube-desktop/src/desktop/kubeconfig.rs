@@ -3,7 +3,7 @@
 use super::Pilot;
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
-use crate::ui::MONO_FONT;
+use crate::ui::{MONO_FONT, dp};
 use freshkube_core::cluster_overview::{
     KubeconfigFileInfo, KubeconfigSelection, inspect_kubeconfig,
 };
@@ -215,14 +215,14 @@ pub(super) fn settings_section(
         }
         _ => None,
     };
-    let hint = |text: SharedString| div().text_size(px(12.)).text_color(p.muted).child(text);
+    let hint = |text: SharedString| div().text_size(dp(12.)).text_color(p.muted).child(text);
     let mode_pilot = pilot.downgrade();
     let mut section = v_flex()
         .id("kubeconfig-settings")
         .gap_1p5()
         .child(
             div()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("Kubernetes API"),
         )
@@ -288,7 +288,7 @@ pub(super) fn settings_section(
                     .min_w_0()
                     .truncate()
                     .font_family(MONO_FONT)
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .when(draft.path.is_none(), |this| this.text_color(p.muted))
                     .child(
                         draft
@@ -321,7 +321,7 @@ pub(super) fn settings_section(
                 .id("kubeconfig-error")
                 .test_support()
                 .role(Role::Alert)
-                .text_size(px(12.))
+                .text_size(dp(12.))
                 .text_color(p.crit_ink)
                 .child(error.clone()),
         ),
@@ -339,7 +339,7 @@ pub(super) fn settings_section(
                     .test_support()
                     .role(Role::ListBox)
                     .aria_label("Kubeconfig contexts")
-                    .max_h(px(132.))
+                    .max_h(dp(132.))
                     .overflow_y_scroll()
                     .children(info.contexts.iter().enumerate().map(|(ix, name)| {
                         let selected = applied_context.as_ref() == Some(name);
@@ -351,17 +351,17 @@ pub(super) fn settings_section(
                             .role(Role::ListBoxOption)
                             .aria_selected(selected)
                             .aria_label(name.clone())
-                            .h(px(26.))
+                            .h(dp(26.))
                             .px_2()
                             .gap_2()
                             .rounded_md()
                             .cursor_pointer()
                             .hover(|this| this.bg(p.hover))
                             .when(selected, |this| this.bg(p.accent_soft))
-                            .child(div().w(px(14.)).when(selected, |this| {
+                            .child(div().w(dp(14.)).when(selected, |this| {
                                 this.child(
                                     Icon::new(IconName::Check)
-                                        .with_size(px(13.))
+                                        .size(dp(13.))
                                         .text_color(p.accent),
                                 )
                             }))
@@ -371,13 +371,13 @@ pub(super) fn settings_section(
                                     .min_w_0()
                                     .truncate()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(name.clone()),
                             )
                             .when(current.as_ref() == Some(name), |this| {
                                 this.child(
                                     div()
-                                        .text_size(px(11.))
+                                        .text_size(dp(11.))
                                         .text_color(p.muted)
                                         .child("current"),
                                 )

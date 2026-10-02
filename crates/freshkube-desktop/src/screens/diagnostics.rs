@@ -1066,11 +1066,11 @@ impl Render for DiagnosticsScreen {
         let toolbar = self.toolbar(all.len(), snapshot.checks.len(), cx);
 
         let width = content_width(window);
-        let wide = width >= px(SIDE_DETAILS);
+        let wide = width >= SIDE_DETAILS;
         // The list gets what the side details leave; fold the result column
         // into the check's cell before anything would be clipped.
         let list_width = if wide {
-            width - px(DETAILS_WIDTH + 14.)
+            width - (DETAILS_WIDTH + 14.)
         } else {
             width
         };

@@ -2,7 +2,7 @@
 use super::{NextNode, NodeView, PAGE_PADDING, Page, Pilot, PreviousNode, clock};
 use crate::palette::palette;
 use crate::presentation::{self, ClusterSummary, NodeSummary, Role as NodeRole, Roster};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone};
+use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
 use freshkube_core::formatting::format_bytes;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -40,10 +40,10 @@ impl Pilot {
 
     pub(super) fn page_body(&self) -> Div {
         v_flex()
-            .px(px(PAGE_PADDING))
-            .pt(px(22.))
-            .pb(px(30.))
-            .gap(px(20.))
+            .px(dp(PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(30.))
+            .gap(dp(20.))
     }
 
     /// The talosconfig couldn't be read; shown on every screen.
@@ -180,7 +180,7 @@ impl Pilot {
         let stale = self.overview.is_stale();
         let versions = summary.versions.clone();
         let header = v_flex()
-            .gap(px(7.))
+            .gap(dp(7.))
             .child(
                 h_flex()
                     .gap_2p5()
@@ -188,8 +188,8 @@ impl Pilot {
                     .child(
                         div()
                             .font_family(DISPLAY_FONT)
-                            .text_size(px(28.))
-                            .line_height(px(32.))
+                            .text_size(dp(28.))
+                            .line_height(dp(32.))
                             .child(cluster.name.clone()),
                     )
                     .child(if stale {
@@ -218,13 +218,13 @@ impl Pilot {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.muted)
                     .when(!summary.versions.is_empty(), |this| {
                         this.child(
                             div()
                                 .font_family(MONO_FONT)
-                                .text_size(px(12.))
+                                .text_size(dp(12.))
                                 .child(format!("Talos {}", summary.versions.join(" / "))),
                         )
                         .child("·")
@@ -237,7 +237,7 @@ impl Pilot {
                             this.child(
                                 div()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(12.))
+                                    .text_size(dp(12.))
                                     .child(parts.join(" · ")),
                             )
                             .child("·")
@@ -248,7 +248,7 @@ impl Pilot {
                             .id("roster")
                             .test_support()
                             .aria_label(roster_tip.clone())
-                            .h(px(22.))
+                            .h(dp(22.))
                             .px_2()
                             .gap_1p5()
                             .rounded_full()
@@ -256,15 +256,11 @@ impl Pilot {
                             .border_color(p.line)
                             .bg(p.surface)
                             .text_color(p.ink_2)
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .tooltip(move |window, cx| {
                                 Tooltip::new(roster_tip.clone()).build(window, cx)
                             })
-                            .child(
-                                Icon::new(IconName::Info)
-                                    .with_size(px(13.))
-                                    .text_color(p.muted),
-                            )
+                            .child(Icon::new(IconName::Info).size(dp(13.)).text_color(p.muted))
                             .child(format!("Roster: {}", roster.label())),
                     ),
             );
@@ -304,44 +300,44 @@ impl Pilot {
                 .border_1()
                 .border_color(p.line)
                 .bg(p.surface)
-                .child(ui::skeleton(px(64.), px(11.)))
-                .child(ui::skeleton(px(96.), px(25.)))
-                .child(ui::skeleton(relative(0.7), px(11.)))
+                .child(ui::skeleton(dp(64.), dp(11.)))
+                .child(ui::skeleton(dp(96.), dp(25.)))
+                .child(ui::skeleton(relative(0.7), dp(11.)))
         };
         let card = || {
             v_flex()
                 .gap_3()
-                .p(px(14.))
+                .p(dp(14.))
                 .rounded(px(10.))
                 .border_1()
                 .border_color(p.line)
                 .bg(p.surface)
-                .child(ui::skeleton(px(110.), px(11.)))
-                .child(ui::skeleton(relative(0.7), px(15.)))
-                .child(ui::skeleton(relative(1.), px(32.)))
-                .child(ui::skeleton(relative(1.), px(6.)))
-                .child(ui::skeleton(relative(0.6), px(10.)))
+                .child(ui::skeleton(dp(110.), dp(11.)))
+                .child(ui::skeleton(relative(0.7), dp(15.)))
+                .child(ui::skeleton(relative(1.), dp(32.)))
+                .child(ui::skeleton(relative(1.), dp(6.)))
+                .child(ui::skeleton(relative(0.6), dp(10.)))
         };
         let body = self
             .page_body()
             .child(
                 v_flex()
                     .gap_2p5()
-                    .child(ui::skeleton(px(190.), px(28.)))
-                    .child(ui::skeleton(px(320.), px(13.))),
+                    .child(ui::skeleton(dp(190.), dp(28.)))
+                    .child(ui::skeleton(dp(320.), dp(13.))),
             )
             .child(
                 div()
                     .grid()
                     .grid_cols(tile_columns(width))
-                    .gap(px(GAP))
+                    .gap(dp(GAP))
                     .children((0..4).map(|_| tile())),
             )
             .child(
                 div()
                     .grid()
                     .grid_cols(card_columns(width))
-                    .gap(px(GAP))
+                    .gap(dp(GAP))
                     .children((0..count).map(|_| card())),
             );
         self.page_scroll("overview-page")
@@ -360,10 +356,10 @@ impl Pilot {
         let p = palette(cx);
         v_flex()
             .id(id)
-            .gap(px(7.))
-            .px(px(14.))
-            .pt(px(12.))
-            .pb(px(13.))
+            .gap(dp(7.))
+            .px(dp(14.))
+            .pt(dp(12.))
+            .pb(dp(13.))
             .rounded(px(10.))
             .border_1()
             .border_color(p.line)
@@ -376,14 +372,14 @@ impl Pilot {
             })
             .child(
                 h_flex()
-                    .gap(px(7.))
+                    .gap(dp(7.))
                     .text_color(p.muted)
-                    .child(Icon::new(icon).with_size(px(15.)).text_color(p.muted))
+                    .child(Icon::new(icon).size(dp(15.)).text_color(p.muted))
                     .child(ui::caption(label, cx))
                     .when(interactive, |this| {
                         this.child(div().flex_1()).child(
                             Icon::new(IconName::ChevronRight)
-                                .with_size(px(15.))
+                                .size(dp(15.))
                                 .text_color(p.muted),
                         )
                     }),
@@ -393,8 +389,8 @@ impl Pilot {
     fn figure(text: impl Into<SharedString>, color: Option<Hsla>) -> Div {
         div()
             .font_family(DISPLAY_FONT)
-            .text_size(px(25.))
-            .line_height(px(28.))
+            .text_size(dp(25.))
+            .line_height(dp(28.))
             .when_some(color, |this, color| this.text_color(color))
             .child(text.into())
     }
@@ -402,13 +398,13 @@ impl Pilot {
     fn summary_tiles(
         &self,
         summary: &ClusterSummary,
-        width: Pixels,
+        width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
         let small = |text: String| {
             div()
-                .text_size(px(12.))
+                .text_size(dp(12.))
                 .text_color(p.muted)
                 .min_w_0()
                 .child(text)
@@ -430,10 +426,10 @@ impl Pilot {
             )
             .child(
                 h_flex()
-                    .gap(px(3.))
+                    .gap(dp(3.))
                     .flex_wrap()
                     .children(self.nodes.iter().map(|node| {
-                        div().w(px(16.)).h(px(6.)).rounded(px(2.)).map(|this| {
+                        div().w(dp(16.)).h(dp(6.)).rounded(px(2.)).map(|this| {
                             if node.responding {
                                 this.bg(p.good)
                             } else {
@@ -507,16 +503,16 @@ impl Pilot {
                         h_flex()
                             .gap_1()
                             .flex_wrap()
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .text_color(p.muted)
                             .child(
                                 div()
                                     .font_family(MONO_FONT)
-                                    .text_size(px(11.5))
+                                    .text_size(dp(11.5))
                                     .child(service),
                             )
                             .child("on")
-                            .child(div().font_family(MONO_FONT).text_size(px(11.5)).child(node)),
+                            .child(div().font_family(MONO_FONT).text_size(dp(11.5)).child(node)),
                     )
                     .child(small(format!(
                         "{} healthy · {} not reported",
@@ -571,7 +567,7 @@ impl Pilot {
                 .child(
                     div()
                         .font_family(MONO_FONT)
-                        .text_size(px(11.5))
+                        .text_size(dp(11.5))
                         .text_color(p.muted)
                         .child(node),
                 )
@@ -593,7 +589,7 @@ impl Pilot {
         div()
             .grid()
             .grid_cols(tile_columns(width))
-            .gap(px(GAP))
+            .gap(dp(GAP))
             .child(nodes_tile.test_support())
             .child(etcd_tile.test_support())
             .child(services_tile.test_support())
@@ -604,7 +600,7 @@ impl Pilot {
     fn nodes_section(
         &self,
         summary: &ClusterSummary,
-        width: Pixels,
+        width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
@@ -616,10 +612,10 @@ impl Pilot {
             .child(
                 div()
                     .font_family(DISPLAY_FONT)
-                    .text_size(px(17.))
+                    .text_size(dp(17.))
                     .child("Nodes"),
             )
-            .child(div().text_size(px(12.)).text_color(p.muted).child(format!(
+            .child(div().text_size(dp(12.)).text_color(p.muted).child(format!(
                 "{} of {} responding · select a node to show it in Services and Logs",
                 summary.responding, summary.total
             )))
@@ -663,7 +659,7 @@ impl Pilot {
             NodeView::Cards => region
                 .grid()
                 .grid_cols(card_columns(width))
-                .gap(px(GAP))
+                .gap(dp(GAP))
                 .children(
                     self.nodes
                         .iter()
@@ -686,9 +682,9 @@ impl Pilot {
             .role(Role::ListBoxOption)
             .aria_selected(target)
             .aria_label(label)
-            .gap(px(13.))
-            .p(px(14.))
-            .pb(px(if node.responding { 8. } else { 14. }))
+            .gap(dp(13.))
+            .p(dp(14.))
+            .pb(dp(if node.responding { 8. } else { 14. }))
             .rounded(px(10.))
             .border_1()
             .min_w_0()
@@ -726,14 +722,14 @@ impl Pilot {
         let header = h_flex()
             .gap_1p5()
             .flex_wrap()
-            .min_h(px(20.))
+            .min_h(dp(20.))
             .child(
                 h_flex()
                     .gap_1p5()
                     .mr_0p5()
                     .child(
                         Icon::new(role_icon(node.role))
-                            .with_size(px(15.))
+                            .size(dp(15.))
                             .text_color(p.muted),
                     )
                     .child(ui::caption(node.role.label(), cx)),
@@ -756,7 +752,7 @@ impl Pilot {
                     .tooltip(|window, cx| {
                         Tooltip::new("Responding to the Talos API").build(window, cx)
                     })
-                    .child(div().size(px(8.)).rounded_full().bg(p.good))
+                    .child(div().size(dp(8.)).rounded_full().bg(p.good))
                     .into_any_element()
             } else {
                 ui::tag(
@@ -768,19 +764,19 @@ impl Pilot {
                 .into_any_element()
             });
         let identity = v_flex()
-            .gap(px(3.))
+            .gap(dp(3.))
             .child(
                 div()
                     .font_family(MONO_FONT)
-                    .text_size(px(14.))
+                    .text_size(dp(14.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .line_height(px(18.))
+                    .line_height(dp(18.))
                     .child(node.name.clone()),
             )
             .child(
                 div()
                     .font_family(MONO_FONT)
-                    .text_size(px(12.))
+                    .text_size(dp(12.))
                     .text_color(p.muted)
                     .child(match &node.version {
                         Some(version) => format!("{} · {version}", node.address),
@@ -792,9 +788,9 @@ impl Pilot {
             return card
                 .child(
                 div()
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .text_color(p.muted)
-                    .line_height(px(19.))
+                    .line_height(dp(19.))
                     .child(format!(
                         "The Talos API at {}:50000 didn't answer the last refresh. CPU, memory and services are unknown, not failed.",
                         node.address
@@ -803,7 +799,7 @@ impl Pilot {
                 .into_any_element();
         }
         let metric_row = |label: String| {
-            h_flex().gap_2().flex_wrap().text_size(px(12.)).child(
+            h_flex().gap_2().flex_wrap().text_size(dp(12.)).child(
                 div()
                     .text_color(p.ink_2)
                     .font_weight(FontWeight::MEDIUM)
@@ -813,7 +809,7 @@ impl Pilot {
         let value = |text: String| {
             div()
                 .font_family(MONO_FONT)
-                .text_size(px(11.5))
+                .text_size(dp(11.5))
                 .text_color(p.ink_2)
                 .child(text)
         };
@@ -837,7 +833,7 @@ impl Pilot {
                 .child(
                     h_flex()
                         .justify_between()
-                        .text_size(px(11.))
+                        .text_size(dp(11.))
                         .text_color(p.muted)
                         .child(if sample_count < 2 {
                             "collecting samples…"
@@ -879,12 +875,12 @@ impl Pilot {
         let counts = node.health_counts();
         let unhealthy: Vec<String> = node.unhealthy_services().map(|s| s.id.clone()).collect();
         let services = v_flex()
-            .gap(px(7.))
-            .pt(px(11.))
+            .gap(dp(7.))
+            .pt(dp(11.))
             .border_t_1()
             .border_color(p.line)
             .child(
-                h_flex().gap(px(5.)).flex_wrap().min_h(px(10.)).children(
+                h_flex().gap(dp(5.)).flex_wrap().min_h(dp(10.)).children(
                     node.services
                         .iter()
                         .enumerate()
@@ -921,7 +917,7 @@ impl Pilot {
         let logs_target = node.name.clone();
         let actions = h_flex()
             .gap_0p5()
-            .ml(px(-6.))
+            .ml(dp(-6.))
             .child(
                 Button::new(("node-services", ix))
                     .ghost()
@@ -969,13 +965,13 @@ impl Pilot {
         let cell = |ix: usize| {
             let cell = div().px_3().min_w_0().whitespace_nowrap();
             if ix == 1 {
-                cell.flex_1().min_w(px(COLUMNS[ix].1))
+                cell.flex_1().min_w(dp(COLUMNS[ix].1))
             } else {
-                cell.flex_none().w(px(COLUMNS[ix].1))
+                cell.flex_none().w(dp(COLUMNS[ix].1))
             }
         };
         let head = h_flex()
-            .py(px(10.))
+            .py(dp(10.))
             .border_b_1()
             .border_color(p.line)
             .children(
@@ -1000,7 +996,7 @@ impl Pilot {
                         node.address,
                         node.role.label()
                     ))
-                    .py(px(9.))
+                    .py(dp(9.))
                     .border_b_1()
                     .border_color(p.line)
                     .cursor_pointer()
@@ -1016,22 +1012,22 @@ impl Pilot {
                                 .gap_1p5()
                                 .child(
                                     Icon::new(role_icon(node.role))
-                                        .with_size(px(14.))
+                                        .size(dp(14.))
                                         .text_color(p.muted),
                                 )
-                                .child(div().text_size(px(12.5)).child(node.role.label())),
+                                .child(div().text_size(dp(12.5)).child(node.role.label())),
                         ),
                     )
                     .child(
                         cell(1)
                             .font_family(MONO_FONT)
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .child(node.name.clone()),
                     )
                     .child(
                         cell(2)
                             .font_family(MONO_FONT)
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .child(node.address.clone()),
                     )
                     .child(cell(3).child(if node.responding {
@@ -1045,13 +1041,13 @@ impl Pilot {
                         )
                     }))
                     .child(
-                        cell(4).text_size(px(12.5)).child(
+                        cell(4).text_size(dp(12.5)).child(
                             node.cores
                                 .map(|c| format!("{c} cores"))
                                 .unwrap_or_else(|| "—".into()),
                         ),
                     )
-                    .child(cell(5).font_family(MONO_FONT).text_size(px(12.)).child(
+                    .child(cell(5).font_family(MONO_FONT).text_size(dp(12.)).child(
                         match node.load {
                             Some([a, b, c]) => format!("{a:.2} / {b:.2} / {c:.2}"),
                             None => "—".into(),
@@ -1070,7 +1066,7 @@ impl Pilot {
                                     );
                                     move |window, cx| Tooltip::new(detail.clone()).build(window, cx)
                                 })
-                                .child(div().w(px(48.)).child(ui::meter(
+                                .child(div().w(dp(48.)).child(ui::meter(
                                     memory.percent(),
                                     memory.level(),
                                     cx,
@@ -1078,14 +1074,14 @@ impl Pilot {
                                 .child(
                                     div()
                                         .font_family(MONO_FONT)
-                                        .text_size(px(12.))
+                                        .text_size(dp(12.))
                                         .child(format!("{:.0} %", memory.percent())),
                                 )
                                 .into_any_element(),
                             None => div().child("—").into_any_element(),
                         }),
                     )
-                    .child(cell(7).text_size(px(12.5)).child(if counts.unhealthy > 0 {
+                    .child(cell(7).text_size(dp(12.5)).child(if counts.unhealthy > 0 {
                         div()
                             .text_color(p.crit_ink)
                             .child(format!("{} unhealthy", counts.unhealthy))
@@ -1100,7 +1096,7 @@ impl Pilot {
                     }))
             });
         v_flex()
-            .min_w(px(COLUMNS.iter().map(|(_, width)| width).sum::<f32>()))
+            .min_w(dp(COLUMNS.iter().map(|(_, width)| width).sum::<f32>()))
             .w_full()
             .rounded(px(10.))
             .border_1()
@@ -1113,17 +1109,19 @@ impl Pilot {
     }
 }
 
-fn tile_columns(width: Pixels) -> u16 {
-    if width >= px(880.) {
+/// Columns for the summary tiles at a content width in `dp`.
+fn tile_columns(width: f32) -> u16 {
+    if width >= 880. {
         4
-    } else if width >= px(400.) {
+    } else if width >= 400. {
         2
     } else {
         1
     }
 }
 
-fn card_columns(width: Pixels) -> u16 {
-    let fit = ((width + px(GAP)) / px(CARD_MIN_WIDTH + GAP)).floor() as u16;
+/// Columns for the node cards at a content width in `dp`.
+fn card_columns(width: f32) -> u16 {
+    let fit = ((width + GAP) / (CARD_MIN_WIDTH + GAP)).floor() as u16;
     fit.clamp(1, 3)
 }

@@ -813,7 +813,7 @@ impl Render for SecurityScreen {
                     .children(children),
             );
         let details = self.details(selected_ix.map(|ix| &all[ix]), cx);
-        let wide = content_width(window) >= px(SIDE_DETAILS);
+        let wide = content_width(window) >= SIDE_DETAILS;
         let split = if wide {
             h_flex()
                 .flex_1()

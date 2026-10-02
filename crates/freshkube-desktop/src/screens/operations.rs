@@ -2460,7 +2460,7 @@ impl OperationsScreen {
                 .child(
                     v_flex()
                         .w_full()
-                        .min_w(table_width(&COLUMNS))
+                        .min_w(crate::ui::dp(table_width(&COLUMNS)))
                         .child(table_head(&COLUMNS, cx))
                         .child(
                             div()
@@ -3110,7 +3110,7 @@ impl Render for OperationsScreen {
         });
         let nodes = self.nodes_panel(&roster, cx);
         let plan = self.plan_panel(cx);
-        let wide = content_width(window) >= table_width(&COLUMNS) + px(PLAN_WIDTH + GAP);
+        let wide = content_width(window) >= table_width(&COLUMNS) + PLAN_WIDTH + GAP;
         let selection = if wide {
             h_flex()
                 .items_start()

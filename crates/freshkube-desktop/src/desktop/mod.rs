@@ -27,7 +27,7 @@ use crate::{
     },
     state::Snapshot,
     text_size, theme,
-    ui::clock,
+    ui::{clock, dp},
 };
 use freshkube_core::cluster_overview::{
     ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
@@ -1196,17 +1196,18 @@ impl Pilot {
         format!("{state} · {refreshed}")
     }
 
-    /// Width available to page content, for choosing grid column counts.
-    fn content_width(window: &Window) -> Pixels {
-        (window.viewport_size().width - px(SIDEBAR_WIDTH) - px(PAGE_PADDING * 2.)).max(px(240.))
+    /// Width available to page content in `dp`, for choosing grid column
+    /// counts.
+    fn content_width(window: &Window) -> f32 {
+        crate::screens::content_width(window)
     }
 
     fn render_logs_page(&self) -> AnyElement {
         div()
             .size_full()
             .min_h_0()
-            .pt(px(22.))
-            .px(px(PAGE_PADDING))
+            .pt(dp(22.))
+            .px(dp(PAGE_PADDING))
             .child(self.logs.clone().cached(cached_page_style()))
             .into_any_element()
     }

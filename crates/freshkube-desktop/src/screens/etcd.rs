@@ -850,11 +850,11 @@ impl Render for EtcdScreen {
             return div().into_any_element();
         };
         let width = content_width(window);
-        let wide = width >= px(SIDE_DETAILS);
+        let wide = width >= SIDE_DETAILS;
         // The table gets what the side details leave; drop columns before
         // they'd be clipped.
         let list_width = if wide {
-            width - px(DETAILS_WIDTH + 14.)
+            width - (DETAILS_WIDTH + 14.)
         } else {
             width
         };

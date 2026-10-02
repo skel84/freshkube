@@ -2355,8 +2355,8 @@ impl Render for NetworkScreen {
             return div().into_any_element();
         };
         let width = content_width(window);
-        self.compact = width < px(COMPACT);
-        let wide = width >= px(SIDE_DETAILS);
+        self.compact = width < COMPACT;
+        let wide = width >= SIDE_DETAILS;
         let mut missing: Vec<String> = data
             .snapshot
             .unavailable

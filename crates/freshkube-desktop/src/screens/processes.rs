@@ -930,7 +930,7 @@ impl Render for ProcessesScreen {
                     }),
             );
         let details = self.details(cx);
-        let wide = content_width(window) >= px(SIDE_DETAILS);
+        let wide = content_width(window) >= SIDE_DETAILS;
         // Short windows scroll the page rather than squeezing the list.
         let split = if wide {
             h_flex()

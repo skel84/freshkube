@@ -1490,7 +1490,7 @@ impl Render for ResourcesScreen {
             // Cached: list updates and age ticks don't redraw the pane.
             let pane =
                 AnyView::from(self.detail.clone()).cached(StyleRefinement::default().size_full());
-            let split = if content_width(window) >= px(SPLIT_WIDTH) {
+            let split = if content_width(window) >= SPLIT_WIDTH {
                 h_resizable("resource-split")
                     .with_state(&self.split)
                     .child(

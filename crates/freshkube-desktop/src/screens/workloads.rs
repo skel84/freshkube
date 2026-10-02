@@ -706,7 +706,7 @@ impl WorkloadsScreen {
 
     /// Width the list needs, with room for whole pod names, before the
     /// details pane may sit beside it.
-    fn width_beside_details(show_issue: bool) -> Pixels {
+    fn width_beside_details(show_issue: bool) -> f32 {
         let name = Column {
             width: Some(NAME_BESIDE_DETAILS),
             ..NAME
@@ -989,8 +989,8 @@ impl Render for WorkloadsScreen {
         let rows = self.rows(cx);
         let row_count = rows.len();
         let width = content_width(window);
-        let show_issue = width >= px(ISSUE_COLUMN);
-        let wide = width >= Self::width_beside_details(show_issue) + px(DETAILS_WIDTH + GAP);
+        let show_issue = width >= ISSUE_COLUMN;
+        let wide = width >= Self::width_beside_details(show_issue) + DETAILS_WIDTH + GAP;
         let missing: Vec<String> = data
             .unavailable
             .iter()

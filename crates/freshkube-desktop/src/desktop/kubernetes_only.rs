@@ -5,7 +5,7 @@ use super::{PAGE_PADDING, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::resources::direct::DirectAccess;
-use crate::ui::{self, MONO_FONT};
+use crate::ui::{self, MONO_FONT, dp};
 use freshkube_core::resources::{KubeconfigReport, discover_contexts, kubeconfig_sources};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -290,14 +290,14 @@ impl Pilot {
         let context = self.applied.context.clone().unwrap_or_default();
         let icon = |name: IconName, color: Hsla| {
             Icon::new(name)
-                .with_size(px(13.))
+                .size(dp(13.))
                 .text_color(color)
                 .into_any_element()
         };
         let dot = |color: Option<Hsla>| {
             div()
                 .flex_none()
-                .size(px(8.))
+                .size(dp(8.))
                 .rounded_full()
                 .map(|this| match color {
                     Some(color) => this.bg(color),
@@ -357,9 +357,9 @@ impl Pilot {
         div()
             .size_full()
             .min_h_0()
-            .pt(px(22.))
-            .px(px(PAGE_PADDING))
-            .pb(px(18.))
+            .pt(dp(22.))
+            .px(dp(PAGE_PADDING))
+            .pb(dp(18.))
             .child(
                 ui::empty_state(
                     IconName::KeyRound,
@@ -413,7 +413,7 @@ pub(super) fn settings_section(
         .gap_1p5()
         .child(
             div()
-                .text_size(px(12.5))
+                .text_size(dp(12.5))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("Kubeconfig"),
         )
@@ -429,7 +429,7 @@ pub(super) fn settings_section(
                         .min_w_0()
                         .truncate()
                         .font_family(MONO_FONT)
-                        .text_size(px(12.))
+                        .text_size(dp(12.))
                         .when(kube.sources.is_empty(), |this| this.text_color(p.muted))
                         .child(kube.files()),
                 )
@@ -451,7 +451,7 @@ pub(super) fn settings_section(
         )
         .child(
             div()
-                .text_size(px(12.))
+                .text_size(dp(12.))
                 .text_color(p.muted)
                 .child("Contexts come from these files and connect as they are: without Talos, nothing checks them against a cluster."),
         )

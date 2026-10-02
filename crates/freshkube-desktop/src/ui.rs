@@ -1,7 +1,7 @@
 //! Small shared building blocks for the Freshkube screens.
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon, Sizable,
+    Icon,
     empty::{
         EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
     },
@@ -10,7 +10,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Bounds, Canvas, DefiniteLength, Div, FontWeight, Hsla, PathBuilder, Pixels,
-    SharedString, canvas, div, fill, point, px, relative, size, transparent_black,
+    Rems, SharedString, Window, canvas, div, fill, point, px, relative, rems, size,
+    transparent_black,
 };
 
 use crate::palette::palette;
@@ -21,8 +22,22 @@ pub(crate) const DISPLAY_FONT: &str = "IBM Plex Sans Condensed SemiBold";
 /// Monospace face for hostnames, addresses, versions and logs.
 pub(crate) const MONO_FONT: &str = "JetBrains Mono";
 
-/// The theme's base text size at the default text size, in pixels.
+/// The theme's base text size at the default text size, in pixels. `dp`
+/// lengths are pixels at this size.
 pub(crate) const BASE_TEXT: f32 = 14.;
+
+/// A length of `n` pixels at the default text size, scaling with the text
+/// size the user chooses (`crate::text_size`). Size text, rows, padding and
+/// widths with it; borders, hairlines and corner radii stay in `px`, as
+/// Kit's do.
+pub(crate) fn dp(n: f32) -> Rems {
+    rems(n / BASE_TEXT)
+}
+
+/// `dp(n)` in pixels, for APIs and arithmetic that take `Pixels`.
+pub(crate) fn dp_px(n: f32, window: &Window) -> Pixels {
+    window.rem_size() * (n / BASE_TEXT)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tone {
@@ -68,13 +83,13 @@ pub(crate) fn tag(
     };
     h_flex()
         .flex_none()
-        .gap(px(5.))
-        .h(px(20.))
-        .px(px(7.))
+        .gap(dp(5.))
+        .h(dp(20.))
+        .px(dp(7.))
         .rounded(px(5.))
         .bg(bg)
         .text_color(fg)
-        .text_size(px(11.5))
+        .text_size(dp(11.5))
         .font_weight(FontWeight::SEMIBOLD)
         .whitespace_nowrap()
         .when(tone == Tone::Outline, |this| {
@@ -83,7 +98,7 @@ pub(crate) fn tag(
                 .font_weight(FontWeight::MEDIUM)
         })
         .when_some(icon, |this, icon| {
-            this.child(Icon::new(icon).with_size(px(13.)).text_color(fg))
+            this.child(Icon::new(icon).size(dp(13.)).text_color(fg))
         })
         .child(text.into())
 }
@@ -94,13 +109,13 @@ pub(crate) fn glyph(health: Health, cx: &App) -> AnyElement {
     match health {
         Health::Healthy => div()
             .flex_none()
-            .size(px(8.))
+            .size(dp(8.))
             .rounded_full()
             .bg(p.good)
             .into_any_element(),
         Health::Unknown => div()
             .flex_none()
-            .size(px(8.))
+            .size(dp(8.))
             .rounded_full()
             .border(px(1.5))
             .border_color(p.unk)
@@ -124,7 +139,7 @@ pub(crate) fn glyph(health: Health, cx: &App) -> AnyElement {
                 },
             )
             .flex_none()
-            .size(px(9.))
+            .size(dp(9.))
             .into_any_element()
         }
     }
@@ -134,7 +149,7 @@ pub(crate) fn glyph(health: Health, cx: &App) -> AnyElement {
 pub(crate) fn caption(text: &str, cx: &App) -> Div {
     div()
         .font_family(DISPLAY_FONT)
-        .text_size(px(11.))
+        .text_size(dp(11.))
         .text_color(palette(cx).muted)
         .whitespace_nowrap()
         .child(text.to_uppercase())
@@ -145,8 +160,8 @@ pub(crate) fn keycap(text: impl Into<SharedString>, cx: &App) -> Div {
     let p = palette(cx);
     div()
         .flex_none()
-        .h(px(18.))
-        .px(px(5.))
+        .h(dp(18.))
+        .px(dp(5.))
         .flex()
         .items_center()
         .rounded(px(4.))
@@ -155,7 +170,7 @@ pub(crate) fn keycap(text: impl Into<SharedString>, cx: &App) -> Div {
         .border_color(p.line_strong)
         .bg(p.surface)
         .font_family(MONO_FONT)
-        .text_size(px(10.5))
+        .text_size(dp(10.5))
         .text_color(p.muted)
         .child(text.into())
 }
@@ -178,7 +193,7 @@ pub(crate) fn meter(percent: f64, level: MemoryLevel, cx: &App) -> Div {
     };
     div()
         .w_full()
-        .h(px(6.))
+        .h(dp(6.))
         .rounded(px(3.))
         .bg(p.track)
         .overflow_hidden()
@@ -252,14 +267,16 @@ pub(crate) fn sparkline(samples: Vec<f64>, cores: Option<usize>, cx: &App) -> Ca
                 }
             }
             let last = at(samples.len() - 1, samples[samples.len() - 1]);
-            let dot = Bounds::centered_at(last, size(px(9.), px(9.)));
-            window.paint_quad(fill(dot, ring).corner_radii(px(4.5)));
-            let dot = Bounds::centered_at(last, size(px(6.), px(6.)));
-            window.paint_quad(fill(dot, accent).corner_radii(px(3.)));
+            let ring_size = dp_px(9., window);
+            let dot = Bounds::centered_at(last, size(ring_size, ring_size));
+            window.paint_quad(fill(dot, ring).corner_radii(ring_size / 2.));
+            let dot_size = dp_px(6., window);
+            let dot = Bounds::centered_at(last, size(dot_size, dot_size));
+            window.paint_quad(fill(dot, accent).corner_radii(dot_size / 2.));
         },
     )
     .w_full()
-    .h(px(32.))
+    .h(dp(32.))
 }
 
 /// Remaining time until the next automatic refresh, drawn as a ring.
@@ -303,15 +320,16 @@ pub(crate) fn countdown_ring(remaining: f32, visible: bool, cx: &App) -> Canvas<
             }
         },
     )
-    .size(px(28.))
+    .size(dp(28.))
 }
 
 /// A skeleton block of a fixed size.
 pub(crate) fn skeleton(
     width: impl Into<DefiniteLength>,
-    height: Pixels,
+    height: impl Into<DefiniteLength>,
 ) -> gpui_kit::component::skeleton::Skeleton {
     let width: DefiniteLength = width.into();
+    let height: DefiniteLength = height.into();
     gpui_kit::component::skeleton::Skeleton::new()
         .w(width)
         .h(height)
@@ -335,18 +353,18 @@ pub(crate) fn empty_state(
         .p_6()
         .child(
             gpui_kit::component::empty::Empty::new()
-                .max_w(px(480.))
+                .max_w(dp(480.))
                 .header(
                     EmptyHeader::new()
                         .media(
                             EmptyMedia::new()
                                 .with_variant(EmptyMediaVariant::Icon)
-                                .child(Icon::new(icon).with_size(px(20.))),
+                                .child(Icon::new(icon).size(dp(20.))),
                         )
                         .title(
                             EmptyTitle::new()
                                 .font_family(DISPLAY_FONT)
-                                .text_size(px(19.))
+                                .text_size(dp(19.))
                                 .text_color(p.ink)
                                 .child(title.into()),
                         )
@@ -362,7 +380,7 @@ pub(crate) fn empty_state(
                             .bg(p.crit_soft)
                             .text_color(p.crit_ink)
                             .font_family(MONO_FONT)
-                            .text_size(px(12.))
+                            .text_size(dp(12.))
                             .child(error),
                     )
                 })
@@ -389,13 +407,13 @@ pub(crate) fn warning_banner(
         .border_1()
         .border_color(p.warn_line)
         .bg(p.warn_soft)
-        .text_size(px(12.5))
+        .text_size(dp(12.5))
         .text_color(p.ink)
         .child(
             Icon::new(IconName::TriangleAlert)
-                .with_size(px(16.))
+                .size(dp(16.))
                 .text_color(p.warn_ink)
-                .mt(px(1.)),
+                .mt(dp(1.)),
         )
         .child(
             div()

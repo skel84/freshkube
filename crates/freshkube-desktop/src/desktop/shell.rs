@@ -7,7 +7,7 @@ use crate::presentation::{self, Role as NodeRole};
 use crate::resources::custom::{CustomGroup, Discovery};
 use crate::resources::navigation::{self, NavGroup};
 use crate::text_size;
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone};
+use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
 use freshkube_core::resources::{Failure, FailureKind};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -42,11 +42,11 @@ struct NavRow {
     id: SharedString,
     label: SharedString,
     tooltip: Option<SharedString>,
-    indent: Pixels,
+    indent: Rems,
 }
 
 impl NavRow {
-    fn new(id: impl Into<SharedString>, label: impl Into<SharedString>, indent: Pixels) -> Self {
+    fn new(id: impl Into<SharedString>, label: impl Into<SharedString>, indent: Rems) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -127,8 +127,8 @@ impl Pilot {
         });
         let next_in = AUTO_REFRESH.saturating_sub(self.elapsed).as_secs();
         TitleBar::new()
-            .h(px(44.))
-            .when(cfg!(target_os = "macos"), |bar| bar.pl(px(92.)))
+            .h(dp(44.))
+            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(92.)))
             .child(
                 h_flex()
                     .id("applied-config")
@@ -140,7 +140,7 @@ impl Pilot {
                     .child(
                         div()
                             .font_family(MONO_FONT)
-                            .text_size(px(12.5))
+                            .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(context),
                     )
@@ -150,7 +150,7 @@ impl Pilot {
                             .id("page-title")
                             .test_support()
                             .aria_label(self.page_title())
-                            .text_size(px(13.))
+                            .text_size(dp(13.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(self.page_title()),
                     ),
@@ -187,15 +187,15 @@ impl Pilot {
                     .child(
                         div()
                             .relative()
-                            .size(px(32.))
+                            .size(dp(32.))
                             .flex()
                             .items_center()
                             .justify_center()
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(2.))
-                                    .left(px(2.))
+                                    .top(dp(2.))
+                                    .left(dp(2.))
                                     .child(self.countdown.clone()),
                             )
                             .child(
@@ -249,7 +249,7 @@ impl Pilot {
                 .accessibility_label(format!("Target node {}", node.name))
                 .tooltip(format!("{} · {}", node.name, node.address))
                 .dropdown_caret(true)
-                .max_w(px(380.)),
+                .max_w(dp(380.)),
             None => Button::new("target-node")
                 .outline()
                 .small()
@@ -263,7 +263,7 @@ impl Pilot {
                 let popover = cx.entity();
                 v_flex()
                     .id("target-options")
-                    .w(px(340.))
+                    .w(dp(340.))
                     .gap_0p5()
                     .child(
                         div()
@@ -294,7 +294,7 @@ impl Pilot {
                                 .hover(|this| this.bg(p.hover))
                                 .child(
                                     Icon::new(role_icon(*role))
-                                        .with_size(px(15.))
+                                        .size(dp(15.))
                                         .text_color(p.muted),
                                 )
                                 .child(
@@ -304,11 +304,11 @@ impl Pilot {
                                         .child(
                                             div()
                                                 .font_family(MONO_FONT)
-                                                .text_size(px(12.5))
+                                                .text_size(dp(12.5))
                                                 .child(name.clone()),
                                         )
                                         .child(
-                                            div().text_size(px(11.5)).text_color(p.muted).child(
+                                            div().text_size(dp(11.5)).text_color(p.muted).child(
                                                 format!(
                                                     "{address} · {}",
                                                     if *responding {
@@ -322,7 +322,7 @@ impl Pilot {
                                 )
                                 .child(
                                     div()
-                                        .size(px(8.))
+                                        .size(dp(8.))
                                         .rounded_full()
                                         .when(*responding, |this| this.bg(p.good))
                                         .when(!*responding, |this| {
@@ -359,13 +359,13 @@ impl Pilot {
         let collecting = self.logs.read(cx).collecting_count();
         let services_suffix = (unhealthy > 0).then(|| {
             div()
-                .min_w(px(18.))
-                .h(px(18.))
-                .px(px(5.))
+                .min_w(dp(18.))
+                .h(dp(18.))
+                .px(dp(5.))
                 .rounded_full()
                 .bg(p.crit)
                 .text_color(gpui_kit::white())
-                .text_size(px(11.))
+                .text_size(dp(11.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .flex()
                 .items_center()
@@ -375,7 +375,7 @@ impl Pilot {
         });
         let logs_suffix = (collecting > 0).then(|| {
             div()
-                .size(px(7.))
+                .size(dp(7.))
                 .rounded_full()
                 .bg(p.good)
                 .into_any_element()
@@ -468,14 +468,14 @@ impl Pilot {
         let contexts = if self.config_loading {
             div()
                 .px_2()
-                .text_size(px(12.))
+                .text_size(dp(12.))
                 .text_color(p.muted)
                 .child("Loading contexts…")
                 .into_any_element()
         } else if self.config_error.is_some() || self.contexts.is_empty() {
             div()
                 .px_2()
-                .text_size(px(12.))
+                .text_size(dp(12.))
                 .text_color(p.muted)
                 .child("No contexts loaded")
                 .into_any_element()
@@ -506,28 +506,28 @@ impl Pilot {
         };
         v_flex()
             .id("sidebar")
-            .w(px(SIDEBAR_WIDTH))
+            .w(dp(SIDEBAR_WIDTH))
             .flex_none()
             .h_full()
             .bg(cx.theme().sidebar)
             .border_r_1()
             .border_color(cx.theme().sidebar_border)
-            .px(px(10.))
+            .px(dp(10.))
             .pt_4()
             .pb_2p5()
-            .gap(px(22.))
+            .gap(dp(22.))
             .child(
                 h_flex()
                     .gap_2p5()
                     .px_1p5()
                     .child(
                         div()
-                            .size(px(28.))
+                            .size(dp(28.))
                             .rounded(px(7.))
                             .bg(p.accent)
                             .text_color(cx.theme().primary_foreground)
                             .font_family(DISPLAY_FONT)
-                            .text_size(px(16.))
+                            .text_size(dp(16.))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -538,10 +538,10 @@ impl Pilot {
                             .child(
                                 div()
                                     .font_family(DISPLAY_FONT)
-                                    .text_size(px(15.))
+                                    .text_size(dp(15.))
                                     .child("Freshkube"),
                             )
-                            .child(div().text_size(px(11.5)).text_color(p.muted).child(
+                            .child(div().text_size(dp(11.5)).text_color(p.muted).child(
                                 if self.fixture {
                                     "Example data"
                                 } else {
@@ -567,8 +567,8 @@ impl Pilot {
                     .max_h(relative(0.4))
                     .min_h_0()
                     .gap_0p5()
-                    .pt(px(14.))
-                    .mt(px(-8.))
+                    .pt(dp(14.))
+                    .mt(dp(-8.))
                     .border_t_1()
                     .border_color(cx.theme().sidebar_border)
                     .child(
@@ -640,13 +640,13 @@ impl Pilot {
             .aria_selected(active)
             .aria_label(page.title())
             .tab_index(0)
-            .h(px(30.))
+            .h(dp(30.))
             .flex_none()
             .px_2()
             .gap_2p5()
             .rounded(px(7.))
             .cursor_pointer()
-            .text_size(px(13.))
+            .text_size(dp(13.))
             .text_color(if active { p.ink } else { p.ink_2 })
             .when(active, |this| {
                 this.bg(cx.theme().sidebar_accent)
@@ -663,7 +663,7 @@ impl Pilot {
                         .build(window, cx)
                 })
             })
-            .child(Icon::new(icon).with_size(px(16.)).text_color(if active {
+            .child(Icon::new(icon).size(dp(16.)).text_color(if active {
                 p.accent
             } else {
                 p.ink_2
@@ -717,7 +717,7 @@ impl Pilot {
             current.is_some_and(|key| group.items.iter().any(|(_, item)| *item == key));
         let slug = group.slug;
         let mut rows = vec![self.nav_header(
-            NavRow::new(format!("nav-k8s-group-{slug}"), group.label, px(8.)),
+            NavRow::new(format!("nav-k8s-group-{slug}"), group.label, dp(8.)),
             open,
             holds_current,
             cx.listener(move |view, _, _, cx| view.toggle_kubernetes_group(slug, cx)),
@@ -726,7 +726,7 @@ impl Pilot {
         if open {
             rows.extend(group.items.iter().map(|(label, key)| {
                 self.kubernetes_item(
-                    NavRow::new(format!("nav-k8s-{key}"), *label, px(30.)),
+                    NavRow::new(format!("nav-k8s-{key}"), *label, dp(30.)),
                     current == Some(*key),
                     cx.listener(move |view, _, window, cx| view.open_builtin(key, window, cx)),
                     cx,
@@ -765,7 +765,7 @@ impl Pilot {
         };
         let mut out = CustomRows {
             rows: vec![self.nav_header(
-                NavRow::new("nav-k8s-group-custom", "Custom Resources", px(8.)),
+                NavRow::new("nav-k8s-group-custom", "Custom Resources", dp(8.)),
                 open,
                 current_group.is_some(),
                 cx.listener(|view, _, _, cx| view.toggle_custom_resources(cx)),
@@ -781,7 +781,7 @@ impl Pilot {
         if !open {
             return out;
         }
-        let status = |text: &'static str| NavRow::new("nav-k8s-custom-status", text, px(30.));
+        let status = |text: &'static str| NavRow::new("nav-k8s-custom-status", text, dp(30.));
         match custom.groups() {
             None => out
                 .rows
@@ -812,7 +812,7 @@ impl Pilot {
                     let toggled = entry.name.clone();
                     out.rows.push(
                         self.nav_header(
-                            NavRow::new(entry.id.clone(), entry.name.clone(), px(30.))
+                            NavRow::new(entry.id.clone(), entry.name.clone(), dp(30.))
                                 .tooltip(entry.tooltip.clone()),
                             group_open,
                             current_group == Some(name),
@@ -847,7 +847,7 @@ impl Pilot {
                                 "{} more groups not shown",
                                 groups.len() - MAX_SIDEBAR_GROUPS
                             ),
-                            px(30.),
+                            dp(30.),
                         ),
                         None,
                         cx,
@@ -876,7 +876,7 @@ impl Pilot {
             reveal: None,
             settled: true,
         };
-        let status = |text: SharedString| NavRow::new(format!("{id}-status"), text, px(52.));
+        let status = |text: SharedString| NavRow::new(format!("{id}-status"), text, dp(52.));
         let retry = || -> Option<RowAction> {
             let name = entry.name.clone();
             Some(Box::new(cx.listener(move |view, _, _, cx| {
@@ -907,7 +907,7 @@ impl Pilot {
             let key = kind.key.clone();
             out.rows.push(
                 self.kubernetes_item(
-                    NavRow::new(kind.id.clone(), kind.label.clone(), px(52.))
+                    NavRow::new(kind.id.clone(), kind.label.clone(), dp(52.))
                         .tooltip(kind.tooltip.clone()),
                     current == Some(kind.key.as_ref()),
                     cx.listener(move |view, _, window, cx| view.open_custom(&key, window, cx)),
@@ -933,7 +933,7 @@ impl Pilot {
         if let Some((label, detail)) = &rows.partial {
             out.rows.push(
                 self.nav_status(
-                    NavRow::new(format!("{id}-partial"), label.clone(), px(52.))
+                    NavRow::new(format!("{id}-partial"), label.clone(), dp(52.))
                         .tooltip(detail.clone()),
                     retry(),
                     cx,
@@ -962,14 +962,14 @@ impl Pilot {
             .aria_expanded(open)
             .aria_label(row.label.clone())
             .tab_index(0)
-            .h(px(28.))
+            .h(dp(28.))
             .flex_none()
             .pl(row.indent)
             .pr_2()
             .gap_2()
             .rounded(px(7.))
             .cursor_pointer()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .text_color(if marked { p.ink } else { p.ink_2 })
             .when(marked, |this| this.font_weight(FontWeight::SEMIBOLD))
             .hover(|style| style.bg(p.hover))
@@ -982,7 +982,7 @@ impl Pilot {
                 } else {
                     IconName::ChevronRight
                 })
-                .with_size(px(14.))
+                .size(dp(14.))
                 .text_color(p.muted)
                 .flex_none(),
             )
@@ -1006,13 +1006,13 @@ impl Pilot {
             .aria_selected(active)
             .aria_label(row.label.clone())
             .tab_index(0)
-            .h(px(28.))
+            .h(dp(28.))
             .flex_none()
             .pl(row.indent)
             .pr_2()
             .rounded(px(7.))
             .cursor_pointer()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .text_color(if active { p.ink } else { p.ink_2 })
             .when(active, |this| {
                 this.bg(cx.theme().sidebar_accent)
@@ -1040,12 +1040,12 @@ impl Pilot {
             .test_support()
             .role(Role::Status)
             .aria_label(row.label.clone())
-            .h(px(28.))
+            .h(dp(28.))
             .flex_none()
             .pl(row.indent)
             .pr_1()
             .gap_1()
-            .text_size(px(12.))
+            .text_size(dp(12.))
             .text_color(p.muted)
             .when_some(row.tooltip, |this, tip| {
                 this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
@@ -1092,7 +1092,7 @@ impl Pilot {
             .aria_selected(current)
             .aria_label(context.to_owned())
             .tab_index(0)
-            .h(px(32.))
+            .h(dp(32.))
             .px_2()
             .gap_2p5()
             .rounded(px(7.))
@@ -1106,7 +1106,7 @@ impl Pilot {
             .child(
                 div()
                     .flex_none()
-                    .size(px(8.))
+                    .size(dp(8.))
                     .rounded_full()
                     .map(|this| match dot {
                         Some(color) => this.bg(color),
@@ -1119,12 +1119,12 @@ impl Pilot {
                     .min_w_0()
                     .truncate()
                     .font_family(MONO_FONT)
-                    .text_size(px(12.5))
+                    .text_size(dp(12.5))
                     .child(context.to_owned()),
             )
             .children(self.context_nodes.get(context).map(|count| {
                 div()
-                    .text_size(px(11.5))
+                    .text_size(dp(11.5))
                     .text_color(p.muted)
                     .child(if *count == 1 {
                         "1 node".to_owned()
@@ -1150,7 +1150,7 @@ impl Pilot {
         let dot = |color: Option<Hsla>| {
             div()
                 .flex_none()
-                .size(px(8.))
+                .size(dp(8.))
                 .rounded_full()
                 .map(|this| match color {
                     Some(color) => this.bg(color),
@@ -1173,7 +1173,7 @@ impl Pilot {
                 .min_w_0()
                 .child(
                     Icon::new(IconName::LoaderCircle)
-                        .with_size(px(13.))
+                        .size(dp(13.))
                         .text_color(p.accent),
                 )
                 .child(div().min_w_0().truncate().child(line))
@@ -1215,7 +1215,7 @@ impl Pilot {
             let (indicator, text) = if let Some(error) = &self.config_error {
                 (
                     Icon::new(IconName::CircleX)
-                        .with_size(px(13.))
+                        .size(dp(13.))
                         .text_color(p.crit_ink)
                         .into_any_element(),
                     format!("No configuration loaded: {error}"),
@@ -1225,7 +1225,7 @@ impl Pilot {
             {
                 (
                     Icon::new(IconName::RefreshCw)
-                        .with_size(px(13.))
+                        .size(dp(13.))
                         .text_color(p.accent)
                         .into_any_element(),
                     format!("Connecting to {context}…"),
@@ -1233,7 +1233,7 @@ impl Pilot {
             } else if self.overview.is_stale() {
                 (
                     Icon::new(IconName::TriangleAlert)
-                        .with_size(px(13.))
+                        .size(dp(13.))
                         .text_color(p.warn_ink)
                         .into_any_element(),
                     "Showing the previous snapshot".to_owned(),
@@ -1321,9 +1321,9 @@ impl Pilot {
                 })
         };
         StatusBar::new()
-            .h(px(28.))
+            .h(dp(28.))
             .px_3()
-            .text_size(px(11.5))
+            .text_size(dp(11.5))
             .left(left)
             .right(right)
             .into_any_element()
@@ -1360,16 +1360,16 @@ fn settings_content(
     let appearance_pilot = pilot.clone();
     let field_label = |text: &'static str| {
         div()
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .font_weight(FontWeight::SEMIBOLD)
             .child(text)
     };
-    let hint = |text: &'static str| div().text_size(px(12.)).text_color(p.muted).child(text);
+    let hint = |text: &'static str| div().text_size(dp(12.)).text_color(p.muted).child(text);
     v_flex()
         .id("settings-panel")
-        .w(px(380.))
+        .w(dp(380.))
         // Short windows scroll the panel instead of clipping it.
-        .max_h(window.viewport_size().height - px(96.))
+        .max_h(window.viewport_size().height - ui::dp_px(96., window))
         .overflow_y_scroll()
         .p_1()
         .gap_3p5()

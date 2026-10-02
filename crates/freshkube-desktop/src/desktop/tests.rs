@@ -2254,3 +2254,31 @@ fn text_size_steps_by_shortcut_and_settings_and_survives_appearance(cx: &mut Tes
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        let measure = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+            window.render_frame(cx);
+            let sidebar = window.find("sidebar-scroll").bounds().size.width;
+            let nav = window.find("nav-services").bounds().size.height;
+            (sidebar, nav)
+        };
+        let (sidebar, nav) = measure(window, cx);
+        for _ in 0..3 {
+            window.press("secondary-=", cx);
+        }
+        let (larger_sidebar, larger_nav) = measure(window, cx);
+        let ratio = 20. / 14.;
+        assert!(
+            (larger_sidebar / sidebar - ratio).abs() < 0.01,
+            "{larger_sidebar:?}"
+        );
+        assert!(
+            (larger_nav / nav - ratio).abs() < 0.1,
+            "{nav:?} → {larger_nav:?}"
+        );
+    })
+    .unwrap();
+}

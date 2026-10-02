@@ -1069,7 +1069,7 @@ impl LifecycleScreen {
                 // max-content width and a long node name pushes columns out.
                 v_flex()
                     .w_full()
-                    .min_w(table_width(&COLUMNS))
+                    .min_w(crate::ui::dp(table_width(&COLUMNS)))
                     .child(table_head(&COLUMNS, cx))
                     .child(
                         div()
@@ -1578,7 +1578,7 @@ impl Render for LifecycleScreen {
         let details = self.details(view, cx);
         // Details sit beside the lists only when the roster still fits whole;
         // otherwise they'd push its last columns behind a horizontal scroll.
-        let wide = content_width(window) >= table_width(&COLUMNS) + px(DETAILS_WIDTH + GAP);
+        let wide = content_width(window) >= table_width(&COLUMNS) + DETAILS_WIDTH + GAP;
         let body = if wide {
             h_flex()
                 .items_start()

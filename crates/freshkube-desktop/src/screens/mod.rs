@@ -47,7 +47,7 @@ use crate::desktop::{PAGE_PADDING, SIDEBAR_WIDTH};
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
 use crate::state::Snapshot;
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock};
+use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
 
 /// Upper bound for one screen request, including Kubernetes client setup.
 pub(crate) const SCREEN_DEADLINE: Duration = Duration::from_secs(60);
@@ -326,10 +326,12 @@ impl<T: Send + 'static> Loader<T> {
     }
 }
 
-/// Width available to page content, for choosing between side-by-side and
-/// stacked layouts.
-pub(crate) fn content_width(window: &Window) -> Pixels {
-    (window.viewport_size().width - px(SIDEBAR_WIDTH) - px(PAGE_PADDING * 2.)).max(px(240.))
+/// Width available to page content in `dp` (pixels at the default text
+/// size), for choosing between side-by-side and stacked layouts: a larger
+/// text size leaves less room, as a narrower window would.
+pub(crate) fn content_width(window: &Window) -> f32 {
+    let viewport = window.viewport_size().width / dp_px(1., window);
+    (viewport - SIDEBAR_WIDTH - PAGE_PADDING * 2.).max(240.)
 }
 
 pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {
@@ -338,16 +340,16 @@ pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {
 
 pub(crate) fn page_body() -> Div {
     v_flex()
-        .px(px(PAGE_PADDING))
-        .pt(px(22.))
-        .pb(px(30.))
-        .gap(px(20.))
+        .px(dp(PAGE_PADDING))
+        .pt(dp(22.))
+        .pb(dp(30.))
+        .gap(dp(20.))
 }
 
 pub(crate) fn mono(text: impl Into<SharedString>) -> Div {
     div()
         .font_family(MONO_FONT)
-        .text_size(px(12.))
+        .text_size(dp(12.))
         .child(text.into())
 }
 
@@ -370,7 +372,7 @@ pub(crate) fn header<V: ScreenPanel, T: Send + 'static>(
         Scope::Cluster => h_flex().child("in").child(mono(target.context.clone())),
     }
     .gap_1p5()
-    .text_size(px(12.5))
+    .text_size(dp(12.5))
     .text_color(p.muted)
     .when_some(loader.last_successful(), |this, time| {
         this.child("·").child(format!("updated {}", clock(time)))
@@ -383,12 +385,12 @@ pub(crate) fn header<V: ScreenPanel, T: Send + 'static>(
         .flex_wrap()
         .child(
             v_flex()
-                .gap(px(7.))
+                .gap(dp(7.))
                 .child(
                     div()
                         .font_family(DISPLAY_FONT)
-                        .text_size(px(28.))
-                        .line_height(px(32.))
+                        .text_size(dp(28.))
+                        .line_height(dp(32.))
                         .child(title),
                 )
                 .child(scope_line),
@@ -557,12 +559,12 @@ pub(crate) fn partial_notice(missing: Vec<String>, cx: &App) -> Option<AnyElemen
             .border_1()
             .border_color(p.line)
             .bg(p.surface)
-            .text_size(px(12.5))
+            .text_size(dp(12.5))
             .child(
                 Icon::new(IconName::CircleDashed)
-                    .with_size(px(15.))
+                    .size(dp(15.))
                     .text_color(p.unk_ink)
-                    .mt(px(1.)),
+                    .mt(dp(1.)),
             )
             .child(
                 v_flex()
@@ -602,14 +604,14 @@ pub(crate) fn field(label: &'static str, value: impl IntoElement, cx: &App) -> D
         .gap_4()
         .child(
             div()
-                .w(px(132.))
+                .w(dp(132.))
                 .flex_none()
-                .pt(px(1.))
-                .text_size(px(12.))
+                .pt(dp(1.))
+                .text_size(dp(12.))
                 .text_color(p.muted)
                 .child(label),
         )
-        .child(div().flex_1().min_w_0().text_size(px(13.)).child(value))
+        .child(div().flex_1().min_w_0().text_size(dp(13.)).child(value))
 }
 
 /// A small figure with a caption, for summary rows above a list.
@@ -623,12 +625,12 @@ pub(crate) fn stat(label: &str, value: impl Into<SharedString>, cx: &App) -> Div
         .border_1()
         .border_color(p.line)
         .bg(p.surface)
-        .min_w(px(120.))
+        .min_w(dp(120.))
         .child(ui::caption(label, cx))
         .child(
             div()
                 .font_family(DISPLAY_FONT)
-                .text_size(px(18.))
+                .text_size(dp(18.))
                 .child(value.into()),
         )
 }
@@ -643,15 +645,15 @@ pub(crate) struct Column {
 pub(crate) fn cell(column: Column) -> Div {
     let cell = div().px_3().min_w_0().whitespace_nowrap().truncate();
     match column.width {
-        Some(width) => cell.flex_none().w(px(width)),
-        None => cell.flex_1().min_w(px(160.)),
+        Some(width) => cell.flex_none().w(dp(width)),
+        None => cell.flex_1().min_w(dp(160.)),
     }
 }
 
 pub(crate) fn table_head(columns: &[Column], cx: &App) -> Div {
     let p = palette(cx);
     h_flex()
-        .py(px(9.))
+        .py(dp(9.))
         .border_b_1()
         .border_color(p.line)
         .children(
@@ -661,19 +663,19 @@ pub(crate) fn table_head(columns: &[Column], cx: &App) -> Div {
         )
 }
 
-/// Width a table needs before it scrolls sideways.
-pub(crate) fn table_width(columns: &[Column]) -> Pixels {
-    px(columns
+/// Width a table needs before it scrolls sideways, in `dp`.
+pub(crate) fn table_width(columns: &[Column]) -> f32 {
+    columns
         .iter()
         .map(|column| column.width.unwrap_or(160.) + 24.)
-        .sum())
+        .sum()
 }
 
 fn skeleton(cx: &App) -> AnyElement {
     panel(cx)
         .p_3()
         .gap_3()
-        .children((0..9).map(|_| ui::skeleton(relative(0.7), px(12.))))
+        .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.))))
         .into_any_element()
 }
 

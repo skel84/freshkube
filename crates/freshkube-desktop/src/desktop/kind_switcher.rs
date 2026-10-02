@@ -83,28 +83,32 @@ impl Pilot {
         let state = self.kind_switcher.clone();
         state.update(cx, |state, cx| state.set_query("", window, cx));
         let pilot = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, window, _| {
             let (kinds, pilot) = (kinds.clone(), pilot.clone());
             let command = groups
                 .iter()
                 .cloned()
                 .fold(Command::new(&state), Command::group);
-            dialog.p_0().w(px(WIDTH)).close_button(false).child(
-                command
-                    .bordered(false)
-                    .placeholder("Go to kind…")
-                    .on_confirm(move |ix, window, cx| {
-                        let Some(kind) = kinds
-                            .get(ix.section)
-                            .and_then(|kinds| kinds.get(ix.row))
-                            .cloned()
-                        else {
-                            return;
-                        };
-                        window.close_dialog(cx);
-                        _ = pilot.update(cx, |pilot, cx| pilot.open_kind(kind, window, cx));
-                    }),
-            )
+            dialog
+                .p_0()
+                .w(crate::ui::dp_px(WIDTH, window))
+                .close_button(false)
+                .child(
+                    command
+                        .bordered(false)
+                        .placeholder("Go to kind…")
+                        .on_confirm(move |ix, window, cx| {
+                            let Some(kind) = kinds
+                                .get(ix.section)
+                                .and_then(|kinds| kinds.get(ix.row))
+                                .cloned()
+                            else {
+                                return;
+                            };
+                            window.close_dialog(cx);
+                            _ = pilot.update(cx, |pilot, cx| pilot.open_kind(kind, window, cx));
+                        }),
+                )
         });
         // After opening: the dialog takes focus and remembers what had it,
         // to hand it back on Escape.
