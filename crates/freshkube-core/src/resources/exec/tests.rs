@@ -319,8 +319,8 @@ async fn output_ends_with_the_stream_and_stops_when_nobody_reads() {
 }
 
 #[tokio::test]
-async fn input_is_written_in_order_and_closing_it_closes_stdin() {
-    let (stdin, mut shell) = duplex(1024);
+async fn input_is_written_in_order_until_the_user_closes_it() {
+    let (mut stdin, mut shell) = duplex(1024);
     let (sizes, mut resized) = size_channel::channel(10);
     let (input, queue) = mpsc::channel(16);
     let size = |columns| ExecSize { columns, rows: 30 };
@@ -333,54 +333,138 @@ async fn input_is_written_in_order_and_closing_it_closes_stdin() {
         input.send(item).await.unwrap();
     }
     drop(input);
-    assert!(write_input(queue, stdin, sizes).await, "the user closed it");
+    assert!(
+        write_input(queue, &mut stdin, sizes).await,
+        "the user closed it"
+    );
+    drop(stdin);
     let mut typed = Vec::new();
     shell.read_to_end(&mut typed).await.unwrap();
-    assert_eq!(typed, b"echo hi\r", "and stdin is closed");
+    assert_eq!(typed, b"echo hi\r");
     let sent = resized.try_recv().unwrap();
     assert_eq!((sent.width, sent.height), (132, 30));
     assert!(resized.try_recv().is_err(), "one resize only");
 }
 
-#[tokio::test(start_paused = true)]
-async fn ending_a_session_waits_briefly_for_the_server() {
-    let (stdin, _shell_in) = duplex(64);
-    let (mut shell, stdout) = duplex(64);
-    let (sizes, _resized) = size_channel::channel(10);
+/// Streams over in-memory pipes: what the session writes to the shell,
+/// what the shell writes, and the handles that end it.
+struct Pipes {
+    streams: Streams<tokio::io::DuplexStream, tokio::io::DuplexStream>,
+    typed: tokio::io::DuplexStream,
+    shell: tokio::io::DuplexStream,
+    input: mpsc::Sender<ExecInput>,
+    output: mpsc::Receiver<ExecOutput>,
+    close: oneshot::Sender<()>,
+}
+
+fn pipes() -> Pipes {
+    let (stdin, typed) = duplex(64);
+    let (shell, stdout) = duplex(64);
+    let (sizes, _) = size_channel::channel(10);
     let (input, queue) = mpsc::channel(4);
-    let (sink, mut output) = mpsc::channel(4);
-    let streams = Streams {
-        input: queue,
-        stdin,
-        sizes,
-        stdout,
-        output: sink,
-    };
-    shell.write_all(b"$ ").await.unwrap();
-    drop(input);
-    // The server never closes; the session still ends.
-    let ran = streams.run().await.unwrap();
+    let (sink, output) = mpsc::channel(4);
+    let (close, closing) = oneshot::channel();
+    Pipes {
+        streams: Streams {
+            input: queue,
+            stdin,
+            sizes,
+            stdout,
+            output: sink,
+            close: closing,
+        },
+        typed,
+        shell,
+        input,
+        output,
+        close,
+    }
+}
+
+/// Everything the session typed into the shell so far.
+async fn typed(pipe: &mut tokio::io::DuplexStream) -> Vec<u8> {
+    let mut typed = vec![0; 64];
+    let read = pipe.read(&mut typed).await.unwrap();
+    typed.truncate(read);
+    typed
+}
+
+#[tokio::test(start_paused = true)]
+async fn ending_a_session_interrupts_then_ends_the_shell() {
+    let mut pipes = pipes();
+    pipes.shell.write_all(b"$ ").await.unwrap();
+    drop(pipes.input);
+    let started = tokio::time::Instant::now();
+    // The server never closes; the session still ends, at the deadline.
+    let ran = pipes.streams.run().await.unwrap();
     assert!(ran.closed);
     assert!(ran.output_seen);
-    assert_eq!(output.recv().await, Some(ExecOutput::Bytes(b"$ ".to_vec())));
+    assert_eq!(started.elapsed(), INTERRUPT_PAUSE + CLOSE_DEADLINE);
+    assert_eq!(typed(&mut pipes.typed).await, b"\x03\x04");
+    assert_eq!(
+        pipes.output.recv().await,
+        Some(ExecOutput::Bytes(b"$ ".to_vec()))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_shell_that_exits_on_control_d_ends_the_session_at_once() {
+    let mut pipes = pipes();
+    let session = tokio::spawn(pipes.streams.run());
+    drop(pipes.input);
+    let started = tokio::time::Instant::now();
+    assert_eq!(typed(&mut pipes.typed).await, b"\x03");
+    assert_eq!(typed(&mut pipes.typed).await, b"\x04");
+    assert_eq!(started.elapsed(), INTERRUPT_PAUSE);
+    pipes.shell.write_all(b"exit\r\n").await.unwrap();
+    drop(pipes.shell);
+    let ran = session.await.unwrap().unwrap();
+    assert!(ran.closed);
+    assert_eq!(started.elapsed(), INTERRUPT_PAUSE);
+    assert_eq!(
+        pipes.output.recv().await,
+        Some(ExecOutput::Bytes(b"exit\r\n".to_vec()))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_guard_closes_politely_though_nobody_reads_or_writes() {
+    let mut pipes = pipes();
+    // The input stays open and the output is gone: closing still ends it.
+    drop(pipes.output);
+    pipes.close.send(()).unwrap();
+    let session = tokio::spawn(pipes.streams.run());
+    assert_eq!(typed(&mut pipes.typed).await, b"\x03");
+    assert_eq!(typed(&mut pipes.typed).await, b"\x04");
+    pipes.shell.write_all(b"exit\r\n").await.unwrap();
+    drop(pipes.shell);
+    assert!(session.await.unwrap().is_none(), "nobody to tell");
+    drop(pipes.input);
+}
+
+#[tokio::test(start_paused = true)]
+async fn when_nobody_reads_the_shell_still_ends_politely() {
+    let mut pipes = pipes();
+    drop(pipes.output);
+    pipes.shell.write_all(b"$ ").await.unwrap();
+    let started = tokio::time::Instant::now();
+    assert!(pipes.streams.run().await.is_none());
+    assert_eq!(typed(&mut pipes.typed).await, b"\x03\x04");
+    // The first batch waits out its window before it finds nobody reads.
+    assert_eq!(
+        started.elapsed(),
+        BATCH_TIME + INTERRUPT_PAUSE + CLOSE_DEADLINE
+    );
+    drop(pipes.input);
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_session_ends_with_its_output() {
-    let (stdin, _shell_in) = duplex(64);
-    let (shell, stdout) = duplex(64);
-    let (sizes, _resized) = size_channel::channel(10);
-    let (_input, queue) = mpsc::channel(4);
-    let (sink, _output) = mpsc::channel(4);
-    drop(shell);
-    let streams = Streams {
-        input: queue,
-        stdin,
-        sizes,
-        stdout,
-        output: sink,
-    };
-    let ran = streams.run().await.unwrap();
+    let mut pipes = pipes();
+    drop(pipes.shell);
+    let ran = pipes.streams.run().await.unwrap();
     assert!(!ran.closed);
     assert!(!ran.output_seen);
+    assert!(pipes.output.recv().await.is_none());
+    drop((pipes.input, pipes.close, pipes.typed));
 }

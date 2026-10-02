@@ -70,7 +70,7 @@ impl ShellView {
                 .small()
                 .icon(IconName::Square)
                 .label("End")
-                .tooltip("End the shell and whatever runs in it")
+                .tooltip("Send Control-C, then Control-D, and close the connection")
                 .on_click(cx.listener(|view, _, _, cx| view.end(cx)))
         } else {
             Button::new("pod-shell-start")

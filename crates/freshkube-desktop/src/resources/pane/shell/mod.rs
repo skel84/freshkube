@@ -19,6 +19,7 @@ use freshkube_core::resources::{
 use gpui_kit::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::backend::{self, OwnedJob};
 use crate::logs::choice_label;
@@ -37,6 +38,9 @@ use example::ExampleShell;
 /// How long starting may take: reading the pod, then the exec, each with
 /// its own deadline in core.
 const START_DEADLINE: Duration = Duration::from_secs(65);
+/// How long quitting or closing the window waits for shells to end
+/// politely (Control-C, then Control-D) before going ahead.
+const CLOSE_GRACE: Duration = Duration::from_secs(1);
 
 /// Where the session stands.
 #[derive(Clone, Debug, PartialEq)]
@@ -88,7 +92,8 @@ enum Session {
         input: Option<mpsc::UnboundedSender<ExecInput>>,
         _forward: OwnedJob,
         _delivery: Task<()>,
-        _guard: ExecGuard,
+        /// Closed rather than dropped, so the shell ends politely.
+        guard: ExecGuard,
     },
     Example(ExampleShell),
 }
@@ -117,9 +122,13 @@ pub(crate) struct ShellView {
 
 impl EventEmitter<ShellEvent> for ShellView {}
 
-/// Every shell view, so quitting can ask about a running session.
+/// Every shell view, so quitting can ask about a running session, and the
+/// sessions still ending, so quitting can wait for them.
 #[derive(Default)]
-struct Shells(Vec<WeakEntity<ShellView>>);
+struct Shells {
+    views: Vec<WeakEntity<ShellView>>,
+    closing: Vec<JoinHandle<()>>,
+}
 
 impl Global for Shells {}
 
@@ -131,8 +140,8 @@ impl ShellView {
         })];
         let this = cx.entity().downgrade();
         let shells = cx.default_global::<Shells>();
-        shells.0.retain(|shell| shell.upgrade().is_some());
-        shells.0.push(this);
+        shells.views.retain(|shell| shell.upgrade().is_some());
+        shells.views.push(this);
         let mut view = Self {
             runtime,
             access: None,
@@ -178,7 +187,7 @@ impl ShellView {
         if self.pod == pod {
             return;
         }
-        self.drop_session();
+        self.drop_session(cx);
         self.pod = pod;
         self.containers = PodContainers::default();
         self.known = false;
@@ -293,7 +302,7 @@ impl ShellView {
         ) else {
             return;
         };
-        self.drop_session();
+        self.drop_session(cx);
         if std::mem::replace(&mut self.used, true) {
             self.terminal.update(cx, |terminal, cx| terminal.reset(cx));
         }
@@ -417,7 +426,7 @@ impl ShellView {
             input: Some(sender),
             _forward: forward,
             _delivery: delivery,
-            _guard: guard,
+            guard,
         });
         self.state = ShellState::Running;
         self.describe(None);
@@ -438,7 +447,7 @@ impl ShellView {
 
     /// The session ended. Its screen stays until a new one starts.
     fn finish(&mut self, end: ExecEnd, cx: &mut Context<Self>) {
-        self.drop_session();
+        self.drop_session(cx);
         self.terminal.update(cx, |terminal, cx| terminal.end(cx));
         if self.state == ShellState::Ended {
             // The user ended it, and has been told.
@@ -458,7 +467,7 @@ impl ShellView {
     }
 
     fn fail(&mut self, failure: ExecFailure, cx: &mut Context<Self>) {
-        self.drop_session();
+        self.drop_session(cx);
         self.terminal.update(cx, |terminal, cx| terminal.end(cx));
         self.state = ShellState::Failed;
         let tag = match failure.kind {
@@ -484,14 +493,14 @@ impl ShellView {
     pub(super) fn end(&mut self, cx: &mut Context<Self>) {
         match self.state {
             ShellState::Connecting => {
-                self.drop_session();
+                self.drop_session(cx);
                 self.state = ShellState::Idle;
                 self.describe(None);
             }
             ShellState::Running => {
                 match &mut self.session {
                     Some(Session::Live { input, .. }) => drop(input.take()),
-                    _ => self.drop_session(),
+                    _ => self.drop_session(cx),
                 }
                 self.terminal.update(cx, |terminal, cx| terminal.end(cx));
                 self.state = ShellState::Ended;
@@ -502,9 +511,36 @@ impl ShellView {
         cx.notify();
     }
 
-    fn drop_session(&mut self) {
-        self.session = None;
+    /// Lets the session go. A live one ends politely in the background:
+    /// closing the connection alone would leave the shell, and whatever
+    /// runs in it, running in the container.
+    fn drop_session(&mut self, cx: &mut App) {
+        if let Some(Session::Live { guard, .. }) = self.session.take() {
+            let closing = guard.close();
+            let shells = cx.default_global::<Shells>();
+            shells.closing.retain(|task| !task.is_finished());
+            shells.closing.push(closing);
+        }
         self.seq += 1;
+    }
+
+    /// Ends the session for good, as the window closes or the app quits.
+    fn close_session(&mut self, cx: &mut Context<Self>) {
+        match self.state {
+            ShellState::Connecting => {
+                self.drop_session(cx);
+                self.state = ShellState::Idle;
+                self.describe(None);
+            }
+            ShellState::Running => {
+                self.drop_session(cx);
+                self.terminal.update(cx, |terminal, cx| terminal.end(cx));
+                self.state = ShellState::Ended;
+                self.describe(Some("You ended the shell.".to_owned()));
+            }
+            _ => return,
+        }
+        cx.notify();
     }
 
     fn terminal_event(&mut self, event: &TerminalEvent, cx: &mut Context<Self>) {
@@ -625,7 +661,7 @@ impl ShellView {
 /// The pod of a shell running anywhere in the app.
 pub(crate) fn running_anywhere(cx: &App) -> Option<SharedString> {
     cx.try_global::<Shells>()?
-        .0
+        .views
         .iter()
         .filter_map(WeakEntity::upgrade)
         .find_map(|shell| shell.read(cx).running_pod())
@@ -636,7 +672,10 @@ fn ask(pod: &str, window: &mut Window, cx: &mut App) -> impl Future<Output = boo
     let answer = window.prompt(
         PromptLevel::Warning,
         &format!("End the shell in {pod}?"),
-        Some("The shell and whatever runs in it stop."),
+        Some(
+            "Freshkube sends Control-C, then Control-D, to stop what runs and end the shell. \
+             A program that ignores them, such as an open editor, keeps running in the pod.",
+        ),
         &["End the shell", "Cancel"],
         cx,
     );
@@ -677,10 +716,33 @@ pub(crate) fn may_close(
     let agreed = ask(&pod, window, cx);
     window
         .spawn(cx, async move |cx| {
-            if agreed.await {
-                _ = cx.update(close);
+            if !agreed.await {
+                return;
             }
+            if let Ok(ending) = cx.update(|_, cx| end_all(cx)) {
+                ending.await;
+            }
+            _ = cx.update(close);
         })
         .detach();
     false
+}
+
+/// Ends every session, and resolves once they have ended politely or
+/// [`CLOSE_GRACE`] has passed.
+fn end_all(cx: &mut App) -> impl Future<Output = ()> + use<> {
+    let shells: Vec<_> = cx
+        .default_global::<Shells>()
+        .views
+        .iter()
+        .filter_map(WeakEntity::upgrade)
+        .collect();
+    for shell in shells {
+        shell.update(cx, |shell, cx| shell.close_session(cx));
+    }
+    let closing = std::mem::take(&mut cx.default_global::<Shells>().closing);
+    let grace = cx.background_executor().timer(CLOSE_GRACE);
+    async move {
+        futures::future::select(futures::future::join_all(closing), grace).await;
+    }
 }

@@ -2381,8 +2381,12 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     assert!(!cx.has_pending_prompt());
     step(cx, &|window, cx| window.press("secondary-escape", cx));
     step(cx, &|window, cx| window.press("alt-down", cx));
-    let (message, _) = cx.pending_prompt().unwrap();
+    let (message, detail) = cx.pending_prompt().unwrap();
     assert_eq!(message, format!("End the shell in {}?", pod.name));
+    // Closing the connection alone would leave the shell running in the
+    // pod, so ending it sends keys first, and says what they can't stop.
+    assert!(detail.contains("Control-C, then Control-D"), "{detail}");
+    assert!(detail.contains("keeps running in the pod"), "{detail}");
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert_eq!(
@@ -2405,8 +2409,13 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         cx.run_until_parked();
         assert_eq!(closed.get(), closes);
     }
+    // Agreeing ended the shell before the window went.
+    assert_eq!(running(cx), None);
 
     // Agreeing to another connection ends the shell and moves on.
+    step(cx, &|window, cx| window.click("pod-shell-start", cx));
+    assert!(running(cx).is_some());
+    step(cx, &|window, cx| window.press("secondary-escape", cx));
     step(cx, &|window, cx| window.press("alt-down", cx));
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();

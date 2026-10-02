@@ -18,7 +18,7 @@ use kube::client::UpgradeConnectionError;
 use kube::{Api, Client};
 use serde_yaml::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::failure::{Failure, FailureKind};
@@ -37,6 +37,9 @@ pub const BATCH_TIME: Duration = Duration::from_millis(8);
 const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
 /// How long the server may take to close after the user ends a session.
 const CLOSE_DEADLINE: Duration = Duration::from_secs(2);
+/// Between Control-C and Control-D when a session ends, so the shell is
+/// back at its prompt when Control-D arrives.
+const INTERRUPT_PAUSE: Duration = Duration::from_millis(200);
 const INPUT_QUEUE: usize = 256;
 const OUTPUT_QUEUE: usize = 64;
 
@@ -172,20 +175,46 @@ impl fmt::Display for ExecFailure {
 
 impl std::error::Error for ExecFailure {}
 
-/// An open shell. Dropping `guard` stops it at once; closing `input` ends it
-/// politely, with [`ExecEnd::Closed`].
+/// An open shell. Closing `input` ends it politely, with
+/// [`ExecEnd::Closed`]; so does [`ExecGuard::close`], whether or not anyone
+/// still reads the output. Dropping `guard` stops it at once.
+///
+/// Politely means as a user at the keyboard would: Control-C stops what runs
+/// in the foreground, and Control-D then ends the shell at its prompt.
+/// Closing the connection alone stops neither: the container runtime keeps
+/// the terminal open, so both would run on in the container. A program that
+/// ignores those keys, such as an open editor, still does.
 pub struct ExecSession {
     pub input: mpsc::Sender<ExecInput>,
     pub output: mpsc::Receiver<ExecOutput>,
     pub guard: ExecGuard,
 }
 
-/// Stops a session's work on Tokio when dropped.
-pub struct ExecGuard(JoinHandle<()>);
+/// Owns a session's work on Tokio.
+pub struct ExecGuard {
+    task: Option<JoinHandle<()>>,
+    close: Option<oneshot::Sender<()>>,
+}
+
+impl ExecGuard {
+    /// Ends the session politely in the background and lets it finish on
+    /// its own, within a couple of seconds. The handle completes when it
+    /// has; dropping the handle doesn't stop it.
+    pub fn close(mut self) -> JoinHandle<()> {
+        if let Some(close) = self.close.take() {
+            let _ = close.send(());
+        }
+        self.task
+            .take()
+            .expect("a guard owns its task until closed")
+    }
+}
 
 impl Drop for ExecGuard {
     fn drop(&mut self) {
-        self.0.abort();
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
     }
 }
 
@@ -230,6 +259,7 @@ pub async fn start_exec(client: Client, request: ExecRequest) -> Result<ExecSess
     let status = process.take_status().ok_or_else(lost)?;
     let (input, input_queue) = mpsc::channel(INPUT_QUEUE);
     let (output_sink, output) = mpsc::channel(OUTPUT_QUEUE);
+    let (close, closing) = oneshot::channel();
     let task = tokio::spawn(async move {
         let streams = Streams {
             input: input_queue,
@@ -237,6 +267,7 @@ pub async fn start_exec(client: Client, request: ExecRequest) -> Result<ExecSess
             sizes,
             stdout,
             output: output_sink.clone(),
+            close: closing,
         };
         let Some(ran) = streams.run().await else {
             process.abort();
@@ -259,7 +290,10 @@ pub async fn start_exec(client: Client, request: ExecRequest) -> Result<ExecSess
     Ok(ExecSession {
         input,
         output,
-        guard: ExecGuard(task),
+        guard: ExecGuard {
+            task: Some(task),
+            close: Some(close),
+        },
     })
 }
 
@@ -277,6 +311,18 @@ struct Streams<W, R> {
     sizes: size_channel::Sender<TerminalSize>,
     stdout: R,
     output: mpsc::Sender<ExecOutput>,
+    /// The guard asks to end politely.
+    close: oneshot::Receiver<()>,
+}
+
+/// Why the streams stop moving bytes both ways.
+enum Stop {
+    /// The user or the guard asked to end.
+    Close,
+    /// The exec stopped taking input.
+    Broken,
+    /// The output ended, or `None` when nobody reads it any more.
+    Read(Option<bool>),
 }
 
 /// How the streams stopped.
@@ -288,37 +334,89 @@ struct Ran {
 }
 
 impl<W: AsyncWrite + Unpin, R: AsyncRead + Unpin> Streams<W, R> {
-    /// Moves bytes both ways until the output ends or the user closes the
-    /// input. `None` when nobody reads the output any more.
+    /// Moves bytes both ways until the output ends, or the user closes the
+    /// input or the guard asks to close, which ends the session politely.
+    /// `None` when nobody reads the output any more.
     async fn run(self) -> Option<Ran> {
         let Streams {
             input,
-            stdin,
+            mut stdin,
             sizes,
-            stdout,
+            mut stdout,
             output,
+            mut close,
         } = self;
-        let writing = write_input(input, stdin, sizes);
-        let reading = read_output(stdout, &output);
-        tokio::pin!(writing, reading);
-        tokio::select! {
-            read = &mut reading => read.map(|output_seen| Ran { closed: false, output_seen }),
-            closed = &mut writing => {
-                // Writing stopped: the user closed the input, or the exec
-                // stopped taking it and its output says why.
-                let finished = if closed {
-                    tokio::time::timeout(CLOSE_DEADLINE, reading).await.ok()
-                } else {
-                    Some(reading.await)
-                };
-                match finished {
-                    Some(None) => None,
-                    Some(Some(output_seen)) => Some(Ran { closed, output_seen }),
-                    None => Some(Ran { closed, output_seen: true }),
+        let mut reading = Box::pin(read_output(&mut stdout, &output));
+        let mut writing = Box::pin(write_input(input, &mut stdin, sizes));
+        let stop = tokio::select! {
+            biased;
+            _ = &mut close => Stop::Close,
+            closed = &mut writing => if closed { Stop::Close } else { Stop::Broken },
+            read = &mut reading => Stop::Read(read),
+        };
+        drop(writing);
+        match stop {
+            Stop::Read(Some(output_seen)) => Some(Ran {
+                closed: false,
+                output_seen,
+            }),
+            // The output says why the exec stopped taking input.
+            Stop::Broken => reading.await.map(|output_seen| Ran {
+                closed: false,
+                output_seen,
+            }),
+            Stop::Close => {
+                // Shows what the shell writes as it ends, and stops once it
+                // has exited, or at the deadline.
+                let deadline = tokio::time::Instant::now() + INTERRUPT_PAUSE + CLOSE_DEADLINE;
+                let (_, read) = tokio::join!(
+                    end_politely(&mut stdin),
+                    tokio::time::timeout_at(deadline, &mut reading),
+                );
+                match read {
+                    Ok(Some(output_seen)) => Some(Ran {
+                        closed: true,
+                        output_seen,
+                    }),
+                    Err(_) => Some(Ran {
+                        closed: true,
+                        output_seen: true,
+                    }),
+                    Ok(None) => {
+                        drop(reading);
+                        let _ = tokio::time::timeout_at(deadline, drain(&mut stdout)).await;
+                        None
+                    }
                 }
+            }
+            Stop::Read(None) => {
+                drop(reading);
+                let deadline = tokio::time::Instant::now() + INTERRUPT_PAUSE + CLOSE_DEADLINE;
+                let _ = tokio::time::timeout_at(deadline, async {
+                    tokio::join!(end_politely(&mut stdin), drain(&mut stdout))
+                })
+                .await;
+                None
             }
         }
     }
+}
+
+/// Ends the shell as a user at the keyboard would: Control-C, then
+/// Control-D once the shell is back at its prompt.
+async fn end_politely(mut stdin: impl AsyncWrite + Unpin) {
+    if stdin.write_all(b"\x03").await.is_err() || stdin.flush().await.is_err() {
+        return;
+    }
+    tokio::time::sleep(INTERRUPT_PAUSE).await;
+    let _ = stdin.write_all(b"\x04").await;
+    let _ = stdin.flush().await;
+}
+
+/// Reads the output to its end, for nobody.
+async fn drain(mut stdout: impl AsyncRead + Unpin) {
+    let mut buffer = [0; 4096];
+    while matches!(stdout.read(&mut buffer).await, Ok(read) if read > 0) {}
 }
 
 /// Writes queued input in order. Returns true once the user closed the
@@ -331,7 +429,6 @@ async fn write_input(
     let mut queued = Vec::new();
     loop {
         let Some(first) = input.recv().await else {
-            let _ = stdin.shutdown().await;
             return true;
         };
         queued.push(first);
