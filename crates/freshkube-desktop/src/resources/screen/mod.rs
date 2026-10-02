@@ -205,14 +205,7 @@ struct TableLayout {
 
 impl TableLayout {
     fn new(store: &ResourceStore, namespace_column: bool) -> Self {
-        let longest = |chars: &dyn Fn(&super::model::ResourceRow) -> usize| {
-            store
-                .entries()
-                .iter()
-                .map(|entry| chars(entry.row()))
-                .max()
-                .unwrap_or(0)
-        };
+        let widest = store.widest();
         let fit = |chars: usize, max: f32| {
             (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max)
         };
@@ -237,7 +230,11 @@ impl TableLayout {
             let width = match column.kind {
                 ColumnKind::Age => AGE_WIDTH,
                 _ => fit(
-                    longest(&|row| row.cells.get(ix).map_or(0, |cell| cell.chars().count()))
+                    widest
+                        .cells
+                        .get(ix)
+                        .copied()
+                        .unwrap_or(0)
                         // Room for the sort arrow beside the label.
                         .max(column.name.chars().count() + 2),
                     if is_flexible {
@@ -263,10 +260,7 @@ impl TableLayout {
                     label: "Namespace".into(),
                     source: ColumnSource::Namespace,
                     kind: ColumnKind::Text,
-                    width: fit(
-                        longest(&|row| row.identity.namespace.chars().count()).max(11),
-                        MAX_COLUMN,
-                    ),
+                    width: fit(widest.namespace.max(11), MAX_COLUMN),
                     flexible: false,
                     status: false,
                 });
@@ -606,7 +600,7 @@ impl ResourcesScreen {
             let events =
                 match example::read(&source.context, &kind.key(), namespace.as_deref(), self.now) {
                     Some((columns, rows)) => vec![
-                        ResourceEvent::Reset { columns, rows },
+                        ResourceEvent::reset(columns, rows),
                         ResourceEvent::Read(ReadState::Loaded),
                     ],
                     None => vec![ResourceEvent::Read(ReadState::Loaded)],
@@ -641,7 +635,7 @@ impl ResourcesScreen {
         let reset = batch
             .events
             .iter()
-            .any(|event| matches!(event, ResourceEvent::Reset { .. }));
+            .any(|event| matches!(event, ResourceEvent::Reset(_)));
         let served = !matches!(self.store.read_state(), ReadState::Missing(_));
         let stored = {
             let _span = crate::perf::span("table.store");

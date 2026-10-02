@@ -224,7 +224,7 @@ mod tests {
         store.apply(ResourceBatch {
             epoch,
             events: vec![
-                ResourceEvent::Reset { columns, rows },
+                ResourceEvent::reset(columns, rows),
                 ResourceEvent::Read(ReadState::Loaded),
             ],
         });
@@ -334,10 +334,7 @@ mod tests {
         view.select(&store, Some(4));
         let selected = view.selected().unwrap().clone();
         rows.reverse();
-        let reset = |rows: Vec<ResourceRow>| ResourceEvent::Reset {
-            columns: pod_columns(),
-            rows,
-        };
+        let reset = |rows: Vec<ResourceRow>| ResourceEvent::reset(pod_columns(), rows);
         apply(&mut store, &mut view, vec![reset(rows.clone())]);
         assert_eq!(view.selected(), Some(&selected));
         assert_eq!(view.selected_index(), Some(95));
@@ -425,10 +422,7 @@ mod tests {
         apply(
             &mut store,
             &mut view,
-            vec![ResourceEvent::Reset {
-                columns: pod_columns(),
-                rows: Vec::new(),
-            }],
+            vec![ResourceEvent::reset(pod_columns(), Vec::new())],
         );
         assert!(store.is_empty());
     }

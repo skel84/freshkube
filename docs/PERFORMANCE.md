@@ -88,3 +88,18 @@ No log keeps up: the lag grows by the second for as long as the stream runs. A 6
 - Once the buffer evicts, every batch rebuilds a set of every retained line to drop dead measurements (`logs.sweep`, 0.6 ms now and growing with retention).
 
 Memory stayed flat in every run: resident memory held between 90 and 115 MB through a 60-second flood that filled the 8 MiB log buffer.
+
+## Fixes
+
+Each fix is its own commit, with the workload that showed the problem run again after it.
+
+### A first list no longer stops the window
+
+A reset now arrives ready to swap in. Where the list is read, on Tokio, core's rows are converted, their search keys built, duplicates merged, identities indexed and the widest printed text of each column counted. The main thread replaces the store's contents and sizes the columns from those counts instead of reading every row.
+
+| Pods | Whole batch, before | After |
+| --- | --- | --- |
+| 20,000 | 107 ms | 0.3 ms |
+| 50,000 | 257 ms | 1.1 ms |
+
+What is left is the projection's first sort, which is quick for the default order because a list arrives in it. A Refresh still drops the old rows on the main thread.

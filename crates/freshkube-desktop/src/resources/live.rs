@@ -87,13 +87,12 @@ pub(crate) fn convert(
     for event in events {
         match event {
             WatchEvent::Reset { columns, rows } => {
-                converted.push(ResourceEvent::Reset {
-                    columns: self::columns(&columns),
-                    rows: rows
-                        .iter()
+                converted.push(ResourceEvent::reset(
+                    self::columns(&columns),
+                    rows.iter()
                         .filter_map(|table_row| row(connection, resource, table_row))
                         .collect(),
-                });
+                ));
                 converted.push(ResourceEvent::Read(ReadState::Loaded));
             }
             WatchEvent::Upsert(table_row) => {
@@ -209,7 +208,7 @@ mod tests {
                 },
             ],
         );
-        assert!(matches!(&events[0], ResourceEvent::Reset { rows, .. } if rows.len() == 2));
+        assert!(matches!(&events[0], ResourceEvent::Reset(snapshot) if snapshot.len() == 2));
         assert!(matches!(events[1], ResourceEvent::Read(ReadState::Loaded)));
         // The orphan upsert has no identity and is dropped.
         assert!(matches!(&events[2], ResourceEvent::Delete(identity) if identity.name == "web"));

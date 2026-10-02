@@ -7,13 +7,83 @@ use super::model::{ReadState, ResourceColumn, ResourceIdentity, ResourceRow};
 /// and every row, and changes to the collection's read state.
 #[derive(Clone, Debug)]
 pub(crate) enum ResourceEvent {
-    Reset {
-        columns: Vec<ResourceColumn>,
-        rows: Vec<ResourceRow>,
-    },
+    Reset(Snapshot),
     Upsert(ResourceRow),
     Delete(ResourceIdentity),
     Read(ReadState),
+}
+
+impl ResourceEvent {
+    /// A reset to these columns and rows. Build it where the list arrives,
+    /// off the main thread: it does the work of a whole list.
+    pub(crate) fn reset(columns: Vec<ResourceColumn>, rows: Vec<ResourceRow>) -> Self {
+        Self::Reset(Snapshot::new(columns, rows))
+    }
+}
+
+/// A list's rows made ready to replace a store's: search keys built,
+/// duplicates merged, identities indexed and printed widths counted, so
+/// applying it only swaps it in.
+#[derive(Clone, Debug)]
+pub(crate) struct Snapshot {
+    columns: Vec<ResourceColumn>,
+    entries: Vec<ResourceEntry>,
+    index: HashMap<ResourceIdentity, usize>,
+    widest: Widest,
+}
+
+impl Snapshot {
+    // Duplicate identities keep the first occurrence's position with the last
+    // occurrence's observation, as a relist that saw an object twice would.
+    fn new(columns: Vec<ResourceColumn>, rows: Vec<ResourceRow>) -> Self {
+        let mut entries: Vec<ResourceEntry> = Vec::with_capacity(rows.len());
+        let mut index: HashMap<ResourceIdentity, usize> = HashMap::with_capacity(rows.len());
+        for row in rows {
+            if let Some(&slot) = index.get(&row.identity) {
+                let seq = entries[slot].seq;
+                entries[slot] = ResourceEntry::new(row, seq);
+            } else {
+                index.insert(row.identity.clone(), entries.len());
+                entries.push(ResourceEntry::new(row, entries.len() as u64));
+            }
+        }
+        let mut widest = Widest::default();
+        for entry in &entries {
+            widest.include(&entry.row);
+        }
+        Self {
+            columns,
+            entries,
+            index,
+            widest,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// The longest printed text of a store's rows, in characters: per cell
+/// column, and of the namespace. Column widths come from it without a pass
+/// over every row.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Widest {
+    pub(crate) cells: Vec<usize>,
+    pub(crate) namespace: usize,
+}
+
+impl Widest {
+    fn include(&mut self, row: &ResourceRow) {
+        if self.cells.len() < row.cells.len() {
+            self.cells.resize(row.cells.len(), 0);
+        }
+        for (widest, cell) in self.cells.iter_mut().zip(&row.cells) {
+            *widest = (*widest).max(cell.chars().count());
+        }
+        self.namespace = self.namespace.max(row.identity.namespace.chars().count());
+    }
 }
 
 /// Events observed within one session. The store applies a batch as one
@@ -79,6 +149,8 @@ pub(crate) struct ResourceStore {
     entries: Vec<ResourceEntry>,
     index: HashMap<ResourceIdentity, usize>,
     next_seq: u64,
+    /// Over every row since the last reset; deletes don't narrow it.
+    widest: Widest,
 }
 
 impl ResourceStore {
@@ -91,6 +163,7 @@ impl ResourceStore {
             entries: Vec::new(),
             index: HashMap::new(),
             next_seq: 0,
+            widest: Widest::default(),
         }
     }
 
@@ -104,6 +177,7 @@ impl ResourceStore {
         self.entries.clear();
         self.index.clear();
         self.next_seq = 0;
+        self.widest = Widest::default();
         self.epoch
     }
 
@@ -136,6 +210,10 @@ impl ResourceStore {
         &self.entries
     }
 
+    pub(crate) fn widest(&self) -> &Widest {
+        &self.widest
+    }
+
     pub(crate) fn slot(&self, identity: &ResourceIdentity) -> Option<usize> {
         self.index.get(identity).copied()
     }
@@ -153,7 +231,7 @@ impl ResourceStore {
         }
         for event in batch.events {
             match event {
-                ResourceEvent::Reset { columns, rows } => self.reset(columns, rows),
+                ResourceEvent::Reset(snapshot) => self.reset(snapshot),
                 ResourceEvent::Upsert(row) => self.upsert(row),
                 ResourceEvent::Delete(identity) => self.delete(&identity),
                 // A failure with rows on screen leaves them up, marked stale.
@@ -168,6 +246,7 @@ impl ResourceStore {
     }
 
     fn upsert(&mut self, row: ResourceRow) {
+        self.widest.include(&row);
         if let Some(slot) = self.slot(&row.identity) {
             let seq = self.entries[slot].seq;
             self.entries[slot] = ResourceEntry::new(row, seq);
@@ -188,16 +267,12 @@ impl ResourceStore {
         }
     }
 
-    // Duplicate identities keep the first occurrence's position with the last
-    // occurrence's observation, as a relist that saw an object twice would.
-    fn reset(&mut self, columns: Vec<ResourceColumn>, rows: Vec<ResourceRow>) {
-        self.columns = columns;
-        self.entries.clear();
-        self.index.clear();
-        self.next_seq = 0;
-        for row in rows {
-            self.upsert(row);
-        }
+    fn reset(&mut self, snapshot: Snapshot) {
+        self.next_seq = snapshot.entries.len() as u64;
+        self.columns = snapshot.columns;
+        self.entries = snapshot.entries;
+        self.index = snapshot.index;
+        self.widest = snapshot.widest;
     }
 }
 
@@ -212,10 +287,7 @@ mod tests {
         assert!(store.apply(ResourceBatch {
             epoch,
             events: vec![
-                ResourceEvent::Reset {
-                    columns: pod_columns(),
-                    rows
-                },
+                ResourceEvent::reset(pod_columns(), rows),
                 ResourceEvent::Read(ReadState::Loaded)
             ],
         }));
@@ -228,10 +300,7 @@ mod tests {
     }
 
     fn reset(rows: Vec<ResourceRow>) -> ResourceEvent {
-        ResourceEvent::Reset {
-            columns: pod_columns(),
-            rows,
-        }
+        ResourceEvent::reset(pod_columns(), rows)
     }
 
     fn assert_index_consistent(store: &ResourceStore) {
@@ -322,10 +391,7 @@ mod tests {
         let columns = vec![pod_columns()[0].clone()];
         apply(
             &mut store,
-            vec![ResourceEvent::Reset {
-                columns: columns.clone(),
-                rows,
-            }],
+            vec![ResourceEvent::reset(columns.clone(), rows)],
         );
         assert_eq!(store.columns(), columns.as_slice());
         assert_eq!(store.len(), 3);
@@ -364,6 +430,35 @@ mod tests {
         );
         assert_eq!(store.len(), 5);
         assert!(store.get(&original.identity).is_none());
+    }
+
+    #[test]
+    fn widest_counts_characters_from_the_reset_on() {
+        let mut rows = pod_rows(3);
+        rows[1].cells[0] = format!("pod-{}", "δ".repeat(36));
+        rows[2].identity.namespace = "a-namespace-longer-than-test".into();
+        let mut store = loaded(rows);
+        let name = |widest: &Widest| widest.cells[0];
+        // Characters, not bytes.
+        assert_eq!(name(store.widest()), 40);
+        assert_eq!(store.widest().namespace, 28);
+        // A wider row widens it; deleting that row doesn't narrow it.
+        let mut wide = inserted_pod(1);
+        wide.cells[0] = "x".repeat(50);
+        apply(&mut store, vec![ResourceEvent::Upsert(wide.clone())]);
+        assert_eq!(name(store.widest()), 50);
+        apply(&mut store, vec![ResourceEvent::Delete(wide.identity)]);
+        assert_eq!(name(store.widest()), 50);
+        // A reset counts only its own rows.
+        apply(&mut store, vec![reset(pod_rows(2))]);
+        let expected = store
+            .entries()
+            .iter()
+            .map(|entry| entry.row().cells[0].chars().count())
+            .max();
+        assert_eq!(Some(name(store.widest())), expected);
+        store.start_session();
+        assert_eq!(store.widest(), &Widest::default());
     }
 
     #[test]
