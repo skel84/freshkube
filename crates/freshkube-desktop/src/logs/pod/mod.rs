@@ -376,14 +376,6 @@ fn clock(time: DateTime<Utc>) -> String {
     }
 }
 
-/// The RFC 3339 timestamp a Kubernetes log line starts with.
-fn line_time(line: &str) -> Option<DateTime<Utc>> {
-    let token = line.split(' ').next()?;
-    DateTime::parse_from_rfc3339(token)
-        .ok()
-        .map(|time| time.with_timezone(&Utc))
-}
-
 impl LogSource for PodLogs {
     fn controls(view: &PodLogView, cx: &mut Context<PodLogView>) -> Vec<AnyElement> {
         view.render_controls(cx)
@@ -621,7 +613,7 @@ impl LogView<PodLogs> {
         let stream = self.source.stream;
         let resume = self.source.position.time().map(|_| self.source.position);
         if let KubeAccess::Example = access {
-            self.start_example(&pod, &container, resume, cx);
+            self.start_example(&pod, &container, resume.is_some(), cx);
             return;
         }
         let request = LogRequest {
@@ -673,19 +665,17 @@ impl LogView<PodLogs> {
         &mut self,
         pod: &ResourceIdentity,
         container: &str,
-        resume: Option<LogPosition>,
+        reading_on: bool,
         cx: &mut Context<Self>,
     ) {
         let stream = self.source.stream;
         let (mut updates, writes_on) =
             example::pod_log(pod, container, self.source.previous, live::now());
-        if let Some(from) = resume.and_then(|resume| resume.time()) {
-            // Example lines all have their own time, so this is enough to
-            // read on without repeating one.
-            updates.retain(|update| match update {
-                PodLogUpdate::Line(line) => line_time(line).is_some_and(|time| time > from),
-                _ => true,
-            });
+        if reading_on {
+            // Example history is dated back from the clock, so read again a
+            // second later it would pass for new lines. Reading on gets only
+            // lines written since, and an example writes none while stopped.
+            updates.retain(|update| !matches!(update, PodLogUpdate::Line(_)));
         }
         self.apply_updates(stream, updates, cx);
         if !writes_on || self.source.stream != stream {

@@ -308,6 +308,9 @@ fn stop_keeps_what_was_read_and_resume_reads_on_without_repeating(cx: &mut TestA
     .unwrap();
     cx.executor().advance_clock(EXAMPLE_INTERVAL * 3);
     cx.run_until_parked();
+    // Example history is dated from the wall clock, so let a second pass:
+    // reading on must not take it again for new lines.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(lines(&view, cx), 40);
         let generation = view.read(cx).generation;
