@@ -4,7 +4,7 @@ This log records GPUI Kit and GPUI friction found while building Freshkube, and 
 
 Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a431fb1b82a6047e908de63913db3d4354` (version 0.7.0). This application uses the published `gpui-kit` 0.7.0 from crates.io. GPUI is the crates.io snapshot `gpui-pre` 0.3.7, and its paths are relative to that crate.
 
-**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K16 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`.
+**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K23 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`. From K17 on, toolkit source is cited in the published crates in the Cargo registry, by crate name and version (`gpui-pre` 0.3.7, `gpui-base` 0.7.0, `gpui-component` 0.7.0, `gpui-kit` 0.7.0), with paths relative to each crate.
 
 | ID | Summary | Found in | Classification |
 | --- | --- | --- | --- |
@@ -24,6 +24,13 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 | [K14](#k14-two-executors) | GPUI's executor and Tokio both have to run | Desktop app | Framework issue |
 | [K15](#k15-ui-test-harness-traps) | UI test harness traps | Desktop app | Documentation gap |
 | [K16](#k16-synthetic-input-needs-a-focused-window) | Synthetic input needs a focused window | Desktop app | Platform limitation |
+| [K17](#k17-keys-follow-the-last-drawn-frame) | A focus target that isn't drawn sends keys to the window root | Workflow pass | Documentation gap |
+| [K18](#k18-bindings-run-before-key-listeners) | Bindings run before a focused element's key listeners | Terminal view | Framework issue |
+| [K19](#k19-scroll_to_item-targets-direct-children-and-the-last-viewport) | `scroll_to_item` targets direct children and the last frame's viewport | Browsing step 2a | Documentation gap |
+| [K20](#k20-popup-menu-items-are-identified-by-position) | Popup menu items are identified by position | Pod logs | Component limitation |
+| [K21](#k21-a-dialog-returns-focus-to-what-had-it-at-open) | A dialog returns focus to what had it when it opened | Workflow pass | Documentation gap |
+| [K22](#k22-no-terminal-widget-for-the-pinned-kit) | No terminal widget builds against the pinned Kit | Pod exec | Component limitation |
+| [K23](#k23-covered-or-locked-windows-draw-nothing) | Covered or locked windows draw nothing | Live checks, performance pass | Platform limitation |
 
 ## K01 DataTable keys ignore row-only mode
 
@@ -51,6 +58,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 - **Symptom:** the first G01 build failed because `Dialog::w(rems(28.))` does not compile. `Dialog` has an inherent `w(impl Into<Pixels>)` that shadows `Styled::w`, which would accept a rem length. Table column widths and dock sizes also take `Pixels`. The Kit design skill requires rem-based sizing.
 - **Kit source:** `crates/component/src/dialog/dialog.rs:452` (`w`), `:460` (`width`), and `:513-517` (`impl Styled for Dialog`); `crates/component/src/table/column.rs:151` (`Column::width`); `crates/base/src/dock/dock_area.rs:348` (`set_dock_size`). The rem guidance is in `skills/gpui-kit-design-guides/SKILL.md:50-52`.
 - **Freshkube workaround:** each call site converts with `rems(x).to_pixels(window.rem_size())`. The call sites are `open_about` (`shell.rs`), `PodTable::new` (`pods/table.rs`), and the default right-dock size in `Workspace::new` (`workspace/mod.rs`). These values are resolved once. They are not expected to follow a later theme font-size change, which has not been checked separately.
+- **Text size (this application):** the text-size work (`6dadfba` to `0090d8e`) answered the open question. Kit's own controls follow the theme's font size, which `Root` makes the window's rem size. Freshkube converts on every render with `ui::dp_px(n, window)` (`ui.rs`), so a dialog's width (`desktop/kind_switcher.rs`) and the detail split's limits (`resources/screen/mod.rs`) follow a size change. A Kit resizable panel uses its `size` only until its first layout, then keeps the measured pixels (`gpui-base` 0.7.0 `src/resizable/panel.rs:341-352`, `src/resizable/mod.rs:200-214`). An open split should therefore keep its width in pixels across a size change while its limits follow. That is read from source, not checked in the app.
 - **Classification:** component limitation (API shape).
 - **Reproduction:** no minimal repro yet. A one-line compile check with `Dialog::w(rems(..))` would be enough.
 - **Upstream:** not reported.
@@ -61,6 +69,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 - **Symptom:** a helper that returned `Stateful<Div>` from `.id(..).test_support()` compiled in normal builds but failed under `cargo test`. With the `test-support` feature, which the dev-dependency enables, `.test_support()` returns `Observed<Stateful<Div>>`.
 - **Kit source:** `crates/base/src/observe.rs:4-9` defines `ObservedElement<E>` as `Observed<E>` with `test-support` and as `E` otherwise. `observe.rs:27` has `fn test_support(self) -> ObservedElement<Self>`, and `crates/base/src/test_support.rs:237` has `Observed<E>`. `crates/kit/TESTING.md` does not mention the effect on return types.
 - **Freshkube workaround:** helpers that call `.test_support()` return `impl IntoElement` (`PodTable::render_read_state` in `pods/table.rs`).
+- **Builder order (this application):** `.test_support()` needs an id already set and must come before `.track_focus(..)`, or focus queries can't see the binding. Kit documents both (`gpui-base` 0.7.0 `src/observe.rs:25-26` and `src/test_support.rs:259-263`; `gpui-kit` 0.7.0 `TESTING.md:50-54`), but a missed binding on a custom element can still report focus as `None` without a panic (`TESTING.md:74-78`). Freshkube's focusable wrappers put it straight after `.id(..)`, as `resource-body` in `resources/screen/mod.rs` does.
 - **Classification:** documentation gap.
 - **Reproduction:** no minimal repro yet.
 - **Upstream:** not reported.
@@ -165,6 +174,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
   - `Window::render_frame` bypasses view caches, so it cannot show whether a cached view was redrawn. The app counts renders with its own probes (`desktop::probe`).
   - Element snapshots cannot tell whether a button is disabled (see the observation below).
   - Setting an input's value from code does not emit its change event. One test that relied on it ended up writing files into the crate directory.
+  - Emitted events and notifications are queued as effects and run only when the outermost update ends (`gpui-pre` 0.3.7 `src/app.rs:1161-1180`; `emit` queues an `Effect::Emit`, `src/app/context.rs:760-770`). A test that emits and checks a subscriber's result inside one `update_window` closure sees nothing yet; it has to check after the closure returns. Found while building custom resources (step 4).
 - **Freshkube workaround:** the rules under [UI tests](../AGENTS.md#ui-tests) in AGENTS.md.
 - **Classification:** documentation gap (test harness behaviour that is not documented).
 
@@ -175,6 +185,73 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 - **Freshkube workaround:** debug builds open a page from `FRESHKUBE_PAGE=<slug>`; interaction checks live in headless UI tests.
 - **Classification:** platform limitation, not a GPUI defect.
 
+## K17 Keys follow the last drawn frame
+
+- **Found in:** the workflow pass (`2c9c278`).
+- **Symptom:** while the Resources page showed a message in place of its rows, the list's keys and the shell's page keys stopped working. The focused list was not drawn, so key dispatch started from the window root, outside every context of the page. Nothing reports that the focus target is missing.
+- **Source (GPUI):** `gpui-pre` 0.3.7 `src/window.rs:5807-5808` (`dispatch_key_event` builds the dispatch path from the focused node in the rendered frame) and `:6251-6259` (`focus_node_id_in_rendered_frame` falls back to `root_node_id()` when the focused handle is not in that frame). The same lookup makes `FocusHandle::dispatch_action` (`:627-636`) do nothing for a handle that wasn't drawn, while `Window::dispatch_action` (`:2441-2454`) is deferred to after the current update. Neither doc comment mentions this.
+- **Freshkube workaround:** a page's key context and focus sit on a wrapper drawn in every state (`ResourcesScreen::keyed`, the `resource-body` element in `resources/screen/mod.rs`). See [Keys and focus](../AGENTS.md#keys-and-focus).
+- **Classification:** documentation gap.
+- **Reproduction:** no minimal repro yet.
+- **Upstream:** not reported.
+
+## K18 Bindings run before key listeners
+
+- **Found in:** pod exec step 1, the terminal view (`6fda2db`).
+- **Symptom:** a terminal must pass Escape, Tab, Control-Tab and the arrows to the program. Any binding on the focus path takes such a key before the focused element's own key-down listener sees it, even a listener in the capture phase. Kit's `Root` binds Tab and Shift-Tab to focus traversal, and the app binds Escape and Control-Tab in enclosing contexts. Separately, the keypad can't be told apart from the main keyboard, so application keypad mode can't be honoured.
+- **Source (GPUI):** `gpui-pre` 0.3.7 `src/window.rs:5860-5870` (keystroke interceptors run first, and stopping propagation there skips the rest), `:5944-5957` (bindings on the dispatch path), then `:5959` and `:6007-6016` into `dispatch_key_down_up_event` (`:6049-6075`), where capture and bubble key listeners run. `App::intercept_keystrokes` (`src/app.rs:2321-2345`) is the only hook ahead of bindings, and it is app-wide. Kit binds `tab` and `shift-tab` in `Root` (`gpui-base` 0.7.0 `src/root.rs:16-17`). `gpui-pre-macos` 0.3.7 `src/events.rs:368` maps the keypad's Enter to `enter`, and `Keystroke` (`gpui-pre` `src/platform/keystroke.rs:18`) has no keypad flag.
+- **Freshkube workaround:** one app-wide interceptor (`register` and `intercept` in `terminal/input.rs`) finds the focused terminal, hands it every key without Command and stops propagation. Command shortcuts and typed text pass on to bindings and the input handler. Terminal-wide shortcuts use Command. The keypad types digits and Enter, as most terminals do by default. Binding every key in the terminal's own context would also work, since a deeper context wins, but it would need a binding for each key.
+- **Classification:** framework issue (no per-element way to take keys ahead of bindings) and platform-layer limitation (no keypad flag).
+- **Reproduction:** no minimal repro yet.
+- **Upstream:** not reported.
+
+## K19 scroll_to_item targets direct children and the last viewport
+
+- **Found in:** browsing step 2a (`361b9d5`), revealing the current kind in the sidebar.
+- **Symptom:** `ScrollHandle::scroll_to_item(ix)` counts only the scrolled element's direct children, so a row nested inside a group can't be named. On a window's first frame the reveal had no viewport size to work with.
+- **Source (GPUI):** `gpui-pre` 0.3.7 `src/elements/div.rs:4315-4323` (`scroll_to_item` stores an index), `:1985-1996` (`child_bounds` holds the bounds of direct children only) and `:2009-2011` (the scroll is applied in prepaint against `state.bounds`). Those bounds are set later in the same prepaint (`:2482-2485`), so the scroll uses the previous frame's viewport, which on a first frame is empty. An index with no child stays pending (`:4344-4382`). `ScrollAnchor` (`:4186-4212`) can target a nested element on the next frame. Freshkube doesn't use it yet.
+- **Freshkube workaround:** the sidebar flattens its rows into the scroll area's children and counts them (`FIRST_ROW + row` in `desktop/shell.rs`), and asks for another frame while `sidebar_scroll.bounds()` is still empty. Diagnostics and Security count the selected row's child index in the same way.
+- **Classification:** documentation gap.
+- **Reproduction:** no minimal repro yet.
+- **Upstream:** not reported.
+
+## K20 Popup menu items are identified by position
+
+- **Found in:** pod logs (`eec2418`).
+- **Symptom:** UI tests can't pick a container or tail length from the menu by a domain id. A Kit `PopupMenuItem` takes no id. Each item's element id is its index in the menu, which counts separators and headings and so shifts with the pod's containers.
+- **Kit source:** `gpui-component` 0.7.0 `src/menu/popup_menu.rs:1226` (`MenuItemElement::new(ix, ..)`), `:1494-1499` (every item, separators and labels included, is enumerated) and the item builders at `:71-214` (no id). `MenuItemElement::new` is `pub(crate)` (`src/menu/menu_item.rs:25`).
+- **Freshkube workaround:** tests drive the choices through the view's methods (`choose_container`, `set_tail` in `logs/pod/mod.rs`). No UI test covers the menus' own click path.
+- **Classification:** component limitation.
+- **Reproduction:** not applicable; the id is positional by construction.
+- **Upstream:** not reported.
+
+## K21 A dialog returns focus to what had it at open
+
+- **Found in:** the workflow pass, the Command-K kind palette (`f6c28d0`).
+- **Symptom:** `open_dialog` records the focused element, then focuses a handle of its own, not the dialog's content. The content has to be focused after `open_dialog`: if it is focused before, the dialog records it as the place to return to on close. A close that the dialog requests itself can be deferred, and then focus comes back only after the close animation. That can undo a focus change the app made in the meantime. `window.close_dialog` restores focus at once.
+- **Kit source:** `gpui-component` 0.7.0 `src/root.rs:235-264` (`open_dialog` records `window.focused` at `:243` and focuses its own handle at `:251-252`), `:275-281` (`close_dialog`), `:283-310` (`defer_close_dialog` restores after `ANIMATION_DURATION`) and `src/dialog/dialog.rs:650-655` (`request_close` chooses between them). `src/window_ext.rs:30-33` documents `open_dialog` as "Opens a Dialog." without mentioning focus.
+- **Freshkube workaround:** `open_kind_switcher` (`desktop/kind_switcher.rs`) focuses the `Command` state after `open_dialog`. On confirm, it closes the dialog with `window.close_dialog` before opening the kind, so the page's focus change comes after the restore. Compare "Command palette query focus" under [Reviewed and not recorded](#reviewed-and-not-recorded-as-friction).
+- **Classification:** documentation gap.
+- **Reproduction:** no minimal repro yet.
+- **Upstream:** not reported.
+
+## K22 No terminal widget for the pinned Kit
+
+- **Found in:** the pod exec feasibility check (`42830e1`).
+- **Symptom:** no published GPUI terminal widget builds against GPUI Kit 0.7.0. Kit has none, `gpui-terminal` 0.1.0 depends on `gpui` 0.2.2 and `gpui_xterm` 0.2.1 on `gpui-kit` 0.6.0. `bezel-terminal` uses its own GPUI fork ([POD_EXEC.md](POD_EXEC.md#feasibility)).
+- **Source:** `gpui-terminal-0.1.0/Cargo.toml:49-50` and `gpui_xterm-0.2.1/Cargo.toml:71-72`.
+- **Freshkube workaround:** Freshkube draws its own grid over `alacritty_terminal`. The `terminal/` module is 2,305 lines, 517 of them tests. It holds 60 frames a second through a 5 MB/s stream ([PERFORMANCE.md](PERFORMANCE.md#terminal-floods)).
+- **Classification:** component limitation (an ecosystem gap: third-party widgets trail Kit's versions).
+- **Upstream:** not applicable. The view knows nothing about Kubernetes, so it could be offered as a widget.
+
+## K23 Covered or locked windows draw nothing
+
+- **Found in:** live checks of browsing steps 2 and 3, and the performance pass.
+- **Symptom:** captures of a live page taken with the screen locked or the window covered showed only the first frames, before any read finished. A stress run on a locked screen draws nothing, so its drawing numbers mean nothing; the `table.*` spans still measure.
+- **Source (GPUI):** intended and documented. `gpui-pre` 0.3.7 `src/platform.rs:85-112` (`WindowVisibility`: on macOS it comes from `NSWindow.occlusionState`, and the platform requests no frames while the window is hidden). The same comment says that Windows, and X11 with a compositor, keep reporting a covered window as visible.
+- **Freshkube workaround:** `scripts/stress.sh` refuses to run on a locked screen, and visual checks confirm that the screen is unlocked first ([Visual checks](../AGENTS.md#visual-checks)).
+- **Classification:** platform limitation. GPUI documents it; this entry records the cost to checks and measurements.
+
 ## Strengths observed
 
 The evaluation weighs these against the friction above:
@@ -184,12 +261,16 @@ The evaluation weighs these against the friction above:
 - **Styling:** the builder API (`.px()`, `.gap()`, `v_flex()`) is quick to write, and GPUI Kit's components and theming produce a polished result.
 - **UI tests:** headless tests render the real app, find elements by id and click or type into them; the desktop app's suite of about 168 tests runs in about 3 seconds.
 - **No UI boundary:** screens call core logic directly with Rust types, unlike a WebView-based frontend.
+- **Drawing our own:** where no Kit component fits, GPUI's lower layers carry the load: `uniform_list` for tables, `VirtualList` with measured heights for logs, and a canvas of quads and `shape_line` runs for the terminal. They handle a 50,000-row list, 10,000 log lines a second and a 60-frame terminal ([PERFORMANCE.md](PERFORMANCE.md)).
+- **Scaling:** Kit sizes its controls from the theme's font size, which `Root` makes the rem size. Once the app's own lengths were rems, the text-size setting scaled the whole window like a zoom (`text_size.rs`).
 
 ## Observations without a verdict yet
 
 - **Large single-line YAML documents (G04):** the ignored diagnostic `yaml_large_long_line_unicode_find_typing_and_undo` (`workspace/yaml.rs`) mounts the production YAML view with 1 MiB and 5 MiB single-line sources. Creating the view, drawing a frame, and making an end-of-buffer edit took 5.437 s and 27.233 s. The whole find/undo flows took 13.511 s and 64.072 s. These are unoptimized, headless, single runs, not native typing latency. Measure them in release mode on a native window under G11 before attributing the cost to the Kit editor, GPUI text layout, or the test harness.
 - **Disabled state in UI queries (G02):** `ElementSnapshot::disabled()` returns `Some(true)` or `None`, never `Some(false)` (`crates/base/src/test_support.rs:106-109`, `:317`). The G02 tests could not assert the disabled state of fixture buttons. They check that an attempted action leaves the model and clipboard unchanged instead. Whether Kit `Button` exposes its disabled state to queries has not been determined.
 - **Focus-in listeners with an inactive window (G03):** when Tab was delivered to an inactive native window by the automation tool, `on_focus_in` listeners that scroll a control into view did not run. `PodBrowser::reveal_focused_control` (`pods/table.rs`) scrolls the newly focused control directly. This was seen only with tool-injected input, not in foreground use.
+- **Wrapping rows wrap early (browsing step 2a, text size):** a `flex_wrap` row of controls wrapped before it was full, and at 20 px text in the smallest window the Resources toolbar ran past the edge. The commit that replaced it (`79c7b76`) puts this down to GPUI measuring a wrapping row without its gaps. But taffy 0.13's flexbox adds the gaps when it sizes a wrapping container (`src/compute/flexbox.rs:979`, `:1005`, `:1180`), so the cause is unconfirmed. The Resources toolbar now chooses its layout from `content_width` in render. Reproduce it with a minimal row before recording it as friction.
+- **Log floods keep the main thread busy (performance pass):** at 10,000 lines a second a log keeps up, but frames come about 15 times a second and a key press can wait about 130 ms. A profile put 35% of the main thread in `CAMetalLayer nextDrawable`, 23% in shaping new rows and about 27% in GPUI's layout and paint ([PERFORMANCE.md](PERFORMANCE.md#logs-keep-up-with-a-flood)). Before attributing the drawable wait to GPUI's Metal renderer, compare it with a minimal GPUI window that draws new text every frame.
 
 ## Reviewed and not recorded as friction
 
