@@ -30,6 +30,7 @@ use super::model::{
     ColumnKind, ReadState, ResourceIdentity, SortDirection, SortKey, StatusTone, natural_cmp,
     status_tone,
 };
+use super::pane::shell::unless_shell;
 use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
@@ -413,14 +414,11 @@ impl ResourcesScreen {
                 &detail,
                 window,
                 |this, _, event: &DetailEvent, window, cx| match event {
-                    DetailEvent::Closed => {
-                        this.close_detail(cx);
-                        window.focus(&this.focus, cx);
-                    }
+                    DetailEvent::Closed => this.close_pane(window, cx),
                     DetailEvent::Leave => window.focus(&this.focus, cx),
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
-                        this.open_detail(identity.clone(), Duration::ZERO, cx);
+                        this.open_now(identity.clone(), window, |_, _, _| {}, cx);
                     }
                 },
             ),
@@ -494,7 +492,7 @@ impl ResourcesScreen {
             return;
         }
         self.kind = kind;
-        self.close_detail(cx);
+        self.leave_detail(cx);
         self.restore = None;
         self.projection.reset_sort();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -708,9 +706,19 @@ impl ResourcesScreen {
         if !self.store.read_state().shows_rows() {
             return;
         }
-        let Some(target) = self.detail.read(cx).target_identity().cloned() else {
+        let Some(target) = self.detail.read(cx).target().cloned() else {
             return;
         };
+        // A pane pinned by its shell may show what this list doesn't cover.
+        let covered = target.kind == self.kind
+            && self
+                .namespace
+                .as_ref()
+                .is_none_or(|namespace| *namespace == target.identity.namespace);
+        if !covered {
+            return;
+        }
+        let target = target.identity;
         match self.store.get(&target) {
             Some(row) => {
                 let version = row.resource_version.clone();
@@ -754,6 +762,51 @@ impl ResourcesScreen {
         cx.notify();
     }
 
+    /// The pod whose shell runs in the pane, which keeps the pane on it:
+    /// the selection moves freely, and only an explicit open asks first.
+    fn pinned(&self, cx: &App) -> Option<SharedString> {
+        self.detail.read(cx).running_shell(cx)
+    }
+
+    /// Opens `identity` in the pane at once, then runs `then`. A shell
+    /// running there for another object asks first.
+    fn open_now(
+        &mut self,
+        identity: ResourceIdentity,
+        window: &mut Window,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let pinned = self
+            .pinned(cx)
+            .filter(|_| self.detail.read(cx).target_identity() != Some(&identity));
+        unless_shell(self, pinned, window, cx, move |this, window, cx| {
+            this.open_detail(identity, Duration::ZERO, cx);
+            then(this, window, cx);
+        });
+    }
+
+    /// Closes the pane, once a shell running there may end, and hands the
+    /// keyboard to the list.
+    fn close_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pinned = self.pinned(cx);
+        unless_shell(self, pinned, window, cx, |this, window, cx| {
+            this.close_detail(cx);
+            window.focus(&this.focus, cx);
+        });
+    }
+
+    /// The list moves on to rows the pane's object isn't among: the pane
+    /// closes, unless a shell pins it.
+    fn leave_detail(&mut self, cx: &mut Context<Self>) {
+        if self.pinned(cx).is_some() {
+            self.projection.select(&self.store, None);
+            self.restore = None;
+        } else {
+            self.close_detail(cx);
+        }
+    }
+
     /// Closes the pane and clears the selection it showed.
     fn close_detail(&mut self, cx: &mut Context<Self>) {
         self.detail.update(cx, |detail, cx| detail.close(cx));
@@ -787,7 +840,7 @@ impl ResourcesScreen {
         self.sync_namespace_choices(window, cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         if self.kind.namespaced {
-            self.close_detail(cx);
+            self.leave_detail(cx);
             self.restart(window, cx);
         }
     }
@@ -874,7 +927,7 @@ impl ResourcesScreen {
         cx: &mut Context<Self>,
     ) {
         self.select_identity(identity, window, cx);
-        self.open_detail(identity.clone(), Duration::ZERO, cx);
+        self.open_now(identity.clone(), window, |_, _, _| {}, cx);
     }
 
     /// Enter on the list opens the selected row at once and hands the
@@ -886,9 +939,15 @@ impl ResourcesScreen {
             cx.propagate();
             return;
         };
-        self.open_detail(identity, Duration::ZERO, cx);
-        self.detail
-            .update(cx, |detail, cx| detail.focus(window, cx));
+        self.open_now(
+            identity,
+            window,
+            |this, window, cx| {
+                this.detail
+                    .update(cx, |detail, cx| detail.focus(window, cx))
+            },
+            cx,
+        );
     }
 
     /// N on the list opens the namespace picker, as Enter on it would.
@@ -922,7 +981,9 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
-        if let Some(identity) = self.projection.selected().cloned() {
+        if let Some(identity) = self.projection.selected().cloned()
+            && self.pinned(cx).is_none()
+        {
             self.open_detail(identity, KEYBOARD_PAUSE, cx);
         }
         cx.notify();
@@ -950,7 +1011,7 @@ impl ResourcesScreen {
         if !self.query.read(cx).value().is_empty() {
             self.clear_filter(window, cx);
         } else if self.detail.read(cx).target_identity().is_some() {
-            self.close_detail(cx);
+            self.close_pane(window, cx);
         }
     }
 

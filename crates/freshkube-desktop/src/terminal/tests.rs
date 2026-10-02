@@ -362,6 +362,35 @@ fn scrollback_keeps_ten_thousand_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_reset_clears_the_screen_history_and_title_but_keeps_the_size(cx: &mut TestAppContext) {
+    let terminal = mount(cx);
+    let size = terminal.size(cx);
+    terminal.feed(cx, &streams::coloured(0, 200));
+    terminal.feed(cx, b"\x1b]2;vim\x07\x1b[?1049h\x1b[?2004h");
+    terminal.take_events();
+    cx.update(|cx| terminal.view.update(cx, |view, cx| view.reset(cx)));
+    terminal.frame(cx);
+    assert!(terminal.screen(cx).iter().all(String::is_empty));
+    let (history, title, mode) = cx.read(|cx| {
+        let view = terminal.view.read(cx);
+        (
+            view.term.grid().history_size(),
+            view.title().cloned(),
+            *view.term.mode(),
+        )
+    });
+    assert_eq!((history, title), (0, None));
+    // The alternate screen and bracketed paste were the old program's.
+    assert!(!mode.intersects(
+        alacritty_terminal::term::TermMode::ALT_SCREEN
+            | alacritty_terminal::term::TermMode::BRACKETED_PASTE
+    ));
+    assert_eq!(terminal.size(cx), size);
+    // Only the title changed, so only that was said.
+    assert_eq!(terminal.take_events(), [TerminalEvent::Title(None)]);
+}
+
+#[gpui_kit::test]
 fn the_grid_follows_the_window_and_resizes_at_most_every_interval(cx: &mut TestAppContext) {
     let terminal = mount(cx);
     let first = terminal.size(cx);

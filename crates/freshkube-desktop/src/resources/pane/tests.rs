@@ -552,19 +552,28 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.press("left", cx);
         window.press("left", cx);
         window.render_frame(cx);
-        // A pod's tabs wrap round to Logs.
+        // A pod's tabs wrap round to Shell.
+        assert_eq!(tab(window, "detail-tab-shell"), (Some(true), Some(true)));
+        window.press("left", cx);
+        window.render_frame(cx);
         assert_eq!(tab(window, "detail-tab-logs"), (Some(true), Some(true)));
 
         // From the pane, Command-Shift-] and [ switch the tab and hand the
-        // keyboard to what it shows: the lines on Logs, the pane elsewhere.
+        // keyboard to what it shows: the lines on Logs, the pane elsewhere,
+        // and the pane on Shell until a session shows there.
         pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Overview, cx));
         let focus = pane.read(cx).focus.clone();
         window.focus(&focus, cx);
         window.render_frame(cx);
         window.press("secondary-{", cx);
         window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
+        assert_eq!(window.find("resource-detail").focused(), Some(true));
+        window.press("secondary-{", cx);
+        window.render_frame(cx);
         assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
         assert_eq!(window.find("logs-viewport").focused(), Some(true));
+        window.press("secondary-}", cx);
         window.press("secondary-}", cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-overview").selected(), Some(true));

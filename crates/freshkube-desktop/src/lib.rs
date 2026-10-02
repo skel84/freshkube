@@ -129,9 +129,6 @@ mod screens;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
-// The pod shell (docs/POD_EXEC.md) uses it from step 3; until then only the
-// tests and the stress harness do, so drop this then.
-#[allow(dead_code)]
 mod terminal;
 mod text_size;
 mod theme;

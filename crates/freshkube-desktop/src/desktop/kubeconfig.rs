@@ -53,10 +53,12 @@ impl Pilot {
         if self.fixture || selection == self.kubeconfig {
             return;
         }
-        self.kubeconfig = selection;
-        self.invalidate_target(window, cx);
-        self.refresh(window, cx);
-        cx.notify();
+        self.unless_shell(window, cx, move |this, window, cx| {
+            this.kubeconfig = selection;
+            this.invalidate_target(window, cx);
+            this.refresh(window, cx);
+            cx.notify();
+        });
     }
 
     /// Automatic and Talos apply at once; File applies once a file with a

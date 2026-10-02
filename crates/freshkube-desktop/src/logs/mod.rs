@@ -46,7 +46,7 @@ use gpui_kit::{
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
-pub(crate) use pod::PodLogView;
+pub(crate) use pod::{PodLogView, choice_label, role_heading};
 use review::{LogReview, MAX_SELECTED_LINES};
 pub(crate) use talos::TalosLogs;
 

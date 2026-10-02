@@ -5,6 +5,7 @@
 use std::fmt::Write;
 
 /// Plain lines, like a log tail or `cat` of a big file.
+#[cfg(test)]
 pub(crate) fn plain(from: usize, lines: usize) -> Vec<u8> {
     let mut out = String::new();
     for i in from..from + lines {
@@ -86,6 +87,7 @@ pub(crate) fn unicode(lines: usize) -> Vec<u8> {
 
 /// One screen to look at: the sixteen colours as text and as backgrounds,
 /// each style, a 256-colour ramp and wide characters, then a prompt.
+#[cfg(feature = "stress")]
 pub(crate) fn sample() -> Vec<u8> {
     let mut out = String::new();
     for (row, base) in [(0, 30), (1, 90)] {

@@ -17,9 +17,7 @@ use gpui_kit::{
     px,
 };
 
-use freshkube_core::resources::ContainerRole;
-
-use super::{PodLogView, StreamState, TAILS};
+use super::{PodLogView, StreamState, TAILS, role_heading};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 
@@ -37,14 +35,6 @@ fn tail_label(tail: Option<i64>) -> String {
         grouped.push(digit);
     }
     format!("Last {grouped}")
-}
-
-fn heading(role: ContainerRole) -> &'static str {
-    match role {
-        ContainerRole::Init => "INIT CONTAINERS",
-        ContainerRole::App => "CONTAINERS",
-        ContainerRole::Ephemeral => "EPHEMERAL",
-    }
 }
 
 impl PodLogView {
@@ -85,7 +75,7 @@ impl PodLogView {
                             if role.is_some() {
                                 menu = menu.separator();
                             }
-                            menu = menu.label(heading(choice.role));
+                            menu = menu.label(role_heading(choice.role));
                             role = Some(choice.role);
                         }
                         let (view, name) = (view.clone(), choice.name.clone());

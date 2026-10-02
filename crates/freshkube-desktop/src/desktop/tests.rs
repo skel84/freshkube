@@ -2341,3 +2341,85 @@ fn the_resources_page_scales_with_the_text_size(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
+    use crate::resources::{example, live, shell};
+    let (_runtime, handle, view) = fixture(cx, 1280., 800.);
+    let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
+    let pod = rows
+        .iter()
+        .find(|row| row.cells[2] == "Running")
+        .unwrap()
+        .identity
+        .clone();
+    let row: SharedString =
+        format!("resource-row:{}/{}/{}", pod.namespace, pod.name, pod.uid).into();
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        let kind = example::kind("pods").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+    });
+    step(cx, &|window, cx| window.click(row.clone(), cx));
+    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
+    step(cx, &|window, cx| window.click("pod-shell-start", cx));
+    let running = |cx: &mut TestAppContext| cx.read(shell::running_anywhere);
+    assert_eq!(running(cx).as_deref(), Some(pod.name.as_str()));
+
+    // Option-Down in the terminal is the shell's; from the list, another
+    // connection asks, and Cancel keeps this one and the shell.
+    step(cx, &|window, cx| window.press("alt-down", cx));
+    assert!(!cx.has_pending_prompt());
+    step(cx, &|window, cx| window.press("secondary-escape", cx));
+    step(cx, &|window, cx| window.press("alt-down", cx));
+    let (message, _) = cx.pending_prompt().unwrap();
+    assert_eq!(message, format!("End the shell in {}?", pod.name));
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| view.read(cx).applied.context.clone()),
+        Some(context.clone())
+    );
+    assert!(running(cx).is_some());
+
+    // Closing the window asks too, and closes only once the user agrees.
+    let closed = Rc::new(Cell::new(false));
+    for (answer, closes) in [("Cancel", false), ("End the shell", true)] {
+        let flag = closed.clone();
+        let close = cx
+            .update_window(handle, |_, window, cx| {
+                shell::may_close(window, cx, move |_, _| flag.set(true))
+            })
+            .unwrap();
+        assert!(!close);
+        cx.simulate_prompt_answer(answer);
+        cx.run_until_parked();
+        assert_eq!(closed.get(), closes);
+    }
+
+    // Agreeing to another connection ends the shell and moves on.
+    step(cx, &|window, cx| window.press("alt-down", cx));
+    cx.simulate_prompt_answer("End the shell");
+    cx.run_until_parked();
+    assert_ne!(
+        cx.read(|cx| view.read(cx).applied.context.clone()),
+        Some(context)
+    );
+    assert_eq!(running(cx), None);
+    // With no shell running, nothing asks.
+    let close = cx
+        .update_window(handle, |_, window, cx| {
+            shell::may_close(window, cx, |_, _| {})
+        })
+        .unwrap();
+    assert!(close && !cx.has_pending_prompt());
+}

@@ -68,16 +68,18 @@ Taken with the user on 2 October 2026.
   - An ended session's screen stays visible and selectable until a new one starts, which begins with a fresh terminal.
 - **Example mode** (`--fixture`) runs a small local script instead of exec. It shows a prompt, echoes input and answers a few commands, including a full-screen redraw and a colour test. UI tests and screenshots drive it.
 - **Keys.** The view has its own key context inside `KubeDetail`, so the pane's tab keys and Command shortcuts keep working. Command-F searching the scrollback waits for a later step.
+- **Landed in step 3** (`crates/freshkube-desktop/src/resources/pane/shell/`): `mod.rs` holds the session and its states, `view.rs` the controls, status, failure banner and the empty state over the terminal, `example.rs` the example shell. One terminal serves the pane; it lays out under the empty state, so the first exec starts at its real size, and a new session resets it. Keys go to the exec through one ordered queue; End closes stdin, and the screen stays until a new session. Choices made with the user: while a shell runs, the pane stays pinned to its pod and the list's selection moves freely, and only Enter or a click on another row (or Escape on the list) asks; the Shell tab has its own container picker, defaulting to the pod's default container and offering only running ones; a dot on the Shell tab marks a running session, with the shell's title as its tooltip. Choices made without asking, to revisit: another kind or namespace keeps the pinned pane rather than asking; a session still connecting ends at once on End, without asking; Cancel on another kubeconfig in Settings leaves the draft showing the new choice. Command-Shift-] and [ still switch tabs from the terminal, and the Shell tab hands the keyboard to the terminal once it shows a session. UI tests drive the example shell through the tab, the screen and the window.
 
 ### Lifetime
 
 | Event | What happens |
 | --- | --- |
-| Opening another object, closing the pane, switching context | Ask "End the shell in ⟨pod⟩?"; Cancel keeps everything as it was |
+| Opening another object, closing the pane, switching context or kubeconfig | Ask "End the shell in ⟨pod⟩?"; Cancel keeps everything as it was |
+| Moving the list's selection, another kind or namespace | The pane stays on the shell's pod |
 | Another page shows | The session keeps running |
 | The shell exits | Ended, with the exit code |
 | The pod is deleted or restarts, or the connection drops | Ended, with the reason |
-| Quitting the app | Ask, then end every session |
+| Quitting the app or closing the window | Ask, then end every session |
 
 ## Build order
 

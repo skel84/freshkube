@@ -18,8 +18,8 @@ use std::time::Duration;
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 use freshkube_core::resources::{
-    ContainerRole, ContainerState, Failure, FailureKind, LogPosition, LogRequest, PodContainers,
-    PodLogUpdate, Termination, follow_pod_log,
+    Container, ContainerRole, ContainerState, Failure, FailureKind, LogPosition, LogRequest,
+    PodContainers, PodLogUpdate, Termination, follow_pod_log,
 };
 use gpui_kit::{AnyElement, Context, SharedString, Task, Window};
 use tokio::runtime::Handle;
@@ -201,28 +201,11 @@ impl PodLogs {
             self.containers
                 .containers
                 .iter()
-                .map(|container| {
-                    let state = match &container.state {
-                        ContainerState::Running(_) => "Running".to_owned(),
-                        ContainerState::Waiting(reason)
-                            if reason.is_empty()
-                                || (container.role == ContainerRole::Init
-                                    && !container.started()) =>
-                        {
-                            "Not started".to_owned()
-                        }
-                        ContainerState::Waiting(reason) => reason.clone(),
-                        ContainerState::Terminated(ended) => match ended.reason.as_str() {
-                            "" => format!("Exited {}", ended.exit_code),
-                            reason => reason.to_owned(),
-                        },
-                    };
-                    Choice {
-                        name: container.name.clone(),
-                        role: container.role,
-                        label: format!("{} · {state}", container.name).into(),
-                        enabled: container.role != ContainerRole::Init || container.started(),
-                    }
+                .map(|container| Choice {
+                    name: container.name.clone(),
+                    role: container.role,
+                    label: choice_label(container).into(),
+                    enabled: container.role != ContainerRole::Init || container.started(),
                 })
                 .collect(),
         );
@@ -351,6 +334,34 @@ impl PodLogs {
     fn marker(&self, text: String) -> LogEvent {
         let at = self.position.time().unwrap_or_else(Utc::now);
         LogEvent::marker(self.container.clone().unwrap_or_default(), at, text)
+    }
+}
+
+/// A container picker's entry: `app · Running`, `migrate · Not started`.
+pub(crate) fn choice_label(container: &Container) -> String {
+    let state = match &container.state {
+        ContainerState::Running(_) => "Running".to_owned(),
+        ContainerState::Waiting(reason)
+            if reason.is_empty()
+                || (container.role == ContainerRole::Init && !container.started()) =>
+        {
+            "Not started".to_owned()
+        }
+        ContainerState::Waiting(reason) => reason.clone(),
+        ContainerState::Terminated(ended) => match ended.reason.as_str() {
+            "" => format!("Exited {}", ended.exit_code),
+            reason => reason.to_owned(),
+        },
+    };
+    format!("{} · {state}", container.name)
+}
+
+/// The heading over a container picker's entries of one role.
+pub(crate) fn role_heading(role: ContainerRole) -> &'static str {
+    match role {
+        ContainerRole::Init => "INIT CONTAINERS",
+        ContainerRole::App => "CONTAINERS",
+        ContainerRole::Ephemeral => "EPHEMERAL",
     }
 }
 

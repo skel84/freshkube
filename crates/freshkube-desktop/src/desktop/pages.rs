@@ -1,7 +1,7 @@
 //! Pages and how the shell moves between them: which page shows, which
 //! Kubernetes kind and context it shows, and where focus lands.
 use super::Pilot;
-use crate::resources::{self, navigation};
+use crate::resources::{self, navigation, shell};
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::*;
 
@@ -121,23 +121,37 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kubernetes_only.is_some() {
+        if self.applied.context.as_ref() == Some(&context) {
             // Choosing the context again retries one that failed.
-            if self.applied.context.as_ref() == Some(&context) {
+            if self.kubernetes_only.is_some() {
                 self.refresh_kubernetes(window, cx);
-            } else {
-                self.use_kube_context(Some(context), window, cx);
             }
             return;
         }
-        if self.applied.context.as_ref() != Some(&context) {
-            self.applied.context = Some(context);
-            self.invalidate_target(window, cx);
-            if self.fixture {
-                self.seed_fixture_history();
+        self.unless_shell(window, cx, move |this, window, cx| {
+            if this.kubernetes_only.is_some() {
+                this.use_kube_context(Some(context), window, cx);
+                return;
             }
-            self.refresh(window, cx);
-        }
+            this.applied.context = Some(context);
+            this.invalidate_target(window, cx);
+            if this.fixture {
+                this.seed_fixture_history();
+            }
+            this.refresh(window, cx);
+        });
+    }
+
+    /// Runs `then` at once, or, with a shell running on the Resources page,
+    /// once the user agrees to end it: `then` leaves the connection.
+    pub(super) fn unless_shell(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let running = shell::running_anywhere(cx);
+        shell::unless_shell(self, running, window, cx, then);
     }
 
     pub(super) fn adjacent_context(

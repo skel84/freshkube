@@ -149,15 +149,8 @@ impl TerminalView {
         input::register(cx.entity().downgrade(), cx);
         let focus = cx.focus_handle();
         let listener = Listener::default();
-        let config = Config {
-            scrolling_history: SCROLLBACK,
-            // The user chose to let programs read the clipboard as well as
-            // write it (docs/POD_EXEC.md).
-            osc52: Osc52::CopyPaste,
-            ..Config::default()
-        };
         let size = TerminalSize::default();
-        let term = Term::new(config, &size, listener.clone());
+        let term = Term::new(config(), &size, listener.clone());
         let subscriptions = vec![
             // Light and dark have their own colours.
             cx.observe_global::<Theme>(|this: &mut Self, cx| this.refresh(cx)),
@@ -205,12 +198,28 @@ impl TerminalView {
         }
     }
 
+    /// Starts over with an empty screen and history, as a new terminal
+    /// would, but at the size the element already gave it.
+    pub(crate) fn reset(&mut self, cx: &mut Context<Self>) {
+        self.listener = Listener::default();
+        self.term = Term::new(config(), &self.size, self.listener.clone());
+        self.parser = Processor::new();
+        self.selecting = false;
+        self.wheel = 0.;
+        self.marked = None;
+        if self.title.take().is_some() {
+            cx.emit(TerminalEvent::Title(None));
+        }
+        self.refresh(cx);
+    }
+
     /// The grid's size, which the program should be told about.
     pub(crate) fn size(&self) -> TerminalSize {
         self.size
     }
 
-    /// The title the program set.
+    /// The title the program set. Its owner hears of it as an event.
+    #[cfg(test)]
     pub(crate) fn title(&self) -> Option<&SharedString> {
         self.title.as_ref()
     }
@@ -283,7 +292,7 @@ impl TerminalView {
 
     /// The screen's text, one string per row with trailing blanks trimmed.
     #[cfg(test)]
-    fn screen_text(&self) -> Vec<String> {
+    pub(crate) fn screen_text(&self) -> Vec<String> {
         use alacritty_terminal::index::{Column, Line};
         let grid = self.term.grid();
         let offset = grid.display_offset() as i32;
@@ -302,6 +311,16 @@ impl TerminalView {
                 text.trim_end().to_owned()
             })
             .collect()
+    }
+}
+
+fn config() -> Config {
+    Config {
+        scrolling_history: SCROLLBACK,
+        // The user chose to let programs read the clipboard as well as write
+        // it (docs/POD_EXEC.md).
+        osc52: Osc52::CopyPaste,
+        ..Config::default()
     }
 }
 

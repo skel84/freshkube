@@ -18,7 +18,7 @@ use crate::{
     presentation::{self, Health, LoadHistory, NodeSummary},
     resources::{
         self, KubeAccess, KubeSource, NotServed, ResourcesScreen, custom::CustomResources,
-        navigation,
+        navigation, shell as pod_shell,
     },
     screens::{
         DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
@@ -152,12 +152,16 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                 KeyBinding::new("secondary-r", Refresh, Some("Freshkube")),
             ]);
             cx.on_action(|_: &Quit, cx| {
-                // Quitting mid-operation would abandon a half-done change.
+                // Quitting mid-operation would abandon a half-done change,
+                // and quitting ends a shell, so it asks first.
                 let Some(window) = cx.windows().into_iter().next() else {
                     return cx.quit();
                 };
                 let may_quit = window
-                    .update(cx, |_, window, cx| mutation::may_close(window, cx))
+                    .update(cx, |_, window, cx| {
+                        mutation::may_close(window, cx)
+                            && pod_shell::may_close(window, cx, |_, cx| cx.quit())
+                    })
                     .unwrap_or(true);
                 if may_quit {
                     cx.quit();
@@ -400,7 +404,10 @@ impl Pilot {
             view.notify_cached(cx);
             cx.notify();
         }));
-        window.on_window_should_close(cx, mutation::may_close);
+        window.on_window_should_close(cx, |window, cx| {
+            mutation::may_close(window, cx)
+                && pod_shell::may_close(window, cx, |window, _| window.remove_window())
+        });
         let screens = Page::SCREENS
             .into_iter()
             .map(|page| {
@@ -670,6 +677,10 @@ impl Pilot {
         if self.fixture || self.config_loading {
             return;
         }
+        self.unless_shell(window, cx, Self::use_config_path);
+    }
+
+    fn use_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.path.read(cx).value().to_string();
         if self.kubernetes_only.is_some() {
             // The default talosconfig is what's missing.

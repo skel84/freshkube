@@ -156,7 +156,11 @@ impl DetailPane {
     fn tabs(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let events = &detail.events;
-        let tab = |id: &'static str, tab: Tab, label: SharedString, extra: Option<Div>| {
+        let tab = |id: &'static str,
+                   tab: Tab,
+                   label: SharedString,
+                   extra: Option<AnyElement>,
+                   tip: Option<SharedString>| {
             let active = self.tab == tab;
             h_flex()
                 .id(id)
@@ -185,11 +189,13 @@ impl DetailPane {
                 })
                 .child(label)
                 .children(extra)
-                .tooltip(|window, cx| {
+                .tooltip(move |window, cx| {
                     let m = ui::modifier();
-                    Tooltip::new(format!(
-                        "{m}⇧[ and {m}⇧] switch tabs; ← and → move between them"
-                    ))
+                    let keys = format!("{m}⇧[ and {m}⇧] switch tabs; ← and → move between them");
+                    Tooltip::new(match &tip {
+                        Some(tip) => format!("{tip}\n{keys}"),
+                        None => keys,
+                    })
                     .build(window, cx)
                 })
                 .on_click(cx.listener(move |pane, _, _, cx| pane.set_tab(tab, cx)))
@@ -215,8 +221,9 @@ impl DetailPane {
                 Tab::Overview,
                 "Overview".into(),
                 None,
+                None,
             ))
-            .child(tab("detail-tab-yaml", Tab::Yaml, "YAML".into(), None))
+            .child(tab("detail-tab-yaml", Tab::Yaml, "YAML".into(), None, None))
             .child(tab(
                 "detail-tab-events",
                 Tab::Events,
@@ -234,10 +241,31 @@ impl DetailPane {
                         },
                         cx,
                     )
+                    .into_any_element()
                 }),
+                None,
             ))
             .when(detail.target.kind.is_pod(), |this| {
-                this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None))
+                let shell = self.shell.read(cx);
+                let running = shell.running().then(|| {
+                    div()
+                        .id("detail-shell-running")
+                        .test_support()
+                        .aria_label("A shell runs")
+                        .size(dp(7.))
+                        .rounded_full()
+                        .bg(p.good)
+                        .into_any_element()
+                });
+                let title = shell.title().cloned();
+                this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None, None))
+                    .child(tab(
+                        "detail-tab-shell",
+                        Tab::Shell,
+                        "Shell".into(),
+                        running,
+                        title,
+                    ))
             })
     }
 
@@ -315,6 +343,7 @@ impl Render for DetailPane {
             (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
             (Tab::Events, ..) => self.events(detail, cx),
             (Tab::Logs, ..) => self.logs.clone().into_any_element(),
+            (Tab::Shell, ..) => self.shell.clone().into_any_element(),
             _ => self.document_state(detail, cx),
         };
         panel(cx)

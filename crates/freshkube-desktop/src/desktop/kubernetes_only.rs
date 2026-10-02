@@ -262,12 +262,17 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(kube) = self.kubernetes_only.as_mut() else {
+        if self.kubernetes_only.is_none() {
             return;
-        };
-        kube.explicit = Some(path);
-        kube.requested = None;
-        self.load_kube_contexts(window, cx);
+        }
+        self.unless_shell(window, cx, move |this, window, cx| {
+            let Some(kube) = this.kubernetes_only.as_mut() else {
+                return;
+            };
+            kube.explicit = Some(path);
+            kube.requested = None;
+            this.load_kube_contexts(window, cx);
+        });
     }
 
     /// Switches to Talos before a talosconfig loads. A kubeconfig named at
