@@ -117,7 +117,21 @@ For real use, select your credentials and context in the app, or pass explicit
 paths and a named context with `open -n ... --args --config <path> --context <name>`
 or `--kubernetes-only --kubeconfig <path> --kube-context <name>`. No credentials
 are included in artifacts. LaunchServices does not inherit a terminal's usual
-environment. Most browsing uses the built-in Talos and Kubernetes clients;
+environment or working directory. Use an absolute config path when passing it
+to a bundle launch:
+
+```sh
+open -n /Applications/Freshkube.app --args --config /absolute/path/to/talosconfig --context '<context>'
+```
+
+The current build does not remember a selected Talos config path or context
+between launches. Settings → Browse selects a file for the current session;
+without explicit startup options, the app reads the default `~/.talos/config`
+(or `TALOSCONFIG` when present) and its contexts. Keeping a remembered connection
+selection is an application followup. Do not replace a default config containing
+other clusters just to work around this limitation.
+
+Most browsing uses the built-in Talos and Kubernetes clients;
 `talosctl` is used by particular COSI queries and maintenance features, and a
 kubeconfig may require its own exec authentication tool. Those tools are not
 bundled, and are not prerequisites for a fixture launch or every browsing path.
@@ -154,7 +168,9 @@ The remaining live check must launch the installed bundle through Finder or
 chooses. Compare with the same context in a terminal launch; record allow, deny
 and retry behavior without exposing credentials or Secret values. A Terminal
 execution of `Contents/MacOS/freshkube` cannot prove the bundle's privacy path.
-No cluster context was supplied for this task, so no live connection was made.
+Local and hosted packaging validation did not use a live cluster. The user's
+subsequent ARM terminal-launch result is recorded below; the corresponding
+LaunchServices connection check remains open.
 
 ## Investigate a TLS connection failure
 
@@ -232,6 +248,9 @@ access remain unverified.
 
 The user subsequently reported the downloaded ARM bundle rendering fixture data
 on their Mac.
-A real Talos connection on that Mac reported `invalid peer certificate:
-BadSignature`; its cause remains under investigation. This confirms an ARM
-fixture launch, while successful live connectivity remains unverified.
+A real Talos connection on that Mac initially reported `invalid peer
+certificate: BadSignature`. The user then reported successful connectivity by
+running `/Applications/Freshkube.app/Contents/MacOS/freshkube` from the terminal
+with an explicit config path and the `kubernetes` context. The same explicit
+selection through LaunchServices remains to be checked. The terminal result
+does not prove a bundle privacy fix or the cause of the original TLS error.
