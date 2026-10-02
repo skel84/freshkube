@@ -32,6 +32,8 @@ Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes
 
 The context switcher sits above Cluster, Resources and Control plane navigation. Node inspection views and logs are tabs in Nodes; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
 
+Pod Overview links to its node, controllers and matching Services, with container logs, previous instances and recent warnings. Owner links work on other kinds too; the kubelet’s node detail links to its Pods tab.
+
 ## Design philosophy
 
 - **State over logs.** Health is read from system state (procfs files, Talos and Kubernetes API responses), not from log lines, so a stale error in an old log never raises a false alarm.

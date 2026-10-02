@@ -55,7 +55,9 @@ pub struct Overview {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Owner {
+    pub api_version: String,
     pub kind: String,
     pub name: String,
     pub uid: String,
@@ -329,6 +331,7 @@ fn overview(object: &Value) -> Overview {
         owners: sequence(field("ownerReferences"))
             .iter()
             .map(|owner| Owner {
+                api_version: text(owner.get("apiVersion")),
                 kind: text(owner.get("kind")),
                 name: text(owner.get("name")),
                 uid: text(owner.get("uid")),

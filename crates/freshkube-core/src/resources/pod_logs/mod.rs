@@ -78,8 +78,10 @@ enum Restart {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Container {
     pub name: String,
+    pub image: String,
     pub role: ContainerRole,
     pub state: ContainerState,
     pub restarts: u32,
@@ -92,11 +94,13 @@ pub struct Container {
 impl Container {
     /// Whether it has a log yet: it ran, or runs.
     pub fn started(&self) -> bool {
-        !matches!(self.state, ContainerState::Waiting(_)) || self.last_termination.is_some()
+        !matches!(self.state, ContainerState::Waiting(_))
+            || self.last_termination.is_some()
+            || self.restarts > 0
     }
 
     pub fn has_previous(&self) -> bool {
-        self.last_termination.is_some()
+        self.last_termination.is_some() || self.restarts > 0
     }
 
     /// Whether the kubelet starts it again after this ending.
@@ -111,10 +115,12 @@ impl Container {
 
 /// A pod's containers as its spec lists them, with their status.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PodContainers {
     /// Init containers in the order they run, then the app containers, then
     /// ephemeral ones.
     pub containers: Vec<Container>,
+    pub node: Option<String>,
     /// The one to show first: the `kubectl.kubernetes.io/default-container`
     /// annotation's, else the first app container.
     pub default: Option<String>,
@@ -187,6 +193,7 @@ pub fn pod_containers(object: &Value) -> PodContainers {
                     .and_then(|status| status.get("lastState"))
                     .and_then(|last| last.get("terminated"))
                     .map(termination),
+                image: text(declared.get("image")),
                 name,
                 role,
                 restart,
@@ -207,6 +214,10 @@ pub fn pod_containers(object: &Value) -> PodContainers {
             .map(|container| container.name.clone())
     });
     PodContainers {
+        node: spec
+            .and_then(|spec| spec.get("nodeName"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         containers,
         default,
     }

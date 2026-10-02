@@ -3,6 +3,7 @@ mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
 pub(crate) mod nodes;
+mod object_links;
 mod overview;
 mod pages;
 mod services;
@@ -512,6 +513,13 @@ impl Pilot {
             })
             .collect();
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        subscriptions.push(cx.subscribe_in(
+            &resources,
+            window,
+            |this, _, event: &resources::ResourceLink, window, cx| {
+                this.resource_link(event.clone(), window, cx)
+            },
+        ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         subscriptions.extend([
             cx.observe(&custom, |_, _, cx| cx.notify()),
@@ -743,6 +751,7 @@ impl Pilot {
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes();
+        self.push_node_rows(cx);
         self.prepare_context_display(window, cx);
         self.node_workspace
             .document

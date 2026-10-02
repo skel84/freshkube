@@ -44,6 +44,7 @@ impl Pilot {
             self.kubernetes_summary
                 .apply(&request, Ok(Arc::new(summary)));
             self.rebuild_joined_nodes();
+            self.push_node_rows(cx);
             self.prepare_context_display(window, cx);
             self.summary_health = Some(health.clone());
             self.deliver_workloads(health, cx);
@@ -98,6 +99,7 @@ impl Pilot {
                 };
                 view.kubernetes_summary.apply(&request, result);
                 view.rebuild_joined_nodes();
+                view.push_node_rows(cx);
                 view.prepare_context_display(window, cx);
                 cx.notify();
             });

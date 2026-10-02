@@ -389,3 +389,5 @@ These have a default, so they don't block a step. Change one only by updating th
 - **Attention ages** use the Ready transition for nodes and the creation time for Pending claims. Pod creation time orders issues when the API has no issue transition; services and workloads with no transition time follow dated subjects, then sort by name. It does not label a pod’s age as the duration of its failure.
 - **etcd attention** merges quorum and deduplicated alarms into one cluster subject. The existing Talos overview cycle reads alarms alongside status; an unavailable alarm response stays unknown. Node attention retains up to fifty rows for each node independently of the cluster list’s fifty-row cap.
 - **Workload card counts** call Pending workloads progressing; Degraded and Failing count as unhealthy. Their first problem follows the core health order.
+
+- **Pod relationship lists** show at most 200 matching Services and 200 containers, with a count when truncated. Owner kinds outside the built-ins resolve through their exact API-version discovery document, so no plural or scope is guessed.

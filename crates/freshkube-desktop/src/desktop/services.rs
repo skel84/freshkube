@@ -399,6 +399,22 @@ impl Pilot {
         };
         let restart_label = format!("Restart {}", service.id);
         frame
+            .when(service.id == "kubelet", |this| {
+                this.child(
+                    Button::new("kubelet-node-pods")
+                        .link()
+                        .small()
+                        .label(
+                            self.node_workspace
+                                .row()
+                                .map(|row| row.kubelet_pods.clone())
+                                .unwrap_or("Pods on this node".into()),
+                        )
+                        .on_click(cx.listener(|view, _, window, cx| {
+                            view.show_node_tab(super::nodes::NodeTab::Pods, window, cx)
+                        })),
+                )
+            })
             .aria_label(format!(
                 "Selected service: {} · {} · {} · {}",
                 service.id,

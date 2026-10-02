@@ -23,6 +23,7 @@ impl Pilot {
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes();
+        self.push_node_rows(cx);
         self.prepare_context_display(window, cx);
         if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
             self.select_node(selected, window, cx);

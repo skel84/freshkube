@@ -79,6 +79,7 @@ async fn an_object_reads_in_server_order_without_managed_fields() {
     assert_eq!(
         overview.owners,
         [Owner {
+            api_version: "v1".into(),
             kind: "Thing".into(),
             name: "owner".into(),
             uid: "o-1".into(),

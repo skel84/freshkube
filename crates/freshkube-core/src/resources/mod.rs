@@ -22,6 +22,7 @@ mod forward;
 mod kinds;
 mod metadata;
 mod object;
+mod pod_links;
 mod pod_logs;
 mod table;
 mod watch;
@@ -40,7 +41,7 @@ pub use forward::{
     ForwardRequest, ForwardState, ForwardStatus, ForwardTarget, Listeners, POD_WAIT, PodWatches,
     WorkloadKind, candidates, declared_ports, listen_local, preferred_port, start_forward,
 };
-pub use kinds::{ResourceKind, builtin};
+pub use kinds::{ResourceKind, builtin, builtin_by_gvk};
 pub use object::{
     Condition, ObjectDocument, Overview, Owner, SecretKey, SecretSummary, SecretValue, get_object,
     hidden_value, object_from_yaml, reveal_secret_value,
@@ -53,3 +54,5 @@ pub use table::{RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
 
 pub use metadata::get_metadata;
+
+pub use pod_links::{PodLinks, ServiceSelector, collect_pod_links, resolve_owner_kind};

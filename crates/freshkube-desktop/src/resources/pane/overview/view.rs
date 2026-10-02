@@ -10,41 +10,46 @@ impl DetailPane {
         let p = palette(cx);
         let identity = &detail.target.identity;
         let section = |title: &str, cx: &App| v_flex().gap_2().child(ui::caption(title, cx));
-        let mut body = v_flex().gap(dp(18.)).child(
-            v_flex()
-                .gap_2()
-                .child(field("Kind", summary.kind.clone(), cx))
-                .when(!identity.namespace.is_empty(), |this| {
-                    this.child(field("Namespace", identity.namespace.clone(), cx))
-                })
-                .child(field(
-                    "UID",
-                    div()
-                        .font_family(MONO_FONT)
-                        .text_size(dp(12.))
-                        .child(identity.uid.clone()),
-                    cx,
-                ))
-                .children(
-                    summary
-                        .created
-                        .clone()
-                        .map(|created| field("Created", created, cx)),
-                )
-                .children(summary.deleting.clone().map(|deleting| {
-                    field(
-                        "Deleting since",
-                        div().text_color(p.crit_ink).child(deleting),
+        let mut body = v_flex()
+            .gap(dp(18.))
+            .when(detail.target.kind.is_pod(), |this| {
+                this.child(self.pod_sections(cx))
+            })
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(field("Kind", summary.kind.clone(), cx))
+                    .when(!identity.namespace.is_empty(), |this| {
+                        this.child(field("Namespace", identity.namespace.clone(), cx))
+                    })
+                    .child(field(
+                        "UID",
+                        div()
+                            .font_family(MONO_FONT)
+                            .text_size(dp(12.))
+                            .child(identity.uid.clone()),
                         cx,
+                    ))
+                    .children(
+                        summary
+                            .created
+                            .clone()
+                            .map(|created| field("Created", created, cx)),
                     )
-                }))
-                .children(
-                    summary
-                        .generation
-                        .clone()
-                        .map(|generation| field("Generation", generation, cx)),
-                ),
-        );
+                    .children(summary.deleting.clone().map(|deleting| {
+                        field(
+                            "Deleting since",
+                            div().text_color(p.crit_ink).child(deleting),
+                            cx,
+                        )
+                    }))
+                    .children(
+                        summary
+                            .generation
+                            .clone()
+                            .map(|generation| field("Generation", generation, cx)),
+                    ),
+            );
         if let Some((secret_type, keys)) = &summary.secret {
             body = body.child(self.secret(detail, secret_type, keys, cx));
         }
@@ -83,12 +88,15 @@ impl DetailPane {
         }
         if !summary.owners.is_empty() {
             body = body.child(
-                section("Owned by", cx).children(
-                    summary
-                        .owners
-                        .iter()
-                        .map(|owner| div().text_size(dp(12.5)).child(owner.clone())),
-                ),
+                section("Owned by", cx)
+                    .id("detail-owners")
+                    .test_support()
+                    .children(
+                        summary
+                            .owners
+                            .iter()
+                            .map(|owner| self.owner_button(owner, cx)),
+                    ),
             );
         }
         if summary.label_count > 0 {

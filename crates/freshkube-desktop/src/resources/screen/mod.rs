@@ -431,6 +431,7 @@ impl ResourcesScreen {
                 |this, _, event: &DetailEvent, window, cx| match event {
                     DetailEvent::Closed => this.close_pane(window, cx),
                     DetailEvent::Leave => window.focus(&this.focus, cx),
+                    DetailEvent::Link(intent) => cx.emit(intent.clone()),
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
                         this.open_now(identity.clone(), window, |_, _, _| {}, cx);
@@ -491,11 +492,28 @@ impl ResourcesScreen {
         self.query.read(cx).value().to_string()
     }
     #[cfg(test)]
+    pub(crate) fn field_selector_value(&self) -> Option<&str> {
+        self.field_selector.as_deref()
+    }
+    #[cfg(test)]
+    pub(crate) fn detail_log_container<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        self.detail.read(cx).log_container(cx)
+    }
+
+    #[cfg(test)]
     pub(crate) fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
         self.detail.read(cx).tab()
     }
 
     /// Called only after the shell's navigation question has been accepted.
+    pub(crate) fn set_node_rows(
+        &mut self,
+        rows: std::sync::Arc<Vec<crate::desktop::nodes::NodeRow>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |pane, cx| pane.set_node_rows(rows, cx));
+    }
     pub(crate) fn close_for_link(&mut self, cx: &mut Context<Self>) {
         self.close_detail(cx);
     }
@@ -508,6 +526,9 @@ impl ResourcesScreen {
                 entry.row().identity.namespace == namespace && entry.row().identity.name == name
             })
             .map(|entry| entry.row().identity.clone())
+    }
+    pub(crate) fn detail_identity<'a>(&'a self, cx: &'a App) -> Option<&'a ResourceIdentity> {
+        self.detail.read(cx).target_identity()
     }
     pub(crate) fn showing(&self, identity: &ResourceIdentity, cx: &App) -> bool {
         self.detail.read(cx).target_identity() == Some(identity)
@@ -1222,3 +1243,5 @@ mod view;
 
 #[cfg(test)]
 mod tests;
+
+impl EventEmitter<super::ResourceLink> for ResourcesScreen {}

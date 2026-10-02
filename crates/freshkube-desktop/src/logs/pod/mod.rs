@@ -510,6 +510,17 @@ impl LogView<PodLogs> {
         }
     }
 
+    /// Opens an explicitly chosen container and instance from its Overview row.
+    pub(crate) fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>) {
+        self.choose_container(name, cx);
+        self.set_previous(previous, cx);
+        self.want(cx);
+    }
+    #[cfg(test)]
+    pub(crate) fn selected_container(&self) -> Option<&str> {
+        self.source.container.as_deref()
+    }
+
     /// Whether a stream is open or about to be, for the pane's tests.
     #[cfg(test)]
     pub(crate) fn streaming(&self) -> bool {

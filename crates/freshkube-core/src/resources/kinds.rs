@@ -88,6 +88,17 @@ pub fn builtin(key: &str) -> Option<ResourceKind> {
         })
 }
 
+/// Resolve a built-in owner reference by group and kind, keeping its named version.
+pub fn builtin_by_gvk(api_version: &str, kind: &str) -> Option<ResourceKind> {
+    let (group, version) = api_version.split_once('/').unwrap_or(("", api_version));
+    BUILTIN
+        .iter()
+        .find(|(known, _, name, _, _)| *known == group && *name == kind)
+        .map(|(_, _, kind, plural, namespaced)| {
+            ResourceKind::new(group, version, kind, plural, *namespaced)
+        })
+}
+
 const BUILTIN: [(&str, &str, &str, &str, bool); 47] = [
     // Cluster
     ("", "v1", "Node", "nodes", false),

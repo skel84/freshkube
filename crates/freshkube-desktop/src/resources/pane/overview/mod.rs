@@ -106,7 +106,7 @@ pub(super) struct Summary {
     created: Option<SharedString>,
     deleting: Option<SharedString>,
     generation: Option<SharedString>,
-    owners: Vec<SharedString>,
+    owners: Vec<super::cross_links::OwnerLink>,
     conditions: Vec<ConditionLine>,
     labels: Vec<SharedString>,
     label_count: usize,
@@ -139,12 +139,10 @@ impl Summary {
                 .owners
                 .iter()
                 .map(|owner| {
-                    let controller = if owner.controller {
-                        " (controller)"
-                    } else {
-                        ""
-                    };
-                    format!("{} {}{controller}", owner.kind, owner.name).into()
+                    super::cross_links::OwnerLink::new(
+                        owner,
+                        view.document.namespace.as_deref().unwrap_or_default(),
+                    )
                 })
                 .collect(),
             conditions: overview.conditions.iter().map(ConditionLine::new).collect(),

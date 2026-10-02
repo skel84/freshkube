@@ -19,6 +19,7 @@ pub(crate) struct NodeRow {
     pub(crate) id: SharedString,
     pub(crate) open_id: SharedString,
     pub(crate) pod_label: SharedString,
+    pub(crate) kubelet_pods: SharedString,
     pub(crate) service_problem: bool,
     pub(crate) name: SharedString,
     pub(crate) role: Role,
@@ -282,6 +283,10 @@ fn row(
         pod_label: kubernetes
             .map(|node| format!("Pods {}", node.pods))
             .unwrap_or_else(|| "Pods".into())
+            .into(),
+        kubelet_pods: kubernetes
+            .map(|node| format!("Pods on this node ({})", node.pods))
+            .unwrap_or("Pods on this node".into())
             .into(),
         service_problem: counts.unhealthy > 0,
         name: name.into(),

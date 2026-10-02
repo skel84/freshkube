@@ -390,6 +390,14 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let object = resources::model::ObjectRef {
+            namespace: if kind.namespaced {
+                object.namespace.clone()
+            } else {
+                String::new()
+            },
+            ..object
+        };
         let Some(source) = self.kube_source() else {
             self.open_kind(kind, window, cx);
             return;
@@ -463,7 +471,10 @@ impl Pilot {
                     .await
                     .unwrap_or_else(|_| Err("The identity worker stopped".into()));
                 _ = this.update_in(cx, |this, window, cx| {
-                    if this.epoch != epoch || this.object_open_sequence != sequence {
+                    if this.epoch != epoch
+                        || this.object_open_sequence != sequence
+                        || this.resources.read(cx).detail_identity(cx).is_some()
+                    {
                         return;
                     }
                     this.object_open_job = None;
