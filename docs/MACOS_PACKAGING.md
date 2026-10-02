@@ -48,7 +48,7 @@ The app currently uses the system's generic application icon.
 
 ## CI and release candidates
 
-[CI](../.github/workflows/ci.yml) runs on pushes to `main` and pull requests
+[CI](../.github/workflows/ci.yml) is configured for pushes to `main` and pull requests
 against `main`. It runs formatting, Clippy and the workspace tests (including
 headless UI tests), and calls the shared
 [macOS packaging workflow](../.github/workflows/macos-app.yml). Packaging uses
@@ -282,3 +282,8 @@ signature checks; the Intel executable ran locally, and each runner checked
 its native executable. Clicking the updated ARM app and connecting with the
 chosen file on the user's Mac remains the live check. The pipeline still signs
 ad-hoc and does not notarize or publish releases.
+
+Both hosted runs used manual dispatch. Although the CI workflow is active and
+declares push/PR triggers, publishing these revisions to `main` did not produce
+an automatic run during verification. Automatic push/PR triggering still needs
+investigation; manual candidate dispatch is the verified build path.
