@@ -10,6 +10,7 @@ use kube::Client;
 use serde_yaml::Value;
 
 use super::failure::{Failure, FailureKind};
+use super::forward::{DeclaredPort, declared_ports};
 use super::kinds::ResourceKind;
 use super::pod_logs::{PodContainers, pod_containers};
 
@@ -49,6 +50,8 @@ pub struct Overview {
     pub secret: Option<SecretSummary>,
     /// Present for a Pod: its containers, for choosing a log.
     pub pod: Option<PodContainers>,
+    /// Present for a kind that can be forwarded: the ports it declares.
+    pub ports: Option<Vec<DeclaredPort>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +140,7 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     let mut overview = overview(&object);
     overview.secret = secret;
     overview.pod = kind.is_pod().then(|| pod_containers(&object));
+    overview.ports = declared_ports(kind, &object);
     let yaml = serde_yaml::to_string(&object)
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
     let metadata = object.get("metadata");
@@ -345,6 +349,7 @@ fn overview(object: &Value) -> Overview {
             .collect(),
         secret: None,
         pod: None,
+        ports: None,
     }
 }
 
@@ -483,6 +488,17 @@ mod tests {
         assert!(!document.yaml.contains("aHVudGVyMg"));
         assert_eq!(document.overview.secret.unwrap().keys[0].bytes, 7);
         assert!(object_from_yaml(&builtin("pods").unwrap(), "a: [").is_err());
+    }
+
+    #[test]
+    fn a_forwardable_kind_lists_its_declared_ports() {
+        let yaml = "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  uid: s-1\nspec:\n  ports:\n  - name: http\n    port: 80\n    targetPort: http\n";
+        let document = object_from_yaml(&builtin("services").unwrap(), yaml).unwrap();
+        let ports = document.overview.ports.unwrap();
+        assert_eq!((ports[0].name.as_str(), ports[0].port), ("http", 80));
+        let secret = "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\n";
+        let document = object_from_yaml(&builtin("secrets").unwrap(), secret).unwrap();
+        assert!(document.overview.ports.is_none());
     }
 
     fn secret() -> serde_json::Value {

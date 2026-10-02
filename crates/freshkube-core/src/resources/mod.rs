@@ -9,7 +9,8 @@
 //! ([`list_custom_groups`], [`list_group_kinds`]). A pod's containers come with its
 //! overview, and their logs from [`follow_pod_log`].
 //! Nothing here changes the cluster, except [`start_exec`], which runs a
-//! shell in a container only when the user starts one.
+//! shell in a container only when the user starts one, and
+//! [`start_forward`], which forwards a pod's port only when the user asks.
 
 mod connection;
 mod contexts;
@@ -17,6 +18,7 @@ mod discovery;
 mod events;
 mod exec;
 mod failure;
+mod forward;
 mod kinds;
 mod object;
 mod pod_logs;
@@ -32,6 +34,11 @@ pub use exec::{
     ExecOutput, ExecRequest, ExecSession, ExecSize, SHELL, start_exec,
 };
 pub use failure::{Failure, FailureKind};
+pub use forward::{
+    DeclaredPort, Forward, ForwardEnd, ForwardFailure, ForwardFailureKind, ForwardGuard,
+    ForwardRequest, ForwardState, ForwardStatus, ForwardTarget, POD_WAIT, PodWatches, WorkloadKind,
+    candidates, declared_ports, preferred_port, start_forward,
+};
 pub use kinds::{ResourceKind, builtin};
 pub use object::{
     Condition, ObjectDocument, Overview, Owner, SecretKey, SecretSummary, SecretValue, get_object,

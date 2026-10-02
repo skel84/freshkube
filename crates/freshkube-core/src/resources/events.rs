@@ -216,7 +216,7 @@ pub async fn watch_object_events(
     }
 }
 
-fn classify(error: watcher::Error) -> Failure {
+pub(super) fn classify(error: watcher::Error) -> Failure {
     match error {
         watcher::Error::InitialListFailed(error)
         | watcher::Error::WatchStartFailed(error)

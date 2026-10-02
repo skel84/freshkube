@@ -2351,10 +2351,14 @@ name = "freshkube-core"
 version = "0.1.11"
 dependencies = [
  "base64",
+ "bytes",
  "chrono",
  "dirs-next",
  "futures",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "k8s-openapi",
  "kube",
  "libc",
@@ -2365,6 +2369,7 @@ dependencies = [
  "talos-rs",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-tungstenite",
  "tonic",
  "tower 0.5.2",
  "tracing",
