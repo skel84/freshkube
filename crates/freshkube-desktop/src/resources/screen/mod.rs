@@ -54,12 +54,16 @@ const AGE_WIDTH: f32 = 76.;
 const MIN_COLUMN: f32 = 64.;
 const MAX_COLUMN: f32 = 280.;
 const MAX_FLEXIBLE: f32 = 440.;
-const LIST_MIN_HEIGHT: f32 = 200.;
+/// The table's header and a couple of rows.
+const LIST_MIN_HEIGHT: f32 = 96.;
 /// Below this content width the detail pane stacks under the list.
 const SPLIT_WIDTH: f32 = 900.;
 const LIST_MIN_WIDTH: f32 = 320.;
 const PANE_WIDTH: f32 = 460.;
 const PANE_MIN_WIDTH: f32 = 320.;
+/// Stacked, the list and the pane share the height one to two, so a short
+/// window still leaves the pane room for a few lines of YAML or logs.
+const STACKED_LIST_HEIGHT: f32 = 190.;
 const PANE_HEIGHT: f32 = 380.;
 const PANE_MIN_HEIGHT: f32 = 220.;
 /// Space between the list and the pane, where the resize handle sits.
@@ -1476,6 +1480,7 @@ impl Render for ResourcesScreen {
                     .with_state(&self.stacked)
                     .child(
                         resizable_panel()
+                            .size(px(STACKED_LIST_HEIGHT))
                             .size_range(px(LIST_MIN_HEIGHT)..Pixels::MAX)
                             .child(list),
                     )
@@ -1483,7 +1488,6 @@ impl Render for ResourcesScreen {
                         resizable_panel()
                             .size(px(PANE_HEIGHT))
                             .size_range(px(PANE_MIN_HEIGHT)..Pixels::MAX)
-                            .flex_none()
                             .pt(px(SPLIT_GAP))
                             .child(pane),
                     )

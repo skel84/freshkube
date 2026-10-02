@@ -2173,3 +2173,45 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+    });
+    step(cx, &|window, cx| {
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    step(cx, &|window, cx| {
+        // Overview, YAML, Events, then Logs.
+        for _ in 0..3 {
+            window.press("secondary-}", cx);
+        }
+    });
+    step(cx, &|window, _| {
+        let list = window.find("resource-list").bounds();
+        let pane = window.find("resource-detail").bounds();
+        let lines = window
+            .within("resource-detail")
+            .find("logs-viewport")
+            .bounds();
+        // The pane stacks under the list and takes the larger share.
+        assert!(pane.top() >= list.bottom(), "{list:?} {pane:?}");
+        assert!(pane.size.height > list.size.height, "{list:?} {pane:?}");
+        assert!(pane.bottom() <= px(560.), "{pane:?}");
+        // At least three log lines show.
+        assert!(lines.size.height >= px(54.), "{lines:?}");
+        assert!(lines.bottom() <= pane.bottom(), "{lines:?} {pane:?}");
+    });
+}
