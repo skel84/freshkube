@@ -43,6 +43,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout 2. Shell module preparation | Split the title bar, node picker, status bar and Settings content from sidebar rendering without changing behavior; existing UI tests cover the same paths. | the commit that adds this row |
 | Holistic layout 2. Nodes and the node pane | Joined Kubernetes and Talos rows, Table/Cards, retained split and expanded panes, Kubernetes-only tabs, embedded Talos screens and logs, Node Events/YAML, and all-namespace Pods by field selector. Unit and UI tests cover join precedence, pagination/watch/relist selectors, node changes and old batches, retained tabs and selection, target changes, narrow Back, keys and context isolation. | the commit that adds this row |
 | Holistic layout 3. Shell view preparation | Move the shell Render implementation into its own child module, with unchanged navigation and UI tests before the sidebar changes. | the commit that adds this row |
+| Holistic layout 3. Lifecycle module preparation | Lifecycle separates rendering, example data and sibling UI tests before routing its Open node action; behavior and tests are unchanged. | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
