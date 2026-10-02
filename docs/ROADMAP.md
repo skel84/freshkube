@@ -40,6 +40,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout 2. Module preparation | Resource rendering and overview node views have child modules, with unchanged behavior and tests before the node pane work | the commit that adds this row |
 | Holistic layout 2. Concurrent forward binds | Checks, IPv4/IPv6 binds and their reservation are atomic, so another bind cannot probe a forward before it is registered. A 32-way regression test checks that neither listener receives a connection; the existing exact websocket assertions stay | the commit that adds this row |
 | Holistic layout 2. Node screen modules | Processes, Storage, Network and Diagnostics use mod.rs and sibling UI test files. Network and Diagnostics separate rendering and example data, with unchanged behavior and tests before embedding | the commit that adds this row |
+| Holistic layout 2. Shell module preparation | Split the title bar, node picker, status bar and Settings content from sidebar rendering without changing behavior; existing UI tests cover the same paths. | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
