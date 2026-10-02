@@ -92,6 +92,8 @@ Taken with the user on 2 October 2026.
 | Stop | The listeners and every open connection close at once; the port is free |
 | Quitting the app or closing the window | Ask, then stop every forward |
 
+Closing releases both sides, unlike exec. The live check counted the pod's TCP connections on the forwarded port by reading `/proc/net/tcp`: one while a local connection was open, none after closing it and none after Stop. The websocket for a connection carries only that connection, so when it closes, the kubelet closes its socket to the pod.
+
 ## Build order
 
 Each step lands with its tests and a Done row in the roadmap.
