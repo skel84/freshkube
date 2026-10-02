@@ -267,6 +267,15 @@ impl DetailPane {
                         title,
                     ))
             })
+            .when(Tab::of(&detail.target.kind).contains(&Tab::Ports), |this| {
+                this.child(tab(
+                    "detail-tab-ports",
+                    Tab::Ports,
+                    "Ports".into(),
+                    None,
+                    None,
+                ))
+            })
     }
 
     /// What replaces the overview and YAML while there is no document.
@@ -344,6 +353,7 @@ impl Render for DetailPane {
             (Tab::Events, ..) => self.events(detail, cx),
             (Tab::Logs, ..) => self.logs.clone().into_any_element(),
             (Tab::Shell, ..) => self.shell.clone().into_any_element(),
+            (Tab::Ports, ..) => self.ports.clone().into_any_element(),
             _ => self.document_state(detail, cx),
         };
         panel(cx)

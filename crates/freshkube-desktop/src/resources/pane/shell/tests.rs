@@ -10,7 +10,7 @@ use gpui_kit::{AnyWindowHandle, AppContext, Entity, Focusable, Task, TestAppCont
 use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use super::{Session, ShellState, ShellView, running_anywhere};
+use super::{Session, ShellState, ShellView, closing_question, running_anywhere};
 use crate::backend::OwnedJob;
 use crate::resources::detail::DetailTarget;
 use crate::resources::pane::{DetailEvent, DetailPane};
@@ -398,7 +398,7 @@ fn escape_reaches_the_shell_and_command_escape_leaves_it(cx: &mut TestAppContext
     assert!(terminal_focused(cx));
     shell.step(cx, |window, cx| window.press("secondary-}", cx));
     shell.step(cx, |window, cx| {
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
         window.press("secondary-{", cx);
     });
     shell.step(cx, |window, _| {
@@ -426,4 +426,36 @@ fn the_example_shell_draws_a_full_screen_at_the_terminals_size(cx: &mut TestAppC
     assert!(screen.ends_with("q leaves"), "{screen}");
     shell.step(cx, |window, cx| window.input("q", cx));
     assert!(shell.screen(cx).contains("stty size"));
+}
+
+#[test]
+fn the_closing_question_names_the_shell_and_the_forwards() {
+    let question = |pod, forwards| {
+        let (question, _, answer) = closing_question(pod, forwards);
+        (question, answer)
+    };
+    assert_eq!(
+        question(Some("web-1"), 0),
+        (
+            "End the shell in web-1?".to_owned(),
+            "End the shell".to_owned()
+        )
+    );
+    assert_eq!(
+        question(None, 1),
+        ("Stop 1 forward?".to_owned(), "Stop".to_owned())
+    );
+    assert_eq!(
+        question(None, 2),
+        ("Stop 2 forwards?".to_owned(), "Stop".to_owned())
+    );
+    assert_eq!(
+        question(Some("web-1"), 2),
+        (
+            "End the shell in web-1 and stop 2 forwards?".to_owned(),
+            "End and stop".to_owned()
+        )
+    );
+    let (_, detail, _) = closing_question(Some("web-1"), 2);
+    assert!(detail.contains("Control-C") && detail.contains("every connection"));
 }

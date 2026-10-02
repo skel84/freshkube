@@ -24,7 +24,6 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use self::pods::{PodSelector, Subscription};
-use self::port::Listeners;
 use self::target::{PodInfo, RemotePort, choose_pod, label_selector, service_selector};
 use super::events::classify;
 use super::failure::{Failure, FailureKind};
@@ -38,7 +37,7 @@ mod target;
 mod tests;
 
 pub use pods::PodWatches;
-pub use port::{candidates, preferred_port};
+pub use port::{Listeners, candidates, preferred_port};
 pub use target::{DeclaredPort, WorkloadKind, declared_ports};
 
 /// How long reading the target, or opening a connection's forward, may take.
@@ -270,7 +269,7 @@ pub async fn start_forward(
     watches: &PodWatches,
     request: ForwardRequest,
 ) -> Result<Forward, ForwardFailure> {
-    let listeners = listen(&request)?;
+    let listeners = listen_local(request.local_port, request.port)?;
     let resolved = resolve(watches.client(), &request).await?;
     let pods = watches.subscribe(&request.namespace, resolved.selector.clone());
     let (route, _) = watch::channel(Route::default());
@@ -309,12 +308,15 @@ pub async fn start_forward(
     })
 }
 
-fn listen(request: &ForwardRequest) -> Result<Listeners, ForwardFailure> {
-    let bound = match request.local_port {
+/// Listens on the loopback as a forward would: on `local_port` exactly, or
+/// on the automatic port for `remote`. Example mode serves its own answers
+/// on what this returns.
+pub fn listen_local(local_port: Option<u16>, remote: u16) -> Result<Listeners, ForwardFailure> {
+    let bound = match local_port {
         Some(port) => port::bind_loopback(port),
-        None => port::bind_automatic(request.port),
+        None => port::bind_automatic(remote),
     };
-    bound.map_err(|error| match request.local_port {
+    bound.map_err(|error| match local_port {
         Some(port) if port::is_taken(&error) => ForwardFailure::new(
             ForwardFailureKind::PortInUse,
             format!("Port {port} is in use"),

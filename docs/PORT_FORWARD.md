@@ -37,7 +37,7 @@ Taken with the user on 2 October 2026.
 - **Watched while it runs.** A pod forward watches its pod by name. A Service or workload forward watches the object by name, for deletion and for a Service's selector or ports changing, and watches its pods by selector. Forwards with the same connection, namespace and selector share one watch. Like a running shell, this keeps a connection open while the Resources page is hidden.
 - **What it shows.** The target as context · namespace/name → current pod; localhost:local → remote; the state (Starting, Listening, No ready pod, Ended); the number of open connections; and the last error. Counts reach the UI at most once a second.
 - **An ended forward stays listed** until removed or the app quits. It is dimmed, gives its reason, and offers Start again (with the same local port when free) and Remove. The status bar counts running forwards and hides when the list is empty.
-- **Example mode** binds a real loopback port by the same rule. Each connection gets a short fixed HTTP page naming the example pod and port. One example port answers like a refused connection, to show the error.
+- **Example mode** binds a real loopback port by the same rule. Each connection gets a short fixed HTTP page naming the example pod and port. The example pods serve 8080 only, so the gateway Service's https port (443 → 8443), and any other port typed, answer like a refused connection, to show the error.
 
 ## Design
 
@@ -67,15 +67,16 @@ Taken with the user on 2 October 2026.
 
 - **`forwards/`** holds the app's forwards. A `Forwards` global owns a list of `ForwardView` entities and outlives panes, pages and connections. Each `ForwardView` holds its `KubeAccess` (for the client, and to `forget` it after a failure), its context's name, its request and its state. Updates from core are folded on the entity and notify it at most once a second. Display text is derived there, never in `render`.
   - `indicator.rs` is a small view in the status bar: "⇄ 2 forwards", hidden when the list is empty. Its popover lists every forward with Copy address (`localhost:13306`), Open in browser (`http://localhost:13306`), Stop, Start again and Remove.
-  - `example.rs` is the example-mode listener.
+  - `example.rs` is the example-mode listener. It resolves the target from the example data as a live forward would: a pod that isn't Running fails as Not running, a Service without a selector as No pods, and a Service or workload goes to its app's first Ready pod.
+  - A `ForwardView` that starts again asks for the port it had first. If that is taken now and the port was automatic, it takes the automatic one; a typed port fails as in use and offers "Use an automatic port".
 - **`resources/pane/ports/`** is the Ports tab, shown for pods, Services and the four workload kinds.
   - It lists the declared ports from the document the pane already reads: name, number, protocol, the local port field (its placeholder shows the automatic port) and Forward.
-  - A row whose forward runs shows its address, state and Stop. The same port can run more than once on different local ports.
+  - Under each port, its forwards from this object show as in the status bar's list, with Stop while running and Start again and Remove once ended. The same port can run more than once on different local ports.
   - An "Other port" row takes any number.
   - It reads nothing itself: starting goes through `Forwards`, so closing the pane leaves the forward running.
 - **Quitting and closing the window** extend `shell::may_close` into one question that covers both: "Stop 2 forwards?", or "End the shell in ⟨pod⟩ and stop 2 forwards?". Agreeing stops every forward, which frees its ports at once, and ends the shells as before.
 - **Context, kubeconfig, pane and page changes** don't consult forwards. They keep running against the connection they started on, and the list names it.
-- **Keys.** Ports joins the pane's tabs: Command-Shift-[ and ], and ← and → on the tab strip. Enter on a focused port row starts it.
+- **Keys.** Ports joins the pane's tabs, last: Command-Shift-[ and ], and ← and → on the tab strip. Enter in a port's local port field, or in Other port's fields, starts it.
 
 ### Lifetime
 

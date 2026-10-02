@@ -116,6 +116,7 @@ mod actions;
 mod backend;
 mod desktop;
 mod fixture;
+mod forwards;
 mod logs;
 mod maintenance;
 mod mutation;

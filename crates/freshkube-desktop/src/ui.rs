@@ -39,11 +39,12 @@ pub(crate) fn dp_px(n: f32, window: &Window) -> Pixels {
     window.rem_size() * (n / BASE_TEXT)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Tone {
     Good,
     Warn,
     Crit,
+    #[default]
     Unknown,
     Accent,
     Outline,

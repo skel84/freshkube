@@ -217,14 +217,9 @@ pub(crate) fn read(
                 .iter()
                 .map(|node| node.name)
                 .collect();
-            let count = match context {
-                "staging-eu" => 48,
-                "homelab" => 22,
-                _ => 140,
-            };
             (
                 pod_columns(),
-                (0..count)
+                (0..pod_count(context))
                     .map(|ix| pod(&connection, ix, &nodes, now))
                     .collect(),
             )
@@ -363,6 +358,50 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
         terminating: false,
         resource_version: EXAMPLE_VERSION.into(),
     }
+}
+
+/// Whether `app` runs in `namespace`: its Service and Deployment select
+/// example pods, Ready or not.
+pub(crate) fn runs_app(namespace: &str, app: &str) -> bool {
+    WORKLOADS
+        .iter()
+        .any(|(ns, name, ..)| *ns == namespace && *name == app)
+}
+
+/// How many example pods `context` has.
+fn pod_count(context: &str) -> usize {
+    match context {
+        "staging-eu" => 48,
+        "homelab" => 22,
+        _ => 140,
+    }
+}
+
+/// The phase of the example pod `name` in `context`, as its status reads
+/// it, or `None` when there is no such pod.
+pub(crate) fn pod_phase(context: &str, name: &str) -> Option<&'static str> {
+    (0..pod_count(context))
+        .map(|ix| pod("", ix, &[], 0))
+        .find(|row| row.identity.name == name)
+        .map(|row| match row.cells[2].as_str() {
+            "Completed" => "Succeeded",
+            "Pending" | "ContainerCreating" => "Pending",
+            _ => "Running",
+        })
+}
+
+/// The first Running, Ready example pod of `app` in `namespace`, as a
+/// Service or Deployment of that name would choose it for a forward.
+pub(crate) fn ready_pod(context: &str, namespace: &str, app: &str) -> Option<String> {
+    (0..pod_count(context))
+        .map(|ix| pod("", ix, &[], 0))
+        .find(|row| {
+            row.identity.namespace == namespace
+                && row.cells[0].starts_with(&format!("{app}-"))
+                && row.cells[1] == "1/1"
+                && row.cells[2] == "Running"
+        })
+        .map(|row| row.identity.name)
 }
 
 pub(crate) fn deployment_columns() -> Vec<ResourceColumn> {

@@ -535,6 +535,7 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
     let (_runtime, pane, handle, _) = mount(cx);
     let (pod, _) = running_pod();
     let (deployment, _) = target("deployments.apps", |_, _| true);
+    let (secret, _) = target("secrets", |_, _| true);
     let tab = |window: &mut gpui_kit::Window, id: &'static str| {
         let tab = window.find(id);
         (tab.selected(), tab.focused())
@@ -552,7 +553,10 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.press("left", cx);
         window.press("left", cx);
         window.render_frame(cx);
-        // A pod's tabs wrap round to Shell.
+        // A pod's tabs wrap round to Ports, after Shell.
+        assert_eq!(tab(window, "detail-tab-ports"), (Some(true), Some(true)));
+        window.press("left", cx);
+        window.render_frame(cx);
         assert_eq!(tab(window, "detail-tab-shell"), (Some(true), Some(true)));
         window.press("left", cx);
         window.render_frame(cx);
@@ -567,6 +571,10 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.render_frame(cx);
         window.press("secondary-{", cx);
         window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
+        assert_eq!(window.find("resource-detail").focused(), Some(true));
+        window.press("secondary-{", cx);
+        window.render_frame(cx);
         assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
         window.press("secondary-{", cx);
@@ -575,12 +583,18 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         assert_eq!(window.find("logs-viewport").focused(), Some(true));
         window.press("secondary-}", cx);
         window.press("secondary-}", cx);
+        window.press("secondary-}", cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
 
-        // Other kinds have three tabs.
+        // A workload has four tabs, Ports last; other kinds have three.
         open(&pane, &deployment, Duration::ZERO, cx);
+        window.render_frame(cx);
+        window.press("secondary-{", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
+        open(&pane, &secret, Duration::ZERO, cx);
         window.render_frame(cx);
         window.press("secondary-{", cx);
         window.render_frame(cx);

@@ -756,7 +756,9 @@ impl ResourcesScreen {
             kind: self.kind.clone(),
         };
         let access = source.access.clone();
+        let context = source.context.clone();
         self.detail.update(cx, |detail, cx| {
+            detail.set_context(context, cx);
             detail.open(target, access, &version, delay, cx)
         });
         cx.notify();

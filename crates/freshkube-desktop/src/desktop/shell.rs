@@ -1271,21 +1271,26 @@ impl Pilot {
                 .into_any_element()
         };
         let right = if self.kubernetes_only.is_some() {
-            h_flex().flex_none().child(
-                div()
-                    .id("kubernetes-only")
-                    .tooltip(|window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(
-                            "Opened with a kubeconfig only: Talos pages need a talosconfig",
-                        )
-                        .build(window, cx)
-                    })
-                    .child(ui::tag(Tone::Outline, None, "Kubernetes only", cx)),
-            )
+            h_flex()
+                .flex_none()
+                .gap_3()
+                .child(self.forwards.clone())
+                .child(
+                    div()
+                        .id("kubernetes-only")
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(
+                                "Opened with a kubeconfig only: Talos pages need a talosconfig",
+                            )
+                            .build(window, cx)
+                        })
+                        .child(ui::tag(Tone::Outline, None, "Kubernetes only", cx)),
+                )
         } else {
             h_flex()
                 .gap_3()
                 .flex_none()
+                .child(self.forwards.clone())
                 .children(
                     self.overview
                         .last_successful()

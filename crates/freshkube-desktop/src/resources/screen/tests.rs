@@ -777,9 +777,10 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert_eq!(focused(window, "resource-body"), Some(true));
         assert!(shown(&screen, cx).is_some());
         // From the list, the brackets switch the tab and keep the keyboard
-        // on the list. A pod's tabs wrap round to Shell, then Logs.
+        // on the list. A pod's tabs wrap round to Ports, Shell, then Logs.
         window.press("secondary-}", cx);
         assert_eq!(window.find("detail-tab-events").selected(), Some(true));
+        window.press("secondary-{", cx);
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
@@ -915,5 +916,41 @@ fn a_running_shell_pins_the_pane_until_the_user_ends_it(cx: &mut TestAppContext)
         assert_eq!(shown(&screen, cx), next);
         assert!(window.try_find("detail-shell-running").is_none());
         assert_eq!(window.find("resource-detail").focused(), Some(true));
+    });
+}
+
+#[gpui_kit::test]
+fn a_forward_runs_on_through_another_context_and_names_its_own(cx: &mut TestAppContext) {
+    // The forward listens on Tokio, which wakes GPUI from its own threads.
+    cx.executor().allow_parking();
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        let ix = running_row(&screen, cx);
+        window.click(row_id(&identity_at(&screen, ix, cx)), cx);
+    });
+    step(cx, &|window, cx| window.click("detail-tab-ports", cx));
+    step(cx, &|window, cx| window.click("ports-forward-8080", cx));
+    step(cx, &|window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_source(Some(source("staging-eu")), window, cx)
+        });
+    });
+    let list = cx.update(crate::forwards::list);
+    cx.read(|cx| {
+        assert_eq!(shown(&screen, cx), None, "another context closes the pane");
+        let items = &list.read(cx).items;
+        assert_eq!(items.len(), 1);
+        let forward = items[0].read(cx);
+        assert!(forward.running(), "the forward keeps its connection");
+        assert_eq!(forward.display.context.as_ref(), "homelab");
     });
 }

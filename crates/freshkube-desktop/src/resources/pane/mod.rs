@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::resources::{
-    EventScope, EventUpdate, Failure, FailureKind, SecretValue, get_object, reveal_secret_value,
-    watch_object_events,
+    EventScope, EventUpdate, Failure, FailureKind, ResourceKind, SecretValue, get_object,
+    reveal_secret_value, watch_object_events,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
@@ -31,6 +31,7 @@ use crate::logs::PodLogView;
 
 mod events;
 mod overview;
+mod ports;
 pub(crate) mod shell;
 #[cfg(test)]
 mod tests;
@@ -39,6 +40,7 @@ mod yaml;
 
 use events::EventLine;
 use overview::Summary;
+use ports::PortsView;
 use shell::{ShellEvent, ShellView};
 
 const CONTEXT: &str = "KubeDetail";
@@ -84,13 +86,32 @@ enum Tab {
     /// Pods only, as is the shell.
     Logs,
     Shell,
+    /// Pods, Services and the workloads that run pods.
+    Ports,
 }
 
 impl Tab {
-    const ALL: [Tab; 5] = [Tab::Overview, Tab::Yaml, Tab::Events, Tab::Logs, Tab::Shell];
+    const ALL: [Tab; 6] = [
+        Tab::Overview,
+        Tab::Yaml,
+        Tab::Events,
+        Tab::Logs,
+        Tab::Shell,
+        Tab::Ports,
+    ];
+    const POD: &[Tab] = &Tab::ALL;
+    const FORWARDABLE: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Ports];
+    const OTHER: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events];
 
-    fn pods_only(self) -> bool {
-        matches!(self, Tab::Logs | Tab::Shell)
+    /// The tabs an object of `kind` has, in order.
+    fn of(kind: &ResourceKind) -> &'static [Tab] {
+        if kind.is_pod() {
+            Tab::POD
+        } else if ports::forwardable(kind) {
+            Tab::FORWARDABLE
+        } else {
+            Tab::OTHER
+        }
     }
 
     fn index(self) -> usize {
@@ -127,7 +148,7 @@ pub(crate) struct DetailPane {
     timer: Option<Task<()>>,
     tab: Tab,
     /// One per tab, in `Tab::ALL` order, so the arrows can move between them.
-    tab_focus: [FocusHandle; 5],
+    tab_focus: [FocusHandle; 6],
     find: Entity<InputState>,
     query: String,
     matches: Vec<(usize, Range<usize>)>,
@@ -144,6 +165,8 @@ pub(crate) struct DetailPane {
     /// The open pod's shell. A session lives while the pod stays open, on
     /// any tab and any page.
     shell: Entity<ShellView>,
+    /// The object's ports, and the forwards running from them.
+    ports: Entity<PortsView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -184,6 +207,7 @@ impl DetailPane {
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
         let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
         let shell = cx.new(|cx| ShellView::new(runtime.clone(), window, cx));
+        let ports = cx.new(|cx| PortsView::new(runtime.clone(), window, cx));
         let subscriptions = vec![
             // The Shell tab's label shows whether a session runs, and its
             // tooltip the shell's title.
@@ -234,6 +258,7 @@ impl DetailPane {
             yaml_scroll: UniformListScrollHandle::new(),
             logs,
             shell,
+            ports,
             _subscriptions: subscriptions,
         }
     }
@@ -258,7 +283,14 @@ impl DetailPane {
             .update(cx, |logs, _| logs.set_access(access.clone()));
         self.shell
             .update(cx, |shell, _| shell.set_access(access.clone()));
+        self.ports
+            .update(cx, |ports, _| ports.set_access(access.clone()));
         self.access = Some(access);
+    }
+
+    /// The context objects open in, which a forward started here names.
+    pub(crate) fn set_context(&mut self, context: String, cx: &mut Context<Self>) {
+        self.ports.update(cx, |ports, _| ports.set_context(context));
     }
 
     /// Shows `target`, reading it after `delay`. `version` is the one the
@@ -285,9 +317,16 @@ impl DetailPane {
         }
         self.stop_reads();
         let pod = target.kind.is_pod().then(|| target.identity.clone());
-        if pod.is_none() && self.tab.pods_only() {
+        if !Tab::of(&target.kind).contains(&self.tab) {
             self.tab = Tab::Overview;
         }
+        self.ports.update(cx, |ports, cx| {
+            ports.show(
+                Some((target.identity.clone(), target.kind.clone())),
+                Some(access.clone()),
+                cx,
+            )
+        });
         self.shell.update(cx, |shell, cx| {
             shell.show_pod(pod.clone(), Some(access.clone()), cx)
         });
@@ -323,6 +362,8 @@ impl DetailPane {
             .update(cx, |logs, cx| logs.show_pod(None, None, cx));
         self.shell
             .update(cx, |shell, cx| shell.show_pod(None, None, cx));
+        self.ports
+            .update(cx, |ports, cx| ports.show(None, None, cx));
         self.detail = None;
         self.summary = None;
         self.event_lines.clear();
@@ -504,6 +545,10 @@ impl DetailPane {
                 .update(cx, |shell, cx| shell.set_containers(containers.clone(), cx));
             self.logs
                 .update(cx, |logs, cx| logs.set_containers(containers, cx));
+        }
+        if let Some(declared) = view.document.overview.ports.clone() {
+            self.ports
+                .update(cx, |ports, cx| ports.set_ports(declared, cx));
         }
         self.summary = Some(Summary::new(&view));
         self.matches = view.find(&self.query);
@@ -755,9 +800,10 @@ impl DetailPane {
     /// Moves `delta` tabs along, wrapping, and returns the tab now shown.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) -> Option<Tab> {
         let detail = self.detail.as_ref()?;
-        let count = if detail.target.kind.is_pod() { 5 } else { 3 };
-        let next = (self.tab.index() as isize + delta).rem_euclid(count) as usize;
-        let tab = Tab::ALL[next];
+        let tabs = Tab::of(&detail.target.kind);
+        let current = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0);
+        let next = (current as isize + delta).rem_euclid(tabs.len() as isize) as usize;
+        let tab = tabs[next];
         self.set_tab(tab, cx);
         Some(tab)
     }
@@ -856,7 +902,7 @@ impl DetailPane {
         match self.tab {
             Tab::Yaml => self.step_match(if forward { 1 } else { -1 }, cx),
             Tab::Logs => self.logs.update(cx, |logs, cx| logs.find_next(forward, cx)),
-            Tab::Overview | Tab::Events | Tab::Shell => {}
+            Tab::Overview | Tab::Events | Tab::Shell | Tab::Ports => {}
         }
     }
 
@@ -864,7 +910,7 @@ impl DetailPane {
         match self.tab {
             Tab::Logs => return self.logs.update(cx, |logs, cx| logs.select_all(cx)),
             // Command-A in the terminal waits for a later step.
-            Tab::Shell => return,
+            Tab::Shell | Tab::Ports => return,
             _ => {}
         }
         let Some(count) = self.view().map(|view| view.lines.len()) else {
@@ -889,7 +935,7 @@ impl DetailPane {
                     .logs
                     .update(cx, |logs, cx| logs.focus_search(window, cx));
             }
-            Tab::Shell => return,
+            Tab::Shell | Tab::Ports => return,
             _ => {}
         }
         self.set_tab(Tab::Yaml, cx);

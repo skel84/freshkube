@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::backend::{self, OwnedJob};
+use crate::forwards;
 use crate::logs::choice_label;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
@@ -703,29 +704,89 @@ pub(crate) fn unless_shell<V: 'static>(
     .detach();
 }
 
-/// Whether the window may close now. With a shell running it asks first,
-/// and `close` runs once the user agrees.
+/// Whether the window may close now. With a shell or a forward running it
+/// asks first, in one question, and `close` runs once the user agrees and
+/// every shell has ended and every forward stopped.
 pub(crate) fn may_close(
     window: &mut Window,
     cx: &mut App,
     close: impl FnOnce(&mut Window, &mut App) + 'static,
 ) -> bool {
-    let Some(pod) = running_anywhere(cx) else {
+    let pod = running_anywhere(cx);
+    let forwards = forwards::running(cx);
+    if pod.is_none() && forwards == 0 {
         return true;
-    };
-    let agreed = ask(&pod, window, cx);
+    }
+    let agreed = ask_closing(pod.as_deref(), forwards, window, cx);
     window
         .spawn(cx, async move |cx| {
             if !agreed.await {
                 return;
             }
-            if let Ok(ending) = cx.update(|_, cx| end_all(cx)) {
-                ending.await;
+            if let Ok((ending, stopping)) = cx.update(|_, cx| (end_all(cx), forwards::stop_all(cx)))
+            {
+                futures::future::join(ending, stopping).await;
             }
             _ = cx.update(close);
         })
         .detach();
     false
+}
+
+/// Asks before quitting or closing the window: "End the shell in ⟨pod⟩?",
+/// "Stop 2 forwards?" or both in one. Resolves to whether the user agreed.
+fn ask_closing(
+    pod: Option<&str>,
+    forwards: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl Future<Output = bool> + use<> {
+    let (question, detail, answer) = closing_question(pod, forwards);
+    let answer = window.prompt(
+        PromptLevel::Warning,
+        &question,
+        Some(&detail),
+        &[answer.as_str(), "Cancel"],
+        cx,
+    );
+    async move { answer.await == Ok(0) }
+}
+
+/// The question, its detail and the agreeing answer.
+fn closing_question(pod: Option<&str>, forwards: usize) -> (String, String, String) {
+    let stop = match forwards {
+        1 => "stop 1 forward".to_owned(),
+        count => format!("stop {count} forwards"),
+    };
+    let shell_detail = "Freshkube sends Control-C, then Control-D, to stop what runs and end \
+                        the shell. A program that ignores them, such as an open editor, keeps \
+                        running in the pod.";
+    let forward_detail = "Stopping closes each local port and every connection through it.";
+    match (pod, forwards) {
+        (Some(pod), 0) => (
+            format!("End the shell in {pod}?"),
+            shell_detail.to_owned(),
+            "End the shell".to_owned(),
+        ),
+        (Some(pod), _) => (
+            format!("End the shell in {pod} and {stop}?"),
+            format!("{shell_detail} {forward_detail}"),
+            "End and stop".to_owned(),
+        ),
+        (None, _) => (
+            format!("{}?", capitalized(&stop)),
+            forward_detail.to_owned(),
+            "Stop".to_owned(),
+        ),
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Ends every session, and resolves once they have ended politely or

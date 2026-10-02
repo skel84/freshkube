@@ -36,8 +36,8 @@ pub use exec::{
 pub use failure::{Failure, FailureKind};
 pub use forward::{
     DeclaredPort, Forward, ForwardEnd, ForwardFailure, ForwardFailureKind, ForwardGuard,
-    ForwardRequest, ForwardState, ForwardStatus, ForwardTarget, POD_WAIT, PodWatches, WorkloadKind,
-    candidates, declared_ports, preferred_port, start_forward,
+    ForwardRequest, ForwardState, ForwardStatus, ForwardTarget, Listeners, POD_WAIT, PodWatches,
+    WorkloadKind, candidates, declared_ports, listen_local, preferred_port, start_forward,
 };
 pub use kinds::{ResourceKind, builtin};
 pub use object::{
