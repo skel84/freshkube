@@ -1,3 +1,4 @@
+mod access;
 mod connection;
 mod kubeconfig;
 mod kubernetes_only;
@@ -296,6 +297,12 @@ pub(crate) struct Pilot {
     config_loading: bool,
     config_generation: u64,
     epoch: u64,
+    access: Option<freshkube_core::AccessIdentity>,
+    access_configuration: Option<freshkube_core::ConfigurationRevision>,
+    prompted_access: Option<(
+        freshkube_core::ConfigurationRevision,
+        Option<freshkube_core::AccessIdentity>,
+    )>,
     overview: Snapshot<ClusterOverview>,
     kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
     summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
@@ -671,6 +678,9 @@ impl Pilot {
             config_loading: false,
             config_generation: 0,
             epoch: 0,
+            access: None,
+            access_configuration: None,
+            prompted_access: None,
             overview: Snapshot::default(),
             kubernetes_summary: Snapshot::default(),
             summary_health: None,
@@ -797,6 +807,10 @@ impl Pilot {
 
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.epoch = self.epoch.wrapping_add(1);
+        self.access = None;
+        self.access_configuration = None;
+        self.prompted_access = None;
+        self.search.update(cx, |search, cx| search.invalidate(cx));
         self.overview_task = None;
         self.overview_job = None;
         self.service_task = None;
@@ -1054,20 +1068,18 @@ impl Pilot {
         let mut collector =
             ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
         collector.set_kubeconfig_selection(self.kubeconfig.clone());
-        let path = self
-            .applied
-            .path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
         Some(KubeSource {
-            id: format!("talos:{path}:{context}:{:?}", self.kubeconfig),
+            id: self.access?.key(),
             context: cluster.name.clone(),
-            access: KubeAccess::Talos(Box::new(LiveSource {
-                client: cluster.client.clone()?,
-                cluster: Arc::new(cluster.clone()),
-                collector,
-                config_path: self.applied.path.clone(),
+            access: KubeAccess::Talos(Box::new(resources::talos::TalosAccess {
+                configuration: self.access_configuration?,
+                selection: self.kubeconfig.clone(),
+                live: LiveSource {
+                    client: cluster.client.clone()?,
+                    cluster: Arc::new(cluster.clone()),
+                    collector,
+                    config_path: self.applied.path.clone(),
+                },
             })),
         })
     }
@@ -1098,6 +1110,7 @@ impl Pilot {
             screen.activate(window, cx);
         }
         let source = self.kube_source();
+        self.sync_search_source(source.clone(), window, cx);
         self.custom
             .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
         self.node_pods.update(cx, |resources, cx| {
@@ -1123,6 +1136,7 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompted_access = None;
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
         if self.page == Page::Resources {
@@ -1171,16 +1185,7 @@ impl Pilot {
             self.runtime.clone(),
             self.applied.clone(),
             self.kubeconfig.clone(),
-            self.summary_session.as_ref().map(|_| {
-                self.kubernetes_summary
-                    .data()
-                    .map(|summary| summary.nodes.clone())
-                    .unwrap_or_else(|| {
-                        freshkube_core::kubernetes_summary::Part::Failed(
-                            "Waiting for shared Nodes".into(),
-                        )
-                    })
-            }),
+            self.observed_nodes(),
         );
         self.overview_job = Some(job);
         self.overview_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -1188,24 +1193,7 @@ impl Pilot {
                 .await
                 .unwrap_or_else(|_| Err("Overview worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                // Node switches freeze the request too; don't apply a snapshot
-                // requested for a different foreground target.
-                if epoch != view.epoch {
-                    return;
-                }
-                view.overview_job = None;
-                if view.overview.apply(&request, result) {
-                    let fresh = !view.overview.is_stale() && view.overview.error().is_none();
-                    if fresh {
-                        view.overview_succeeded();
-                    }
-                    view.sync_nodes(window, cx);
-                    if fresh {
-                        view.refresh_services(window, cx);
-                        view.ensure_summary(window, cx);
-                    }
-                }
-                cx.notify();
+                view.overview_received(epoch, request, result, window, cx);
             });
         }));
         cx.notify();

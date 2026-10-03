@@ -194,6 +194,18 @@ fn kubeconfig_revision(path: &Path) -> u64 {
 }
 
 impl ConfigurationRevision {
+    /// The local files that can replace Talos or Kubernetes access. Resolve and
+    /// fingerprint these on a worker, including when connecting will fail.
+    pub fn for_talos_sources(path: Option<&Path>, selection: &KubeconfigSelection) -> Self {
+        let path = path
+            .map(Path::to_path_buf)
+            .or_else(|| talos_rs::TalosConfig::default_path().ok());
+        Self(fingerprint((
+            path.as_ref().map(|path| (path, file_revision(path))),
+            selection_key(selection),
+        )))
+    }
+
     /// Includes merge order, paths, exact file contents and referenced CA,
     /// certificate, key and token files. Missing files have a distinct revision.
     pub fn from_kubeconfig_sources(paths: &[PathBuf]) -> Self {

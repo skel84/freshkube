@@ -1,8 +1,6 @@
 //! Kubernetes-only mode: no talosconfig. The kubeconfig's contexts fill the
 //! contexts list, the Resources page reads the chosen one directly, and the
 //! Talos pages wait for a talosconfig.
-use crate::state::Snapshot;
-
 use super::{PAGE_PADDING, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
@@ -40,6 +38,8 @@ pub(super) struct KubernetesOnly {
     pub(super) connection: KubeConnection,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
+    revision_check: Option<(OwnedJob, Task<()>)>,
+    connection_generation: u64,
 }
 
 impl KubernetesOnly {
@@ -53,6 +53,8 @@ impl KubernetesOnly {
             connection: KubeConnection::Idle,
             job: None,
             task: None,
+            revision_check: None,
+            connection_generation: 0,
         }
     }
 
@@ -188,21 +190,13 @@ impl Pilot {
         };
         kube.job = None;
         kube.task = None;
+        kube.revision_check = None;
         kube.connection = KubeConnection::Idle;
         kube.access = context
             .clone()
             .map(|context| DirectAccess::new(kube.sources.clone(), context, kube.revision));
-        self.epoch = self.epoch.wrapping_add(1);
-        self.kubernetes_summary = Snapshot::default();
-        self.rebuild_joined_nodes();
-        self.node_workspace
-            .document
-            .update(cx, |pane, cx| pane.close(cx));
-        self.sync_node_visibility(window, cx);
-        self.summary_health = None;
-        self.stop_summary();
         self.applied.context = context;
-        self.push_source(window, cx);
+        self.invalidate_target(window, cx);
         self.check_kube_connection(window, cx);
         cx.notify();
     }
@@ -235,58 +229,159 @@ impl Pilot {
             },
         );
         kube.job = Some(job);
-        let epoch = self.epoch;
+        kube.connection_generation = kube.connection_generation.wrapping_add(1);
+        let generation = kube.connection_generation;
         kube.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("The connection worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if view.epoch != epoch {
-                    return;
-                }
-                let Some(kube) = view.kubernetes_only.as_mut() else {
-                    return;
-                };
-                kube.job = None;
-                match result {
-                    Ok(version) => {
-                        kube.connection = KubeConnection::Connected { version };
-                        view.ensure_summary(window, cx);
-                        if recovering {
-                            view.resources
-                                .update(cx, |resources, cx| resources.refresh(window, cx));
-                        }
-                    }
-                    Err(error) => {
-                        access.forget();
-                        kube.connection = KubeConnection::Failed(error);
-                    }
-                }
-                view.prepare_context_display(window, cx);
-                cx.notify();
+                view.kube_connection_received(access, generation, recovering, result, window, cx);
             });
         }));
         self.prepare_context_display(window, cx);
         cx.notify();
     }
 
-    /// Reads the kubeconfig again when that failed, or connects again when
-    /// connecting failed. A connected context needs nothing: the Resources
-    /// page's watch keeps it current.
+    fn kube_connection_received(
+        &mut self,
+        access: DirectAccess,
+        generation: u64,
+        recovering: bool,
+        result: Result<String, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kube) = self.kubernetes_only.as_mut() else {
+            return;
+        };
+        // Node selection doesn't replace compatible Kubernetes access.
+        if kube.connection_generation != generation
+            || kube.access.as_ref().map(DirectAccess::id) != Some(access.id())
+        {
+            return;
+        }
+        kube.job = None;
+        match result {
+            Ok(version) => {
+                kube.connection = KubeConnection::Connected { version };
+                self.ensure_summary(window, cx);
+                if recovering {
+                    self.resources
+                        .update(cx, |resources, cx| resources.refresh(window, cx));
+                }
+            }
+            Err(error) => {
+                access.forget();
+                kube.connection = KubeConnection::Failed(error);
+            }
+        }
+        self.prepare_context_display(window, cx);
+        cx.notify();
+    }
+
+    /// Reinspect local files at the refresh boundary. Unchanged access keeps
+    /// its watch and selection, including while a failed transport retries.
     pub(super) fn refresh_kubernetes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.elapsed = Duration::ZERO;
         if self.config_loading {
             return;
         }
-        let failed = self
-            .kubernetes_only
-            .as_ref()
-            .is_some_and(|kube| matches!(kube.connection, KubeConnection::Failed(_)));
         if self.config_error.is_some() {
             self.load_kube_contexts(window, cx);
-        } else if failed {
-            self.check_kube_connection(window, cx);
+            return;
         }
+        let Some(kube) = self.kubernetes_only.as_ref() else {
+            return;
+        };
+        let Some(access) = kube.access.clone() else {
+            return;
+        };
+        if kube.revision_check.is_some() {
+            return;
+        }
+        let sources = kube.sources.clone();
+        let (job, receiver) = backend::spawn_job(
+            &self.runtime,
+            READ_DEADLINE,
+            "Reading the kubeconfig timed out".into(),
+            async move {
+                tokio::task::spawn_blocking(move || discover_contexts(&sources))
+                    .await
+                    .map_err(|_| "Reading the kubeconfig stopped unexpectedly".into())
+            },
+        );
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = receiver
+                .await
+                .unwrap_or_else(|_| Err("Reading the kubeconfig stopped".into()));
+            _ = this.update_in(cx, |view, window, cx| {
+                let Some(kube) = view.kubernetes_only.as_mut() else {
+                    return;
+                };
+                if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
+                    return;
+                }
+                kube.revision_check = None;
+                match result {
+                    Ok(report) => view.kubeconfig_checked(access, report, window, cx),
+                    Err(error) => {
+                        kube.connection = KubeConnection::Failed(error);
+                    }
+                }
+                cx.notify();
+            });
+        });
+        self.kubernetes_only.as_mut().unwrap().revision_check = Some((job, task));
+    }
+
+    fn kubeconfig_checked(
+        &mut self,
+        access: DirectAccess,
+        report: KubeconfigReport,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kube) = self.kubernetes_only.as_ref() else {
+            return;
+        };
+        if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
+            return;
+        }
+        if report.revision == access.revision() {
+            if matches!(kube.connection, KubeConnection::Failed(_)) {
+                self.check_kube_connection(window, cx);
+            }
+            return;
+        }
+        let replacement = (report.revision, None);
+        if crate::resources::shell::running_anywhere(cx).is_some()
+            && self.prompted_access == Some(replacement)
+        {
+            return;
+        }
+        self.prompted_access = Some(replacement);
+        self.unless_shell(window, cx, move |view, window, cx| {
+            if view.prompted_access != Some(replacement) {
+                return;
+            }
+            let Some(kube) = view.kubernetes_only.as_mut() else {
+                return;
+            };
+            if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
+                return;
+            }
+            kube.sources = report.sources;
+            kube.revision = report.revision;
+            view.contexts = report
+                .contexts
+                .into_iter()
+                .map(|context| context.name)
+                .collect();
+            // Retain the explicitly selected context even if the new file's
+            // current context differs or the selected context disappeared.
+            view.use_kube_context(Some(access.context().to_owned()), window, cx);
+        });
     }
 
     /// Lists the contexts of a kubeconfig file chosen in Settings.
@@ -478,4 +573,125 @@ pub(super) fn settings_section(
                 .child("Contexts come from these files and connect as they are: without Talos, nothing checks them against a cluster."),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KubeConnection, KubernetesOnly};
+    use crate::desktop::tests::fixture;
+    use crate::resources::direct::DirectAccess;
+    use freshkube_core::resources::discover_contexts;
+    use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    fn direct_reload_preserves_unchanged_access_but_replaces_same_path_configuration(
+        cx: &mut TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config");
+        // Deliberately unusable: exercising identity never needs a real API.
+        std::fs::write(&path, "before").unwrap();
+        let report = discover_contexts(std::slice::from_ref(&path));
+        let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.fixture = false;
+                let mut kube = KubernetesOnly::new(Some(path.clone()), None);
+                kube.sources = report.sources.clone();
+                kube.revision = report.revision;
+                let access =
+                    DirectAccess::new(kube.sources.clone(), "chosen".into(), report.revision);
+                kube.access = Some(access.clone());
+                kube.connection = KubeConnection::Connected {
+                    version: "synthetic".into(),
+                };
+                view.kubernetes_only = Some(kube);
+                view.applied.context = Some("chosen".into());
+                view.ensure_summary(window, cx);
+                let observation = view
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity()
+                    .clone();
+                view.kubeconfig_checked(access.clone(), report, window, cx);
+                assert_eq!(view.kube_source().unwrap().id, access.id());
+                assert_eq!(
+                    view.summary_session.as_ref().unwrap().core.identity(),
+                    &observation
+                );
+
+                // A node epoch is not an access epoch: the connection can finish.
+                view.select_node(None, window, cx);
+                view.kube_connection_received(
+                    access.clone(),
+                    0,
+                    false,
+                    Ok("after node".into()),
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    view.kubernetes_only.as_ref().unwrap().connection,
+                    KubeConnection::Connected {
+                        version: "after node".into()
+                    }
+                );
+                assert_eq!(
+                    view.summary_session.as_ref().unwrap().core.identity(),
+                    &observation
+                );
+
+                view.kubernetes_only.as_mut().unwrap().connection_generation = 1;
+                view.kube_connection_received(
+                    access.clone(),
+                    0,
+                    false,
+                    Err("older attempt".into()),
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    view.kubernetes_only.as_ref().unwrap().connection,
+                    KubeConnection::Connected {
+                        version: "after node".into()
+                    }
+                );
+
+                std::fs::write(&path, "after!").unwrap();
+                let mut replacement = discover_contexts(std::slice::from_ref(&path));
+                replacement.current = Some("different-current".into());
+                view.kubeconfig_checked(access.clone(), replacement, window, cx);
+                let current = view.kube_source().unwrap().id;
+                assert_ne!(current, access.id());
+                assert_eq!(view.applied.context.as_deref(), Some("chosen"));
+                assert!(view.kubernetes_summary.data().is_none());
+                view.ensure_summary(window, cx);
+                assert_eq!(
+                    view.summary_session
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .identity()
+                        .connection(),
+                    current
+                );
+                assert_ne!(
+                    view.summary_session.as_ref().unwrap().core.identity(),
+                    &observation
+                );
+
+                view.kube_connection_received(access, 0, false, Ok("obsolete".into()), window, cx);
+                assert_eq!(
+                    view.kubernetes_only.as_ref().unwrap().connection,
+                    KubeConnection::Connecting
+                );
+                view.kubernetes_only.as_mut().unwrap().job = None;
+                view.kubernetes_only.as_mut().unwrap().task = None;
+                view.stop_summary();
+            });
+        })
+        .unwrap();
+    }
 }
