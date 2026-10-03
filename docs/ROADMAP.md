@@ -74,6 +74,109 @@ These hold for every step until a later one deliberately changes them.
 | Monitoring 5. History | A pod's Overview, near the top after its cause card, and the node pane's Overview, after its load and memory, show CPU and memory over the last hour as two Monitoring timeseries sharing a cursor (`monitoring/history/`, [MONITORING.md](MONITORING.md#history-as-built)). They read the Prometheus the Monitoring page confirmed, or the Service it remembers for the context; a context with neither, or one where the page looked and found none, shows and reads nothing. A pod reads its containers' cAdvisor series; a node reads node-exporter's, joined on `node_uname_info`. Only a shown Overview reads, again each minute and on Refresh; another pod, node or cluster starts over. Unit tests cover the queries and quoting; UI tests cover no Prometheus, reading only while shown, hiding mid-read, another pod and cluster, the minute's timer, the shared cursor, the page's source in each state, and both panes in the fixture | the commit that adds this row |
 | Monitoring 6. Live check | On home-ops, the built-in and history queries ran against the cluster's Prometheus and the built-in dashboards' faults were fixed ([MONITORING.md](MONITORING.md#built-in-queries-on-a-live-prometheus)); then the app itself. The pod history moved near the top of a pod's Overview. The Go Processes dashboard (67 pods on eight panels) slowed the whole app: each series was its own path, and every path is a full-window pass in GPUI's Metal renderer. Series of one look now share a path and fill non-zero, dots paint after paths, and the cursor dots only what its readout names. The readout fits the plot's height in aligned columns and, past what fits, names the highest values. `stress monitoring <dashboard.json>` reproduces the load against a fake Prometheus | 29f9340, 700055f, d44dcbc, ef8da4a, 8b52066, 8798f5d |
 
+## Proposed: watch-backed Kubernetes summary and shared Nodes
+
+Implements [#3](https://github.com/skel84/freshkube/issues/3), with [#1](https://github.com/skel84/freshkube/issues/1) folded in. **Approved; implementation in progress.** Work on `watch`; fixture and synthetic API checks only until a live context is explicitly named.
+
+Replace the shell's nine periodic lists with session-owned `kube::runtime` watcher/reflector stores for Nodes, Pods, warning Events, Deployments, DaemonSets, StatefulSets, PVs, PVCs and Namespaces. Overview, Attention, Health, the Nodes workspace and rail marks receive derived updates without Refresh. Lifecycle shares the Node observation for both its Kubernetes roster and kubelet versions, removing its two independent Node lists. Successful sources keep updating when another source fails.
+
+### Ownership and identity
+
+```mermaid
+flowchart TD
+    shell["Desktop Kubernetes session owner<br/>cluster Target epoch + config revision<br/>OwnedJob + GPUI receiver task"]
+    shell --> session["Core observation session<br/>one writer/task per compatible subscription"]
+    session --> stores["Reflector stores on Tokio<br/>Nodes · Pods · warning Events<br/>Deployments · DaemonSets · StatefulSets<br/>PVs · PVCs · Namespaces"]
+    stores --> state["Per-kind coverage, revision, freshness<br/>typed failure + last successful observation"]
+    state --> derive["500 ms coalescing window<br/>derive summary and Health on Tokio"]
+    derive --> latest["One latest immutable snapshot<br/>session + generation + revision"]
+    latest --> apply["GPUI applies once<br/>prepares display data outside render"]
+    apply --> consumers["Overview · Attention · Health<br/>Nodes · rail marks"]
+    stores --> node_observation["Shared Node observation<br/>same reader and revision"]
+    node_observation --> lifecycle["Visible Lifecycle<br/>roster + kubelet versions<br/>joined with polled Talos facts"]
+    refresh["Explicit Refresh"] --> session
+    replace["Context/config replacement or close"] --> cancel["Drop OwnedJob and subscriptions<br/>abort children; discard old session data"]
+    cancel --> session
+```
+
+- Keep the registry, stores, interpretation and failure types in `freshkube-core::kubernetes_summary`; the desktop adapter owns the session guard and applies its output. A core session supervisor owns its child tasks with abort-on-drop semantics; aborting the desktop `OwnedJob` must also close idle HTTP streams, retries and pending derivations. Core has no GPUI types.
+- Key a subscription by **session ID, applied configuration/credential revision, API group/version/resource, scope (cluster, all namespaces or one namespace), label selector, field selector and retained representation/version**. Share only exact compatible keys in this step. The Events key includes `type=Warning`; it cannot answer an all-Events subscription. Server-printed Tables and compact semantic facts remain different representations.
+- A session revision changes on a new context, kubeconfig/talosconfig selection or reload, including changed contents at the same path and re-entering a previously used context. Use opaque revisions; credentials and their contents never become display IDs or logs. Tag output with the session identity, relist generation and monotonically increasing local revision. Kubernetes resource versions stay opaque, per collection; they are not a cluster-wide clock.
+- Separate the cluster session epoch from the foreground node epoch. Selecting another Talos node currently increments `Pilot::epoch` and cancels a summary read; it must not restart these cluster watches. Context/config replacement cancels every old summary watch immediately, clears its derived data and rejects late output, even if the old context name is reused.
+- The shell holds the explicitly permitted background summary subscriptions on every page. Lifecycle consumes the same Node store while visible and releases its subscription when hidden; opening it adds no Node list/watch. A store stops when its last permitted consumer leaves, and every store stops with its session. This session does not own independent user-started port forwards or shells.
+
+### Consumers and delivery
+
+1. Introduce the observation contract and Node store, then move the **shell summary and Lifecycle** onto that shared Node observation. Lifecycle receives roster, control-plane roles, addresses and kubelet versions from one revision; its Talos collection remains separately refreshed. Add a narrow core collector input for an observed roster so neither Lifecycle collection path lists Nodes behind the subscription.
+2. Move the other eight summary collections to stores. Continue using the existing summary/Health derivations, adapting them to borrowed or shared retained facts instead of cloning full object collections. Feed the existing Overview, Attention, Health, Nodes and rail derivations in one apply. Adapt their notices so per-source stale/unavailable state survives presentation, including cached views.
+3. Disconnect Kubernetes summary acquisition from the 15 s cycle. Keep that cycle and its countdown ring for Talos services, etcd, memory, load and visible Talos inspections; Kubernetes-only mode has no summary countdown or periodic relist. Metrics and Prometheus retain their existing independent polling schedules. Where the Talos roster fallback would otherwise periodically list Nodes, consume the shared Node observation after session bootstrap; unavailable Nodes must not cause a hidden replacement poll. Any necessary bootstrap read is counted separately.
+
+The first dirty store starts a **500 ms window whose deadline is not extended by subsequent events**. Drain the latest revisions at its end, derive once on Tokio, and coalesce further work while a derivation is running. This bounds normal burst delivery to about twice a second without starving a continuously changing cluster. Apply every object event to its store; coalesce revision notifications and complete snapshots, never drop individual deltas. Use latest-value channels with one retained notification/snapshot, one derivation in flight and one dirty follow-up. Failure and synchronization transitions also wake this path.
+
+No changes means no derivation or redraw. Warning counts use the existing one-hour window, so schedule a local timer for the next warning eligibility/expiry boundary and derive again then, even on an otherwise quiet stream. That timer makes no API requests. GPUI render only reads prepared display data; timestamps/countdowns redraw in their small existing owners.
+
+### Coverage, failure and resynchronization
+
+Each source exposes its current `Part`, last successful value and observation time, initial-sync/coverage state, stream state, local revision and typed failure. Retaining last-known data must not change a refused read into `Loaded`: its current result remains `Part::Refused`. Loading, successfully empty, refused, unsupported, transiently failed and stale remain distinct. Source health is separate from observation state.
+
+| Event | Required result |
+| --- | --- |
+| First list / `Init` | Mark this source syncing and coverage incomplete. Do not publish partial pages as a complete collection or infer absence. Other ready sources can already appear. |
+| `InitApply` | Project and stage objects through the reflector. Preserve the previous committed store during a relist. |
+| `InitDone` | Atomically replace that source's committed contents, including a genuinely empty collection; record successful synchronization and clear only its failure/staleness. Readiness must be tracked for every resync, not just `Store::wait_until_ready`'s first completion. |
+| Apply / Delete | Update by namespace/name and UID within the subscription. A new UID is a new incarnation; a late delete for an old UID must not remove its replacement. Publish the next debounced revision. |
+| Initial failure or failed partial list | Show that source's typed failure, with no empty-success result. Drop incomplete staging; it cannot delete committed objects. |
+| Failure after success | Retain only that source's last successful value, clearly stale, with its original observation time. Apply successes from every other source. Recovery updates only the recovered source's metadata. |
+| 403 / unsupported API | Classify from typed HTTP/watch errors, never text containing `forbidden`. Show `Part::Refused` for 403 and a distinct not-served failure for 404; stop that kind until explicit Refresh or a new session. A list allowed but watch refused is last-known, not live. |
+| Transient disconnect / timeout | Mark only that source stale; use bounded exponential backoff. Normal finite watch completion resumes from its resource version. After an uncertain failure, relist the affected kind when needed to establish recovery, including a quiet collection with no subsequent object events. Bound initial/list progress waits; silence on a healthy watch alone is not a failed read. |
+| 410 | Enter resynchronization and relist only that kind. Cover both a watch error event and an HTTP 410 at watch start; kube 0.98's watch-start failure path needs explicit handling. Keep old data stale until `InitDone`. |
+| Explicit Refresh | Coalesce repeated requests, cancel the current watcher generation and force a fresh list/watch for each active summary kind, retrying refused kinds too. Keep previous values marked refreshing/stale until their replacements complete. Refresh does not replace the session or erase a selection whose UID survives. |
+| Context/config replacement | Cancel all watches and pending publications; remove every previous-session value. A late list, event, debounce callback or derivation cannot populate the new session. |
+
+Remove the desktop's all-or-nothing `refresh_failure` gate and its message matching. Give Pods, Deployments, StatefulSets and DaemonSets independent observation metadata even though Health combines them. A failed Events read must not hold back changed workload health, node readiness or pod counts. Missing dependencies stay unknown: unreadable Pods do not give Nodes a zero pod count; incomplete/stale Nodes cannot establish that a node is absent; unavailable Events cannot establish that a pending claim has no warning. Last-known findings remain labelled, and unavailable evidence cannot produce a fresh all-clear. The combined summary records independent input revisions rather than claiming an atomic cluster snapshot.
+
+Read the Kubernetes version once per session, reusing connection metadata when available, and on explicit Refresh. A version failure does not reject the watched collections or establish current API health by itself.
+
+### Retention and Pod memory
+
+- Project objects **before** writing to a reflector. Pods retain namespace/name, UID, resource version, creation time, node name, phase, restart count and the existing health classifier's result. Run that classifier on arrival; keep no Pod spec, environment, volume contents, annotation, managed field, container message or status history. Use a named, versioned compact Pod representation so a future consumer needing more evidence cannot silently reuse it.
+- Node retention covers the union required by summary and Lifecycle. Other kinds retain only identity and the status/metadata fields used by their current derivations; discard managed fields and unused annotations everywhere. Namespace counting can use metadata observations. No Secret collection is added, and raw objects, config contents and arbitrary failure response bodies are not logged or persisted.
+- Proposed budgets: **at most 4 KiB of retained payload per projected Pod**, targeting **at most 1 KiB mean** for the stress fixture; **100,000 objects per kind** and **128 MiB total retained payload per session**, plus at most one additional 128 MiB staging budget during relists. Account for owned allocation capacities, and report map/Arc overhead and process RSS separately rather than presenting payload bytes as total memory. Measure initial decode and relist peaks too.
+- Enforce limits before insertion. If a record or collection exceeds a budget, stop that kind with an explicit capacity/coverage failure and retain any previous complete observation as stale. Never silently evict a live Pod or truncate identity and then report complete coverage. Free incomplete staging on failure; remove deleted/replaced incarnations; keep no event history. Existing 200-issue caps and virtualized lists remain.
+
+### Fixture, tests and measurements
+
+`--fixture` seeds the same stores with the typed objects already used by example rows and panes, through `Init`/`InitApply`/`InitDone`. Capture its reference time once per session, not on every Refresh. A deterministic scripted source can then deliver changes, failures and resyncs through the production reducer; default fixture pages receive their initial data immediately for screenshots. Scripts use the GPUI executor clock; core retry/debounce tests use a controlled Tokio clock. HTTP integration tests synchronize on requests/events and use `allow_parking` where Tokio wakes GPUI, without wall-clock sleeps.
+
+After approval, first reproduce #1 on the unmodified behavior with a regression test: load successfully, then fail Events while Pods/workloads change. Record the failing assertion before replacing the collector. Add these checks against the real session-to-view path, not by directly replacing `Pilot`'s snapshot:
+
+| Check | Evidence |
+| --- | --- |
+| Initial sync and empty | UI shows loading/unknown until a kind completes, then real counts or an empty success. A failed later page cannot establish absence. |
+| Watch update without Refresh | Change a Pod, Deployment and Node; advance the debounce and verify Health, Overview/Attention, Nodes and rail marks. Sustained events still publish, and idle frames do not derive again. |
+| Partial failure and recovery | After a good snapshot, Events times out or is refused while workloads change. Only Events becomes stale/refused; typed category and last-success time survive. Recovery clears only Events. Include an independently failed workload kind. |
+| 410 and interrupted relist | UI retains the prior data during staging and swaps only after completion, with missed deletes removed. Exercise HTTP and streamed 410, refused relist and Refresh during resync. |
+| Shared Nodes and lifecycle | Summary and visible Lifecycle observe the same node/UID/version with one underlying list/watch. Hidden Lifecycle starts no reads; node selection does not restart the session. Missing or capped coverage cannot create roster-mismatch alerts. |
+| Session replacement | Switch context and reload changed config at the same path while an old list, watch or derivation is pending; assert stream cancellation, cleared old data and rejection of late output, including switching back to the same context name. |
+| Identity and bounds | Core tests for mismatched API/scope/selectors/representation, delete/recreate with the same name, oversized Pods, capacity overflow, failed staging cleanup and a slow/dropped subscriber. Sensitive Pod fields never reach retained facts. |
+| Refresh, quiet expiry and timer split | Clicking Refresh forces one coalesced relist per active kind. Warning counts age out without traffic; advancing the 15 s Talos clock causes no summary lists/version reads. Test Kubernetes-only and Talos fixture modes. |
+
+Use the existing reduced-motion UI harness and stable element IDs. Add core fake-API tests for request parameters, pagination, retry/backoff, synchronization and cancellation alongside the UI regressions.
+
+Before production changes, run `FRESHKUBE_STRESS_SECONDS=40 scripts/stress.sh watch-before-summary summary`, `scripts/stress.sh watch-before-table table 20000` and `scripts/stress.sh watch-before-burst burst 20000 2000` on an unlocked screen with the window in front. Record the commit, machine, timings, CPU and RSS; the older numbers in [PERFORMANCE.md](PERFORMANCE.md#kubernetes-summary) are context, not a substitute for this baseline.
+
+The current stress API serves typed lists but its Pod watch emits Tables, and several new watch endpoints are absent. Extend it in an isolated harness change to serve both representations, all nine endpoints, correct per-object UIDs/resource versions, selectors and paginated snapshots. One deterministic world writer feeds both watch representations so two subscribers do not double the mutation rate. Bounded replay must signal a 410 when it cannot bridge a gap. Add per-kind list-page, watch-open, reconnect and version request counters, plus retained bytes/object and staging peaks. Capture those counters on the polling implementation before migration as well.
+
+Repeat the same workloads after migration and add `summary` idle, sustained summary changes, forced 410/relist and a longer churn run (at least 120 s). Measure summary derivation, GPUI apply, notification rate, watch-to-display lag, CPU, steady RSS, relist peak and bytes per Pod. Report initial-sync costs separately from the 5 s warm-up exclusion. Repeat noisy comparisons three times. Gate on no periodic summary lists/version requests while idle, one shared Node watch with Lifecycle open, bounded queues and steady memory under churn, no starvation, and GPUI apply below the existing roughly 16 ms target. Record measured numbers and any missed target in `docs/PERFORMANCE.md`, including the synthetic server's contribution to RSS.
+
+### Change boundaries and completion
+
+The main work stays in core `kubernetes_summary/`, desktop `desktop/kubernetes_summary` and the existing `screens/lifecycle/` directory (the former `screens/lifecycle.rs`). Small adjacent changes are required for session/source identity in `resources/model.rs` and source wiring, Lifecycle's core collector input in `security_lifecycle.rs`, typed workload observation metadata, presentation notices and the stress harness. A narrow Talos roster-input seam may also touch `cluster_overview.rs`. Keep `desktop/mod.rs`, `desktop/target.rs`, `desktop/kubernetes_only.rs`, the header and `resources/` wiring limited to lifecycle, refresh and state propagation; avoid restructuring the files shared with #2. Do not fold in #6 or #9. Rebase against the parallel work before final validation.
+
+Split a touched module only if its concerns require it, and make every move-only split its own commit with existing tests unchanged and passing. Keep the first failure regression, store/observation work, consumer migration and performance evidence reviewable. Update the stale polling descriptions in this roadmap and `AGENTS.md` when the implementation lands; move this step to Done with its implementation commit and retain any honest open checks.
+
+Before **each push**, run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check`. Open a PR from `watch` with the partial-failure and shared-observation evidence, before/after measurements, and `Closes #1` / `Closes #3`. Completion means both issues' acceptance criteria hold for these consumers; wider resource sharing remains F02 follow-up work.
+
 ## Next: finish Kubernetes browsing
 
 Steps 1 to 5 are done. What remains here is checking them against the live cluster.
