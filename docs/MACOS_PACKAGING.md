@@ -119,6 +119,10 @@ To release:
    `git push origin v<version>`.
 4. Review the draft on the
    [Releases page](https://github.com/skel84/freshkube/releases), and publish it.
+5. The tap's [Bump casks](https://github.com/skel84/homebrew-tap/actions/workflows/bump.yml)
+   workflow finds the published release within three hours and commits its
+   version and checksums to the cask. Run it by hand to update the cask at once.
+   It skips drafts and takes pre-releases.
 
 To retry after a failure, fix the cause, delete the tag
 (`git push origin :refs/tags/v<version>`, and any draft it left), and push it
@@ -134,7 +138,21 @@ Cargo metadata and artifact manifests refer to that destination.
 
 ## Install a release
 
-Download the ZIP and its `.sha256` for your Mac from the
+With [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask skel84/tap/freshkube
+```
+
+The cask lives in [skel84/homebrew-tap](https://github.com/skel84/homebrew-tap).
+It installs `Freshkube.app` in `/Applications`, links the `freshkube` command
+and verifies the download against the release's checksum. `brew upgrade --cask
+freshkube` updates it, and `brew uninstall --zap --cask freshkube` also removes
+preferences, the remembered selection and operation audit files. Homebrew
+quarantines the app like any download, so the first open asks for **Open
+Anyway** as described below.
+
+To install by hand, download the ZIP and its `.sha256` for your Mac from the
 [Releases page](https://github.com/skel84/freshkube/releases): `aarch64` for
 Apple silicon, `x86_64` for Intel. For a build from a CI run instead, download
 the `freshkube-<target>` artifact from the run's page and extract GitHub's outer
