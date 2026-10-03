@@ -17,6 +17,7 @@ These hold for every step until a later one deliberately changes them.
 | Step | What landed | Commit |
 | --- | --- | --- |
 | Attention derivation ([#8](https://github.com/skel84/freshkube/issues/8)) | Category builders separate node problems, services, pods, workloads, claims and etcd from final ordering and grouping. Row identities, severity, destinations and limits are preserved; focused regression tests cover partial sources, unknown health, object links, alarms and per-node retention | the commit that adds this row |
+| Pipeline and releases | Pull requests run the checks, skipped when only spikes, docs or Markdown change; merges to `main` also build both bundles, kept 90 days; a `v*` tag promotes `main`'s bundles for that commit, verified against checksum and manifest, to a draft pre-release with notes from the changelog. Nothing is rebuilt for a release ([MACOS_PACKAGING.md](MACOS_PACKAGING.md#releases)) | the commit that adds this row |
 | Foundation | talos-pilot fork renamed to Freshkube; the GPUI Kit app is the only frontend | `c878fa9` |
 | 1. Core | Read-only listing and watching of any kind through the server-side Table API (kube 0.98), checked against a live cluster | `86294f9` |
 | 2a. Browse | KUBERNETES sidebar groups in Kubeli's order; one Resources page with a live list and watch, namespace picker and filter; Talos mode reads through the Talos-derived Kubernetes client | `361b9d5` |
@@ -128,16 +129,16 @@ These come from the GPUI evaluation plan (G09–G12) and the follow-ups it liste
 | F01 | Observations and evidence |
 | F02 | Shared resource store |
 | F03 | Consistent workload health |
-| F04 | Ownership and reconciliation |
+| F04 | Argo CD applications, ownership and reconciliation |
 | F05 | Traffic paths |
 | F06 | Planned changes |
 | F07 | Integration contracts |
-| F08 | One deep operator workflow |
+| F08 | CloudNativePG database investigation |
 | F09 | Change history |
 | F10 | Several clusters at once |
 | F11 | CLI and MCP explanations |
 
-The first semantic slice is F01 → F02 → F03, then F04 and F05. F06 is the first task that changes the cluster.
+The first semantic slice starts with F01 → F02 → F03 and Argo-first F04, with the minimum F07 contracts developed alongside CloudNativePG in F08. Its connected workflow is Application → database → failed backup or instance → storage/node evidence, with Talos inspection where available. F05 adds traffic diagnosis afterward. Flux and cert-manager, then Prometheus and Loki, are the next integration candidates detailed in [FUTURE_IDEAS.md](FUTURE_IDEAS.md#integration-rollout-after-cloudnativepg-and-argo-cd). F06 introduces reviewed resource mutations; it is separate from the existing explicit pod exec and port-forward sessions.
 
 ## History
 

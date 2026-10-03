@@ -54,5 +54,6 @@ jobs:
             target/macos/${{ matrix.target }}/*.sha256
             target/macos/${{ matrix.target }}/*.json
           if-no-files-found: error
-          retention-days: 14
+          # A release promotes these exact files, so keep them as long as GitHub allows.
+          retention-days: 90
           compression-level: 0
