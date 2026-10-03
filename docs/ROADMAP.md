@@ -71,13 +71,23 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 - The detail pane's recreated state (same name, new UID) is covered by UI tests only; no object on the cluster is recreated on its own. Checked live (2 October): with a node Lease open, 4 renewals in 50 seconds gave exactly 4 reads, and the 400 list batches about other leases gave none. An Event open when the API server expired it turned Deleted at once, kept its last-read document and was not read again.
 - Launched as an app bundle, the app couldn't reach a LAN cluster that the terminal-launched binary reached. The macOS packaging now includes `NSLocalNetworkUsageDescription`, a stable bundle identifier and a checked executable UUID. Apple's Local Network privacy rules are consistent with the difference, but metadata alone does not prove the cause or fix. Still open: launch the installed bundle on a chosen LAN context, grant permission and retry; verify reliable identity with Developer ID signing ([MACOS_PACKAGING.md](MACOS_PACKAGING.md#local-network-privacy)).
 
+## Next: the Console look
+
+The visual direction chosen on the design canvas: Console tokens and type, one status glyph language, a header with an icon rail and a contextual second column, dense problems-first tables and a pod detail that opens on the cause. The decisions, the open questions and the five-step build order are in [DESIGN.md](DESIGN.md).
+
+1. Tokens and type.
+2. Status glyphs.
+3. App frame.
+4. Tables, pods first.
+5. Pod detail.
+
 ## Then: a daily-use workflow
 
 These come from the GPUI evaluation plan (G09–G12) and the follow-ups it listed.
 
 - **Pod exec.** A Shell tab in a pod's pane, on an explicitly chosen container; node-debug pods stay out. Feasibility is settled: `alacritty_terminal` (Apache-2.0) with our own GPUI drawing keeps 60 frames a second through a 5 MB/s stream. The decisions and the four-step build order are in [POD_EXEC.md](POD_EXEC.md). All four steps are done, the live check included.
 - **Port forwarding.** A Ports tab in the pane of a pod, Service or workload, and every forward in the status bar. A forward lives until Stop, through page, pane and context changes, and binds only the loopback on a port derived from the remote one (3306 → 13306). The source review, the decisions and the three-step build order are in [PORT_FORWARD.md](PORT_FORWARD.md). All three steps are done, the live check included.
-- **One app for Talos and Kubernetes.** Talos becomes a Control plane section and a node pane. The sidebar reads Cluster (Overview, Nodes, Namespaces, Events), Resources and Control plane, under a context switcher and Search everything. The Overview, Nodes and the sidebar's badges join both sides through a Kubernetes summary that refreshes with the Talos overview. The code review, the decisions and the seven-step build order are in [HOLISTIC_LAYOUT.md](HOLISTIC_LAYOUT.md). Not started.
+- **One app for Talos and Kubernetes.** Talos becomes a Control plane section and a node pane. The sidebar reads Cluster (Overview, Nodes, Namespaces, Events), Resources and Control plane, under a context switcher and Search everything. The Overview, Nodes and the sidebar's badges join both sides through a Kubernetes summary that refreshes with the Talos overview. The code review, the decisions and the seven-step build order are in [HOLISTIC_LAYOUT.md](HOLISTIC_LAYOUT.md). All seven steps are done.
 - **Follow-ups**, each promoted to a step with acceptance criteria when it enters scope:
   - logs of several containers, or of a workload's pods, in one view: the same `LogView` with several sources and its source filter;
   - current CPU and memory from the metrics API;
