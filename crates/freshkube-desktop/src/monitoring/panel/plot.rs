@@ -141,6 +141,21 @@ impl Frame {
     }
 }
 
+/// What a series' line and area look like; series that share it draw as
+/// one path.
+#[derive(PartialEq)]
+struct Look<'a> {
+    color: Hsla,
+    fill: f32,
+    line: bool,
+    dashes: Option<&'a [f32]>,
+}
+
+struct Group<'a> {
+    look: Look<'a>,
+    members: Vec<&'a ChartSeries>,
+}
+
 impl Paint {
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
         let _span = crate::perf::span("monitoring.plot_paint");
@@ -329,7 +344,23 @@ impl Paint {
             .filter(|s| s.draw == DrawStyle::Bars)
             .count();
         let mut bar_slot = 0;
-        // The first series draws last, on top, as the legend lists it.
+        let key = |id: (u64, usize, u8)| {
+            let mut key = ShapeKey::new(id);
+            key.f32(frame.width.into())
+                .f32(frame.height.into())
+                .f32(frame.left.into());
+            key.finish()
+        };
+        // Lines and areas of one look draw as one path. Past the sixth
+        // series every line is the same grey, and the GPU rasterises each
+        // path batch in a pass of its own, so hundreds of series as hundreds
+        // of paths cost a frame dearly. The first series draws last, on top,
+        // as the legend lists it; a group draws where its topmost member
+        // would. While one series is focused every group fades and that
+        // series draws again on top, so the groups never change with focus
+        // and their paths are built once per answer.
+        let mut groups: Vec<Group> = Vec::new();
+        let mut dots = Vec::new();
         for (index, series) in self.chart.series.iter().enumerate().rev() {
             let focused = self.focus == Some(index);
             let fade = if self.focus.is_some() && !focused {
@@ -338,18 +369,11 @@ impl Paint {
                 1.
             };
             let color = series.ink.color(focused);
-            let key = |part: u8| {
-                let mut key = ShapeKey::new((self.revision, index, part));
-                key.f32(frame.width.into())
-                    .f32(frame.height.into())
-                    .f32(frame.left.into());
-                key.finish()
-            };
             if series.draw == DrawStyle::Bars {
                 let slot = bar_slot;
                 bar_slot += 1;
-                let path = caches.slot(index * 4).get(
-                    key(0),
+                let path = caches.slot(index).get(
+                    key((self.revision, index, 0)),
                     bounds.origin,
                     built(|| bars_path(series, &self.chart.xs, frame, slot, bars)),
                 );
@@ -358,57 +382,110 @@ impl Paint {
                 }
                 continue;
             }
-            if series.fill > 0. {
-                let path = caches.slot(index * 4 + 1).get(
-                    key(1),
-                    bounds.origin,
-                    built(|| area_path(series, &self.chart.xs, self.chart.curve, frame)),
-                );
-                if let Some(path) = path {
-                    window.paint_path(path, color.opacity(series.fill * fade));
-                }
-            }
-            if series.draw == DrawStyle::Line {
-                let path = caches.slot(index * 4 + 2).get(
-                    key(2),
-                    bounds.origin,
-                    built(|| line_path(series, &self.chart.xs, self.chart.curve, frame)),
-                );
-                if let Some(path) = path {
-                    window.paint_path(path, color.opacity(fade));
-                }
+            let look = Look {
+                color: series.ink.color(false),
+                fill: series.fill,
+                line: series.draw == DrawStyle::Line,
+                dashes: series.dashes.as_deref(),
+            };
+            match groups.iter_mut().find(|group| group.look == look) {
+                Some(group) => group.members.push(series),
+                None => groups.push(Group {
+                    look,
+                    members: vec![series],
+                }),
             }
             if series.points || series.draw == DrawStyle::Points || self.chart.xs.len() == 1 {
                 let r = px(if focused { 3. } else { 2.5 });
                 for (x, y) in self.chart.xs.iter().zip(&series.tops) {
                     if y.is_finite() {
                         let center = bounds.origin + point(frame.x(*x), frame.y(*y));
-                        window.paint_quad(
-                            fill(
-                                Bounds::centered_at(center, size(r * 2., r * 2.)),
-                                color.opacity(fade),
-                            )
-                            .corner_radii(r),
-                        );
+                        dots.push((center, r * 2., None, color.opacity(fade)));
                     }
                 }
             } else if let Some(last) = early_end(&series.tops) {
                 // A line that stops before the window's end ends in a dot.
                 let center =
                     bounds.origin + point(frame.x(self.chart.xs[last]), frame.y(series.tops[last]));
-                let (outer, inner) = (dp_px(10., window), dp_px(7., window));
-                window.paint_quad(
-                    fill(Bounds::centered_at(center, size(outer, outer)), surface)
-                        .corner_radii(outer / 2.),
+                dots.push((
+                    center,
+                    dp_px(7., window),
+                    Some(dp_px(10., window)),
+                    color.opacity(fade),
+                ));
+            }
+        }
+        let fade = if self.focus.is_some() {
+            FADED_OPACITY
+        } else {
+            1.
+        };
+        let focused = self
+            .focus
+            .and_then(|index| Some((index, self.chart.series.get(index)?)))
+            .filter(|(_, series)| series.draw != DrawStyle::Bars);
+        let first = self.chart.series.len();
+        let groups = groups
+            .iter()
+            .map(|group| (&group.look, &group.members[..], fade));
+        let focused = focused.map(|(index, series)| {
+            let look = Look {
+                color: series.ink.color(true),
+                fill: series.fill,
+                line: series.draw == DrawStyle::Line,
+                dashes: series.dashes.as_deref(),
+            };
+            (index, look, [series])
+        });
+        let focused = focused
+            .as_ref()
+            .map(|(index, look, members)| (*index, (look, &members[..], 1.)));
+        let shapes = groups
+            .enumerate()
+            .map(|(number, group)| (first + number * 2, group))
+            .chain(focused.map(|(index, group)| (first * 3 + index * 2, group)));
+        for (slot, (look, members, fade)) in shapes {
+            if look.fill > 0. {
+                let path = caches.slot(slot).get(
+                    key((self.revision, slot, 1)),
+                    bounds.origin,
+                    built(|| area_path(members, &self.chart.xs, self.chart.curve, frame)),
                 );
+                if let Some(path) = path {
+                    window.paint_path(path, look.color.opacity(look.fill * fade));
+                }
+            }
+            if look.line {
+                let path = caches.slot(slot + 1).get(
+                    key((self.revision, slot + 1, 2)),
+                    bounds.origin,
+                    built(|| {
+                        line_path(
+                            members,
+                            look.dashes,
+                            &self.chart.xs,
+                            self.chart.curve,
+                            frame,
+                        )
+                    }),
+                );
+                if let Some(path) = path {
+                    window.paint_path(path, look.color.opacity(fade));
+                }
+            }
+        }
+        // Dots after every path, so they don't split the paths' batches.
+        for (center, diameter, ring, color) in dots {
+            if let Some(ring) = ring {
                 window.paint_quad(
-                    fill(
-                        Bounds::centered_at(center, size(inner, inner)),
-                        color.opacity(fade),
-                    )
-                    .corner_radii(inner / 2.),
+                    fill(Bounds::centered_at(center, size(ring, ring)), surface)
+                        .corner_radii(ring / 2.),
                 );
             }
+            window.paint_quad(
+                fill(Bounds::centered_at(center, size(diameter, diameter)), color)
+                    .corner_radii(diameter / 2.),
+            );
         }
     }
 
@@ -498,23 +575,26 @@ fn trace(path: &mut PathBuilder, run: &[(usize, Point<Pixels>)], curve: Curve, s
 }
 
 fn line_path(
-    series: &ChartSeries,
+    members: &[&ChartSeries],
+    dashes: Option<&[f32]>,
     xs: &[f32],
     curve: Curve,
     frame: &Frame,
 ) -> Option<Path<Pixels>> {
-    let mut path = PathBuilder::stroke(px(if series.dashes.is_some() { 1.5 } else { 2. }));
-    if let Some(dashes) = &series.dashes {
+    let mut path = PathBuilder::stroke(px(if dashes.is_some() { 1.5 } else { 2. }));
+    if let Some(dashes) = dashes {
         let dashes: Vec<Pixels> = dashes.iter().map(|d| px(*d)).collect();
         path = path.dash_array(&dashes);
     }
     let mut any = false;
-    for run in runs(xs, &series.tops, frame) {
-        if run.len() < 2 {
-            continue;
+    for series in members {
+        for run in runs(xs, &series.tops, frame) {
+            if run.len() < 2 {
+                continue;
+            }
+            trace(&mut path, &run, curve, true);
+            any = true;
         }
-        trace(&mut path, &run, curve, true);
-        any = true;
     }
     any.then(|| path.build().ok()).flatten()
 }
@@ -522,39 +602,41 @@ fn line_path(
 /// The area under a line, down to its baseline or, stacked, to the series
 /// below.
 fn area_path(
-    series: &ChartSeries,
+    members: &[&ChartSeries],
     xs: &[f32],
     curve: Curve,
     frame: &Frame,
 ) -> Option<Path<Pixels>> {
     let mut path = PathBuilder::fill();
     let mut any = false;
-    for run in runs(xs, &series.tops, frame) {
-        if run.len() < 2 {
-            continue;
+    for series in members {
+        for run in runs(xs, &series.tops, frame) {
+            if run.len() < 2 {
+                continue;
+            }
+            trace(&mut path, &run, curve, true);
+            let lower: Vec<(usize, Point<Pixels>)> = run
+                .iter()
+                .rev()
+                .map(|(index, top)| {
+                    let base = series
+                        .bases
+                        .as_ref()
+                        .and_then(|bases| bases.get(*index).copied())
+                        .filter(|base| base.is_finite())
+                        .unwrap_or(series.baseline);
+                    (*index, point(top.x, frame.y(base.clamp(-0.05, 1.05))))
+                })
+                .collect();
+            let edge = if series.bases.is_some() {
+                curve
+            } else {
+                Curve::Linear
+            };
+            trace(&mut path, &lower, edge, false);
+            path.close();
+            any = true;
         }
-        trace(&mut path, &run, curve, true);
-        let lower: Vec<(usize, Point<Pixels>)> = run
-            .iter()
-            .rev()
-            .map(|(index, top)| {
-                let base = series
-                    .bases
-                    .as_ref()
-                    .and_then(|bases| bases.get(*index).copied())
-                    .filter(|base| base.is_finite())
-                    .unwrap_or(series.baseline);
-                (*index, point(top.x, frame.y(base.clamp(-0.05, 1.05))))
-            })
-            .collect();
-        let edge = if series.bases.is_some() {
-            curve
-        } else {
-            Curve::Linear
-        };
-        trace(&mut path, &lower, edge, false);
-        path.close();
-        any = true;
     }
     any.then(|| path.build().ok()).flatten()
 }

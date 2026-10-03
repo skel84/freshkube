@@ -171,10 +171,18 @@ impl PanelView {
             p.ink_2.opacity(if cursor.own { 0.7 } else { 0.35 }),
             p.surface,
         );
+        // A dot on each line, or past the readout's rows on the lines it
+        // names and the focused one: hundreds of dots stacked on one
+        // crosshair say nothing and cost every frame of the hover.
+        let few = chart.series.len() <= READOUT_ROWS;
         let dots: Vec<(f32, gpui_kit::Hsla)> = chart
             .series
             .iter()
             .enumerate()
+            .filter(|(series, _)| {
+                few || self.focus() == Some(*series)
+                    || cursor.rows.iter().any(|row| row.series == *series)
+            })
             .filter_map(|(series, line)| {
                 let y = *line.tops.get(cursor.index)?;
                 let focused = self.focus() == Some(series);

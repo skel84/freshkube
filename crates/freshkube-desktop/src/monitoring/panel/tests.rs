@@ -225,8 +225,9 @@ fn the_legend_fades_other_series_on_hover_and_a_click_keeps_one(cx: &mut TestApp
         .unwrap();
     assert_eq!(focus(cx), (Some(1), Some(1)));
 
-    // Fading draws the same shapes in other colours.
-    assert_eq!(probe::count("monitoring-path"), paths);
+    // Fading draws the same shapes in another opacity; only the focused
+    // series is built again, its line and area alone, to draw on top.
+    assert!(probe::count("monitoring-path") <= paths + 2);
 
     // Clicking it again lets go.
     cx.update_window(handle, |_, window, cx| window.click(row.clone(), cx))
@@ -441,4 +442,60 @@ fn markers_on_the_window_draw_and_the_readout_names_the_one_under_the_pointer(
     });
     let labels = cx.read(|cx| panels[cpu].read(cx).marker_labels());
     assert_eq!(labels, ["worker-2 NotReady"]);
+}
+
+/// A chart of forty pods, pod n's values about 3n, mounted unanswered, and
+/// its answer.
+fn crowded(
+    cx: &mut TestAppContext,
+) -> (
+    AnyWindowHandle,
+    Vec<Entity<PanelView>>,
+    freshkube_core::monitoring::PanelResult,
+) {
+    use freshkube_core::monitoring::model::data::{Frame, Series};
+    let dashboard = Dashboard::parse(
+        r#"{
+          "title": "Crowded",
+          "panels": [{
+            "type": "timeseries", "title": "Goroutines",
+            "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
+            "fieldConfig": {"defaults": {"custom": {"fillOpacity": 10}}},
+            "targets": [{"refId": "A", "expr": "go_goroutines", "legendFormat": "{{pod}}"}]
+          }]
+        }"#,
+    )
+    .unwrap();
+    let specs: Vec<Rc<PanelSpec>> = dashboard.panels.iter().cloned().map(Rc::new).collect();
+    let (handle, panels) = mount(cx, specs);
+    let times: Vec<f64> = (0..72).map(|n| (END - 6 * 3600 + n * 300) as f64).collect();
+    let series = (0..40)
+        .map(|pod| Series {
+            name: format!("app-{pod}"),
+            query: "A".into(),
+            field: None,
+            labels: vec![("pod".into(), format!("app-{pod}"))],
+            values: (0..72).map(|n| (pod * 3 + n % 7) as f64).collect(),
+        })
+        .collect();
+    let result = freshkube_core::monitoring::PanelResult {
+        frame: Frame { times, series },
+        warnings: Vec::new(),
+        expressions: Vec::new(),
+    };
+    (handle, panels, result)
+}
+
+/// Forty series past the six colours: the grey lines draw as one path and
+/// the grey areas as another, not one of each per series.
+#[gpui_kit::test]
+fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) {
+    let (handle, panels, result) = crowded(cx);
+    let before = probe::count("monitoring-path");
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(result, window_range(), cx)));
+    frame(cx, handle);
+    let series = cx.read(|cx| panels[0].read(cx).chart().unwrap().series.len());
+    assert_eq!(series, 40);
+    // Six coloured series and the grey rest, each a line and an area.
+    assert_eq!(probe::count("monitoring-path") - before, 7 * 2);
 }
