@@ -181,8 +181,13 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                 }
             })
             .detach();
+            #[cfg(not(any(debug_assertions, feature = "stress")))]
+            let window_size = size(px(1320.), px(860.));
+            #[cfg(any(debug_assertions, feature = "stress"))]
+            let window_size =
+                startup::window_size(std::env::var("FRESHKUBE_WINDOW_SIZE").ok().as_deref());
             let window_options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1320.), px(860.)), cx)),
+                window_bounds: Some(WindowBounds::centered(window_size, cx)),
                 window_min_size: Some(size(px(760.), px(560.))),
                 titlebar: Some(TitlebarOptions {
                     title: Some(
@@ -933,6 +938,14 @@ impl Pilot {
     /// API of the Talos cluster. Its id covers what picks the cluster and
     /// its credentials, not the target node, so changing node keeps a watch.
     fn kube_source(&self) -> Option<KubeSource> {
+        if self.fixture {
+            let context = self.applied.context.clone()?;
+            return Some(KubeSource {
+                id: resources::example::connection(&context),
+                context,
+                access: KubeAccess::Example,
+            });
+        }
         if let Some(kube) = &self.kubernetes_only {
             let access = kube.access()?.clone();
             return Some(KubeSource {
@@ -942,13 +955,6 @@ impl Pilot {
             });
         }
         let context = self.applied.context.clone()?;
-        if self.fixture {
-            return Some(KubeSource {
-                id: resources::example::connection(&context),
-                context,
-                access: KubeAccess::Example,
-            });
-        }
         let cluster = self.overview.data()?;
         let mut collector =
             ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));

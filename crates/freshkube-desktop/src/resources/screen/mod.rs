@@ -331,6 +331,7 @@ pub(crate) struct ResourcesScreen {
     updated: Option<SystemTime>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    page_scroll: ScrollHandle,
     watch: Option<(OwnedJob, Task<()>)>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
     tick: Option<Task<()>>,
@@ -430,7 +431,11 @@ impl ResourcesScreen {
                 window,
                 |this, _, event: &DetailEvent, window, cx| match event {
                     DetailEvent::Closed => this.close_pane(window, cx),
-                    DetailEvent::Leave => window.focus(&this.focus, cx),
+                    DetailEvent::Leave => {
+                        this.page_scroll.set_offset(point(px(0.), px(0.)));
+                        window.focus(&this.focus, cx);
+                        cx.notify();
+                    }
                     DetailEvent::Link(intent) => cx.emit(intent.clone()),
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
@@ -459,6 +464,7 @@ impl ResourcesScreen {
             updated: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            page_scroll: ScrollHandle::new(),
             watch: None,
             namespace_job: None,
             tick: None,
@@ -901,6 +907,7 @@ impl ResourcesScreen {
             detail.set_context(context, cx);
             detail.open(target, access, &version, delay, cx)
         });
+        self.page_scroll.scroll_to_bottom();
         cx.notify();
     }
 
@@ -951,6 +958,7 @@ impl ResourcesScreen {
 
     /// Closes the pane and clears the selection it showed.
     fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
         self.detail.update(cx, |detail, cx| detail.close(cx));
         self.projection.select(&self.store, None);
         self.restore = None;
@@ -1106,6 +1114,7 @@ impl ResourcesScreen {
         if !self.kind.namespaced || self.embedded {
             return;
         }
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
         let focus = self.namespace_select.focus_handle(cx);
         window.focus(&focus, cx);
         focus.dispatch_action(&base::actions::Confirm { secondary: false }, window, cx);

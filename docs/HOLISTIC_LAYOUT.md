@@ -1,6 +1,6 @@
 # One app for Talos and Kubernetes
 
-Today the sidebar is a Talos app with Kubernetes added below it. Overview, Services, Logs and the NODE and CLUSTER sections read the Talos API. Kubernetes is a block of collapsible groups near the bottom. The Overview knows nothing about pods or workloads, and a TARGET picker in the title bar decides which node half the pages show. This file records what the code review found, the decisions taken with the user, and the design the build follows. The [roadmap](ROADMAP.md) tracks its progress.
+The sidebar joins Talos and Kubernetes under Cluster, Resources and Control plane. Overview and Health share the Kubernetes summary; Nodes joins both layers and holds machine inspection. Pod relationships and Search everything use the same object navigation path. This file records the starting review, the decisions taken with the user and the implemented design. The [roadmap](ROADMAP.md) tracks the commits.
 
 The mockups are in `~/Downloads/freshkube-holistic-mockups/` and are not committed:
 - `png/` holds 2× screenshots at 1280 × 880;
@@ -8,7 +8,13 @@ The mockups are in `~/Downloads/freshkube-holistic-mockups/` and are not committ
 
 Screen 00 is today. Screens 01–06 are the target: 01 Overview, 02 Nodes, 03 the node pane, 04 a pod's cross-links, 05 search, 06 Kubernetes-only. They show intent, not pixels. Where this file and a mockup differ, this file wins.
 
-## What the code has today
+## Build state
+
+All seven steps are implemented, with their acceptance tests and local commits in the roadmap. Step 7 checks the resulting fixture views against screens 01–06. The summary cost gate and its final rerun are recorded in PERFORMANCE.md. The starting review is kept as history; it does not describe the current module paths.
+
+The app uses its own Kit components, palette and text scale. Table is the default Nodes view, node tabs keep their state, every object link respects a running shell, and search reads metadata only. No cluster mutations or live-cluster verification were added.
+
+## Before the build
 
 Reviewed on 2 October 2026. Paths are under `crates/freshkube-desktop/src` (desktop) and `crates/freshkube-core/src` (core).
 
@@ -393,3 +399,17 @@ These have a default, so they don't block a step. Change one only by updating th
 - **Pod relationship lists** show at most 200 matching Services and 200 containers, with a count when truncated. Owner kinds outside the built-ins resolve through their exact API-version discovery document, so no plural or scope is guessed.
 
 - **Search matching** ignores case and uses substring matches on names and namespace/name. Namespaces join Config; Namespaces and Events also remain local page destinations. Refused answers share the 30-second reopen cache, and a new connection clears it. Metadata negotiation has no full-object JSON fallback.
+
+- **Fixture visual entry points** add `node-overview`, `pod-overview`, `search` and `kubernetes-only` to `FRESHKUBE_PAGE`. Node Overview picks a node with a problem; Pod Overview picks a crash-looping pod; search starts with grafana. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select the review conditions without saving settings. Kubernetes-only fixture navigation keeps using the example store and never opens kubeconfig files.
+
+- **Short Resources pages** scroll the frame below 620 dp of window height when the list stacks above the pane. Opening an object reveals the pane; closing returns the frame to the top. This keeps the existing list and pane minimum sizes usable at 760 × 560 with 20 px text, where a fixed stack clipped the tabs and Runs on link.
+
+- **Narrow Nodes tables** keep their columns in a horizontally scrolling frame, including the header. Long names stay on one line in tables and cards, with the full name in the row tooltip and accessible label. Overview card contents fill the Kit button so card borders and headings align across each grid row.
+
+## Visual check
+
+Fixture captures cover all six target views at 1280 × 880 and the 760 × 560 minimum, in light and dark at text sizes 14 and 20: 48 combinations under `target/holistic-layout/`. The app was opened with the documented page, theme, size and text-size entry points; only its own fixture window was captured. The views were compared with mockups 01–06 for hierarchy, wording, navigation and the relationships shown, using the app's own palette and components.
+
+The check found and fixed clipped long node names, mismatched Overview card alignment, inaccessible right-hand Nodes columns and a short stacked Resources pane whose tabs were outside the window. UI tests cover those corrections, minimum-window navigation at text sizes 12, 14 and 20 in both themes, and Kubernetes-only fixture context changes without accessing credentials or the network. Existing keyboard, shell, forward and object-link tests remain in the workspace gate.
+
+The first final performance attempt was refused because the macOS screen was locked. Once it was unlocked, the 40-second summary rerun completed: main-thread apply was 7.01 ms against the 16 ms budget, with a maximum main-thread stall of 11.09 ms. The all-page refresh stays enabled; PERFORMANCE.md holds both runs. No live-cluster check was run; that remains the user's follow-up.

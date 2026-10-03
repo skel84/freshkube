@@ -330,6 +330,7 @@ impl ResourcesScreen {
             .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
             .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
             .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+                view.page_scroll.set_offset(point(px(0.), px(0.)));
                 let focus = view.query.read(cx).focus_handle(cx);
                 window.focus(&focus, cx);
             }))
@@ -508,6 +509,8 @@ impl Render for ResourcesScreen {
         let _span = crate::perf::span("table.render");
         let list = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
         let list = self.keyed(list, cx);
+        let short = content_width(window) < SPLIT_WIDTH
+            && window.viewport_size().height < dp_px(620., window);
         let body = if self.detail.read(cx).target_identity().is_some() {
             // Cached: list updates and age ticks don't redraw the pane.
             let pane =
@@ -545,12 +548,22 @@ impl Render for ResourcesScreen {
                             .child(pane),
                     )
             };
-            v_flex().flex_1().min_h_0().child(split).into_any_element()
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .when(short, |this| {
+                    this.min_h(dp(LIST_MIN_HEIGHT + PANE_MIN_HEIGHT + SPLIT_GAP))
+                })
+                .child(split)
+                .into_any_element()
         } else {
             list
         };
         v_flex()
             .id("resources-page")
+            .test_support()
+            .track_scroll(&self.page_scroll)
+            .when(short, |this| this.overflow_y_scroll())
             .size_full()
             .min_h_0()
             .px(dp(PAGE_PADDING))

@@ -5,6 +5,7 @@ use crate::{
     ui::{MONO_FONT, dp, dp_px},
 };
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     assets::IconName,
     component::{
@@ -180,9 +181,12 @@ impl Pilot {
             )
             .track_scroll(&self.node_workspace.scroll)
             .size_full();
-        v_flex()
+        let table = v_flex()
             .size_full()
             .min_h_0()
+            .when(!compact && !cards, |this| {
+                this.min_w(dp(if talos { 960. } else { 470. }))
+            })
             .when(!compact && !cards, |this| {
                 this.child(
                     h_flex()
@@ -202,12 +206,28 @@ impl Pilot {
                         })
                         .child(div().w(dp(50.)).child(ui::caption("Pods", cx)))
                         .when(talos, |this| {
-                            this.child(div().w(dp(140.)).child(ui::caption("System services", cx)))
+                            this.child(
+                                div()
+                                    .id("node-table-services")
+                                    .test_support()
+                                    .w(dp(140.))
+                                    .child(ui::caption("System services", cx)),
+                            )
                         }),
                 )
             })
-            .child(list)
-            .into_any_element()
+            .child(list);
+        if !compact && !cards {
+            div()
+                .id("nodes-table-scroll")
+                .test_support()
+                .size_full()
+                .overflow_x_scroll()
+                .child(table)
+                .into_any_element()
+        } else {
+            table.into_any_element()
+        }
     }
 
     fn joined_node_row(
@@ -230,6 +250,12 @@ impl Pilot {
                         .child(ui::tag(row.tone, None, row.ready, cx))
                         .child(
                             div()
+                                .flex_1()
+                                .min_w_0()
+                                .whitespace_nowrap()
+                                .truncate()
+                                .id("node-row-name")
+                                .test_support()
                                 .font_family(MONO_FONT)
                                 .text_size(dp(12.))
                                 .child(row.name.clone()),
@@ -246,6 +272,11 @@ impl Pilot {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w_0()
+                                .whitespace_nowrap()
+                                .truncate()
+                                .id("node-row-name")
+                                .test_support()
                                 .font_family(MONO_FONT)
                                 .child(row.name.clone()),
                         )
@@ -287,6 +318,10 @@ impl Pilot {
                     div()
                         .flex_1()
                         .min_w(dp(170.))
+                        .whitespace_nowrap()
+                        .truncate()
+                        .id("node-row-name")
+                        .test_support()
                         .font_family(MONO_FONT)
                         .child(row.name.clone()),
                 )
@@ -312,12 +347,14 @@ impl Pilot {
                 })
                 .into_any_element()
         };
+        let name = row.name.clone();
         div()
             .id(row.id.clone())
             .test_support()
             .role(gpui_kit::Role::ListBoxOption)
             .aria_selected(selected)
             .aria_label(row.name.clone())
+            .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
             .when(cards, |this| {
                 this.h(dp(232.))
                     .rounded(px(10.))

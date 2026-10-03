@@ -51,6 +51,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout step 5: pod and owner cross-links, shared Runs on, container instances and kubelet Pods | Done | the commit that adds this row |
 | Holistic layout step 6: Search everything, local destinations and metadata-only names with bounded groups and reopen cache | Done | the commit that adds this row |
 | Holistic layout step 7 preparation: isolate the existing debug page entry points without changing navigation | Done | the commit that adds this row |
+| Holistic layout step 7: docs, 48 fixture visual combinations, minimum-window navigation and clipping regressions | Done | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 

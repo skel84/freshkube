@@ -87,6 +87,9 @@ impl Pilot {
     /// Reads the kubeconfig files and lists their contexts, then connects
     /// to the one asked for, or else the current one.
     pub(super) fn load_kube_contexts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.fixture {
+            return;
+        }
         let Some(kube) = self.kubernetes_only.as_ref() else {
             return;
         };
@@ -170,6 +173,13 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.fixture {
+            self.applied.context = context;
+            self.invalidate_target(window, cx);
+            self.refresh_summary(window, cx);
+            self.prepare_context_display(window, cx);
+            return;
+        }
         let Some(kube) = self.kubernetes_only.as_mut() else {
             return;
         };
@@ -199,6 +209,9 @@ impl Pilot {
     /// whether the context answers. After a failure, the page lists again
     /// once it does.
     pub(super) fn check_kube_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.fixture {
+            return;
+        }
         let Some(kube) = self.kubernetes_only.as_mut() else {
             return;
         };
@@ -277,7 +290,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kubernetes_only.is_none() {
+        if self.fixture || self.kubernetes_only.is_none() {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {

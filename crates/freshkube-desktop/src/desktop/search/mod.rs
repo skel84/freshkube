@@ -61,6 +61,20 @@ impl Search {
             jobs: Vec::new(),
         }
     }
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    pub(super) fn startup_query(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.query = query.into();
+        self.rebuild();
+        self.command
+            .update(cx, |command, cx| command.set_query(query, window, cx));
+        cx.notify();
+    }
+
     fn close(&mut self, cx: &mut Context<Self>) {
         if !self.open {
             return;

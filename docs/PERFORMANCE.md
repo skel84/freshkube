@@ -168,3 +168,14 @@ Release build, 40 s, with the first 5 s left out; two periodic refreshes, while 
 Process CPU was 4.76% at the median and 106.01% at the 99th percentile; resident memory ended at 397 MB and peaked at 404 MB, including the synthetic server in the same process. With only two refresh samples the percentiles select the larger sample, as the stress reporter does; this is a cost gate, not a latency distribution.
 
 The main-thread apply stayed under its 16 ms budget, so the summary keeps its all-page refresh. No visibility fallback was needed. The raw report is `target/stress/summary-20k.log`.
+
+
+The completed layout was checked again with `FRESHKUBE_STRESS_SECONDS=40 scripts/stress.sh summary-final-20k summary`, after an initial attempt was refused because the screen was locked. The rerun used the unlocked screen, opened Health and had no concurrent build or capture. It includes the joined node rows, card and attention derivation added after the first gate. The first 5 s were excluded, leaving two periodic refresh samples.
+
+| Span | Median / 99th / max, completed layout |
+| --- | --- |
+| Collection and derivation on Tokio | 724.19 / 724.19 / 724.19 ms |
+| Apply on the main thread | 7.01 / 7.01 / 7.01 ms |
+| Main-thread stalls | 0.48 / 1.19 / 11.09 ms |
+
+CPU was 4.18% at the median and 87.80% at the 99th percentile and maximum. Resident memory ended at 385 MB and peaked at 430 MB, including the synthetic server. The 7.01 ms apply still meets the 16 ms budget, so the all-page refresh remains enabled. The same two-sample percentile caveat applies. The raw report is `target/stress/summary-final-20k.log`.
