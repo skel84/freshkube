@@ -16,7 +16,11 @@ use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
 
 /// Readout rows drawn at most; the rest are counted.
-const READOUT_ROWS: usize = 10;
+pub(super) const READOUT_ROWS: usize = 10;
+/// One readout row's height, and the readout's top offset, padding and time
+/// line around them, in dp.
+const ROW: f32 = 18.;
+const CHROME: f32 = 10. + 2. * 8. + ROW + 4.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Cursor {
@@ -32,6 +36,8 @@ pub(crate) struct Cursor {
     pub own: bool,
     pub time: SharedString,
     pub rows: Vec<Row>,
+    /// Shown series past `rows`; when there are any, `rows` holds the
+    /// highest values.
     pub more: usize,
     /// The marker under the pointer, named first in the readout.
     pub marker: Option<usize>,
@@ -51,7 +57,7 @@ impl PanelView {
         let cursor = time.and_then(|time| {
             let chart = self.chart()?;
             let index = nearest_time(&chart.times, time)?;
-            self.cursor_at(&chart, index, false)
+            self.cursor_at(&chart, index, false, READOUT_ROWS)
         });
         if self.cursor != cursor {
             self.cursor = cursor;
@@ -75,10 +81,16 @@ impl PanelView {
         let index = inside
             .then(|| nearest_x(&chart.xs, x / geometry.width))
             .flatten();
-        let mut cursor = index.and_then(|index| self.cursor_at(&chart, index, true));
+        // As many rows as the plot is tall, so a short panel never cuts the
+        // readout off.
+        let room = (geometry.size.height - dp_px(CHROME, window)) / dp_px(ROW, window);
+        let reach = dp_px(markers::REACH, window) / geometry.width;
+        let marker = markers::nearest(&self.placed, x / geometry.width, reach);
+        let fit = (room.max(0.) as usize).saturating_sub(usize::from(marker.is_some()));
+        let mut cursor =
+            index.and_then(|index| self.cursor_at(&chart, index, true, fit.clamp(1, READOUT_ROWS)));
         if let Some(cursor) = &mut cursor {
-            let reach = dp_px(markers::REACH, window) / geometry.width;
-            cursor.marker = markers::nearest(&self.placed, x / geometry.width, reach);
+            cursor.marker = marker;
         }
         let key = |c: &Cursor| (c.index, c.own, c.marker);
         if self.cursor.as_ref().map(key) == cursor.as_ref().map(key) {
@@ -104,28 +116,41 @@ impl PanelView {
         }
     }
 
-    fn cursor_at(&self, chart: &Chart, index: usize, own: bool) -> Option<Cursor> {
+    /// The cursor at sample `index`, naming at most `fit` series: all of them
+    /// in legend order when they fit, else the highest values and the
+    /// focused series.
+    fn cursor_at(&self, chart: &Chart, index: usize, own: bool, fit: usize) -> Option<Cursor> {
         let geometry = self.geometry.get();
         if geometry.width <= px(0.) {
             return None;
         }
         let x = geometry.left + geometry.width * *chart.xs.get(index)?;
-        let shown: Vec<Row> = chart
-            .series
-            .iter()
-            .enumerate()
-            .filter(|(series, _)| chart.legend.rows.iter().any(|row| row.series == *series))
-            .map(|(series, line)| Row {
-                series,
-                value: derive::format(
-                    &line.field,
-                    line.values.get(index).copied().unwrap_or(f64::NAN),
-                )
-                .into(),
-                name: line.name.clone(),
-            })
+        let value = |series: usize| {
+            let line = &chart.series[series];
+            line.values.get(index).copied().unwrap_or(f64::NAN)
+        };
+        let mut shown: Vec<usize> = (0..chart.series.len())
+            .filter(|series| !chart.series[*series].unlisted)
             .collect();
-        let more = shown.len().saturating_sub(READOUT_ROWS);
+        let more = shown.len().saturating_sub(fit);
+        if more > 0 {
+            // Highest first, a missing value last; the focused series keeps
+            // the last row when it falls below.
+            let focus = self.focus().filter(|series| shown.contains(series));
+            shown.sort_by(|a, b| {
+                let (a, b) = (value(*a), value(*b));
+                a.is_nan().cmp(&b.is_nan()).then(b.total_cmp(&a))
+            });
+            shown.truncate(fit);
+            if let Some(focus) = focus.filter(|focus| !shown.contains(focus)) {
+                shown[fit - 1] = focus;
+            }
+        }
+        let shown = shown.into_iter().map(|series| Row {
+            series,
+            value: derive::format(&chart.series[series].field, value(series)).into(),
+            name: chart.series[series].name.clone(),
+        });
         Some(Cursor {
             index,
             x,
@@ -133,7 +158,7 @@ impl PanelView {
             width: geometry.size.width,
             own,
             time: when(chart.times[index]).into(),
-            rows: shown.into_iter().take(READOUT_ROWS).collect(),
+            rows: shown.collect(),
             more,
             marker: None,
         })
@@ -229,10 +254,50 @@ impl PanelView {
             .into_any_element()
     }
 
+    /// The time, then a row a series in three aligned columns: swatch,
+    /// value and name. When rows are left out, the time line says how many
+    /// it ranks from.
     fn render_readout(&self, chart: &Chart, cursor: &Cursor, cx: &Context<Self>) -> AnyElement {
         let p = palette(cx);
         let focus = self.focus();
         let gap = dp(12.);
+        let cell = || h_flex().h(dp(ROW)).flex_none();
+        let column = |rows: Vec<AnyElement>| v_flex().flex_none().children(rows);
+        let mut swatches = Vec::with_capacity(cursor.rows.len());
+        let mut values = Vec::with_capacity(cursor.rows.len());
+        let mut names = Vec::with_capacity(cursor.rows.len());
+        for row in &cursor.rows {
+            let color = chart.series[row.series]
+                .ink
+                .color(focus == Some(row.series));
+            swatches.push(
+                cell()
+                    .child(div().w(dp(12.)).h(px(2.)).rounded(px(1.)).bg(color))
+                    .into_any_element(),
+            );
+            values.push(
+                cell()
+                    .justify_end()
+                    .text_size(dp(12.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(p.ink)
+                    .whitespace_nowrap()
+                    .child(row.value.clone())
+                    .into_any_element(),
+            );
+            names.push(
+                cell()
+                    .max_w(dp(240.))
+                    .text_size(dp(11.))
+                    .text_color(if focus == Some(row.series) {
+                        p.ink
+                    } else {
+                        p.muted
+                    })
+                    .child(div().truncate().child(row.name.clone()))
+                    .into_any_element(),
+            );
+        }
         v_flex()
             .id(self.element_id("readout"))
             .absolute()
@@ -244,7 +309,6 @@ impl PanelView {
                     this.left(cursor.x).ml(gap)
                 }
             })
-            .gap(dp(3.))
             .px(dp(10.))
             .py(dp(8.))
             .rounded(px(8.))
@@ -252,12 +316,22 @@ impl PanelView {
             .border_color(p.line_strong)
             .bg(p.hover)
             .shadow_lg()
+            .font_family(ui::MONO_FONT)
             .child(
-                div()
-                    .font_family(ui::MONO_FONT)
+                h_flex()
+                    .h(dp(ROW))
+                    .mb(dp(4.))
+                    .gap(dp(16.))
+                    .justify_between()
                     .text_size(dp(11.))
-                    .text_color(p.muted)
-                    .child(cursor.time.clone()),
+                    .child(div().text_color(p.muted).child(cursor.time.clone()))
+                    .when(cursor.more > 0, |this| {
+                        this.child(div().text_color(p.faint).child(format!(
+                            "top {} of {}",
+                            cursor.rows.len(),
+                            cursor.rows.len() + cursor.more
+                        )))
+                    }),
             )
             .children(
                 cursor
@@ -265,48 +339,14 @@ impl PanelView {
                     .and_then(|marker| self.placed.get(marker))
                     .map(|marker| markers::readout_row(marker, &p)),
             )
-            .children(cursor.rows.iter().map(|row| {
-                let color = chart.series[row.series]
-                    .ink
-                    .color(focus == Some(row.series));
+            .child(
                 h_flex()
+                    .items_start()
                     .gap(dp(8.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(dp(12.))
-                            .h(px(2.))
-                            .rounded(px(1.))
-                            .bg(color),
-                    )
-                    .child(
-                        div()
-                            .min_w(dp(40.))
-                            .font_family(ui::MONO_FONT)
-                            .text_size(dp(12.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(p.ink)
-                            .whitespace_nowrap()
-                            .child(row.value.clone()),
-                    )
-                    .child(
-                        div()
-                            .max_w(dp(220.))
-                            .truncate()
-                            .font_family(ui::MONO_FONT)
-                            .text_size(dp(11.))
-                            .text_color(p.muted)
-                            .child(row.name.clone()),
-                    )
-            }))
-            .when(cursor.more > 0, |this| {
-                this.child(
-                    div()
-                        .text_size(dp(11.))
-                        .text_color(p.faint)
-                        .child(format!("and {} more", cursor.more)),
-                )
-            })
+                    .child(column(swatches))
+                    .child(column(values))
+                    .child(column(names).min_w_0()),
+            )
             .test_support()
             .into_any_element()
     }

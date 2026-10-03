@@ -499,3 +499,47 @@ fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) 
     // Six coloured series and the grey rest, each a line and an area.
     assert_eq!(probe::count("monitoring-path") - before, 7 * 2);
 }
+
+/// Past what fits, the readout names the highest values and the picked
+/// series, and stays inside the plot.
+#[gpui_kit::test]
+fn a_crowded_readout_ranks_the_highest_values_and_fits_the_plot(cx: &mut TestAppContext) {
+    let (handle, panels, result) = crowded(cx);
+    cx.update(|cx| {
+        panels[0].update(cx, |panel, cx| {
+            panel.set_result(result, window_range(), cx);
+            panel.toggle_picked(2, cx);
+        })
+    });
+    frame(cx, handle);
+    let (plot, readout): (gpui_kit::SharedString, gpui_kit::SharedString) = (
+        "monitoring-panel-0-plot".into(),
+        "monitoring-panel-0-readout".into(),
+    );
+    cx.update_window(handle, |_, window, cx| {
+        let bounds = window.find(plot.clone()).bounds();
+        window.dispatch_event(
+            gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                position: bounds.center(),
+                pressed_button: None,
+                modifiers: Default::default(),
+            }),
+            cx,
+        );
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    let cursor = cx.read(|cx| panels[0].read(cx).cursor.clone()).unwrap();
+    let series: Vec<usize> = cursor.rows.iter().map(|row| row.series).collect();
+    let fit = series.len();
+    assert!((3..=cursor::READOUT_ROWS).contains(&fit), "{series:?}");
+    assert_eq!(cursor.more, 40 - fit);
+    let mut expected: Vec<usize> = (0..fit - 1).map(|n| 39 - n).collect();
+    expected.push(2);
+    assert_eq!(series, expected);
+    cx.update_window(handle, |_, window, _| {
+        let (plot, readout) = (window.find(plot).bounds(), window.find(readout).bounds());
+        assert!(readout.bottom() <= plot.bottom(), "{readout:?} in {plot:?}");
+    })
+    .unwrap();
+}

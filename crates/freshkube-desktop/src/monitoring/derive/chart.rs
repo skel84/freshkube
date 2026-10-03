@@ -80,6 +80,8 @@ pub(crate) struct ChartSeries {
     /// The values as answered, for the cursor.
     pub values: Rc<[f64]>,
     pub field: Rc<FieldSpec>,
+    /// Hidden from the legend, and so from the cursor's readout.
+    pub unlisted: bool,
 }
 
 /// A dashed threshold line.
@@ -247,6 +249,7 @@ pub(super) fn chart(
                     || draw == DrawStyle::Points,
                 values: s.values.clone().into(),
                 field: Rc::new(s.field.clone()),
+                unlisted: s.style.hidden_in_legend,
             }
         })
         .collect();
