@@ -68,6 +68,13 @@ snapshots, at most eight active snapshots and a 100,000-event replay ring shared
 by typed and Table watches. A replay gap produces a 410 rather than missing
 deletes silently. Process memory includes that API and its replay ring.
 
+When local compilation is contended, a manual CI run can build the native Intel
+benchmark executable: `gh workflow run ci.yml --ref <branch> -f native_stress=true`.
+Download its `freshkube-stress-x86_64-apple-darwin` artifact, restore executable
+permission with `chmod +x`, and select it with `FRESHKUBE_STRESS_BINARY`. CI builds
+but does not run the GUI benchmark; it still needs the local visible window.
+Record the compiler and commit when comparing saved binaries.
+
 When a number looks wrong, profile the run with macOS `sample`:
 
 ```sh
@@ -198,3 +205,187 @@ The completed layout was checked again with `FRESHKUBE_STRESS_SECONDS=40 scripts
 | Main-thread stalls | 0.48 / 1.19 / 11.09 ms |
 
 CPU was 4.18% at the median and 87.80% at the 99th percentile and maximum. Resident memory ended at 385 MB and peaked at 430 MB, including the synthetic server. The 7.01 ms apply met the 16 ms budget, so the all-page refresh remained enabled. The same two-sample percentile caveat applies. The raw report is `target/stress/summary-final-20k.log`.
+
+### Watch-backed summary: read-model acceptance, 4 October 2026
+
+The shell now retains compact facts for nine kinds and derives on changes. This
+is an intentional all-page read model: Overview, Attention, Health, Nodes and
+rail marks need cluster-wide Pod evidence even when Resources is hidden.
+Lifecycle shares the Node observation. A visible Resources page still owns its
+separate Table representation; this change does not deduplicate those streams.
+
+The comparison below excludes the FPS indicator, which is isolated in
+[PR #19](https://github.com/skel84/freshkube/pull/19). Both sides used the same
+counted synthetic API, including its single mutation writer and bounded replay.
+The machine was an Intel Core i7-9750H Mac with 16 GiB RAM, macOS 15.2, with an
+unlocked screen and the stress window visible. Other worktrees were compiling;
+the measurements are affected by contention and memory pressure. They are
+repeatability checks, not a controlled compiler or CPU benchmark.
+
+| Build | Provenance |
+| --- | --- |
+| Polling baseline | `5754fda` (documentation over `7aa1045`), exported before production changes, with the counted stress harness; local release, rustc 1.98.1 |
+| FPS-free watch comparison | `aeefcdf`, native Intel release artifact from [CI 37157649913](https://github.com/skel84/freshkube/actions/runs/37157649913), rustc 1.99.0 |
+| Final typed Health/Lifecycle handoff | `d871826`, native Intel release artifact from [CI 37158341599](https://github.com/skel84/freshkube/actions/runs/37158341599), rustc 1.99.0; separate final verification below |
+
+Each comparison workload ran three times: `summary` for 40 s, `table 20000`
+for 60 s, and `burst 20000 2000` for 60 s. The first five seconds are excluded
+from reported span and CPU statistics. Table filters started at 30 s, after
+the initial list, using `app-1`, `crash` and `ns-4`, clearing between each.
+The summary scenario includes 20,000 Pods, 2,000 Deployments and 5,000 warning
+Events; table/burst scenarios have the 20,000 Pods and empty Events/workloads.
+
+In these tables, **median** is the median of the three run medians; **max** is
+the largest sample across all three runs. RSS is decimal MB for the entire
+process, including GPUI, the synthetic API, pagination snapshots and replay.
+CPU includes the synthetic API too; 100% is one logical core's time.
+End RSS is the median of the three final samples; peak RSS is the largest run
+peak. The previously discussed roughly 431 MB figure described polling plus
+the synthetic server, not the new reflector payload.
+
+| Workload | Summary apply, median / max ms, before → after | Process CPU median, before → after | End / peak RSS MB, before → after |
+| --- | --- | --- | --- |
+| Quiet summary | 14.92 / 20.74 → 6.49 / 8.13 | 37.44% → 8.04% | 428 / 505 → 109 / 159 |
+| Table with filters | 9.51 / 28.19 → 4.05 / 4.79 | 20.95% → 13.45% | 453 / 608 → 148 / 197 |
+| Table plus 2,000 mutations/s | 31.31 / 35.23 → 5.22 / 64.75 | 88.77% → 149.57% | 412 / 571 → 174 / 197 |
+
+| Resources span | Median / max ms, before → after |
+| --- | --- |
+| Table initial apply | 27.11 / 37.57 → 24.50 / 36.46 |
+| Table projection, including filters | 15.27 / 47.71 → 16.58 / 55.04 |
+| Burst batch apply | 72.68 / 185.63 → 44.60 / 187.89 |
+| Burst projection | 43.93 / 155.25 → 34.03 / 173.55 |
+
+The burst CPU increase is a real limitation of this comparison. The visible
+Table applied 301–390 batches after warm-up, versus 76–104 before (about
+5.5–7.1 versus 1.4–1.9 updates/s), while the new summary also processed every
+Pod change. Lower per-batch medians do not imply lower total work. Summary apply
+99th percentiles were 9.31, 18.60 and 32.00 ms, with a 64.75 ms worst sample.
+**The roughly 16 ms main-thread target is not met under the combined burst.**
+Table projection also misses it on both implementations. Profiling summary
+publication together with Table projection/redraw remains performance work;
+these results do not justify claiming an overall CPU or frame-time win.
+
+#### Synchronization and request counts
+
+All nine summary sources first became current at 7–8 s in the quiet runs and
+5–8 s across table/burst runs. Initial partial publications retained incomplete
+coverage. Once synchronized, the quiet summary produced no more publications,
+lists or version reads during the rest of each 40 s run. The first five-second
+exclusion therefore leaves only initial-sync samples in the quiet apply row,
+not a steady-state latency distribution.
+
+The polling summary made three complete nine-kind collection cycles and four
+version requests in 40 s: 31 requests. The watch summary made **one initial
+paginated list per kind**, nine watch opens and one version request: 60 list
+pages plus 10 other requests, or 70 total. Pods accounted for 40 pages,
+Events 10 and Deployments four. It makes more initial HTTP requests because
+it paginates; the improvement is the absence of repeated full collection reads,
+not a lower short-run request count.
+
+On the 60 s table/burst workloads, polling started five summary cycles and
+made six version requests. Watching made 48 initial summary list pages, nine
+watch opens and one version request. Both sides additionally made the same
+40-page Pod Table list, one Table watch and one namespace Table request
+(93 total requests before, 100 after). The Node watch was opened once.
+Shared-Node HTTP and UI tests separately verify that showing Lifecycle adds
+no Node request and selecting a Talos node does not replace the observation.
+
+`summary.tokio` is not comparable as a speedup ratio: before it included API
+collection and decoding; after it measures derivation from retained facts.
+Under the combined burst its after median was 170.34 ms and worst sample
+492.61 ms. Dirty-notification-to-apply lag had a median of run medians of
+828.74 ms and a worst sample of 1,381.44 ms. This includes the fixed 500 ms
+debounce and excludes network delay and any producer backlog.
+
+#### Memory bounds, relisting and sustained churn
+
+Compact Pod payload averaged **282.51 bytes** in the quiet 20,000-Pod workload,
+rising to at most 284.47 bytes during delete/recreate churn. The full summary
+retained 12.02 MiB initially and at most 12.06 MiB under churn; the Pods-only
+table workload retained 5.47–5.50 MiB. These counters account for owned payload
+allocation capacities, but exclude map buckets, Arc allocations and allocator
+overhead. They are not process-memory limits.
+
+The implementation enforces 4 KiB per projected Pod, 100,000 objects per kind
+and 128 MiB of committed payload per session, with a separate 128 MiB staging
+budget during resynchronization. Oversized or over-capacity observations stop
+that kind with incomplete coverage; they cannot silently evict a live object
+or establish absence. Only summary fields survive projection: no full Pod
+spec, environment, annotations, managed fields or container messages. Queues
+retain one latest notification/snapshot, rather than a history of snapshots.
+
+| FPS-free recovery/churn run | 40 s forced Pod 410 | 120 s summary churn |
+| --- | --- | --- |
+| Mutations/s | 2,000 | 2,000 |
+| First nine current sources | 7 s | 8 s |
+| Summary apply median / 99th / max | 8.92 / 15.06 / 15.06 ms | 9.37 / 13.67 / 16.54 ms |
+| Dirty-to-apply lag median / max | 1,179.22 / 1,847.58 ms | 952.77 / 2,203.81 ms |
+| Peak staging payload | 10.97 MiB | 10.57 MiB |
+| Process CPU median | 60.32% | 62.25% |
+| Process end / peak RSS | 166 / 172 MB | 124 / 166 MB |
+
+The 410 run temporarily showed eight current sources at second 10 and then
+recovered nine. Only Pods relisted (80 pages and two watch opens total); each
+other kind stayed at one list/watch, with one version request for the session.
+The 120 s run published 134 times after warm-up, kept nine sources current
+after initial sync, and made no additional lists or watch opens. One mutation
+in ten deletes and recreates, so 2,000 mutations/s produce 2,200 events/s; this
+run outlasts the 100,000-event replay ring's fill time. Retained payload stayed
+at 12.05–12.06 MiB. Median RSS was 156.5 MB during seconds 60–89 and 129 MB
+during seconds 90–120, with no upward trend after the ring filled. Falling RSS
+under host memory pressure is not evidence that every allocation was freed.
+
+**Decision:** retain the bounded, always-on compact Pod read model for these
+consumers. The measured 20,000-Pod case fits its payload budget and continues
+publishing under sustained churn without accumulating snapshots or relisting
+quiet kinds. This accepts the read-model memory tradeoff, not the burst CPU
+or 16 ms latency result. Capacity-failure behavior is unit-tested with reduced limits; the
+100,000-object ceiling is not validated here as an interactive workload. Real-cluster latency,
+pathological object sizes, longer-duration allocator behavior and separate
+client/server RSS remain unmeasured. No live cluster was used.
+
+#### Final typed-handle verification
+
+The final `d871826` executable repeated quiet summary, forced 410 and 120 s
+churn after the Health/Lifecycle handoff changed to typed entity handles.
+Both typed handles point to the same entities used by generic navigation;
+there is no second screen or duplicate observation.
+
+| Final-build run | First nine sources | Apply median / 99th / max ms | CPU median | End / peak process RSS |
+| --- | --- | --- | --- | --- |
+| Quiet, 40 s | 6 s | 6.37 / 6.37 / 6.37 | 8.25% | 120 / 155 MB |
+| Forced Pod 410, 40 s | 6 s | 6.71 / 29.72 / 29.72 | 61.05% | 124 / 180 MB |
+| Churn, 120 s | 5 s | 8.31 / 13.46 / 16.80 | 62.15% | 134 / 169 MB |
+
+Quiet and churn each made 60 initial list pages, nine watch opens and one
+version request, with no later relist. The 410 added only 40 Pod pages and
+one Pod watch, restoring coverage after briefly showing eight current sources
+at second 10. Final churn delivered 152 publications after warm-up, all with
+nine current sources, at 795.64 ms median and 1,462.21 ms maximum dirty-to-apply
+lag. Retained payload stayed at 12.05–12.06 MiB; peak staging was 9.45 MiB
+(9.89 MiB in the 410 run). Final churn RSS medians were 160.5 MB at seconds
+60–89 and 133 MB at seconds 90–120. Recovery and single-page churn can also
+exceed the 16 ms target, as their maxima show.
+
+[CI 37158341599](https://github.com/skel84/freshkube/actions/runs/37158341599)
+passed all 911 workspace/doc tests, two stress-API tests, strict workspace
+Clippy, formatting, source-cleanliness checks and both native macOS bundles.
+This includes the fixture UI regressions for initial sync, change without
+Refresh, refused kind, 410 staging, context/same-path replacement and the
+Talos timer split, plus shared Lifecycle Nodes and delayed Talos completions.
+
+After these measurements, watch was rebased onto #20's merge `bcbdd71`,
+preserving its Operations policy, voting-member quorum calculation and ROADMAP
+entries. The measured executables above precede that integration; the compact
+store and typed-handle behavior did not change. The integrated source is
+validated by the checks on [PR #21](https://github.com/skel84/freshkube/pull/21).
+
+Raw reports are retained under `target/stress/`: `watch-before-counted-{1,2,3}`,
+`watch-before-table-ready-{1,2,3}`, `watch-before-burst-ready-{1,2,3}`,
+`watch-after-summary-{1,2,3}`, `watch-after-table-ready-{1,2,3}`,
+`watch-after-burst-ready-{1,2,3}`, `watch-after-410`, `watch-after-churn`,
+`watch-final-summary`, `watch-final-410` and `watch-final-churn`
+(each `.log`). The before and after aggregate JSON files and each saved
+binary's `build.txt` record provenance. Locked-screen attempts and runs whose
+filters preceded list completion are excluded.
