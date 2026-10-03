@@ -276,6 +276,9 @@ impl DetailPane {
             .child(runs_on)
             .child(relations)
             .child(recent)
+            .when(self.history.read(cx).shows(), |this| {
+                this.child(self.history.clone())
+            })
             .children(
                 links
                     .errors

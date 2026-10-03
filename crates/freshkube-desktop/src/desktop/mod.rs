@@ -25,6 +25,7 @@ use crate::{
     forwards::ForwardsIndicator,
     logs::LogPanel,
     maintenance::MaintenanceView,
+    monitoring::history::HistoryView,
     monitoring::page::{MonitoringEvent, MonitoringPage, TalosNodes},
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
@@ -329,6 +330,8 @@ pub(crate) struct Pilot {
     search: Entity<search::Search>,
     /// The Monitoring page, which reads only while it shows.
     monitoring: Entity<MonitoringPage>,
+    /// The node pane's CPU and memory, when the context has a Prometheus.
+    node_history: Entity<HistoryView>,
     /// The rail's area, whose pages or kinds the column lists.
     area: Area,
     /// The kind each built-in group showed last, by group slug.
@@ -548,7 +551,10 @@ impl Pilot {
         subscriptions.push(cx.subscribe_in(
             &monitoring,
             window,
-            |_, _, MonitoringEvent::Catalog, _, cx| cx.notify(),
+            |this, _, event, _, cx| match event {
+                MonitoringEvent::Catalog => cx.notify(),
+                MonitoringEvent::History => this.push_history(cx),
+            },
         ));
         subscriptions.extend([
             cx.observe(&custom, |_, _, cx| cx.notify()),
@@ -654,6 +660,7 @@ impl Pilot {
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             monitoring,
+            node_history: cx.new(|_| HistoryView::new(runtime.clone(), "node")),
             area: Area::Overview,
             group_kinds: BTreeMap::new(),
             last_custom: None,
@@ -1047,6 +1054,16 @@ impl Pilot {
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
 
+    /// Hands pod and node history the Monitoring page's Prometheus.
+    fn push_history(&mut self, cx: &mut Context<Self>) {
+        let history = self.monitoring.read(cx).history();
+        self.node_history
+            .update(cx, |view, cx| view.set_source(history.clone(), cx));
+        self.resources
+            .update(cx, |resources, cx| resources.set_history(history, cx));
+        cx.notify();
+    }
+
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1058,6 +1075,10 @@ impl Pilot {
         if self.page == Page::Monitoring {
             self.monitoring
                 .update(cx, |monitoring, cx| monitoring.refresh(cx));
+        }
+        if self.page == Page::Nodes {
+            self.node_history
+                .update(cx, |history, cx| history.refresh(cx));
         }
     }
 

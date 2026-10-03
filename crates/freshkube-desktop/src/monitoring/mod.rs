@@ -4,6 +4,7 @@
 //! `page` is the rail area's page that reads and lays out a dashboard.
 pub(crate) mod colors;
 pub(crate) mod derive;
+pub(crate) mod history;
 pub(crate) mod page;
 pub(crate) mod panel;
 pub(crate) mod store;

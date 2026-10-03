@@ -288,3 +288,41 @@ fn minimum_node_table_can_reveal_its_rightmost_column(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    for (page, id) in [
+        ("pod-overview", "pod-history"),
+        ("node-overview", "node-history"),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.startup_selection(Some(page), None, None, window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find(id).is_some(), "{page}: {id}");
+            let prefix = id.trim_end_matches("-history");
+            for panel in ["cpu", "memory"] {
+                let panel = format!("monitoring-panel-{prefix}-{panel}");
+                let found = window.try_find(gpui_kit::SharedString::from(panel.clone()));
+                assert!(found.is_some(), "{page}: {panel}");
+            }
+        })
+        .unwrap();
+    }
+    // Another tab on the node pane hides the history and stops its reads.
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_node_tab(crate::desktop::nodes::NodeTab::Pods, window, cx);
+            assert!(!pilot.node_history.read(cx).reading());
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("node-history").is_none());
+    })
+    .unwrap();
+}

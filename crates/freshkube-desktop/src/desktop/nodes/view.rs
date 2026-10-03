@@ -408,6 +408,9 @@ impl Pilot {
                                 this.child(ui::meter(memory.percent(), memory.level(), cx))
                             },
                         )
+                        .when(self.node_history.read(cx).shows(), |this| {
+                            this.child(self.node_history.clone())
+                        })
                         .children(row.facts.iter().map(|(label, value)| {
                             h_flex()
                                 .gap(dp(12.))

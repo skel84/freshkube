@@ -105,6 +105,15 @@ Step 4 (`freshkube-core::monitoring::markers`, `monitoring/page/markers.rs`, `mo
 - **Filters.** The header's "Annotations" toggles, Deploys and Node events, as the mock's pills. A variable named `namespace` or `ns` limits deploys to the namespaces chosen, and one named `node`, `nodename` or `kubernetes_node` limits node markers; All lets every one through. The mock's Alerts toggle is not built.
 - **Example data** marks four deploys, a reboot of cp-2 and worker-2 turning NotReady, on the example namespaces and nodes.
 
+### History as built
+
+Step 5 (`freshkube-core::monitoring::history`, `monitoring/history/`).
+
+- **Where.** A pod's Overview, after Recent events, and the node pane's Overview, after its load and memory: "Last hour", the source in a muted line, and CPU and memory as two timeseries side by side, stacked when the pane is narrow. The cursor on one shows on the other.
+- **Source.** The Monitoring page hands it on (`MonitoringPage::history`): example data with `--fixture`, the Prometheus it confirmed, or, until it looks again, the Service it remembers for the context, which isn't confirmed first. A context with no remembered Service, or one where the page looked and found none, has no history: the panes draw and read nothing, as before this step. Nothing here runs discovery.
+- **Queries.** A pod: `sum by (container)` of `rate(container_cpu_usage_seconds_total[$__rate_interval])` and of `container_memory_working_set_bytes`, for its namespace and name, without the pause container. A node: `1 - avg(rate(node_cpu_seconds_total{mode="idle"}))` and `1 - MemAvailable / MemTotal`, each joined `on (instance)` to `node_uname_info{nodename="…"}`, so they don't depend on how the scrape labels the node; the 90% line is the threshold. Names are quoted as PromQL literals.
+- **Reads.** Only while the Overview shows on a visible page; again each minute while it shows, and on Refresh. Hiding drops a read in flight; another pod, node or cluster builds new panels with nothing of the last.
+
 ## Build order
 
 Each step is its own commit (or a preparation commit and then the step), with unit and UI tests where behaviour changes, and its row in the roadmap's Done table. The app stays usable after every step.

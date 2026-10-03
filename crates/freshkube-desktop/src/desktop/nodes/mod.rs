@@ -9,6 +9,7 @@ use crate::{
     resources::{DetailPane, Tab, detail::DetailTarget, model::ResourceIdentity},
     ui,
 };
+use freshkube_core::monitoring::history::Subject;
 use gpui_kit::{component::resizable::ResizableState, *};
 pub(crate) use join::{NodeKey, NodeRow};
 use std::{sync::Arc, time::Duration};
@@ -302,6 +303,16 @@ impl Pilot {
         });
         self.logs.update(cx, |logs, cx| {
             logs.set_visible(shown && self.node_workspace.tab == NodeTab::Logs, cx)
+        });
+        let subject = self
+            .node_workspace
+            .row()
+            .and_then(|row| row.key.kubernetes.clone())
+            .map(|name| Subject::Node { name });
+        let overview = shown && self.node_workspace.tab == NodeTab::Overview;
+        self.node_history.update(cx, |history, cx| {
+            history.set_subject(subject, cx);
+            history.set_visible(overview, cx);
         });
     }
 

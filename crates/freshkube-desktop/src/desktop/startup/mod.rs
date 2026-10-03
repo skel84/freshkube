@@ -75,6 +75,10 @@ impl Pilot {
                         cx,
                     );
                 }
+                if self.fixture {
+                    self.node_history
+                        .update(cx, |history, cx| history.answer_example_now(cx));
+                }
             }
             Some("pod-overview") if self.fixture => {
                 let context = self.applied.context.as_deref().unwrap_or("prod-fra");
@@ -93,6 +97,8 @@ impl Pilot {
                         window,
                         cx,
                     );
+                    self.resources
+                        .update(cx, |resources, cx| resources.answer_history_now(cx));
                 }
             }
             Some("search") => {

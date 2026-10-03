@@ -530,6 +530,23 @@ impl ResourcesScreen {
         self.restart(window, cx);
     }
 
+    /// Where a pod's CPU and memory history reads, from the Monitoring page.
+    pub(crate) fn set_history(
+        &mut self,
+        history: Option<crate::monitoring::history::HistorySource>,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |detail, cx| detail.set_history(history, cx));
+    }
+
+    /// Debug fixture checks: answers the open pod's history now.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    pub(crate) fn answer_history_now(&mut self, cx: &mut Context<Self>) {
+        self.detail
+            .update(cx, |detail, cx| detail.answer_history_now(cx));
+    }
+
     /// Shows another kind; the same kind at another version reads again.
     pub(crate) fn set_kind(
         &mut self,

@@ -28,6 +28,8 @@ use super::screen::KubeAccess;
 use super::{example, live};
 use crate::backend::{self, OwnedJob};
 use crate::logs::PodLogView;
+use crate::monitoring::history::{HistorySource, HistoryView};
+use freshkube_core::monitoring::history::Subject;
 
 mod cross_links;
 mod events;
@@ -175,6 +177,8 @@ pub(crate) struct DetailPane {
     shell: Entity<ShellView>,
     /// The object's ports, and the forwards running from them.
     ports: Entity<PortsView>,
+    /// A pod's CPU and memory over the last hour, on its Overview.
+    history: Entity<HistoryView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -223,10 +227,13 @@ impl DetailPane {
         let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
         let shell = cx.new(|cx| ShellView::new(runtime.clone(), window, cx));
         let ports = cx.new(|cx| PortsView::new(runtime.clone(), window, cx));
+        let history = cx.new(|_| HistoryView::new(runtime.clone(), "pod"));
         let subscriptions = vec![
             // The Shell tab's label shows whether a session runs, and its
             // tooltip the shell's title.
             cx.observe(&shell, |_, _, cx| cx.notify()),
+            // Whether the pod's history shows, which this cached view draws.
+            cx.observe(&history, |_, _, cx| cx.notify()),
             cx.subscribe(&shell, |_, _, event, cx| match event {
                 ShellEvent::Leave => cx.emit(DetailEvent::Leave),
             }),
@@ -280,6 +287,7 @@ impl DetailPane {
             logs,
             shell,
             ports,
+            history,
             _subscriptions: subscriptions,
         }
     }
@@ -406,6 +414,7 @@ impl DetailPane {
         self.current = None;
         self.selection = None;
         self.feedback = None;
+        self.show_history(cx);
         cx.notify();
     }
 
@@ -429,6 +438,7 @@ impl DetailPane {
     /// Reads the object again and lists its events again.
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.read_job = None;
+        self.history.update(cx, |history, cx| history.refresh(cx));
         self.start(cx);
     }
 
@@ -892,6 +902,37 @@ impl DetailPane {
                 logs.want(cx);
             }
             logs.set_visible(shown && active, cx);
+        });
+        self.show_history(cx);
+    }
+
+    /// Where a pod's CPU and memory history reads, from the Monitoring page.
+    pub(crate) fn set_history(&mut self, history: Option<HistorySource>, cx: &mut Context<Self>) {
+        self.history
+            .update(cx, |view, cx| view.set_source(history, cx));
+    }
+
+    /// Debug fixture checks: answers the pod's history now.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    pub(crate) fn answer_history_now(&mut self, cx: &mut Context<Self>) {
+        self.history
+            .update(cx, |history, cx| history.answer_example_now(cx));
+    }
+
+    /// Tells the history which pod the Overview shows, and whether it does.
+    fn show_history(&mut self, cx: &mut Context<Self>) {
+        let subject = self
+            .detail
+            .as_ref()
+            .filter(|detail| detail.target.kind.is_pod() && !self.embedded_node)
+            .map(|detail| Subject::Pod {
+                namespace: detail.target.identity.namespace.clone(),
+                name: detail.target.identity.name.clone(),
+            });
+        let shown = self.active && self.tab == Tab::Overview && subject.is_some();
+        self.history.update(cx, |history, cx| {
+            history.set_subject(subject, cx);
+            history.set_visible(shown, cx);
         });
     }
 

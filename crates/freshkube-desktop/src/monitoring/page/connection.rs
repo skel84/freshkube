@@ -8,7 +8,8 @@ use freshkube_core::monitoring::{
 };
 use gpui_kit::{Context, SharedString};
 
-use super::{MonitoringPage, Request};
+use super::{MonitoringEvent, MonitoringPage, Request};
+use crate::monitoring::history::{HistoryKind, HistorySource};
 use crate::resources::KubeAccess;
 
 pub(super) enum Connection {
@@ -91,6 +92,26 @@ impl MonitoringPage {
         }
     }
 
+    /// Where pod and node history read: example data, the Prometheus this
+    /// page confirmed, or the Service remembered for the context while it
+    /// hasn't looked again. None when it looked and found none.
+    pub(crate) fn history(&self) -> Option<HistorySource> {
+        let source = self.source.as_ref()?;
+        let kind = match (&self.connection, &source.access) {
+            (_, KubeAccess::Example) => HistoryKind::Example,
+            (Connection::Ready { prometheus, .. }, _) => HistoryKind::Ready(prometheus.clone()),
+            (Connection::None | Connection::Looking { .. }, access) => HistoryKind::Remembered {
+                access: access.clone(),
+                service: self.saved.services.get(&source.context)?.clone(),
+            },
+            _ => return None,
+        };
+        Some(HistorySource {
+            id: source.id.clone(),
+            kind,
+        })
+    }
+
     /// Looks for Prometheus when the page shows and hasn't yet on this
     /// source; once usable, reads what the dashboard needs.
     pub(super) fn connect(&mut self, cx: &mut Context<Self>) {
@@ -145,6 +166,7 @@ impl MonitoringPage {
             }
             Err(error) => self.connection = Connection::Failed(error.message.into()),
         }
+        cx.emit(MonitoringEvent::History);
         cx.notify();
     }
 
@@ -212,6 +234,7 @@ impl MonitoringPage {
             label: service.label().into(),
             version: format!("Prometheus {}", build.version).into(),
         };
+        cx.emit(MonitoringEvent::History);
         self.resume(cx);
         cx.notify();
     }
@@ -219,6 +242,7 @@ impl MonitoringPage {
     /// Asks again after a failure, from the start.
     pub(super) fn retry(&mut self, cx: &mut Context<Self>) {
         self.connection = Connection::None;
+        cx.emit(MonitoringEvent::History);
         self.connect(cx);
         cx.notify();
     }

@@ -12,6 +12,7 @@ pub mod builtin;
 pub mod catalog;
 mod discovery;
 mod example;
+pub mod history;
 pub mod markers;
 mod transport;
 

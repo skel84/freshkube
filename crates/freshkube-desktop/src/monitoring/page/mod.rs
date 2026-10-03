@@ -46,6 +46,8 @@ const DEADLINE: Duration = Duration::from_secs(45);
 pub(crate) enum MonitoringEvent {
     /// The column's dashboards changed, or which one is open.
     Catalog,
+    /// The Prometheus that pod and node history read may have changed.
+    History,
 }
 
 /// The part of the dashboard in view, in dp from the grid's top.
@@ -183,6 +185,7 @@ impl MonitoringPage {
             return;
         }
         self.connection = Connection::None;
+        cx.emit(MonitoringEvent::History);
         // Another cluster's answers never show as this one's.
         self.board = None;
         self.markers.forget();
@@ -202,6 +205,7 @@ impl MonitoringPage {
             self.resolve_variables(cx);
         } else {
             self.connection = Connection::None;
+            cx.emit(MonitoringEvent::History);
             self.connect(cx);
         }
         cx.notify();
