@@ -68,6 +68,11 @@ http = "1"
 # Certificate parsing
 x509-parser = "0.16"
 
+# Prometheus dashboards: grafaui's model and query crates (MIT, the user's
+# own), pinned by revision; Freshkube draws its own panels (docs/MONITORING.md).
+grafaui-model = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95" }
+grafaui-prometheus = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95", default-features = false }
+
 # Internal crates
 talos-rs = { path = "crates/talos-rs" }
 freshkube-core = { path = "crates/freshkube-core" }

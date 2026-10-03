@@ -10,6 +10,21 @@ alacritty_terminal 0.26.0
   Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
   Used unmodified, as a library.
 
+grafaui-model and grafaui-prometheus 0.1.0
+  Dashboard parsing, PromQL request planning and answer conversion for the
+  Monitoring page.
+  https://github.com/skel84/grafaui
+  Copyright (c) 2026 Francesco Cislaghi
+  Licensed under the MIT License; see licenses/grafaui-MIT.txt.
+  Used unmodified, as libraries pinned by revision.
+
+promql-parser 0.11.0
+  Used by grafaui-prometheus to read PromQL selectors.
+  https://github.com/GreptimeTeam/promql-parser
+  Copyright 2023 Greptime Team
+  Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+  Used unmodified, as a library.
+
 Lato
   https://www.latofonts.com
   Copyright (c) 2010-2014 by tyPoland Lukasz Dziedzic with Reserved Font Name "Lato"
