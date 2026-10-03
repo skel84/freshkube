@@ -163,19 +163,25 @@ impl Overview {
                 .as_ref()
                 .and_then(|summary| summary.etcd.as_ref())
                 .map(|etcd| {
+                    let quorum = freshkube_core::indicators::quorum(etcd.healthy, etcd.total);
+                    let tolerance = quorum.remaining_tolerance;
                     (
-                        if etcd.has_quorum {
+                        if quorum.state.has_quorum() {
                             "Quorum".to_owned()
                         } else {
                             "Quorum unconfirmed".to_owned()
                         },
                         format!(
-                            "{} of {} answered · tolerates {} member failures",
+                            "{} of {} answered · tolerates {tolerance} additional member {}",
                             etcd.healthy,
                             etcd.total,
-                            super::etcd_failure_tolerance(etcd.total)
+                            if tolerance == 1 {
+                                "failure"
+                            } else {
+                                "failures"
+                            }
                         ),
-                        if etcd.has_quorum {
+                        if quorum.state.has_quorum() && tolerance > 0 {
                             Tone::Good
                         } else {
                             Tone::Warn

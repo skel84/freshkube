@@ -1385,23 +1385,22 @@ async fn collect_etcd_pre_operation(
             };
         }
     };
-    let responding_members = members
-        .iter()
+    let voting_members = members.iter().filter(|member| !member.is_learner);
+    let total_members = voting_members.clone().count();
+    let responding_members = voting_members
         .filter(|member| {
             statuses.iter().any(|status| {
                 status.member_id == member.id && status.errors.is_empty() && !status.is_learner
             })
         })
         .count();
-    let total_members = members.len();
-    let quorum_required = total_members / 2 + 1;
-    let quorum = QuorumState::from_counts(responding_members, total_members);
+    let quorum = crate::indicators::quorum(responding_members, total_members);
     SourceSnapshot::Available(EtcdPreOperationAudit {
         total_members,
         responding_members,
-        quorum_required,
-        can_lose: responding_members.saturating_sub(quorum_required),
-        quorum,
+        quorum_required: quorum.required,
+        can_lose: quorum.remaining_tolerance,
+        quorum: quorum.state,
     })
 }
 

@@ -283,7 +283,7 @@ fn append_etcd(cluster: &ClusterOverview, rows: &mut Vec<AttentionRow>) {
             "{} of {} members answered; quorum needs {}",
             etcd.healthy,
             etcd.total,
-            etcd.total / 2 + 1
+            freshkube_core::indicators::quorum(etcd.healthy, etcd.total).required
         ));
     }
     if let Some(alarms) = &cluster.etcd_alarms {

@@ -203,22 +203,48 @@ pub enum QuorumState {
     Unknown,
 }
 
+/// Quorum and failure margins for the observed voting membership.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Quorum {
+    /// Majority required to make progress; zero when no membership is known.
+    pub required: usize,
+    /// Failures the membership can tolerate when every member is healthy.
+    pub designed_tolerance: usize,
+    /// Additional failures the currently healthy members can tolerate.
+    pub remaining_tolerance: usize,
+    pub state: QuorumState,
+}
+
+/// Calculate both designed and remaining tolerance from voting-member counts.
+/// Empty or inconsistent counts are unknown and never advertise spare capacity.
+pub fn quorum(healthy: usize, total: usize) -> Quorum {
+    let required = if total == 0 { 0 } else { total / 2 + 1 };
+    let state = if total == 0 || healthy > total {
+        QuorumState::Unknown
+    } else if healthy == total {
+        QuorumState::Healthy
+    } else if healthy >= required {
+        QuorumState::Degraded { healthy, total }
+    } else {
+        QuorumState::NoQuorum { healthy, total }
+    };
+    Quorum {
+        required,
+        designed_tolerance: total.saturating_sub(required),
+        remaining_tolerance: if state.has_quorum() {
+            healthy.saturating_sub(required)
+        } else {
+            0
+        },
+        state,
+    }
+}
+
 impl QuorumState {
     /// Calculate quorum state from member counts
     pub fn from_counts(healthy: usize, total: usize) -> Self {
-        if total == 0 {
-            return QuorumState::Unknown;
-        }
-
-        let required = (total / 2) + 1;
-
-        if healthy == total {
-            QuorumState::Healthy
-        } else if healthy >= required {
-            QuorumState::Degraded { healthy, total }
-        } else {
-            QuorumState::NoQuorum { healthy, total }
-        }
+        quorum(healthy, total).state
     }
 
     /// Check if quorum is maintained
@@ -349,6 +375,35 @@ mod tests {
             HealthIndicator::Error.worst(HealthIndicator::Healthy),
             HealthIndicator::Error
         );
+    }
+
+    #[test]
+    fn quorum_distinguishes_designed_and_remaining_tolerance() {
+        for (healthy, total, required, designed, remaining) in [
+            (2, 3, 2, 1, 0),
+            (3, 5, 3, 2, 0),
+            (3, 3, 2, 1, 1),
+            (4, 5, 3, 2, 1),
+            (5, 5, 3, 2, 2),
+            (1, 1, 1, 0, 0),
+            (2, 2, 2, 0, 0),
+            (1, 3, 2, 1, 0),
+        ] {
+            let observed = quorum(healthy, total);
+            assert_eq!(observed.required, required);
+            assert_eq!(observed.designed_tolerance, designed);
+            assert_eq!(observed.remaining_tolerance, remaining, "{healthy}/{total}");
+            assert_eq!(observed.state.has_quorum(), healthy >= required);
+        }
+    }
+
+    #[test]
+    fn unknown_quorum_never_advertises_remaining_tolerance() {
+        for (healthy, total) in [(0, 0), (1, 0), (4, 3)] {
+            let observed = quorum(healthy, total);
+            assert_eq!(observed.state, QuorumState::Unknown);
+            assert_eq!(observed.remaining_tolerance, 0);
+        }
     }
 
     #[test]

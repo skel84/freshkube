@@ -18,8 +18,9 @@ use kube::{
     api::{Api, ListParams},
 };
 use talos_rs::{
-    DiscoveryMember, EtcdMemberInfo, NodeCpuInfo, NodeLoadAvg, NodeMemory, NodeServices,
-    TalosClient, TalosConfig, TalosError, VersionInfo, get_discovery_members_with_retry,
+    DiscoveryMember, EtcdMemberInfo, EtcdMemberStatus, NodeCpuInfo, NodeLoadAvg, NodeMemory,
+    NodeServices, TalosClient, TalosConfig, TalosError, VersionInfo,
+    get_discovery_members_with_retry,
 };
 
 pub use crate::client_cache::ConfigIdentity;
@@ -66,12 +67,31 @@ impl ClusterConnectionStatus {
 /// Compact etcd state for a cluster overview header.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EtcdSummary {
-    /// Number of control plane members responding to the status request.
+    /// Number of voting members responding to the status request.
     pub healthy: usize,
-    /// Number of configured etcd members.
+    /// Number of configured voting members; learners do not contribute to quorum.
     pub total: usize,
     /// Whether the responding members meet the etcd quorum requirement.
     pub has_quorum: bool,
+}
+
+impl EtcdSummary {
+    fn from_statuses(members: &[EtcdMemberInfo], statuses: &[EtcdMemberStatus]) -> Self {
+        let voters = members.iter().filter(|member| !member.is_learner);
+        let total = voters.clone().count();
+        let healthy = voters
+            .filter(|member| {
+                statuses
+                    .iter()
+                    .any(|status| status.member_id == member.id && !status.is_learner)
+            })
+            .count();
+        Self {
+            healthy,
+            total,
+            has_quorum: crate::indicators::quorum(healthy, total).state.has_quorum(),
+        }
+    }
 }
 
 /// A UI-framework-free snapshot of one Talos context.
@@ -542,14 +562,8 @@ impl ClusterOverviewCollector {
             );
             cluster.etcd_alarms = alarms.ok().and_then(Result::ok);
             if let Ok(statuses) = statuses {
-                let total = cluster.etcd_members.len();
-                let healthy = statuses.len();
-                let quorum_needed = total / 2 + 1;
-                cluster.etcd_summary = Some(EtcdSummary {
-                    healthy,
-                    total,
-                    has_quorum: healthy >= quorum_needed,
-                });
+                cluster.etcd_summary =
+                    Some(EtcdSummary::from_statuses(&cluster.etcd_members, &statuses));
             }
         }
 
@@ -1683,6 +1697,50 @@ mod tests {
             PreparedKubeconfig::unavailable("transient")
                 .config
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn etcd_summary_counts_each_known_voter_once_and_excludes_learners() {
+        let members: Vec<_> = (1..=3)
+            .map(|id| EtcdMemberInfo {
+                id,
+                hostname: format!("cp-{id}"),
+                peer_urls: Vec::new(),
+                client_urls: Vec::new(),
+                is_learner: id == 3,
+            })
+            .collect();
+        let status = |id| EtcdMemberStatus {
+            node: format!("cp-{id}"),
+            member_id: id,
+            protocol_version: String::new(),
+            db_size: 0,
+            db_size_in_use: 0,
+            leader_id: 1,
+            raft_index: 0,
+            raft_term: 1,
+            raft_applied_index: 0,
+            errors: Vec::new(),
+            is_learner: id == 3,
+        };
+        let summary = EtcdSummary::from_statuses(
+            &members,
+            &[status(1), status(1), status(2), status(3), status(99)],
+        );
+        assert_eq!(
+            (summary.healthy, summary.total, summary.has_quorum),
+            (2, 2, true)
+        );
+        assert_eq!(
+            crate::indicators::quorum(summary.healthy, summary.total).remaining_tolerance,
+            0
+        );
+        let summary =
+            EtcdSummary::from_statuses(&members, &[status(1), status(1), status(3), status(99)]);
+        assert_eq!(
+            (summary.healthy, summary.total, summary.has_quorum),
+            (1, 2, false)
         );
     }
 }

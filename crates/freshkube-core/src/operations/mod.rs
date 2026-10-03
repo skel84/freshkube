@@ -243,7 +243,7 @@ pub fn evaluate_operation_safety(
         return SafetyStatus::Safe;
     }
 
-    let required = total_members / 2 + 1;
+    let required = crate::indicators::quorum(*healthy_members, *total_members).required;
     if *healthy_members < required {
         return SafetyStatus::Unsafe(format!(
             "etcd already lacks quorum ({}/{})",
