@@ -1,3 +1,4 @@
+use super::layout::{ColumnSource, DisplayColumn};
 use super::*;
 
 impl ResourcesScreen {

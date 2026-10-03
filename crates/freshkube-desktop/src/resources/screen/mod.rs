@@ -40,6 +40,7 @@ use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
 use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
 use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
+use layout::TableLayout;
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
@@ -54,18 +55,11 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 /// gathered and applied together, so a churning list re-sorts and redraws at
 /// most ten times a second instead of once per batch core sends.
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
-/// Advance of one character in the 12 px table font.
-const CHAR_WIDTH: f32 = 7.2;
 /// The namespace picker's width in the toolbar.
 const NAMESPACE_WIDTH: f32 = 200.;
 /// The narrowest one-row toolbar without the namespace picker: the
 /// filter at its narrowest, the Refresh button and the gap between them.
 const CONTROLS_MIN_WIDTH: f32 = 120. + 8. + 96.;
-const CELL_PADDING: f32 = 24.;
-const AGE_WIDTH: f32 = 76.;
-const MIN_COLUMN: f32 = 64.;
-const MAX_COLUMN: f32 = 280.;
-const MAX_FLEXIBLE: f32 = 440.;
 /// The table's header and a couple of rows.
 const LIST_MIN_HEIGHT: f32 = 96.;
 /// Below this content width the detail pane stacks under the list.
@@ -176,111 +170,6 @@ fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<N
         choices.push(choice(current));
     }
     SearchableVec::new(choices)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ColumnSource {
-    /// A printed column, by index into the store's columns.
-    Cell(usize),
-    /// The namespace, added when listing every namespace.
-    Namespace,
-}
-
-#[derive(Clone, Debug)]
-struct DisplayColumn {
-    label: SharedString,
-    source: ColumnSource,
-    kind: ColumnKind,
-    width: f32,
-    /// Takes the room left over; at most one column does.
-    flexible: bool,
-    /// Printed statuses are coloured by what they mean.
-    status: bool,
-}
-
-impl DisplayColumn {
-    fn sort_key(&self) -> SortKey {
-        match self.source {
-            ColumnSource::Cell(ix) => SortKey::Column(ix),
-            ColumnSource::Namespace => SortKey::Namespace,
-        }
-    }
-}
-
-/// The columns drawn for the current read and their widths. Derived when a
-/// read resets, never while drawing; wide (`-o wide`) columns are left out.
-#[derive(Clone, Debug, Default)]
-struct TableLayout {
-    columns: Vec<DisplayColumn>,
-    width: f32,
-}
-
-impl TableLayout {
-    fn new(store: &ResourceStore, namespace_column: bool) -> Self {
-        let widest = store.widest();
-        let fit = |chars: usize, max: f32| {
-            (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max)
-        };
-        let printed: Vec<_> = store
-            .columns()
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| !column.wide)
-            .collect();
-        let named = |name: &str| {
-            printed
-                .iter()
-                .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
-                .map(|(ix, _)| *ix)
-        };
-        let flexible = named("message")
-            .or_else(|| named("name"))
-            .or_else(|| printed.first().map(|(ix, _)| *ix));
-        let mut columns = Vec::with_capacity(printed.len() + 1);
-        for (ix, column) in printed {
-            let is_flexible = flexible == Some(ix);
-            let width = match column.kind {
-                ColumnKind::Age => AGE_WIDTH,
-                _ => fit(
-                    widest
-                        .cells
-                        .get(ix)
-                        .copied()
-                        .unwrap_or(0)
-                        // Room for the sort arrow beside the label.
-                        .max(column.name.chars().count() + 2),
-                    if is_flexible {
-                        MAX_FLEXIBLE
-                    } else {
-                        MAX_COLUMN
-                    },
-                ),
-            };
-            columns.push(DisplayColumn {
-                label: column.name.clone().into(),
-                source: ColumnSource::Cell(ix),
-                kind: column.kind,
-                width,
-                flexible: is_flexible,
-                status: matches!(
-                    column.name.to_ascii_lowercase().as_str(),
-                    "status" | "phase"
-                ),
-            });
-            if namespace_column && columns.len() == 1 {
-                columns.push(DisplayColumn {
-                    label: "Namespace".into(),
-                    source: ColumnSource::Namespace,
-                    kind: ColumnKind::Text,
-                    width: fit(widest.namespace.max(11), MAX_COLUMN),
-                    flexible: false,
-                    status: false,
-                });
-            }
-        }
-        let width = columns.iter().map(|column| column.width).sum();
-        Self { columns, width }
-    }
 }
 
 /// The element id of a row: derived from what it shows, so a press that
@@ -1248,6 +1137,7 @@ pub(crate) enum NodePodsEvent {
 }
 impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
+mod layout;
 mod view;
 
 #[cfg(test)]
