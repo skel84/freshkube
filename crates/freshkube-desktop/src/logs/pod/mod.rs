@@ -521,6 +521,11 @@ impl LogView<PodLogs> {
         self.source.container.as_deref()
     }
 
+    #[cfg(test)]
+    pub(crate) fn reads_previous(&self) -> bool {
+        self.source.previous
+    }
+
     /// Whether a stream is open or about to be, for the pane's tests.
     #[cfg(test)]
     pub(crate) fn streaming(&self) -> bool {

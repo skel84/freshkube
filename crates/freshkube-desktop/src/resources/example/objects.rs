@@ -180,7 +180,9 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
         "Pending" | "ContainerCreating" => "Pending",
         _ => "Running",
     };
-    yaml.push_str(&format!("  phase: {phase}\n  conditions:\n"));
+    yaml.push_str(&format!(
+        "  phase: {phase}\n  qosClass: Burstable\n  conditions:\n"
+    ));
     if scheduled {
         yaml.push_str(&format!(
             "  - type: Ready\n    status: '{}'\n    lastTransitionTime: '{}'\n{}  - type: PodScheduled\n    status: 'True'\n    lastTransitionTime: '{}'\n  podIP: {}\n  startTime: '{}'\n{}  containerStatuses:\n  - name: {app}\n    image: {image}\n    imageID: example://app\n    ready: {ready}\n    restartCount: {restarts}\n{}    state:\n",
@@ -203,12 +205,24 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
                 String::new()
             },
             match last_termination(status, restarts, ix, now) {
-                Some(last) => format!(
-                    "    lastState:\n      terminated:\n        exitCode: {}\n        reason: {}\n        finishedAt: '{}'\n",
-                    last.exit_code,
-                    last.reason,
-                    last.finished.unwrap_or_default().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                ),
+                Some(last) => {
+                    let finished = last.finished.unwrap_or_default();
+                    // A crashed instance ran briefly; one that failed days
+                    // ago had run for hours.
+                    let ran = if status == "CrashLoopBackOff" { 42 } else { 6 * 3_600 };
+                    format!(
+                        "    lastState:\n      terminated:\n        exitCode: {}\n        reason: {}\n{}        startedAt: '{}'\n        finishedAt: '{}'\n",
+                        last.exit_code,
+                        last.reason,
+                        if last.reason == "Error" {
+                            "        message: 'lost connection to postgres: dial tcp 10.96.0.40:5432: i/o timeout'\n"
+                        } else {
+                            ""
+                        },
+                        timestamp(finished.timestamp() - ran),
+                        finished.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    )
+                }
                 None => String::new(),
             },
         ));

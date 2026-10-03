@@ -45,8 +45,9 @@ pub use forward::{
 };
 pub use kinds::{ResourceKind, builtin, builtin_by_gvk};
 pub use object::{
-    Condition, ObjectDocument, Overview, Owner, SecretKey, SecretSummary, SecretValue, get_object,
-    hidden_value, object_from_yaml, reveal_secret_value,
+    Condition, ContainerStatus, Diagnosis, Instance, ObjectDocument, Overview, Owner, PodStatus,
+    SecretKey, SecretSummary, SecretValue, Severity, get_object, hidden_value, is_error_reason,
+    next_restart, object_from_yaml, reveal_secret_value,
 };
 pub use pod_logs::{
     Container, ContainerRole, ContainerState, LogPosition, LogRequest, MAX_ATTEMPTS,

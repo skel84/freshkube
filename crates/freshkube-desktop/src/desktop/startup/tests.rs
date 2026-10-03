@@ -77,7 +77,14 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                             pilot.read(cx).resources.read(cx).detail_tab(cx),
                             Tab::Overview
                         );
-                        assert!(window.find("pod-runs-on").visible(),"{page} {theme} {text_size}: runs={:?} pane={:?} tabs={:?} viewport={:?}",window.find("pod-runs-on").bounds(),window.find("resource-detail").bounds(),window.find("detail-tab-overview").bounds(),window.viewport_size());
+                        // The pane opens on why the pod fails.
+                        assert!(
+                            window.find("pod-cause").visible(),
+                            "{page} {theme} {text_size}: cause={:?} pane={:?} viewport={:?}",
+                            window.find("pod-cause").bounds(),
+                            window.find("resource-detail").bounds(),
+                            window.viewport_size()
+                        );
                     }
                     if page == "search" {
                         assert!(window.has_active_dialog(cx));
@@ -154,7 +161,7 @@ fn short_resource_navigation_reveals_the_pane_and_returns_to_the_list(cx: &mut T
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.find("pod-runs-on").visible());
+        assert!(window.find("pod-cause").visible());
         assert_eq!(window.find("resource-detail").focused(), Some(true));
         window.press("escape", cx);
     })

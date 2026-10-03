@@ -59,6 +59,7 @@ These hold for every step until a later one deliberately changes them.
 | Console 3. App frame | A 52 px header (context switcher, the location, Search everything, Refresh, appearance and Settings), a 64 px icon rail of twelve areas with problem dots from the Overview's cards, and a 208 px column for the areas with several pages or kinds: each Kubernetes group, Custom Resources and Control plane. A group reopens the kind it showed last; Custom Resources discovers only while its column shows. Every page, shortcut and key context is kept ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 | Console 2. Status glyphs | One shape per status everywhere: ● OK, outlined ▲ warning, ◆ critical, ○ pending or unknown. Status tags lead with their glyph and drop their Lucide icons; standalone marks have tooltips; tags become pills. Status bars, the context switcher, service and etcd lists and the node pane's Services tab use the glyphs ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 | Console 4. Tables | The F2″ rules on the Resources list. Pods list with their full object and read their use from metrics-server every 15 s while shown; they open on Problems, grouped by cause (Failing, each NotReady node, Not ready, Pending, Terminating, Unknown) with healthy pods folded into "Showing N of M · Show all". Every kind has the glyph column, muted namespace prefix, dimmed generated suffix, an Owner column and a comfortable or compact density; pods merge ready and restarts, show the reason after the name, CPU and memory bars against the limit with a request tick (grey when last known) and node names without their shared prefix. X marks rows and a group's Select all marks its rows, with Copy names and Clear; L opens a pod's logs. Unit and UI tests cover the grouping, folding, Show all, NotReady nodes, marks, density, use sorting and keys ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
+| Console 5. Pod detail | The F3 layout in a pod's Overview: Logs as the primary action; a "Why it's failing" (or waiting, or not ready) card with the state, message, container, last exit, restarts, the next restart from the kubelet's back-off, the termination message and the last instance's logs on request; a restart timeline; containers; Runs on with Talos's kubelet health and the node's system services; Relations with the controller chain, Services, ServiceAccount, Pod IP and QoS class; recent warnings. Core's `PodStatus` reads the status and diagnoses failing, waiting and unready pods without guessing for healthy ones. Unit tests cover crash loops, the back-off, image pulls, eviction, scheduling, readiness and healthy pods; UI tests the card, the timeline, Relations and both Logs actions ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
@@ -83,7 +84,7 @@ The visual direction chosen on the design canvas: Console tokens and type, one s
 2. Status glyphs. Done.
 3. App frame. Done.
 4. Tables, pods first. Done.
-5. Pod detail.
+5. Pod detail. Done.
 
 ## Then: a daily-use workflow
 
