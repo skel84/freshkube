@@ -272,6 +272,10 @@ pub(crate) fn collect(
             access = Some(current);
             collector.set_observed_nodes(nodes.and_then(|nodes| nodes.for_access(current)));
             collector.refresh(&mut snapshot).await;
+            if current != freshkube_core::AccessIdentity::for_talos(snapshot.client.as_ref().unwrap(), &kubeconfig) {
+                access = None;
+                return Err("Access configuration changed during refresh; refresh again".into());
+            }
             require_fresh_node_data(snapshot)
             }.await;
             let after = configuration_revision(&config, &kubeconfig).await?;

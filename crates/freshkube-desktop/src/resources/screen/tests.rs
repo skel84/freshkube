@@ -1560,16 +1560,16 @@ fn old_metrics_cannot_change_the_new_access_or_a_disconnected_page(cx: &mut Test
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
     cx.update_window(handle, |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            let epoch = screen.store.epoch();
+            let generation = screen.usage_generation;
             screen.set_source(Some(source("prod-fra")), window, cx);
-            assert!(!screen.apply_usage(epoch, Err("late failure".into()), cx));
+            assert!(!screen.apply_usage(generation, Err("late failure".into()), cx));
             assert_eq!(screen.usage_state, super::UsageState::Known);
-            let epoch = screen.store.epoch();
-            assert!(screen.apply_usage(epoch, Err("current failure".into()), cx));
+            let generation = screen.usage_generation;
+            assert!(screen.apply_usage(generation, Err("current failure".into()), cx));
             assert_eq!(screen.usage_state, super::UsageState::Stale);
             screen.set_source(None, window, cx);
             assert!(screen.usage.is_none());
-            assert!(!screen.apply_usage(epoch, Ok(Vec::new()), cx));
+            assert!(!screen.apply_usage(generation, Ok(Vec::new()), cx));
             assert_eq!(screen.usage_state, super::UsageState::Unknown);
         });
     })

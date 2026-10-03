@@ -181,6 +181,7 @@ impl ResourcesScreen {
     /// shows; anything else stops it.
     pub(super) fn poll_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.usage = None;
+        self.usage_generation = self.usage_generation.wrapping_add(1);
         if !self.visible || !self.lists_pods() {
             return;
         }
@@ -189,12 +190,12 @@ impl ResourcesScreen {
         };
         let namespace = self.namespace.clone();
         let runtime = self.runtime.clone();
-        let epoch = self.store.epoch();
+        let generation = self.usage_generation;
         // Example use applies at once, as example rows do; later ticks
         // drift it.
         let example = matches!(source.access, KubeAccess::Example);
         if example {
-            self.apply_usage(epoch, Ok(example::pod_usage(&source.context, 0)), cx);
+            self.apply_usage(generation, Ok(example::pod_usage(&source.context, 0)), cx);
         }
         self.usage = Some(cx.spawn_in(window, async move |this, cx| {
             let mut tick = 0;
@@ -232,7 +233,7 @@ impl ResourcesScreen {
                             .unwrap_or_else(|_| Err("Reading pods' use stopped".into()))
                     }
                 };
-                let applied = this.update(cx, |view, cx| view.apply_usage(epoch, result, cx));
+                let applied = this.update(cx, |view, cx| view.apply_usage(generation, result, cx));
                 if !matches!(applied, Ok(true)) {
                     break;
                 }
@@ -243,14 +244,14 @@ impl ResourcesScreen {
         }));
     }
 
-    /// Cancellation and the request epoch both protect another source or scope.
+    /// Cancellation and the request generation protect another source or scope.
     pub(super) fn apply_usage(
         &mut self,
-        epoch: u64,
+        generation: u64,
         result: Result<Vec<PodUsage>, String>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.store.epoch() != epoch || !self.visible {
+        if self.usage_generation != generation || !self.visible {
             return false;
         }
         match result {

@@ -244,6 +244,7 @@ pub(crate) struct ResourcesScreen {
     marked: BTreeSet<ResourceIdentity>,
     /// Reads pods' use while the pods list shows.
     usage: Option<Task<()>>,
+    usage_generation: u64,
     usage_state: UsageState,
     _subscriptions: Vec<Subscription>,
 }
@@ -387,6 +388,7 @@ impl ResourcesScreen {
             compact: false,
             marked: BTreeSet::new(),
             usage: None,
+            usage_generation: 0,
             usage_state: UsageState::default(),
             _subscriptions: subscriptions,
         }
@@ -661,6 +663,7 @@ impl ResourcesScreen {
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch = None;
         self.usage = None;
+        self.usage_generation = self.usage_generation.wrapping_add(1);
         if let Some(selected) = self.projection.selected() {
             self.restore = Some(selected.clone());
         }
