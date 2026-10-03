@@ -391,3 +391,5 @@ These have a default, so they don't block a step. Change one only by updating th
 - **Workload card counts** call Pending workloads progressing; Degraded and Failing count as unhealthy. Their first problem follows the core health order.
 
 - **Pod relationship lists** show at most 200 matching Services and 200 containers, with a count when truncated. Owner kinds outside the built-ins resolve through their exact API-version discovery document, so no plural or scope is guessed.
+
+- **Search matching** ignores case and uses substring matches on names and namespace/name. Namespaces join Config; Namespaces and Events also remain local page destinations. Refused answers share the 30-second reopen cache, and a new connection clears it. Metadata negotiation has no full-object JSON fallback.

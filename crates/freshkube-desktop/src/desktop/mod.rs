@@ -1,4 +1,3 @@
-mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
@@ -6,6 +5,7 @@ pub(crate) mod nodes;
 mod object_links;
 mod overview;
 mod pages;
+mod search;
 mod services;
 mod shell;
 mod system_services;
@@ -42,7 +42,6 @@ use freshkube_core::cluster_overview::{
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{
     ActiveTheme, Theme, ThemeMode, TitleBar,
-    command::CommandState,
     input::{InputEvent, InputState},
     v_flex,
 };
@@ -316,7 +315,7 @@ pub(crate) struct Pilot {
     /// The sidebar's Custom Resources, discovered when opened.
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
-    kind_switcher: Entity<CommandState>,
+    search: Entity<search::Search>,
     /// Kubernetes navigation groups shown open in the sidebar, by slug.
     kubernetes_groups: BTreeSet<&'static str>,
     sidebar_scroll: ScrollHandle,
@@ -579,7 +578,7 @@ impl Pilot {
             }
         });
         let mut view = Self {
-            runtime,
+            runtime: runtime.clone(),
             applied: AppliedConfig {
                 path: options.config_path,
                 context: options.context,
@@ -621,7 +620,7 @@ impl Pilot {
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
-            kind_switcher: cx.new(|cx| CommandState::new(window, cx)),
+            search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
             sidebar_scroll: ScrollHandle::new(),
             sidebar_reveal: None,

@@ -76,9 +76,7 @@ impl Render for Pilot {
             .on_action(cx.listener(|view, _: &NextContext, window, cx| {
                 view.adjacent_context(true, window, cx)
             }))
-            .on_action(
-                cx.listener(|view, _: &GoToKind, window, cx| view.open_kind_switcher(window, cx)),
-            )
+            .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             .child(self.render_title_bar(window, cx))
             .child(
                 div()

@@ -98,6 +98,9 @@ pub(super) fn metadata(kind: &str, api_version: &str, row: &ResourceRow, extra: 
 /// The full object behind an example row, written as the server would
 /// return it. `None` for anything the example cluster doesn't have.
 pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument> {
+    if identity.resource == "secrets" {
+        crate::desktop::probe::hit("example.secret-document");
+    }
     let (row, ix) = find(identity, now)?;
     let created = row.created.unwrap_or_default();
     let yaml = match identity.resource.as_str() {

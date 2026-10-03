@@ -34,6 +34,8 @@ The context switcher sits above Cluster, Resources and Control plane navigation.
 
 Pod Overview links to its node, controllers and matching Services, with container logs, previous instances and recent warnings. Owner links work on other kinds too; the kubelet’s node detail links to its Pods tab.
 
+Search everything (⌘K) finds pages, nodes, kinds and object names. It lists metadata when opened, shows permission refusals per kind, and never reads Secret values. Enter opens the result.
+
 ## Design philosophy
 
 - **State over logs.** Health is read from system state (procfs files, Talos and Kubernetes API responses), not from log lines, so a stale error in an old log never raises a false alarm.

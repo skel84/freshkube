@@ -53,6 +53,6 @@ pub use pod_logs::{
 pub use table::{RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
 
-pub use metadata::get_metadata;
+pub use metadata::{MetadataNames, get_metadata, list_metadata};
 
 pub use pod_links::{PodLinks, ServiceSelector, collect_pod_links, resolve_owner_kind};

@@ -233,9 +233,7 @@ impl Pilot {
                     .small()
                     .icon(IconName::Search)
                     .label("Search everything")
-                    .on_click(
-                        cx.listener(|view, _, window, cx| view.open_kind_switcher(window, cx)),
-                    ),
+                    .on_click(cx.listener(|view, _, window, cx| view.open_search(window, cx))),
             )
             .child(
                 // Navigation scrolls when the window is short or many
