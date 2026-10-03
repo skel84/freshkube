@@ -75,8 +75,15 @@ pub fn derive(
     if let Part::Loaded(events) = &mut events {
         events.newest.truncate(ISSUE_LIMIT);
     }
-    let nodes = nodes
-        .map(|nodes| summarize_nodes(nodes, pods.loaded().map(Vec::as_slice).unwrap_or_default()));
+    let nodes = nodes.map(|nodes| {
+        let mut nodes =
+            summarize_nodes(nodes, pods.loaded().map(Vec::as_slice).unwrap_or_default());
+        for node in &mut nodes {
+            node.pods_current = pods.is_current();
+            node.pods_observed = pods.loaded().is_some();
+        }
+        nodes
+    });
     let pod_summary = pods
         .clone()
         .map(|pods| summarize_pods(&pods, nodes.loaded().map(Vec::as_slice).unwrap_or_default()));

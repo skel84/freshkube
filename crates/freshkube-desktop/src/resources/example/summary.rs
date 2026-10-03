@@ -117,7 +117,7 @@ pub(crate) fn summary_objects<T: serde::de::DeserializeOwned>(
             .map(|object| serde_json::from_value(object).expect("typed example object"))
             .collect();
     }
-    let objects = read(context, key, None, now)
+    read(context, key, None, now)
         .unwrap()
         .1
         .into_iter()
@@ -132,8 +132,7 @@ pub(crate) fn summary_objects<T: serde::de::DeserializeOwned>(
             };
             serde_yaml::from_str(&yaml).expect("typed example object")
         })
-        .collect();
-    objects
+        .collect()
 }
 
 /// Seed exactly the reducer used by live list/watch streams. The caller keeps

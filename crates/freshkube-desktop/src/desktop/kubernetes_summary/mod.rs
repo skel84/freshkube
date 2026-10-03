@@ -201,15 +201,14 @@ impl Pilot {
         self.summary_task = Some(cx.spawn_in(window, async move |this, cx| {
             while receiver.changed().await.is_ok() {
                 let answer = receiver.borrow_and_update().clone();
-                if let Some((publication, health)) = answer {
-                    if this
+                if let Some((publication, health)) = answer
+                    && this
                         .update_in(cx, |view, window, cx| {
                             view.apply_summary(publication, health, window, cx)
                         })
                         .is_err()
-                    {
-                        break;
-                    }
+                {
+                    break;
                 }
             }
         }));

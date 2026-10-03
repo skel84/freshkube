@@ -130,12 +130,19 @@ impl Render for Fps {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Fps, Frames, SAMPLE_PERIOD, tone};
+    use crate::ui::Tone;
     use gpui_kit::{
+        AppContext, TestAppContext,
         component::Root,
+        px, size,
         test::{TestAppContextExt, TestWindowExt},
     };
-    use std::cell::Cell;
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn activity_colors_and_idle_do_not_confuse_sparse_redraws_with_slow_frames() {
