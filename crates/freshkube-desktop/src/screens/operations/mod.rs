@@ -53,9 +53,9 @@ use freshkube_core::{
         AuditEntry, AuditPhase, BlockingPdb, DrainOptions, DrainSummary, EtcdQuorumImpact,
         NodeOperationResult, NodeTarget, OperationConfirmation, OperationKind,
         OperationProgressEvent, OperationStatus, OperationStep, OperationsEvent, POD_SAMPLE_LIMIT,
-        PREFLIGHT_TIMEOUT, PodReference, RollingProgressEvent, SchedulingState, SelectionEvent,
-        SelectionRequest, blocking_pdbs, etcd_impact, evaluate_operation_safety, move_target,
-        not_started, ordered_sequence, panic_outcomes, preflight_nodes, run_selection,
+        PREFLIGHT_TIMEOUT, PodReference, SchedulingState, SelectionEvent, SelectionRequest,
+        blocking_pdbs, etcd_impact, evaluate_operation_safety, move_target, not_started,
+        ordered_sequence, panic_outcomes, preflight_nodes, run_selection,
         selection_blocked_reason as first_blocking, selection_toggle,
     },
 };

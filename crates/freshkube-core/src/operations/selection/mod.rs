@@ -16,16 +16,24 @@ pub const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(45);
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct SelectionRequest {
+    /// Mutation approved for every selected target.
     pub operation: OperationKind,
+    /// Exact node identities, in the confirmed execution order.
     pub targets: Vec<NodeTarget>,
+    /// Talos source used for fresh etcd evidence.
     pub endpoint: InspectionTarget,
+    /// The frontend's explicit approval of the frozen selection and options.
     pub confirmation: OperationConfirmation,
+    /// Eviction and post-reboot behavior shared by the selection.
     pub drain_options: DrainOptions,
+    /// Stop after any unsuccessful node; cancellation always stops the selection.
     pub stop_on_failure: bool,
+    /// Cooperative pause between nodes, never a deadline for a mutation.
     pub delay_between_nodes: Duration,
 }
 
 impl SelectionRequest {
+    /// Create a confirmed or rejected selection with safe drain defaults and no pause.
     pub fn new(
         operation: OperationKind,
         targets: Vec<NodeTarget>,
@@ -47,7 +55,9 @@ impl SelectionRequest {
 /// The caller chooses how to deliver progress and completed node outcomes.
 #[derive(Clone, Debug)]
 pub enum SelectionEvent {
+    /// Progress from the precheck or the existing per-node runner.
     Progress(OperationsEvent),
+    /// An executed node's retained result; the final outcome also includes unstarted nodes.
     NodeDone(NodeOperationResult),
 }
 
@@ -55,7 +65,9 @@ pub enum SelectionEvent {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct SelectionOutcome {
+    /// Final outcomes in the requested order, with audit failures retained on each result.
     pub results: Vec<NodeOperationResult>,
+    /// A selection-wide precheck/access failure or panic, when present.
     pub note: Option<String>,
 }
 
@@ -103,7 +115,7 @@ async fn run_with_preflight<Check, CheckFuture>(
     preflight: Check,
 ) -> SelectionOutcome
 where
-    Check: Fn(Client, Vec<NodeTarget>) -> CheckFuture + Clone,
+    Check: Fn(Client, Vec<NodeTarget>) -> CheckFuture,
     CheckFuture: Future<Output = Result<Vec<NodePreflight>, String>>,
 {
     let operation = request.operation;
