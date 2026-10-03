@@ -80,6 +80,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
         run: cargo test --workspace --locked
+      - name: Check builds leave the source tree clean
+        run: test -z "$(git status --porcelain)"
 
   build:
     name: macOS application bundles

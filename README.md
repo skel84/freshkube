@@ -60,6 +60,15 @@ Requirements:
 - `protoc`, the protobuf compiler, used to generate the Talos gRPC client: `brew install protobuf`
 - macOS 15 or later with the Xcode command line tools (see GPUI Kit's [platform prerequisites](https://gpui-kit.com/docs/installation))
 
+`talos-rs` generates its protobuf Rust code at build time from the checked-in
+`crates/talos-rs/proto/` schemas into Cargo's `OUT_DIR`. Generated Rust files are
+build outputs and are not checked in; separate target directories keep their
+outputs independent. Schema changes regenerate the code on the next build,
+including imported schemas. The public `talos_rs::proto` module paths stay the
+same. Set `PROTOC` to an absolute compiler path if it is not on `PATH`; changing
+`PROTOC` or `PROTOC_INCLUDE` also reruns generation. `protoc` is a build dependency
+only, and is not needed to launch the app or an installed bundle.
+
 Clone the public [Freshkube repository](https://github.com/skel84/freshkube) and build:
 
 ```bash

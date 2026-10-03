@@ -15,6 +15,11 @@ icons are embedded too. The bundle carries the checked-in assets, `LICENSE`,
 `NOTICE`, Apache-2.0 and Lucide/Feather texts, and both font OFL notices under
 `Contents/Resources`. There is no external asset directory to install.
 
+Talos protobuf Rust code is generated from the checked-in schemas into Cargo's
+`OUT_DIR` for each build, including release and target-specific builds. Set
+`PROTOC` to an absolute compiler path if necessary. Generated code and `protoc`
+are not runtime bundle resources.
+
 On the machine matching the target architecture:
 
 ```sh
@@ -63,6 +68,13 @@ including headless UI tests. A change that touches only `spikes/`, `docs/` or
 Markdown files skips them; the skipped job counts as passed, so it never blocks
 a merge. A spike has its own workspace and tests that CI doesn't run. A new push
 to a pull request cancels its previous run.
+
+Both the checks and bundle jobs install protobuf before building. They generate
+the Talos client in their own Cargo output directory; no checked-in generated
+Rust or regeneration maintenance command is required. Schema changes trigger
+generation through the build script's recursive `proto/` dependency.
+Both jobs also check that building leaves the tracked and untracked source tree
+clean (Cargo outputs are ignored).
 
 The bundles come from the shared
 [macOS packaging workflow](../.github/workflows/macos-app.yml), on these standard
