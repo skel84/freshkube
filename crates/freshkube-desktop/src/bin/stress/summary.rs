@@ -40,13 +40,13 @@ impl State {
             "list-page"
         };
         let representation = if table { "Table" } else { "Object" };
-        *self
-            .inner
-            .lock()
-            .unwrap()
-            .requests
-            .entry(format!("{path} {operation} {representation}"))
-            .or_default() += 1;
+        let key = format!("{path} {operation} {representation}");
+        let mut history = self.inner.lock().unwrap();
+        let count = history.requests.entry(key.clone()).or_default();
+        *count += 1;
+        // Log cumulative counters as reads start too: native quit can bypass
+        // main's return, and slow window startup can outlast the reporter.
+        eprintln!("stress server requests {key}={count}");
     }
     pub(super) fn report(&self) {
         let mut history = self.inner.lock().unwrap();

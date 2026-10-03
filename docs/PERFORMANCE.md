@@ -25,6 +25,9 @@ scripts/stress.sh terminal-50k terminal 50000
 | --- | --- |
 | `table <pods>` | lists that many pods, then types three filters and clears each |
 | `burst <pods> <changes/s>` | lists the pods, then the watch changes them at that rate: one change in ten deletes a pod and adds another, the rest flip a pod between Running and CrashLoopBackOff |
+| `summary` | opens Health with 20,000 Pods, 2,000 Deployments and 5,000 warning Events, then leaves the collections quiet |
+| `summary-burst <changes/s>` | the summary workload with sustained Pod changes from the same writer as the Resources watch |
+| `summary-410 <changes/s>` | the same workload, with one forced Pod watch expiration and relist after 10 s |
 | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate; every 50th line carries 300 more characters |
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
@@ -50,6 +53,26 @@ The `stress` feature turns on spans around the work that matters (`crate::perf`)
 | `terminal.snapshot` | copying the visible rows into style runs, at most once per batch of chunks |
 | `terminal.paint` | painting the grid; its count a second is the frame rate |
 | `monitoring.panel_render`, `monitoring.plot_paint`, `monitoring.cursor` | building a dashboard panel's tree, painting a timeseries' paths, and placing the cursor another chart passed on |
+| `summary.tokio`, `summary.apply` | deriving compact reflector evidence on Tokio, then applying prepared display data on GPUI; before the watch migration, `summary.tokio` also included API collection |
+| `summary.lag` | first dirty-store notification to GPUI apply, including the 500 ms debounce; excludes network and producer backlog |
+| `summary.live_sources` | synchronized and current summary collections, from zero through nine; the first nine marks completed initial synchronization |
+| `summary.retained_mib`, `summary.staging_peak_mib`, `summary.bytes_per_pod` | retained payload and maximum staging payload in MiB, and mean retained Pod payload bytes; excludes map/Arc/allocator overhead |
+
+Summary request counters are cumulative per API path, operation and representation.
+Use the last (or maximum) value for each key, not the sum of repeated lines. An
+initial list can have many pages; a watch opened after the list is a separate
+request. `FRESHKUBE_STRESS_BINARY=/absolute/path/to/saved/stress` runs an immutable
+release binary without rebuilding it, so polling and watching can be compared
+against the same synthetic API. The API has one world writer, stable paginated
+snapshots, at most eight active snapshots and a 100,000-event replay ring shared
+by typed and Table watches. A replay gap produces a 410 rather than missing
+deletes silently. Process memory includes that API and its replay ring.
+
+The bottom bar's FPS indicator passively samples painted frames during activity;
+it never requests a continuous animation. It refreshes its own label at most
+once a second: green at 55+, amber at 30–54, red below 30. Gaps of 250 ms or more
+and samples with fewer than three frame intervals are neutral idle readings.
+This is redraw cadence during bursts, not a GPU throughput benchmark.
 
 When a number looks wrong, profile the run with macOS `sample`:
 
@@ -157,7 +180,7 @@ What is left is the projection's first sort, which is quick for the default orde
 
 ### Kubernetes summary
 
-The shell reads the Kubernetes summary from the API server cache on its 15 s cycle on every page. `scripts/stress.sh summary-20k summary` serves 20,000 pods, 2,000 deployments and 5,000 warning events through the real client. Typed objects are discarded on Tokio after deriving the summary and Health data.
+Before the watch migration, the shell read the Kubernetes summary from the API server cache on its 15 s cycle on every page. `scripts/stress.sh summary-20k summary` served 20,000 pods, 2,000 deployments and 5,000 warning events through the real client. Typed objects were discarded on Tokio after deriving the summary and Health data. These historical measurements describe that polling implementation.
 
 Release build, 40 s, with the first 5 s left out; two periodic refreshes, while the macOS packaging worktree was also compiling. The run opened Health. Timings include the synthetic server's JSON generation and client decoding.
 
@@ -169,7 +192,7 @@ Release build, 40 s, with the first 5 s left out; two periodic refreshes, while 
 
 Process CPU was 4.76% at the median and 106.01% at the 99th percentile; resident memory ended at 397 MB and peaked at 404 MB, including the synthetic server in the same process. With only two refresh samples the percentiles select the larger sample, as the stress reporter does; this is a cost gate, not a latency distribution.
 
-The main-thread apply stayed under its 16 ms budget, so the summary keeps its all-page refresh. No visibility fallback was needed. The raw report is `target/stress/summary-20k.log`.
+The main-thread apply stayed under its 16 ms budget, so the summary kept its all-page refresh. No visibility fallback was needed. The raw report is `target/stress/summary-20k.log`.
 
 
 The completed layout was checked again with `FRESHKUBE_STRESS_SECONDS=40 scripts/stress.sh summary-final-20k summary`, after an initial attempt was refused because the screen was locked. The rerun used the unlocked screen, opened Health and had no concurrent build or capture. It includes the joined node rows, card and attention derivation added after the first gate. The first 5 s were excluded, leaving two periodic refresh samples.
@@ -180,4 +203,4 @@ The completed layout was checked again with `FRESHKUBE_STRESS_SECONDS=40 scripts
 | Apply on the main thread | 7.01 / 7.01 / 7.01 ms |
 | Main-thread stalls | 0.48 / 1.19 / 11.09 ms |
 
-CPU was 4.18% at the median and 87.80% at the 99th percentile and maximum. Resident memory ended at 385 MB and peaked at 430 MB, including the synthetic server. The 7.01 ms apply still meets the 16 ms budget, so the all-page refresh remains enabled. The same two-sample percentile caveat applies. The raw report is `target/stress/summary-final-20k.log`.
+CPU was 4.18% at the median and 87.80% at the 99th percentile and maximum. Resident memory ended at 385 MB and peaked at 430 MB, including the synthetic server. The 7.01 ms apply met the 16 ms budget, so the all-page refresh remained enabled. The same two-sample percentile caveat applies. The raw report is `target/stress/summary-final-20k.log`.

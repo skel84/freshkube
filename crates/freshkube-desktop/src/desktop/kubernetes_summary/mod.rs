@@ -283,6 +283,13 @@ impl Pilot {
             return;
         }
         session.applied_revision = publication.revision;
+        crate::perf::value(
+            "summary.live_sources",
+            Source::WATCHED
+                .iter()
+                .filter(|source| publication.summary.observations[*source].is_current())
+                .count() as f64,
+        );
         if let Some(changed_at) = publication.changed_at {
             crate::perf::value("summary.lag", changed_at.elapsed().as_secs_f64() * 1000.);
         }
