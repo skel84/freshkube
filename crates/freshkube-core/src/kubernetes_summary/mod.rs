@@ -1,5 +1,5 @@
-//! Cluster facts derived from cache-backed Kubernetes lists. Objects are
-//! dropped after collection; a refused list does not hide other parts.
+//! Cluster facts derived from session-owned compact Kubernetes reflectors.
+//! Each collection keeps its own coverage, freshness and typed failure.
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -9,8 +9,20 @@ use crate::workloads::{PodInfo, WorkloadCollectionOutcome};
 
 mod collect;
 mod derive;
+mod driver;
+mod observation;
+mod project;
+mod retained;
+mod session;
 pub use collect::collect_kubernetes_summary;
 pub use derive::derive;
+pub use driver::DEBOUNCE;
+pub use observation::{
+    Observation, ObservationFailure, Observations, ReadStatus, Scope, SessionIdentity, Source,
+    SubscriptionKey,
+};
+pub use retained::{RetainedObject, SummaryResource};
+pub use session::{Limits, Publication, Session, Subscription};
 
 pub const ISSUE_LIMIT: usize = 200;
 
@@ -18,21 +30,73 @@ pub const ISSUE_LIMIT: usize = 200;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part<T> {
     Loaded(T),
-    Refused(String),
-    Failed(String),
+    Refused(Unavailable<T>),
+    Failed(Unavailable<T>),
 }
 
 impl<T> Part<T> {
+    /// Last completely observed value, which may be stale. Check `is_current`
+    /// before using a missing object or a zero to establish current absence.
     pub fn loaded(&self) -> Option<&T> {
         match self {
             Self::Loaded(value) => Some(value),
-            _ => None,
+            Self::Refused(unavailable) | Self::Failed(unavailable) => {
+                unavailable.last_good.as_ref()
+            }
         }
     }
     pub fn error(&self) -> Option<&str> {
         match self {
-            Self::Refused(error) | Self::Failed(error) => Some(error),
+            Self::Refused(error) | Self::Failed(error) => Some(&error.message),
             _ => None,
+        }
+    }
+}
+
+/// A read failure and the last completely observed value, when one exists.
+/// Keeping a value never turns a refused read into a successful read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unavailable<T> {
+    pub failure: Option<ObservationFailure>,
+    pub message: String,
+    pub last_good: Option<T>,
+}
+impl<T> From<String> for Unavailable<T> {
+    fn from(message: String) -> Self {
+        Self {
+            failure: None,
+            message,
+            last_good: None,
+        }
+    }
+}
+impl<T> From<&str> for Unavailable<T> {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+impl<T> std::fmt::Display for Unavailable<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(f)
+    }
+}
+impl<T> Part<T> {
+    pub fn is_current(&self) -> bool {
+        matches!(self, Self::Loaded(_))
+    }
+    fn observed(value: T, observation: &Observation) -> Self {
+        if observation.is_current() {
+            return Self::Loaded(value);
+        }
+        let unavailable = Unavailable {
+            failure: observation.failure().cloned(),
+            message: observation.message().unwrap_or("Read unavailable").into(),
+            last_good: observation.has_data().then_some(value),
+        };
+        if observation.status() == ReadStatus::Refused {
+            Self::Refused(unavailable)
+        } else {
+            Self::Failed(unavailable)
         }
     }
 }
@@ -60,6 +124,8 @@ pub struct NodeSummary {
     pub capacity: BTreeMap<String, Quantity>,
     pub taints: Vec<String>,
     pub pods: usize,
+    pub pods_current: bool,
+    pub pods_observed: bool,
 }
 
 impl NodeSummary {
@@ -123,6 +189,7 @@ pub struct ClaimSummary {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct KubernetesSummary {
+    pub observations: Observations,
     /// Identities of subjects retained by the summary; no full objects remain.
     pub references: BTreeMap<(String, String, String), String>,
     pub version: Part<String>,
@@ -135,40 +202,72 @@ pub struct KubernetesSummary {
     pub namespaces: Part<usize>,
 }
 
-impl KubernetesSummary {
-    pub fn refresh_failure(&self) -> Option<&str> {
-        fn failed<T>(part: &Part<T>) -> Option<&str> {
-            match part {
-                Part::Failed(message) => Some(message),
-                _ => None,
-            }
-        }
-        failed(&self.version)
-            .or_else(|| failed(&self.nodes))
-            .or_else(|| failed(&self.pods))
-            .or_else(|| failed(&self.events))
-            .or_else(|| failed(&self.claims))
-            .or_else(|| failed(&self.available_volumes))
-            .or_else(|| failed(&self.namespaces))
-            .or_else(|| {
-                self.workloads
-                    .unavailable()
-                    .iter()
-                    .find(|error| !error.message.contains("forbidden"))
-                    .map(|error| error.message.as_str())
-            })
-    }
-}
-
 impl<T> Part<T> {
     fn map<U>(self, map: impl FnOnce(T) -> U) -> Part<U> {
         match self {
             Self::Loaded(value) => Part::Loaded(map(value)),
-            Self::Refused(error) => Part::Refused(error),
-            Self::Failed(error) => Part::Failed(error),
+            Self::Refused(error) => Part::Refused(Unavailable {
+                failure: error.failure,
+                message: error.message,
+                last_good: error.last_good.map(map),
+            }),
+            Self::Failed(error) => Part::Failed(Unavailable {
+                failure: error.failure,
+                message: error.message,
+                last_good: error.last_good.map(map),
+            }),
         }
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod session_tests;
+
+impl KubernetesSummary {
+    /// Last committed roster plus explicit coverage. Partial evidence is useful
+    /// for retaining rows, but cannot prove that an unobserved node is absent.
+    pub fn node_roster(
+        &self,
+    ) -> crate::security_lifecycle::SourceSnapshot<
+        Vec<crate::security_lifecycle::KubernetesNodeRosterEntry>,
+    > {
+        use crate::security_lifecycle::{KubernetesNodeRosterEntry, SourceSnapshot};
+        let Some(nodes) = self.nodes.loaded() else {
+            return SourceSnapshot::Unavailable {
+                reason: self.nodes.error().unwrap_or("Waiting for Nodes").into(),
+            };
+        };
+        let value = nodes
+            .iter()
+            .map(|node| KubernetesNodeRosterEntry {
+                name: node.name.clone(),
+                internal_address: node
+                    .addresses
+                    .iter()
+                    .find(|(kind, _)| kind == "InternalIP")
+                    .map(|(_, address)| address.clone()),
+                is_control_plane: node
+                    .roles
+                    .iter()
+                    .any(|role| matches!(role.as_str(), "control-plane" | "master")),
+            })
+            .collect();
+        if self.nodes.is_current() {
+            SourceSnapshot::Available(value)
+        } else {
+            SourceSnapshot::Partial {
+                value,
+                warnings: vec![format!(
+                    "{} · showing last known Nodes",
+                    self.nodes.error().unwrap_or("Refreshing Nodes")
+                )],
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod driver_tests;

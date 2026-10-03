@@ -157,6 +157,13 @@ pub(crate) enum ScreenEvent {
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn set_embedded(&mut self, _embedded: bool, _cx: &mut Context<Self>) {}
 
+    fn set_summary_nodes(
+        &mut self,
+        _nodes: Option<freshkube_core::kubernetes_summary::Subscription>,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     fn set_workloads(
         &mut self,
         _context: &str,
@@ -184,6 +191,11 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     /// A manual or automatic refresh while the screen is visible.
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>);
 
+    /// An explicit request from the screen's Refresh or Retry button.
+    fn manual_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh(window, cx);
+    }
+
     /// The user navigated here: focus the main list so keys work at once.
     /// Not called on source changes, so it never steals focus from a popover.
     fn focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -192,6 +204,8 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
+type SummaryNodesFn =
+    Rc<dyn Fn(Option<freshkube_core::kubernetes_summary::Subscription>, &mut App)>;
 type WorkloadsFn = Rc<dyn Fn(&str, Result<Arc<WorkloadData>, String>, &mut App)>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
@@ -203,6 +217,7 @@ pub(crate) struct ScreenHandle {
     refresh: WindowFn,
     focus: WindowFn,
     workloads: WorkloadsFn,
+    summary_nodes: SummaryNodesFn,
     embedded: EmbeddedFn,
 }
 
@@ -214,9 +229,13 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
+        let summary_nodes = entity.clone();
         let workloads = entity.clone();
         let embedded = entity.clone();
         Self {
+            summary_nodes: Rc::new(move |nodes, cx| {
+                summary_nodes.update(cx, |screen, cx| screen.set_summary_nodes(nodes, cx))
+            }),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
             }),
@@ -239,6 +258,14 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
+    }
+
+    pub(crate) fn set_summary_nodes(
+        &self,
+        nodes: Option<freshkube_core::kubernetes_summary::Subscription>,
+        cx: &mut App,
+    ) {
+        (self.summary_nodes)(nodes, cx)
     }
 
     pub(crate) fn set_workloads(
@@ -462,7 +489,7 @@ pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
                 .label("Refresh")
                 .loading(loading)
                 .disabled(loading)
-                .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
+                .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx))),
         )
 }
 
@@ -471,7 +498,7 @@ pub(crate) fn retry_button<V: ScreenPanel>(id: &'static str, cx: &mut Context<V>
         .primary()
         .icon(IconName::RefreshCw)
         .label("Retry")
-        .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
+        .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx)))
         .into_any_element()
 }
 

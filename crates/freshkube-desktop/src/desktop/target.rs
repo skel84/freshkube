@@ -59,15 +59,6 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.epoch = self.epoch.wrapping_add(1);
-        if self.kubernetes_summary.is_loading() {
-            self.summary_job = None;
-            self.summary_task = None;
-            let request = self.kubernetes_summary.begin(self.applied.clone());
-            self.kubernetes_summary.apply(
-                &request,
-                Err("Node changed; waiting for the next summary refresh".into()),
-            );
-        }
         // Cancel rather than let an old foreground node refresh keep loading.
         if self.overview.is_loading() {
             self.overview_job = None;

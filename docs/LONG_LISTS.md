@@ -25,6 +25,8 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 | Search everything | local destinations plus up to 2,000 metadata names per kind, nine kinds | Kit `Command`, a `v_virtual_list`; seven groups show eight matches each and a count of the rest. Groups are derived on query or answer changes | Fine |
 | Diagnostics, Security, etcd, Lifecycle, Operations progress | bounded: usually tens of rows; at most 256 Lifecycle nodes or Operations lines | plain children in a scroll area | Fine while bounded |
 
+The background Kubernetes summary retains compact reflector evidence rather than full objects or printer-table rows. Pod facts are capped at 4 KiB each, collections at 100,000 objects, and committed payload at 128 MiB per session, with a separate 128 MiB aggregate budget for replacement lists. Exceeding a limit marks that kind incomplete and retains its previous complete observation; it never silently drops live objects to report a lower count. Publications and dirty notifications use capacity-one channels. Issue rows remain capped at 200, while aggregate counts and namespace health include the complete committed collection. Overview Attention shows eight rows, expanding to at most fifty. See [PERFORMANCE.md](PERFORMANCE.md) for measured payload, process RSS and relist peaks.
+
 ## Wrapped rows during a resize
 
 With line wrapping on, the logs panel used to re-lay out every retained line on each resize step. In talos-pilot's GPUI frontend, where Freshkube's logs panel comes from, that cost about 115 ms per step at 5,000 lines. Measuring only the rows that can be on screen, then re-measuring the rest once the width holds, brought it to 44 ms, the profiling harness's floor. Rows on screen keep exact heights.

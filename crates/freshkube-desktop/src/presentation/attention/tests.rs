@@ -16,6 +16,7 @@ fn node() -> NodeRow {
     let talos =
         crate::presentation::node_summaries(&crate::fixture::cluster("prod-fra", 0))[0].clone();
     NodeRow {
+        kubernetes_current: true,
         key: NodeKey {
             kubernetes: Some(kubernetes.name.clone()),
             talos: Some(talos.name.clone()),

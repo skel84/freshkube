@@ -2433,12 +2433,14 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "k8s-openapi",
  "kube",
  "libc",
  "serde",
  "serde_json",
  "serde_yaml",
  "talos-rs",
+ "tempfile",
  "tokio",
 ]
 

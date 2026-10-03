@@ -302,7 +302,7 @@ impl Pilot {
                     .loading(loading)
                     .accessibility_label("Refresh now")
                     .tooltip(if ring_visible {
-                        format!("Refresh now · next automatic refresh in {next_in} s")
+                        format!("Refresh now · next Talos refresh in {next_in} s")
                     } else {
                         "Refresh now".into()
                     })

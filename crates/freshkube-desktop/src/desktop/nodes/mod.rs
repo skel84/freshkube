@@ -186,7 +186,9 @@ impl Pilot {
             &self.nodes,
             kubernetes.map(Vec::as_slice).unwrap_or_default(),
             self.overview.data().is_some(),
-            kubernetes.is_some(),
+            self.kubernetes_summary
+                .data()
+                .is_some_and(|summary| summary.nodes.is_current()),
         ));
         if self
             .node_workspace

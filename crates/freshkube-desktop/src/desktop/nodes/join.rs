@@ -31,6 +31,7 @@ pub(crate) struct NodeRow {
     pub(crate) role: Role,
     pub(crate) tone: Tone,
     pub(crate) kubernetes: Option<KubernetesNode>,
+    pub(crate) kubernetes_current: bool,
     pub(crate) talos: Option<TalosNode>,
     pub(crate) ready: &'static str,
     pub(crate) talos_state: SharedString,
@@ -129,7 +130,8 @@ fn row(
         kubernetes,
         talos_available,
         kubernetes_available,
-    );
+    )
+    .with_kubernetes_current(kubernetes_available);
     let name = kubernetes
         .map(|node| node.name.as_str())
         .or_else(|| talos.map(|node| node.name.as_str()))
@@ -143,7 +145,19 @@ fn row(
         role,
         &memory,
     );
+    let pod_count = kubernetes
+        .map(|node| {
+            if !node.pods_observed {
+                "—".into()
+            } else if !node.pods_current {
+                format!("{} last known", node.pods)
+            } else {
+                node.pods.to_string()
+            }
+        })
+        .unwrap_or_else(|| "—".into());
     let mut row = NodeRow {
+        kubernetes_current: kubernetes_available,
         key: NodeKey {
             kubernetes: kubernetes.map(|node| node.name.clone()),
             talos: talos.map(|node| node.name.clone()),
@@ -151,11 +165,11 @@ fn row(
         id: format!("node-{name}").into(),
         open_id: format!("node-{name}-open").into(),
         pod_label: kubernetes
-            .map(|node| format!("Pods {}", node.pods))
+            .map(|_| format!("Pods {pod_count}"))
             .unwrap_or_else(|| "Pods".into())
             .into(),
         kubelet_pods: kubernetes
-            .map(|node| format!("Pods on this node ({})", node.pods))
+            .map(|_| format!("Pods on this node ({pod_count})"))
             .unwrap_or_else(|| "Pods on this node".into())
             .into(),
         service_problem: counts.unhealthy > 0,
@@ -172,10 +186,7 @@ fn row(
         address: node_address(talos, kubernetes).into(),
         load: load_text(talos),
         memory,
-        pods: kubernetes
-            .map(|node| node.pods.to_string())
-            .unwrap_or_else(|| "—".into())
-            .into(),
+        pods: pod_count.into(),
         services: match assessment.talos() {
             TalosNodeState::Responding => format!(
                 "{} healthy · {} unhealthy",
@@ -208,6 +219,7 @@ fn readiness_label(state: KubernetesNodeState) -> &'static str {
     match state {
         KubernetesNodeState::Ready => "Ready",
         KubernetesNodeState::NotReady => "NotReady",
+        KubernetesNodeState::Stale => "Last known",
         KubernetesNodeState::Unavailable => "Kubernetes unavailable",
         KubernetesNodeState::Absent => "Not in Kubernetes",
     }

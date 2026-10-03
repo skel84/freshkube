@@ -9,12 +9,12 @@ use std::collections::BTreeMap;
 
 use freshkube_core::HealthIndicator;
 use freshkube_core::QuorumState;
+use freshkube_core::kubernetes_summary::{Part, Publication, Subscription};
 use freshkube_core::security_lifecycle::{
     ClusterIdentity, DiscoveryRosterEntry, EtcdPreOperationAudit, KubernetesNodeRosterEntry,
     LifecycleAlert, LifecycleAlertKind, LifecycleCollector, LifecycleSnapshot,
     NodeLifecycleSnapshot, SourceSnapshot, TimeSynchronizationAudit,
 };
-use futures::join;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -93,6 +93,7 @@ enum Item {
 pub(crate) struct LifecycleScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
+    summary_nodes: Option<Subscription>,
     loader: Loader<LifecycleView>,
     selected: Option<Item>,
     focus: FocusHandle,
@@ -101,6 +102,23 @@ pub(crate) struct LifecycleScreen {
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
 impl ScreenPanel for LifecycleScreen {
+    fn set_summary_nodes(&mut self, nodes: Option<Subscription>, cx: &mut Context<Self>) {
+        self.summary_nodes = nodes;
+        if let (Some(publication), Some(data), Some(source)) = (
+            self.summary_nodes.as_ref().and_then(Subscription::latest),
+            self.loader.data().cloned(),
+            self.source.as_ref(),
+        ) {
+            if !self.loader.is_loading() {
+                self.loader.resolve(
+                    source.target.clone(),
+                    Ok(data.with_nodes(&publication).prepare()),
+                );
+                cx.notify();
+            }
+        }
+    }
+
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
@@ -112,6 +130,7 @@ impl ScreenPanel for LifecycleScreen {
         Self {
             runtime,
             source: None,
+            summary_nodes: None,
             loader: Loader::default(),
             selected: None,
             focus: cx.focus_handle(),
@@ -139,6 +158,11 @@ impl ScreenPanel for LifecycleScreen {
         window.focus(&self.focus, cx);
     }
 
+    fn manual_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(ScreenEvent::RefreshSummary);
+        self.refresh(window, cx);
+    }
+
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
@@ -147,33 +171,54 @@ impl ScreenPanel for LifecycleScreen {
             return;
         }
         let Some(live) = source.live.clone() else {
-            self.resolve(source.target.clone(), example(&source));
+            let data = example(&source).map(|data| {
+                self.summary_nodes
+                    .as_ref()
+                    .and_then(Subscription::latest)
+                    .map(|publication| data.clone().with_nodes(&publication))
+                    .unwrap_or(data)
+            });
+            self.resolve(source.target.clone(), data);
             cx.notify();
             return;
         };
         let context = source.target.context.clone();
+        let nodes = self.summary_nodes.clone();
         self.loader.load(
             source.target.clone(),
             &self.runtime,
             "lifecycle status",
             async move {
-                let kubernetes = live.kubernetes().await;
-                let had_client = kubernetes.is_ok();
+                let roster = nodes
+                    .as_ref()
+                    .and_then(Subscription::latest)
+                    .map(|p| p.summary.node_roster())
+                    .unwrap_or_else(|| SourceSnapshot::Unavailable {
+                        reason: "Waiting for the shared Node observation".into(),
+                    });
                 let collector = LifecycleCollector::new(live.config_path.clone());
-                let (snapshot, kubelets) = join!(
-                    collector.collect_with_kubernetes(&live.client, &context, kubernetes.clone()),
-                    collect_kubelets(kubernetes),
-                );
-                if had_client && matches!(kubelets, SourceSnapshot::Unavailable { .. }) {
-                    // The reused client failed; revalidate and rebuild next time.
-                    live.forget_kubernetes();
-                }
-                Ok(LifecycleView {
+                let snapshot = collector
+                    .collect_with_observed_nodes(&live.client, &context, roster)
+                    .await;
+                let kubelets = nodes
+                    .as_ref()
+                    .and_then(Subscription::latest)
+                    .map(|p| observed_kubelets(&p))
+                    .unwrap_or_else(|| SourceSnapshot::Unavailable {
+                        reason: "Waiting for the shared Node observation".into(),
+                    });
+                let data = LifecycleView {
                     snapshot,
                     kubelets,
                     display: Default::default(),
-                }
-                .prepare())
+                };
+                let data = if let Some(publication) = nodes.as_ref().and_then(Subscription::latest)
+                {
+                    data.with_nodes(&publication)
+                } else {
+                    data
+                };
+                Ok(data.prepare())
             },
             |screen: &mut Self| &mut screen.loader,
             cx,
@@ -182,84 +227,58 @@ impl ScreenPanel for LifecycleScreen {
     }
 }
 
-/// The kubelet version each Kubernetes node reports, read through the same
-/// kubeconfig choice as the roster.
-async fn collect_kubelets(
-    client: Result<kube::Client, String>,
-) -> SourceSnapshot<Vec<KubeletEntry>> {
-    use kube::api::ListParams;
-    use kube::core::{ApiResource, DynamicObject, GroupVersionKind};
-
-    let client = match client {
-        Ok(client) => client,
-        Err(reason) => return SourceSnapshot::Unavailable { reason },
+/// Project kubelet versions from the same committed Node revision as the roster.
+fn observed_kubelets(publication: &Publication) -> SourceSnapshot<Vec<KubeletEntry>> {
+    let part = &publication.summary.nodes;
+    let Some(nodes) = part.loaded() else {
+        return SourceSnapshot::Unavailable {
+            reason: part.error().unwrap_or("Waiting for Nodes").into(),
+        };
     };
-    let resource = ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Node"));
-    let api: kube::Api<DynamicObject> = kube::Api::all_with(client, &resource);
-    let listed = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        api.list(&ListParams::default()),
-    )
-    .await;
-    let list = match listed {
-        Ok(Ok(list)) => list,
-        Ok(Err(error)) => {
-            return SourceSnapshot::Unavailable {
-                reason: format!("Kubernetes node versions request failed: {error}"),
-            };
-        }
-        Err(_) => {
-            return SourceSnapshot::Unavailable {
-                reason: "Kubernetes node versions request timed out".into(),
-            };
-        }
-    };
-    let mut skipped = 0;
-    let entries: Vec<KubeletEntry> = list
-        .items
+    let value: Vec<_> = nodes
         .iter()
-        .take(256)
-        .filter_map(|node| {
-            let name = node.metadata.name.clone()?;
-            let version = node
-                .data
-                .pointer("/status/nodeInfo/kubeletVersion")
-                .and_then(|version| version.as_str())
-                .filter(|version| !version.is_empty());
-            let Some(version) = version else {
-                skipped += 1;
-                return None;
-            };
-            let address = node
-                .data
-                .pointer("/status/addresses")
-                .and_then(|addresses| addresses.as_array())
-                .and_then(|addresses| {
-                    addresses.iter().find_map(|address| {
-                        (address.get("type").and_then(|kind| kind.as_str()) == Some("InternalIP"))
-                            .then(|| address.get("address").and_then(|a| a.as_str()))
-                            .flatten()
-                            .map(str::to_owned)
-                    })
-                });
-            Some(KubeletEntry {
-                name,
-                address,
-                version: version.to_owned(),
-            })
+        .filter(|node| !node.kubelet_version.is_empty())
+        .map(|node| KubeletEntry {
+            name: node.name.clone(),
+            version: node.kubelet_version.clone(),
+            address: node
+                .addresses
+                .iter()
+                .find(|(kind, _)| kind == "InternalIP")
+                .map(|(_, address)| address.clone()),
         })
         .collect();
-    if skipped > 0 || entries.is_empty() {
-        SourceSnapshot::Partial {
-            value: entries,
-            warnings: vec![if skipped > 0 {
-                format!("{skipped} Kubernetes node(s) reported no kubelet version")
-            } else {
-                "Kubernetes API returned no nodes".into()
-            }],
-        }
+    let mut warnings = Vec::new();
+    if value.len() != nodes.len() {
+        warnings.push("Some Nodes reported no kubelet version".into());
+    }
+    if !matches!(part, Part::Loaded(_)) {
+        warnings.push(format!(
+            "{} · showing last known versions",
+            part.error().unwrap_or("Refreshing Nodes")
+        ));
+    }
+    if warnings.is_empty() {
+        SourceSnapshot::Available(value)
     } else {
-        SourceSnapshot::Available(entries)
+        SourceSnapshot::Partial { value, warnings }
+    }
+}
+impl LifecycleView {
+    fn with_nodes(mut self, publication: &Publication) -> Self {
+        self.snapshot
+            .set_kubernetes_roster(publication.summary.node_roster());
+        self.kubelets = observed_kubelets(publication);
+        self
+    }
+}
+
+/// Only a complete, current observation can establish absence.
+fn complete<T>(source: &SourceSnapshot<T>) -> Option<&T> {
+    if let SourceSnapshot::Available(value) = source {
+        Some(value)
+    } else {
+        None
     }
 }
 
@@ -371,14 +390,8 @@ fn kubernetes_support(talos: &str) -> Option<(u32, u32)> {
 
 fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
     let snapshot = &view.snapshot;
-    let discovery = snapshot
-        .talos_discovery
-        .value()
-        .filter(|roster| !roster.is_empty());
-    let kubernetes = snapshot
-        .kubernetes_roster
-        .value()
-        .filter(|roster| !roster.is_empty());
+    let discovery = complete(&snapshot.talos_discovery).filter(|roster| !roster.is_empty());
+    let kubernetes = complete(&snapshot.kubernetes_roster).filter(|roster| !roster.is_empty());
     let kubelets = view.kubelets.value();
     let mut rows: Vec<NodeRow> = snapshot
         .nodes
@@ -396,7 +409,13 @@ fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
                             || address_matches(entry.address.as_deref(), address)
                     })
                     .map(|entry| entry.version.clone())
-                    .ok_or_else(|| "Kubernetes doesn't list this node".to_owned()),
+                    .ok_or_else(|| {
+                        if view.kubelets.is_available() {
+                            "Kubernetes doesn't list this node".to_owned()
+                        } else {
+                            "Kubernetes node coverage is incomplete".to_owned()
+                        }
+                    }),
                 _ => Err("Kubernetes node versions weren't read".into()),
             };
             NodeRow {
@@ -491,6 +510,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
     // Kubelet skew among the nodes whose kubelet version was read.
     let kubelets: Vec<(&NodeRow, (u32, u32, u32), &String)> = rows
         .iter()
+        .filter(|_| view.kubelets.is_available())
         .filter_map(|row| {
             let version = row.kubelet.as_ref().ok()?;
             Some((row, parse_version(version)?, version))
@@ -562,14 +582,8 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
     }
 
     // Roster consistency, only when both rosters were read and aren't empty.
-    let discovery = snapshot
-        .talos_discovery
-        .value()
-        .filter(|roster| !roster.is_empty());
-    let kubernetes = snapshot
-        .kubernetes_roster
-        .value()
-        .filter(|roster| !roster.is_empty());
+    let discovery = complete(&snapshot.talos_discovery).filter(|roster| !roster.is_empty());
+    let kubernetes = complete(&snapshot.kubernetes_roster).filter(|roster| !roster.is_empty());
     if let (Some(discovery), Some(kubernetes)) = (discovery, kubernetes) {
         let label = |member: &DiscoveryRosterEntry| {
             if member.name.is_empty() {

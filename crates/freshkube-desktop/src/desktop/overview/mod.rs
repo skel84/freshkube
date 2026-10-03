@@ -365,7 +365,11 @@ impl Pilot {
                     .child("Needs attention"),
             )
             .when(rows.is_empty(), |this| {
-                this.child(div().text_color(p.muted).child("No problems reported"))
+                this.child(div().text_color(p.muted).child(if self.attention.complete {
+                    "No problems reported"
+                } else {
+                    "Some sources are unavailable; attention may be incomplete"
+                }))
             })
             .children(rows[..count].iter().map(|row| {
                 let open = row.open.clone();

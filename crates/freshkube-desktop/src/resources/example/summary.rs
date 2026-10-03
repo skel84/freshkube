@@ -91,53 +91,102 @@ pub(super) fn extra_rows(
     (columns, rows)
 }
 
-/// Uses exactly the objects the example lists and panes show.
+/// Unit-test snapshots use the same reducer as the running fixture.
+#[cfg(test)]
 pub(crate) fn summary(
     context: &str,
     now: i64,
 ) -> freshkube_core::kubernetes_summary::KubernetesSummary {
-    use freshkube_core::kubernetes_summary::{Part, derive};
-    fn typed<T: serde::de::DeserializeOwned>(context: &str, key: &str, now: i64) -> Part<Vec<T>> {
-        if matches!(
-            key,
-            "events" | "replicasets.apps" | "persistentvolumeclaims" | "persistentvolumes"
-        ) {
-            return Part::Loaded(
-                extra_objects(context, key, now)
-                    .into_iter()
-                    .map(|object| serde_json::from_value(object).expect("typed example object"))
-                    .collect(),
-            );
-        }
-        let objects = read(context, key, None, now)
-            .unwrap()
-            .1
+    use freshkube_core::kubernetes_summary::{Session, SessionIdentity};
+    let session = Session::new(SessionIdentity::new(connection(context), 0));
+    seed_summary(&session, context, now);
+    (*session.derive(time(now).unwrap()).summary).clone()
+}
+
+pub(crate) fn summary_objects<T: serde::de::DeserializeOwned>(
+    context: &str,
+    key: &str,
+    now: i64,
+) -> Vec<T> {
+    if matches!(
+        key,
+        "events" | "replicasets.apps" | "persistentvolumeclaims" | "persistentvolumes"
+    ) {
+        return extra_objects(context, key, now)
             .into_iter()
-            .enumerate()
-            .map(|(ix, row)| {
-                let created = row.created.unwrap_or_default();
-                let yaml = match key {
-                    "pods" => pod_yaml(&row, ix, created, now),
-                    "nodes" => node_yaml(&row, created),
-                    "deployments.apps" => deployment_yaml(&row, ix, created),
-                    _ => document(&row.identity, now).expect("example document").yaml,
-                };
-                serde_yaml::from_str(&yaml).expect("typed example object")
-            })
+            .map(|object| serde_json::from_value(object).expect("typed example object"))
             .collect();
-        Part::Loaded(objects)
     }
-    derive(
-        Part::Loaded("v1.32.3".into()),
-        typed(context, "nodes", now),
-        typed(context, "pods", now),
-        typed(context, "deployments.apps", now),
-        Part::Loaded(Vec::new()),
-        Part::Loaded(Vec::new()),
-        typed(context, "namespaces", now),
-        typed(context, "persistentvolumeclaims", now),
-        typed(context, "persistentvolumes", now),
-        typed(context, "events", now),
-        time(now).unwrap(),
-    )
+    let objects = read(context, key, None, now)
+        .unwrap()
+        .1
+        .into_iter()
+        .enumerate()
+        .map(|(ix, row)| {
+            let created = row.created.unwrap_or_default();
+            let yaml = match key {
+                "pods" => pod_yaml(&row, ix, created, now),
+                "nodes" => node_yaml(&row, created),
+                "deployments.apps" => deployment_yaml(&row, ix, created),
+                _ => document(&row.identity, now).expect("example document").yaml,
+            };
+            serde_yaml::from_str(&yaml).expect("typed example object")
+        })
+        .collect();
+    objects
+}
+
+/// Seed exactly the reducer used by live list/watch streams. The caller keeps
+/// `now` fixed for the lifetime of a fixture session.
+pub(crate) fn seed_summary(
+    session: &freshkube_core::kubernetes_summary::Session,
+    context: &str,
+    now: i64,
+) {
+    use freshkube_core::kubernetes_summary::SummaryResource;
+    use k8s_openapi::api::{
+        apps::v1::{DaemonSet, Deployment, StatefulSet},
+        core::v1::{Event, Namespace, Node, PersistentVolume, PersistentVolumeClaim, Pod},
+    };
+    use kube::runtime::watcher::Event as Change;
+    fn seed<K: SummaryResource>(
+        session: &freshkube_core::kubernetes_summary::Session,
+        objects: Vec<K>,
+        now: i64,
+    ) {
+        let generation = session.generation();
+        session
+            .apply::<K>(generation, Change::Init, time(now).unwrap())
+            .unwrap();
+        for object in objects {
+            session
+                .apply(generation, Change::InitApply(object), time(now).unwrap())
+                .unwrap();
+        }
+        session
+            .apply::<K>(generation, Change::InitDone, time(now).unwrap())
+            .unwrap();
+    }
+    seed::<Node>(session, summary_objects(context, "nodes", now), now);
+    seed::<Pod>(session, summary_objects(context, "pods", now), now);
+    seed::<Deployment>(
+        session,
+        summary_objects(context, "deployments.apps", now),
+        now,
+    );
+    seed::<StatefulSet>(session, vec![], now);
+    seed::<DaemonSet>(session, vec![], now);
+    seed::<Namespace>(session, summary_objects(context, "namespaces", now), now);
+    seed::<PersistentVolumeClaim>(
+        session,
+        summary_objects(context, "persistentvolumeclaims", now),
+        now,
+    );
+    seed::<PersistentVolume>(
+        session,
+        summary_objects(context, "persistentvolumes", now),
+        now,
+    );
+    seed::<Event>(session, summary_objects(context, "events", now), now);
+    session.version(session.generation(), "v1.32.3".into(), time(now).unwrap());
 }

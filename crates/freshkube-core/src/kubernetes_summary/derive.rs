@@ -77,14 +77,9 @@ pub fn derive(
     }
     let nodes = nodes
         .map(|nodes| summarize_nodes(nodes, pods.loaded().map(Vec::as_slice).unwrap_or_default()));
-    let pod_summary = match &pods {
-        Part::Loaded(pods) => Part::Loaded(summarize_pods(
-            pods,
-            nodes.loaded().map(Vec::as_slice).unwrap_or_default(),
-        )),
-        Part::Refused(error) => Part::Refused(error.clone()),
-        Part::Failed(error) => Part::Failed(error.clone()),
-    };
+    let pod_summary = pods
+        .clone()
+        .map(|pods| summarize_pods(&pods, nodes.loaded().map(Vec::as_slice).unwrap_or_default()));
     fn objects<T>(part: Part<Vec<T>>) -> Vec<T> {
         match part {
             Part::Loaded(objects) => objects,
@@ -160,6 +155,7 @@ pub fn derive(
     }
     references.retain(|key, _| kept.contains(key));
     KubernetesSummary {
+        observations: Default::default(),
         references,
         version,
         nodes,
@@ -183,7 +179,7 @@ pub fn derive(
     }
 }
 
-fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary> {
+pub(super) fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary> {
     let mut counts = BTreeMap::new();
     for pod in pods {
         if let Some(name) = pod.spec.as_ref().and_then(|spec| spec.node_name.as_deref()) {
@@ -199,6 +195,8 @@ fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary> {
             NodeSummary {
                 uid: node.metadata.uid.clone().unwrap_or_default(),
                 pods: counts.get(name.as_str()).copied().unwrap_or_default(),
+                pods_current: true,
+                pods_observed: true,
                 name,
                 conditions: status
                     .conditions
@@ -288,7 +286,7 @@ fn summarize_pods(pods: &[Pod], nodes: &[NodeSummary]) -> PodSummary {
     summary
 }
 
-fn summarize_events(events: Vec<Event>, now: DateTime<Utc>) -> EventSummary {
+pub(super) fn summarize_events(events: Vec<Event>, now: DateTime<Utc>) -> EventSummary {
     let mut summary = EventSummary::default();
     let mut newest = BTreeMap::new();
     for event in events {

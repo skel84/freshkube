@@ -385,6 +385,7 @@ impl Pilot {
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
         self.page = page;
+        self.deliver_summary_nodes(cx);
         let area = Area::of(page, &self.resource_kind);
         if area == Area::ControlPlane {
             self.last_control = page;

@@ -23,15 +23,15 @@ where
     match tokio::time::timeout(DEADLINE, Api::<K>::all(client).list(params)).await {
         Ok(Ok(ObjectList { items, .. })) => Part::Loaded(items),
         Ok(Err(kube::Error::Api(error))) if error.code == 403 => {
-            Part::Refused(format!("Can't list {name}: forbidden"))
+            Part::Refused(format!("Can't list {name}: forbidden").into())
         }
-        Ok(Err(_)) => Part::Failed(format!("Can't list {name}: request failed")),
-        Err(_) => Part::Failed(format!("Can't list {name}: timed out")),
+        Ok(Err(_)) => Part::Failed(format!("Can't list {name}: request failed").into()),
+        Err(_) => Part::Failed(format!("Can't list {name}: timed out").into()),
     }
 }
 
 /// Lists each part concurrently, using the API server cache and an independent
-/// deadline. This is the shell's one cluster-wide background read.
+/// deadline. Kept for one-shot callers; the desktop shell uses `Session`.
 pub async fn collect_kubernetes_summary(client: Client) -> KubernetesSummary {
     let params = ListParams::default().match_any();
     let warnings = params.clone().fields("type=Warning");

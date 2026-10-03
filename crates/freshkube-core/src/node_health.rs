@@ -39,6 +39,7 @@ pub enum KubernetesNodeState {
     Absent,
     Ready,
     NotReady,
+    Stale,
 }
 
 impl HasHealth for KubernetesNodeState {
@@ -46,7 +47,7 @@ impl HasHealth for KubernetesNodeState {
         match self {
             Self::Ready => HealthIndicator::Healthy,
             Self::NotReady => HealthIndicator::Error,
-            Self::Unavailable | Self::Absent => HealthIndicator::Unknown,
+            Self::Unavailable | Self::Absent | Self::Stale => HealthIndicator::Unknown,
         }
     }
 }
@@ -151,6 +152,22 @@ impl<'a> NodeAssessment<'a> {
         self.kubernetes
     }
 
+    /// Retained evidence from an interrupted observation is not current health.
+    /// Keep independent Talos findings and the role inferred from Node facts.
+    pub fn with_kubernetes_current(mut self, current: bool) -> Self {
+        if !current
+            && matches!(
+                self.kubernetes,
+                KubernetesNodeState::Ready | KubernetesNodeState::NotReady
+            )
+        {
+            self.kubernetes = KubernetesNodeState::Stale;
+            self.problems
+                .retain(|problem| !matches!(problem, NodeProblem::KubernetesNotReady));
+        }
+        self
+    }
+
     pub fn talos(&self) -> TalosNodeState {
         self.talos
     }
@@ -166,11 +183,14 @@ impl HasHealth for NodeAssessment<'_> {
     /// Summarize observed problems. Unavailable or absent sources alone do not
     /// make the node unhealthy; their state is exposed separately.
     fn health(&self) -> HealthIndicator {
-        self.problems
-            .iter()
-            .fold(HealthIndicator::Healthy, |health, problem| {
-                health.worst(problem.health())
-            })
+        self.problems.iter().fold(
+            if self.kubernetes == KubernetesNodeState::Stale {
+                HealthIndicator::Unknown
+            } else {
+                HealthIndicator::Healthy
+            },
+            |health, problem| health.worst(problem.health()),
+        )
     }
 }
 
@@ -211,7 +231,28 @@ mod tests {
             capacity: Default::default(),
             taints: Vec::new(),
             pods: 0,
+            pods_current: true,
+            pods_observed: true,
         }
+    }
+
+    #[test]
+    fn stale_kubernetes_evidence_keeps_independent_talos_problems() {
+        let mut kube = kubernetes();
+        kube.conditions[0].status = "False".into();
+        let stale = NodeAssessment::from_sources(None, Some(&kube), false, false)
+            .with_kubernetes_current(false);
+        assert_eq!(stale.kubernetes(), KubernetesNodeState::Stale);
+        assert_eq!(stale.health(), HealthIndicator::Unknown);
+        assert!(stale.problems().is_empty());
+        let talos_failure = NodeAssessment::from_sources(
+            Some(TalosNodeFacts::new(NodeRole::Worker, false, &[], None)),
+            Some(&kube),
+            true,
+            false,
+        ).with_kubernetes_current(false);
+        assert_eq!(talos_failure.health(), HealthIndicator::Error);
+        assert_eq!(talos_failure.problems(), [NodeProblem::TalosUnresponsive]);
     }
 
     #[test]

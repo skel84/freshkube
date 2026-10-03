@@ -781,6 +781,8 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 mod objects;
 mod summary;
 pub(crate) use objects::{document, events, pod_log, pod_log_line, secret_value};
+pub(crate) use summary::seed_summary;
+#[cfg(test)]
 pub(crate) use summary::summary;
 #[cfg(test)]
 const TEST_NOW: i64 = 1_790_000_000;

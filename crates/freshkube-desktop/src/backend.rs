@@ -202,6 +202,11 @@ pub(crate) fn collect(
     runtime: Handle,
     config: AppliedConfig,
     kubeconfig: KubeconfigSelection,
+    nodes: Option<
+        freshkube_core::kubernetes_summary::Part<
+            Vec<freshkube_core::kubernetes_summary::NodeSummary>,
+        >,
+    >,
 ) -> (OwnedJob, oneshot::Receiver<Result<ClusterOverview, String>>) {
     let (mut sender, receiver) = oneshot::channel();
     let worker_runtime = runtime.clone();
@@ -212,6 +217,7 @@ pub(crate) fn collect(
             // in the shared collector retain data, which must not be labeled fresh here.
             let mut collector = ClusterOverviewCollector::new(Some(path), Some(catalog.current));
             collector.set_kubeconfig_selection(kubeconfig);
+            collector.set_observed_nodes(nodes);
             // The Talos connection is reused while path, content, context and endpoints
             // are unchanged, and dropped by the collector after transport failures.
             let mut snapshots = tokio::time::timeout(OPEN_DEADLINE, collector.connect_from_config_reusing(&loaded, identity))
