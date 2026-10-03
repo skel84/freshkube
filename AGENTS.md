@@ -41,6 +41,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
+CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
+
 Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
 
 ## Cluster safety
