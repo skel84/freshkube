@@ -36,6 +36,35 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 .identity()
                 .clone();
             let context = view.applied.context.clone().unwrap();
+            let pod = resources::example::read(&context, "pods", None, resources::live::now())
+                .unwrap()
+                .1
+                .into_iter()
+                .find(|row| row.cells[2] == "Running")
+                .unwrap()
+                .identity;
+            let forwards = crate::forwards::list(cx);
+            let forward = forwards.update(cx, |list, cx| {
+                list.start(
+                    crate::forwards::ForwardSpec {
+                        runtime: view.runtime.clone(),
+                        access: resources::KubeAccess::Example,
+                        target: freshkube_core::resources::ForwardTarget::of(
+                            &resources::example::kind("pods").unwrap(),
+                            &pod.name,
+                            &pod.uid,
+                        )
+                        .unwrap(),
+                        identity: pod.clone(),
+                        context: context.clone(),
+                        port: 8080,
+                        local_port: None,
+                    },
+                    cx,
+                )
+            });
+            assert!(forward.read(cx).running());
+            let port = forward.read(cx).local_port;
             let request = view.overview.begin(view.applied.clone());
             let epoch = view.epoch;
             view.overview_received(
@@ -55,6 +84,12 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 &observation
             );
             assert_eq!(view.access_configuration, Some(after));
+            assert!(forward.read(cx).running());
+            assert_eq!(forward.read(cx).local_port, port);
+            assert_eq!(forward.read(cx).port_of(&pod), Some(8080));
+            let mut other_session = pod.clone();
+            other_session.connection = new_access.key();
+            assert_eq!(forward.read(cx).port_of(&other_session), None);
             view.overview_received(
                 epoch,
                 request,
@@ -81,6 +116,9 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 view.summary_session.as_ref().unwrap().core.identity(),
                 &observation
             );
+            let id = forward.read(cx).id;
+            forwards.update(cx, |list, cx| list.stop(id, cx));
+            assert!(!forward.read(cx).running());
             let request = view.overview.begin(view.applied.clone());
             view.overview_received(
                 view.epoch,
