@@ -425,6 +425,15 @@ impl<S: LogSource> LogView<S> {
     }
 }
 
+/// Renders `view` again once this frame is drawn. A notify while the
+/// window prepaints only marks the view dirty and schedules no frame, so
+/// a geometry learned in prepaint would wait for the next input event.
+fn redraw_next_frame<V: 'static>(view: gpui_kit::WeakEntity<V>, window: &Window) {
+    window.on_next_frame(move |_, cx| {
+        let _ = view.update(cx, |_, cx| cx.notify());
+    });
+}
+
 impl<S: LogSource> Render for LogView<S> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("logs");
@@ -518,21 +527,26 @@ impl<S: LogSource> Render for LogView<S> {
             .on_action(cx.listener(|this, _: &ClearSelection, _, cx| this.clear_selection(cx)))
             .on_mouse_down(gpui_kit::MouseButton::Left, cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
             .on_prepaint(move |bounds, window, cx| {
-                let _ = entity.update(cx, |this, cx| {
+                let changed = entity.update(cx, |this, _| {
                     // The permanent one-pixel border belongs to this
                     // viewport, so rows measure its actual inner width.
                     let width = (bounds.size.width - px(2.)).max(px(0.));
+                    let mut changed = false;
                     if this.width != Some(width) {
                         this.capture_anchor();
                         this.width = Some(width);
-                        cx.notify();
+                        changed = true;
                     }
                     if this.measured.as_ref().is_some_and(|key| key.rem != window.rem_size()) {
                         this.capture_anchor();
                         this.measured = None;
-                        cx.notify();
+                        changed = true;
                     }
+                    changed
                 });
+                if changed.unwrap_or(false) {
+                    redraw_next_frame(entity.clone(), window);
+                }
             })
             .when(self.review.visible.is_empty(), |element| element.child(div().id("logs-empty").test_support().role(Role::Status).aria_label(empty.clone()).p_4().text_size(dp(12.5)).text_color(p.muted).child(empty)))
             .when(!self.review.visible.is_empty(), |element| {
@@ -558,13 +572,15 @@ impl<S: LogSource> Render for LogView<S> {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .on_prepaint(move |bounds, _, cx| {
-                let _ = root_entity.update(cx, |this, cx| {
-                    if this.panel_height != Some(bounds.size.height) {
-                        this.panel_height = Some(bounds.size.height);
-                        cx.notify();
-                    }
+            .on_prepaint(move |bounds, window, cx| {
+                let changed = root_entity.update(cx, |this, _| {
+                    let changed = this.panel_height != Some(bounds.size.height);
+                    this.panel_height = Some(bounds.size.height);
+                    changed
                 });
+                if changed.unwrap_or(false) {
+                    redraw_next_frame(root_entity.clone(), window);
+                }
             })
             .text_color(cx.theme().foreground)
             .child(

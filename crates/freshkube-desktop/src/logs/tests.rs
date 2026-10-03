@@ -69,6 +69,34 @@ fn settle(cx: &mut TestAppContext, panel: &Entity<LogPanel>, handle: WindowHandl
 }
 
 #[gpui_kit::test]
+fn the_first_frame_redraws_once_the_list_knows_its_width(cx: &mut TestAppContext) {
+    // Opening the window draws the first frame, with rows measured against
+    // the window because the list's width is learned in that prepaint.
+    let (_runtime, panel, handle) = mount(cx);
+    let notified = std::rc::Rc::new(std::cell::Cell::new(0));
+    let _observer = cx.update({
+        let notified = notified.clone();
+        |cx| cx.observe(&panel, move |_, _| notified.set(notified.get() + 1))
+    });
+    cx.run_until_parked();
+    let before = notified.get();
+    // A notify from prepaint schedules nothing; the next frame must ask
+    // for the redraw itself, with no input event to prompt it.
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(window.simulate_next_frame(cx) > 0);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(notified.get() > before);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let view = panel.read(cx);
+        assert_eq!(view.measured.as_ref().map(|key| key.width), view.width);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards(cx: &mut TestAppContext) {
     let (_runtime, panel, handle) = mount(cx);
     let measured = || crate::desktop::probe::count("logs.measure");
