@@ -230,6 +230,8 @@ impl Pilot {
             self.fixture,
             self.kubernetes_only.is_some(),
         );
+        self.rail_marks =
+            crate::desktop::shell::RailMarks::from_cards(&self.overview_display.cards);
         self.attention = crate::presentation::attention::build(
             &self.node_workspace.rows,
             self.kubernetes_summary

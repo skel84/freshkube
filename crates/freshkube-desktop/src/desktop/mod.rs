@@ -51,12 +51,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::runtime::Handle;
 
@@ -86,10 +81,12 @@ pub(crate) mod probe {
 }
 
 pub(crate) use pages::Page;
-use pages::{ScreenKind, SidebarReveal};
+use pages::{Area, ColumnReveal, ScreenKind};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
-pub(crate) const SIDEBAR_WIDTH: f32 = 228.;
+/// The icon rail's width, and the navigation column's beside it, in dp.
+pub(crate) const RAIL_WIDTH: f32 = 64.;
+pub(crate) const COLUMN_WIDTH: f32 = 208.;
 pub(crate) const PAGE_PADDING: f32 = 26.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,7 +197,8 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                         }
                         .into(),
                     ),
-                    traffic_light_position: Some(point(px(16.), px(15.))),
+                    // Centred in the 52 px header.
+                    traffic_light_position: Some(point(px(18.), px(20.))),
                     ..TitleBar::title_bar_options()
                 }),
                 ..TitleBar::window_options()
@@ -328,11 +326,19 @@ pub(crate) struct Pilot {
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
     search: Entity<search::Search>,
-    /// Kubernetes navigation groups shown open in the sidebar, by slug.
-    kubernetes_groups: BTreeSet<&'static str>,
-    sidebar_scroll: ScrollHandle,
-    /// A Kubernetes row to scroll into view on the next frame.
-    sidebar_reveal: Option<SidebarReveal>,
+    /// The rail's area, whose pages or kinds the column lists.
+    area: Area,
+    /// The kind each built-in group showed last, by group slug.
+    group_kinds: BTreeMap<&'static str, String>,
+    /// The custom kind shown last, which Custom Resources opens again.
+    last_custom: Option<ResourceKind>,
+    /// The Control plane page shown last.
+    last_control: Page,
+    /// Problem dots on the rail, from the overview's cards.
+    rail_marks: shell::RailMarks,
+    column_scroll: ScrollHandle,
+    /// A column row to scroll into view on the next frame.
+    column_reveal: Option<ColumnReveal>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
     /// Set without Talos: contexts come from a kubeconfig and only the
@@ -371,6 +377,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // The window opens on Overview, which has no navigation column.
+        crate::screens::set_chrome_width(RAIL_WIDTH);
         cx.bind_keys([
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
             KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
@@ -635,9 +643,13 @@ impl Pilot {
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
-            kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
-            sidebar_scroll: ScrollHandle::new(),
-            sidebar_reveal: None,
+            area: Area::Overview,
+            group_kinds: BTreeMap::new(),
+            last_custom: None,
+            last_control: Page::Etcd,
+            rail_marks: Default::default(),
+            column_scroll: ScrollHandle::new(),
+            column_reveal: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
             settings_open: false,

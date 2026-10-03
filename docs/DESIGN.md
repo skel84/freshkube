@@ -54,9 +54,9 @@ Soft fills behind status chips are the status colour at 14–16% opacity; the se
 
 ### App frame
 
-- **Header, 52 px:** the context switcher (cluster name and "Talos + Kubernetes"), section tabs, Search (⌘K) and Settings.
-- **Icon rail, 64 px, on the left:** icon-only buttons with tooltips. A coloured dot on a button flags problems in that area.
-- **Second column, 208 px, contextual:** resource kinds and namespaces with counts under Workloads, the dashboard list under Monitoring, observability navigation under Observability. An icon-only rail can't hold twenty-odd Kubernetes kinds, so this column is required.
+- **Header, 52 px:** the context switcher (cluster name and "Talos + Kubernetes"), where the window is, Search (⌘K), Refresh, appearance and Settings. The mockup's section tabs would repeat the rail, so the header names the page instead, and in the node pane its node and tab.
+- **Icon rail, 64 px, on the left:** icon-only buttons with tooltips. A coloured dot on a button flags problems in that area: the worst of the Overview's warning and critical cards for it, with their figures in the tooltip. The rail has twelve areas in three sections: Overview, Nodes, Namespaces, Events; the six Kubernetes groups and Custom Resources; Control plane. In a short window it scrolls.
+- **Second column, 208 px, contextual:** only for an area with several pages or kinds. Each Kubernetes group lists its kinds (Workloads with Health first), Custom Resources its API groups, Control plane its Talos pages. Later: the dashboard list under Monitoring and observability navigation under Observability. An icon-only rail can't hold twenty-odd Kubernetes kinds, so this column is required. Namespaces with counts under Workloads wait for the tables step.
 - **Status bar, 28 px:** connection, port forwards and the last refresh.
 
 ### Status language
@@ -124,7 +124,7 @@ Each step is its own commit (or a preparation commit and then the step), with UI
 
 1. **Tokens and type** (done). The dark theme and palette take the Console tokens; Lato and Source Code Pro replace IBM Plex Sans Condensed and JetBrains Mono; radii follow the table above. Until a Console light mode is designed, the light theme keeps its colours and takes only the new type and radii.
 2. **Status glyphs** (done). `ui::status_glyph` draws the shape for each status tone, and every status tag leads with it; a tag's icon now marks only Accent and Outline tags, which carry no status. Standalone marks (`ui::status_mark`, `ui::health_mark`) carry a tooltip. The status bars, context switcher, service and etcd member lists and the node pane's Services tab use them. Error and warning banners and empty states keep their icons: they are callouts, not statuses. The completed tick, integration-required square and log-error dot arrive with the first screen that shows those states.
-3. **App frame.** Header, icon rail, contextual second column and status bar replace today's sidebar and title bar, keeping every page, shortcut and key context.
+3. **App frame** (done). Header, icon rail, contextual second column and status bar replace the sidebar and title bar, keeping every page, shortcut and key context. A group's rail button reopens the kind it showed last, Custom Resources the last custom kind, and Control plane the last Talos page.
 4. **Tables.** The F2″ rules on the Resources list, starting with pods: toolbar, density, glyph column, merged cells, Owner, mini bars, name shortening and tooltips; then problems-first grouping for the causes core can establish.
 5. **Pod detail.** The F3 layout in the pod's Overview tab.
 

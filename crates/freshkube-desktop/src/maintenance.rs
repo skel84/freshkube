@@ -954,8 +954,9 @@ impl MaintenanceView {
     fn title_bar(&self, cx: &App) -> AnyElement {
         let p = palette(cx);
         TitleBar::new()
-            .h(dp(44.))
-            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(92.)))
+            // The app header's height, where the window puts its traffic lights.
+            .h(dp(52.))
+            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
             .child(
                 h_flex()
                     .id("maint-title")

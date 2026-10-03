@@ -1,4 +1,4 @@
-use super::{GpuiOptions, NodeView, Page, Pilot, SidebarReveal};
+use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot};
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
@@ -84,8 +84,7 @@ fn open_node_tab(
 ) {
     let view = root_pilot(window, cx);
     let name = view.read(cx).selected_node.clone().unwrap();
-    window.click("nav-nodes", cx);
-    window.render_frame(cx);
+    area(window, cx, "nav-nodes");
     if !view.read(cx).node_workspace.open {
         let id = view
             .read(cx)
@@ -813,20 +812,29 @@ fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) {
-    // Minimum window size: the sectioned sidebar must scroll, not clip.
+    // Minimum window size: the rail and column must scroll, not clip.
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        for page in [
-            Page::Etcd,
-            Page::Health,
-            Page::Security,
-            Page::Lifecycle,
-            Page::Operations,
+        for (area_id, pages) in [
+            (
+                "nav-control-plane",
+                &[
+                    Page::Etcd,
+                    Page::Security,
+                    Page::Lifecycle,
+                    Page::Operations,
+                ][..],
+            ),
+            ("nav-k8s-group-workloads", &[Page::Health][..]),
         ] {
-            let nav = SharedString::from(format!("nav-{}", page.slug()));
-            assert!(window.try_find(nav.clone()).is_some(), "{nav} is missing");
+            area(window, cx, area_id);
+            for page in pages {
+                reveal(window, cx, &format!("nav-{}", page.slug()));
+            }
         }
+        window.press("secondary-1", cx);
+        window.render_frame(cx);
         // Hidden screens never ask for data.
         assert!(window.try_find("processes-page").is_none());
         open_node_tab(window, cx, super::nodes::NodeTab::Processes);
@@ -872,7 +880,9 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
             window.render_frame(cx);
             assert_eq!(view.read(cx).page, page);
         }
-        // The short window scrolls the sidebar to reach the last sections.
+        // Control plane's pages are in its column.
+        area(window, cx, "nav-control-plane");
+        assert_eq!(view.read(cx).page, Page::Etcd);
         for page in [Page::Security, Page::Lifecycle] {
             let nav = format!("nav-{}", page.slug());
             reveal(window, cx, &nav);
@@ -880,17 +890,18 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
             window.render_frame(cx);
             assert_eq!(view.read(cx).page, page);
         }
-        // Kubernetes kinds sit in collapsible groups below the cluster pages.
+        // Kubernetes kinds are in their group's column.
         assert!(window.try_find("resources-page").is_none());
+        area(window, cx, "nav-k8s-group-workloads");
         reveal(window, cx, "nav-k8s-pods");
         window.click("nav-k8s-pods", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);
         assert_eq!(window.find("nav-k8s-pods").selected(), Some(true));
         assert!(window.find("resource-list").visible());
-        // Contexts stay in view below the scrolled navigation.
         contexts(window, cx);
         assert!(window.find(("context", 0usize)).visible());
+        area(window, cx, "nav-control-plane");
         reveal(window, cx, "nav-operations");
         window.click("nav-operations", cx);
         window.render_frame(cx);
@@ -900,18 +911,43 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
     .unwrap();
 }
 
-/// Scrolls the sidebar navigation until `id` shows in full.
-fn reveal(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
-    for _ in 0..60 {
-        if shown_in_sidebar(window, id) {
+/// Clicks the rail button `id`, scrolling the rail to it first.
+fn area(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
+    let id = SharedString::from(id.to_owned());
+    for _ in 0..30 {
+        let rail = window.find("nav-rail").bounds();
+        let button = window.find(id.clone()).bounds();
+        if button.top() >= rail.top() && button.bottom() <= rail.bottom() {
+            window.click(id, cx);
+            window.render_frame(cx);
             return;
         }
-        let area = window.find("sidebar-scroll").bounds();
+        let above = button.top() < rail.top();
+        window.scroll(
+            "nav-rail",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                px(0.),
+                px(if above { 40. } else { -40. }),
+            )),
+            cx,
+        );
+        window.render_frame(cx);
+    }
+    panic!("{id} never scrolled into the rail");
+}
+
+/// Scrolls the navigation column until `id` shows in full.
+fn reveal(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
+    for _ in 0..60 {
+        if shown_in_column(window, id) {
+            return;
+        }
+        let area = window.find("nav-column").bounds();
         let above = window
             .try_find(SharedString::from(id.to_owned()))
             .is_some_and(|element| element.bounds().top() < area.top());
         window.scroll(
-            "sidebar-scroll",
+            "nav-column",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
                 px(0.),
                 px(if above { 40. } else { -40. }),
@@ -923,9 +959,9 @@ fn reveal(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
     panic!("{id} never scrolled into view");
 }
 
-/// Whether `id` shows in full inside the scrolled sidebar navigation.
-fn shown_in_sidebar(window: &mut gpui_kit::Window, id: &str) -> bool {
-    let area = window.find("sidebar-scroll").bounds();
+/// Whether `id` shows in full inside the scrolled navigation column.
+fn shown_in_column(window: &mut gpui_kit::Window, id: &str) -> bool {
+    let area = window.find("nav-column").bounds();
     window
         .try_find(SharedString::from(id.to_owned()))
         .is_some_and(|element| {
@@ -946,68 +982,78 @@ fn opening_a_kind_scrolls_its_group_into_the_short_sidebar(cx: &mut TestAppConte
         view.update(cx, |view, cx| view.open_builtin(key, window, cx));
         window.render_frame(cx);
         window.render_frame(cx);
-        assert!(shown_in_sidebar(window, &nav));
+        assert!(shown_in_column(window, &nav));
         assert_eq!(window.find(SharedString::from(nav)).selected(), Some(true));
         assert_eq!(
             window.find("page-title").label(),
             Some("Validating Admission Policy Bindings")
         );
 
-        // Opening a group from its header shows its kinds too.
+        // A group's rail button opens its first kind, with the group's kinds.
         view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
         window.render_frame(cx);
         window.render_frame(cx);
-        assert!(shown_in_sidebar(window, "nav-k8s-pods"));
-        reveal(window, cx, "nav-k8s-group-storage");
-        window.click("nav-k8s-group-storage", cx);
+        assert!(shown_in_column(window, "nav-k8s-pods"));
+        area(window, cx, "nav-k8s-group-storage");
         window.render_frame(cx);
-        window.render_frame(cx);
-        assert!(shown_in_sidebar(window, "nav-k8s-csinodes.storage.k8s.io"));
+        assert_eq!(view.read(cx).resource_kind.key(), "persistentvolumeclaims");
+        reveal(window, cx, "nav-k8s-csinodes.storage.k8s.io");
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestAppContext) {
+fn rail_areas_list_their_kinds_and_open_the_last_one(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        // Workloads starts open; the other groups start closed.
+        // Overview has no column; a group's rail button shows its kinds.
+        assert_eq!(window.find("nav-overview").selected(), Some(true));
+        assert!(window.try_find("nav-column").is_none());
         let workloads = window.find("nav-k8s-group-workloads");
-        assert_eq!(workloads.role(), Some(gpui_kit::Role::Button));
-        assert_eq!(workloads.expanded(), Some(true));
-        assert!(window.try_find("nav-k8s-deployments.apps").is_some());
+        assert_eq!(workloads.role(), Some(gpui_kit::Role::Tab));
+        assert_eq!(workloads.selected(), Some(false));
+        area(window, cx, "nav-k8s-group-workloads");
+        assert_eq!(view.read(cx).resource_kind.key(), "pods");
         assert_eq!(
-            window.find("nav-k8s-group-networking").expanded(),
-            Some(false)
-        );
-        assert!(window.try_find("nav-k8s-services").is_none());
-
-        reveal(window, cx, "nav-k8s-group-networking");
-        window.click("nav-k8s-group-networking", cx);
-        window.render_frame(cx);
-        assert_eq!(
-            window.find("nav-k8s-group-networking").expanded(),
+            window.find("nav-k8s-group-workloads").selected(),
             Some(true)
         );
-        reveal(window, cx, "nav-k8s-services");
-        window.click("nav-k8s-services", cx);
-        window.render_frame(cx);
+        assert!(window.try_find("nav-k8s-deployments.apps").is_some());
+        assert!(window.try_find("nav-k8s-services").is_none());
+
+        area(window, cx, "nav-k8s-group-networking");
         assert_eq!(view.read(cx).page, Page::Resources);
         assert_eq!(view.read(cx).resource_kind.key(), "services");
         assert_eq!(window.find("nav-k8s-services").selected(), Some(true));
-        assert_eq!(window.find("nav-k8s-group-workloads").selected(), None);
+        assert_eq!(
+            window.find("nav-k8s-group-workloads").selected(),
+            Some(false)
+        );
         assert!(window.find("resource-list").visible());
         assert_eq!(window.find("page-title").label(), Some("Services"));
 
-        // Collapsing the group of the open kind keeps the page.
-        reveal(window, cx, "nav-k8s-group-networking");
-        window.click("nav-k8s-group-networking", cx);
+        // Each group opens the kind it showed last.
+        let ingresses = "nav-k8s-ingresses.networking.k8s.io";
+        window.click(ingresses, cx);
         window.render_frame(cx);
-        assert!(window.try_find("nav-k8s-services").is_none());
-        assert_eq!(view.read(cx).page, Page::Resources);
+        area(window, cx, "nav-k8s-group-workloads");
+        assert_eq!(view.read(cx).resource_kind.key(), "pods");
+        area(window, cx, "nav-k8s-group-networking");
+        assert_eq!(
+            view.read(cx).resource_kind.key(),
+            "ingresses.networking.k8s.io"
+        );
+        assert_eq!(window.find(ingresses).selected(), Some(true));
 
-        // Other pages hide the table, and coming back shows the same kind.
+        // Namespaces and Events are kinds of their own, with no column.
+        window.click("nav-k8s-events", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).resource_kind.key(), "events");
+        assert_eq!(window.find("nav-k8s-events").selected(), Some(true));
+        assert!(window.try_find("nav-column").is_none());
+
+        // Other pages hide the table, and coming back shows the last kind.
         window.press("secondary-1", cx);
         window.render_frame(cx);
         assert!(window.try_find("resources-page").is_none());
@@ -1016,8 +1062,34 @@ fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestApp
             window.render_frame(cx);
         }
         assert_eq!(view.read(cx).page, Page::Resources);
-        assert_eq!(window.find("page-title").label(), Some("Services"));
-        assert!(window.find("resource-list").visible());
+        assert_eq!(
+            view.read(cx).resource_kind.key(),
+            "ingresses.networking.k8s.io"
+        );
+        assert!(window.find("resources-page").visible());
+        assert_eq!(
+            window.find("nav-k8s-group-networking").selected(),
+            Some(true)
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_rail_marks_areas_the_overview_finds_problems_in(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 1000.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let marks = &view.read(cx).rail_marks;
+        // The example cluster has a NotReady node and a node near its memory.
+        assert_eq!(marks.tone(Area::Nodes), Some(crate::ui::Tone::Crit));
+        assert_eq!(marks.tone(Area::ControlPlane), Some(crate::ui::Tone::Warn));
+        assert_eq!(
+            marks.tone(Area::Group("workloads")),
+            Some(crate::ui::Tone::Warn)
+        );
+        assert_eq!(marks.tone(Area::Overview), None);
+        assert_eq!(marks.tone(Area::Group("networking")), None);
     })
     .unwrap();
 }
@@ -1028,15 +1100,16 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(window.find("nav-k8s-group-custom").expanded(), Some(false));
+        assert_eq!(window.find("nav-k8s-group-custom").selected(), Some(false));
         assert!(view.read(cx).custom.read(cx).groups().is_none());
 
-        reveal(window, cx, "nav-k8s-group-custom");
-        window.click("nav-k8s-group-custom", cx);
+        // With no custom kind shown yet, the page stays while the column
+        // discovers the groups.
+        area(window, cx, "nav-k8s-group-custom");
         window.render_frame(cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("nav-k8s-group-custom").expanded(), Some(true));
-        assert!(shown_in_sidebar(window, "nav-k8s-api-velero.io"));
+        assert_eq!(window.find("nav-k8s-group-custom").selected(), Some(true));
+        assert_eq!(view.read(cx).page, Page::Overview);
+        assert!(shown_in_column(window, "nav-k8s-api-velero.io"));
         let group = "nav-k8s-api-cert-manager.io";
         assert_eq!(window.find(group).expanded(), Some(false));
         assert!(
@@ -1050,7 +1123,7 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         window.render_frame(cx);
         window.render_frame(cx);
         assert_eq!(window.find(group).expanded(), Some(true));
-        assert!(shown_in_sidebar(window, "nav-k8s-issuers.cert-manager.io"));
+        assert!(shown_in_column(window, "nav-k8s-issuers.cert-manager.io"));
 
         let certificates = "nav-k8s-certificates.cert-manager.io";
         reveal(window, cx, certificates);
@@ -1065,19 +1138,20 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         assert_eq!(window.find("page-title").label(), Some("Certificate"));
         assert!(window.find("resource-list").visible());
 
-        // Collapsing the section keeps the page. Opening a kind again, as
-        // the keyboard or FRESHKUBE_KIND would, opens the section and group.
-        reveal(window, cx, "nav-k8s-group-custom");
-        window.click("nav-k8s-group-custom", cx);
-        window.render_frame(cx);
+        // Another area hides the column; Custom Resources then opens the
+        // custom kind shown last. Opening a kind, as the keyboard or
+        // FRESHKUBE_KIND would, shows its group.
+        area(window, cx, "nav-overview");
         assert!(window.try_find(certificates).is_none());
+        area(window, cx, "nav-k8s-group-custom");
         assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(window.find(certificates).selected(), Some(true));
         let kind = crate::resources::example::kind("certificaterequests.cert-manager.io").unwrap();
         view.update(cx, |view, cx| view.open_kind(kind, window, cx));
         window.render_frame(cx);
         window.render_frame(cx);
         let requests = "nav-k8s-certificaterequests.cert-manager.io";
-        assert!(shown_in_sidebar(window, requests));
+        assert!(shown_in_column(window, requests));
         assert_eq!(window.find(requests).selected(), Some(true));
         assert_eq!(window.find(certificates).selected(), Some(false));
         assert_eq!(
@@ -1094,7 +1168,7 @@ fn custom_groups_say_why_they_show_no_kinds(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         view.update(cx, |view, cx| {
-            view.toggle_custom_resources(cx);
+            view.show_custom(cx);
             for group in [
                 "external.metrics.k8s.io",
                 "metrics.k8s.io",
@@ -1167,7 +1241,7 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
         view.update(cx, |view, cx| view.open_kind(kind, window, cx));
         window.render_frame(cx);
         window.render_frame(cx);
-        assert!(shown_in_sidebar(window, certificates));
+        assert!(shown_in_column(window, certificates));
         // Another connection discovers again.
         window.press("alt-down", cx);
     })
@@ -1177,18 +1251,18 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
         window.render_frame(cx);
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging-eu"));
         // The section and the group stay open, with the kinds found again.
-        assert_eq!(window.find("nav-k8s-group-custom").expanded(), Some(true));
+        assert_eq!(window.find("nav-k8s-group-custom").selected(), Some(true));
         assert_eq!(
             window.find("nav-k8s-api-cert-manager.io").expanded(),
             Some(true)
         );
         assert!(window.try_find(certificates).is_some());
 
-        // While the groups are read, the section says so and the reveal
-        // waits for them, unless the sidebar is scrolled by hand.
+        // While the groups are read, the column says so and the reveal
+        // waits for them, unless the column is scrolled by hand.
         let reopen = |view: &mut Pilot, cx: &mut gpui_kit::Context<Pilot>| {
-            view.toggle_custom_resources(cx);
-            view.toggle_custom_resources(cx);
+            view.set_area(Area::Overview, cx);
+            view.show_custom(cx);
         };
         view.update(cx, |view, cx| {
             view.custom
@@ -1201,24 +1275,24 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
             window.find("nav-k8s-custom-status").label(),
             Some("Discovering…")
         );
-        assert_eq!(view.read(cx).sidebar_reveal, Some(SidebarReveal::Custom));
+        assert_eq!(view.read(cx).column_reveal, Some(ColumnReveal::Custom));
         window.scroll(
-            "sidebar-scroll",
+            "nav-column",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(40.))),
             cx,
         );
-        assert_eq!(view.read(cx).sidebar_reveal, None);
+        assert_eq!(view.read(cx).column_reveal, None);
 
         view.update(cx, reopen);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).sidebar_reveal, Some(SidebarReveal::Custom));
+        assert_eq!(view.read(cx).column_reveal, Some(ColumnReveal::Custom));
         view.update(cx, |view, cx| {
             view.custom.update(cx, |custom, cx| custom.retry(cx))
         });
         window.render_frame(cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).sidebar_reveal, None);
-        assert!(shown_in_sidebar(window, "nav-k8s-api-velero.io"));
+        assert_eq!(view.read(cx).column_reveal, None);
+        assert!(shown_in_column(window, "nav-k8s-api-velero.io"));
         assert!(window.try_find(certificates).is_some());
     })
     .unwrap();
@@ -2370,6 +2444,26 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("rail"), None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        area(window, cx, "nav-control-plane");
+        // The area shows why it is empty and keeps the page.
+        assert_eq!(view.read(cx).page, Page::Overview);
+        assert!(window.try_find("nav-etcd").is_none());
+        window.click("add-talosconfig", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("talosconfig-path").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn kubernetes_only_never_swaps_in_another_context(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("asked-for"), Some("prod"));
     wait_until(cx, handle, "prod to be missing", |window, _| {
@@ -2569,8 +2663,8 @@ fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         let measure = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
             window.render_frame(cx);
-            let sidebar = window.find("sidebar-scroll").bounds().size.width;
-            let nav = window.find("nav-system-services").bounds().size.height;
+            let sidebar = window.find("nav-rail").bounds().size.width;
+            let nav = window.find("nav-overview").bounds().size.height;
             (sidebar, nav)
         };
         let (sidebar, nav) = measure(window, cx);
@@ -2596,9 +2690,7 @@ fn the_resources_toolbar_wraps_rather_than_clip_at_a_large_size(cx: &mut TestApp
     let (_runtime, handle, _view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        reveal(window, cx, "nav-k8s-pods");
-        window.click("nav-k8s-pods", cx);
-        window.render_frame(cx);
+        area(window, cx, "nav-k8s-group-workloads");
         let controls = ["resource-namespace", "resource-filter", "resource-refresh"];
         let fit = |window: &mut gpui_kit::Window| {
             for id in controls {
@@ -2634,9 +2726,7 @@ fn the_resources_page_scales_with_the_text_size(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        reveal(window, cx, "nav-k8s-pods");
-        window.click("nav-k8s-pods", cx);
-        window.render_frame(cx);
+        area(window, cx, "nav-k8s-group-workloads");
         let namespace = window.find("resource-namespace").bounds().size.width;
         assert_eq!(namespace, px(200.));
         window.press("secondary--", cx);
@@ -2758,6 +2848,7 @@ fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppCo
             cx.notify();
         });
         window.render_frame(cx);
+        area(window, cx, "nav-k8s-group-workloads");
         window.click("nav-health", cx);
         window.find("workload-list");
         let summary = view.read(cx).kubernetes_summary.data().unwrap();
@@ -2776,6 +2867,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
     let previous = cx.update(|cx| view.read(cx).kubernetes_summary.data().unwrap().clone());
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        area(window, cx, "nav-k8s-group-workloads");
         window.click("nav-health", cx);
         window.click("screen-refresh", cx);
     })

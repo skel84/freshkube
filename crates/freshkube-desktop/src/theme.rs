@@ -79,7 +79,12 @@ gpui_kit::assets::icon_assets!(
         Zap,
         GitCompareArrows,
         ScanSearch,
-        Skull
+        Skull,
+        // The rail.
+        Folders,
+        SlidersHorizontal,
+        Cog,
+        Puzzle
     ]
 );
 

@@ -11,6 +11,9 @@ pub(in crate::desktop) struct ContextDisplay {
     pub(in crate::desktop) counts: std::collections::BTreeMap<String, SharedString>,
 }
 
+/// Room for the context's name in the header's switcher, in dp.
+const CONTEXT_NAME_WIDTH: f32 = 170.;
+
 fn middle(name: &str, max: usize) -> String {
     let chars: Vec<_> = name.chars().collect();
     if chars.len() <= max {
@@ -25,18 +28,20 @@ fn middle(name: &str, max: usize) -> String {
 }
 
 impl Pilot {
-    pub(in crate::desktop) fn prepare_context_display(&mut self, window: &mut Window, _cx: &App) {
+    pub(in crate::desktop) fn prepare_context_display(&mut self, window: &mut Window, cx: &App) {
         let full = self.applied.context.as_deref().unwrap_or("No context");
         let font = window.text_system().resolve_font(&Font {
-            family: MONO_FONT.into(),
+            family: cx.theme().font_family.clone(),
+            weight: ui::HEADING_WEIGHT,
             ..Default::default()
         });
         let advance = window
             .text_system()
-            .advance(font, ui::dp_px(12., window), 'm')
+            .advance(font, ui::dp_px(13., window), 'm')
             .map(|size| f32::from(size.width))
-            .unwrap_or(7.);
-        let width = f32::from(ui::dp_px(SIDEBAR_WIDTH - 82., window));
+            .unwrap_or(8.);
+        // The header gives the name this much room beside the status glyph.
+        let width = f32::from(ui::dp_px(CONTEXT_NAME_WIDTH, window));
         self.context_display.name = middle(full, (width / advance).floor().max(5.) as usize).into();
         let kube = self.kubernetes_summary.data();
         let kubernetes = kube

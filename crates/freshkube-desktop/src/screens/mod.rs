@@ -43,7 +43,7 @@ use talos_rs::TalosClient;
 use tokio::runtime::Handle;
 
 use crate::backend::{self, OwnedJob, Target};
-use crate::desktop::{PAGE_PADDING, SIDEBAR_WIDTH};
+use crate::desktop::{COLUMN_WIDTH, PAGE_PADDING, RAIL_WIDTH};
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
 use crate::state::Snapshot;
@@ -372,7 +372,19 @@ impl<T: Send + 'static> Loader<T> {
 /// text size leaves less room, as a narrower window would.
 pub(crate) fn content_width(window: &Window) -> f32 {
     let viewport = window.viewport_size().width / dp_px(1., window);
-    (viewport - SIDEBAR_WIDTH - PAGE_PADDING * 2.).max(240.)
+    (viewport - CHROME_WIDTH.get() - PAGE_PADDING * 2.).max(240.)
+}
+
+thread_local! {
+    /// The width of the navigation beside the page in dp: the rail, and the
+    /// column when it shows. Windows draw on one thread, and the shell sets
+    /// it whenever the column shows or hides.
+    static CHROME_WIDTH: std::cell::Cell<f32> =
+        const { std::cell::Cell::new(RAIL_WIDTH + COLUMN_WIDTH) };
+}
+
+pub(crate) fn set_chrome_width(width: f32) {
+    CHROME_WIDTH.set(width);
 }
 
 pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {

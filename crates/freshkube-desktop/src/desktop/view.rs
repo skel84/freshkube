@@ -77,14 +77,15 @@ impl Render for Pilot {
                 view.adjacent_context(true, window, cx)
             }))
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
-            .child(self.render_title_bar(window, cx))
+            .child(self.render_header(window, cx))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .min_h_0()
-                    .child(self.render_sidebar(window, cx))
+                    .child(self.render_rail(cx))
+                    .children(self.render_column(window, cx))
                     .child(div().flex_1().min_w_0().min_h_0().child(page)),
             )
             .child(self.render_status_bar(window, cx))
