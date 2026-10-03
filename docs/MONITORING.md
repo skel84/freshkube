@@ -114,6 +114,16 @@ Step 5 (`freshkube-core::monitoring::history`, `monitoring/history/`).
 - **Queries.** A pod: `sum by (container)` of `rate(container_cpu_usage_seconds_total[$__rate_interval])` and of `container_memory_working_set_bytes`, for its namespace and name, without the pause container. A node: `1 - avg(rate(node_cpu_seconds_total{mode="idle"}))` and `1 - MemAvailable / MemTotal`, each joined `on (instance)` to `node_uname_info{nodename="…"}`, so they don't depend on how the scrape labels the node; the 90% line is the threshold. Names are quoted as PromQL literals.
 - **Reads.** Only while the Overview shows on a visible page; again each minute while it shows, and on Refresh. Hiding drops a read in flight; another pod, node or cluster builds new panels with nothing of the last.
 
+### Built-in queries on a live Prometheus
+
+Step 6 began by running every built-in and history query, as GETs through the service proxy, against the user's kube-prometheus-stack (Prometheus 3.4). The history queries answered as written; the built-in dashboards had three faults the example data couldn't show, since it draws a series for any label a query groups by.
+
+- **node-exporter has no `node` label.** Its series carry `instance` only. The Cluster dashboard's node panels now join `on (instance)` to `node_uname_info` and group by `nodename`, as history does; the node variable still lists `kube_node_info`'s names. The join assumes a host's name is its node's name, true on Talos and most bare metal. The node variable's All stays `.*`, so a host Prometheus scrapes outside the cluster shows as one more line rather than All matching nothing where names differ.
+- **The same object can be reported twice.** Another exporter of kube-state-metrics' series (Coroot's cluster agent, there), or two kube-state-metrics pods during a rollout, doubled Ready nodes, Running pods and restarts. Every `kube_` sum now takes `max by` the object first.
+- **A finished pod isn't ready.** Pods not ready counted Completed Job pods; it now counts Running and Pending pods only.
+
+Unit tests hold the first two for every built-in expression.
+
 ## Build order
 
 Each step is its own commit (or a preparation commit and then the step), with unit and UI tests where behaviour changes, and its row in the roadmap's Done table. The app stays usable after every step.

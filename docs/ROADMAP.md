@@ -102,7 +102,7 @@ Grafana-like dashboards in the Console look (F4), drawn natively from the cluste
 3. Monitoring page: rail area, dashboards, variables, time picker, shared cursor, legend fade, PromQL on hover. Done.
 4. Deploy and node markers. Done.
 5. CPU and memory history in the pod detail and the node pane. Done.
-6. Live check on a context the user names.
+6. Live check on a context the user names. The built-in and history queries ran against the user's Prometheus, and the built-in dashboards' faults are fixed ([MONITORING.md](MONITORING.md#built-in-queries-on-a-live-prometheus)); the app itself on that context remains.
 
 ## Then: a daily-use workflow
 

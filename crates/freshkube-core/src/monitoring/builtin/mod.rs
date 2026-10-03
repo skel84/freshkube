@@ -62,4 +62,43 @@ mod tests {
             }
         }
     }
+
+    fn expressions() -> Vec<String> {
+        BUILTINS
+            .iter()
+            .flat_map(|builtin| Dashboard::parse(builtin.json).unwrap().panels)
+            .flat_map(|panel| panel.queries)
+            .filter_map(|query| query.request.expr)
+            .collect()
+    }
+
+    /// The example data draws a series for any label a query groups by, so
+    /// it can't catch a label the exporter doesn't have. node-exporter's
+    /// series carry `instance`, not the node's name.
+    #[test]
+    fn node_exporter_series_are_named_through_their_uname() {
+        let node_exporter: Vec<_> = expressions()
+            .into_iter()
+            .filter(|expr| expr.contains("node_cpu_") || expr.contains("node_memory_"))
+            .collect();
+        assert!(!node_exporter.is_empty());
+        for expr in node_exporter {
+            assert!(expr.contains("node_uname_info"), "{expr}");
+            assert!(
+                !expr.contains("by (node)") && !expr.contains("node=~"),
+                "{expr}"
+            );
+        }
+    }
+
+    /// Another exporter, or two kube-state-metrics pods during a rollout,
+    /// can report the same object twice; each is counted once.
+    #[test]
+    fn kube_state_metrics_count_each_object_once() {
+        for expr in expressions() {
+            if expr.contains("kube_") {
+                assert!(expr.contains("max by ("), "{expr}");
+            }
+        }
+    }
 }

@@ -75,7 +75,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})",
+          "expr": "sum(max by (node) (kube_node_status_condition{condition=\"Ready\",status=\"true\"}))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -117,7 +117,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(kube_pod_container_resource_requests{resource=\"cpu\"}) / sum(kube_node_status_allocatable{resource=\"cpu\"})",
+          "expr": "sum(max by (namespace, pod, container) (kube_pod_container_resource_requests{resource=\"cpu\"})) / sum(max by (node) (kube_node_status_allocatable{resource=\"cpu\"}))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -175,7 +175,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(kube_pod_container_resource_requests{resource=\"memory\"}) / sum(kube_node_status_allocatable{resource=\"memory\"})",
+          "expr": "sum(max by (namespace, pod, container) (kube_pod_container_resource_requests{resource=\"memory\"})) / sum(max by (node) (kube_node_status_allocatable{resource=\"memory\"}))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -292,7 +292,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[2h]))",
+          "expr": "sum(max by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[2h])))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -351,12 +351,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - avg by (node) (rate(node_cpu_seconds_total{mode=\"idle\",node=~\"$node\"}[5m]))",
+          "expr": "1 - avg by (nodename) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]) * on (instance) group_left (nodename) node_uname_info{nodename=~\"$node\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{nodename}}"
         }
       ],
       "fieldConfig": {
@@ -418,12 +418,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (node) (1 - node_memory_MemAvailable_bytes{node=~\"$node\"} / node_memory_MemTotal_bytes{node=~\"$node\"})",
+          "expr": "max by (nodename) ((1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * on (instance) group_left (nodename) node_uname_info{nodename=~\"$node\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{nodename}}"
         }
       ],
       "fieldConfig": {
