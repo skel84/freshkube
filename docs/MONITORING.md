@@ -1,6 +1,6 @@
 # Monitoring
 
-Grafana-like dashboards in the Console look (F4 in [DESIGN.md](DESIGN.md)), drawn natively from Prometheus. This file records what the review of grafaui found, the decisions taken with the user, and the build order. The [roadmap](ROADMAP.md) tracks its progress. Observability on Coroot's data (O1–O7) is a separate, later piece of work.
+Grafana-like dashboards in the Console look (F4 in [DESIGN.md](DESIGN.md)), drawn natively from Prometheus. This file records what the review of grafaui found, the decisions taken with the user, and the build order. The [roadmap](ROADMAP.md) tracks its progress. The separate live Observability integration now has its own [Coroot plan](COROOT.md), building on design2's H1–H7 prototype.
 
 ## Feasibility
 
@@ -24,7 +24,7 @@ Taken with the user on 3 October 2026.
 
 - **Option 2.** Freshkube depends on `grafaui-model` and `grafaui-prometheus` as git dependencies pinned to a revision, and draws its own Console panels. Grafaui stays its own app and keeps working unchanged. Plot code from `grafaui-desktop` (axes, projection, hover) may be lifted where it fits. It is the user's own MIT code, but its origin is still noted in the module.
 - **Read-only, GET only.** Queries go through the service proxy as GET, so they stay within the read verbs. A 403 says "Not allowed to query Prometheus (services/proxy)", never an empty dashboard.
-- **Coroot later.** The user runs Coroot. Observability (O1–O7) will read Coroot's API rather than reimplement its analysis, but not in this work, and it needs no mocks now.
+- **Coroot separately.** The user runs Coroot. Observability reads Coroot's analysis and remains separate from Prometheus Monitoring. The 4 October follow-up uses design2's H1–H7 prototype and the user's `coroot-rs` library; [COROOT.md](COROOT.md) records the integration order and missing client capabilities. This does not change Monitoring's transport.
 - **No panel editor and no Explore screen,** as F4 says.
 
 Defaults the plan follows until the user says otherwise:

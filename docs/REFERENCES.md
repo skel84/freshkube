@@ -11,6 +11,7 @@ The integration review was expanded on 2026-10-02 against the same Rubick revisi
 | Kubeli | `06a19153bf7f2d5d3340972780dceb88bf7a52cf` | Selected Rust implementation donor and existing workflow reference |
 | Rubick | `030c6012bea9e00a934f6051add2f979f25f333d` | Future diagnostic behavior and architecture reference |
 | GPUI Kit | `201b55a431fb1b82a6047e908de63913db3d4354` | Toolkit, component examples, and development guidance |
+| [corust / coroot-rs](https://github.com/skel84/corust) | `dd6d3b21640d70cb22a3d524bd2fe23fb7559f61` | Reviewed 4 October for [Coroot integration](COROOT.md). Reuse the `coroot-rs` library (MIT OR Apache-2.0); its application/health/map APIs support the first slice, with signal-preservation and richer native-view models tracked separately. Source review only; no live verification. |
 
 ## GPUI Kit starting points
 
