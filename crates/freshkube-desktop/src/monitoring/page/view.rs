@@ -19,7 +19,9 @@ use gpui_kit::{
 use super::board::Board;
 use super::connection::{Connection, Missing};
 use super::layout::{NARROW, ROW_HEADER};
+use super::markers::MarkerToggle;
 use super::{MonitoringPage, Viewport};
+use crate::monitoring::panel::marker_glyph;
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
 
@@ -202,7 +204,7 @@ impl MonitoringPage {
     /// One chip per shown variable: its name, then its value as a menu.
     fn render_variables(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let board = self.board.as_ref()?;
-        if board.controls.is_empty() {
+        if board.error.is_some() {
             return None;
         }
         let p = palette(cx);
@@ -257,8 +259,68 @@ impl MonitoringPage {
                                 }),
                         )
                 }))
+                .child(div().flex_1())
+                .child(self.render_annotations(cx))
                 .into_any_element(),
         )
+    }
+
+    /// "Annotations" and a toggle each for deploys and node events, as the
+    /// mock's pills, with a mark when part of them couldn't be read.
+    fn render_annotations(&self, cx: &Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let toggle = |id: &'static str, label: &'static str, color, on: bool, which| {
+            let page = cx.entity().downgrade();
+            h_flex()
+                .id(id)
+                .h(dp(28.))
+                .px(dp(10.))
+                .gap(dp(6.))
+                .rounded_full()
+                .border_1()
+                .border_color(if on { p.line_strong } else { p.line })
+                .when(on, |this| this.bg(p.hover))
+                .cursor_pointer()
+                .text_size(dp(12.))
+                .font_weight(FontWeight::BOLD)
+                .text_color(if on { p.ink_2 } else { p.muted })
+                .child(marker_glyph(if on { color } else { p.faint }, 10.))
+                .child(label)
+                .on_click(move |_, _, cx| {
+                    _ = page.update(cx, |page, cx| page.toggle_markers(which, cx));
+                })
+                .test_support()
+        };
+        h_flex()
+            .gap(dp(8.))
+            .child(
+                div()
+                    .text_size(dp(12.))
+                    .text_color(p.muted)
+                    .child("Annotations"),
+            )
+            .child(toggle(
+                "monitoring-markers-deploys",
+                "Deploys",
+                p.accent,
+                self.markers.deploys,
+                MarkerToggle::Deploys,
+            ))
+            .child(toggle(
+                "monitoring-markers-nodes",
+                "Node events",
+                p.crit,
+                self.markers.nodes,
+                MarkerToggle::Nodes,
+            ))
+            .when_some(self.markers.unavailable.clone(), |this, why| {
+                this.child(ui::status_mark(
+                    "monitoring-markers-unavailable",
+                    ui::Tone::Warn,
+                    format!("Some annotations couldn't be read:\n{why}"),
+                    cx,
+                ))
+            })
     }
 
     fn render_variable_error(&self, cx: &Context<Self>) -> Option<AnyElement> {

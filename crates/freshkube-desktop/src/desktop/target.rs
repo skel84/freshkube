@@ -23,6 +23,7 @@ impl Pilot {
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes();
+        self.push_talos_nodes(cx);
         self.push_node_rows(cx);
         self.prepare_context_display(window, cx);
         if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
@@ -30,6 +31,25 @@ impl Pilot {
         } else {
             self.push_source(window, cx);
         }
+    }
+
+    /// Monitoring marks reboots from the responding nodes' boot times.
+    fn push_talos_nodes(&mut self, cx: &mut Context<Self>) {
+        let talos = self
+            .overview
+            .data()
+            .and_then(|cluster| cluster.client.clone())
+            .map(|client| TalosNodes {
+                client,
+                nodes: self
+                    .nodes
+                    .iter()
+                    .filter(|node| node.responding)
+                    .map(|node| (node.name.clone(), node.address.clone()))
+                    .collect(),
+            });
+        self.monitoring
+            .update(cx, |monitoring, cx| monitoring.set_talos(talos, cx));
     }
 
     pub(super) fn select_node(

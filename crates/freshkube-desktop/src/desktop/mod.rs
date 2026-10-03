@@ -25,7 +25,7 @@ use crate::{
     forwards::ForwardsIndicator,
     logs::LogPanel,
     maintenance::MaintenanceView,
-    monitoring::page::{MonitoringEvent, MonitoringPage},
+    monitoring::page::{MonitoringEvent, MonitoringPage, TalosNodes},
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
     resources::{

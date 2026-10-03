@@ -353,3 +353,92 @@ fn a_click_on_the_info_icon_copies_the_promql_as_sent(cx: &mut TestAppContext) {
     assert!(copied.contains("node_cpu_seconds_total"), "{copied}");
     assert!(!copied.contains("$node"), "{copied}");
 }
+
+#[gpui_kit::test]
+fn markers_on_the_window_draw_and_the_readout_names_the_one_under_the_pointer(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::monitoring::markers::{Marker, MarkerKind};
+    let (dashboard, specs) = cluster();
+    let cpu = index_of(&specs, "CPU usage by node");
+    let stat = index_of(&specs, "Ready nodes");
+    let (handle, panels) = mount(cx, specs);
+    answer(cx, &dashboard, &panels);
+    let marker = |kind, at: i64, label: &str| Marker {
+        kind,
+        at,
+        namespace: None,
+        node: None,
+        label: label.into(),
+    };
+    let markers: Rc<[Marker]> = Rc::from(vec![
+        marker(MarkerKind::Deploy, END - 7 * 3600, "deploy/old → 3"),
+        marker(MarkerKind::Deploy, END - 3 * 3600, "deploy/api → 1.8.2"),
+        marker(MarkerKind::NodeNotReady, END - 600, "worker-2 NotReady"),
+    ]);
+    for panel in &panels {
+        let markers = markers.clone();
+        cx.update(|cx| panel.update(cx, |panel, cx| panel.set_markers(markers, cx)));
+    }
+    let labels = cx.read(|cx| panels[cpu].read(cx).marker_labels());
+    assert_eq!(labels, ["deploy/api → 1.8.2", "worker-2 NotReady"]);
+    assert!(cx.read(|cx| panels[stat].read(cx).marker_labels().is_empty()));
+
+    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let geometry = cx.read(|cx| panels[cpu].read(cx).geometry.get());
+    let move_to = |cx: &mut TestAppContext, fraction: f32| {
+        cx.update_window(handle, |_, window, cx| {
+            let position = geometry.origin
+                + gpui_kit::point(
+                    geometry.left + geometry.width * fraction,
+                    geometry.top + geometry.height / 2.,
+                );
+            window.dispatch_event(
+                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+    };
+    let marker_at = |cx: &mut TestAppContext| {
+        cx.read(|cx| panels[cpu].read(cx).cursor.clone())
+            .and_then(|cursor| cursor.marker)
+    };
+    // Three hours before the end of six is halfway.
+    move_to(cx, 0.5);
+    assert_eq!(marker_at(cx), Some(0));
+    assert!(shown(
+        cx,
+        handle,
+        &format!("monitoring-panel-{cpu}-readout")
+    ));
+    move_to(cx, 0.25);
+    assert_eq!(marker_at(cx), None);
+
+    // A new answer over a later window places them again.
+    let later = TimeWindow::new(END + 4 * 3600, 6 * 3600, 72);
+    let source = ExampleSource::new(BUILTINS[0].uid);
+    let (variables, _) = source
+        .resolve_variables(&dashboard.variables, &[], later)
+        .unwrap();
+    let context = QueryContext {
+        window: later,
+        variables: variables.context_values(),
+    };
+    cx.update(|cx| {
+        panels[cpu].update(cx, |panel, cx| {
+            let result = source
+                .query_panel(&panel.spec.clone(), &context, &variables)
+                .unwrap();
+            panel.set_result(result, later, cx);
+        })
+    });
+    let labels = cx.read(|cx| panels[cpu].read(cx).marker_labels());
+    assert_eq!(labels, ["worker-2 NotReady"]);
+}

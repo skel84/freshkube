@@ -11,6 +11,7 @@ mod board;
 mod catalog;
 mod connection;
 mod layout;
+mod markers;
 mod settings;
 #[cfg(test)]
 mod tests;
@@ -32,6 +33,8 @@ use crate::resources::{KubeAccess, KubeSource};
 use board::Board;
 pub(crate) use catalog::{Catalog, Entry, EntryId, FolderState};
 use connection::Connection;
+use markers::MarkerState;
+pub(crate) use markers::TalosNodes;
 pub(crate) use settings::settings_section;
 
 /// How long one request through the proxy may take, past the transport's
@@ -89,6 +92,10 @@ pub(crate) struct MonitoringPage {
     scroll: ScrollHandle,
     viewport: Rc<Cell<Viewport>>,
     focus: FocusHandle,
+    /// Deploys and node events across the charts.
+    markers: MarkerState,
+    /// The shell's Talos nodes, for reboots.
+    talos: Option<TalosNodes>,
     /// Why the last save failed, for Settings.
     save_error: Option<gpui_kit::SharedString>,
     /// Unix seconds now. Tests fix it, so example data is the same each run.
@@ -121,6 +128,8 @@ impl MonitoringPage {
             scroll: ScrollHandle::new(),
             viewport: Rc::default(),
             focus: cx.focus_handle(),
+            markers: MarkerState::default(),
+            talos: None,
             save_error: None,
             now: || chrono::Utc::now().timestamp(),
         };
@@ -158,6 +167,7 @@ impl MonitoringPage {
             if let Some(board) = &mut self.board {
                 board.hide();
             }
+            self.markers.hide();
             self.refresh_task = None;
         }
         cx.notify();
@@ -175,6 +185,7 @@ impl MonitoringPage {
         self.connection = Connection::None;
         // Another cluster's answers never show as this one's.
         self.board = None;
+        self.markers.forget();
         if self.visible {
             self.load_board(cx);
         }

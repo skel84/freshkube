@@ -611,3 +611,47 @@ async fn the_example_source_answers_through_the_same_plan() {
         .unwrap();
     assert_eq!(first.frame.series[0].values, second.frame.series[0].values);
 }
+
+#[tokio::test]
+async fn markers_read_what_they_may_and_name_what_was_refused() {
+    let at = "2023-11-14T22:00:00Z";
+    let (client, seen) = fake(move |_, path, _| match path {
+        "/apis/apps/v1/replicasets" => (403, status(403, "replicasets is forbidden")),
+        "/api/v1/nodes" => (
+            200,
+            json!({"kind": "NodeList", "apiVersion": "v1", "metadata": {}, "items": [{
+                "metadata": {"name": "worker-2"},
+                "status": {"conditions": [
+                    {"type": "Ready", "status": "False", "lastTransitionTime": at}
+                ]},
+            }]})
+            .to_string(),
+        ),
+        "/api/v1/events" => (
+            200,
+            json!({"kind": "EventList", "apiVersion": "v1", "metadata": {}, "items": [{
+                "metadata": {"name": "cp-1.1", "namespace": "default"},
+                "involvedObject": {"kind": "Node", "name": "cp-1"},
+                "reason": "Rebooted",
+                "lastTimestamp": at,
+            }]})
+            .to_string(),
+        ),
+        _ => (404, status(404, "not found")),
+    });
+    let read = markers::read_markers(client, 0).await;
+    let labels: Vec<_> = read.markers.iter().map(|m| m.label.as_str()).collect();
+    assert_eq!(labels, ["worker-2 NotReady", "cp-1 rebooted"]);
+    assert_eq!(read.unavailable, ["Can't list replicasets: forbidden"]);
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.iter().all(|request| request.starts_with("GET ")),
+        "{seen:?}"
+    );
+    assert!(
+        seen.iter()
+            .any(|request| request.contains("/api/v1/events?")
+                && request.contains("fieldSelector=involvedObject.kind%3DNode")),
+        "{seen:?}"
+    );
+}

@@ -10,7 +10,7 @@ use gpui_kit::{
     Window, canvas, div, fill, point, px, size,
 };
 
-use super::{PanelEvent, PanelView};
+use super::{PanelEvent, PanelView, markers};
 use crate::monitoring::derive::{self, Chart};
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
@@ -33,6 +33,8 @@ pub(crate) struct Cursor {
     pub time: SharedString,
     pub rows: Vec<Row>,
     pub more: usize,
+    /// The marker under the pointer, named first in the readout.
+    pub marker: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,19 +59,28 @@ impl PanelView {
     }
 
     /// Where the pointer is over the plot, in window coordinates.
-    fn pointer_moved(&mut self, position: gpui_kit::Point<Pixels>, cx: &mut Context<Self>) {
+    fn pointer_moved(
+        &mut self,
+        position: gpui_kit::Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(chart) = self.chart() else {
             return;
         };
         let geometry = self.geometry.get();
         let x = position.x - geometry.origin.x - geometry.left;
-        let index = (geometry.width > px(0.) && x >= px(0.) && x <= geometry.width)
+        let inside = geometry.width > px(0.) && x >= px(0.) && x <= geometry.width;
+        let index = inside
             .then(|| nearest_x(&chart.xs, x / geometry.width))
             .flatten();
-        let cursor = index.and_then(|index| self.cursor_at(&chart, index, true));
-        if self.cursor.as_ref().map(|c| (c.index, c.own))
-            == cursor.as_ref().map(|c| (c.index, c.own))
-        {
+        let mut cursor = index.and_then(|index| self.cursor_at(&chart, index, true));
+        if let Some(cursor) = &mut cursor {
+            let reach = dp_px(markers::REACH, window) / geometry.width;
+            cursor.marker = markers::nearest(&self.placed, x / geometry.width, reach);
+        }
+        let key = |c: &Cursor| (c.index, c.own, c.marker);
+        if self.cursor.as_ref().map(key) == cursor.as_ref().map(key) {
             return;
         }
         let time = cursor.as_ref().map(|cursor| chart.times[cursor.index]);
@@ -123,6 +134,7 @@ impl PanelView {
             time: when(chart.times[index]).into(),
             rows: shown.into_iter().take(READOUT_ROWS).collect(),
             more,
+            marker: None,
         })
     }
 
@@ -140,8 +152,8 @@ impl PanelView {
             .top_0()
             .left_0()
             .size_full()
-            .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
-                view.pointer_moved(event.position, cx)
+            .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, window, cx| {
+                view.pointer_moved(event.position, window, cx)
             }));
         let Some(cursor) = self.cursor.clone() else {
             return overlay
@@ -238,6 +250,12 @@ impl PanelView {
                     .text_color(p.muted)
                     .child(cursor.time.clone()),
             )
+            .children(
+                cursor
+                    .marker
+                    .and_then(|marker| self.placed.get(marker))
+                    .map(|marker| markers::readout_row(marker, &p)),
+            )
             .children(cursor.rows.iter().map(|row| {
                 let color = chart.series[row.series]
                     .ink
@@ -317,7 +335,7 @@ pub(super) fn nearest_time(times: &[f64], time: f64) -> Option<usize> {
 }
 
 /// "Today 13:40", or the date for another day.
-fn when(time: f64) -> String {
+pub(super) fn when(time: f64) -> String {
     let Some(at) = Local.timestamp_opt(time as i64, 0).single() else {
         return String::new();
     };

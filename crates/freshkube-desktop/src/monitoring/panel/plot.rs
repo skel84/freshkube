@@ -16,6 +16,7 @@ use gpui_kit::{
     SharedString, Size, TextAlign, TextRun, Window, canvas, div, fill, point, px, size,
 };
 
+use super::markers::{self, Placed};
 use crate::monitoring::colors::{FADED_OPACITY, Tier};
 use crate::monitoring::derive::{Axis, Chart, ChartSeries, fitting};
 use crate::palette::{Palette, palette};
@@ -42,6 +43,7 @@ pub(crate) struct PlotView {
     revision: u64,
     pub(super) focus: Option<usize>,
     geometry: Rc<Cell<Geometry>>,
+    markers: Rc<[Placed]>,
 }
 
 impl PlotView {
@@ -52,7 +54,13 @@ impl PlotView {
             revision: 0,
             focus: None,
             geometry,
+            markers: Rc::from([]),
         }
+    }
+
+    pub(super) fn set_markers(&mut self, markers: Rc<[Placed]>, cx: &mut Context<Self>) {
+        self.markers = markers;
+        cx.notify();
     }
 
     pub(super) fn set_chart(&mut self, chart: Rc<Chart>, cx: &mut Context<Self>) {
@@ -79,6 +87,7 @@ impl Render for PlotView {
             revision: self.revision,
             focus: self.focus,
             geometry: self.geometry.clone(),
+            markers: self.markers.clone(),
             palette: palette(cx),
         };
         div()
@@ -102,6 +111,7 @@ struct Paint {
     revision: u64,
     focus: Option<usize>,
     geometry: Rc<Cell<Geometry>>,
+    markers: Rc<[Placed]>,
     palette: Palette,
 }
 
@@ -165,6 +175,13 @@ impl Paint {
 
         self.paint_grid(&frame, bounds.origin, label, gap, window, cx);
         self.paint_bands(&frame, bounds.origin, window);
+        markers::paint(
+            &self.markers,
+            bounds.origin,
+            (frame.left, frame.top, frame.width, frame.height),
+            &self.palette,
+            window,
+        );
         let inner = Bounds::new(
             bounds.origin + point(frame.left, frame.top - px(2.)),
             size(frame.width, frame.height + px(4.)),

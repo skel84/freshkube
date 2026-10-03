@@ -6,6 +6,7 @@
 //! moving cursor or a hovered legend row redraws only the overlay above it.
 mod cursor;
 mod legend;
+mod markers;
 mod plot;
 mod summary;
 #[cfg(test)]
@@ -16,6 +17,7 @@ use std::rc::Rc;
 
 use freshkube_core::monitoring::{
     PanelResult, QueryError,
+    markers::Marker,
     model::{PanelSpec, time::TimeWindow},
 };
 use gpui_kit::assets::IconName;
@@ -31,6 +33,7 @@ use crate::palette::palette;
 use crate::ui::{self, dp};
 
 pub(crate) use cursor::Cursor;
+pub(crate) use markers::glyph as marker_glyph;
 pub(crate) use plot::{Geometry, PlotView};
 
 /// What a panel tells its page.
@@ -68,6 +71,9 @@ pub(crate) struct PanelView {
     hovered: Option<usize>,
     picked: Option<usize>,
     cursor: Option<Cursor>,
+    /// The page's markers, and those on this chart's window.
+    markers: Rc<[Marker]>,
+    placed: Rc<[markers::Placed]>,
 }
 
 impl EventEmitter<PanelEvent> for PanelView {}
@@ -91,6 +97,8 @@ impl PanelView {
             hovered: None,
             picked: None,
             cursor: None,
+            markers: Rc::from([]),
+            placed: Rc::from([]),
         }
     }
 
@@ -125,7 +133,41 @@ impl PanelView {
         self.cursor = None;
         self.hovered = None;
         self.picked = None;
+        self.place_markers(cx);
         cx.notify();
+    }
+
+    /// The deploys and node events to draw, already filtered by the page.
+    pub(crate) fn set_markers(&mut self, markers: Rc<[Marker]>, cx: &mut Context<Self>) {
+        if Rc::ptr_eq(&self.markers, &markers) {
+            return;
+        }
+        self.markers = markers;
+        self.place_markers(cx);
+        cx.notify();
+    }
+
+    fn place_markers(&mut self, cx: &mut Context<Self>) {
+        let placed = self
+            .chart()
+            .map(|chart| markers::place(&self.markers, &chart))
+            .unwrap_or_else(|| Rc::from([]));
+        if placed == self.placed {
+            return;
+        }
+        self.placed = placed.clone();
+        if let Some(plot) = &self.plot {
+            plot.update(cx, |plot, cx| plot.set_markers(placed, cx));
+        }
+    }
+
+    /// The markers on this chart, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn marker_labels(&self) -> Vec<SharedString> {
+        self.placed
+            .iter()
+            .map(|marker| marker.label.clone())
+            .collect()
     }
 
     /// A failed query: the last answer stays, marked stale, else the

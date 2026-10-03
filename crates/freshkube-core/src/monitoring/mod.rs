@@ -12,6 +12,7 @@ pub mod builtin;
 pub mod catalog;
 mod discovery;
 mod example;
+pub mod markers;
 mod transport;
 
 #[cfg(test)]

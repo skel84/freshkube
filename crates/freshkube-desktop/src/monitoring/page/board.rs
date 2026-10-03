@@ -377,6 +377,7 @@ impl MonitoringPage {
                 slot.request = None;
             }
         }
+        self.read_markers(window, cx);
         self.ask_visible(cx);
     }
 
@@ -489,6 +490,7 @@ impl MonitoringPage {
                 Err(error) => panel.set_error(&error, cx),
             });
         }
+        self.read_markers(window, cx);
         cx.notify();
     }
 

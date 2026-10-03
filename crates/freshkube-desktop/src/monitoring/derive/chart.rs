@@ -29,6 +29,9 @@ pub(crate) struct Chart {
     pub xs: Vec<f32>,
     /// Each sample's time, in Unix seconds.
     pub times: Vec<f64>,
+    /// The window's first and last time, in Unix seconds.
+    pub start: f64,
+    pub end: f64,
     pub series: Vec<ChartSeries>,
     /// The left and right value axes.
     pub axes: [Option<Axis>; 2],
@@ -256,6 +259,8 @@ pub(super) fn chart(
         body: Body::Chart(Rc::new(Chart {
             xs,
             times: times.to_vec(),
+            start,
+            end,
             series,
             axes,
             time_ticks: ticks::time_ticks(start, end),

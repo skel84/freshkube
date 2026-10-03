@@ -95,6 +95,16 @@ Step 3 puts the panels on a page (`monitoring/page/`), its own rail area with a 
 - **Nodes:** a node turning NotReady or Ready, and with Talos a reboot from the node's boot time, drawn the same way in critical red (#F0484E, 55% opacity), and Ready again in the same line at a lower opacity.
 - Markers follow the variables: a dashboard filtered to one namespace or node shows only its own.
 
+### Markers as built
+
+Step 4 (`freshkube-core::monitoring::markers`, `monitoring/page/markers.rs`, `monitoring/panel/markers.rs`).
+
+- **Sources, all state.** A deploy is a ReplicaSet owned by a Deployment and created within the window, listed as metadata only; it reads "deploy/api → 1.8.2" from the `app.kubernetes.io/version` label, else "→ revision 7". A rollback to an older ReplicaSet doesn't create one and isn't marked. A node's last Ready transition comes from its condition; earlier ones come from `NodeNotReady`, `NodeReady` and `Rebooted` events (`involvedObject.kind=Node`), both times of a repeated one, for as long as the API server keeps events. With Talos, each responding node's boot time from `SystemStat` marks a reboot; the kubelet's `Rebooted` event within five minutes of it is the same reboot. Node markers of one kind within two minutes are one. At most 200, the newest.
+- **Reads.** Each generation (a variable, a range, Refresh, auto-refresh) reads them again unless a read within the last 15 s reached back as far, concurrently with an 8 s deadline per list, from the API server's cache. Only a visible page reads; hiding drops the reads and another context forgets them. A refused or failed list leaves the others and puts a warning mark beside the toggles that names it.
+- **Drawing.** A 1 px line across the plot under the series, with a small triangle on the baseline: accent blue at 55% for a deploy, critical red at 55% for NotReady and reboots, and the same red fainter for Ready. Each panel places them on its own window when the markers or its answer change. The cursor's readout names the marker within 6 dp of the pointer, with its time.
+- **Filters.** The header's "Annotations" toggles, Deploys and Node events, as the mock's pills. A variable named `namespace` or `ns` limits deploys to the namespaces chosen, and one named `node`, `nodename` or `kubernetes_node` limits node markers; All lets every one through. The mock's Alerts toggle is not built.
+- **Example data** marks four deploys, a reboot of cp-2 and worker-2 turning NotReady, on the example namespaces and nodes.
+
 ## Build order
 
 Each step is its own commit (or a preparation commit and then the step), with unit and UI tests where behaviour changes, and its row in the roadmap's Done table. The app stays usable after every step.
