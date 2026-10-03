@@ -172,16 +172,7 @@ impl Pilot {
         let p = palette(cx);
         let status = Self::status(&self.overview);
         let context = self.applied.context.clone().unwrap_or_default();
-        let dot = |color: Option<Hsla>| {
-            div()
-                .flex_none()
-                .size(dp(8.))
-                .rounded_full()
-                .map(|this| match color {
-                    Some(color) => this.bg(color),
-                    None => this.border(px(1.5)).border_color(p.faint),
-                })
-        };
+        let glyph = |tone: Tone| ui::status_glyph(tone, cx);
         let left = if let Some(running) = Operations::current(cx) {
             let cancelling = running.cancel_requested();
             let line = match (&running.step, cancelling) {
@@ -231,7 +222,11 @@ impl Pilot {
                 .aria_label(line.clone())
                 .gap_2()
                 .min_w_0()
-                .child(dot(logs.is_collecting().then_some(p.good)))
+                .children(glyph(if logs.is_collecting() {
+                    Tone::Good
+                } else {
+                    Tone::Unknown
+                }))
                 .child(div().min_w_0().truncate().child(line))
                 .tooltip(|window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(
@@ -243,38 +238,31 @@ impl Pilot {
         } else {
             let (indicator, text) = if let Some(error) = &self.config_error {
                 (
-                    Icon::new(IconName::CircleX)
-                        .size(dp(13.))
-                        .text_color(p.crit_ink)
-                        .into_any_element(),
+                    glyph(Tone::Crit),
                     format!("No configuration loaded: {error}"),
                 )
             } else if self.config_loading
                 || (self.overview.is_loading() && self.overview.data().is_none())
             {
                 (
-                    Icon::new(IconName::RefreshCw)
-                        .size(dp(13.))
-                        .text_color(p.accent)
-                        .into_any_element(),
+                    Some(
+                        Icon::new(IconName::RefreshCw)
+                            .size(dp(13.))
+                            .text_color(p.accent)
+                            .into_any_element(),
+                    ),
                     format!("Connecting to {context}…"),
                 )
             } else if self.overview.is_stale() {
                 (
-                    Icon::new(IconName::TriangleAlert)
-                        .size(dp(13.))
-                        .text_color(p.warn_ink)
-                        .into_any_element(),
+                    glyph(Tone::Warn),
                     "Showing the previous snapshot".to_owned(),
                 )
             } else if self.overview.data().is_some() {
-                (
-                    dot(Some(p.good)).into_any_element(),
-                    self.context_display.status.to_string(),
-                )
+                (glyph(Tone::Good), self.context_display.status.to_string())
             } else {
                 (
-                    dot(None).into_any_element(),
+                    glyph(Tone::Unknown),
                     self.overview
                         .error()
                         .map(|error| format!("Unavailable: {error}"))
@@ -288,7 +276,7 @@ impl Pilot {
                 .aria_label(status)
                 .gap_2()
                 .min_w_0()
-                .child(indicator)
+                .children(indicator)
                 .child(div().min_w_0().truncate().child(text))
                 .into_any_element()
         };

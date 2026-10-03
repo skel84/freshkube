@@ -585,7 +585,7 @@ impl LogView<TalosLogs> {
                         if self.source.collection_active {
                             ui::tag(ui::Tone::Good, None, "Collecting", cx)
                         } else {
-                            ui::tag(ui::Tone::Unknown, Some(IconName::Pause), "Stopped", cx)
+                            ui::tag(ui::Tone::Unknown, None, "Stopped", cx)
                         },
                     ))
                     .child(

@@ -498,11 +498,12 @@ impl Pilot {
                         },
                     )
                     .when(*tab == NodeTab::Services && row.service_problem, |this| {
-                        this.icon(
-                            gpui_kit::component::Icon::new(IconName::CircleAlert)
-                                .text_color(p.warn)
-                                .size(dp(12.)),
-                        )
+                        this.child(ui::status_mark(
+                            "node-services-problem",
+                            ui::Tone::Warn,
+                            "A system service on this node is unhealthy",
+                            cx,
+                        ))
                     })
                     .on_click(cx.listener({
                         let tab = *tab;

@@ -230,7 +230,11 @@ impl Pilot {
                     .cursor_pointer()
                     .when(selected, |this| this.bg(p.accent_soft))
                     .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-                    .child(ui::glyph(health, cx))
+                    .child(ui::health_mark(
+                        SharedString::from(format!("service-health-{}", service.id)),
+                        health,
+                        cx,
+                    ))
                     .child(
                         div()
                             .font_family(MONO_FONT)
@@ -341,7 +345,7 @@ impl Pilot {
                 .into_any_element();
         };
         let health = presentation::service_health(&service);
-        let (tone, icon) = ui::health_tone(health);
+        let tone = ui::health_tone(health);
         let message = service
             .health
             .as_ref()
@@ -425,12 +429,7 @@ impl Pilot {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(service.id.clone()),
                     )
-                    .child(ui::tag(
-                        tone,
-                        Some(icon),
-                        presentation::health_text(&health),
-                        cx,
-                    )),
+                    .child(ui::tag(tone, None, presentation::health_text(&health), cx)),
             )
             .child(
                 v_flex()
@@ -491,7 +490,7 @@ impl Pilot {
                             .gap_2()
                             .child(snapshot)
                             .when(self.services.is_stale(), |this| {
-                                this.child(ui::tag(Tone::Warn, Some(IconName::Clock), "Stale", cx))
+                                this.child(ui::tag(Tone::Warn, None, "Stale", cx))
                             })
                             .into_any_element(),
                     )),
@@ -534,10 +533,10 @@ impl Pilot {
                     ),
             )
             .children(restart_notice.map(|notice| {
-                let (tone, icon, lead) = if notice.ok {
-                    (Tone::Good, IconName::CircleCheck, "Restart")
+                let (tone, lead) = if notice.ok {
+                    (Tone::Good, "Restart")
                 } else {
-                    (Tone::Crit, IconName::CircleX, "Restart failed")
+                    (Tone::Crit, "Restart failed")
                 };
                 h_flex()
                     .id("service-restart-result")
@@ -546,7 +545,7 @@ impl Pilot {
                     .aria_label(format!("{lead}: {}", notice.text))
                     .items_start()
                     .gap_2()
-                    .child(ui::tag(tone, Some(icon), lead, cx))
+                    .child(ui::tag(tone, None, lead, cx))
                     .child(
                         div()
                             .flex_1()

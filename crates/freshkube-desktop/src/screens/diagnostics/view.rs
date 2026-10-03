@@ -72,7 +72,7 @@ impl DiagnosticsScreen {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let p = palette(cx);
-        let (tone, _, status) = status_tone(&check.status);
+        let (tone, status) = status_tone(&check.status);
         let key = key(check);
         let columns: &[Column] = if compact {
             &COMPACT_COLUMNS
@@ -166,7 +166,7 @@ impl DiagnosticsScreen {
                 .text_size(dp(12.5))
                 .child("Select a check to see its details.");
         };
-        let (tone, icon, status) = status_tone(&check.status);
+        let (tone, status) = status_tone(&check.status);
         let service = log_service(check);
         let fix = check.fix.as_ref().map(|fix| FixGuidance::of(fix, address));
         let applicable = Self::applicable_fix(check).is_some();
@@ -196,7 +196,7 @@ impl DiagnosticsScreen {
                             .truncate()
                             .child(check.name.clone()),
                     )
-                    .child(ui::tag(tone, Some(icon), status, cx))
+                    .child(ui::tag(tone, None, status, cx))
                     .child(div().flex_1())
                     .when_some(service, |this, service| {
                         this.child(
@@ -318,10 +318,10 @@ impl DiagnosticsScreen {
                             )
                         })
                         .when_some(notice, |this, (ok, text)| {
-                            let (tone, icon, lead) = if ok {
-                                (Tone::Good, IconName::CircleCheck, "Fix applied")
+                            let (tone, lead) = if ok {
+                                (Tone::Good, "Fix applied")
                             } else {
-                                (Tone::Crit, IconName::CircleX, "Fix failed")
+                                (Tone::Crit, "Fix failed")
                             };
                             this.child(
                                 h_flex()
@@ -331,7 +331,7 @@ impl DiagnosticsScreen {
                                     .aria_label(format!("{lead}: {text}"))
                                     .items_start()
                                     .gap_2()
-                                    .child(ui::tag(tone, Some(icon), lead, cx))
+                                    .child(ui::tag(tone, None, lead, cx))
                                     .child(
                                         div().flex_1().min_w_0().text_size(dp(12.5)).child(text),
                                     ),

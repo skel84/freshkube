@@ -95,13 +95,14 @@ impl Verdict {
         }
     }
 
-    fn tone(self) -> (Tone, IconName) {
+    /// The tag's tone, and an icon for Info, which carries no status.
+    fn tone(self) -> (Tone, Option<IconName>) {
         match self {
-            Verdict::Good => (Tone::Good, IconName::CircleCheck),
-            Verdict::Warn => (Tone::Warn, IconName::CircleAlert),
-            Verdict::Crit => (Tone::Crit, IconName::ShieldAlert),
-            Verdict::Info => (Tone::Accent, IconName::Info),
-            Verdict::Unknown => (Tone::Unknown, IconName::CircleDashed),
+            Verdict::Good => (Tone::Good, None),
+            Verdict::Warn => (Tone::Warn, None),
+            Verdict::Crit => (Tone::Crit, None),
+            Verdict::Info => (Tone::Accent, Some(IconName::Info)),
+            Verdict::Unknown => (Tone::Unknown, None),
         }
     }
 }
@@ -707,7 +708,7 @@ impl SecurityScreen {
                             .truncate()
                             .child(item.name.clone()),
                     )
-                    .child(ui::tag(tone, Some(icon), item.status.clone(), cx)),
+                    .child(ui::tag(tone, icon, item.status.clone(), cx)),
             )
             .children(
                 item.fields.iter().map(|(label, value)| {

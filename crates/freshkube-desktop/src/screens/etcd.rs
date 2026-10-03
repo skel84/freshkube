@@ -208,12 +208,7 @@ fn role_tag(role: MemberRole, cx: &App) -> Div {
         MemberRole::Leader => ui::tag(Tone::Accent, Some(IconName::Crosshair), "Leader", cx),
         MemberRole::Follower => ui::tag(Tone::Good, None, "Follower", cx),
         MemberRole::Learner => ui::tag(Tone::Outline, None, "Learner", cx),
-        MemberRole::NotReported => ui::tag(
-            Tone::Unknown,
-            Some(IconName::CircleDashed),
-            "Not reported",
-            cx,
-        ),
+        MemberRole::NotReported => ui::tag(Tone::Unknown, None, "Not reported", cx),
     }
 }
 
@@ -234,7 +229,6 @@ fn error_count(member: &EtcdMemberSnapshot) -> Option<usize> {
 /// The quorum verdict, worded so silence is never reported as failure.
 struct QuorumView {
     tone: Tone,
-    icon: IconName,
     label: &'static str,
     detail: String,
 }
@@ -250,7 +244,6 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
     if voting == 0 {
         return QuorumView {
             tone: Tone::Unknown,
-            icon: IconName::CircleDashed,
             label: "Quorum unknown",
             detail: "The member list is empty.".into(),
         };
@@ -258,7 +251,6 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
     if status_missing || answered == 0 {
         return QuorumView {
             tone: Tone::Unknown,
-            icon: IconName::CircleDashed,
             label: "Quorum not reported",
             detail: "No member statuses were available, so quorum can't be confirmed.".into(),
         };
@@ -271,13 +263,11 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
     match snapshot.quorum {
         QuorumState::Healthy => QuorumView {
             tone: Tone::Good,
-            icon: IconName::CircleCheck,
             label: "Quorum",
             detail: format!("All {voting} voting members answered · {tolerates}"),
         },
         QuorumState::Degraded { .. } => QuorumView {
             tone: Tone::Warn,
-            icon: IconName::CircleAlert,
             label: "Degraded",
             detail: format!(
                 "{answered} of {voting} voting members answered, which is still a quorum · {tolerates}"
@@ -285,7 +275,6 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
         },
         _ => QuorumView {
             tone: Tone::Warn,
-            icon: IconName::CircleAlert,
             label: "Quorum unconfirmed",
             detail: format!(
                 "Only {answered} of {voting} voting members answered; a quorum needs {}. Members that didn't answer are not reported, not failed.",
@@ -374,7 +363,7 @@ impl EtcdScreen {
                     .aria_label(format!("{} · {}", quorum.label, quorum.detail))
                     .gap_2p5()
                     .flex_wrap()
-                    .child(ui::tag(quorum.tone, Some(quorum.icon), quorum.label, cx))
+                    .child(ui::tag(quorum.tone, None, quorum.label, cx))
                     .child(
                         div()
                             .text_size(dp(12.5))
@@ -448,7 +437,11 @@ impl EtcdScreen {
             .flex()
             .items_center()
             .gap_2()
-            .child(ui::glyph(member_health(member), cx))
+            .child(ui::health_mark(
+                SharedString::from(format!("etcd-member-health-{}", member.info.id)),
+                member_health(member),
+                cx,
+            ))
             .child(
                 div()
                     .truncate()
@@ -772,12 +765,7 @@ impl EtcdScreen {
         let body = if unknown {
             h_flex()
                 .gap_2()
-                .child(ui::tag(
-                    Tone::Unknown,
-                    Some(IconName::CircleDashed),
-                    "Not reported",
-                    cx,
-                ))
+                .child(ui::tag(Tone::Unknown, None, "Not reported", cx))
                 .child(
                     div()
                         .text_color(p.muted)
@@ -787,12 +775,7 @@ impl EtcdScreen {
         } else if alarms.is_empty() {
             h_flex()
                 .gap_2()
-                .child(ui::tag(
-                    Tone::Good,
-                    Some(IconName::BadgeCheck),
-                    "No alarms",
-                    cx,
-                ))
+                .child(ui::tag(Tone::Good, None, "No alarms", cx))
                 .into_any_element()
         } else {
             v_flex()
@@ -803,12 +786,7 @@ impl EtcdScreen {
                         .test_support()
                         .aria_label(alarm_text(alarm))
                         .gap_2()
-                        .child(ui::tag(
-                            Tone::Warn,
-                            Some(IconName::CircleAlert),
-                            alarm.alarm_type.as_str(),
-                            cx,
-                        ))
+                        .child(ui::tag(Tone::Warn, None, alarm.alarm_type.as_str(), cx))
                         .child(mono(format!(
                             "member {} · reported by {}",
                             self.name_of(alarm.member_id),

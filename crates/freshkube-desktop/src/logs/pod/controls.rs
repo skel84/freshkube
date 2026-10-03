@@ -183,10 +183,6 @@ impl PodLogView {
     /// to say. A failure says it in the banner below instead.
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let status = &self.source.status;
-        let icon = match self.source.state {
-            StreamState::Reconnecting { .. } => Some(IconName::TriangleAlert),
-            _ => None,
-        };
         let failed = matches!(self.source.state, StreamState::Failed(_));
         h_flex()
             .id("pod-logs-status")
@@ -198,7 +194,7 @@ impl PodLogView {
             .text_size(dp(12.))
             .text_color(palette(cx).muted)
             .when(!status.tag.is_empty(), |this| {
-                this.child(ui::tag(status.tone, icon, status.tag.clone(), cx))
+                this.child(ui::tag(status.tone, None, status.tag.clone(), cx))
             })
             .when(!failed, |this| {
                 this.child(div().flex_1().min_w_0().child(status.text.clone()))

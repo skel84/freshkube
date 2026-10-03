@@ -298,10 +298,10 @@ impl Pilot {
         let open_pilot = pilot.clone();
         let label = self.context_display.name.clone();
         let detail = self.context_display.detail.clone();
-        let dot = match self.context_display.state {
-            1 => p.good,
-            2 => p.crit,
-            _ => p.unk,
+        let tone = match self.context_display.state {
+            1 => Tone::Good,
+            2 => Tone::Crit,
+            _ => Tone::Unknown,
         };
         Popover::new("context-popover")
             .open(self.context_display.open)
@@ -344,7 +344,7 @@ impl Pilot {
                                     .child(
                                         h_flex()
                                             .gap_1()
-                                            .child(div().size(dp(6.)).rounded_full().bg(dot))
+                                            .children(ui::status_glyph(tone, cx))
                                             .child(
                                                 div()
                                                     .id("context-short-name")
@@ -857,20 +857,20 @@ impl Pilot {
         let p = palette(cx);
         let current = self.applied.context.as_deref() == Some(context);
         let connection = self.kubernetes_only.as_ref().map(|kube| &kube.connection);
-        let (dot, tip) = if !current {
-            (None, "Not loaded yet")
+        let (tone, tip) = if !current {
+            (Tone::Unknown, "Not loaded yet")
         } else if let Some(connection) = connection {
             match connection {
-                KubeConnection::Connected { .. } => (Some(p.good), "Connected"),
-                KubeConnection::Failed(_) => (Some(p.crit), "Couldn't connect"),
-                KubeConnection::Idle | KubeConnection::Connecting => (None, "Connecting"),
+                KubeConnection::Connected { .. } => (Tone::Good, "Connected"),
+                KubeConnection::Failed(_) => (Tone::Crit, "Couldn't connect"),
+                KubeConnection::Idle | KubeConnection::Connecting => (Tone::Unknown, "Connecting"),
             }
         } else if self.overview.is_stale() {
-            (Some(p.warn), "Last refresh failed")
+            (Tone::Warn, "Last refresh failed")
         } else if self.overview.data().is_some() {
-            (Some(p.good), "Connected")
+            (Tone::Good, "Connected")
         } else {
-            (None, "Connecting")
+            (Tone::Unknown, "Connecting")
         };
         let chosen = context.to_owned();
         h_flex()
@@ -892,16 +892,7 @@ impl Pilot {
             .tooltip(move |window, cx| {
                 gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx)
             })
-            .child(
-                div()
-                    .flex_none()
-                    .size(dp(8.))
-                    .rounded_full()
-                    .map(|this| match dot {
-                        Some(color) => this.bg(color),
-                        None => this.border(px(1.5)).border_color(p.faint),
-                    }),
-            )
+            .children(ui::status_glyph(tone, cx))
             .child(
                 div()
                     .flex_1()

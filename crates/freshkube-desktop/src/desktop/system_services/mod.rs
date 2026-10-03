@@ -150,7 +150,7 @@ impl SystemServices {
         let logs_service = row.service.clone();
         let open_node = row.node.clone();
         let open_service = row.service.clone();
-        let (tone, _) = ui::health_tone(row.health);
+        let tone = ui::health_tone(row.health);
         h_flex()
             .id(row.id.clone())
             .test_support()

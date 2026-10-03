@@ -131,13 +131,13 @@ fn section_title(category: CheckCategory, snapshot: &DiagnosticSnapshot) -> Stri
     }
 }
 
-fn status_tone(status: &CheckStatus) -> (Tone, IconName, &'static str) {
+fn status_tone(status: &CheckStatus) -> (Tone, &'static str) {
     match status {
-        CheckStatus::Pass => (Tone::Good, IconName::CircleCheck, "Pass"),
-        CheckStatus::Warn => (Tone::Warn, IconName::CircleAlert, "Warn"),
-        CheckStatus::Fail => (Tone::Crit, IconName::ShieldAlert, "Fail"),
-        CheckStatus::Unknown => (Tone::Unknown, IconName::CircleDashed, "Unknown"),
-        CheckStatus::Checking => (Tone::Unknown, IconName::CircleDashed, "Checking"),
+        CheckStatus::Pass => (Tone::Good, "Pass"),
+        CheckStatus::Warn => (Tone::Warn, "Warn"),
+        CheckStatus::Fail => (Tone::Crit, "Fail"),
+        CheckStatus::Unknown => (Tone::Unknown, "Unknown"),
+        CheckStatus::Checking => (Tone::Unknown, "Checking"),
     }
 }
 
@@ -472,7 +472,7 @@ impl DiagnosticsScreen {
             .iter()
             .find(|check| key(check) == check_key)?;
         Self::applicable_fix(check)?;
-        let status = status_tone(&check.status).2;
+        let status = status_tone(&check.status).1;
         Some(actions::fingerprint((
             &source.target.context,
             source.target.epoch,
@@ -502,7 +502,7 @@ impl DiagnosticsScreen {
             return;
         };
         let (status, name, message) = (
-            status_tone(&check.status).2,
+            status_tone(&check.status).1,
             check.name.clone(),
             check.message.clone(),
         );

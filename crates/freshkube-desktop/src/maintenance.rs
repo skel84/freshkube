@@ -978,12 +978,7 @@ impl MaintenanceView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Maintenance"),
                     )
-                    .child(ui::tag(
-                        Tone::Warn,
-                        Some(IconName::TriangleAlert),
-                        "Insecure",
-                        cx,
-                    )),
+                    .child(ui::tag(Tone::Warn, None, "Insecure", cx)),
             )
             .into_any_element()
     }

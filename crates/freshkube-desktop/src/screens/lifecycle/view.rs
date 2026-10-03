@@ -192,7 +192,7 @@ impl LifecycleScreen {
                         .cursor_pointer()
                         .when(selected, |this| this.bg(p.accent_soft))
                         .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-                        .child(ui::tag(tone, Some(icon), label, cx))
+                        .child(ui::tag(tone, icon, label, cx))
                         .child(div().flex_1().min_w_0().child(alert.message.clone()))
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.select(Item::Alert(ix), window, cx);
@@ -240,7 +240,7 @@ impl LifecycleScreen {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .child(ui::tag(verdict.tone, Some(verdict.icon), verdict.label, cx)),
+                    .child(ui::tag(verdict.tone, None, verdict.label, cx)),
             )
             .child(
                 div()
@@ -443,12 +443,7 @@ impl LifecycleScreen {
                 .flex_wrap()
                 .child(mono(hash.clone()))
                 .child(match drift {
-                    Drift::Differs => ui::tag(
-                        Tone::Warn,
-                        Some(IconName::GitCompareArrows),
-                        "Differs from other nodes",
-                        cx,
-                    ),
+                    Drift::Differs => ui::tag(Tone::Warn, None, "Differs from other nodes", cx),
                     Drift::InSync => ui::tag(Tone::Good, None, "Matches other nodes", cx),
                     _ => ui::tag(Tone::Outline, None, "Only reading", cx),
                 })
@@ -477,12 +472,7 @@ impl LifecycleScreen {
                 .flex_wrap()
                 .child(mono(version.clone()))
                 .when(row.kubelet_behind, |this| {
-                    this.child(ui::tag(
-                        Tone::Warn,
-                        Some(IconName::CircleAlert),
-                        "Behind the newest kubelet",
-                        cx,
-                    ))
+                    this.child(ui::tag(Tone::Warn, None, "Behind the newest kubelet", cx))
                 })
                 .into_any_element(),
             Err(reason) => unknown(reason).into_any_element(),
@@ -521,12 +511,7 @@ impl LifecycleScreen {
                     .child(if reported {
                         ui::tag(Tone::Outline, None, row.role_label(), cx)
                     } else {
-                        ui::tag(
-                            Tone::Unknown,
-                            Some(IconName::CircleDashed),
-                            "Not reported",
-                            cx,
-                        )
+                        ui::tag(Tone::Unknown, None, "Not reported", cx)
                     })
                     .child(div().flex_1())
                     .children(target),
@@ -583,7 +568,7 @@ impl LifecycleScreen {
             .aria_label(format!("Details of alert: {}", alert.message))
             .p_4()
             .gap_2p5()
-            .child(h_flex().gap_2().child(ui::tag(tone, Some(icon), label, cx)))
+            .child(h_flex().gap_2().child(ui::tag(tone, icon, label, cx)))
             .child(
                 div()
                     .text_size(dp(13.5))
