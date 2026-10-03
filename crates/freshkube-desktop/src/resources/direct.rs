@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use freshkube_core::resources::{Connection, connect};
+use freshkube_core::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 use futures::future::{BoxFuture, FutureExt, Shared};
 
 /// Loading credentials can run an auth plugin; anything slower is stuck.
@@ -21,13 +22,18 @@ type Connector = fn(Vec<PathBuf>, String) -> BoxFuture<'static, Result<Connectio
 pub(crate) struct DirectAccess {
     sources: Arc<[PathBuf]>,
     context: String,
+    identity: AccessIdentity,
     attempt: Arc<Mutex<Option<Attempt>>>,
     connector: Connector,
 }
 
 impl DirectAccess {
-    pub(crate) fn new(sources: Vec<PathBuf>, context: String) -> Self {
-        Self::with_connector(sources, context, |sources, context| {
+    pub(crate) fn new(
+        sources: Vec<PathBuf>,
+        context: String,
+        revision: ConfigurationRevision,
+    ) -> Self {
+        Self::with_connector(sources, context, revision, |sources, context| {
             async move {
                 connect(sources, context)
                     .await
@@ -37,23 +43,29 @@ impl DirectAccess {
         })
     }
 
-    fn with_connector(sources: Vec<PathBuf>, context: String, connector: Connector) -> Self {
+    fn with_connector(
+        sources: Vec<PathBuf>,
+        context: String,
+        revision: ConfigurationRevision,
+        connector: Connector,
+    ) -> Self {
         Self {
             sources: sources.into(),
             context,
+            identity: AccessIdentity::new(AccessSessionId::new(), revision),
             attempt: Arc::default(),
             connector,
         }
     }
 
-    /// Names the connection: the files read and the context.
+    /// One session and inspected configuration revision. Recreating access
+    /// changes it even when the path and context names are the same.
     pub(crate) fn id(&self) -> String {
-        let files: Vec<String> = self
-            .sources
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect();
-        format!("kube:{}:{}", files.join(","), self.context)
+        self.identity.key()
+    }
+
+    pub(crate) fn revision(&self) -> ConfigurationRevision {
+        self.identity.configuration()
     }
 
     pub(crate) fn context(&self) -> &str {
@@ -66,11 +78,18 @@ impl DirectAccess {
             let mut slot = self.attempt.lock().expect("connection slot");
             slot.get_or_insert_with(|| {
                 let context = self.context.clone();
+                let sources = self.sources.clone();
+                let revision = self.revision();
                 let connecting = (self.connector)(self.sources.to_vec(), context.clone());
                 async move {
-                    tokio::time::timeout(CONNECT_DEADLINE, connecting)
-                        .await
-                        .unwrap_or_else(|_| Err(format!("Connecting to '{context}' timed out")))
+                    tokio::time::timeout(CONNECT_DEADLINE, async move {
+                        check_revision(sources.clone(), revision).await?;
+                        let connection = connecting.await?;
+                        check_revision(sources, revision).await?;
+                        Ok(connection)
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err(format!("Connecting to '{context}' timed out")))
                 }
                 .boxed()
                 .shared()
@@ -81,7 +100,9 @@ impl DirectAccess {
     }
 
     /// Drops a finished attempt, so the next read connects again. One still
-    /// under way is fresh, and stays.
+    /// under way is fresh, and stays. A transport retry keeps this session's
+    /// identity and durable object selection; configuration replacement must
+    /// create new access instead.
     pub(crate) fn forget(&self) {
         let mut slot = self.attempt.lock().expect("connection slot");
         if slot
@@ -93,12 +114,108 @@ impl DirectAccess {
     }
 }
 
+async fn check_revision(
+    sources: Arc<[PathBuf]>,
+    expected: ConfigurationRevision,
+) -> Result<(), String> {
+    let current = tokio::task::spawn_blocking(move || {
+        ConfigurationRevision::from_kubeconfig_sources(&sources)
+    })
+    .await
+    .map_err(|_| "Reading the Kubernetes configuration stopped".to_owned())?;
+    if current == expected {
+        Ok(())
+    } else {
+        Err("Kubernetes configuration changed; refresh to load it".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+
+    fn replace_during_connect(
+        sources: Vec<PathBuf>,
+        context: String,
+    ) -> BoxFuture<'static, Result<Connection, String>> {
+        async move {
+            std::fs::write(&sources[0], "new configuration").unwrap();
+            Ok(Connection {
+                context: freshkube_core::resources::KubeContext {
+                    name: context,
+                    cluster: "synthetic".into(),
+                    namespace: None,
+                    source: sources[0].clone(),
+                },
+                // Construction only: this test never sends a network request.
+                client: kube::Client::try_from(kube::Config::new(
+                    "http://127.0.0.1:1".parse().unwrap(),
+                ))
+                .unwrap(),
+                server_version: "synthetic".into(),
+            })
+        }
+        .boxed()
+    }
+
+    #[tokio::test]
+    async fn a_connection_completing_after_configuration_replacement_is_rejected() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-late-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("config");
+        std::fs::write(&path, "old configuration").unwrap();
+        let sources = vec![path];
+        let revision = ConfigurationRevision::from_kubeconfig_sources(&sources);
+        let access =
+            DirectAccess::with_connector(sources, "lab".into(), revision, replace_during_connect);
+        let result = access.connect().await;
+        std::fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Kubernetes configuration changed; refresh to load it")
+        );
+    }
+
+    #[test]
+    fn same_path_configuration_replacement_changes_resource_identity() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("config");
+        std::fs::write(&path, "old configuration").unwrap();
+        let sources = vec![path];
+        let previous = DirectAccess::new(
+            sources.clone(),
+            "lab".into(),
+            ConfigurationRevision::from_kubeconfig_sources(&sources),
+        );
+        assert_eq!(previous.id(), previous.clone().id());
+        std::fs::write(&sources[0], "new configuration").unwrap();
+        let current = DirectAccess::new(
+            sources.clone(),
+            "lab".into(),
+            ConfigurationRevision::from_kubeconfig_sources(&sources),
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+        assert_ne!(previous.id(), current.id());
+        assert_ne!(previous.revision(), current.revision());
+    }
 
     /// Fails after a moment, counting attempts.
     fn refused(_: Vec<PathBuf>, context: String) -> BoxFuture<'static, Result<Connection, String>> {
@@ -115,9 +232,14 @@ mod tests {
         let access = DirectAccess::with_connector(
             vec!["/a/config".into(), "/b/config".into()],
             "lab".into(),
+            ConfigurationRevision::from_kubeconfig_sources(&[
+                "/a/config".into(),
+                "/b/config".into(),
+            ]),
             refused,
         );
-        assert_eq!(access.id(), "kube:/a/config,/b/config:lab");
+        let identity = access.id();
+        assert_eq!(identity, access.clone().id());
         assert_eq!(access.context(), "lab");
         let other = access.clone();
         // Forgetting an attempt under way keeps it.
@@ -134,5 +256,6 @@ mod tests {
         other.forget();
         assert!(access.connect().await.is_err());
         assert_eq!(ATTEMPTS.load(Ordering::SeqCst), 2);
+        assert_eq!(identity, access.id());
     }
 }
