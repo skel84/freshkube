@@ -12,8 +12,9 @@ use freshkube_core::monitoring::model::spec::{Curve, DrawStyle};
 use gpui_kit::component::plot::{PathCaches, ShapeKey};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Bounds, Context, Hsla, IntoElement, Path, PathBuilder, Pixels, Point, Render,
-    SharedString, Size, TextAlign, TextRun, Window, canvas, div, fill, point, px, size,
+    App, Bounds, Context, FillOptions, FillRule, Hsla, IntoElement, Path, PathBuilder, PathStyle,
+    Pixels, Point, Render, SharedString, Size, TextAlign, TextRun, Window, canvas, div, fill,
+    point, px, size,
 };
 
 use super::markers::{self, Placed};
@@ -142,11 +143,14 @@ impl Frame {
 }
 
 /// What a series' line and area look like; series that share it draw as
-/// one path.
+/// one path. The baseline is part of it: an area winds one way above its
+/// baseline and the other way below, so areas on one baseline overlap only
+/// where they wind alike, and the non-zero fill draws their union.
 #[derive(PartialEq)]
 struct Look<'a> {
     color: Hsla,
     fill: f32,
+    baseline: f32,
     line: bool,
     dashes: Option<&'a [f32]>,
 }
@@ -385,6 +389,7 @@ impl Paint {
             let look = Look {
                 color: series.ink.color(false),
                 fill: series.fill,
+                baseline: series.baseline,
                 line: series.draw == DrawStyle::Line,
                 dashes: series.dashes.as_deref(),
             };
@@ -432,6 +437,7 @@ impl Paint {
             let look = Look {
                 color: series.ink.color(true),
                 fill: series.fill,
+                baseline: series.baseline,
                 line: series.draw == DrawStyle::Line,
                 dashes: series.dashes.as_deref(),
             };
@@ -607,7 +613,7 @@ fn area_path(
     curve: Curve,
     frame: &Frame,
 ) -> Option<Path<Pixels>> {
-    let mut path = PathBuilder::fill();
+    let mut path = area_builder();
     let mut any = false;
     for series in members {
         for run in runs(xs, &series.tops, frame) {
@@ -639,6 +645,14 @@ fn area_path(
         }
     }
     any.then(|| path.build().ok()).flatten()
+}
+
+/// A fill that draws overlapping areas once. Even-odd, the default, would cut
+/// a hole wherever two of a group's areas overlap.
+fn area_builder() -> PathBuilder {
+    PathBuilder::fill().with_style(PathStyle::Fill(
+        FillOptions::default().with_fill_rule(FillRule::NonZero),
+    ))
 }
 
 /// One bar per sample, side by side with the panel's other bar series.
@@ -730,4 +744,36 @@ fn paint_text(
         window,
         cx,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two overlapping areas in one path cover their union, with no hole
+    /// where they overlap.
+    #[test]
+    fn areas_in_one_path_fill_their_union() {
+        let mut path = area_builder();
+        for (left, right) in [(0., 60.), (40., 100.)] {
+            path.move_to(point(px(left), px(0.)));
+            path.line_to(point(px(right), px(0.)));
+            path.line_to(point(px(right), px(10.)));
+            path.line_to(point(px(left), px(10.)));
+            path.close();
+        }
+        let path = path.build().unwrap();
+        let covered: f32 = path
+            .vertices
+            .chunks(3)
+            .map(|triangle| {
+                let [a, b, c] = [0, 1, 2].map(|i| triangle[i].xy_position);
+                (f32::from(b.x - a.x) * f32::from(c.y - a.y)
+                    - f32::from(c.x - a.x) * f32::from(b.y - a.y))
+                .abs()
+                    / 2.
+            })
+            .sum();
+        assert!((covered - 1000.).abs() < 1., "covered {covered}");
+    }
 }
