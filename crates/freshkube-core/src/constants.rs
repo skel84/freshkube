@@ -18,6 +18,10 @@ pub const MEMORY_WARNING_PERCENT: f64 = 85.0;
 /// Node memory use (percent of total) at which memory is shown as critical
 pub const MEMORY_CRITICAL_PERCENT: f64 = 95.0;
 
+/// Combined node health warns at 90% memory use, independently of the memory
+/// meter's high/critical thresholds above.
+pub const NODE_MEMORY_WARNING_PERCENT: f64 = 90.0;
+
 // =============================================================================
 // Addon Detection CRDs
 // =============================================================================

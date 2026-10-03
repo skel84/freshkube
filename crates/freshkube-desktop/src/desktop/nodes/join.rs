@@ -4,7 +4,13 @@ use crate::{
     presentation::{NodeSummary as TalosNode, Role},
     ui::Tone,
 };
-use freshkube_core::kubernetes_summary::NodeSummary as KubernetesNode;
+use freshkube_core::{
+    HasHealth, HealthIndicator,
+    kubernetes_summary::NodeSummary as KubernetesNode,
+    node_health::{
+        KubernetesNodeState, NodeAssessment, NodeProblem, TalosNodeFacts, TalosNodeState,
+    },
+};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,169 +117,33 @@ fn row(
     talos_available: bool,
     kubernetes_available: bool,
 ) -> NodeRow {
+    let assessment = NodeAssessment::from_sources(
+        talos.map(|node| {
+            TalosNodeFacts::new(
+                node.role.into(),
+                node.responding,
+                &node.services,
+                node.memory.map(|memory| memory.percent()),
+            )
+        }),
+        kubernetes,
+        talos_available,
+        kubernetes_available,
+    );
     let name = kubernetes
         .map(|node| node.name.as_str())
         .or_else(|| talos.map(|node| node.name.as_str()))
         .unwrap_or_default();
-    let role = if kubernetes.is_some_and(|node| {
-        node.roles
-            .iter()
-            .any(|role| matches!(role.as_str(), "control-plane" | "master"))
-    }) {
-        Role::ControlPlane
-    } else {
-        talos.map(|node| node.role).unwrap_or(Role::Worker)
-    };
-    let ready = match kubernetes {
-        Some(node) if node.is_ready() => "Ready",
-        Some(_) => "NotReady",
-        None if !kubernetes_available => "Kubernetes unavailable",
-        None => "Not in Kubernetes",
-    };
-    let talos_state = match talos {
-        Some(node) if !node.responding => "No response".to_owned(),
-        Some(node) => node
-            .version
-            .clone()
-            .unwrap_or_else(|| "Version not reported".into()),
-        None if !talos_available => "Talos unavailable".into(),
-        None => "No Talos data".into(),
-    };
-    let address = talos
-        .map(|node| node.address.clone())
-        .or_else(|| {
-            kubernetes.and_then(|node| {
-                node.addresses
-                    .iter()
-                    .find(|(kind, _)| kind == "InternalIP")
-                    .or_else(|| node.addresses.first())
-                    .map(|(_, address)| address.clone())
-            })
-        })
-        .unwrap_or_default();
-    let mut problems: Vec<SharedString> = Vec::new();
-    let mut tone = Tone::Good;
-    if kubernetes.is_some_and(|node| !node.is_ready()) {
-        tone = Tone::Crit;
-        problems.push("Kubernetes NotReady".into());
-    }
-    if let Some(node) = talos {
-        if !node.responding {
-            tone = Tone::Crit;
-            problems.push("Talos API not answering".into());
-        }
-        for service in node.unhealthy_services() {
-            if tone != Tone::Crit {
-                tone = Tone::Warn;
-            }
-            problems.push(format!("{} unhealthy", service.id).into());
-        }
-        if let Some(memory) = node.memory.filter(|memory| memory.percent() >= 90.) {
-            if tone != Tone::Crit {
-                tone = Tone::Warn;
-            }
-            problems.push(format!("Memory {:.0}%", memory.percent()).into());
-        }
-    }
-    let load = talos
-        .and_then(|node| node.load)
-        .map(|load| format!("{:.2} · {:.2} · {:.2}", load[0], load[1], load[2]))
-        .unwrap_or_else(|| "—".into());
-    let memory = talos
-        .and_then(|node| node.memory)
-        .map(|memory| {
-            format!(
-                "{:.0}% · {}",
-                memory.percent(),
-                freshkube_core::formatting::format_bytes(memory.total)
-            )
-        })
-        .unwrap_or_else(|| "—".into());
+    let role = Role::from(assessment.role());
     let counts = talos.map(|node| node.health_counts()).unwrap_or_default();
-    let services = talos
-        .filter(|node| node.responding)
-        .map(|_| {
-            format!(
-                "{} healthy · {} unhealthy",
-                counts.healthy, counts.unhealthy
-            )
-        })
-        .unwrap_or_else(|| "—".into());
-    let note = if ready == "NotReady" {
-        ready.into()
-    } else if talos.is_some_and(|node| !node.responding) {
-        "No response".into()
-    } else if counts.unhealthy > 0 {
-        format!("{} svc", counts.unhealthy)
-    } else if talos
-        .and_then(|node| node.memory)
-        .is_some_and(|memory| memory.percent() >= 90.)
-    {
-        memory.clone()
-    } else if role == Role::ControlPlane {
-        "cp".into()
-    } else {
-        "worker".into()
-    };
-    let mut chips: Vec<SharedString> = vec![role.label().into(), address.clone().into()];
-    let mut facts: Vec<(SharedString, SharedString)> = vec![
-        ("Kubernetes".into(), ready.into()),
-        ("Talos".into(), talos_state.clone().into()),
-        ("Load".into(), load.clone().into()),
-        ("Memory".into(), memory.clone().into()),
-        ("System services".into(), services.clone().into()),
-    ];
-    if let Some(node) = talos {
-        if let Some(version) = &node.version {
-            chips.push(format!("Talos {version}").into());
-        }
-        if let Some(cores) = node.cores {
-            chips.push(format!("{cores} cores").into());
-        }
-        if let Some(memory) = node.memory {
-            chips.push(freshkube_core::formatting::format_bytes(memory.total).into());
-        }
-        facts.push((
-            "etcd member".into(),
-            if node.etcd_member { "Yes" } else { "No" }.into(),
-        ));
-    }
-    if let Some(node) = kubernetes {
-        if talos.is_none() {
-            if let Some(cores) = node.capacity.get("cpu") {
-                chips.push(format!("{} cores", cores.0).into());
-            }
-            if let Some(memory) = node.capacity.get("memory") {
-                chips.push(format!("{} memory", memory.0).into());
-            }
-        }
-        if !node.kubelet_version.is_empty() {
-            chips.push(format!("kubelet {}", node.kubelet_version).into());
-        }
-        if node.unschedulable {
-            chips.push("Cordoned".into());
-        }
-        for condition in &node.conditions {
-            facts.push((
-                condition.kind.clone().into(),
-                format!(
-                    "{} · {} · {}",
-                    condition.status, condition.reason, condition.message
-                )
-                .into(),
-            ));
-        }
-        for (kind, address) in &node.addresses {
-            facts.push((kind.clone().into(), address.clone().into()));
-        }
-        for (kind, amount) in &node.capacity {
-            facts.push((format!("Capacity {kind}").into(), amount.0.clone().into()));
-        }
-        for taint in &node.taints {
-            facts.push(("Taint".into(), taint.clone().into()));
-        }
-    }
-    NodeRow {
+    let memory = memory_text(talos);
+    let note = compact_note(
+        assessment.problems().first(),
+        counts.unhealthy,
+        role,
+        &memory,
+    );
+    let mut row = NodeRow {
         key: NodeKey {
             kubernetes: kubernetes.map(|node| node.name.clone()),
             talos: talos.map(|node| node.name.clone()),
@@ -286,27 +156,215 @@ fn row(
             .into(),
         kubelet_pods: kubernetes
             .map(|node| format!("Pods on this node ({})", node.pods))
-            .unwrap_or("Pods on this node".into())
+            .unwrap_or_else(|| "Pods on this node".into())
             .into(),
         service_problem: counts.unhealthy > 0,
         name: name.into(),
         role,
-        tone,
+        tone: node_tone(assessment.health()),
         kubernetes: kubernetes.cloned(),
         talos: talos.cloned(),
-        ready,
-        talos_state: talos_state.into(),
-        address: address.into(),
-        load: load.into(),
-        memory: memory.into(),
+        ready: readiness_label(assessment.kubernetes()),
+        talos_state: talos_label(
+            assessment.talos(),
+            talos.and_then(|node| node.version.as_deref()),
+        ),
+        address: node_address(talos, kubernetes).into(),
+        load: load_text(talos),
+        memory,
         pods: kubernetes
             .map(|node| node.pods.to_string())
             .unwrap_or_else(|| "—".into())
             .into(),
-        services: services.into(),
-        note: note.into(),
-        chips,
-        facts,
-        problems,
+        services: match assessment.talos() {
+            TalosNodeState::Responding => format!(
+                "{} healthy · {} unhealthy",
+                counts.healthy, counts.unhealthy
+            )
+            .into(),
+            _ => "—".into(),
+        },
+        note,
+        chips: Vec::new(),
+        facts: Vec::new(),
+        problems: assessment.problems().iter().map(problem_text).collect(),
+    };
+    row.chips = chips(&row);
+    row.facts = facts(&row);
+    row
+}
+
+fn node_tone(health: HealthIndicator) -> Tone {
+    match health {
+        HealthIndicator::Healthy => Tone::Good,
+        HealthIndicator::Warning => Tone::Warn,
+        HealthIndicator::Error => Tone::Crit,
+        HealthIndicator::Pending | HealthIndicator::Unknown => Tone::Unknown,
+        HealthIndicator::Info => Tone::Accent,
+    }
+}
+
+fn readiness_label(state: KubernetesNodeState) -> &'static str {
+    match state {
+        KubernetesNodeState::Ready => "Ready",
+        KubernetesNodeState::NotReady => "NotReady",
+        KubernetesNodeState::Unavailable => "Kubernetes unavailable",
+        KubernetesNodeState::Absent => "Not in Kubernetes",
+    }
+}
+
+fn talos_label(state: TalosNodeState, version: Option<&str>) -> SharedString {
+    match state {
+        TalosNodeState::Responding => version.unwrap_or("Version not reported").to_owned().into(),
+        TalosNodeState::Unresponsive => "No response".into(),
+        TalosNodeState::Unavailable => "Talos unavailable".into(),
+        TalosNodeState::Absent => "No Talos data".into(),
+    }
+}
+
+fn node_address<'a>(
+    talos: Option<&'a TalosNode>,
+    kubernetes: Option<&'a KubernetesNode>,
+) -> &'a str {
+    talos
+        .map(|node| node.address.as_str())
+        .or_else(|| {
+            kubernetes.and_then(|node| {
+                node.addresses
+                    .iter()
+                    .find(|(kind, _)| kind == "InternalIP")
+                    .or_else(|| node.addresses.first())
+                    .map(|(_, address)| address.as_str())
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn load_text(talos: Option<&TalosNode>) -> SharedString {
+    talos
+        .and_then(|node| node.load)
+        .map(|load| format!("{:.2} · {:.2} · {:.2}", load[0], load[1], load[2]))
+        .unwrap_or_else(|| "—".into())
+        .into()
+}
+
+fn memory_text(talos: Option<&TalosNode>) -> SharedString {
+    talos
+        .and_then(|node| node.memory)
+        .map(|memory| {
+            format!(
+                "{:.0}% · {}",
+                memory.percent(),
+                freshkube_core::formatting::format_bytes(memory.total)
+            )
+        })
+        .unwrap_or_else(|| "—".into())
+        .into()
+}
+
+fn problem_text(problem: &NodeProblem<'_>) -> SharedString {
+    match problem {
+        NodeProblem::KubernetesNotReady => "Kubernetes NotReady".into(),
+        NodeProblem::TalosUnresponsive => "Talos API not answering".into(),
+        NodeProblem::UnhealthyService(id) => format!("{id} unhealthy").into(),
+        NodeProblem::HighMemory(percent) => format!("Memory {percent:.0}%").into(),
+    }
+}
+
+fn compact_note(
+    problem: Option<&NodeProblem<'_>>,
+    unhealthy_services: usize,
+    role: Role,
+    memory: &SharedString,
+) -> SharedString {
+    match problem {
+        Some(NodeProblem::KubernetesNotReady) => "NotReady".into(),
+        Some(NodeProblem::TalosUnresponsive) => "No response".into(),
+        Some(NodeProblem::UnhealthyService(_)) => format!("{unhealthy_services} svc").into(),
+        Some(NodeProblem::HighMemory(_)) => memory.clone(),
+        None if role == Role::ControlPlane => "cp".into(),
+        None => "worker".into(),
+    }
+}
+
+fn chips(row: &NodeRow) -> Vec<SharedString> {
+    let mut chips = vec![row.role.label().into(), row.address.clone()];
+    if let Some(node) = &row.talos {
+        talos_chips(node, &mut chips);
+    }
+    if let Some(node) = &row.kubernetes {
+        kubernetes_chips(node, row.talos.is_none(), &mut chips);
+    }
+    chips
+}
+
+fn talos_chips(node: &TalosNode, chips: &mut Vec<SharedString>) {
+    if let Some(version) = &node.version {
+        chips.push(format!("Talos {version}").into());
+    }
+    if let Some(cores) = node.cores {
+        chips.push(format!("{cores} cores").into());
+    }
+    if let Some(memory) = node.memory {
+        chips.push(freshkube_core::formatting::format_bytes(memory.total).into());
+    }
+}
+
+fn kubernetes_chips(node: &KubernetesNode, show_capacity: bool, chips: &mut Vec<SharedString>) {
+    if show_capacity {
+        if let Some(cores) = node.capacity.get("cpu") {
+            chips.push(format!("{} cores", cores.0).into());
+        }
+        if let Some(memory) = node.capacity.get("memory") {
+            chips.push(format!("{} memory", memory.0).into());
+        }
+    }
+    if !node.kubelet_version.is_empty() {
+        chips.push(format!("kubelet {}", node.kubelet_version).into());
+    }
+    if node.unschedulable {
+        chips.push("Cordoned".into());
+    }
+}
+
+fn facts(row: &NodeRow) -> Vec<(SharedString, SharedString)> {
+    let mut facts = vec![
+        ("Kubernetes".into(), row.ready.into()),
+        ("Talos".into(), row.talos_state.clone()),
+        ("Load".into(), row.load.clone()),
+        ("Memory".into(), row.memory.clone()),
+        ("System services".into(), row.services.clone()),
+    ];
+    if let Some(node) = &row.talos {
+        facts.push((
+            "etcd member".into(),
+            if node.etcd_member { "Yes" } else { "No" }.into(),
+        ));
+    }
+    if let Some(node) = &row.kubernetes {
+        kubernetes_facts(node, &mut facts);
+    }
+    facts
+}
+
+fn kubernetes_facts(node: &KubernetesNode, facts: &mut Vec<(SharedString, SharedString)>) {
+    for condition in &node.conditions {
+        facts.push((
+            condition.kind.clone().into(),
+            format!(
+                "{} · {} · {}",
+                condition.status, condition.reason, condition.message
+            )
+            .into(),
+        ));
+    }
+    for (kind, address) in &node.addresses {
+        facts.push((kind.clone().into(), address.clone().into()));
+    }
+    for (kind, amount) in &node.capacity {
+        facts.push((format!("Capacity {kind}").into(), amount.0.clone().into()));
+    }
+    for taint in &node.taints {
+        facts.push(("Taint".into(), taint.clone().into()));
     }
 }
