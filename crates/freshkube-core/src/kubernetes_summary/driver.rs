@@ -123,7 +123,9 @@ impl Session {
                 };
                 match item {
                     Some(Ok(event)) => {
-                        if matches!(event, watcher::Event::Init) {
+                        if matches!(event, watcher::Event::Init | watcher::Event::InitApply(_)) {
+                            // Bound a stalled read, not the total time needed
+                            // for a large collection that is still progressing.
                             initial_deadline = Some(Instant::now() + READ_DEADLINE);
                         }
                         if matches!(event, watcher::Event::InitDone) {

@@ -32,6 +32,9 @@ fn full(value: Value) -> UnsyncBoxBody<Bytes, Infallible> {
     Full::new(Bytes::from(value.to_string())).boxed_unsync()
 }
 fn api(http_gone: bool, nodes_refused: bool) -> (Client, ApiLog) {
+    api_with_delay(http_gone, nodes_refused, Duration::ZERO)
+}
+fn api_with_delay(http_gone: bool, nodes_refused: bool, page_delay: Duration) -> (Client, ApiLog) {
     let log = ApiLog {
         calls: Default::default(),
         streams: Default::default(),
@@ -40,6 +43,7 @@ fn api(http_gone: bool, nodes_refused: bool) -> (Client, ApiLog) {
     let service = tower::service_fn(move |request: Request<Body>| {
         let uri = request.uri().to_string();
         let path = request.uri().path().to_owned();
+        let delayed = path == "/api/v1/pods" && !uri.contains("watch=true");
         let mut calls = service_log.calls.lock().unwrap();
         calls.push(uri.clone());
         let pod_lists = calls
@@ -91,7 +95,12 @@ fn api(http_gone: bool, nodes_refused: bool) -> (Client, ApiLog) {
                 ),
             )
         };
-        async move { Ok::<_, Infallible>(Response::builder().status(code).body(body).unwrap()) }
+        async move {
+            if delayed && !page_delay.is_zero() {
+                tokio::time::sleep(page_delay).await;
+            }
+            Ok::<_, Infallible>(Response::builder().status(code).body(body).unwrap())
+        }
     });
     (Client::new(service, "ns"), log)
 }
@@ -106,6 +115,56 @@ async fn until(mut predicate: impl FnMut() -> bool) {
 }
 fn session() -> Session {
     Session::new(SessionIdentity::new("synthetic", 1))
+}
+
+#[tokio::test(start_paused = true)]
+async fn progressing_pages_can_take_longer_than_one_read_deadline() {
+    let (client, log) = api_with_delay(false, false, Duration::from_secs(8));
+    let session = session();
+    let worker = session.clone();
+    let task = tokio::spawn(async move { worker.run(client).await });
+    until(|| {
+        log.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u.starts_with("/api/v1/pods?"))
+    })
+    .await;
+    tokio::time::advance(Duration::from_secs(8)).await;
+    until(|| {
+        log.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u.contains("continue=page2"))
+    })
+    .await;
+    assert!(
+        session
+            .derive(chrono::Utc::now())
+            .summary
+            .pods
+            .loaded()
+            .is_none()
+    );
+    // Step through the old total deadline while page two is still pending,
+    // rather than making the response and timeout ready in the same poll.
+    tokio::time::advance(Duration::from_secs(7)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        session.derive(chrono::Utc::now()).summary.observations[&Source::Pods].status(),
+        ReadStatus::Syncing
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    until(|| log.streams.lock().unwrap().len() == 9).await;
+    let publication = session.derive(chrono::Utc::now());
+    assert!(publication.summary.pods.is_current());
+    assert_eq!(publication.pod_count, 2);
+    task.abort();
+    let _ = task.await;
 }
 
 #[tokio::test(start_paused = true)]
