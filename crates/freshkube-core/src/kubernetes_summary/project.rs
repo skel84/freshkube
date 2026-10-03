@@ -269,7 +269,11 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         .flat_map(|(source, objects)| {
             objects.iter().filter_map(|object| {
                 let key = (source.key(), object.namespace.clone(), object.name.clone());
-                wanted.contains(&key).then(|| (key, object.uid.clone()))
+                if wanted.contains(&key) {
+                    Some((key, object.uid.clone()))
+                } else {
+                    None
+                }
             })
         })
         .collect();

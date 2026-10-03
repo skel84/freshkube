@@ -244,22 +244,23 @@ async fn http_and_streamed_410_each_relist_only_the_expired_collection() {
                 .unwrap();
         }
         until(|| session.derive(chrono::Utc::now()).pod_count == 1).await;
-        let calls = log.calls.lock().unwrap();
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|u| u.starts_with("/api/v1/pods?") && !u.contains("watch=true"))
-                .count(),
-            3
-        );
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|u| u.starts_with("/api/v1/nodes?") && !u.contains("watch=true"))
-                .count(),
-            1
-        );
-        drop(calls);
+        {
+            let calls = log.calls.lock().unwrap();
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|u| u.starts_with("/api/v1/pods?") && !u.contains("watch=true"))
+                    .count(),
+                3
+            );
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|u| u.starts_with("/api/v1/nodes?") && !u.contains("watch=true"))
+                    .count(),
+                1
+            );
+        }
         assert_eq!(
             session
                 .derive(chrono::Utc::now())

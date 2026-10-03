@@ -57,7 +57,7 @@ impl Pilot {
 
     pub(super) fn deliver_summary_nodes(&self, cx: &mut Context<Self>) {
         let subscription = (self.page == super::Page::Lifecycle)
-            .then(|| self.summary_session.as_ref())
+            .then_some(self.summary_session.as_ref())
             .flatten()
             .and_then(|session| {
                 session.core.subscribe(SubscriptionKey::summary(
