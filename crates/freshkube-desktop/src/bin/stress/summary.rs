@@ -91,7 +91,8 @@ pub(super) fn start(world: Arc<World>) {
             let due = (started.elapsed().as_secs_f64() * f64::from(rate)) as u64;
             let mut pods = world.pods.lock().unwrap();
             let mut history = world.summary.inner.lock().unwrap();
-            for _ in sent..due.min(sent + 2000) {
+            let batch = due.saturating_sub(sent).min(2000);
+            for _ in 0..batch {
                 sent += 1;
                 if pods.rows.is_empty() {
                     break;
