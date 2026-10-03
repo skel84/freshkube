@@ -354,7 +354,7 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
         session.publish(publication.clone());
         cx.update_window(handle.into(), |_, window, cx| {
             screen.update(cx, |screen, cx| {
-                screen.set_summary_nodes(Some(subscription.clone()), cx)
+                screen.observe_nodes(Some(subscription.clone()), cx)
             });
             let data = screen.read(cx).loader.data().unwrap();
             assert_eq!(screen.read(cx).loader.is_loading(), delayed.is_some());
@@ -419,7 +419,7 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
     session.publish(session.derive(chrono::Utc::now()));
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            screen.set_summary_nodes(Some(subscription), cx)
+            screen.observe_nodes(Some(subscription), cx)
         });
         let data = screen.read(cx).loader.data().unwrap();
         assert_eq!(screen.read(cx).loader.error(), Some("Talos unavailable"));
@@ -446,7 +446,7 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
         );
         assert_eq!(data.kubelets.value().unwrap()[0].version, "v1.33.1");
         window.render_frame(cx);
-        screen.update(cx, |screen, cx| screen.set_summary_nodes(None, cx));
+        screen.update(cx, |screen, cx| screen.observe_nodes(None, cx));
         assert!(screen.read(cx).summary_nodes.is_none());
     })
     .unwrap();

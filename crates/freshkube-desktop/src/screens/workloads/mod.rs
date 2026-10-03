@@ -270,31 +270,6 @@ impl WorkloadData {
 }
 
 impl ScreenPanel for WorkloadsScreen {
-    fn set_workloads(
-        &mut self,
-        context: &str,
-        data: Result<Arc<WorkloadData>, String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.summary_managed = true;
-        if self.source.is_none() {
-            self.source = Some(ScreenSource {
-                target: crate::backend::Target {
-                    epoch: 0,
-                    context: context.into(),
-                    node: String::new(),
-                    address: String::new(),
-                },
-                nodes: Arc::default(),
-                live: None,
-            });
-        }
-        let source = self.source.as_ref().unwrap();
-        self.loader.resolve(source.target.clone(), data);
-        self.rows(cx);
-        cx.notify();
-    }
-
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
@@ -389,6 +364,32 @@ impl ScreenPanel for WorkloadsScreen {
 }
 
 impl WorkloadsScreen {
+    /// Apply Health data prepared by the shell's shared observation session.
+    pub(crate) fn apply_summary(
+        &mut self,
+        context: &str,
+        data: Result<Arc<WorkloadData>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.summary_managed = true;
+        if self.source.is_none() {
+            self.source = Some(ScreenSource {
+                target: crate::backend::Target {
+                    epoch: 0,
+                    context: context.into(),
+                    node: String::new(),
+                    address: String::new(),
+                },
+                nodes: Arc::default(),
+                live: None,
+            });
+        }
+        let source = self.source.as_ref().unwrap();
+        self.loader.resolve(source.target.clone(), data);
+        self.rows(cx);
+        cx.notify();
+    }
+
     fn filter_text(&self, cx: &App) -> String {
         self.query.read(cx).value().trim().to_lowercase()
     }

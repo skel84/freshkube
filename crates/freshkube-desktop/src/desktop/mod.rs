@@ -321,6 +321,9 @@ pub(crate) struct Pilot {
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
     screens: Vec<(ScreenKind, ScreenHandle)>,
+    /// Typed observation recipients; `screens` wraps these same entities.
+    health: Entity<WorkloadsScreen>,
+    lifecycle: Entity<LifecycleScreen>,
     resources: Entity<ResourcesScreen>,
     /// The Kubernetes kind the Resources page shows.
     resource_kind: ResourceKind,
@@ -503,6 +506,10 @@ impl Pilot {
             KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
             KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
         ]);
+        let health =
+            Self::screen_entity::<WorkloadsScreen>(runtime.clone(), &mut subscriptions, window, cx);
+        let lifecycle =
+            Self::screen_entity::<LifecycleScreen>(runtime.clone(), &mut subscriptions, window, cx);
         let screens = ScreenKind::ALL
             .into_iter()
             .map(|page| {
@@ -523,15 +530,11 @@ impl Pilot {
                     ScreenKind::Etcd => {
                         Self::screen::<EtcdScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Health => {
-                        Self::screen::<WorkloadsScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Health => ScreenHandle::new(health.clone()),
                     ScreenKind::Security => {
                         Self::screen::<SecurityScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Lifecycle => {
-                        Self::screen::<LifecycleScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Lifecycle => ScreenHandle::new(lifecycle.clone()),
                     ScreenKind::Operations => {
                         Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
                     }
@@ -658,6 +661,8 @@ impl Pilot {
             node_workspace,
             node_pods,
             screens,
+            health,
+            lifecycle,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
@@ -913,9 +918,18 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ScreenHandle {
+        ScreenHandle::new(Self::screen_entity::<T>(runtime, subscriptions, window, cx))
+    }
+
+    fn screen_entity<T: ScreenPanel>(
+        runtime: Handle,
+        subscriptions: &mut Vec<Subscription>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<T> {
         let screen = cx.new(|cx| T::new(runtime, window, cx));
         subscriptions.push(cx.subscribe_in(&screen, window, Self::screen_event));
-        ScreenHandle::new(screen)
+        screen
     }
 
     fn screen_event<T>(

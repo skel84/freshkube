@@ -104,11 +104,6 @@ pub(crate) struct LifecycleScreen {
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
 impl ScreenPanel for LifecycleScreen {
-    fn set_summary_nodes(&mut self, nodes: Option<Subscription>, cx: &mut Context<Self>) {
-        self.summary_nodes = nodes;
-        self.sync_shared_nodes(cx);
-    }
-
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
@@ -220,6 +215,12 @@ impl ScreenPanel for LifecycleScreen {
 }
 
 impl LifecycleScreen {
+    /// Retain the shared Nodes subscription while Lifecycle is visible.
+    pub(crate) fn observe_nodes(&mut self, nodes: Option<Subscription>, cx: &mut Context<Self>) {
+        self.summary_nodes = nodes;
+        self.sync_shared_nodes(cx);
+    }
+
     /// A Talos read may have been prepared before the latest watch update.
     /// Reconcile on delivery as well as on publication, without resolving or
     /// cancelling the Talos request or erasing its independent failure state.

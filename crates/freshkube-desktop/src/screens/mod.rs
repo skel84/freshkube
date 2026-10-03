@@ -153,24 +153,10 @@ pub(crate) enum ScreenEvent {
     },
 }
 
-/// The contract between the shell and a screen.
+/// Common lifecycle behavior between the shell and a screen. Feature-specific
+/// data is delivered through the screen's typed entity handle.
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn set_embedded(&mut self, _embedded: bool, _cx: &mut Context<Self>) {}
-
-    fn set_summary_nodes(
-        &mut self,
-        _nodes: Option<freshkube_core::kubernetes_summary::Subscription>,
-        _cx: &mut Context<Self>,
-    ) {
-    }
-
-    fn set_workloads(
-        &mut self,
-        _context: &str,
-        _data: Result<Arc<WorkloadData>, String>,
-        _cx: &mut Context<Self>,
-    ) {
-    }
 
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
@@ -204,9 +190,6 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
-type SummaryNodesFn =
-    Rc<dyn Fn(Option<freshkube_core::kubernetes_summary::Subscription>, &mut App)>;
-type WorkloadsFn = Rc<dyn Fn(&str, Result<Arc<WorkloadData>, String>, &mut App)>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -216,8 +199,6 @@ pub(crate) struct ScreenHandle {
     activate: WindowFn,
     refresh: WindowFn,
     focus: WindowFn,
-    workloads: WorkloadsFn,
-    summary_nodes: SummaryNodesFn,
     embedded: EmbeddedFn,
 }
 
@@ -229,18 +210,10 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
-        let summary_nodes = entity.clone();
-        let workloads = entity.clone();
         let embedded = entity.clone();
         Self {
-            summary_nodes: Rc::new(move |nodes, cx| {
-                summary_nodes.update(cx, |screen, cx| screen.set_summary_nodes(nodes, cx))
-            }),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
-            }),
-            workloads: Rc::new(move |context, data, cx| {
-                workloads.update(cx, |screen, cx| screen.set_workloads(context, data, cx))
             }),
             view: entity.into(),
             set_source: Rc::new(
@@ -258,23 +231,6 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
-    }
-
-    pub(crate) fn set_summary_nodes(
-        &self,
-        nodes: Option<freshkube_core::kubernetes_summary::Subscription>,
-        cx: &mut App,
-    ) {
-        (self.summary_nodes)(nodes, cx)
-    }
-
-    pub(crate) fn set_workloads(
-        &self,
-        context: &str,
-        data: Result<Arc<WorkloadData>, String>,
-        cx: &mut App,
-    ) {
-        (self.workloads)(context, data, cx)
     }
 
     pub(crate) fn set_embedded(&self, embedded: bool, cx: &mut App) {

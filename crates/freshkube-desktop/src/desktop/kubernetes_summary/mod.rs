@@ -42,17 +42,13 @@ impl Pilot {
         data: Result<Arc<WorkloadData>, String>,
         cx: &mut Context<Self>,
     ) {
-        if let Some((_, screen)) = self
-            .screens
-            .iter()
-            .find(|(page, _)| *page == super::pages::ScreenKind::Health)
-        {
-            screen.set_workloads(
+        self.health.update(cx, |screen, cx| {
+            screen.apply_summary(
                 self.applied.context.as_deref().unwrap_or_default(),
                 data,
                 cx,
             );
-        }
+        });
     }
 
     pub(super) fn deliver_summary_nodes(&self, cx: &mut Context<Self>) {
@@ -65,13 +61,8 @@ impl Pilot {
                     Source::Nodes,
                 ))
             });
-        if let Some((_, screen)) = self
-            .screens
-            .iter()
-            .find(|(kind, _)| *kind == super::pages::ScreenKind::Lifecycle)
-        {
-            screen.set_summary_nodes(subscription, cx);
-        }
+        self.lifecycle
+            .update(cx, |screen, cx| screen.observe_nodes(subscription, cx));
     }
 
     pub(super) fn stop_summary(&mut self) {
