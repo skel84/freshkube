@@ -132,12 +132,7 @@ impl Render for Fps {
 mod tests {
     use super::{Fps, Frames, SAMPLE_PERIOD, tone};
     use crate::ui::Tone;
-    use gpui_kit::{
-        AppContext, TestAppContext,
-        component::Root,
-        px, size,
-        test::{TestAppContextExt, TestWindowExt},
-    };
+    use gpui_kit::{AppContext, TestAppContext, component::Root, px, size, test::TestWindowExt};
     use std::{
         cell::Cell,
         rc::Rc,
