@@ -734,7 +734,7 @@ impl LogView<TalosLogs> {
                             })
                             .child(
                                 div()
-                                    .when(!showing, |this| this.line_through().text_color(p.faint))
+                                    .when(!showing, |this| this.line_through().text_color(p.muted))
                                     .child(service.as_str().to_owned()),
                             )
                             .when(count > 0, |this| {

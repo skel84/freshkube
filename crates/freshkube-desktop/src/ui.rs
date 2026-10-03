@@ -20,8 +20,8 @@ use crate::palette::palette;
 use crate::presentation::{Health, MemoryLevel};
 
 /// Monospace face for resource names, hostnames, addresses, numbers and
-/// logs. The interface face, Lato, is the theme's `font.family`.
-pub(crate) const MONO_FONT: &str = "Source Code Pro";
+/// logs. The interface face, Figtree, is the theme's `font.family`.
+pub(crate) const MONO_FONT: &str = "IBM Plex Mono";
 /// Weight of page titles and figures.
 pub(crate) const TITLE_WEIGHT: FontWeight = FontWeight::BLACK;
 /// Weight of section headings and uppercase captions.
@@ -30,15 +30,50 @@ pub(crate) const HEADING_WEIGHT: FontWeight = FontWeight::BOLD;
 /// A page's title.
 pub(crate) fn page_title(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(dp(22.))
+        .text_size(dp(20.))
         .line_height(dp(28.))
         .font_weight(TITLE_WEIGHT)
         .child(text.into())
 }
 
+/// A quiet cross-reference. Dots are quads so a table adds no separate
+/// full-window path pass for each underline.
+pub(crate) fn reference(text: impl Into<SharedString>, p: &crate::palette::Palette) -> Div {
+    let color = p.muted;
+    let accent = p.accent;
+    div()
+        .relative()
+        .min_w_0()
+        .font_family(MONO_FONT)
+        .text_size(dp(12.5))
+        .text_color(p.ink_2)
+        .hover(move |style| style.text_color(accent))
+        .child(div().min_w_0().truncate().child(text.into()))
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let mut x = bounds.left();
+                    while x < bounds.right() {
+                        window.paint_quad(fill(
+                            Bounds::new(point(x, bounds.top()), size(px(1.), px(1.))),
+                            color,
+                        ));
+                        x += dp_px(3., window);
+                    }
+                },
+            )
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .w_full()
+            .h(px(1.)),
+        )
+}
+
 /// The theme's base text size at the default text size, in pixels. `dp`
 /// lengths are pixels at this size.
-pub(crate) const BASE_TEXT: f32 = 14.;
+pub(crate) const BASE_TEXT: f32 = 13.;
 
 /// A length of `n` pixels at the default text size, scaling with the text
 /// size the user chooses (`crate::text_size`). Size text, rows, padding and

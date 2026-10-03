@@ -16,6 +16,12 @@ impl Pilot {
             self.column_reveal = None;
             return None;
         }
+        if self.column_collapsed(window) {
+            return Some(self.render_collapsed_column(cx));
+        }
+        if self.area == Area::Observability {
+            return Some(self.render_observability_column(false, cx));
+        }
         let p = palette(cx);
         let current = (self.page == Page::Resources).then(|| self.resource_kind.key());
         let (rows, reveal, settled) = match self.area {
@@ -63,9 +69,25 @@ impl Pilot {
                     .px(dp(10.))
                     .pt(dp(4.))
                     .pb(dp(8.))
-                    .child(ui::caption(self.area.label(), cx)),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(ui::caption(self.area.label(), cx))
+                    .child(
+                        Button::new("nav-collapse")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::PanelLeftClose)
+                            .tooltip("Collapse sidebar · ⌘B")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_column(window, cx)),
+                            ),
+                    ),
             )
-            .children(rows);
+            .children(rows)
+            .when(self.area == Area::Group("workloads"), |this| {
+                this.child(self.render_namespaces(cx))
+            });
         Some(
             div()
                 .relative()
@@ -105,8 +127,10 @@ impl Pilot {
         }
         let first_kind = rows.len();
         rows.extend(group.items.iter().map(|(label, key)| {
+            let mut row = NavRow::new(format!("nav-k8s-{key}"), *label, dp(10.));
+            row.icon = super::fog_column::kind_icon(key);
             self.column_item(
-                NavRow::new(format!("nav-k8s-{key}"), *label, dp(10.)),
+                row,
                 current == Some(*key),
                 cx.listener(move |view, _, window, cx| view.open_builtin(key, window, cx)),
                 cx,
@@ -138,6 +162,7 @@ impl Pilot {
         };
         let entry = |entry: &Entry| {
             let mut row = NavRow::new(entry.element_id.clone(), entry.title.clone(), dp(10.));
+            row.icon = IconName::ChartLine;
             if let Some(tooltip) = &entry.tooltip {
                 row = row.tooltip(tooltip.clone());
             }
@@ -276,7 +301,7 @@ impl Pilot {
                 .justify_center()
                 .rounded_full()
                 .bg(p.crit)
-                .text_color(gpui_kit::white())
+                .text_color(p.on_fill)
                 .text_size(dp(11.))
                 .font_weight(ui::HEADING_WEIGHT)
                 .child(services.badge.clone())
@@ -300,6 +325,15 @@ impl Pilot {
     ) -> AnyElement {
         let mut row =
             NavRow::new(format!("nav-{}", page.slug()), page.title(), dp(10.)).suffix(suffix);
+        row.icon = match page {
+            Page::Health => IconName::HeartPulse,
+            Page::Etcd => IconName::Database,
+            Page::SystemServices => IconName::ServerCog,
+            Page::Security => IconName::ShieldCheck,
+            Page::Lifecycle => IconName::RefreshCw,
+            Page::Operations => IconName::Wrench,
+            _ => IconName::Box,
+        };
         if let Some(key) = key {
             row = row.key(key);
         }

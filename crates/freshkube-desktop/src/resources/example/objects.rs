@@ -215,7 +215,7 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
                         last.exit_code,
                         last.reason,
                         if last.reason == "Error" {
-                            "        message: 'lost connection to postgres: dial tcp 10.96.0.40:5432: i/o timeout'\n"
+                            "        message: 'dial tcp ledger-db:5432: connect: connection refused'\n"
                         } else {
                             ""
                         },
@@ -259,7 +259,7 @@ pub(super) fn last_termination(
     now: i64,
 ) -> Option<Termination> {
     let (exit_code, reason, finished) = match status {
-        "CrashLoopBackOff" => (137, "OOMKilled", now - 180),
+        "CrashLoopBackOff" => (1, "Error", now - 180),
         "Running" if restarts > 0 => (1, "Error", now - (ix as i64 % 9 + 1) * 86_400),
         _ => return None,
     };

@@ -19,6 +19,7 @@ pub(crate) enum Page {
     Lifecycle,
     Operations,
     Monitoring,
+    Observability,
 }
 
 /// The retained inspection views, including those embedded in the node pane.
@@ -71,6 +72,7 @@ pub(crate) enum Area {
     Events,
     /// Dashboards from Prometheus, listed in its column.
     Monitoring,
+    Observability,
     /// A built-in group of Kubernetes kinds, by its navigation slug.
     Group(&'static str),
     Custom,
@@ -86,6 +88,7 @@ impl Area {
             Self::Namespaces,
             Self::Events,
             Self::Monitoring,
+            Self::Observability,
         ],
         &[
             Self::Group("workloads"),
@@ -116,6 +119,7 @@ impl Area {
             | Page::Lifecycle
             | Page::Operations => Self::ControlPlane,
             Page::Monitoring => Self::Monitoring,
+            Page::Observability => Self::Observability,
         }
     }
 
@@ -126,6 +130,7 @@ impl Area {
             Self::Namespaces => "Namespaces",
             Self::Events => "Events",
             Self::Monitoring => "Monitoring",
+            Self::Observability => "Observability",
             Self::Group(slug) => navigation::NAVIGATION
                 .iter()
                 .find(|group| group.slug == slug)
@@ -143,6 +148,7 @@ impl Area {
             Self::Namespaces => "nav-k8s-namespaces".into(),
             Self::Events => "nav-k8s-events".into(),
             Self::Monitoring => "nav-monitoring".into(),
+            Self::Observability => "nav-observability".into(),
             Self::Group(slug) => format!("nav-k8s-group-{slug}").into(),
             Self::Custom => "nav-k8s-group-custom".into(),
             Self::ControlPlane => "nav-control-plane".into(),
@@ -164,13 +170,17 @@ impl Area {
     pub(crate) fn has_column(self) -> bool {
         matches!(
             self,
-            Self::Monitoring | Self::Group(_) | Self::Custom | Self::ControlPlane
+            Self::Monitoring
+                | Self::Observability
+                | Self::Group(_)
+                | Self::Custom
+                | Self::ControlPlane
         )
     }
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 10] = [
+    pub(super) const ALL: [Page; 11] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -181,6 +191,7 @@ impl Page {
         Self::Lifecycle,
         Self::Operations,
         Self::Monitoring,
+        Self::Observability,
     ];
 
     pub(super) fn screen(self) -> Option<ScreenKind> {
@@ -205,6 +216,7 @@ impl Page {
             Self::Lifecycle => "Lifecycle",
             Self::Operations => "Operations",
             Self::Monitoring => "Monitoring",
+            Self::Observability => "Observability",
         }
     }
     pub(crate) fn slug(self) -> &'static str {
@@ -219,6 +231,7 @@ impl Page {
             Self::Lifecycle => "lifecycle",
             Self::Operations => "operations",
             Self::Monitoring => "monitoring",
+            Self::Observability => "observability",
         }
     }
 }
@@ -301,7 +314,7 @@ impl Pilot {
             Page::Resources if self.resource_kind.key() == "namespaces" => 2,
             Page::Resources if self.resource_kind.key() == "events" => 3,
             // Between Events and Health, which has no row of its own.
-            Page::Monitoring => 3,
+            Page::Monitoring | Page::Observability => 3,
             Page::Health => 4,
             Page::Resources => 5,
             Page::Etcd => 6,
@@ -351,6 +364,9 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
+        } else if self.page == Page::Observability {
+            self.observability
+                .update(cx, |page, cx| page.focus(window, cx));
         } else if self.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
@@ -491,6 +507,7 @@ impl Pilot {
             Area::Namespaces => self.open_builtin("namespaces", window, cx),
             Area::Events => self.open_builtin("events", window, cx),
             Area::Monitoring => self.navigate_from_keyboard(Page::Monitoring, window, cx),
+            Area::Observability => self.navigate_from_keyboard(Page::Observability, window, cx),
             Area::Group(slug) => {
                 let key = self.group_kinds.get(slug).cloned().or_else(|| {
                     navigation::NAVIGATION

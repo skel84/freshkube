@@ -20,6 +20,7 @@ impl Pilot {
         let page = std::env::var("FRESHKUBE_PAGE").ok();
         let kind = std::env::var("FRESHKUBE_KIND").ok();
         let theme = std::env::var("FRESHKUBE_THEME").ok();
+        let sidebar = std::env::var("FRESHKUBE_SIDEBAR").ok();
         // A dashboard of the Monitoring folder, by its path.
         let dashboard = std::env::var_os("FRESHKUBE_DASHBOARD").map(std::path::PathBuf::from);
         cx.defer_in(window, move |this, window, cx| {
@@ -30,6 +31,16 @@ impl Pilot {
                 window,
                 cx,
             );
+            let collapsed = match sidebar.as_deref() {
+                Some("collapsed") => Some(true),
+                Some("expanded") => Some(false),
+                _ => None,
+            };
+            if let Some(collapsed) = collapsed {
+                this.column_state.preview(collapsed);
+                this.notify_cached(cx);
+                cx.notify();
+            }
             if let Some(path) = dashboard {
                 this.monitoring.update(cx, |monitoring, cx| {
                     monitoring.open(crate::monitoring::page::EntryId::File(path), cx)
@@ -54,6 +65,24 @@ impl Pilot {
             page.and_then(|slug| Page::ALL.into_iter().find(|page| page.slug() == slug))
         {
             self.navigate(page, window, cx);
+        }
+        if let Some(destination) = page.and_then(|slug| {
+            use crate::observability::Destination;
+            [
+                Destination::Applications,
+                Destination::ServiceMap,
+                Destination::Application,
+                Destination::Incidents,
+                Destination::Deployments,
+                Destination::Profiling,
+                Destination::Traces,
+            ]
+            .into_iter()
+            .find(|destination| format!("observability-{}", destination.slug()) == slug)
+        }) {
+            self.observability
+                .update(cx, |page, cx| page.open(destination, cx));
+            self.navigate(Page::Observability, window, cx);
         }
         match page {
             Some("monitoring") if self.fixture => self

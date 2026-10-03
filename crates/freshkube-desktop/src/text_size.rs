@@ -14,10 +14,10 @@ use gpui_kit::{App, Global, KeyBinding};
 use crate::ui::BASE_TEXT;
 
 /// The sizes offered, in pixels of the theme's base text.
-pub(crate) const STEPS: [f32; 5] = [12., 14., 16., 18., 20.];
+pub(crate) const STEPS: [f32; 6] = [12., 13., 14., 16., 18., 20.];
 /// Monospace text keeps its proportion to the base text, as the theme sets
 /// them at the default size.
-const MONO_RATIO: f32 = 12. / BASE_TEXT;
+const MONO_RATIO: f32 = 12.5 / BASE_TEXT;
 
 gpui_kit::actions!(text_size, [LargerText, SmallerText, DefaultText]);
 

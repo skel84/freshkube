@@ -15,8 +15,6 @@ use super::*;
 use crate::palette::Palette;
 
 /// The use bar's size and the figure's width beside it.
-const BAR_WIDTH: f32 = 40.;
-const BAR_HEIGHT: f32 = 4.;
 const FIGURE_WIDTH: f32 = 40.;
 /// How much faster than the reason a name's generated suffix shrinks.
 const SUFFIX_SHRINK: f32 = 1000.;
@@ -66,6 +64,7 @@ pub(super) fn glyph(
     column: &DisplayColumn,
     tone: Option<(ui::Tone, SharedString)>,
     marked: bool,
+    completed: bool,
     cx: &App,
 ) -> AnyElement {
     let p = palette(cx);
@@ -83,6 +82,13 @@ pub(super) fn glyph(
                     .text_color(p.accent),
             )
             .into_any_element();
+    }
+    if completed {
+        return tooltip(
+            cell.child(Icon::new(IconName::Check).size(dp(14.)).text_color(p.muted)),
+            || "Completed".into(),
+        )
+        .into_any_element();
     }
     match tone {
         Some((tone, label)) => tooltip(cell.children(ui::status_glyph(tone, cx)), move || {
@@ -120,6 +126,7 @@ pub(super) fn name(
                     div()
                         .flex_none()
                         .text_color(p.muted)
+                        .group_hover("resource-row", |style| style.text_color(p.ink_2))
                         .child(format!("{}/", row.identity.namespace)),
                 )
             })
@@ -154,36 +161,77 @@ pub(super) fn name(
             None => address.clone(),
         },
     )
+    .test_support()
     .into_any_element()
 }
 
 /// `deploy/` muted and the owner's name.
-pub(super) fn owner(column: &DisplayColumn, owner: Option<&RowOwner>, p: &Palette) -> AnyElement {
+pub(super) fn owner(
+    column: &DisplayColumn,
+    owner: Option<&RowOwner>,
+    namespace: &str,
+    selected: bool,
+    cx: &Context<ResourcesScreen>,
+) -> AnyElement {
+    let mut p = palette(cx);
+    if selected {
+        p.muted = p.ink_2;
+    }
     let Some(owner) = owner else {
         return cell(column)
-            .text_color(p.faint)
+            .text_color(p.muted)
+            .group_hover("resource-row", |style| style.text_color(p.ink_2))
             .child("—")
             .into_any_element();
     };
     let label = format!("{} {}", owner.kind, owner.name);
+    let key = match owner.kind.as_str() {
+        "Deployment" => "deployments.apps",
+        "ReplicaSet" => "replicasets.apps",
+        "StatefulSet" => "statefulsets.apps",
+        "DaemonSet" => "daemonsets.apps",
+        "ReplicationController" => "replicationcontrollers",
+        "CronJob" => "cronjobs.batch",
+        "Job" => "jobs.batch",
+        _ => "",
+    };
+    let destination = freshkube_core::resources::builtin(key).map(|kind| {
+        super::super::ResourceLink::Object(
+            kind,
+            super::super::model::ObjectRef {
+                namespace: namespace.into(),
+                name: owner.name.clone(),
+                uid: String::new(),
+            },
+            super::super::Tab::Overview,
+        )
+    });
     tooltip(
         cell(column)
             .id("owner")
             .flex()
+            .items_center()
             .child(
                 div()
                     .flex_none()
-                    .italic()
                     .text_color(p.muted)
+                    .group_hover("resource-row", |style| style.text_color(p.ink_2))
                     .child(format!("{}/", owner.short)),
             )
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(owner.name.clone()),
-            ),
+            .when_else(
+                destination.is_some(),
+                |this| this.child(ui::reference(owner.name.clone(), &p)),
+                |this| this.child(div().text_color(p.ink_2).child(owner.name.clone())),
+            )
+            .when_some(destination, |this, destination| {
+                this.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(destination.clone());
+                    }),
+                )
+            }),
         move || label.clone(),
     )
     .into_any_element()
@@ -297,10 +345,7 @@ impl Resource {
     }
 }
 
-/// A pod's use as a figure and a bar: the fill is use against the limit,
-/// the tick the request. Without a limit the bar spans twice the request.
-/// `stale` greys it: the last use known, from a node or a metrics-server
-/// that no longer answers.
+/// A neutral value beside a Fog bullet meter. Stripes identify last-known use.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn usage(
     column: &DisplayColumn,
@@ -316,28 +361,29 @@ pub(super) fn usage(
     let limit = resource.of(&pod.limits);
     let Some(value) = used else {
         return cell(column)
-            .text_color(p.faint)
+            .text_color(p.muted)
+            .group_hover("resource-row", |style| style.text_color(p.ink_2))
             .child("—")
             .into_any_element();
     };
-    let span = limit
-        .or(request.map(|request| request * 2.))
-        .unwrap_or(value)
-        .max(f64::EPSILON);
-    let fill = (value / span).clamp(0., 1.) as f32;
-    let tick = request.map(|request| (request / span).clamp(0., 1.) as f32);
-    let (fill_color, tick_color) = if stale {
-        (p.faint, p.faint)
-    } else {
-        (p.accent, p.muted)
-    };
     let text = |amount: Option<f64>| amount.map_or("none".to_owned(), |v| resource.format(v));
+    let percent = limit
+        .filter(|v| *v > 0.)
+        .map(|v| format!(" · {:.0}% of limit", value / v * 100.))
+        .unwrap_or_default();
+    let requested = match (request, limit.filter(|v| *v > 0.)) {
+        (Some(request), Some(limit)) => format!(
+            "{} ({:.0}%)",
+            resource.format(request),
+            request / limit * 100.
+        ),
+        _ => text(request),
+    };
     let tip = format!(
-        "{} {} used{} · request {} · limit {}",
+        "{} {} used{}{percent} · requested {requested} · limit {}",
         resource.name(),
         resource.format(value),
         if stale { " (last known)" } else { "" },
-        text(request),
         text(limit),
     );
     tooltip(
@@ -351,39 +397,23 @@ pub(super) fn usage(
                     .flex_none()
                     .w(dp(FIGURE_WIDTH))
                     .text_right()
-                    .when(stale, |this| this.text_color(p.muted))
+                    .when(stale, |this| {
+                        this.text_color(p.muted)
+                            .group_hover("resource-row", |style| style.text_color(p.ink_2))
+                    })
                     .child(resource.format(value)),
             )
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .w(dp(BAR_WIDTH))
-                    .h(dp(BAR_HEIGHT))
-                    .rounded(px(2.))
-                    .bg(p.track)
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top_0()
-                            .h_full()
-                            .w(dp(BAR_WIDTH * fill))
-                            .rounded(px(2.))
-                            .bg(fill_color),
-                    )
-                    .when_some(tick, |this, tick| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .left(dp(BAR_WIDTH * tick - 1.))
-                                .top(dp(-3.))
-                                .w(px(2.))
-                                .h(dp(10.))
-                                .bg(tick_color),
-                        )
-                    }),
-            ),
+            .child(crate::meters::bullet(
+                match resource {
+                    Resource::Cpu => crate::meters::Resource::Cpu,
+                    Resource::Memory => crate::meters::Resource::Memory,
+                },
+                value,
+                request,
+                limit,
+                stale,
+                p,
+            )),
         move || tip.clone(),
     )
     .into_any_element()
@@ -396,10 +426,11 @@ pub(super) fn node(
     node: &str,
     prefix: usize,
     ready: bool,
-    cx: &App,
+    cx: &Context<ResourcesScreen>,
 ) -> AnyElement {
     let p = palette(cx);
     let shown = node.get(prefix..).filter(|_| prefix > 0).unwrap_or(node);
+    let destination = node.to_owned();
     let full = if ready {
         node.to_owned()
     } else {
@@ -415,7 +446,18 @@ pub(super) fn node(
                 this.text_color(p.warn_ink)
                     .children(ui::status_glyph(ui::Tone::Warn, cx))
             })
-            .child(div().min_w_0().truncate().child(shown.to_owned())),
+            .child(ui::reference(shown.to_owned(), &p))
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.emit(super::super::ResourceLink::Node(
+                        destination.clone(),
+                        crate::desktop::nodes::NodeTab::Overview,
+                    ));
+                }),
+            ),
         move || full.clone(),
     )
     .into_any_element()

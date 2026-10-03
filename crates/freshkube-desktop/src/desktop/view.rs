@@ -3,7 +3,13 @@ use super::*;
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
+        self.layout_chrome(window);
         let page = match self.page {
+            Page::Observability => self
+                .observability
+                .clone()
+                .cached(cached_page_style())
+                .into_any_element(),
             Page::Monitoring => self
                 .monitoring
                 .clone()
@@ -82,6 +88,9 @@ impl Render for Pilot {
                 view.adjacent_context(true, window, cx)
             }))
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
+            .on_action(
+                cx.listener(|view, _: &ToggleColumn, window, cx| view.toggle_column(window, cx)),
+            )
             .child(self.render_header(window, cx))
             .child(
                 div()

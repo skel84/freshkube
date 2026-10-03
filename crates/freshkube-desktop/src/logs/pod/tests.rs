@@ -223,7 +223,7 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         assert_eq!(
             markers(&view, cx),
             vec![format!(
-                "{app} restarted (exit 137 (OOMKilled)), showing the new instance"
+                "{app} restarted (exit 1 (Error)), showing the new instance"
             )]
         );
         assert_eq!(
@@ -233,7 +233,7 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         let hint = window.find("pod-logs-hint").label().unwrap().to_owned();
         assert!(
             hint.starts_with(&format!(
-                "{app} restarted 14 times, last exited 137 (OOMKilled) at "
+                "{app} restarted 14 times, last exited 1 (Error) at "
             )),
             "{hint}"
         );
@@ -256,7 +256,7 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         assert_eq!(state(&view, cx), StreamState::Ended(None));
         let status = window.find("pod-logs-status").label().unwrap().to_owned();
         assert!(
-            status.starts_with("Previous instance: Previous instance · exited 137 (OOMKilled) at ")
+            status.starts_with("Previous instance: Previous instance · exited 1 (Error) at ")
                 && status.ends_with(" · complete"),
             "{status}"
         );

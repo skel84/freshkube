@@ -90,7 +90,10 @@ gpui_kit::assets::icon_assets!(
         Rows2,
         Rows4,
         SquareCheck,
-        Logs
+        Logs,
+        Flame,
+        PanelLeftClose,
+        PanelLeftOpen
     ]
 );
 
@@ -118,11 +121,14 @@ impl AssetSource for AppAssets {
 /// Call once after `gpui_kit::init`.
 pub(crate) fn install(cx: &mut App) {
     let fonts = vec![
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lato-Regular.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lato-Bold.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lato-Black.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../assets/fonts/SourceCodePro-Regular.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../assets/fonts/SourceCodePro-Semibold.ttf").as_slice()),
+        // GPUI loads one face per embedded file. Static faces preserve the
+        // requested weights; a variable font is loaded at its default weight.
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Regular.otf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-SemiBold.otf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Bold.otf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Black.otf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-SemiBold.ttf").as_slice()),
     ];
     // Missing fonts fall back to the system faces; never block startup.
     let _ = cx.text_system().add_fonts(fonts);

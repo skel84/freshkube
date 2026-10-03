@@ -1,134 +1,107 @@
-# The Console look
+# Freshkube Fog
 
-Freshkube's visual direction, chosen in a design session with the user on 2–3 October 2026. It is inspired by the dark mode of the UniFi network console, not copied from it. This file records what was decided, what was explored and left open, and the order in which it is built. The [roadmap](ROADMAP.md) tracks the commits.
+Fog is the design direction chosen on 3 October 2026: calm grey content, a blue-slate frame, dense tables and pastel semantic colour. Figtree carries the interface; IBM Plex Mono carries resource names, numbers and code. Colour identifies status, selection or resource type. The visual language must remain distinct from Aptakube, Lens and Rubick.
 
-The mockups are on the design canvas "Freshkube holistic layout" (https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1). They use fictional example data and were never rendered or checked, so they show intent, not pixels. Where this file and a mockup differ, this file wins.
+The reference is the user's **Freshkube holistic layout-selection.pdf** (1280×880 fictional window comps). G7/G7c, G8 and H1–H7 are canonical. G2b/G3b only introduced bullet meters and quieter links; G–G6 are earlier palette studies. H and G7–G8 win over G2b/G3b, which win over G–G6. The written rules win when a mock disagrees; the comps were not pixel-QA'd. This supersedes the earlier Console direction.
 
-| Board | File | Status |
-| --- | --- | --- |
-| Original holistic proposal (Today, 1–6, Sidebar) | `Today`, `Main`, `Nodes`, `Node`, `Pod`, `Search`, `KubeOnly`, `Sidebar` | Built ([HOLISTIC_LAYOUT.md](HOLISTIC_LAYOUT.md)) |
-| A–E′ Basalt, Glacier, Phosphor, Nightshade, Nord Grey dark and light | `Theme*` | Explored, not chosen; kept for reference |
-| F Console dashboard | `ThemeConsole` | Built on the canvas, not committed to |
-| F2, F2′ Pods | `ConsolePods`, `ConsolePodsCompact` | Superseded by F2″ |
-| F2″ Pods, the reference table | `ConsolePodsGlyph` | Decided |
-| F3 Pod detail | `ConsolePod` | Decided |
-| F4 Monitoring | `ConsoleMetrics` | Decided; building ([MONITORING.md](MONITORING.md)) |
-| O1–O7 Observability | `Obs*` | Explored, open |
+## Tokens and type
 
-Rubick was a reference the user liked but it must not be copied: no neutral charcoal look and no multicolour hashed resource names.
-
-## Decided
-
-### Tokens
-
-Dark mode. A light mode for the Console look is not designed yet (see [Open](#open)).
-
-| Role | Value |
+| Role | Dark value |
 | --- | --- |
-| Background | `#0E0F11` |
-| Rail, header and status bar | `#0A0B0C` |
-| Card | `#17181B` |
-| Raised (popovers, segmented controls, selected navigation) | `#1E2024` |
-| Hover | `#25272C` |
-| Tooltip | `#2A2D33` |
-| Hairline | `#24262A` |
-| Strong border | `#33363C` |
-| Text | `#F2F3F5` |
-| Secondary text | `#C9CCD1` |
-| Muted text | `#8E939B` |
-| Faint text | `#5E636B` |
-| Accent (links, selection, focus) | `#4797FF` |
-| Primary button | `#0A64E6` fill, white text |
-| OK | `#3DD68C` |
-| Warning | `#F5A623` |
-| Critical | `#F0484E`; as text `#FF6B70` |
-| Integration required | `#9085E9` |
+| Content | `#24272D` |
+| Header, rail, status bar | `#1B2029` |
+| Cards and tables | `#2C3037` |
+| Raised, table headers, inputs | `#343943` |
+| Hover | `#3C424D` |
+| Tooltips and popovers | `#444A55` |
+| Hairline / control border | `#393E47` / `#4A505B` |
+| Primary / secondary text | `#EEF1F5` / `#CDD3DC` |
+| Muted text | `#A0A7B2` |
+| Decorative faint text | `#737A85` |
+| Accent, selection, focus, prose links | `#8AB4F8` |
+| Text on solid accent or status fills | `#14223B` |
+| OK | `#82D4AB` |
+| Warning, at risk | `#F2C46D` |
+| Critical | `#F28B82`; text `#F5A097` |
+| Integration required / memory resource | `#B7AAF7` |
 
-Soft fills behind status chips are the status colour at 14–16% opacity; the selected rail button is the accent at 16%.
+Status tints use 14–16% opacity and light semantic text. Navy is for **solid** fills; navy on a translucent dark tint fails contrast. Muted text is about 5.5:1 on cards, but falls below AA on hover and tooltip surfaces: use secondary or primary text there. Faint is only for decorative suffixes and separators.
 
-**Type.** Lato 400, 700 and 900 for the interface. Source Code Pro for resource names, addresses and numbers. Section and column captions are Lato 700 at 11 px, uppercase, slightly tracked, in the muted colour. Weight carries hierarchy; 700 is the usual weight for labels, buttons and tabs.
+Figtree Regular, SemiBold, Bold and Black are embedded as static faces (GPUI loads the variable face only at its default weight); IBM Plex Mono Regular and SemiBold are embedded with their OFL licences. Base UI 13 px, tables 12.5 px, secondary 12 px. Captions 11 px, uppercase bold with 0.06em tracking. Section titles 14 px bold; screen titles 20 px black (900). Numeric columns use monospace/tabular figures. The user's text-size preference scales layout through `ui::dp`; 13 is the new default, and existing saved sizes remain valid.
 
-**Radii.** Cards 12 px, buttons and inputs 8 px, chips fully rounded, rail buttons 10 px.
+Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12 px gaps. Radii: cards 12 px, controls 8 px, rail buttons 10 px, meters 3 px, chips fully rounded. Shadows belong only to tooltips and popovers. The previous light palette remains available until a Fog light theme is designed.
 
-**Chart series.** Six slots in a fixed order, checked against the card colour for contrast and colour blindness: `#3987e5`, `#d95926`, `#199e70`, `#c98500`, `#d55181`, `#008300`. Ordered levels such as p50, p95 and p99 use one blue ramp: `#1c5cab`, `#3987e5`, `#86b6ef`. Status colours are reserved for status and are never used as series colours.
+## Frame
 
-### App frame
+- Header 52 dp: context and “Talos + Kubernetes”, Dashboard / Nodes / Workloads / Events / Observability tabs, relevant time range, Search (⌘K), refresh and settings. Tabs become icons in narrow windows.
+- Rail 64 dp: icon-only areas, tooltips, blue active wash; status dots indicate a problem. Existing Kubernetes groups, Custom Resources, Talos pages and Prometheus dashboards stay reachable.
+- Contextual sidebar 208 dp or a 52 dp icon strip. ⌘B and the title's collapse button toggle it. The choice is remembered in `navigation.json` beside preferences; narrow windows auto-collapse but can be expanded manually. Workloads adds namespace counts from the existing summary. Collapsed namespaces become “all”; Observability data sources become one database button. Collapsed tooltips open to the right.
+- Status bar 28 dp: connection, port forwards, last refresh.
 
-- **Header, 52 px:** the context switcher (cluster name and "Talos + Kubernetes"), where the window is, Search (⌘K), Refresh, appearance and Settings. The mockup's section tabs would repeat the rail, so the header names the page instead, and in the node pane its node and tab.
-- **Icon rail, 64 px, on the left:** icon-only buttons with tooltips. A coloured dot on a button flags problems in that area: the worst of the Overview's warning and critical cards for it, with their figures in the tooltip. The rail has twelve areas in three sections: Overview, Nodes, Namespaces, Events; the six Kubernetes groups and Custom Resources; Control plane. In a short window it scrolls.
-- **Second column, 208 px, contextual:** only for an area with several pages or kinds. Each Kubernetes group lists its kinds (Workloads with Health first), Custom Resources its API groups, Control plane its Talos pages. Later: the dashboard list under Monitoring and observability navigation under Observability. An icon-only rail can't hold twenty-odd Kubernetes kinds, so this column is required. Namespaces with counts under Workloads wait for the tables step.
-- **Status bar, 28 px:** connection, port forwards and the last refresh.
-
-### Status language
-
-Shape and colour together, never colour alone, everywhere in the app:
+## Status and links
 
 | State | Glyph |
 | --- | --- |
-| OK | green filled dot |
-| Warning, at risk | amber outlined triangle |
-| Critical, failing | red filled diamond |
-| Pending, unknown | hollow grey circle |
-| Completed | grey tick |
-| Integration required | violet outlined square |
-| Errors in logs | blue dot |
+| OK | Filled mint dot |
+| Warning / at risk | Amber outlined triangle |
+| Critical / failing | Filled coral diamond |
+| Pending / unknown | Hollow grey circle |
+| Completed | Grey tick |
+| Integration required | Lavender outlined square |
+| Log errors | Blue dot |
 
-Colour and shape say how bad it is; words say why, and only where a group header doesn't already say it.
+Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. Prose links, breadcrumbs, selection and focus are blue. Dense cross-references use secondary text with dotted underlines and become blue on hover.
 
-### Tables
+## G7: tables
 
-F2″ (`ConsolePodsGlyph`) is the reference.
+Pods start on Problems when problems exist, grouped by cause, with healthy rows folded. The toolbar contains title, text filter, glyph/count filters, comfortable/compact density and Columns. A blue-tinted banner states how many rows are shown and provides Show all; selected rows expose bulk copy/clear actions. Comfortable rows are 34 dp, compact 26 dp, group headers 28 dp, table headers 30 dp.
 
-- **One-line toolbar:** title, filter, status filter buttons, density toggle and columns.
-- **Density:** comfortable 34 px rows or compact 26 px rows.
-- **Problems first by default** when anything is wrong. The status filter starts on Problems, rows are grouped by cause (for example "On a NotReady node"), and the healthy rows collapse into one line. A banner, "Showing 25 of 140 · Show all", also hosts bulk actions.
-- **Status is a 16 px glyph column,** not a text column. Selecting a row swaps its glyph for a checkbox.
-- **Ready and restarts share a cell** ("0/1 ↻14"). The freed width goes to an Owner column (`deploy/`, `sts/`, `ds/`).
-- **Node names drop the prefix every node shares,** with the full name on hover, but only when such a prefix is detected.
-- **CPU and memory mini bars:** the fill is use against the limit, a tick marks the request, and grey means last known (stale, for example on a NotReady node).
-- **Names:** the namespace prefix is muted and a random hash suffix is dimmed.
-- **Keyboard:** sort indicators, a visible focus row; ↑ and ↓ move, ↵ opens, x selects, l opens logs.
+The status is a glyph, replaced by a checkbox on a marked row. Ready and restarts share a cell (`0/1 ↻14`). Owner prefixes are muted (`deploy/`, `sts/`). Namespace prefixes are muted; random suffixes are faint. Remove a common node prefix only when detected and keep the full name in its tooltip. Sort arrows, a blue focus outline, ↑↓, Enter, X and L keep their existing behavior.
 
-### Tooltips
+Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities.
 
-Every compact element has a hover tooltip: glyphs, shortened node names, meters, restart counts, owner kinds and icon-only buttons. The rich pattern, as for an at-risk pod, says what happened, why the shown state can't be trusted, the side effects (endpoints dropped, eviction time) and the keyboard shortcuts. Tooltips flip upward near the bottom edge of a table.
+## G8: pod detail
 
-### Pod detail
+Open on the cause: state, last exit, next restart, termination output and a Logs action. Continue with the restart timeline, containers, Runs on (node and Talos kubelet health), relationships and recent events. The retained resource pane keeps its watch and shell/forward protections. Previous-instance logs are read only through an explicit Logs action; unavailable history is not invented. The node memory bullet uses Talos used/physical capacity when available and explicitly identifies unavailable requests.
 
-F3 (`ConsolePod`) opens on the cause: a "Why it's failing" card with the state, last exit code, next restart and last log lines. Then the restart timeline, containers, Runs on (the node, Talos kubelet health and a link to its system services), Relations (ReplicaSet → Deployment, Service, ServiceAccount, IP and QoS) and recent events. Logs is the primary action.
+## H1–H7: observability prototype
 
-### F4 Monitoring
+These use Coroot's concepts in Fog's visual language. **The current implementation is an interactive prototype, enabled by `--fixture` only.** The workspace has no runtime handle, credentials or live provider. Outside fixture mode every route shows Integration required and a route to the existing Prometheus dashboards. Rollback and configuration actions show previews and never execute cluster writes. Thresholds and mute choices are session-local example state.
 
-Grafana-like dashboards in the Console look, with dashboard-wide filter dropdowns, a time picker, a cursor linked across charts, deploy and node event markers, thresholds, legend hover that fades the other lines, and the PromQL query on hover. A panel editor and an Explore screen are explicitly not wanted for now. Charts use the chart series and blue ramp above, never Grafana's palette or a dashboard's own colours; deploy markers are accent blue, node markers critical red and thresholds dashed amber or red, as in `ConsoleMetrics`. Dashboards are read with grafaui's model and query crates and drawn as Console panels; [MONITORING.md](MONITORING.md) has the decisions and the build order.
+| Screen | Interaction |
+| --- | --- |
+| H1 Applications | 47 fictional apps, 11 check columns; problems first, grouped Applications / Control plane / Monitoring. Text, namespace, category and status filters; every cell opens its report. |
+| H2 Service map | Tiers/topology, healthy solid / degraded and failing dashed connections, widths by traffic; select a link to inspect it; nodes open app reports. |
+| H3 Application | Clients → instances → dependencies, one tab per check, written conditions and editable thresholds; worker links to its fixture pod/logs. |
+| H4 Incident | Two incidents, SLO compliance and 1h/5m burn, root cause, cause chain, previewed fixes and ruled-out evidence. Burn threshold 14.4×. |
+| H5 Deployments | Four releases, selectable revisions, actual diff of the fictional Deployment specs, full selected YAML and rollback preview. |
+| H6 Profiling | Comparison toggle, CPU history, biggest increases, function search and a flame graph with zoom/reset. |
+| H7 Traces | Latency/error heatmap with SLO line, selectable buckets and error causes, matching sample waterfalls and span inspection. |
 
-## Built on the canvas, not committed to
+The fictional snapshot ends at 15:00, with the worker deployment at 12:52 and node event at 14:48. Header ranges regenerate bounded history. The applications table is virtualized; maps, traces, profiles and releases have small fixed limits. A future Coroot provider must preserve source identity, cancellation and the visible-page-only I/O rules.
 
-- **F, the Console dashboard:** ring gauges with legends, a "Needs attention" table and a Health-by-area card.
+Debug entry points:
+
+```sh
+FRESHKUBE_THEME=dark FRESHKUBE_TEXT_SIZE=13 FRESHKUBE_WINDOW_SIZE=1280x880 \
+  FRESHKUBE_PAGE=observability cargo run -- --fixture
+# observability-service-map, observability-application, observability-incidents,
+# observability-deployments, observability-profiling, observability-traces
+# FRESHKUBE_SIDEBAR=expanded|collapsed overrides only this debug session.
+```
+
+## Charts
+
+Use 2 px series lines, solid hairline grids, recessive axes and legends for multiple series. Deploy markers are blue and node events coral: a fine vertical line and bottom triangle. Text stays neutral.
+
+Two series use `#5E93E6` and `#CC7C4A`. Additional dashboard series remain neutral until focused in the existing legend; this avoids introducing an unreviewed larger categorical palette. Ordered quantiles use a blue ramp (`#5379BB`, `#7AA0E6`, `#B3CEFA`).
+
+Heatmap levels: `#323845`, `#33466A`, `#3D5C92`, `#5379BB`, `#7AA0E6`, `#B3CEFA`; errors use coral steps from `#3A3036` to `#F28B82`. Flame differences: less `#3F65A0` / `#3F5A80`, same `#454B56`, more `#7E4A49` / `#A64B46`, with white labels. Status colours never stand in for ordinary chart series.
 
 ## Open
 
-- **Observability, O1–O7,** uses Coroot's concepts (statuses, built-in checks and thresholds, the health table, service map, incidents and root cause, deployments), read from its source, without its visuals:
-  - O1 an applications health matrix of per-app checks (errors, latency, upstreams, instances, restarts, CPU, memory, disk, network, DNS, logs), healthy values muted and problems as glyph and value, grouped into Applications, Control plane and Monitoring;
-  - O2 a service map in tiers, link colour for status and width for traffic, with a side panel for the selected link;
-  - O3 an app page: who calls it and what it calls, one tab per report with a status glyph, checks written as sentences with an editable "Condition: … > threshold" line;
-  - O4 an incident: SLO compliance and error-budget burn rate (opens at 14.4× over 1 h/5 m or 6× over 6 h/15 m), a written root cause, the cause chain, one-click fixes and what was ruled out;
-  - O5 deployments: per-release summaries, the Deployment spec diff and Roll back;
-  - O6 profiling: a flame graph coloured by change against the previous 24 h;
-  - O7 traces: a latency and error heatmap with the SLO line, error causes and a sample trace waterfall.
-
-  The data sources shown are Prometheus, Coroot's node agent (eBPF), ClickHouse (logs and traces) and the Talos API. The user runs Coroot, and these screens will read its API rather than reimplement its analysis, after Monitoring. Still to decide: which screens come first, and the Risks, Logs patterns and Costs screens, which aren't designed.
-- **A light mode** for the Console look.
-- **The default row density,** compact or comfortable.
-- **Grouping problems by cause** beyond "pods on a NotReady node". Linking a crashing pod to the database it depends on is harder.
-
-## Build order
-
-Each step is its own commit (or a preparation commit and then the step), with UI tests where behaviour changes. The app stays usable after every step.
-
-1. **Tokens and type** (done). The dark theme and palette take the Console tokens; Lato and Source Code Pro replace IBM Plex Sans Condensed and JetBrains Mono; radii follow the table above. Until a Console light mode is designed, the light theme keeps its colours and takes only the new type and radii.
-2. **Status glyphs** (done). `ui::status_glyph` draws the shape for each status tone, and every status tag leads with it; a tag's icon now marks only Accent and Outline tags, which carry no status. Standalone marks (`ui::status_mark`, `ui::health_mark`) carry a tooltip. The status bars, context switcher, service and etcd member lists and the node pane's Services tab use them. Error and warning banners and empty states keep their icons: they are callouts, not statuses. The completed tick, integration-required square and log-error dot arrive with the first screen that shows those states.
-3. **App frame** (done). Header, icon rail, contextual second column and status bar replace the sidebar and title bar, keeping every page, shortcut and key context. A group's rail button reopens the kind it showed last, Custom Resources the last custom kind, and Control plane the last Talos page.
-4. **Tables** (done). Pods list with their full object (`includeObject=Object`), so readiness, restarts, the owner, the node, requests and limits come from the pod itself; watch events reuse the last listed columns. Every kind gets the glyph column (from Status or Ready where the kind prints one), the muted namespace prefix and dimmed generated suffix, an Owner column when any row has an owner, and the density toggle. Pods also merge ready and restarts, put the waiting or failing reason after the name, show CPU and memory bars from metrics.k8s.io every 15 s (grey when last known, "isn't installed" on a 404, "not permitted" on a 403) and drop the node prefix every node shares. The pods page opens on Problems: groups for Failing, each NotReady node, Not ready, Pending, Terminating and Unknown, healthy pods folded into one line under them with "Showing 50 of 140 · Show all"; All lists every pod in one sort, and a filter shows every match. X marks a row, a group's Select all marks its rows, and the marks banner copies or clears them; L opens the selected pod's logs. Density stays per session until the default is decided.
-5. **Pod detail** (done). A pod's Overview opens with Logs as its primary action, then, when its status says something is wrong, a card titled "Why it's failing", "Why it's waiting" or "Why it isn't ready": the state, the kubelet's message, the container, its last exit, restarts and the next restart estimated from the kubelet's back-off, the last instance's termination message, and its logs. Then the restart timeline of that container (or the one restarted most), containers, Runs on with Talos's kubelet service and a link to the node's system services, Relations (the controller chain, selecting Services, ServiceAccount, Pod IP and QoS class) and recent warnings. The diagnosis is core's `PodStatus::diagnose`, from the status alone. The card doesn't show the last log lines: the previous instance is read only when the user asks, so "Logs of the last instance" opens it.
-
-Monitoring is decided and follows [MONITORING.md](MONITORING.md). The Console dashboard, Observability and the light mode wait for the user's decision.
+- Whether integration-required lavender should become soft teal, to separate it from memory.
+- Default row density; comfortable remains the initial value.
+- More causal grouping beyond pod state and NotReady nodes.
+- Fog light theme.
+- A real Coroot integration, authentication, capabilities and a reviewed workflow for any fixes. No live Coroot integration is implied by the prototype.

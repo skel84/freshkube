@@ -143,7 +143,8 @@ gpui_kit::actions!(
         NextNode,
         PreviousService,
         NextService,
-        GoToKind
+        GoToKind,
+        ToggleColumn
     ]
 );
 
@@ -335,6 +336,8 @@ pub(crate) struct Pilot {
     search: Entity<search::Search>,
     /// The Monitoring page, which reads only while it shows.
     monitoring: Entity<MonitoringPage>,
+    observability: Entity<crate::observability::ObservabilityPage>,
+    column_state: shell::ColumnState,
     /// The node pane's CPU and memory, when the context has a Prometheus.
     node_history: Entity<HistoryView>,
     /// The rail's area, whose pages or kinds the column lists.
@@ -391,6 +394,7 @@ impl Pilot {
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
         cx.bind_keys([
+            KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
             KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
             KeyBinding::new("secondary-3", ShowNamespaces, Some("Freshkube")),
@@ -553,6 +557,37 @@ impl Pilot {
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let monitoring =
             cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
+        let observability =
+            cx.new(|cx| crate::observability::ObservabilityPage::new(options.fixture, window, cx));
+        subscriptions.push(cx.subscribe_in(
+            &observability,
+            window,
+            |this, _, event, window, cx| {
+                use crate::observability::ObservabilityEvent;
+                match event {
+                    ObservabilityEvent::Navigation => cx.notify(),
+                    ObservabilityEvent::Dashboards => {
+                        this.navigate_from_keyboard(Page::Monitoring, window, cx)
+                    }
+                    ObservabilityEvent::OpenPod { logs } if this.fixture => this.open_object(
+                        builtin("pods").unwrap(),
+                        resources::model::ObjectRef {
+                            namespace: "payments".into(),
+                            name: "worker-6c4f8da0-bbbbh".into(),
+                            uid: String::new(),
+                        },
+                        if *logs {
+                            resources::Tab::Logs
+                        } else {
+                            resources::Tab::Overview
+                        },
+                        window,
+                        cx,
+                    ),
+                    ObservabilityEvent::OpenPod { .. } => {}
+                }
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &monitoring,
             window,
@@ -670,6 +705,8 @@ impl Pilot {
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             monitoring,
+            observability,
+            column_state: shell::ColumnState::new(options.preferences.as_deref()),
             node_history: cx.new(|_| HistoryView::new(runtime.clone(), "node")),
             area: Area::Overview,
             group_kinds: BTreeMap::new(),
@@ -1273,6 +1310,8 @@ impl Pilot {
         for (_, screen) in &self.screens {
             App::notify(cx, screen.view().entity_id());
         }
+        App::notify(cx, self.observability.entity_id());
+        App::notify(cx, self.monitoring.entity_id());
         App::notify(cx, self.logs.entity_id());
         App::notify(cx, self.resources.entity_id());
         let detail = self.resources.read(cx).detail_view();
