@@ -12,6 +12,7 @@ gpui_kit::assets::icon_assets!(
     ExtraIcons,
     [
         ServerCog,
+        ChartLine,
         HeartPulse,
         ScrollText,
         Database,
@@ -79,7 +80,17 @@ gpui_kit::assets::icon_assets!(
         Zap,
         GitCompareArrows,
         ScanSearch,
-        Skull
+        Skull,
+        // The rail.
+        Folders,
+        SlidersHorizontal,
+        Cog,
+        Puzzle,
+        // The resource table.
+        Rows2,
+        Rows4,
+        SquareCheck,
+        Logs
     ]
 );
 
@@ -107,11 +118,11 @@ impl AssetSource for AppAssets {
 /// Call once after `gpui_kit::init`.
 pub(crate) fn install(cx: &mut App) {
     let fonts = vec![
-        Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-SemiBold.ttf").as_slice()),
-        Cow::Borrowed(
-            include_bytes!("../assets/fonts/IBMPlexSansCondensed-SemiBold.ttf").as_slice(),
-        ),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lato-Regular.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lato-Bold.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lato-Black.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/SourceCodePro-Regular.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/SourceCodePro-Semibold.ttf").as_slice()),
     ];
     // Missing fonts fall back to the system faces; never block startup.
     let _ = cx.text_system().add_fonts(fonts);

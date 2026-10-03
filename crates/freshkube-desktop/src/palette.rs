@@ -1,5 +1,6 @@
 //! Semantic colors the gpui-kit theme doesn't carry (status inks, soft
-//! fills). Values match `assets/theme.json` and the design mockup.
+//! fills). Values match `assets/theme.json`; the dark set is the Console
+//! look in docs/DESIGN.md.
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{App, Hsla, rgb, rgba};
 
@@ -74,35 +75,36 @@ fn light() -> Palette {
     }
 }
 
+/// The Console look (docs/DESIGN.md).
 fn dark() -> Palette {
     Palette {
-        surface: hex(0x151A21),
-        surface_2: hex(0x1B2129),
-        hover: hexa(0xE3E7EE0F),
-        ink: hex(0xE3E7EE),
-        ink_2: hex(0xC1C8D3),
-        muted: hex(0x8C96A6),
-        faint: hex(0x5F6979),
-        line: hex(0x232A35),
-        line_strong: hex(0x2F3845),
-        track: hex(0x232A34),
-        accent: hex(0x7C9BFF),
-        accent_soft: hexa(0x7C9BFF21),
-        accent_line: hexa(0x7C9BFF80),
-        good: hex(0x0CA30C),
-        good_ink: hex(0x3FCC3F),
-        good_soft: hexa(0x0CA30C2E),
-        warn: hex(0xFAB219),
-        warn_ink: hex(0xFAB219),
-        warn_soft: hexa(0xFAB21921),
-        warn_line: hexa(0xFAB21966),
-        crit: hex(0xD03B3B),
-        crit_ink: hex(0xFF7070),
-        crit_soft: hexa(0xD03B3B33),
-        unk: hex(0x6B7586),
-        unk_ink: hex(0x8C96A6),
-        unk_soft: hexa(0x8C96A624),
-        mark: hexa(0xFAB21952),
+        surface: hex(0x17181B),
+        surface_2: hex(0x1E2024),
+        hover: hex(0x25272C),
+        ink: hex(0xF2F3F5),
+        ink_2: hex(0xC9CCD1),
+        muted: hex(0x8E939B),
+        faint: hex(0x5E636B),
+        line: hex(0x24262A),
+        line_strong: hex(0x33363C),
+        track: hex(0x25272C),
+        accent: hex(0x4797FF),
+        accent_soft: hexa(0x4797FF29),
+        accent_line: hexa(0x4797FF80),
+        good: hex(0x3DD68C),
+        good_ink: hex(0x3DD68C),
+        good_soft: hexa(0x3DD68C24),
+        warn: hex(0xF5A623),
+        warn_ink: hex(0xF5A623),
+        warn_soft: hexa(0xF5A62324),
+        warn_line: hexa(0xF5A62366),
+        crit: hex(0xF0484E),
+        crit_ink: hex(0xFF6B70),
+        crit_soft: hexa(0xF0484E29),
+        unk: hex(0x5E636B),
+        unk_ink: hex(0x8E939B),
+        unk_soft: hexa(0x8E939B24),
+        mark: hexa(0xF5A62352),
     }
 }
 
@@ -134,11 +136,11 @@ const TERMINAL_LIGHT: TerminalColors = TerminalColors {
 
 const TERMINAL_DARK: TerminalColors = TerminalColors {
     ansi: [
-        0x232A34, 0xE05A5A, 0x2FB52F, 0xE0A010, 0x7C9BFF, 0xC07EE8, 0x3FB8C4, 0xC1C8D3, 0x5F6979,
-        0xFF7070, 0x3FCC3F, 0xFAB219, 0xA3B9FF, 0xD6A3F5, 0x6FD3DC, 0xE3E7EE,
+        0x25272C, 0xF0484E, 0x3DD68C, 0xF5A623, 0x4797FF, 0xB08CF0, 0x3FC4D0, 0xC9CCD1, 0x5E636B,
+        0xFF6B70, 0x6FE3A8, 0xFFC25C, 0x7AB4FF, 0xC9AEF7, 0x72D9E2, 0xF2F3F5,
     ],
-    foreground: 0xE3E7EE,
-    background: 0x151A21,
+    foreground: 0xF2F3F5,
+    background: 0x17181B,
 };
 
 pub(crate) fn terminal_colors(cx: &App) -> &'static TerminalColors {

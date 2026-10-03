@@ -1,5 +1,5 @@
 use crate::{
-    desktop::{Page, tests::fixture},
+    desktop::{Area, Page, tests::fixture},
     resources::{KubeAccess, Tab},
 };
 use gpui_kit::{AppContext, TestAppContext, component::WindowExt, test::TestWindowExt};
@@ -77,7 +77,14 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                             pilot.read(cx).resources.read(cx).detail_tab(cx),
                             Tab::Overview
                         );
-                        assert!(window.find("pod-runs-on").visible(),"{page} {theme} {text_size}: runs={:?} pane={:?} tabs={:?} viewport={:?}",window.find("pod-runs-on").bounds(),window.find("resource-detail").bounds(),window.find("detail-tab-overview").bounds(),window.viewport_size());
+                        // The pane opens on why the pod fails.
+                        assert!(
+                            window.find("pod-cause").visible(),
+                            "{page} {theme} {text_size}: cause={:?} pane={:?} viewport={:?}",
+                            window.find("pod-cause").bounds(),
+                            window.find("resource-detail").bounds(),
+                            window.viewport_size()
+                        );
                     }
                     if page == "search" {
                         assert!(window.has_active_dialog(cx));
@@ -90,6 +97,49 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
             }
         }
     }
+}
+
+#[gpui_kit::test]
+fn fixture_monitoring_opens_its_dashboard_from_example_data_and_hides_on_navigation(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("monitoring"), None, Some("dark"), window, cx)
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).area, Area::Monitoring);
+        assert!(window.find("monitoring-grid").visible());
+        assert!(window.find("monitoring-variable-node").visible());
+        assert!(window.find("monitoring-panel-0-title").visible());
+        assert!(window.try_find("monitoring-panel-0-failed").is_none());
+        assert!(
+            window
+                .find("monitoring-dashboard-freshkube-cluster")
+                .visible()
+        );
+        window.click("monitoring-dashboard-freshkube-workloads", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            pilot.read(cx).monitoring.read(cx).chosen(),
+            &crate::monitoring::page::EntryId::Builtin("freshkube-workloads")
+        );
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("monitoring-grid").is_none());
+        assert!(window.find("tile-pods").visible());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -154,7 +204,7 @@ fn short_resource_navigation_reveals_the_pane_and_returns_to_the_list(cx: &mut T
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.find("pod-runs-on").visible());
+        assert!(window.find("pod-cause").visible());
         assert_eq!(window.find("resource-detail").focused(), Some(true));
         window.press("escape", cx);
     })
@@ -235,6 +285,49 @@ fn minimum_node_table_can_reveal_its_rightmost_column(cx: &mut TestAppContext) {
         assert!(column.bounds().left() < before);
         assert!(column.visible());
         assert!(column.bounds().right() <= window.viewport_size().width);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    for (page, id) in [
+        ("pod-overview", "pod-history"),
+        ("node-overview", "node-history"),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.startup_selection(Some(page), None, None, window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find(id).is_some(), "{page}: {id}");
+            let prefix = id.trim_end_matches("-history");
+            for panel in ["cpu", "memory"] {
+                let panel = format!("monitoring-panel-{prefix}-{panel}");
+                let found = window.try_find(gpui_kit::SharedString::from(panel.clone()));
+                assert!(found.is_some(), "{page}: {panel}");
+                // A pod's history is among the first things its Overview
+                // shows, on screen without scrolling.
+                if prefix == "pod" {
+                    assert!(found.unwrap().visible(), "{page}: {panel} visible");
+                }
+            }
+        })
+        .unwrap();
+    }
+    // Another tab on the node pane hides the history and stops its reads.
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_node_tab(crate::desktop::nodes::NodeTab::Pods, window, cx);
+            assert!(!pilot.node_history.read(cx).reading());
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("node-history").is_none());
     })
     .unwrap();
 }

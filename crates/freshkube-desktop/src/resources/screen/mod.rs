@@ -3,6 +3,7 @@
 //! and filtered locally, and selected by identity. Read-only: nothing here
 //! changes the cluster.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::time::{Duration, SystemTime};
 
@@ -12,7 +13,7 @@ use freshkube_core::resources::{
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, IndexPath, Sizable,
-    button::{Button, ButtonVariants},
+    button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
@@ -39,13 +40,14 @@ use crate::backend::{self, OwnedJob};
 use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
 use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
+use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
+use layout::TableLayout;
+use pods::{ListView, NotReady, UsageState};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
 const EMBEDDED_CONTEXT: &str = "NodePods";
 const FILTER_CONTEXT: &str = "KubeResourcesFilter";
-const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Ages are redrawn this often while the page is visible.
 const AGE_TICK: Duration = Duration::from_secs(5);
@@ -54,18 +56,11 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 /// gathered and applied together, so a churning list re-sorts and redraws at
 /// most ten times a second instead of once per batch core sends.
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
-/// Advance of one character in the 12 px table font.
-const CHAR_WIDTH: f32 = 7.2;
 /// The namespace picker's width in the toolbar.
 const NAMESPACE_WIDTH: f32 = 200.;
 /// The narrowest one-row toolbar without the namespace picker: the
 /// filter at its narrowest, the Refresh button and the gap between them.
 const CONTROLS_MIN_WIDTH: f32 = 120. + 8. + 96.;
-const CELL_PADDING: f32 = 24.;
-const AGE_WIDTH: f32 = 76.;
-const MIN_COLUMN: f32 = 64.;
-const MAX_COLUMN: f32 = 280.;
-const MAX_FLEXIBLE: f32 = 440.;
 /// The table's header and a couple of rows.
 const LIST_MIN_HEIGHT: f32 = 96.;
 /// Below this content width the detail pane stacks under the list.
@@ -95,7 +90,9 @@ actions!(
         ClearFilter,
         LeaveFilter,
         OpenSelected,
-        ChooseNamespace
+        ChooseNamespace,
+        ToggleMark,
+        OpenLogs
     ]
 );
 
@@ -178,111 +175,6 @@ fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<N
     SearchableVec::new(choices)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ColumnSource {
-    /// A printed column, by index into the store's columns.
-    Cell(usize),
-    /// The namespace, added when listing every namespace.
-    Namespace,
-}
-
-#[derive(Clone, Debug)]
-struct DisplayColumn {
-    label: SharedString,
-    source: ColumnSource,
-    kind: ColumnKind,
-    width: f32,
-    /// Takes the room left over; at most one column does.
-    flexible: bool,
-    /// Printed statuses are coloured by what they mean.
-    status: bool,
-}
-
-impl DisplayColumn {
-    fn sort_key(&self) -> SortKey {
-        match self.source {
-            ColumnSource::Cell(ix) => SortKey::Column(ix),
-            ColumnSource::Namespace => SortKey::Namespace,
-        }
-    }
-}
-
-/// The columns drawn for the current read and their widths. Derived when a
-/// read resets, never while drawing; wide (`-o wide`) columns are left out.
-#[derive(Clone, Debug, Default)]
-struct TableLayout {
-    columns: Vec<DisplayColumn>,
-    width: f32,
-}
-
-impl TableLayout {
-    fn new(store: &ResourceStore, namespace_column: bool) -> Self {
-        let widest = store.widest();
-        let fit = |chars: usize, max: f32| {
-            (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max)
-        };
-        let printed: Vec<_> = store
-            .columns()
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| !column.wide)
-            .collect();
-        let named = |name: &str| {
-            printed
-                .iter()
-                .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
-                .map(|(ix, _)| *ix)
-        };
-        let flexible = named("message")
-            .or_else(|| named("name"))
-            .or_else(|| printed.first().map(|(ix, _)| *ix));
-        let mut columns = Vec::with_capacity(printed.len() + 1);
-        for (ix, column) in printed {
-            let is_flexible = flexible == Some(ix);
-            let width = match column.kind {
-                ColumnKind::Age => AGE_WIDTH,
-                _ => fit(
-                    widest
-                        .cells
-                        .get(ix)
-                        .copied()
-                        .unwrap_or(0)
-                        // Room for the sort arrow beside the label.
-                        .max(column.name.chars().count() + 2),
-                    if is_flexible {
-                        MAX_FLEXIBLE
-                    } else {
-                        MAX_COLUMN
-                    },
-                ),
-            };
-            columns.push(DisplayColumn {
-                label: column.name.clone().into(),
-                source: ColumnSource::Cell(ix),
-                kind: column.kind,
-                width,
-                flexible: is_flexible,
-                status: matches!(
-                    column.name.to_ascii_lowercase().as_str(),
-                    "status" | "phase"
-                ),
-            });
-            if namespace_column && columns.len() == 1 {
-                columns.push(DisplayColumn {
-                    label: "Namespace".into(),
-                    source: ColumnSource::Namespace,
-                    kind: ColumnKind::Text,
-                    width: fit(widest.namespace.max(11), MAX_COLUMN),
-                    flexible: false,
-                    status: false,
-                });
-            }
-        }
-        let width = columns.iter().map(|column| column.width).sum();
-        Self { columns, width }
-    }
-}
-
 /// The element id of a row: derived from what it shows, so a press that
 /// lands after the rows moved can't complete on another object.
 pub(crate) fn row_id(identity: &ResourceIdentity) -> ElementId {
@@ -339,6 +231,18 @@ pub(crate) struct ResourcesScreen {
     detail: Entity<DetailPane>,
     split: Entity<ResizableState>,
     stacked: Entity<ResizableState>,
+    /// Pods: problems first, or all in one list.
+    list_view: ListView,
+    /// The healthy pods show under the problems.
+    healthy_open: bool,
+    not_ready: NotReady,
+    /// Compact rows, from the density toggle; comfortable by default.
+    compact: bool,
+    /// Rows marked with X or a group's Select all, by identity.
+    marked: BTreeSet<ResourceIdentity>,
+    /// Reads pods' use while the pods list shows.
+    usage: Option<Task<()>>,
+    usage_state: UsageState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -356,6 +260,8 @@ impl ResourcesScreen {
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
             KeyBinding::new("enter", OpenSelected, Some(CONTEXT)),
             KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
+            KeyBinding::new("x", ToggleMark, Some(CONTEXT)),
+            KeyBinding::new("l", OpenLogs, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
@@ -471,6 +377,13 @@ impl ResourcesScreen {
             detail,
             split: cx.new(|_| ResizableState::default()),
             stacked: cx.new(|_| ResizableState::default()),
+            list_view: ListView::default(),
+            healthy_open: false,
+            not_ready: NotReady::new(),
+            compact: false,
+            marked: BTreeSet::new(),
+            usage: None,
+            usage_state: UsageState::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -517,6 +430,7 @@ impl ResourcesScreen {
         rows: std::sync::Arc<Vec<crate::desktop::nodes::NodeRow>>,
         cx: &mut Context<Self>,
     ) {
+        self.set_not_ready(&rows, cx);
         self.detail
             .update(cx, |pane, cx| pane.set_node_rows(rows, cx));
     }
@@ -616,6 +530,23 @@ impl ResourcesScreen {
         self.restart(window, cx);
     }
 
+    /// Where a pod's CPU and memory history reads, from the Monitoring page.
+    pub(crate) fn set_history(
+        &mut self,
+        history: Option<crate::monitoring::history::HistorySource>,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |detail, cx| detail.set_history(history, cx));
+    }
+
+    /// Debug fixture checks: answers the open pod's history now.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    pub(crate) fn answer_history_now(&mut self, cx: &mut Context<Self>) {
+        self.detail
+            .update(cx, |detail, cx| detail.answer_history_now(cx));
+    }
+
     /// Shows another kind; the same kind at another version reads again.
     pub(crate) fn set_kind(
         &mut self,
@@ -666,6 +597,7 @@ impl ResourcesScreen {
         } else {
             self.watch = None;
             self.tick = None;
+            self.usage = None;
             if self.namespace_job.take().is_some() {
                 self.namespaces_for = None;
             }
@@ -725,7 +657,9 @@ impl ResourcesScreen {
             self.restore = Some(selected.clone());
         }
         let epoch = self.store.start_session();
-        self.projection.rebuild(&self.store);
+        self.marked.clear();
+        self.usage_state = UsageState::Unknown;
+        self.regroup();
         self.layout = TableLayout::default();
         self.updated = None;
         self.now = live::now();
@@ -756,6 +690,7 @@ impl ResourcesScreen {
                 None => vec![ResourceEvent::Read(ReadState::Loaded)],
             };
             self.apply(ResourceBatch { epoch, events }, cx);
+            self.poll_usage(window, cx);
             return;
         }
         let (sender, receiver) = mpsc::channel(8);
@@ -769,6 +704,7 @@ impl ResourcesScreen {
         )));
         let task = self.receive(epoch, receiver, cx);
         self.watch = Some((job, task));
+        self.poll_usage(window, cx);
     }
 
     /// Applies what a read sends until it stops, at most once per
@@ -826,17 +762,17 @@ impl ResourcesScreen {
         self.updated = Some(SystemTime::now());
         self.now = live::now();
         self.projection.rebuild(&self.store);
+        self.prune_marks();
         if reset {
             let _span = crate::perf::span("table.layout");
-            self.layout = TableLayout::new(&self.store, self.lists_all_namespaces());
+            self.layout =
+                TableLayout::new(&self.store, self.lists_all_namespaces(), self.lists_pods());
             drop(_span);
             // A restarted read selects the same object again if it still
             // exists; only its first list can tell.
             if let Some(identity) = self.restore.take() {
-                self.projection.select_identity(&self.store, &identity);
-                if let Some(ix) = self.projection.selected_index() {
-                    self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
-                }
+                self.show_identity(&identity);
+                self.scroll_to_selection(ScrollStrategy::Nearest);
             }
         }
         self.follow_detail(cx);
@@ -1064,9 +1000,31 @@ impl ResourcesScreen {
         cx: &mut Context<Self>,
     ) {
         self.restore = None;
-        self.projection.select_identity(&self.store, identity);
+        self.show_identity(identity);
+        self.scroll_to_selection(ScrollStrategy::Nearest);
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    /// Selects `identity`, unfolding the healthy pods when it is among them.
+    fn show_identity(&mut self, identity: &ResourceIdentity) {
+        if self.projection.hides(&self.store, identity) {
+            self.healthy_open = true;
+            self.regroup();
+        }
+        self.projection.select_identity(&self.store, identity);
+    }
+
+    /// Scrolls the list to the selected row's line, below its group's
+    /// header.
+    fn scroll_to_selection(&self, strategy: ScrollStrategy) {
+        match self.projection.selected_index() {
+            Some(ix) => self
+                .scroll
+                .scroll_to_item(self.projection.line_of(ix), strategy),
+            None if strategy == ScrollStrategy::Top => self.scroll.scroll_to_item(0, strategy),
+            None => {}
+        }
     }
 
     /// A click opens the row at once.
@@ -1139,7 +1097,7 @@ impl ResourcesScreen {
         };
         self.restore = None;
         self.projection.select(&self.store, Some(next));
-        self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        self.scroll_to_selection(ScrollStrategy::Nearest);
         if let Some(identity) = self.projection.selected().cloned()
             && self.pinned(cx).is_none()
         {
@@ -1159,9 +1117,7 @@ impl ResourcesScreen {
         };
         self.projection.sort(&self.store, key, direction);
         // The selection follows its object to wherever the sort put it.
-        if let Some(ix) = self.projection.selected_index() {
-            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
-        }
+        self.scroll_to_selection(ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -1218,6 +1174,7 @@ async fn watch(
     };
     let (raw_sender, mut raw) = mpsc::channel::<WatchBatch>(4);
     let forward = async move {
+        let mut columns = Vec::new();
         while let Some(batch) = raw.recv().await {
             let transient = batch.events.iter().any(|event| {
                 matches!(event, WatchEvent::Failed { failure, .. } if !failure.kind.is_permanent())
@@ -1226,7 +1183,7 @@ async fn watch(
                 access.forget();
             }
             if sender
-                .send(live::convert(&connection, &key, batch.events))
+                .send(live::convert(&connection, &key, &mut columns, batch.events))
                 .await
                 .is_err()
             {
@@ -1248,6 +1205,9 @@ pub(crate) enum NodePodsEvent {
 }
 impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
+mod cells;
+mod layout;
+mod pods;
 mod view;
 
 #[cfg(test)]

@@ -1,0 +1,312 @@
+//! The Console chart palette (docs/MONITORING.md, Colours). Every colour a
+//! dashboard asks for is ignored: palette modes, fixed and named colours,
+//! overrides, continuous schemes and threshold colours. A series' colour
+//! follows only from its position, or from its level when the series read
+//! as quantiles or histogram buckets. A threshold step's colour gives only
+//! its meaning: of several steps the highest is critical and the rest are
+//! warnings, and a single step is a warning.
+use freshkube_core::monitoring::model::{color::Rgba, spec::Step};
+use gpui_kit::{App, Hsla, rgb};
+
+use crate::palette::palette;
+
+/// The six series slots, in their fixed order.
+pub(crate) const SLOTS: [u32; 6] = [0x3987e5, 0xd95926, 0x199e70, 0xc98500, 0xd55181, 0x008300];
+/// Ordered levels (p50, p95, p99; le buckets), lowest level darkest.
+pub(crate) const RAMP: [u32; 3] = [0x1c5cab, 0x3987e5, 0x86b6ef];
+/// Series past the sixth, until hovered or picked.
+pub(crate) const OVERFLOW: u32 = 0x5E636B;
+/// Opacity of an area under its line.
+pub(crate) const AREA_OPACITY: f32 = 0.14;
+/// Opacity of the other series while one is hovered or picked.
+pub(crate) const FADED_OPACITY: f32 = 0.15;
+
+/// How a series is coloured.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Ink {
+    /// One of the six slots.
+    Slot(usize),
+    /// Past the sixth series: grey, its own slot only while focused.
+    Overflow(usize),
+    /// A level on the blue ramp, 0 (lowest, darkest) to 1 (highest).
+    Level(f32),
+}
+
+impl Ink {
+    /// The colour drawn, given whether the series is hovered or picked.
+    pub(crate) fn color(self, focused: bool) -> Hsla {
+        match self {
+            Ink::Slot(slot) => hex(SLOTS[slot % SLOTS.len()]),
+            Ink::Overflow(slot) if focused => hex(SLOTS[slot % SLOTS.len()]),
+            Ink::Overflow(_) => hex(OVERFLOW),
+            Ink::Level(level) => ramp(level),
+        }
+    }
+}
+
+fn hex(value: u32) -> Hsla {
+    rgb(value).into()
+}
+
+/// A colour along the ramp; its three stops at 0, ½ and 1.
+pub(crate) fn ramp(level: f32) -> Hsla {
+    let level = level.clamp(0., 1.) * (RAMP.len() - 1) as f32;
+    let low = (level.floor() as usize).min(RAMP.len() - 2);
+    let t = level - low as f32;
+    let channel = |value: u32, shift: u32| ((value >> shift) & 0xff) as f32;
+    let mix = |shift: u32| {
+        let (a, b) = (channel(RAMP[low], shift), channel(RAMP[low + 1], shift));
+        ((a + (b - a) * t).round() as u32) << shift
+    };
+    hex(mix(16) | mix(8) | mix(0))
+}
+
+/// Inks for series in frame order: the ramp when every series reads as a
+/// level, else the slots with grey past the sixth.
+pub(crate) fn inks(series: &[(&str, &[(String, String)])]) -> Vec<Ink> {
+    if let Some(levels) = levels(series) {
+        return levels;
+    }
+    (0..series.len())
+        .map(|index| {
+            if index < SLOTS.len() {
+                Ink::Slot(index)
+            } else {
+                Ink::Overflow(index)
+            }
+        })
+        .collect()
+}
+
+/// Each series' place among the levels, when all of them carry one.
+fn levels(series: &[(&str, &[(String, String)])]) -> Option<Vec<Ink>> {
+    if series.len() < 2 {
+        return None;
+    }
+    let values: Vec<f64> = series
+        .iter()
+        .map(|(name, labels)| level(name, labels))
+        .collect::<Option<_>>()?;
+    let mut distinct = values.clone();
+    distinct.sort_by(f64::total_cmp);
+    distinct.dedup();
+    if distinct.len() < 2 {
+        return None;
+    }
+    let top = (distinct.len() - 1) as f32;
+    Some(
+        values
+            .iter()
+            .map(|value| {
+                let rank = distinct.iter().position(|v| v == value).unwrap_or(0);
+                Ink::Level(rank as f32 / top)
+            })
+            .collect(),
+    )
+}
+
+/// The quantile or bucket a series stands for: a `quantile` or `le` label,
+/// or a name such as `p99`, `P95 latency`, `0.99` or `99th percentile`.
+pub(crate) fn level(name: &str, labels: &[(String, String)]) -> Option<f64> {
+    for key in ["quantile", "le"] {
+        if let Some((_, value)) = labels.iter().find(|(label, _)| label == key) {
+            return match value.as_str() {
+                "+Inf" | "Inf" => Some(f64::INFINITY),
+                value => value.parse().ok(),
+            };
+        }
+    }
+    let name = name.trim();
+    if let Ok(value) = name.parse::<f64>()
+        && (0. ..=1.).contains(&value)
+    {
+        return Some(value);
+    }
+    name.split(|c: char| c.is_whitespace() || matches!(c, '-' | '_' | '(' | ')' | ','))
+        .find_map(|word| {
+            let lower = word.to_ascii_lowercase();
+            let digits = lower
+                .strip_prefix('p')
+                .or_else(|| lower.strip_suffix("th"))
+                .or_else(|| lower.strip_suffix('%'))?;
+            let value: f64 = digits.parse().ok()?;
+            (value > 0. && value <= 100.).then_some(value / 100.)
+        })
+}
+
+/// The status colours a threshold may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Tier {
+    Warn,
+    Crit,
+}
+
+impl Tier {
+    /// The dashed line and the value that crossed it.
+    pub(crate) fn color(self, cx: &App) -> Hsla {
+        let p = palette(cx);
+        match self {
+            Tier::Warn => p.warn,
+            Tier::Crit => p.crit,
+        }
+    }
+}
+
+/// Tiers for `count` ascending thresholds, whatever colours they name: the
+/// highest is critical when there are several, the rest are warnings.
+pub(crate) fn tiers(count: usize) -> Vec<Tier> {
+    (0..count)
+        .map(|index| {
+            if count > 1 && index == count - 1 {
+                Tier::Crit
+            } else {
+                Tier::Warn
+            }
+        })
+        .collect()
+}
+
+/// What a dashboard colour means, never how it looks: green, blue and grey
+/// are fine, yellow and orange a warning, red critical. `None` for a colour
+/// with no status meaning, such as purple.
+pub(crate) fn meaning(color: Rgba) -> Option<Option<Tier>> {
+    let [r, g, b] = [color.red(), color.green(), color.blue()].map(|c| c as f32 / 255.);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    if color.alpha() == 0 || max - min < 0.12 {
+        return Some(None);
+    }
+    let delta = max - min;
+    let hue = if max == r {
+        60. * ((g - b) / delta).rem_euclid(6.)
+    } else if max == g {
+        60. * ((b - r) / delta + 2.)
+    } else {
+        60. * ((r - g) / delta + 4.)
+    };
+    match hue {
+        h if !(15. ..345.).contains(&h) => Some(Some(Tier::Crit)),
+        h if h < 70. => Some(Some(Tier::Warn)),
+        h if h < 255. => Some(None),
+        _ => None,
+    }
+}
+
+/// The status each threshold step stands for, the base step included. A
+/// step's colour gives only its meaning; one without a status meaning
+/// counts by position, as [`tiers`] says.
+pub(crate) fn step_tiers(steps: &[Step]) -> Vec<Option<Tier>> {
+    let raised = steps.iter().filter(|step| step.value.is_finite()).count();
+    let by_position = tiers(raised);
+    let mut index = 0;
+    steps
+        .iter()
+        .map(|step| {
+            if !step.value.is_finite() {
+                return meaning(step.color).flatten();
+            }
+            let tier = meaning(step.color).unwrap_or(Some(by_position[index]));
+            index += 1;
+            tier
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(names: &[&str]) -> Vec<Ink> {
+        let series: Vec<(&str, &[(String, String)])> =
+            names.iter().map(|name| (*name, &[][..])).collect();
+        inks(&series)
+    }
+
+    #[test]
+    fn series_take_the_slots_in_order_then_grey() {
+        let names: Vec<String> = (0..8).map(|n| format!("node-{n}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let inks = named(&names);
+        assert_eq!(&inks[..6], &(0..6).map(Ink::Slot).collect::<Vec<_>>()[..]);
+        assert_eq!(inks[6], Ink::Overflow(6));
+        assert_eq!(inks[0].color(false), hex(0x3987e5));
+        assert_eq!(inks[5].color(false), hex(0x008300));
+        // Grey until focused, then its own slot (the first again).
+        assert_eq!(inks[6].color(false), hex(OVERFLOW));
+        assert_eq!(inks[6].color(true), hex(0x3987e5));
+        assert_eq!(inks[7].color(true), hex(0xd95926));
+    }
+
+    #[test]
+    fn quantiles_take_the_ramp_lowest_darkest() {
+        let inks = named(&["p99", "p50", "p95"]);
+        assert_eq!(inks, [Ink::Level(1.), Ink::Level(0.), Ink::Level(0.5)]);
+        assert_eq!(inks[1].color(false), hex(0x1c5cab));
+        assert_eq!(inks[2].color(false), hex(0x3987e5));
+        assert_eq!(inks[0].color(false), hex(0x86b6ef));
+        assert_eq!(
+            named(&["P50 latency", "99th percentile"]),
+            [Ink::Level(0.), Ink::Level(1.)]
+        );
+        assert_eq!(named(&["0.5", "0.9", "0.99"])[1], Ink::Level(0.5));
+        // One unreadable name and the series are ordinary.
+        assert_eq!(named(&["p50", "errors"]), [Ink::Slot(0), Ink::Slot(1)]);
+        // A single quantile is just a series.
+        assert_eq!(named(&["p99"]), [Ink::Slot(0)]);
+    }
+
+    #[test]
+    fn buckets_and_quantile_labels_are_levels() {
+        let label = |key: &str, value: &str| vec![(key.to_owned(), value.to_owned())];
+        let (a, b, c) = (label("le", "0.1"), label("le", "+Inf"), label("le", "1"));
+        let inks = inks(&[("x", &a[..]), ("y", &b[..]), ("z", &c[..])]);
+        assert_eq!(inks, [Ink::Level(0.), Ink::Level(1.), Ink::Level(0.5)]);
+        let (a, b) = (label("quantile", "0.5"), label("quantile", "0.99"));
+        assert_eq!(
+            super::inks(&[("a", &a[..]), ("b", &b[..])]),
+            [Ink::Level(0.), Ink::Level(1.)]
+        );
+    }
+
+    #[test]
+    fn the_ramp_interpolates_between_its_stops() {
+        assert_eq!(ramp(0.), hex(0x1c5cab));
+        assert_eq!(ramp(1.), hex(0x86b6ef));
+        assert_eq!(ramp(0.25), hex(0x2b72c8));
+    }
+
+    #[test]
+    fn thresholds_are_amber_then_red_whatever_they_say() {
+        assert_eq!(tiers(1), [Tier::Warn]);
+        assert_eq!(tiers(2), [Tier::Warn, Tier::Crit]);
+        assert_eq!(tiers(3), [Tier::Warn, Tier::Warn, Tier::Crit]);
+    }
+
+    #[test]
+    fn steps_keep_their_meaning_not_their_colour() {
+        let step = |value: f64, color: u32| Step {
+            value,
+            color: Rgba::rgb(color),
+        };
+        // Grafana's defaults: green, then red at 80.
+        let steps = [step(f64::NEG_INFINITY, 0x73BF69), step(80., 0xF2495C)];
+        assert_eq!(step_tiers(&steps), [None, Some(Tier::Crit)]);
+        // Low is bad: red base, green from 1.
+        let steps = [step(f64::NEG_INFINITY, 0xC4162A), step(1., 0x56A64B)];
+        assert_eq!(step_tiers(&steps), [Some(Tier::Crit), None]);
+        // Orange and yellow warn; blue and grey are fine.
+        assert_eq!(meaning(Rgba::rgb(0xFF9830)), Some(Some(Tier::Warn)));
+        assert_eq!(meaning(Rgba::rgb(0xFADE2A)), Some(Some(Tier::Warn)));
+        assert_eq!(meaning(Rgba::rgb(0x5794F2)), Some(None));
+        assert_eq!(meaning(Rgba::rgb(0x808080)), Some(None));
+        // Purple says nothing, so the steps count by position.
+        let steps = [
+            step(f64::NEG_INFINITY, 0x73BF69),
+            step(10., 0xA352CC),
+            step(20., 0x8F3BB8),
+        ];
+        assert_eq!(
+            step_tiers(&steps),
+            [None, Some(Tier::Warn), Some(Tier::Crit)]
+        );
+    }
+}

@@ -678,7 +678,12 @@ impl StorageScreen {
                     .gap_2()
                     .child(mono(encryption(volume).to_owned()))
                     .when(encrypted, |this| {
-                        this.child(ui::tag(Tone::Good, Some(IconName::Lock), "Encrypted", cx))
+                        this.child(ui::tag(
+                            Tone::Outline,
+                            Some(IconName::Lock),
+                            "Encrypted",
+                            cx,
+                        ))
                     }),
                 cx,
             ))

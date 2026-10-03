@@ -10,6 +10,7 @@ pub(crate) mod model;
 pub(crate) mod navigation;
 mod pane;
 pub(crate) mod projection;
+pub(crate) mod rows;
 mod screen;
 pub(crate) mod store;
 

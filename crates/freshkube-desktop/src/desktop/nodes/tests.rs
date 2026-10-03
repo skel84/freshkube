@@ -75,6 +75,8 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-wk-fra1-02")
         );
+        // Its unhealthy kubelet marks the Services tab with the warning glyph.
+        assert!(window.try_find("node-services-problem").is_some());
         let selected = pilot.read(cx).node_workspace.selected.clone();
         window.click("node-tab-processes", cx);
         window.render_frame(cx);
@@ -92,6 +94,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
+        assert!(window.try_find("node-services-problem").is_none());
         window.click("node-close", cx);
         window.render_frame(cx);
         assert_eq!(

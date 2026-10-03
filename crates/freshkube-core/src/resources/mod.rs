@@ -7,7 +7,8 @@
 //! object is read in full on demand ([`get_object`]), with its events
 //! ([`watch_object_events`]). Custom kinds come from discovery
 //! ([`list_custom_groups`], [`list_group_kinds`]). A pod's containers come with its
-//! overview, and their logs from [`follow_pod_log`].
+//! overview, and their logs from [`follow_pod_log`]. Pods' use comes from
+//! metrics-server ([`list_pod_usage`]).
 //! Nothing here changes the cluster, except [`start_exec`], which runs a
 //! shell in a container only when the user starts one, and
 //! [`start_forward`], which forwards a pod's port only when the user asks.
@@ -24,6 +25,7 @@ mod metadata;
 mod object;
 mod pod_links;
 mod pod_logs;
+mod pod_row;
 mod table;
 mod watch;
 
@@ -43,14 +45,18 @@ pub use forward::{
 };
 pub use kinds::{ResourceKind, builtin, builtin_by_gvk};
 pub use object::{
-    Condition, ObjectDocument, Overview, Owner, SecretKey, SecretSummary, SecretValue, get_object,
-    hidden_value, object_from_yaml, reveal_secret_value,
+    Condition, ContainerStatus, Diagnosis, Instance, ObjectDocument, Overview, Owner, PodStatus,
+    SecretKey, SecretSummary, SecretValue, Severity, get_object, hidden_value, is_error_reason,
+    next_restart, object_from_yaml, reveal_secret_value,
 };
 pub use pod_logs::{
     Container, ContainerRole, ContainerState, LogPosition, LogRequest, MAX_ATTEMPTS,
     MAX_LINE_BYTES, PodContainers, PodLogUpdate, Termination, follow_pod_log, pod_containers,
 };
-pub use table::{RowMetadata, Table, TableColumn, TableRow, list_table};
+pub use pod_row::{
+    Amounts, ContainerFacts, PodFacts, PodUsage, cpu_millis, list_pod_usage, quantity,
+};
+pub use table::{OwnerReference, RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
 
 pub use metadata::{MetadataNames, get_metadata, list_metadata};

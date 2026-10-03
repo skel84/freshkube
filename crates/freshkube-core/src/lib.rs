@@ -20,6 +20,7 @@
 //! - [`diagnostics`] - Diagnostic types for health checks and CNI detection
 //! - [`constants`] - Shared constants (thresholds, CRD names, refresh intervals)
 //! - [`resources`] - Read-only listing and watching of any Kubernetes kind
+//! - [`monitoring`] - Prometheus dashboards through the service proxy, GET only
 
 pub mod async_state;
 mod client_cache;
@@ -35,6 +36,7 @@ pub mod inspection;
 mod kubeconfig_selection;
 pub mod logs;
 pub mod maintenance;
+pub mod monitoring;
 pub mod network;
 pub mod operations;
 pub mod pcap;

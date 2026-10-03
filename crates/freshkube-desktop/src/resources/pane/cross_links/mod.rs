@@ -5,6 +5,7 @@ use crate::resources::{ResourceLink, model::ObjectRef};
 use freshkube_core::resources::{ContainerState, Owner, PodLinks};
 use std::sync::Arc;
 
+mod cause;
 mod view;
 
 #[derive(Clone)]
@@ -46,6 +47,8 @@ struct NodeLink {
     tone: crate::ui::Tone,
     problems: Vec<SharedString>,
     services: bool,
+    /// Talos's kubelet service on the node, when Talos reports the node.
+    kubelet: Option<(crate::ui::Tone, SharedString)>,
 }
 struct ServiceLink {
     id: SharedString,
@@ -68,6 +71,12 @@ struct RecentEvent {
 }
 #[derive(Default)]
 pub(super) struct CrossLinks {
+    pub(in crate::resources::pane) cause: Option<cause::CauseCard>,
+    timeline: Option<cause::Timeline>,
+    /// ServiceAccount, IP and QoS class.
+    pub(in crate::resources::pane) facts: Vec<(SharedString, SharedString)>,
+    /// The container Logs opens first: the one at fault, else the default.
+    logs: Option<String>,
     node: Option<NodeLink>,
     owners: Vec<OwnerLink>,
     services: Vec<ServiceLink>,
@@ -109,7 +118,28 @@ impl DetailPane {
                     .into(),
                 tone: row.map(|row| row.tone).unwrap_or_default(),
                 problems: row.map(|row| row.problems.clone()).unwrap_or_default(),
-                services: row.is_some_and(|row| row.service_problem),
+                services: row.is_some_and(|row| row.service_problem || row.talos.is_some()),
+                kubelet: row.and_then(|row| row.talos.as_ref()).map(|talos| {
+                    match talos
+                        .services
+                        .iter()
+                        .find(|service| service.id == "kubelet")
+                    {
+                        Some(service) => {
+                            let health = crate::presentation::service_health(service);
+                            (
+                                crate::ui::health_tone(health),
+                                format!(
+                                    "kubelet {} · {}",
+                                    service.state.to_lowercase(),
+                                    crate::presentation::health_text(&health).to_lowercase()
+                                )
+                                .into(),
+                            )
+                        }
+                        None => (crate::ui::Tone::Unknown, "kubelet not reported".into()),
+                    }
+                }),
             }
         });
         let namespace = document.namespace.as_deref().unwrap_or_default();
@@ -215,7 +245,35 @@ impl DetailPane {
                 message: event.message.clone().into(),
             })
             .collect();
+        let now = chrono::Utc::now();
+        let status = document.overview.pod_status.as_ref();
+        let diagnosis = status.and_then(|status| status.diagnose());
+        let cause = diagnosis
+            .as_ref()
+            .map(|diagnosis| cause::CauseCard::new(diagnosis, Some(pod), now));
+        let timeline =
+            status.and_then(|status| cause::Timeline::new(status, diagnosis.as_ref(), now));
+        let facts = status
+            .map(|status| {
+                [
+                    ("ServiceAccount", &status.service_account),
+                    ("Pod IP", &status.ip),
+                    ("QoS class", &status.qos),
+                ]
+                .into_iter()
+                .filter(|(_, value)| !value.is_empty())
+                .map(|(label, value)| (label.into(), value.clone().into()))
+                .collect()
+            })
+            .unwrap_or_default();
+        let logs = diagnosis
+            .and_then(|diagnosis| diagnosis.container)
+            .or_else(|| pod.default.clone());
         self.cross_links = CrossLinks {
+            cause,
+            timeline,
+            facts,
+            logs,
             node,
             owners,
             services,

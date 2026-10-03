@@ -10,7 +10,8 @@ use std::rc::Rc;
 use freshkube_core::resources::ResourceKind;
 
 use super::{
-    KEYBOARD_PAUSE, KubeAccess, KubeSource, NotServed, ResourcesScreen, WATCH_COALESCE, row_id,
+    KEYBOARD_PAUSE, KubeAccess, KubeSource, ListView, NotServed, ResourcesScreen, WATCH_COALESCE,
+    row_id,
 };
 use crate::resources::example;
 use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
@@ -55,6 +56,9 @@ fn mount_sized(
             let mut view = ResourcesScreen::new(runtime.handle().clone(), window, cx);
             view.set_source(source, window, cx);
             view.set_visible(true, window, cx);
+            // Most tests read the rows in one sorted list; the problems
+            // view has tests of its own.
+            view.set_list_view(ListView::All, cx);
             view
         });
         screen = Some(view.clone());
@@ -132,9 +136,11 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(screen.read(cx).store.len(), 22);
         assert!(window.find("resource-list").visible());
-        // Every namespace: a Namespace column after the name. The wide
-        // columns (IP, Node) are left out.
-        let labels: Vec<String> = (0..6usize)
+        // The glyph first, which doesn't sort; then the name, after its
+        // namespace when listing every one, the owner, readiness with
+        // restarts, use, the node and age. IP stays left out.
+        assert!(window.try_find(("resource-sort", 0usize)).is_none());
+        let labels: Vec<String> = (1..8usize)
             .map(|ix| {
                 window
                     .find(("resource-sort", ix))
@@ -145,9 +151,9 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
             .collect();
         assert_eq!(
             labels,
-            ["Name", "Namespace", "Ready", "Status", "Restarts", "Age"]
+            ["Name", "Owner", "Ready", "CPU", "Memory", "Node", "Age"]
         );
-        assert!(window.try_find(("resource-sort", 6usize)).is_none());
+        assert!(window.try_find(("resource-sort", 8usize)).is_none());
 
         let third = identity_at(&screen, 2, cx);
         window.click(row_id(&third), cx);
@@ -161,19 +167,19 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         assert_eq!(selected(&screen, cx), Some(fourth.clone()));
 
         // Sorting moves rows, not the selection.
-        window.click(("resource-sort", 0usize), cx);
+        window.click(("resource-sort", 1usize), cx);
         window.render_frame(cx);
         assert_eq!(
-            window.find(("resource-sort", 0usize)).label(),
+            window.find(("resource-sort", 1usize)).label(),
             Some("Name, sorted ascending")
         );
         assert_eq!(selected(&screen, cx), Some(fourth.clone()));
         assert_eq!(window.find(row_id(&fourth)).selected(), Some(true));
         assert_ne!(identity_at(&screen, 3, cx), fourth);
-        window.click(("resource-sort", 0usize), cx);
+        window.click(("resource-sort", 1usize), cx);
         window.render_frame(cx);
         assert_eq!(
-            window.find(("resource-sort", 0usize)).label(),
+            window.find(("resource-sort", 1usize)).label(),
             Some("Name, sorted descending")
         );
 
@@ -217,10 +223,11 @@ fn a_namespace_narrows_namespaced_kinds_and_persists_across_kinds(cx: &mut TestA
                 .iter()
                 .all(|entry| entry.row().identity.namespace == "payments")
         );
-        // One namespace needs no Namespace column.
+        // One namespace isn't repeated before every name.
+        assert!(!view.layout.namespaced);
         assert_eq!(
-            window.find(("resource-sort", 1usize)).label(),
-            Some("Ready")
+            window.find(("resource-sort", 2usize)).label(),
+            Some("Owner")
         );
 
         // Cluster-scoped kinds have no namespace picker and list all.
@@ -237,8 +244,12 @@ fn a_namespace_narrows_namespaced_kinds_and_persists_across_kinds(cx: &mut TestA
         window.render_frame(cx);
         assert!(window.find("resource-namespace").visible());
         assert_eq!(screen.read(cx).store.len(), 3);
+        // A glyph from the replicas ready, then the name without its
+        // namespace.
+        assert!(!screen.read(cx).layout.namespaced);
+        assert_eq!(window.find(("resource-sort", 1usize)).label(), Some("Name"));
         assert_eq!(
-            window.find(("resource-sort", 1usize)).label(),
+            window.find(("resource-sort", 2usize)).label(),
             Some("Ready")
         );
     })
@@ -506,7 +517,8 @@ fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppC
                 window.find("detail-title").label(),
                 Some(third.address().as_str())
             );
-            let list = window.find("resource-list").bounds();
+            // The table scrolls sideways in what the pane leaves it.
+            let list = window.find("resource-table-scroll").bounds();
             let pane = window.find("resource-detail").bounds();
             if beside {
                 assert!(pane.left() >= list.right(), "{list:?} {pane:?}");
@@ -1072,6 +1084,310 @@ fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
             screen.open_identity_on(missing.clone(), crate::resources::Tab::Overview, window, cx)
         });
         assert_eq!(shown(&screen, cx), Some(missing));
+    })
+    .unwrap();
+}
+
+/// The pods page as it opens: problems first.
+fn problems(screen: &Entity<ResourcesScreen>, cx: &mut gpui_kit::App) {
+    screen.update(cx, |screen, cx| {
+        screen.set_list_view(ListView::Problems, cx)
+    });
+}
+
+#[gpui_kit::test]
+fn pods_show_problems_first_and_fold_healthy_ones(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        window.render_frame(cx);
+        // One pod crashes and one waits to start; the rest are folded.
+        let tally = screen.read(cx).projection.tally();
+        assert_eq!((tally.failing, tally.waiting, tally.total()), (1, 1, 22));
+        assert_eq!(tally.problems(), 2);
+        assert_eq!(screen.read(cx).projection.len(), 2);
+        assert!(window.find("resource-group-failing").visible());
+        assert!(window.find("resource-group-pending").visible());
+        let healthy = window
+            .find("resource-group-healthy")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(healthy.starts_with("Healthy · 20 pods in "), "{healthy}");
+        assert!(healthy.ends_with("· collapsed"), "{healthy}");
+        assert!(window.find("resource-collapsed").visible());
+        assert_eq!(
+            window.find("resource-tally-failing").label(),
+            Some("1 failing")
+        );
+        // The crashing pod says why after its name.
+        let failing = screen.read(cx).projection.row(&screen.read(cx).store, 0);
+        let failing = failing.unwrap().identity.clone();
+        assert_eq!(
+            screen
+                .read(cx)
+                .store
+                .get(&failing)
+                .unwrap()
+                .pod
+                .as_ref()
+                .unwrap()
+                .reason,
+            "CrashLoopBackOff · exit 1"
+        );
+
+        window.click("resource-group-healthy-toggle", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).projection.len(), 22);
+        assert!(window.try_find("resource-collapsed").is_none());
+        window.click("resource-group-healthy-toggle", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).projection.len(), 2);
+
+        // Show all lists every pod in one sorted list.
+        window.click("resource-show-all", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).list_view, ListView::All);
+        assert_eq!(screen.read(cx).projection.len(), 22);
+        assert!(window.try_find("resource-group-failing").is_none());
+        window.click("resource-view-problems", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).projection.len(), 2);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn opening_a_folded_pod_unfolds_the_healthy_ones(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        let healthy = {
+            let view = screen.read(cx);
+            view.store
+                .entries()
+                .iter()
+                .map(|entry| entry.row())
+                .find(|row| row.pod.as_ref().unwrap().reason.is_empty())
+                .unwrap()
+                .identity
+                .clone()
+        };
+        problems(&screen, cx);
+        screen.update(cx, |screen, cx| {
+            screen.open_identity_on(healthy.clone(), crate::resources::Tab::Overview, window, cx)
+        });
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), Some(healthy.clone()));
+        assert!(window.find(row_id(&healthy)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn pods_on_a_node_that_isnt_ready_group_under_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let links = Rc::new(RefCell::new(Vec::new()));
+    let sink = links.clone();
+    cx.update(|cx| {
+        cx.subscribe(
+            &screen,
+            move |_, link: &crate::resources::ResourceLink, _| {
+                if let crate::resources::ResourceLink::Node(node, tab) = link {
+                    sink.borrow_mut().push((node.clone(), *tab));
+                }
+            },
+        )
+        .detach()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.not_ready = [("talos-home".to_owned(), None)].into();
+            screen.set_list_view(ListView::Problems, cx);
+        });
+        window.render_frame(cx);
+        let group = window
+            .find("resource-group-node:talos-home")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(group.starts_with("Node not ready · "), "{group}");
+        assert!(group.contains("metrics are last known"), "{group}");
+        // The crashing pod stays failing; the waiting ones and the
+        // running ones can't be confirmed.
+        let tally = screen.read(cx).projection.tally();
+        assert_eq!(tally.failing, 1);
+        assert!(tally.warning > 10, "{tally:?}");
+        window.click("resource-group-node:talos-home-open-node", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        links.borrow().as_slice(),
+        [(
+            "talos-home".to_owned(),
+            crate::desktop::nodes::NodeTab::Overview
+        )]
+    );
+}
+
+#[gpui_kit::test]
+fn x_marks_rows_and_a_group_selects_all_of_its_own(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let first = identity_at(&screen, 0, cx);
+        window.click(row_id(&first), cx);
+        window.press("x", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).marked.contains(&first));
+        assert!(window.find("resource-marks").visible());
+        window.press("x", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).marked.is_empty());
+        assert!(window.try_find("resource-marks").is_none());
+
+        problems(&screen, cx);
+        window.render_frame(cx);
+        window.click("resource-group-failing-select", cx);
+        window.click("resource-group-pending-select", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).marked.len(), 2);
+        window.click("resource-marks-copy", cx);
+    })
+    .unwrap();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert_eq!(copied.lines().count(), 2);
+    assert!(copied.lines().all(|line| line.contains('/')), "{copied}");
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-marks-clear", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).marked.is_empty());
+        // Listing again starts without marks.
+        screen.update(cx, |screen, cx| {
+            screen.marked.insert(identity_at_now(screen));
+            screen.refresh(window, cx);
+        });
+        assert!(screen.read(cx).marked.is_empty());
+    })
+    .unwrap();
+}
+
+fn identity_at_now(screen: &ResourcesScreen) -> ResourceIdentity {
+    screen
+        .projection
+        .row(&screen.store, 0)
+        .unwrap()
+        .identity
+        .clone()
+}
+
+#[gpui_kit::test]
+fn l_opens_the_selected_pod_on_its_logs(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let first = identity_at(&screen, 0, cx);
+        window.click(row_id(&first), cx);
+        window.render_frame(cx);
+        window.press("l", cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(first));
+        assert_eq!(screen.read(cx).detail_tab(cx), crate::resources::Tab::Logs);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn density_switches_between_comfortable_and_compact_rows(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let first = row_id(&identity_at(&screen, 0, cx));
+        let comfortable = window.find(first.clone()).bounds().size.height;
+        window.click("resource-density", cx);
+        window.render_frame(cx);
+        let compact = window.find(first.clone()).bounds().size.height;
+        assert!(
+            (compact / comfortable - 26. / 34.).abs() < 0.01,
+            "{compact:?}"
+        );
+        window.click("resource-density", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(first).bounds().size.height, comfortable);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn pod_rows_show_owner_readiness_use_and_node(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        // Example use arrives with the rows, so the first frame has it.
+        assert_eq!(view.usage_state, super::UsageState::Known);
+        let running = view
+            .store
+            .entries()
+            .iter()
+            .find(|entry| entry.usage().is_some())
+            .unwrap()
+            .row()
+            .identity
+            .clone();
+        let row = view.store.get(&running).unwrap();
+        assert_eq!(row.owner.as_ref().unwrap().short, "deploy");
+        let label = window.find(row_id(&running)).label().unwrap().to_owned();
+        assert!(label.contains(" · deploy/"), "{label}");
+        // Use sorts by value with unknown use below any known: busiest
+        // first, then the pods with no use.
+        let pod = row.pod.clone().unwrap();
+        assert!(!pod.node.is_empty() && !pod.containers.is_empty());
+        screen.update(cx, |screen, cx| {
+            screen.sort_by(crate::resources::model::SortKey::Cpu, cx);
+            screen.sort_by(crate::resources::model::SortKey::Cpu, cx);
+        });
+        let view = screen.read(cx);
+        let cpu: Vec<Option<f64>> = (0..view.projection.len())
+            .map(|ix| {
+                view.projection
+                    .entry(&view.store, ix)
+                    .unwrap()
+                    .usage()
+                    .and_then(|usage| usage.cpu_millis)
+            })
+            .collect();
+        let known = cpu.iter().take_while(|cpu| cpu.is_some()).count();
+        assert!(
+            known > 0 && cpu[known..].iter().all(Option::is_none),
+            "{cpu:?}"
+        );
+        assert!(
+            cpu[..known].windows(2).all(|pair| pair[0] >= pair[1]),
+            "{cpu:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn workloads_take_their_glyph_from_replicas_ready(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("deployments.apps"), window, cx)
+        });
+        window.render_frame(cx);
+        let layout = &screen.read(cx).layout;
+        assert_eq!(layout.columns[0].source, super::layout::ColumnSource::Glyph);
+        assert!(matches!(
+            layout.tone_from,
+            Some(super::layout::ToneSource::Ready(_))
+        ));
+        assert!(screen.read(cx).projection.grouping().is_none());
+        assert!(window.try_find("resource-view").is_none());
     })
     .unwrap();
 }

@@ -408,6 +408,9 @@ impl Pilot {
                                 this.child(ui::meter(memory.percent(), memory.level(), cx))
                             },
                         )
+                        .when(self.node_history.read(cx).shows(), |this| {
+                            this.child(self.node_history.clone())
+                        })
                         .children(row.facts.iter().map(|(label, value)| {
                             h_flex()
                                 .gap(dp(12.))
@@ -498,11 +501,12 @@ impl Pilot {
                         },
                     )
                     .when(*tab == NodeTab::Services && row.service_problem, |this| {
-                        this.icon(
-                            gpui_kit::component::Icon::new(IconName::CircleAlert)
-                                .text_color(p.warn)
-                                .size(dp(12.)),
-                        )
+                        this.child(ui::status_mark(
+                            "node-services-problem",
+                            ui::Tone::Warn,
+                            "A system service on this node is unhealthy",
+                            cx,
+                        ))
                     })
                     .on_click(cx.listener({
                         let tab = *tab;

@@ -131,12 +131,7 @@ impl DetailPane {
                             h_flex()
                                 .gap_2()
                                 .child(if line.warning {
-                                    ui::tag(
-                                        Tone::Warn,
-                                        Some(IconName::TriangleAlert),
-                                        "Warning",
-                                        cx,
-                                    )
+                                    ui::tag(Tone::Warn, None, "Warning", cx)
                                 } else {
                                     ui::tag(Tone::Outline, None, "Normal", cx)
                                 })

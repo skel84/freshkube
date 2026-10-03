@@ -47,7 +47,7 @@ use crate::{
     mutation::{self, Confirmation, Operations},
     palette::palette,
     screens::{field, mono, page_body, page_scroll, panel},
-    ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp},
+    ui::{self, MONO_FONT, Tone, dp},
 };
 
 /// Cooperative cancellation handed to a runner; checked before each step.
@@ -922,7 +922,7 @@ fn readiness_rows(evidence: &BootstrapReadinessEvidence) -> Vec<(&'static str, T
 
 fn heading(text: &'static str) -> Div {
     div()
-        .font_family(DISPLAY_FONT)
+        .font_weight(ui::HEADING_WEIGHT)
         .text_size(dp(16.))
         .child(text)
 }
@@ -954,8 +954,9 @@ impl MaintenanceView {
     fn title_bar(&self, cx: &App) -> AnyElement {
         let p = palette(cx);
         TitleBar::new()
-            .h(dp(44.))
-            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(92.)))
+            // The app header's height, where the window puts its traffic lights.
+            .h(dp(52.))
+            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
             .child(
                 h_flex()
                     .id("maint-title")
@@ -978,12 +979,7 @@ impl MaintenanceView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Maintenance"),
                     )
-                    .child(ui::tag(
-                        Tone::Warn,
-                        Some(IconName::TriangleAlert),
-                        "Insecure",
-                        cx,
-                    )),
+                    .child(ui::tag(Tone::Warn, None, "Insecure", cx)),
             )
             .into_any_element()
     }

@@ -715,7 +715,6 @@ fn unavailable_reason<T>(source: &SourceSnapshot<T>) -> Option<String> {
 
 struct EtcdVerdict {
     tone: Tone,
-    icon: IconName,
     label: &'static str,
     detail: String,
 }
@@ -726,7 +725,6 @@ fn etcd_verdict(etcd: &SourceSnapshot<EtcdPreOperationAudit>) -> EtcdVerdict {
     let Some(audit) = etcd.value() else {
         return EtcdVerdict {
             tone: Tone::Unknown,
-            icon: IconName::CircleDashed,
             label: "Not reported",
             detail: format!(
                 "etcd status wasn't read, so there is no verdict yet. {}",
@@ -743,7 +741,6 @@ fn etcd_verdict(etcd: &SourceSnapshot<EtcdPreOperationAudit>) -> EtcdVerdict {
     if audit.safe_for_single_member_operation() {
         EtcdVerdict {
             tone: Tone::Good,
-            icon: IconName::CircleCheck,
             label: "A control plane can be taken down",
             detail,
         }
@@ -752,7 +749,6 @@ fn etcd_verdict(etcd: &SourceSnapshot<EtcdPreOperationAudit>) -> EtcdVerdict {
         // answers means quorum can't be confirmed, not that it's lost.
         EtcdVerdict {
             tone: Tone::Warn,
-            icon: IconName::CircleAlert,
             label: "Quorum unconfirmed",
             detail: format!(
                 "{detail}. Members that didn't answer are not reported, not failed; nothing that takes a member down is safe until they answer."
@@ -761,14 +757,12 @@ fn etcd_verdict(etcd: &SourceSnapshot<EtcdPreOperationAudit>) -> EtcdVerdict {
     } else if matches!(audit.quorum, QuorumState::Unknown) {
         EtcdVerdict {
             tone: Tone::Unknown,
-            icon: IconName::CircleDashed,
             label: "Not reported",
             detail,
         }
     } else {
         EtcdVerdict {
             tone: Tone::Warn,
-            icon: IconName::CircleAlert,
             label: "Not safe to take a control plane down",
             detail,
         }
@@ -804,13 +798,13 @@ fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
     out
 }
 
-fn health_tone(health: &HealthIndicator) -> (Tone, IconName, &'static str) {
+fn health_tone(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
     match health {
-        HealthIndicator::Healthy => (Tone::Good, IconName::CircleCheck, "OK"),
-        HealthIndicator::Warning => (Tone::Warn, IconName::CircleAlert, "Warning"),
-        HealthIndicator::Error => (Tone::Crit, IconName::CircleX, "Error"),
-        HealthIndicator::Info => (Tone::Accent, IconName::Info, "Info"),
-        _ => (Tone::Unknown, IconName::CircleDashed, "Unknown"),
+        HealthIndicator::Healthy => (Tone::Good, None, "OK"),
+        HealthIndicator::Warning => (Tone::Warn, None, "Warning"),
+        HealthIndicator::Error => (Tone::Crit, None, "Error"),
+        HealthIndicator::Info => (Tone::Accent, Some(IconName::Info), "Info"),
+        _ => (Tone::Unknown, None, "Unknown"),
     }
 }
 

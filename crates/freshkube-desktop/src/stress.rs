@@ -4,7 +4,10 @@
 //!
 //! - `FRESHKUBE_STRESS_KEYS`: space-separated keystrokes as GPUI parses them
 //!   (`down`, `enter`, `secondary-}`), `wait:<ms>` to pause, and
-//!   `type:<text>` to type into whatever has focus.
+//!   `type:<text>` to type into whatever has focus. `hover:<x0>,<y0>,<x1>,<y1>,<ms>`
+//!   moves the mouse in a straight line over that long, a step a frame, and
+//!   `scroll:<x>,<y>,<dy>` scrolls there; positions are fractions of the
+//!   window, so a script fits any window size.
 //! - `FRESHKUBE_STRESS_SECONDS`: quit after this long (default 30).
 //! - `FRESHKUBE_STRESS_WARMUP`: seconds left out of the summary (default 5).
 //!
@@ -34,6 +37,57 @@ pub(crate) fn start<V: 'static>(window: &mut Window, cx: &mut Context<V>) {
                 cx.background_executor()
                     .timer(Duration::from_millis(ms))
                     .await;
+                continue;
+            }
+            if let Some(args) = step.strip_prefix("hover:") {
+                let args = numbers(args);
+                if let [x0, y0, x1, y1, ms] = args[..] {
+                    let steps = (ms / 16.).max(1.) as usize;
+                    for n in 0..=steps {
+                        let t = n as f32 / steps as f32;
+                        let _ = cx.update(|window, cx| {
+                            let size = window.viewport_size();
+                            let position = gpui_kit::point(
+                                size.width * (x0 + (x1 - x0) * t),
+                                size.height * (y0 + (y1 - y0) * t),
+                            );
+                            window.dispatch_event(
+                                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                                    position,
+                                    pressed_button: None,
+                                    modifiers: gpui_kit::Modifiers::default(),
+                                }),
+                                cx,
+                            );
+                        });
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
+                    }
+                }
+                continue;
+            }
+            if let Some(args) = step.strip_prefix("scroll:") {
+                if let [x, y, dy] = numbers(args)[..] {
+                    let _ = cx.update(|window, cx| {
+                        let size = window.viewport_size();
+                        window.dispatch_event(
+                            gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+                                position: gpui_kit::point(size.width * x, size.height * y),
+                                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                    gpui_kit::px(0.),
+                                    gpui_kit::px(dy),
+                                )),
+                                modifiers: gpui_kit::Modifiers::default(),
+                                touch_phase: gpui_kit::TouchPhase::Moved,
+                            }),
+                            cx,
+                        );
+                    });
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+                }
                 continue;
             }
             let strokes: Vec<String> = match step.strip_prefix("type:") {
@@ -105,6 +159,10 @@ pub(crate) fn start<V: 'static>(window: &mut Window, cx: &mut Context<V>) {
         cx.update(|cx| cx.quit());
     })
     .detach();
+}
+
+fn numbers(text: &str) -> Vec<f32> {
+    text.split(',').filter_map(|n| n.parse().ok()).collect()
 }
 
 fn env_u64(name: &str, default: u64) -> u64 {

@@ -25,6 +25,8 @@ use crate::{
     forwards::ForwardsIndicator,
     logs::LogPanel,
     maintenance::MaintenanceView,
+    monitoring::history::HistoryView,
+    monitoring::page::{MonitoringEvent, MonitoringPage, TalosNodes},
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
     resources::{
@@ -51,12 +53,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::runtime::Handle;
 
@@ -86,10 +83,12 @@ pub(crate) mod probe {
 }
 
 pub(crate) use pages::Page;
-use pages::{ScreenKind, SidebarReveal};
+use pages::{Area, ColumnReveal, ScreenKind};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
-pub(crate) const SIDEBAR_WIDTH: f32 = 228.;
+/// The icon rail's width, and the navigation column's beside it, in dp.
+pub(crate) const RAIL_WIDTH: f32 = 64.;
+pub(crate) const COLUMN_WIDTH: f32 = 208.;
 pub(crate) const PAGE_PADDING: f32 = 26.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,7 +199,8 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                         }
                         .into(),
                     ),
-                    traffic_light_position: Some(point(px(16.), px(15.))),
+                    // Centred in the 52 px header.
+                    traffic_light_position: Some(point(px(18.), px(20.))),
                     ..TitleBar::title_bar_options()
                 }),
                 ..TitleBar::window_options()
@@ -328,11 +328,23 @@ pub(crate) struct Pilot {
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
     search: Entity<search::Search>,
-    /// Kubernetes navigation groups shown open in the sidebar, by slug.
-    kubernetes_groups: BTreeSet<&'static str>,
-    sidebar_scroll: ScrollHandle,
-    /// A Kubernetes row to scroll into view on the next frame.
-    sidebar_reveal: Option<SidebarReveal>,
+    /// The Monitoring page, which reads only while it shows.
+    monitoring: Entity<MonitoringPage>,
+    /// The node pane's CPU and memory, when the context has a Prometheus.
+    node_history: Entity<HistoryView>,
+    /// The rail's area, whose pages or kinds the column lists.
+    area: Area,
+    /// The kind each built-in group showed last, by group slug.
+    group_kinds: BTreeMap<&'static str, String>,
+    /// The custom kind shown last, which Custom Resources opens again.
+    last_custom: Option<ResourceKind>,
+    /// The Control plane page shown last.
+    last_control: Page,
+    /// Problem dots on the rail, from the overview's cards.
+    rail_marks: shell::RailMarks,
+    column_scroll: ScrollHandle,
+    /// A column row to scroll into view on the next frame.
+    column_reveal: Option<ColumnReveal>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
     /// Set without Talos: contexts come from a kubeconfig and only the
@@ -371,6 +383,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // The window opens on Overview, which has no navigation column.
+        crate::screens::set_chrome_width(RAIL_WIDTH);
         cx.bind_keys([
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
             KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
@@ -532,6 +546,16 @@ impl Pilot {
             },
         ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
+        let monitoring =
+            cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
+        subscriptions.push(cx.subscribe_in(
+            &monitoring,
+            window,
+            |this, _, event, _, cx| match event {
+                MonitoringEvent::Catalog => cx.notify(),
+                MonitoringEvent::History => this.push_history(cx),
+            },
+        ));
         subscriptions.extend([
             cx.observe(&custom, |_, _, cx| cx.notify()),
             // A kind that stopped being served may have taken its group's
@@ -635,9 +659,15 @@ impl Pilot {
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
-            kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
-            sidebar_scroll: ScrollHandle::new(),
-            sidebar_reveal: None,
+            monitoring,
+            node_history: cx.new(|_| HistoryView::new(runtime.clone(), "node")),
+            area: Area::Overview,
+            group_kinds: BTreeMap::new(),
+            last_custom: None,
+            last_control: Page::Etcd,
+            rail_marks: Default::default(),
+            column_scroll: ScrollHandle::new(),
+            column_reveal: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
             settings_open: false,
@@ -1017,8 +1047,21 @@ impl Pilot {
         self.node_pods.update(cx, |resources, cx| {
             resources.set_source(source.clone(), window, cx)
         });
+        self.monitoring.update(cx, |monitoring, cx| {
+            monitoring.set_source(source.clone(), cx)
+        });
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
+    }
+
+    /// Hands pod and node history the Monitoring page's Prometheus.
+    fn push_history(&mut self, cx: &mut Context<Self>) {
+        let history = self.monitoring.read(cx).history();
+        self.node_history
+            .update(cx, |view, cx| view.set_source(history.clone(), cx));
+        self.resources
+            .update(cx, |resources, cx| resources.set_history(history, cx));
+        cx.notify();
     }
 
     /// A refresh the user asked for. Unlike the automatic one it also lists
@@ -1028,6 +1071,14 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.refresh(window, cx));
+        }
+        if self.page == Page::Monitoring {
+            self.monitoring
+                .update(cx, |monitoring, cx| monitoring.refresh(cx));
+        }
+        if self.page == Page::Nodes {
+            self.node_history
+                .update(cx, |history, cx| history.refresh(cx));
         }
     }
 

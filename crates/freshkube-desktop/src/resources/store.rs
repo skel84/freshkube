@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
+use freshkube_core::resources::Amounts;
+
 use super::model::{ReadState, ResourceColumn, ResourceIdentity, ResourceRow};
+use super::rows;
 
 /// One change to observed state, in the shape of a list/watch stream:
 /// individual upserts and deletes, an atomic reset that replaces the columns
@@ -72,6 +75,10 @@ impl Snapshot {
 pub(crate) struct Widest {
     pub(crate) cells: Vec<usize>,
     pub(crate) namespace: usize,
+    /// The Owner column's `deploy/worker`.
+    pub(crate) owner: usize,
+    /// A pod's node, in full.
+    pub(crate) node: usize,
 }
 
 impl Widest {
@@ -83,6 +90,13 @@ impl Widest {
             *widest = (*widest).max(cell.chars().count());
         }
         self.namespace = self.namespace.max(row.identity.namespace.chars().count());
+        if let Some(owner) = &row.owner {
+            let label = owner.short.chars().count() + 1 + owner.name.chars().count();
+            self.owner = self.owner.max(label);
+        }
+        if let Some(pod) = &row.pod {
+            self.node = self.node.max(pod.node.chars().count());
+        }
     }
 }
 
@@ -105,6 +119,8 @@ pub(crate) struct ResourceEntry {
     search_key: String,
     /// Observation order: position in the last reset, then arrival order.
     seq: u64,
+    /// A pod's use, as metrics-server last reported it.
+    usage: Option<Amounts>,
 }
 
 impl ResourceEntry {
@@ -120,6 +136,7 @@ impl ResourceEntry {
             search_key: search_key.to_lowercase(),
             row,
             seq,
+            usage: None,
         }
     }
 
@@ -135,7 +152,15 @@ impl ResourceEntry {
     pub(crate) fn seq(&self) -> u64 {
         self.seq
     }
+
+    pub(crate) fn usage(&self) -> Option<&Amounts> {
+        self.usage.as_ref()
+    }
 }
+
+/// Pods' use by namespace, then name, so an entry finds its own without
+/// building a key.
+pub(crate) type Usage = HashMap<String, HashMap<String, Amounts>>;
 
 /// Observations for one session of one kind. Only batches change it, and
 /// every applied batch advances `revision`, which tells a projection that its
@@ -151,6 +176,11 @@ pub(crate) struct ResourceStore {
     next_seq: u64,
     /// Over every row since the last reset; deletes don't narrow it.
     widest: Widest,
+    /// The last use metrics-server reported, kept for pods that arrive later.
+    usage: Usage,
+    /// How much of every pod's node name all of them share, such as
+    /// `talos-`, which the Node column leaves out.
+    node_prefix: usize,
 }
 
 impl ResourceStore {
@@ -164,6 +194,8 @@ impl ResourceStore {
             index: HashMap::new(),
             next_seq: 0,
             widest: Widest::default(),
+            usage: Usage::new(),
+            node_prefix: 0,
         }
     }
 
@@ -178,6 +210,8 @@ impl ResourceStore {
         self.index.clear();
         self.next_seq = 0;
         self.widest = Widest::default();
+        self.usage.clear();
+        self.node_prefix = 0;
         self.epoch
     }
 
@@ -214,6 +248,26 @@ impl ResourceStore {
         &self.widest
     }
 
+    pub(crate) fn node_prefix(&self) -> usize {
+        self.node_prefix
+    }
+
+    /// Replaces pods' use as one revision, so a sort by it is redone.
+    pub(crate) fn set_usage(&mut self, usage: Usage) {
+        self.usage = usage;
+        for entry in &mut self.entries {
+            entry.usage = Self::usage_of(&self.usage, &entry.row);
+        }
+        self.revision += 1;
+    }
+
+    fn usage_of(usage: &Usage, row: &ResourceRow) -> Option<Amounts> {
+        usage
+            .get(&row.identity.namespace)
+            .and_then(|names| names.get(&row.identity.name))
+            .copied()
+    }
+
     pub(crate) fn slot(&self, identity: &ResourceIdentity) -> Option<usize> {
         self.index.get(identity).copied()
     }
@@ -241,20 +295,30 @@ impl ResourceStore {
                 ResourceEvent::Read(state) => self.read_state = state,
             }
         }
+        self.node_prefix = rows::shared_prefix(
+            self.entries
+                .iter()
+                .filter_map(|entry| entry.row.pod.as_ref())
+                .map(|pod| pod.node.as_str()),
+        );
         self.revision += 1;
         true
     }
 
     fn upsert(&mut self, row: ResourceRow) {
         self.widest.include(&row);
-        if let Some(slot) = self.slot(&row.identity) {
+        let usage = Self::usage_of(&self.usage, &row);
+        let slot = if let Some(slot) = self.slot(&row.identity) {
             let seq = self.entries[slot].seq;
             self.entries[slot] = ResourceEntry::new(row, seq);
+            slot
         } else {
             self.index.insert(row.identity.clone(), self.entries.len());
             self.entries.push(ResourceEntry::new(row, self.next_seq));
             self.next_seq += 1;
-        }
+            self.entries.len() - 1
+        };
+        self.entries[slot].usage = usage;
     }
 
     fn delete(&mut self, identity: &ResourceIdentity) {
@@ -273,6 +337,11 @@ impl ResourceStore {
         self.entries = snapshot.entries;
         self.index = snapshot.index;
         self.widest = snapshot.widest;
+        if !self.usage.is_empty() {
+            for entry in &mut self.entries {
+                entry.usage = Self::usage_of(&self.usage, &entry.row);
+            }
+        }
     }
 }
 

@@ -1,4 +1,7 @@
 use std::cmp::Ordering;
+use std::sync::Arc;
+
+use super::rows::{PodRow, RowOwner};
 
 /// Identifies one observed incarnation of any resource: the connection, the
 /// kubectl resource key (`pods`, `deployments.apps`), the address and the UID
@@ -54,7 +57,7 @@ impl ResourceColumn {
 }
 
 /// A row as printed for its kind. Cells line up with the store's columns.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResourceRow {
     pub(crate) identity: ResourceIdentity,
     pub(crate) cells: Vec<String>,
@@ -64,6 +67,12 @@ pub(crate) struct ResourceRow {
     /// Changes whenever the object does, so an open detail pane knows to
     /// read it again. Not part of identity.
     pub(crate) resource_version: String,
+    /// The object that manages this one, as the Owner column shows it.
+    pub(crate) owner: Option<RowOwner>,
+    /// Where the part of the name its owner generated starts.
+    pub(crate) generated: Option<usize>,
+    /// A pod's state, readiness, node and resources.
+    pub(crate) pod: Option<Arc<PodRow>>,
 }
 
 impl ResourceRow {
@@ -210,8 +219,18 @@ impl ReadState {
 pub(crate) enum SortKey {
     /// A printed column, by index into the store's columns.
     Column(usize),
-    /// The namespace, which the table adds when listing all namespaces.
+    /// The namespace, then the name: the Name column when listing all
+    /// namespaces, which shows both.
     Namespace,
+    /// The owner's short kind and name.
+    Owner,
+    /// A pod's restarts, then how many containers are ready.
+    Restarts,
+    /// A pod's use, as metrics-server reports it.
+    Cpu,
+    Memory,
+    /// The node a pod runs on.
+    Node,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -5,7 +5,6 @@
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_core::operations::{AuditLog, default_audit_path};
-use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Root, WindowExt,
     button::{Button, ButtonVariants},
@@ -295,7 +294,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                         )))
                     })
                     .children(request.warnings.iter().map(|warning| {
-                        ui::tag(Tone::Warn, Some(IconName::TriangleAlert), warning.clone(), cx)
+                        ui::tag(Tone::Warn, None, warning.clone(), cx)
                     }))
                     .children(notice),
             )

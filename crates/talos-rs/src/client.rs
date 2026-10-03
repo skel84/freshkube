@@ -571,6 +571,7 @@ impl TalosClient {
 
                 NodeSystemStat {
                     node: self.node_from_metadata(msg.metadata.as_ref(), 0),
+                    boot_time: msg.boot_time,
                     cpu_total,
                     process_running: msg.process_running,
                     process_blocked: msg.process_blocked,
@@ -2080,6 +2081,8 @@ pub struct NodeCpuInfo {
 #[derive(Debug, Clone)]
 pub struct NodeSystemStat {
     pub node: String,
+    /// When the node booted, in Unix seconds; 0 when it didn't say.
+    pub boot_time: u64,
     pub cpu_total: CpuStat,
     pub process_running: u64,
     pub process_blocked: u64,

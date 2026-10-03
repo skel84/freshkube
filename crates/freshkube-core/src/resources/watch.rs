@@ -375,7 +375,7 @@ pub(super) mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(
             seen[0],
-            "/api/v1/namespaces/default/pods?includeObject=Metadata&limit=500"
+            "/api/v1/namespaces/default/pods?includeObject=Object&limit=500"
         );
         assert!(seen[1].ends_with("&continue=tok%2B%2F%3D"), "{}", seen[1]);
     }

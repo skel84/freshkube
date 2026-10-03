@@ -82,6 +82,9 @@ pub(super) fn extra_rows(
                 created: Some(now - 720),
                 terminating: false,
                 resource_version: EXAMPLE_VERSION.into(),
+                owner: None,
+                generated: None,
+                pod: None,
             }
         })
         .collect();

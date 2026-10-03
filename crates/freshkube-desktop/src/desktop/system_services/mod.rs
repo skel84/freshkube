@@ -150,7 +150,7 @@ impl SystemServices {
         let logs_service = row.service.clone();
         let open_node = row.node.clone();
         let open_service = row.service.clone();
-        let (tone, _) = ui::health_tone(row.health);
+        let tone = ui::health_tone(row.health);
         h_flex()
             .id(row.id.clone())
             .test_support()
@@ -221,12 +221,7 @@ impl Render for SystemServices {
             .size_full()
             .p(dp(20.))
             .gap_3()
-            .child(
-                div()
-                    .text_size(dp(28.))
-                    .font_family(ui::DISPLAY_FONT)
-                    .child("System services"),
-            )
+            .child(ui::page_title("System services"))
             .child(
                 h_flex()
                     .gap_2()

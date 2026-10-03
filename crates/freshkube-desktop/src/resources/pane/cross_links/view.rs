@@ -3,6 +3,7 @@ use crate::{
     palette::palette,
     ui::{self, MONO_FONT, dp},
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
@@ -49,7 +50,15 @@ impl DetailPane {
                                     )))
                                 })),
                         )
-                        .child(ui::tag(node.tone, None, node.ready.clone(), cx)),
+                        .child(ui::tag(node.tone, None, node.ready.clone(), cx))
+                        .children(node.kubelet.as_ref().map(|(tone, text)| {
+                            div().id("pod-node-kubelet").test_support().child(ui::tag(
+                                *tone,
+                                None,
+                                text.clone(),
+                                cx,
+                            ))
+                        })),
                 )
                 .children(node.problems.iter().map(|problem| {
                     div()
@@ -75,7 +84,20 @@ impl DetailPane {
             .when(links.node.is_none(), |this| {
                 this.child(div().text_color(p.muted).child("Not scheduled on a node"))
             });
-        let controlled_by = section("Controlled by")
+        let relation = |label: &str| {
+            h_flex().items_start().gap(dp(10.)).child(
+                div()
+                    .w(dp(104.))
+                    .flex_none()
+                    .pt(dp(4.))
+                    .text_size(dp(12.))
+                    .text_color(p.muted)
+                    .child(label.to_owned()),
+            )
+        };
+        let controlled_by = v_flex()
+            .flex_1()
+            .min_w_0()
             .children(
                 links
                     .owners
@@ -83,9 +105,11 @@ impl DetailPane {
                     .map(|owner| self.owner_button(owner, cx)),
             )
             .when(links.owners.is_empty(), |this| {
-                this.child(div().text_color(p.muted).child("No controller"))
+                this.child(div().pt(dp(4.)).text_color(p.muted).child("No controller"))
             });
-        let selected_by = section("Selected by")
+        let selected_by = v_flex()
+            .flex_1()
+            .min_w_0()
             .children(links.services.iter().map(|service| {
                 let open = service.object.clone();
                 let forward = service.object.clone();
@@ -122,8 +146,43 @@ impl DetailPane {
                     )
             }))
             .when(!links.services_note.is_empty(), |this| {
-                this.child(div().text_color(p.muted).child(links.services_note.clone()))
+                this.child(
+                    div()
+                        .pt(dp(4.))
+                        .text_color(p.muted)
+                        .child(links.services_note.clone()),
+                )
             });
+        let relations = section("Relations")
+            .id("pod-relations")
+            .test_support()
+            .child(relation("Controlled by").child(controlled_by))
+            .child(relation("Selected by").child(selected_by))
+            .children(links.facts.iter().map(|(label, value)| {
+                relation(label).child(
+                    div()
+                        .pt(dp(4.))
+                        .min_w_0()
+                        .font_family(MONO_FONT)
+                        .text_size(dp(12.5))
+                        .child(value.clone()),
+                )
+            }));
+        let logs = links.logs.clone();
+        let primary = h_flex().gap(dp(8.)).child(
+            Button::new("pod-open-logs")
+                .primary()
+                .small()
+                .icon(IconName::ScrollText)
+                .label(match &logs {
+                    Some(name) if links.containers.len() > 1 => format!("Logs of {name}"),
+                    _ => "Logs".to_owned(),
+                })
+                .on_click(cx.listener(move |pane, _, _, cx| match &logs {
+                    Some(name) => pane.container_logs(name.clone(), false, cx),
+                    None => pane.set_tab(Tab::Logs, cx),
+                })),
+        );
         let containers = section("Containers").children(links.containers.iter().map(|container| {
             let name = container.name.clone();
             let previous_name = container.name.clone();
@@ -205,10 +264,20 @@ impl DetailPane {
             .test_support()
             .min_w_0()
             .gap(dp(18.))
-            .child(runs_on)
-            .child(controlled_by)
-            .child(selected_by)
+            .child(primary)
+            .children(links.cause.as_ref().map(|card| self.cause_card(card, cx)))
+            .when(self.history.read(cx).shows(), |this| {
+                this.child(self.history.clone())
+            })
+            .children(
+                links
+                    .timeline
+                    .as_ref()
+                    .map(|timeline| self.timeline(timeline, cx)),
+            )
             .child(containers)
+            .child(runs_on)
+            .child(relations)
             .child(recent)
             .children(
                 links

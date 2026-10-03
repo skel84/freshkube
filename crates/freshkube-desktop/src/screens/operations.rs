@@ -358,7 +358,8 @@ impl PreviewState {
 
 struct Verdict {
     tone: Tone,
-    icon: IconName,
+    /// Marks only the Outline verdict; status tones draw their glyph.
+    icon: Option<IconName>,
     label: &'static str,
     detail: String,
     /// Reboot and shutdown refuse on this.
@@ -389,7 +390,7 @@ fn verdict(kind: OperationKind, node: &NodeView) -> Verdict {
     if !kind.is_destructive() {
         return Verdict {
             tone: Tone::Outline,
-            icon: IconName::Info,
+            icon: Some(IconName::Info),
             label: "No etcd impact",
             detail: format!(
                 "{} doesn't take the node down; etcd isn't consulted.",
@@ -401,28 +402,28 @@ fn verdict(kind: OperationKind, node: &NodeView) -> Verdict {
     match &node.safety {
         SafetyStatus::Safe => Verdict {
             tone: Tone::Good,
-            icon: IconName::CircleCheck,
+            icon: None,
             label: "Safe",
             detail: impact_detail(&node.impact),
             blocks: false,
         },
         SafetyStatus::Warning(reason) => Verdict {
             tone: Tone::Warn,
-            icon: IconName::CircleAlert,
+            icon: None,
             label: "Warning",
             detail: reason.clone(),
             blocks: false,
         },
         SafetyStatus::Unsafe(reason) => Verdict {
             tone: Tone::Crit,
-            icon: IconName::CircleX,
+            icon: None,
             label: "Unsafe",
             detail: reason.clone(),
             blocks: true,
         },
         SafetyStatus::Unknown => Verdict {
             tone: Tone::Unknown,
-            icon: IconName::CircleDashed,
+            icon: None,
             label: "Unknown",
             detail: impact_detail(&node.impact),
             blocks: true,
@@ -606,15 +607,15 @@ fn describe(event: &OperationsEvent) -> (String, String) {
     }
 }
 
-fn status_label(status: OperationStatus) -> (Tone, IconName, &'static str) {
+fn status_label(status: OperationStatus) -> (Tone, Option<IconName>, &'static str) {
     match status {
-        OperationStatus::Succeeded => (Tone::Good, IconName::CircleCheck, "Completed"),
-        OperationStatus::Failed => (Tone::Crit, IconName::CircleX, "Failed"),
-        OperationStatus::Cancelled => (Tone::Warn, IconName::CircleAlert, "Cancelled"),
-        OperationStatus::Blocked => (Tone::Warn, IconName::CircleAlert, "Blocked"),
-        OperationStatus::NotConfirmed => (Tone::Warn, IconName::CircleAlert, "Not confirmed"),
-        OperationStatus::Unsupported => (Tone::Unknown, IconName::CircleDashed, "Unsupported"),
-        OperationStatus::NotStarted => (Tone::Outline, IconName::Pause, "Skipped"),
+        OperationStatus::Succeeded => (Tone::Good, None, "Completed"),
+        OperationStatus::Failed => (Tone::Crit, None, "Failed"),
+        OperationStatus::Cancelled => (Tone::Warn, None, "Cancelled"),
+        OperationStatus::Blocked => (Tone::Warn, None, "Blocked"),
+        OperationStatus::NotConfirmed => (Tone::Warn, None, "Not confirmed"),
+        OperationStatus::Unsupported => (Tone::Unknown, None, "Unsupported"),
+        OperationStatus::NotStarted => (Tone::Outline, Some(IconName::Pause), "Skipped"),
     }
 }
 
@@ -661,7 +662,7 @@ fn drain_text(drain: &DrainSummary) -> String {
 
 /// Overall outcome of a finished run. Counts every state, so a partial
 /// failure is never folded into one status.
-fn run_summary(run: &RunView) -> (Tone, IconName, String) {
+fn run_summary(run: &RunView) -> (Tone, String) {
     let total = run.targets.len();
     let completed = run.count(OperationStatus::Succeeded);
     let mut parts = vec![format!("{completed} of {total} completed")];
@@ -678,16 +679,16 @@ fn run_summary(run: &RunView) -> (Tone, IconName, String) {
             parts.push(format!("{count} {word}"));
         }
     }
-    let (tone, icon) = if completed == total && total > 0 {
-        (Tone::Good, IconName::CircleCheck)
+    let tone = if completed == total && total > 0 {
+        Tone::Good
     } else if completed > 0 {
-        (Tone::Warn, IconName::CircleAlert)
+        Tone::Warn
     } else if run.count(OperationStatus::Failed) > 0 {
-        (Tone::Crit, IconName::CircleX)
+        Tone::Crit
     } else {
-        (Tone::Warn, IconName::CircleAlert)
+        Tone::Warn
     };
-    (tone, icon, parts.join(" · "))
+    (tone, parts.join(" · "))
 }
 
 fn emit(tx: &mpsc::UnboundedSender<RunEvent>, event: OperationsEvent) {
@@ -2508,7 +2509,7 @@ impl OperationsScreen {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(ui::tag(v.tone, Some(v.icon), v.label, cx))
+                    .child(ui::tag(v.tone, v.icon, v.label, cx))
                     .child(
                         div()
                             .text_size(dp(12.5))
@@ -2751,7 +2752,7 @@ impl OperationsScreen {
                 .join(", ")
         );
         let status: AnyElement = if run.finished {
-            let (tone, icon, text) = run_summary(run);
+            let (tone, text) = run_summary(run);
             h_flex()
                 .id("ops-run-status")
                 .test_support()
@@ -2759,7 +2760,7 @@ impl OperationsScreen {
                 .aria_label(format!("Finished: {text}"))
                 .gap_2()
                 .items_center()
-                .child(ui::tag(tone, Some(icon), "Finished", cx))
+                .child(ui::tag(tone, None, "Finished", cx))
                 .child(div().text_size(dp(12.5)).child(text))
                 .into_any_element()
         } else {
@@ -2826,7 +2827,7 @@ impl OperationsScreen {
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(ui::tag(tone, Some(icon), label, cx))
+                        .child(ui::tag(tone, icon, label, cx))
                         .child(
                             div()
                                 .font_family(MONO_FONT)

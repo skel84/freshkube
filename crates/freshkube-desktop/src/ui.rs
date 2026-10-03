@@ -5,22 +5,36 @@ use gpui_kit::component::{
     empty::{
         EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
     },
-    h_flex, v_flex,
+    h_flex,
+    tooltip::Tooltip,
+    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, Canvas, DefiniteLength, Div, FontWeight, Hsla, PathBuilder, Pixels,
-    Rems, SharedString, Window, canvas, div, fill, point, px, relative, rems, size,
-    transparent_black,
+    AnyElement, App, Bounds, Canvas, DefiniteLength, Div, ElementId, FontWeight, Hsla, PathBuilder,
+    Pixels, Rems, SharedString, TestSupportExt, Window, canvas, div, fill, point, px, relative,
+    rems, size, transparent_black,
 };
 
 use crate::palette::palette;
 use crate::presentation::{Health, MemoryLevel};
 
-/// Condensed face for headings, figures and uppercase labels.
-pub(crate) const DISPLAY_FONT: &str = "IBM Plex Sans Condensed SemiBold";
-/// Monospace face for hostnames, addresses, versions and logs.
-pub(crate) const MONO_FONT: &str = "JetBrains Mono";
+/// Monospace face for resource names, hostnames, addresses, numbers and
+/// logs. The interface face, Lato, is the theme's `font.family`.
+pub(crate) const MONO_FONT: &str = "Source Code Pro";
+/// Weight of page titles and figures.
+pub(crate) const TITLE_WEIGHT: FontWeight = FontWeight::BLACK;
+/// Weight of section headings and uppercase captions.
+pub(crate) const HEADING_WEIGHT: FontWeight = FontWeight::BOLD;
+
+/// A page's title.
+pub(crate) fn page_title(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(dp(22.))
+        .line_height(dp(28.))
+        .font_weight(TITLE_WEIGHT)
+        .child(text.into())
+}
 
 /// The theme's base text size at the default text size, in pixels. `dp`
 /// lengths are pixels at this size.
@@ -50,11 +64,11 @@ pub(crate) enum Tone {
     Outline,
 }
 
-pub(crate) fn health_tone(health: Health) -> (Tone, IconName) {
+pub(crate) fn health_tone(health: Health) -> Tone {
     match health {
-        Health::Healthy => (Tone::Good, IconName::CircleCheck),
-        Health::Unhealthy => (Tone::Crit, IconName::CircleX),
-        Health::Unknown => (Tone::Unknown, IconName::CircleDashed),
+        Health::Healthy => Tone::Good,
+        Health::Unhealthy => Tone::Crit,
+        Health::Unknown => Tone::Unknown,
     }
 }
 
@@ -66,7 +80,9 @@ pub(crate) fn memory_tone(level: MemoryLevel) -> Option<(Tone, &'static str)> {
     }
 }
 
-/// A compact status pill; the label always carries the meaning, never color alone.
+/// A compact status pill; the label always carries the meaning, never color
+/// alone. A status tone leads with its [`status_glyph`]; `icon` marks only
+/// Accent and Outline tags, which carry no status.
 pub(crate) fn tag(
     tone: Tone,
     icon: Option<IconName>,
@@ -86,8 +102,8 @@ pub(crate) fn tag(
         .flex_none()
         .gap(dp(5.))
         .h(dp(20.))
-        .px(dp(7.))
-        .rounded(px(5.))
+        .px(dp(8.))
+        .rounded_full()
         .bg(bg)
         .text_color(fg)
         .text_size(dp(11.5))
@@ -98,58 +114,113 @@ pub(crate) fn tag(
                 .border_color(p.line_strong)
                 .font_weight(FontWeight::MEDIUM)
         })
-        .when_some(icon, |this, icon| {
-            this.child(Icon::new(icon).size(dp(13.)).text_color(fg))
+        .map(|this| match status_glyph(tone, cx) {
+            Some(glyph) => this.child(glyph),
+            None => this.when_some(icon, |this, icon| {
+                this.child(Icon::new(icon).size(dp(13.)).text_color(fg))
+            }),
         })
         .child(text.into())
 }
 
-/// Shape and color together: ● healthy, ◆ unhealthy, ○ not reported.
-pub(crate) fn glyph(health: Health, cx: &App) -> AnyElement {
+/// The status language of docs/DESIGN.md, shape and color together: ● OK,
+/// outlined ▲ warning, ◆ critical, ○ pending or unknown. Accent and Outline
+/// carry no status and have no glyph.
+pub(crate) fn status_glyph(tone: Tone, cx: &App) -> Option<AnyElement> {
     let p = palette(cx);
-    match health {
-        Health::Healthy => div()
-            .flex_none()
+    let shape = match tone {
+        Tone::Good => div()
             .size(dp(8.))
             .rounded_full()
             .bg(p.good)
             .into_any_element(),
-        Health::Unknown => div()
-            .flex_none()
+        Tone::Warn => triangle(p.warn_ink).size(dp(10.)).into_any_element(),
+        Tone::Crit => diamond(p.crit).size(dp(9.)).into_any_element(),
+        Tone::Unknown => div()
             .size(dp(8.))
             .rounded_full()
             .border(px(1.5))
-            .border_color(p.unk)
+            .border_color(p.unk_ink)
             .into_any_element(),
-        Health::Unhealthy => {
-            let color = p.crit;
-            canvas(
-                |_, _, _| {},
-                move |bounds: Bounds<Pixels>, _, window, _| {
-                    let center = bounds.center();
-                    let r = bounds.size.width / 2.;
-                    let mut path = PathBuilder::fill();
-                    path.move_to(point(center.x, center.y - r));
-                    path.line_to(point(center.x + r, center.y));
-                    path.line_to(point(center.x, center.y + r));
-                    path.line_to(point(center.x - r, center.y));
-                    path.close();
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, color);
-                    }
-                },
-            )
+        Tone::Accent | Tone::Outline => return None,
+    };
+    Some(
+        h_flex()
             .flex_none()
-            .size(dp(9.))
-            .into_any_element()
-        }
-    }
+            .size(dp(10.))
+            .items_center()
+            .justify_center()
+            .child(shape)
+            .into_any_element(),
+    )
 }
 
-/// Uppercase condensed caption used for section and field labels.
+/// A standalone [`status_glyph`] with a tooltip that says what it means.
+pub(crate) fn status_mark(
+    id: impl Into<ElementId>,
+    tone: Tone,
+    tooltip: impl Into<SharedString>,
+    cx: &App,
+) -> AnyElement {
+    let tooltip = tooltip.into();
+    div()
+        .id(id)
+        .flex_none()
+        .children(status_glyph(tone, cx))
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .test_support()
+        .into_any_element()
+}
+
+/// The status mark for a health, with its label as the tooltip.
+pub(crate) fn health_mark(id: impl Into<ElementId>, health: Health, cx: &App) -> AnyElement {
+    let label = crate::presentation::health_text(&health);
+    status_mark(id, health_tone(health), label, cx)
+}
+
+fn diamond(color: Hsla) -> Canvas<()> {
+    canvas(
+        |_, _, _| {},
+        move |bounds: Bounds<Pixels>, _, window, _| {
+            let center = bounds.center();
+            let r = bounds.size.width / 2.;
+            let mut path = PathBuilder::fill();
+            path.move_to(point(center.x, center.y - r));
+            path.line_to(point(center.x + r, center.y));
+            path.line_to(point(center.x, center.y + r));
+            path.line_to(point(center.x - r, center.y));
+            path.close();
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+}
+
+fn triangle(color: Hsla) -> Canvas<()> {
+    canvas(
+        |_, _, _| {},
+        move |bounds: Bounds<Pixels>, _, window, _| {
+            // Inset by half the stroke so the outline stays inside the box.
+            let inset = px(1.);
+            let (left, right) = (bounds.left() + inset, bounds.right() - inset);
+            let (top, bottom) = (bounds.top() + inset, bounds.bottom() - inset);
+            let mut path = PathBuilder::stroke(px(1.5));
+            path.move_to(point(bounds.center().x, top));
+            path.line_to(point(right, bottom));
+            path.line_to(point(left, bottom));
+            path.close();
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+}
+
+/// Uppercase caption used for section, column and field labels.
 pub(crate) fn caption(text: &str, cx: &App) -> Div {
     div()
-        .font_family(DISPLAY_FONT)
+        .font_weight(HEADING_WEIGHT)
         .text_size(dp(11.))
         .text_color(palette(cx).muted)
         .whitespace_nowrap()
@@ -364,7 +435,7 @@ pub(crate) fn empty_state(
                         )
                         .title(
                             EmptyTitle::new()
-                                .font_family(DISPLAY_FONT)
+                                .font_weight(HEADING_WEIGHT)
                                 .text_size(dp(19.))
                                 .text_color(p.ink)
                                 .child(title.into()),

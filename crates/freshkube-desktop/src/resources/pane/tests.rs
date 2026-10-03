@@ -105,7 +105,9 @@ fn an_object_reads_at_once_with_its_overview_yaml_and_events(cx: &mut TestAppCon
         assert!(window.try_find("detail-state").is_none());
         assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
         assert!(window.find("detail-overview").visible());
-        assert!(window.find(("detail-condition", 0usize)).visible());
+        // A crashing pod opens on why; its conditions follow further down.
+        assert!(window.find("pod-cause").visible());
+        assert!(window.try_find(("detail-condition", 0usize)).is_some());
 
         window.click("detail-tab-yaml", cx);
         window.render_frame(cx);
@@ -669,4 +671,56 @@ fn find_keys_follow_the_tab_shown(cx: &mut TestAppContext) {
         assert!(!pane.read(cx).focus.is_focused(window));
         assert!(pane.read(cx).focus.contains_focused(window, cx));
     });
+}
+
+#[gpui_kit::test]
+fn a_crashing_pod_opens_on_why_with_its_restarts_and_relations(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = crashing_pod();
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("pod-cause").label(),
+            Some("Why it's failing · CrashLoopBackOff")
+        );
+        assert!(window.find("pod-timeline").visible());
+        assert!(window.try_find("pod-relations").is_some());
+        let links = &pane.read(cx).cross_links;
+        let facts: Vec<&str> = links
+            .facts
+            .iter()
+            .map(|(label, _)| label.as_ref())
+            .collect();
+        assert_eq!(facts, ["ServiceAccount", "Pod IP", "QoS class"]);
+        let card = links.cause.as_ref().unwrap();
+        assert!(card.previous);
+        let container = card.container.clone().unwrap();
+
+        // The crashed instance's logs are one click away.
+        window.click("pod-cause-previous", cx);
+        window.render_frame(cx);
+        assert_eq!(pane.read(cx).tab(), super::Tab::Logs);
+        let logs = pane.read(cx).logs.read(cx);
+        assert_eq!(logs.selected_container(), Some(container.as_str()));
+        assert!(logs.reads_previous());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_healthy_pod_has_no_cause_and_logs_is_its_first_action(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        window.render_frame(cx);
+        assert!(window.try_find("pod-cause").is_none());
+        assert!(window.find("pod-open-logs").visible());
+        window.click("pod-open-logs", cx);
+        window.render_frame(cx);
+        assert_eq!(pane.read(cx).tab(), super::Tab::Logs);
+        assert!(!pane.read(cx).logs.read(cx).reads_previous());
+    })
+    .unwrap();
 }

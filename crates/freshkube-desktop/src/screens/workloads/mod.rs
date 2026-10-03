@@ -172,12 +172,12 @@ fn health_label(health: HealthState) -> &'static str {
     }
 }
 
-fn health_tone(health: HealthState) -> (Tone, IconName) {
+fn health_tone(health: HealthState) -> Tone {
     match health {
-        HealthState::Failing => (Tone::Crit, IconName::CircleX),
-        HealthState::Degraded => (Tone::Warn, IconName::CircleAlert),
-        HealthState::Pending => (Tone::Unknown, IconName::Hourglass),
-        HealthState::Healthy => (Tone::Good, IconName::CircleCheck),
+        HealthState::Failing => Tone::Crit,
+        HealthState::Degraded => Tone::Warn,
+        HealthState::Pending => Tone::Unknown,
+        HealthState::Healthy => Tone::Good,
     }
 }
 
@@ -580,10 +580,10 @@ impl WorkloadsScreen {
                 .child(mono(value))
         };
         let pods = |health: HealthState, value: usize| {
-            let (tone, icon) = health_tone(health);
+            let tone = health_tone(health);
             ui::tag(
                 tone,
-                Some(icon),
+                None,
                 format!(
                     "{} {}",
                     count(value, WorkloadSource::Pods),
@@ -672,7 +672,7 @@ impl WorkloadsScreen {
         let selected = self.selected.as_ref() == Some(&key);
         let view = self.describe(row, data);
         let is_namespace = matches!(row, RowRef::Namespace(_));
-        let (tone, icon) = health_tone(view.health);
+        let tone = health_tone(view.health);
         let label = health_label(view.health);
         let aria = format!(
             "{} {} · {label} · {} · {}",
@@ -695,7 +695,7 @@ impl WorkloadsScreen {
                 cell(STATUS)
                     .flex()
                     .items_center()
-                    .child(ui::tag(tone, Some(icon), label, cx)),
+                    .child(ui::tag(tone, None, label, cx)),
             )
             .child(
                 cell(NAME)
@@ -770,7 +770,7 @@ impl WorkloadsScreen {
         let namespaces = &data.snapshot.namespaces;
         let gone = || hint("The selected item is no longer reported by the cluster.");
         let title = |name: String, health: HealthState, cx: &App| {
-            let (tone, icon) = health_tone(health);
+            let tone = health_tone(health);
             h_flex()
                 .id("workload-detail-title")
                 .test_support()
@@ -785,7 +785,7 @@ impl WorkloadsScreen {
                         .truncate()
                         .child(name),
                 )
-                .child(ui::tag(tone, Some(icon), health_label(health), cx))
+                .child(ui::tag(tone, None, health_label(health), cx))
         };
         match key {
             ItemKey::Namespace(name) => {

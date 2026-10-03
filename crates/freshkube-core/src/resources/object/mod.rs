@@ -14,6 +14,12 @@ use super::forward::{DeclaredPort, declared_ports};
 use super::kinds::ResourceKind;
 use super::pod_logs::{PodContainers, pod_containers};
 
+mod pod_status;
+
+pub use pod_status::{
+    ContainerStatus, Diagnosis, Instance, PodStatus, Severity, is_error_reason, next_restart,
+};
+
 /// kubectl apply stores the whole applied object here, a Secret's data
 /// included.
 const LAST_APPLIED: &str = "kubectl.kubernetes.io/last-applied-configuration";
@@ -50,6 +56,8 @@ pub struct Overview {
     pub secret: Option<SecretSummary>,
     /// Present for a Pod: its containers, for choosing a log.
     pub pod: Option<PodContainers>,
+    /// Present for a Pod: its status, and why it fails or waits.
+    pub pod_status: Option<PodStatus>,
     /// Present for a kind that can be forwarded: the ports it declares.
     pub ports: Option<Vec<DeclaredPort>>,
 }
@@ -142,6 +150,7 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     let mut overview = overview(&object);
     overview.secret = secret;
     overview.pod = kind.is_pod().then(|| pod_containers(&object));
+    overview.pod_status = kind.is_pod().then(|| PodStatus::new(&object));
     overview.ports = declared_ports(kind, &object);
     let yaml = serde_yaml::to_string(&object)
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
@@ -352,6 +361,7 @@ fn overview(object: &Value) -> Overview {
             .collect(),
         secret: None,
         pod: None,
+        pod_status: None,
         ports: None,
     }
 }

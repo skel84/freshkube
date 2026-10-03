@@ -1,6 +1,7 @@
 //! Pages and how the shell moves between them: which page shows, which
 //! Kubernetes kind and context it shows, and where focus lands.
 use super::Pilot;
+use crate::desktop::{COLUMN_WIDTH, RAIL_WIDTH};
 use crate::resources::{self, navigation, shell};
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::WindowExt;
@@ -17,6 +18,7 @@ pub(crate) enum Page {
     Security,
     Lifecycle,
     Operations,
+    Monitoring,
 }
 
 /// The retained inspection views, including those embedded in the node pane.
@@ -47,23 +49,128 @@ impl ScreenKind {
     ];
 }
 
-/// A Kubernetes sidebar row to scroll into view; scrolling is minimal, so a
-/// row already in view stays put.
+/// A row of the navigation column to scroll into view; scrolling is
+/// minimal, so a row already in view stays put.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum SidebarReveal {
-    /// A kind's row by kubectl key, or its group's header while the group
-    /// is closed.
+pub(super) enum ColumnReveal {
+    /// A kind's row by kubectl key.
     Kind(String),
-    /// The last kind of a group just opened, so its kinds show.
-    Group(&'static str),
-    /// The last row of Custom Resources just opened, once discovered.
+    /// The last row of Custom Resources just shown, once discovered.
     Custom,
     /// The last row of a custom API group just opened, once discovered.
     ApiGroup(String),
 }
 
+/// A button of the icon rail. A page or kind of its own, or a group whose
+/// pages and kinds the navigation column lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Area {
+    Overview,
+    Nodes,
+    Namespaces,
+    Events,
+    /// Dashboards from Prometheus, listed in its column.
+    Monitoring,
+    /// A built-in group of Kubernetes kinds, by its navigation slug.
+    Group(&'static str),
+    Custom,
+    ControlPlane,
+}
+
+impl Area {
+    /// The rail's buttons in order, as sections split by a divider.
+    pub(crate) const RAIL: [&'static [Self]; 3] = [
+        &[
+            Self::Overview,
+            Self::Nodes,
+            Self::Namespaces,
+            Self::Events,
+            Self::Monitoring,
+        ],
+        &[
+            Self::Group("workloads"),
+            Self::Group("networking"),
+            Self::Group("configuration"),
+            Self::Group("storage"),
+            Self::Group("access-control"),
+            Self::Group("administration"),
+            Self::Custom,
+        ],
+        &[Self::ControlPlane],
+    ];
+
+    /// The area that holds a page, and for Resources the kind it shows.
+    pub(crate) fn of(page: Page, kind: &ResourceKind) -> Self {
+        match page {
+            Page::Overview => Self::Overview,
+            Page::Nodes => Self::Nodes,
+            Page::Health => Self::Group("workloads"),
+            Page::Resources => match kind.key().as_str() {
+                "namespaces" => Self::Namespaces,
+                "events" => Self::Events,
+                key => navigation::group_of(key).map_or(Self::Custom, Self::Group),
+            },
+            Page::Etcd
+            | Page::SystemServices
+            | Page::Security
+            | Page::Lifecycle
+            | Page::Operations => Self::ControlPlane,
+            Page::Monitoring => Self::Monitoring,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Nodes => "Nodes",
+            Self::Namespaces => "Namespaces",
+            Self::Events => "Events",
+            Self::Monitoring => "Monitoring",
+            Self::Group(slug) => navigation::NAVIGATION
+                .iter()
+                .find(|group| group.slug == slug)
+                .map_or(slug, |group| group.label),
+            Self::Custom => "Custom Resources",
+            Self::ControlPlane => "Control plane",
+        }
+    }
+
+    /// The element id of the area's rail button.
+    pub(crate) fn id(self) -> SharedString {
+        match self {
+            Self::Overview => "nav-overview".into(),
+            Self::Nodes => "nav-nodes".into(),
+            Self::Namespaces => "nav-k8s-namespaces".into(),
+            Self::Events => "nav-k8s-events".into(),
+            Self::Monitoring => "nav-monitoring".into(),
+            Self::Group(slug) => format!("nav-k8s-group-{slug}").into(),
+            Self::Custom => "nav-k8s-group-custom".into(),
+            Self::ControlPlane => "nav-control-plane".into(),
+        }
+    }
+
+    /// The Command-number that shows the area, for the rail's tooltip.
+    pub(crate) fn shortcut(self) -> Option<&'static str> {
+        match self {
+            Self::Overview => Some("1"),
+            Self::Nodes => Some("2"),
+            Self::Namespaces => Some("3"),
+            Self::Events => Some("4"),
+            _ => None,
+        }
+    }
+
+    /// Whether the navigation column lists the area's pages or kinds.
+    pub(crate) fn has_column(self) -> bool {
+        matches!(
+            self,
+            Self::Monitoring | Self::Group(_) | Self::Custom | Self::ControlPlane
+        )
+    }
+}
+
 impl Page {
-    pub(super) const ALL: [Page; 9] = [
+    pub(super) const ALL: [Page; 10] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -73,6 +180,7 @@ impl Page {
         Self::Security,
         Self::Lifecycle,
         Self::Operations,
+        Self::Monitoring,
     ];
 
     pub(super) fn screen(self) -> Option<ScreenKind> {
@@ -96,6 +204,7 @@ impl Page {
             Self::Security => "Security",
             Self::Lifecycle => "Lifecycle",
             Self::Operations => "Operations",
+            Self::Monitoring => "Monitoring",
         }
     }
     pub(crate) fn slug(self) -> &'static str {
@@ -109,6 +218,7 @@ impl Page {
             Self::Security => "security",
             Self::Lifecycle => "lifecycle",
             Self::Operations => "operations",
+            Self::Monitoring => "monitoring",
         }
     }
 }
@@ -190,6 +300,8 @@ impl Pilot {
             Page::Nodes => 1,
             Page::Resources if self.resource_kind.key() == "namespaces" => 2,
             Page::Resources if self.resource_kind.key() == "events" => 3,
+            // Between Events and Health, which has no row of its own.
+            Page::Monitoring => 3,
             Page::Health => 4,
             Page::Resources => 5,
             Page::Etcd => 6,
@@ -239,6 +351,9 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
+        } else if self.page == Page::Monitoring {
+            let focus = self.monitoring.read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
         } else if self.page == Page::Nodes
             && self.node_workspace.open
             && self.node_workspace.tab == super::nodes::NodeTab::Logs
@@ -270,14 +385,22 @@ impl Pilot {
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
         self.page = page;
+        let area = Area::of(page, &self.resource_kind);
+        if area == Area::ControlPlane {
+            self.last_control = page;
+        }
+        self.set_area(area, cx);
         self.sync_node_visibility(window, cx);
         if let Some(screen) = self.active_screen() {
             screen.set_embedded(page == Page::Nodes, cx);
         }
-        // However the page was reached, its kind shows in the sidebar.
+        // However the page was reached, its kind shows in the column.
         if page == Page::Resources {
-            self.sidebar_reveal = Some(SidebarReveal::Kind(self.resource_kind.key()));
+            self.column_reveal = Some(ColumnReveal::Kind(self.resource_kind.key()));
         }
+        self.monitoring.update(cx, |monitoring, cx| {
+            monitoring.set_visible(page == Page::Monitoring, cx)
+        });
         self.resources.update(cx, |resources, cx| {
             resources.set_visible(page == Page::Resources, window, cx);
             if page == Page::Resources {
@@ -293,8 +416,8 @@ impl Pilot {
         cx.notify();
     }
 
-    /// Shows one Kubernetes kind, opening its sidebar group: a built-in
-    /// one, or Custom Resources and the kind's API group.
+    /// Shows one Kubernetes kind, with its group in the navigation column:
+    /// a built-in one, or Custom Resources and the kind's API group.
     pub(super) fn open_kind(
         &mut self,
         kind: ResourceKind,
@@ -308,13 +431,17 @@ impl Pilot {
         if !matches!(kind.key().as_str(), "namespaces" | "events") {
             self.last_kind = kind.clone();
         }
-        match navigation::group_of(&kind.key()) {
+        let key = kind.key();
+        match navigation::group_of(&key) {
             Some(group) => {
-                self.kubernetes_groups.insert(group);
+                self.group_kinds.insert(group, key);
             }
-            None => self
-                .custom
-                .update(cx, |custom, cx| custom.reveal(&kind, cx)),
+            None if !matches!(key.as_str(), "namespaces" | "events") => {
+                self.last_custom = Some(kind.clone());
+                self.custom
+                    .update(cx, |custom, cx| custom.reveal(&kind, cx));
+            }
+            None => {}
         }
         self.resource_kind = kind.clone();
         self.resources
@@ -336,20 +463,67 @@ impl Pilot {
         }
     }
 
-    pub(super) fn toggle_kubernetes_group(&mut self, slug: &'static str, cx: &mut Context<Self>) {
-        if !self.kubernetes_groups.remove(slug) {
-            self.kubernetes_groups.insert(slug);
-            // An opened group shows its kinds, not just its header.
-            self.sidebar_reveal = Some(SidebarReveal::Group(slug));
+    /// Marks the rail's area and sizes the chrome around the page. Custom
+    /// Resources discovers only while its column shows.
+    pub(super) fn set_area(&mut self, area: Area, cx: &mut Context<Self>) {
+        crate::screens::set_chrome_width(if area.has_column() {
+            RAIL_WIDTH + COLUMN_WIDTH
+        } else {
+            RAIL_WIDTH
+        });
+        if self.area == area {
+            return;
         }
+        self.area = area;
+        self.custom
+            .update(cx, |custom, cx| custom.set_open(area == Area::Custom, cx));
         cx.notify();
     }
 
-    pub(super) fn toggle_custom_resources(&mut self, cx: &mut Context<Self>) {
-        self.custom.update(cx, |custom, cx| custom.toggle(cx));
-        if self.custom.read(cx).is_open() {
-            self.sidebar_reveal = Some(SidebarReveal::Custom);
+    /// A rail button: the area's page, or the kind or page it showed last.
+    /// Custom Resources, and Control plane without Talos, show their column
+    /// and keep the page until a row is chosen.
+    pub(super) fn show_area(&mut self, area: Area, window: &mut Window, cx: &mut Context<Self>) {
+        match area {
+            Area::Overview => self.navigate_from_keyboard(Page::Overview, window, cx),
+            Area::Nodes => self.navigate_from_keyboard(Page::Nodes, window, cx),
+            Area::Namespaces => self.open_builtin("namespaces", window, cx),
+            Area::Events => self.open_builtin("events", window, cx),
+            Area::Monitoring => self.navigate_from_keyboard(Page::Monitoring, window, cx),
+            Area::Group(slug) => {
+                let key = self.group_kinds.get(slug).cloned().or_else(|| {
+                    navigation::NAVIGATION
+                        .iter()
+                        .find(|group| group.slug == slug)
+                        .and_then(|group| group.items.first())
+                        .map(|(_, key)| (*key).to_owned())
+                });
+                if let Some(key) = key {
+                    self.open_builtin(&key, window, cx);
+                }
+            }
+            Area::Custom => {
+                // A kind from another connection may not be served here.
+                let last = self
+                    .last_custom
+                    .as_ref()
+                    .and_then(|kind| self.custom.read(cx).kind(&kind.key()));
+                match last {
+                    Some(kind) => self.open_kind(kind, window, cx),
+                    None => self.show_custom(cx),
+                }
+            }
+            Area::ControlPlane if self.kubernetes_only.is_some() => {
+                self.set_area(Area::ControlPlane, cx);
+            }
+            Area::ControlPlane => self.navigate_from_keyboard(self.last_control, window, cx),
         }
+    }
+
+    /// Shows Custom Resources' column, discovering its groups.
+    pub(super) fn show_custom(&mut self, cx: &mut Context<Self>) {
+        self.set_area(Area::Custom, cx);
+        self.column_reveal = Some(ColumnReveal::Custom);
         cx.notify();
     }
 
@@ -357,7 +531,7 @@ impl Pilot {
         self.custom
             .update(cx, |custom, cx| custom.toggle_group(name, cx));
         if self.custom.read(cx).is_group_open(name) {
-            self.sidebar_reveal = Some(SidebarReveal::ApiGroup(name.to_owned()));
+            self.column_reveal = Some(ColumnReveal::ApiGroup(name.to_owned()));
         }
         cx.notify();
     }

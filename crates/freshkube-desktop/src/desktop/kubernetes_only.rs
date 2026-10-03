@@ -7,7 +7,7 @@ use super::{PAGE_PADDING, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::resources::direct::DirectAccess;
-use crate::ui::{self, MONO_FONT, dp};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::resources::{KubeconfigReport, discover_contexts, kubeconfig_sources};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -321,54 +321,37 @@ impl Pilot {
     pub(super) fn render_kubernetes_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let context = self.applied.context.clone().unwrap_or_default();
-        let icon = |name: IconName, color: Hsla| {
-            Icon::new(name)
-                .size(dp(13.))
-                .text_color(color)
-                .into_any_element()
+        let spinner = || {
+            Some(
+                Icon::new(IconName::RefreshCw)
+                    .size(dp(13.))
+                    .text_color(p.accent)
+                    .into_any_element(),
+            )
         };
-        let dot = |color: Option<Hsla>| {
-            div()
-                .flex_none()
-                .size(dp(8.))
-                .rounded_full()
-                .map(|this| match color {
-                    Some(color) => this.bg(color),
-                    None => this.border(px(1.5)).border_color(p.faint),
-                })
-                .into_any_element()
-        };
+        let glyph = |tone: Tone| ui::status_glyph(tone, cx);
         let connection = self
             .kubernetes_only
             .as_ref()
             .map(|kube| kube.connection.clone())
             .unwrap_or(KubeConnection::Idle);
         let (indicator, text) = if let Some(error) = &self.config_error {
-            (
-                icon(IconName::CircleX, p.crit_ink),
-                format!("No kubeconfig loaded: {error}"),
-            )
+            (glyph(Tone::Crit), format!("No kubeconfig loaded: {error}"))
         } else if self.config_loading {
-            (
-                icon(IconName::RefreshCw, p.accent),
-                "Reading the kubeconfig…".to_owned(),
-            )
+            (spinner(), "Reading the kubeconfig…".to_owned())
         } else {
             match connection {
                 KubeConnection::Idle => (
-                    dot(None),
+                    glyph(Tone::Unknown),
                     "The kubeconfig names no current context; choose one".to_owned(),
                 ),
-                KubeConnection::Connecting => (
-                    icon(IconName::RefreshCw, p.accent),
-                    format!("Connecting to {context}…"),
-                ),
+                KubeConnection::Connecting => (spinner(), format!("Connecting to {context}…")),
                 KubeConnection::Connected { version } => (
-                    dot(Some(p.good)),
+                    glyph(Tone::Good),
                     format!("Connected to {context} · Kubernetes {version}"),
                 ),
                 KubeConnection::Failed(error) => (
-                    icon(IconName::CircleX, p.crit_ink),
+                    glyph(Tone::Crit),
                     format!("Couldn't connect to {context}: {error}"),
                 ),
             }
@@ -380,7 +363,7 @@ impl Pilot {
             .aria_label(text.clone())
             .gap_2()
             .min_w_0()
-            .child(indicator)
+            .children(indicator)
             .child(div().min_w_0().truncate().child(text))
             .into_any_element()
     }

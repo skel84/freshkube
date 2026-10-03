@@ -171,10 +171,6 @@ impl CustomResources {
         }
     }
 
-    pub(crate) fn is_open(&self) -> bool {
-        self.open
-    }
-
     pub(crate) fn is_group_open(&self, name: &str) -> bool {
         self.open_groups.contains(name)
     }
@@ -224,6 +220,12 @@ impl CustomResources {
             self.discover_open_groups(cx);
         }
         cx.notify();
+    }
+
+    pub(crate) fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.open != open {
+            self.toggle(cx);
+        }
     }
 
     pub(crate) fn toggle_group(&mut self, name: &str, cx: &mut Context<Self>) {

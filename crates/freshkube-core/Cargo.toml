@@ -21,6 +21,11 @@ serde_yaml.workspace = true
 serde_json.workspace = true
 futures.workspace = true
 http.workspace = true
+http-body-util = "0.1"
+
+# Monitoring: dashboards and Prometheus queries, sent through the service proxy
+grafaui-model.workspace = true
+grafaui-prometheus.workspace = true
 
 # TLS and logging
 rustls.workspace = true
@@ -38,7 +43,6 @@ tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 # A fake API server that upgrades to the port-forward websocket.
 bytes = "1"
-http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }

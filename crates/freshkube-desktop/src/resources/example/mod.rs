@@ -1,13 +1,17 @@
 //! Example Kubernetes objects for the Resources page, made up from the
 //! example cluster's name. Nothing here reads a cluster or a kubeconfig.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use freshkube_core::resources::{
-    ApiGroup, Failure, FailureKind, GroupKinds, ObjectDocument, ObjectEvent, PodLogUpdate,
-    ResourceKind, SecretValue, Termination, builtin, object_from_yaml,
+    Amounts, ApiGroup, ContainerFacts, Failure, FailureKind, GroupKinds, ObjectDocument,
+    ObjectEvent, PodFacts, PodLogUpdate, PodUsage, ResourceKind, SecretValue, Termination, builtin,
+    object_from_yaml,
 };
 
 use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
+use super::rows::{self, PodState};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
@@ -254,6 +258,9 @@ pub(crate) fn read(
                     created: Some(now - 400 * 86_400 + ix as i64 * 3_600),
                     terminating: false,
                     resource_version: EXAMPLE_VERSION.into(),
+                    owner: None,
+                    generated: None,
+                    pod: None,
                 })
                 .collect(),
         ),
@@ -323,11 +330,8 @@ pub(crate) fn pod_columns() -> Vec<ResourceColumn> {
 
 fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
     let (namespace, app, ..) = WORKLOADS[ix % WORKLOADS.len()];
-    let name = format!(
-        "{app}-{:x}-{}",
-        0x6c4f_8d9b + ix % WORKLOADS.len(),
-        suffix(ix)
-    );
+    let hash = format!("{:x}", 0x6c4f_8d9b + ix % WORKLOADS.len());
+    let name = format!("{app}-{hash}-{}", suffix(ix));
     let (ready, status, restarts) = if namespace == "batch" {
         ("0/1", "Completed", "0".to_owned())
     } else if ix % 23 == 5 {
@@ -345,7 +349,7 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
     } else {
         ("1/1", "Running", "0".to_owned())
     };
-    ResourceRow {
+    let mut row = ResourceRow {
         identity: identity(connection, "pods", namespace, &name, ix),
         cells: vec![
             name,
@@ -363,7 +367,87 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
         created: Some(now - (ix as i64 * 7_919 % 2_000_000) - 120),
         terminating: false,
         resource_version: EXAMPLE_VERSION.into(),
+        owner: None,
+        generated: None,
+        pod: None,
+    };
+    // Batch pods belong to a Job; the rest to a Deployment's ReplicaSet,
+    // labelled with its template hash as the Deployment labels them.
+    let (controller, labels) = if namespace == "batch" {
+        (("Job", format!("{app}-{hash}")), BTreeMap::new())
+    } else {
+        (
+            ("ReplicaSet", format!("{app}-{hash}")),
+            BTreeMap::from([("pod-template-hash".to_owned(), hash.clone())]),
+        )
+    };
+    let facts = pod_facts(ix, ready == "1/1", status);
+    rows::derive(
+        &mut row,
+        &pod_columns(),
+        Some((controller.0, &controller.1)),
+        &labels,
+        Some(facts),
+    );
+    row
+}
+
+/// The example pod's one container and its resources: requests and limits
+/// vary by workload, and some pods set no limits.
+fn pod_facts(ix: usize, ready: bool, status: &str) -> PodFacts {
+    let workload = ix % WORKLOADS.len();
+    let mebi = 1024. * 1024.;
+    let cpu = 50. * (workload % 4 + 1) as f64;
+    let memory = 64. * mebi * (workload % 3 + 1) as f64;
+    let limited = workload % 5 != 3;
+    PodFacts {
+        qos: if limited { "Burstable" } else { "BestEffort" }.into(),
+        requests: Amounts {
+            cpu_millis: Some(cpu),
+            memory_bytes: Some(memory),
+        },
+        limits: Amounts {
+            cpu_millis: limited.then_some(cpu * 4.),
+            memory_bytes: limited.then_some(memory * 2.),
+        },
+        containers: vec![ContainerFacts {
+            name: "app".into(),
+            ready,
+            restarts: if status == "CrashLoopBackOff" { 14 } else { 0 },
+            waiting: (status == "CrashLoopBackOff").then(|| status.to_owned()),
+            last_exit_code: (status == "CrashLoopBackOff").then_some(1),
+            last_reason: (status == "CrashLoopBackOff").then(|| "Error".to_owned()),
+        }],
+        ..PodFacts::default()
     }
+}
+
+/// What metrics-server would report for the example pods of `context`
+/// that run: a share of each pod's request that drifts with `tick`.
+pub(crate) fn pod_usage(context: &str, tick: u64) -> Vec<PodUsage> {
+    (0..pod_count(context))
+        .map(|ix| pod("", ix, &[], 0))
+        .filter_map(|row| {
+            let pod = row.pod.as_ref()?;
+            if !matches!(
+                pod.state,
+                PodState::Running | PodState::NotReady | PodState::Failing
+            ) {
+                return None;
+            }
+            let ix = row.identity.uid.len() + row.identity.name.len();
+            let share = 0.25 + 0.6 * ((ix as f64 * 0.37 + tick as f64 * 0.3).sin().abs());
+            let scale = |amount: Option<f64>| amount.map(|amount| (amount * share).round());
+            Some(PodUsage {
+                namespace: row.identity.namespace.clone(),
+                name: row.identity.name.clone(),
+                usage: Amounts {
+                    cpu_millis: scale(pod.requests.cpu_millis.map(|cpu| cpu * 1.6)),
+                    memory_bytes: scale(pod.requests.memory_bytes),
+                },
+            })
+        })
+        .collect()
 }
 
 /// Whether `app` runs in `namespace`: its Service and Deployment select
@@ -452,6 +536,9 @@ fn deployment(connection: &str, ix: usize, now: i64) -> ResourceRow {
         created: Some(now - 90 * 86_400 + ix as i64 * 86_400),
         terminating: false,
         resource_version: EXAMPLE_VERSION.into(),
+        owner: None,
+        generated: None,
+        pod: None,
     }
 }
 
@@ -482,6 +569,9 @@ fn services(connection: &str, now: i64) -> Vec<ResourceRow> {
         created: Some(now - 400 * 86_400),
         terminating: false,
         resource_version: EXAMPLE_VERSION.into(),
+        owner: None,
+        generated: None,
+        pod: None,
     }];
     for (ix, (namespace, app, ..)) in WORKLOADS.iter().enumerate() {
         if *namespace == "batch" {
@@ -506,6 +596,9 @@ fn services(connection: &str, now: i64) -> Vec<ResourceRow> {
             created: Some(now - 80 * 86_400 + ix as i64 * 86_400),
             terminating: false,
             resource_version: EXAMPLE_VERSION.into(),
+            owner: None,
+            generated: None,
+            pod: None,
         });
     }
     rows
@@ -544,6 +637,9 @@ fn nodes(connection: &str, context: &str, now: i64) -> Vec<ResourceRow> {
             created: Some(now - 200 * 86_400 + ix as i64 * 600),
             terminating: false,
             resource_version: EXAMPLE_VERSION.into(),
+            owner: None,
+            generated: None,
+            pod: None,
         })
         .collect()
 }
@@ -626,6 +722,9 @@ fn secrets(connection: &str, now: i64) -> Vec<ResourceRow> {
             created: Some(now - 120 * 86_400 + ix as i64 * 86_400),
             terminating: false,
             resource_version: EXAMPLE_VERSION.into(),
+            owner: None,
+            generated: None,
+            pod: None,
         })
         .collect()
 }
@@ -672,6 +771,9 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
             created: Some(now - 90 * 86_400 + ix as i64 * 86_400),
             terminating: false,
             resource_version: EXAMPLE_VERSION.into(),
+            owner: None,
+            generated: None,
+            pod: None,
         })
         .collect()
 }

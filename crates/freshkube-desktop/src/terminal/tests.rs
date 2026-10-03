@@ -446,11 +446,11 @@ fn colours_follow_the_appearance(cx: &mut TestAppContext) {
     terminal.frame(cx);
     assert_eq!(
         red(cx),
-        super::snapshot::hsla(super::snapshot::palette_rgb(0xE05A5A))
+        super::snapshot::hsla(super::snapshot::palette_rgb(0xF0484E))
     );
     // A program asking for the background hears the theme's.
     terminal.feed(cx, b"\x1b]11;?\x07");
-    assert_eq!(terminal.output(), b"\x1b]11;rgb:1515/1a1a/2121\x07");
+    assert_eq!(terminal.output(), b"\x1b]11;rgb:1717/1818/1b1b\x07");
 }
 
 #[gpui_kit::test]

@@ -5,7 +5,7 @@ use crate::backend;
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::{self, Health};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -104,39 +104,31 @@ impl Pilot {
             .items_end()
             .gap_3()
             .flex_wrap()
-            .child(
-                v_flex()
-                    .gap(dp(7.))
-                    .child(
-                        div()
-                            .font_family(DISPLAY_FONT)
-                            .text_size(dp(28.))
-                            .line_height(dp(32.))
-                            .child("Services"),
+            .child(v_flex().gap(dp(7.)).child(ui::page_title("Services")).when(
+                self.page != Page::Nodes,
+                |this| {
+                    this.child(
+                        h_flex()
+                            .gap_1p5()
+                            .text_size(dp(12.5))
+                            .text_color(p.muted)
+                            .child("on")
+                            .child(
+                                div()
+                                    .font_family(MONO_FONT)
+                                    .text_size(dp(12.))
+                                    .child(node.name.clone()),
+                            )
+                            .child("·")
+                            .child(
+                                div()
+                                    .font_family(MONO_FONT)
+                                    .text_size(dp(12.))
+                                    .child(node.address.clone()),
+                            ),
                     )
-                    .when(self.page != Page::Nodes, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1p5()
-                                .text_size(dp(12.5))
-                                .text_color(p.muted)
-                                .child("on")
-                                .child(
-                                    div()
-                                        .font_family(MONO_FONT)
-                                        .text_size(dp(12.))
-                                        .child(node.name.clone()),
-                                )
-                                .child("·")
-                                .child(
-                                    div()
-                                        .font_family(MONO_FONT)
-                                        .text_size(dp(12.))
-                                        .child(node.address.clone()),
-                                ),
-                        )
-                    }),
-            )
+                },
+            ))
             .child(div().flex_1())
             .child(
                 Button::new("refresh-services")
@@ -238,7 +230,11 @@ impl Pilot {
                     .cursor_pointer()
                     .when(selected, |this| this.bg(p.accent_soft))
                     .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-                    .child(ui::glyph(health, cx))
+                    .child(ui::health_mark(
+                        SharedString::from(format!("service-health-{}", service.id)),
+                        health,
+                        cx,
+                    ))
                     .child(
                         div()
                             .font_family(MONO_FONT)
@@ -349,7 +345,7 @@ impl Pilot {
                 .into_any_element();
         };
         let health = presentation::service_health(&service);
-        let (tone, icon) = ui::health_tone(health);
+        let tone = ui::health_tone(health);
         let message = service
             .health
             .as_ref()
@@ -433,12 +429,7 @@ impl Pilot {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(service.id.clone()),
                     )
-                    .child(ui::tag(
-                        tone,
-                        Some(icon),
-                        presentation::health_text(&health),
-                        cx,
-                    )),
+                    .child(ui::tag(tone, None, presentation::health_text(&health), cx)),
             )
             .child(
                 v_flex()
@@ -499,7 +490,7 @@ impl Pilot {
                             .gap_2()
                             .child(snapshot)
                             .when(self.services.is_stale(), |this| {
-                                this.child(ui::tag(Tone::Warn, Some(IconName::Clock), "Stale", cx))
+                                this.child(ui::tag(Tone::Warn, None, "Stale", cx))
                             })
                             .into_any_element(),
                     )),
@@ -542,10 +533,10 @@ impl Pilot {
                     ),
             )
             .children(restart_notice.map(|notice| {
-                let (tone, icon, lead) = if notice.ok {
-                    (Tone::Good, IconName::CircleCheck, "Restart")
+                let (tone, lead) = if notice.ok {
+                    (Tone::Good, "Restart")
                 } else {
-                    (Tone::Crit, IconName::CircleX, "Restart failed")
+                    (Tone::Crit, "Restart failed")
                 };
                 h_flex()
                     .id("service-restart-result")
@@ -554,7 +545,7 @@ impl Pilot {
                     .aria_label(format!("{lead}: {}", notice.text))
                     .items_start()
                     .gap_2()
-                    .child(ui::tag(tone, Some(icon), lead, cx))
+                    .child(ui::tag(tone, None, lead, cx))
                     .child(
                         div()
                             .flex_1()

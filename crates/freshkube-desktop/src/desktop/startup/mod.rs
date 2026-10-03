@@ -20,6 +20,8 @@ impl Pilot {
         let page = std::env::var("FRESHKUBE_PAGE").ok();
         let kind = std::env::var("FRESHKUBE_KIND").ok();
         let theme = std::env::var("FRESHKUBE_THEME").ok();
+        // A dashboard of the Monitoring folder, by its path.
+        let dashboard = std::env::var_os("FRESHKUBE_DASHBOARD").map(std::path::PathBuf::from);
         cx.defer_in(window, move |this, window, cx| {
             this.startup_selection(
                 page.as_deref(),
@@ -28,6 +30,11 @@ impl Pilot {
                 window,
                 cx,
             );
+            if let Some(path) = dashboard {
+                this.monitoring.update(cx, |monitoring, cx| {
+                    monitoring.open(crate::monitoring::page::EntryId::File(path), cx)
+                });
+            }
         });
     }
     pub(super) fn startup_selection(
@@ -49,6 +56,9 @@ impl Pilot {
             self.navigate(page, window, cx);
         }
         match page {
+            Some("monitoring") if self.fixture => self
+                .monitoring
+                .update(cx, |monitoring, cx| monitoring.answer_example_now(cx)),
             Some("node-logs" | "node-overview") => {
                 let name = if page == Some("node-overview") {
                     self.node_workspace
@@ -72,6 +82,10 @@ impl Pilot {
                         cx,
                     );
                 }
+                if self.fixture {
+                    self.node_history
+                        .update(cx, |history, cx| history.answer_example_now(cx));
+                }
             }
             Some("pod-overview") if self.fixture => {
                 let context = self.applied.context.as_deref().unwrap_or("prod-fra");
@@ -90,6 +104,8 @@ impl Pilot {
                         window,
                         cx,
                     );
+                    self.resources
+                        .update(cx, |resources, cx| resources.answer_history_now(cx));
                 }
             }
             Some("search") => {
