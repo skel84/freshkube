@@ -112,6 +112,7 @@ pub(super) fn example(source: &ScreenSource) -> Result<LifecycleView, String> {
             .count()
             .max(1),
     );
+    let quorum = freshkube_core::indicators::quorum(total, total);
     Ok(LifecycleView {
         snapshot: LifecycleSnapshot {
             identity: SourceSnapshot::Available(ClusterIdentity {
@@ -125,9 +126,9 @@ pub(super) fn example(source: &ScreenSource) -> Result<LifecycleView, String> {
             etcd_pre_operation: SourceSnapshot::Available(EtcdPreOperationAudit {
                 total_members: total,
                 responding_members: total,
-                quorum_required: total / 2 + 1,
-                can_lose: total.saturating_sub(total / 2 + 1),
-                quorum: QuorumState::Healthy,
+                quorum_required: quorum.required,
+                can_lose: quorum.remaining_tolerance,
+                quorum: quorum.state,
             }),
             alerts: Vec::new(),
         },

@@ -309,11 +309,6 @@ pub(crate) fn cluster_summary(cluster: &ClusterOverview, nodes: &[NodeSummary]) 
     }
 }
 
-/// Members that can fail while etcd keeps quorum.
-pub(crate) fn etcd_failure_tolerance(total: usize) -> usize {
-    total.saturating_sub(1) / 2
-}
-
 /// Recent load1 samples per node, owned by the UI because the backend only
 /// reports the current value.
 #[derive(Clone, Debug, Default)]
