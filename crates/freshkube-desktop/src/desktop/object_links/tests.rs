@@ -261,6 +261,21 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         assert_eq!(window.find("pod-logs-previous").checked(), Some(false));
         window.click("detail-tab-overview", cx);
         window.render_frame(cx);
+        // Recent events sit below the history; scroll down to them.
+        for _ in 0..20 {
+            if window.find("pod-all-events").visible() {
+                break;
+            }
+            window.scroll(
+                "detail-overview",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-60.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+        }
         window.click("pod-all-events", cx);
         window.render_frame(cx);
         assert_eq!(

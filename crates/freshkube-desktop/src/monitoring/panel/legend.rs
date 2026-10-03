@@ -1,6 +1,6 @@
-//! A timeseries legend: inline under a few series, else two columns of rows
-//! with a value per heading. Hovering a row fades the other lines; a click
-//! keeps that series in front until clicked again.
+//! A timeseries legend: inline under a few series, else rows with a value
+//! per heading, in two columns where they fit. Hovering a row fades the
+//! other lines; a click keeps that series in front until clicked again.
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Div, Stateful, TestSupportExt, div, px, relative};
@@ -64,12 +64,8 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                 .child(heading.clone())
         }));
     let mut rows = Vec::new();
-    for pair in legend.rows.chunks(2) {
-        let mut line = h_flex().gap(dp(18.));
-        for row in pair {
-            line = line.child(table_row(view, chart, row, cx));
-        }
-        rows.push(line.when(pair.len() == 1, |this| this.child(div().flex_1())));
+    for row in &legend.rows {
+        rows.push(table_row(view, chart, row, cx).into_any_element());
     }
     v_flex()
         .flex_none()
@@ -84,7 +80,13 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                 .px(dp(12.))
                 .pt(dp(4.))
                 .pb(dp(10.))
-                .children(rows)
+                .child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_x(dp(18.))
+                        .gap_y(dp(2.))
+                        .children(rows),
+                )
                 .when(legend.more > 0, |this| {
                     this.child(
                         div()
@@ -106,8 +108,10 @@ fn table_row(
 ) -> impl IntoElement {
     let p = palette(cx);
     let mut values = row.values.iter();
+    // Two columns where both fit; one in a narrow panel, so names show.
     entry(view, chart, row, cx)
-        .flex_1()
+        .flex_grow(1.)
+        .flex_basis(dp(160.))
         .min_w_0()
         .gap(dp(8.))
         .h(dp(20.))

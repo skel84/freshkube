@@ -311,6 +311,11 @@ fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppCont
                 let panel = format!("monitoring-panel-{prefix}-{panel}");
                 let found = window.try_find(gpui_kit::SharedString::from(panel.clone()));
                 assert!(found.is_some(), "{page}: {panel}");
+                // A pod's history is among the first things its Overview
+                // shows, on screen without scrolling.
+                if prefix == "pod" {
+                    assert!(found.unwrap().visible(), "{page}: {panel} visible");
+                }
             }
         })
         .unwrap();

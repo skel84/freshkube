@@ -266,6 +266,9 @@ impl DetailPane {
             .gap(dp(18.))
             .child(primary)
             .children(links.cause.as_ref().map(|card| self.cause_card(card, cx)))
+            .when(self.history.read(cx).shows(), |this| {
+                this.child(self.history.clone())
+            })
             .children(
                 links
                     .timeline
@@ -276,9 +279,6 @@ impl DetailPane {
             .child(runs_on)
             .child(relations)
             .child(recent)
-            .when(self.history.read(cx).shows(), |this| {
-                this.child(self.history.clone())
-            })
             .children(
                 links
                     .errors

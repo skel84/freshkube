@@ -451,7 +451,7 @@ impl Render for HistoryView {
                     .children(self.panels.iter().map(|panel| {
                         div()
                             .flex_1()
-                            .min_w(dp(220.))
+                            .min_w(dp(180.))
                             .h(dp(184.))
                             .child(panel.clone().cached(StyleRefinement::default().size_full()))
                     })),
