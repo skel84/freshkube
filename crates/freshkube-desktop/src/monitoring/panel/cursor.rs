@@ -47,6 +47,7 @@ pub(crate) struct Row {
 impl PanelView {
     /// The cursor another chart on the page is showing, at `time`.
     pub(crate) fn show_cursor(&mut self, time: Option<f64>, cx: &mut Context<Self>) {
+        let _span = crate::perf::span("monitoring.cursor");
         let cursor = time.and_then(|time| {
             let chart = self.chart()?;
             let index = nearest_time(&chart.times, time)?;

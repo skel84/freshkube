@@ -266,6 +266,7 @@ impl Render for PanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         crate::desktop::probe::hit("monitoring-panel");
+        let _span = crate::perf::span("monitoring.panel_render");
         let p = palette(cx);
         let stat = matches!(
             self.data.as_ref().map(|data| &data.body),

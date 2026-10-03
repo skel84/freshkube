@@ -16,6 +16,7 @@
 //! | `terminal <lines/s>` | a window with only a terminal, fed coloured lines at that rate |
 //! | `terminal-top` | the terminal, redrawn whole by a `top`-like program about 60 times a second |
 //! | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks |
+//! | `monitoring <dashboard.json> [processes]` | opens that dashboard against a fake Prometheus with that many Go processes (67), then sweeps the mouse over its first panels and scrolls |
 //!
 //! The run quits after `FRESHKUBE_STRESS_SECONDS` (30) and prints its
 //! timings to stderr; see `src/stress.rs`. `FRESHKUBE_STRESS_KEYS`,
@@ -56,6 +57,7 @@ enum Scenario {
     Terminal { rate: u32 },
     TerminalTop,
     TerminalSample,
+    Monitoring { processes: usize },
 }
 
 impl Scenario {
@@ -84,6 +86,10 @@ impl Scenario {
             },
             "terminal-top" => Scenario::TerminalTop,
             "terminal-sample" => Scenario::TerminalSample,
+            // The dashboard's path is the first argument; see `main`.
+            "monitoring" if args.len() > 1 => Scenario::Monitoring {
+                processes: number(2, 67)? as usize,
+            },
             _ => return None,
         })
     }
@@ -117,6 +123,23 @@ impl Scenario {
             Scenario::Terminal { .. } | Scenario::TerminalTop | Scenario::TerminalSample => {
                 Vec::new()
             }
+            Scenario::Monitoring { .. } => vec![
+                ("FRESHKUBE_PAGE", "monitoring".into()),
+                (
+                    "FRESHKUBE_STRESS_KEYS",
+                    "wait:6000 \
+                     hover:0.3,0.3,0.6,0.3,2000 hover:0.6,0.3,0.3,0.3,2000 \
+                     hover:0.65,0.3,0.95,0.3,2000 hover:0.95,0.3,0.65,0.3,2000 \
+                     hover:0.3,0.3,0.6,0.3,2000 hover:0.6,0.3,0.3,0.3,2000 \
+                     scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
+                     scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
+                     scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
+                     wait:500 hover:0.3,0.5,0.6,0.5,2000 hover:0.6,0.5,0.3,0.5,2000"
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
+            ],
         }
     }
 }
@@ -125,10 +148,35 @@ fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(scenario) = Scenario::parse(&args) else {
         eprintln!(
-            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample"
+            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
         );
         std::process::exit(2);
     };
+    let dir = std::env::temp_dir().join(format!("freshkube-stress-{}", std::process::id()));
+    if let Scenario::Monitoring { .. } = scenario {
+        // A home of its own: the dashboard in a folder Monitoring reads, and
+        // the fake Prometheus remembered for the context.
+        let dashboards = dir.join("dashboards");
+        let support = dir.join("home/Library/Application Support/Freshkube");
+        std::fs::create_dir_all(&dashboards)?;
+        std::fs::create_dir_all(&support)?;
+        let dashboard = dashboards.join("dashboard.json");
+        std::fs::copy(&args[1], &dashboard)?;
+        let (namespace, name, port) = PROMETHEUS;
+        std::fs::write(
+            support.join("monitoring.json"),
+            json!({
+                "dashboards": dashboards,
+                "prometheus": {"stress": {"namespace": namespace, "name": name, "port": port}}
+            })
+            .to_string(),
+        )?;
+        // SAFETY: no other thread has started yet.
+        unsafe {
+            std::env::set_var("HOME", dir.join("home"));
+            std::env::set_var("FRESHKUBE_DASHBOARD", dashboard);
+        }
+    }
     for (name, value) in scenario.defaults() {
         if std::env::var_os(name).is_none() {
             // SAFETY: no other thread has started yet.
@@ -156,7 +204,6 @@ fn main() -> color_eyre::Result<()> {
     }
     let world = Arc::new(World::new(scenario));
     let address = runtime.block_on(serve(world))?;
-    let dir = std::env::temp_dir().join(format!("freshkube-stress-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     let kubeconfig = dir.join("kubeconfig");
     std::fs::write(
@@ -311,6 +358,25 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
         ["apis"] => {
             json_response(json!({"kind": "APIGroupList", "apiVersion": "v1", "groups": []}))
         }
+        [
+            "api",
+            "v1",
+            "namespaces",
+            _,
+            "services",
+            _,
+            "proxy",
+            "api",
+            "v1",
+            rest @ ..,
+        ] => {
+            let Scenario::Monitoring { processes } = world.scenario else {
+                return json_response(json!({}));
+            };
+            prometheus(processes, rest, &query)
+        }
+        ["api", "v1", "services"] if watching => idle_stream(),
+        ["api", "v1", "services"] => json_response(service_list()),
         ["api", "v1", "namespaces"] if watching => idle_stream(),
         ["api", "v1", "namespaces"] => json_response(namespace_table()),
         ["api", "v1", "pods"] if watching => pod_watch(world),
@@ -615,4 +681,186 @@ fn summary_list(world: &World, path: &str) -> Option<Response<Body>> {
     Some(json_response(
         json!({"apiVersion":"v1","kind":kind,"metadata":{"resourceVersion":"1"},"items":items}),
     ))
+}
+
+/// The fake Prometheus the `monitoring` scenario reaches through the service
+/// proxy, as `monitoring/prometheus-operated:9090`.
+const PROMETHEUS: (&str, &str, u16) = ("monitoring", "prometheus-operated", 9090);
+/// GC duration summaries carry these quantiles, five series a process.
+const QUANTILES: [&str; 5] = ["0", "0.25", "0.5", "0.75", "1"];
+
+fn service_list() -> Value {
+    let (namespace, name, port) = PROMETHEUS;
+    json!({
+        "kind": "ServiceList", "apiVersion": "v1",
+        "metadata": {"resourceVersion": "1"},
+        "items": [{
+            "metadata": {
+                "name": name, "namespace": namespace,
+                "labels": {"operated-prometheus": "true"}
+            },
+            "spec": {"ports": [{"name": "web", "port": port, "protocol": "TCP"}]}
+        }]
+    })
+}
+
+/// One process a Go exporter reports for: the labels every series carries.
+fn process(ix: usize) -> [(&'static str, String); 4] {
+    let namespace = format!("ns-{:02}", ix % 12);
+    [
+        ("namespace", namespace),
+        (
+            "pod",
+            format!("app-{ix}-{:05x}", ix.wrapping_mul(40_503) % 0xfffff),
+        ),
+        ("instance", format!("10.0.{}.{}:8080", ix / 250, ix % 250)),
+        ("job", format!("app-{}", ix % 30)),
+    ]
+}
+
+/// Answers `/api/v1/<rest>` as Prometheus would, for `processes` Go
+/// processes: every query draws one series per process, or five for a GC
+/// duration summary, whatever its matchers say.
+fn prometheus(processes: usize, rest: &[&str], query: &str) -> Response<Body> {
+    let params: Vec<(String, String)> = query
+        .split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            Some((decode(key), decode(value)))
+        })
+        .collect();
+    let param = |name: &str| {
+        params
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    let success = |data: Value| json_response(json!({"status": "success", "data": data}));
+    match rest {
+        ["status", "buildinfo"] => success(json!({"version": "3.4.0"})),
+        ["targets"] => success(json!({
+            "activeTargets": [{"scrapeInterval": "30s", "health": "up"}],
+            "droppedTargets": []
+        })),
+        ["labels"] => success(json!(["__name__", "instance", "job", "namespace", "pod"])),
+        ["label", label, "values"] => {
+            let mut values: Vec<String> = (0..processes)
+                .filter_map(|ix| {
+                    process(ix)
+                        .into_iter()
+                        .find(|(key, _)| key == label)
+                        .map(|(_, value)| value)
+                })
+                .collect();
+            values.sort();
+            values.dedup();
+            success(json!(values))
+        }
+        ["series"] => {
+            let series: Vec<Value> = (0..processes).map(|ix| labels(ix, None, None)).collect();
+            success(json!(series))
+        }
+        ["query" | "query_range"] => {
+            let expr = param("query").unwrap_or("");
+            let metric = metric_name(expr);
+            let quantiles: &[&str] = if metric.ends_with("_duration_seconds") {
+                &QUANTILES
+            } else {
+                &[""]
+            };
+            let range = rest == ["query_range"];
+            let number = |name: &str| param(name).and_then(|value| value.parse::<f64>().ok());
+            let (start, end, step) = match (number("start"), number("end"), number("step")) {
+                (Some(start), Some(end), Some(step)) if range && step > 0. => (start, end, step),
+                _ => {
+                    let time = number("time").unwrap_or(Utc::now().timestamp() as f64);
+                    (time, time, 1.)
+                }
+            };
+            let mut result = Vec::new();
+            for ix in 0..processes {
+                for (qx, quantile) in quantiles.iter().enumerate() {
+                    let seed = (ix * 7 + qx) as f64;
+                    let at = |time: f64| {
+                        let wave =
+                            (time / 600. + seed).sin() * 0.3 + (time / 97. + seed * 3.).sin() * 0.1;
+                        let value = (1. + seed % 11.) * (1. + qx as f64) * (1.5 + wave);
+                        json!([time, format!("{value:.4}")])
+                    };
+                    let metric =
+                        labels(ix, Some(metric), (!quantile.is_empty()).then_some(quantile));
+                    result.push(if range {
+                        let count = ((end - start) / step).floor() as usize + 1;
+                        // A quarter of the processes were replaced partway,
+                        // as restarted pods are: their lines end early.
+                        let count = if ix % 4 == 0 { count * 7 / 10 } else { count };
+                        let values: Vec<Value> =
+                            (0..count).map(|n| at(start + n as f64 * step)).collect();
+                        json!({"metric": metric, "values": values})
+                    } else {
+                        json!({"metric": metric, "value": at(end)})
+                    });
+                }
+            }
+            let kind = if range { "matrix" } else { "vector" };
+            success(json!({"resultType": kind, "result": result}))
+        }
+        _ => {
+            eprintln!("stress prometheus: no answer for {}", rest.join("/"));
+            let mut response = json_response(json!({
+                "status": "error", "errorType": "not_found", "error": "not served"
+            }));
+            *response.status_mut() = StatusCode::NOT_FOUND;
+            response
+        }
+    }
+}
+
+fn labels(ix: usize, name: Option<&str>, quantile: Option<&str>) -> Value {
+    let mut labels: serde_json::Map<String, Value> = process(ix)
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), Value::String(value)))
+        .collect();
+    if let Some(name) = name.filter(|name| !name.is_empty()) {
+        labels.insert("__name__".into(), json!(name));
+    }
+    if let Some(quantile) = quantile {
+        labels.insert("quantile".into(), json!(quantile));
+    }
+    Value::Object(labels)
+}
+
+/// The first metric selector's name: the identifier before the first `{`.
+fn metric_name(expr: &str) -> &str {
+    let head = expr.split('{').next().unwrap_or("");
+    let start = head
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+        .map_or(0, |ix| ix + 1);
+    &head[start..]
+}
+
+/// Percent-decoding for query parameters.
+fn decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut ix = 0;
+    while ix < bytes.len() {
+        match bytes[ix] {
+            b'%' if ix + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[ix + 1..ix + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(byte) => {
+                        out.push(byte);
+                        ix += 3;
+                        continue;
+                    }
+                    Err(_) => out.push(b'%'),
+                }
+            }
+            b'+' => out.push(b' '),
+            byte => out.push(byte),
+        }
+        ix += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

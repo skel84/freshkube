@@ -20,6 +20,8 @@ impl Pilot {
         let page = std::env::var("FRESHKUBE_PAGE").ok();
         let kind = std::env::var("FRESHKUBE_KIND").ok();
         let theme = std::env::var("FRESHKUBE_THEME").ok();
+        // A dashboard of the Monitoring folder, by its path.
+        let dashboard = std::env::var_os("FRESHKUBE_DASHBOARD").map(std::path::PathBuf::from);
         cx.defer_in(window, move |this, window, cx| {
             this.startup_selection(
                 page.as_deref(),
@@ -28,6 +30,11 @@ impl Pilot {
                 window,
                 cx,
             );
+            if let Some(path) = dashboard {
+                this.monitoring.update(cx, |monitoring, cx| {
+                    monitoring.open(crate::monitoring::page::EntryId::File(path), cx)
+                });
+            }
         });
     }
     pub(super) fn startup_selection(

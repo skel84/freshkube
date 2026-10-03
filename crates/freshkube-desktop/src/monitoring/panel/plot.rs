@@ -143,6 +143,7 @@ impl Frame {
 
 impl Paint {
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+        let _span = crate::perf::span("monitoring.plot_paint");
         let label = dp_px(10.5, window);
         let gap = dp_px(6., window);
         let gutter = |axis: &Option<Axis>, window: &mut Window| {
