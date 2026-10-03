@@ -450,6 +450,23 @@ pub struct LifecycleSnapshot {
     pub alerts: Vec<LifecycleAlert>,
 }
 
+impl LifecycleSnapshot {
+    /// Replace only Kubernetes evidence, leaving independently polled Talos
+    /// facts intact and re-evaluating source availability alerts.
+    pub fn set_kubernetes_roster(
+        &mut self,
+        roster: SourceSnapshot<Vec<KubernetesNodeRosterEntry>>,
+    ) {
+        self.kubernetes_roster = roster;
+        self.alerts = lifecycle_alerts(
+            &self.nodes,
+            &self.talos_discovery,
+            &self.kubernetes_roster,
+            &self.etcd_pre_operation,
+        );
+    }
+}
+
 /// Collects lifecycle state using the selected talosconfig and Talos APIs.
 #[derive(Debug, Clone, Default)]
 pub struct LifecycleCollector {
@@ -463,7 +480,7 @@ impl LifecycleCollector {
 
     /// Collects lifecycle information with the existing pinned-source default.
     pub async fn collect(&self, client: &TalosClient) -> LifecycleSnapshot {
-        self.collect_inner(client, None, None).await
+        self.collect_inner(client, None, None, None).await
     }
 
     /// Collects using an already identity-validated Kubernetes client (or its
@@ -475,7 +492,18 @@ impl LifecycleCollector {
         context: &str,
         kubernetes: Result<kube::Client, String>,
     ) -> LifecycleSnapshot {
-        self.collect_inner(client, Some(context), Some(kubernetes))
+        self.collect_inner(client, Some(context), Some(kubernetes), None)
+            .await
+    }
+
+    /// Uses the session's committed Node evidence; never lists Kubernetes.
+    pub async fn collect_with_observed_nodes(
+        &self,
+        client: &TalosClient,
+        context: &str,
+        roster: SourceSnapshot<Vec<KubernetesNodeRosterEntry>>,
+    ) -> LifecycleSnapshot {
+        self.collect_inner(client, Some(context), None, Some(roster))
             .await
     }
 
@@ -484,6 +512,7 @@ impl LifecycleCollector {
         client: &TalosClient,
         context: Option<&str>,
         kubernetes: Option<Result<kube::Client, String>>,
+        observed: Option<SourceSnapshot<Vec<KubernetesNodeRosterEntry>>>,
     ) -> LifecycleSnapshot {
         let config = load_selected_talosconfig(self.talosconfig_path.clone(), context).await;
         let identity = match &config {
@@ -511,12 +540,16 @@ impl LifecycleCollector {
             talos_discovery.value(),
             versions.as_ref().ok(),
         );
-        let kubernetes_roster = match kubernetes {
-            Some(Ok(client)) => kubernetes_roster_from_client(&client).await,
-            Some(Err(reason)) => SourceSnapshot::Unavailable { reason },
-            None => {
-                self.collect_kubernetes_roster(client, control_plane_address.as_deref())
-                    .await
+        let kubernetes_roster = if let Some(roster) = observed {
+            roster
+        } else {
+            match kubernetes {
+                Some(Ok(client)) => kubernetes_roster_from_client(&client).await,
+                Some(Err(reason)) => SourceSnapshot::Unavailable { reason },
+                None => {
+                    self.collect_kubernetes_roster(client, control_plane_address.as_deref())
+                        .await
+                }
             }
         };
 

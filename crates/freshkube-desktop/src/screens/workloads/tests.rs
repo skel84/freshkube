@@ -225,7 +225,7 @@ fn partial_results_name_what_is_missing(cx: &mut TestAppContext) {
                 }],
             };
             let data = WorkloadData::from_outcome(&outcome);
-            screen.set_workloads("prod-fra", data, cx);
+            screen.apply_summary("prod-fra", data, cx);
             cx.notify();
         });
         window.render_frame(cx);

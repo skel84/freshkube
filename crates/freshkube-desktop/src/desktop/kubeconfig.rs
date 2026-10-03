@@ -50,7 +50,11 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fixture || selection == self.kubeconfig {
+        // Choosing a file again reloads its credentials even at the same path.
+        if self.fixture
+            || (selection == self.kubeconfig
+                && !matches!(selection, KubeconfigSelection::File { .. }))
+        {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {

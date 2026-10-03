@@ -176,7 +176,7 @@ impl Pilot {
         if self.fixture {
             self.applied.context = context;
             self.invalidate_target(window, cx);
-            self.refresh_summary(window, cx);
+            self.ensure_summary(window, cx);
             self.prepare_context_display(window, cx);
             return;
         }
@@ -197,8 +197,7 @@ impl Pilot {
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
         self.summary_health = None;
-        self.summary_job = None;
-        self.summary_task = None;
+        self.stop_summary();
         self.applied.context = context;
         self.push_source(window, cx);
         self.check_kube_connection(window, cx);
@@ -233,11 +232,15 @@ impl Pilot {
             },
         );
         kube.job = Some(job);
+        let epoch = self.epoch;
         kube.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("The connection worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
+                if view.epoch != epoch {
+                    return;
+                }
                 let Some(kube) = view.kubernetes_only.as_mut() else {
                     return;
                 };
@@ -245,7 +248,7 @@ impl Pilot {
                 match result {
                     Ok(version) => {
                         kube.connection = KubeConnection::Connected { version };
-                        view.refresh_summary(window, cx);
+                        view.ensure_summary(window, cx);
                         if recovering {
                             view.resources
                                 .update(cx, |resources, cx| resources.refresh(window, cx));

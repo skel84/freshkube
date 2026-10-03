@@ -133,6 +133,7 @@ pub(super) fn example(source: &ScreenSource) -> Result<LifecycleView, String> {
             alerts: Vec::new(),
         },
         kubelets: SourceSnapshot::Available(kubelets),
+        node_observation: None,
         display: Default::default(),
     }
     .prepare())

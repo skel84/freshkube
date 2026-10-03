@@ -11,6 +11,9 @@
 //! | --- | --- |
 //! | `table <pods>` | lists that many pods, then filters them by typing |
 //! | `burst <pods> <changes/s>` | lists the pods, then the watch changes them at that rate |
+//! | `summary` | 20,000 Pods, 2,000 Deployments and 5,000 warning Events, idle after sync |
+//! | `summary-burst <changes/s>` | the summary world changes continuously |
+//! | `summary-410 <changes/s>` | the same changes, with a forced Pod relist after 10 s |
 //! | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate |
 //! | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
 //! | `terminal <lines/s>` | a window with only a terminal, fed coloured lines at that rate |
@@ -41,6 +44,9 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
+mod summary;
+use summary::summary_list;
+
 type Body = UnsyncBoxBody<Bytes, Infallible>;
 
 const NAMESPACES: usize = 50;
@@ -50,6 +56,7 @@ const TICK: Duration = Duration::from_millis(10);
 #[derive(Clone, Copy, Debug)]
 enum Scenario {
     Summary,
+    SummaryBurst { rate: u32, expire: bool },
     Table { pods: usize },
     Burst { pods: usize, rate: u32 },
     PodLogs { rate: u32 },
@@ -68,6 +75,10 @@ impl Scenario {
         };
         Some(match args.first().map(String::as_str)? {
             "summary" => Scenario::Summary,
+            "summary-burst" | "summary-410" => Scenario::SummaryBurst {
+                rate: number(1, 2000)? as u32,
+                expire: args[0] == "summary-410",
+            },
             "table" => Scenario::Table {
                 pods: number(1, 20_000)? as usize,
             },
@@ -99,7 +110,7 @@ impl Scenario {
     fn defaults(self) -> Vec<(&'static str, String)> {
         let pods = ("FRESHKUBE_KIND", "pods".to_owned());
         match self {
-            Scenario::Summary => vec![("FRESHKUBE_PAGE", "health".into())],
+            Scenario::Summary | Scenario::SummaryBurst { .. } => vec![("FRESHKUBE_PAGE", "health".into())],
             Scenario::Table { .. } => vec![
                 pods,
                 (
@@ -203,7 +214,7 @@ fn main() -> color_eyre::Result<()> {
         );
     }
     let world = Arc::new(World::new(scenario));
-    let address = runtime.block_on(serve(world))?;
+    let address = runtime.block_on(serve(world.clone()))?;
     std::fs::create_dir_all(&dir)?;
     let kubeconfig = dir.join("kubeconfig");
     std::fs::write(
@@ -223,6 +234,7 @@ fn main() -> color_eyre::Result<()> {
         ),
         runtime.handle().clone(),
     );
+    world.summary.report();
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -231,6 +243,9 @@ fn main() -> color_eyre::Result<()> {
 struct World {
     scenario: Scenario,
     pods: Mutex<Pods>,
+    summary: summary::State,
+    started: Instant,
+    created: chrono::DateTime<Utc>,
 }
 
 struct Pods {
@@ -282,7 +297,7 @@ impl Pods {
 impl World {
     fn new(scenario: Scenario) -> Self {
         let count = match scenario {
-            Scenario::Summary => 20_000,
+            Scenario::Summary | Scenario::SummaryBurst { .. } => 20_000,
             Scenario::Table { pods } | Scenario::Burst { pods, .. } => pods,
             _ => 20,
         };
@@ -303,11 +318,15 @@ impl World {
         Self {
             scenario,
             pods: Mutex::new(pods),
+            summary: summary::State::default(),
+            started: Instant::now(),
+            created: Utc::now(),
         }
     }
 }
 
 async fn serve(world: Arc<World>) -> std::io::Result<std::net::SocketAddr> {
+    summary::start(world.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     tokio::spawn(async move {
@@ -333,7 +352,7 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
     let param = |name: &str| {
         query.split('&').find_map(|pair| {
             let (key, value) = pair.split_once('=')?;
-            (key == name).then(|| value.to_owned())
+            (key == name).then(|| summary::decode(value))
         })
     };
     let watching = matches!(param("watch").as_deref(), Some("1" | "true"));
@@ -343,9 +362,15 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
         .get("accept")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|accept| accept.contains("as=Table"));
+    if summary::supported(&path) || path == "/version" {
+        world.summary.count(&path, watching, table);
+    }
+    if watching && summary::supported(&path) {
+        return summary::watch(world, &path, &param, table);
+    }
     if !watching
         && !table
-        && let Some(response) = summary_list(world, &path)
+        && let Some(response) = summary_list(world, &path, &param)
     {
         return response;
     }
@@ -379,11 +404,11 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
         ["api", "v1", "services"] => json_response(service_list()),
         ["api", "v1", "namespaces"] if watching => idle_stream(),
         ["api", "v1", "namespaces"] => json_response(namespace_table()),
-        ["api", "v1", "pods"] if watching => pod_watch(world),
-        ["api", "v1", "pods"] => json_response(pod_table(world, None, &param)),
+        ["api", "v1", "pods"] if watching => summary::watch(world, &path, &param, table),
+        ["api", "v1", "pods"] => summary::pods(world, None, &param, true),
         ["api", "v1", "namespaces", _, "pods"] if watching => idle_stream(),
         ["api", "v1", "namespaces", namespace, "pods"] => {
-            json_response(pod_table(world, Some(namespace), &param))
+            summary::pods(world, Some(namespace), &param, true)
         }
         ["api", "v1", "namespaces", namespace, "pods", name] => pod_object(world, namespace, name),
         ["api", "v1", "namespaces", _, "pods", _, "log"] => log_stream(world),
@@ -475,111 +500,8 @@ fn pod_row(pod: &Pod) -> Value {
     };
     json!({
         "cells": [pod.name, ready, pod.status, pod.restarts.to_string(), "5d", "10.0.0.1", "node-1"],
-        "object": {"kind": "PartialObjectMetadata", "metadata": {
-            "name": pod.name, "namespace": pod.namespace, "uid": pod.uid,
-            "resourceVersion": pod.version.to_string(),
-            "creationTimestamp": "2026-09-27T00:00:00Z",
-            "labels": {"app": pod.name.split('-').take(2).collect::<Vec<_>>().join("-")}
-        }}
+        "object": summary::pod_value(pod)
     })
-}
-
-fn pod_table(
-    world: &World,
-    namespace: Option<&str>,
-    param: &dyn Fn(&str) -> Option<String>,
-) -> Value {
-    let pods = world.pods.lock().expect("pods");
-    let limit: usize = param("limit")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(usize::MAX);
-    let from: usize = param("continue").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let matching: Vec<&Pod> = pods
-        .rows
-        .iter()
-        .filter(|pod| namespace.is_none_or(|namespace| pod.namespace == namespace))
-        .collect();
-    let to = from.saturating_add(limit).min(matching.len());
-    let rows: Vec<Value> = matching[from.min(to)..to]
-        .iter()
-        .map(|pod| pod_row(pod))
-        .collect();
-    let next = if to < matching.len() {
-        to.to_string()
-    } else {
-        String::new()
-    };
-    json!({
-        "kind": "Table", "apiVersion": "meta.k8s.io/v1",
-        "metadata": {"resourceVersion": pods.version.to_string(), "continue": next},
-        "columnDefinitions": pod_columns(),
-        "rows": rows
-    })
-}
-
-/// The pods watch: with a burst rate, changes that many pods a second; one
-/// change in ten replaces a pod, as a rollout would.
-fn pod_watch(world: &Arc<World>) -> Response<Body> {
-    let Scenario::Burst { rate, .. } = world.scenario else {
-        return idle_stream();
-    };
-    let (sender, receiver) = mpsc::channel(16);
-    let world = world.clone();
-    tokio::spawn(async move {
-        let started = Instant::now();
-        let mut sent = 0u64;
-        let mut tick = tokio::time::interval(TICK);
-        loop {
-            tick.tick().await;
-            let due = (started.elapsed().as_secs_f64() * f64::from(rate)) as u64;
-            let mut chunk = String::new();
-            {
-                let mut pods = world.pods.lock().expect("pods");
-                while sent < due && chunk.len() < 1 << 20 {
-                    sent += 1;
-                    let ix = pods.random() as usize % pods.rows.len();
-                    if sent.is_multiple_of(10) {
-                        let gone = pods.rows[ix].clone();
-                        let new = pods.pod();
-                        pods.rows[ix] = new.clone();
-                        push_event(&mut chunk, "DELETED", &gone, pods.version);
-                        push_event(&mut chunk, "ADDED", &new, pods.version);
-                    } else {
-                        pods.version += 1;
-                        let version = pods.version;
-                        let pod = &mut pods.rows[ix];
-                        pod.version = version;
-                        if pod.status == "Running" {
-                            pod.status = "CrashLoopBackOff";
-                            pod.restarts += 1;
-                        } else {
-                            pod.status = "Running";
-                        }
-                        let pod = pod.clone();
-                        push_event(&mut chunk, "MODIFIED", &pod, version);
-                    }
-                }
-            }
-            if !chunk.is_empty() && sender.send(Bytes::from(chunk)).await.is_err() {
-                return;
-            }
-        }
-    });
-    stream_response(receiver, "application/json")
-}
-
-fn push_event(chunk: &mut String, kind: &str, pod: &Pod, version: u64) {
-    let event = json!({
-        "type": kind,
-        "object": {
-            "kind": "Table", "apiVersion": "meta.k8s.io/v1",
-            "metadata": {"resourceVersion": version.to_string()},
-            "columnDefinitions": null,
-            "rows": [pod_row(pod)]
-        }
-    });
-    chunk.push_str(&event.to_string());
-    chunk.push('\n');
 }
 
 fn pod_object(world: &World, namespace: &str, name: &str) -> Response<Body> {
@@ -596,23 +518,7 @@ fn pod_object(world: &World, namespace: &str, name: &str) -> Response<Body> {
         *response.status_mut() = StatusCode::NOT_FOUND;
         return response;
     };
-    json_response(json!({
-        "kind": "Pod", "apiVersion": "v1",
-        "metadata": {
-            "name": pod.name, "namespace": pod.namespace, "uid": pod.uid,
-            "resourceVersion": pod.version.to_string(),
-            "creationTimestamp": "2026-09-27T00:00:00Z"
-        },
-        "spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]},
-        "status": {
-            "phase": "Running",
-            "containerStatuses": [{
-                "name": "app", "ready": true, "restartCount": 0,
-                "image": "example.invalid/app:1", "imageID": "",
-                "state": {"running": {"startedAt": "2026-09-27T00:00:10Z"}}
-            }]
-        }
-    }))
+    json_response(summary::pod_value(pod))
 }
 
 /// A container writing `rate` lines a second, each stamped with the time it
@@ -655,32 +561,6 @@ fn log_stream(world: &World) -> Response<Body> {
         }
     });
     stream_response(receiver, "text/plain")
-}
-
-/// Typed cache-backed answers, separate from the browsing Table API.
-fn summary_list(world: &World, path: &str) -> Option<Response<Body>> {
-    let (kind, items) = match path {
-        "/api/v1/pods" => {
-            let pods = world.pods.lock().expect("pods");
-            let items = pods.rows.iter().enumerate().map(|(ix,pod)| json!({"metadata":{"name":pod.name,"namespace":pod.namespace,"uid":pod.uid,"creationTimestamp":"2026-09-27T00:00:00Z"},"spec":{"nodeName":format!("worker-{}",ix%100),"containers":[{"name":"app","image":"example:1"}]},"status":{"phase":"Running","containerStatuses":[{"name":"app","image":"example:1","imageID":"example","ready":true,"restartCount":pod.restarts,"state":if ix%20==0 {json!({"waiting":{"reason":"CrashLoopBackOff"}})} else {json!({"running":{}})}}]}})).collect();
-            ("PodList",items)
-        }
-        "/apis/apps/v1/deployments" => ("DeploymentList",(0..if matches!(world.scenario,Scenario::Summary) {2000} else {20}).map(|ix|json!({"metadata":{"name":format!("deploy-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"status":{"replicas":3,"readyReplicas":if ix%10==0 {0} else {3},"availableReplicas":if ix%10==0 {0} else {3}}})).collect()),
-        "/apis/apps/v1/statefulsets" => ("StatefulSetList",Vec::new()),
-        "/apis/apps/v1/daemonsets" => ("DaemonSetList",Vec::new()),
-        "/api/v1/nodes" => ("NodeList",(0..100).map(|ix|json!({"metadata":{"name":format!("worker-{ix}")},"status":{"conditions":[{"type":"Ready","status":if ix%10==0 {"False"} else {"True"}}]}})).collect()),
-        "/api/v1/namespaces" => ("NamespaceList",(0..NAMESPACES).map(|ix|json!({"metadata":{"name":format!("ns-{ix:02}")}})).collect()),
-        "/api/v1/persistentvolumeclaims" => ("PersistentVolumeClaimList",Vec::new()),
-        "/api/v1/persistentvolumes" => ("PersistentVolumeList",Vec::new()),
-        "/api/v1/events" => {
-            let now=Utc::now().to_rfc3339();
-            ("EventList",(0..if matches!(world.scenario,Scenario::Summary) {5000} else {0}).map(|ix|json!({"metadata":{"name":format!("warning-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"involvedObject":{"kind":"Pod","name":format!("pod-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"type":"Warning","reason":"BackOff","message":"Example warning","lastTimestamp":now})).collect())
-        }
-        _=>return None,
-    };
-    Some(json_response(
-        json!({"apiVersion":"v1","kind":kind,"metadata":{"resourceVersion":"1"},"items":items}),
-    ))
 }
 
 /// The fake Prometheus the `monitoring` scenario reaches through the service

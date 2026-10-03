@@ -298,6 +298,8 @@ pub(crate) struct Pilot {
     overview: Snapshot<ClusterOverview>,
     kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
     summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
+    summary_session: Option<kubernetes_summary::SummarySession>,
+    summary_epoch: u64,
     summary_job: Option<OwnedJob>,
     summary_task: Option<Task<()>>,
     object_open_job: Option<OwnedJob>,
@@ -319,6 +321,9 @@ pub(crate) struct Pilot {
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
     screens: Vec<(ScreenKind, ScreenHandle)>,
+    /// Typed observation recipients; `screens` wraps these same entities.
+    health: Entity<WorkloadsScreen>,
+    lifecycle: Entity<LifecycleScreen>,
     resources: Entity<ResourcesScreen>,
     /// The Kubernetes kind the Resources page shows.
     resource_kind: ResourceKind,
@@ -501,6 +506,10 @@ impl Pilot {
             KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
             KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
         ]);
+        let health =
+            Self::screen_entity::<WorkloadsScreen>(runtime.clone(), &mut subscriptions, window, cx);
+        let lifecycle =
+            Self::screen_entity::<LifecycleScreen>(runtime.clone(), &mut subscriptions, window, cx);
         let screens = ScreenKind::ALL
             .into_iter()
             .map(|page| {
@@ -521,15 +530,11 @@ impl Pilot {
                     ScreenKind::Etcd => {
                         Self::screen::<EtcdScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Health => {
-                        Self::screen::<WorkloadsScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Health => ScreenHandle::new(health.clone()),
                     ScreenKind::Security => {
                         Self::screen::<SecurityScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Lifecycle => {
-                        Self::screen::<LifecycleScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Lifecycle => ScreenHandle::new(lifecycle.clone()),
                     ScreenKind::Operations => {
                         Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
                     }
@@ -597,6 +602,7 @@ impl Pilot {
                     .update_in(cx, |view, window, cx| {
                         view.elapsed += Duration::from_secs(1);
                         if view.automatic
+                            && view.kubernetes_only.is_none()
                             && view.elapsed >= AUTO_REFRESH
                             && !view.overview.is_loading()
                             && !view.config_loading
@@ -633,6 +639,8 @@ impl Pilot {
             overview: Snapshot::default(),
             kubernetes_summary: Snapshot::default(),
             summary_health: None,
+            summary_session: None,
+            summary_epoch: 0,
             summary_job: None,
             summary_task: None,
             object_open_job: None,
@@ -653,6 +661,8 @@ impl Pilot {
             node_workspace,
             node_pods,
             screens,
+            health,
+            lifecycle,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
@@ -773,8 +783,7 @@ impl Pilot {
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
         self.summary_health = None;
-        self.summary_job = None;
-        self.summary_task = None;
+        self.stop_summary();
         self.attention_expanded = false;
         self.object_open_job = None;
         self.object_open_task = None;
@@ -909,9 +918,18 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ScreenHandle {
+        ScreenHandle::new(Self::screen_entity::<T>(runtime, subscriptions, window, cx))
+    }
+
+    fn screen_entity<T: ScreenPanel>(
+        runtime: Handle,
+        subscriptions: &mut Vec<Subscription>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<T> {
         let screen = cx.new(|cx| T::new(runtime, window, cx));
         subscriptions.push(cx.subscribe_in(&screen, window, Self::screen_event));
-        ScreenHandle::new(screen)
+        screen
     }
 
     fn screen_event<T>(
@@ -1031,6 +1049,7 @@ impl Pilot {
 
     /// Hands every screen the current source; the visible one loads if empty.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.deliver_summary_nodes(cx);
         let source = self.screen_source();
         for (_, screen) in &self.screens {
             screen.set_source(source.clone(), window, cx);
@@ -1067,6 +1086,7 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_summary(window, cx);
         self.refresh(window, cx);
         if self.page == Page::Resources {
             self.resources
@@ -1085,7 +1105,7 @@ impl Pilot {
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.kubernetes_only.is_some() {
             self.refresh_kubernetes(window, cx);
-            self.refresh_summary(window, cx);
+            self.ensure_summary(window, cx);
             return;
         }
         if self.config_loading || self.overview.is_loading() {
@@ -1101,7 +1121,7 @@ impl Pilot {
             self.overview_succeeded();
             self.sync_nodes(window, cx);
             self.refresh_services(window, cx);
-            self.refresh_summary(window, cx);
+            self.ensure_summary(window, cx);
             self.refresh_screen(window, cx);
             cx.notify();
             return;
@@ -1114,6 +1134,16 @@ impl Pilot {
             self.runtime.clone(),
             self.applied.clone(),
             self.kubeconfig.clone(),
+            self.summary_session.as_ref().map(|_| {
+                self.kubernetes_summary
+                    .data()
+                    .map(|summary| summary.nodes.clone())
+                    .unwrap_or_else(|| {
+                        freshkube_core::kubernetes_summary::Part::Failed(
+                            "Waiting for shared Nodes".into(),
+                        )
+                    })
+            }),
         );
         self.overview_job = Some(job);
         self.overview_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -1135,7 +1165,7 @@ impl Pilot {
                     view.sync_nodes(window, cx);
                     if fresh {
                         view.refresh_services(window, cx);
-                        view.refresh_summary(window, cx);
+                        view.ensure_summary(window, cx);
                     }
                 }
                 cx.notify();
@@ -1268,7 +1298,10 @@ impl Pilot {
         let loading = self.loading();
         (
             1. - self.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
-            self.automatic && self.overview.data().is_some() && !loading,
+            self.automatic
+                && self.kubernetes_only.is_none()
+                && self.overview.data().is_some()
+                && !loading,
         )
     }
 

@@ -10,6 +10,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      native_stress:
+        description: Build an Intel macOS stress binary for local visible-window benchmarks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -80,8 +85,42 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
         run: cargo test --workspace --locked
+      - name: Stress API checks
+        # Enabling stress for the UI suite would start its timed app quit.
+        # Test the synthetic server binary separately from the normal app.
+        run: |
+          cargo clippy -p freshkube-desktop --features stress --all-targets --locked -- -D warnings
+          cargo test -p freshkube-desktop --features stress --bin stress --locked
       - name: Check builds leave the source tree clean
         run: test -z "$(git status --porcelain)"
+
+  stress_binary:
+    name: Native stress binary (Intel macOS)
+    if: github.event_name == 'workflow_dispatch' && inputs.native_stress
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - name: Install build tools
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app-x86_64-apple-darwin
+      - name: Build the benchmark executable
+        run: cargo build --release --locked --target x86_64-apple-darwin -p freshkube-desktop --features stress --bin stress
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freshkube-stress-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/stress
+          if-no-files-found: error
+          retention-days: 7
 
   build:
     name: macOS application bundles

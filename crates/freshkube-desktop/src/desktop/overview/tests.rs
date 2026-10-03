@@ -227,7 +227,7 @@ fn kubernetes_only_cards_and_refused_parts_keep_the_other_counts() {
     assert!(
         display.cards[3]
             .detail
-            .contains("Can't list events: forbidden")
+            .contains("Can't read events: forbidden")
     );
     assert!(display.subtitle.contains("Kubernetes v1.32.3"));
 }

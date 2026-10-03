@@ -245,6 +245,8 @@ pub struct ClusterOverviewCollector {
     context_filter: Option<String>,
     kubeconfig_selection: KubeconfigSelection,
     connection_keys: ConnectionKeys,
+    observed_nodes:
+        Option<crate::kubernetes_summary::Part<Vec<crate::kubernetes_summary::NodeSummary>>>,
 }
 
 impl ClusterOverviewCollector {
@@ -255,7 +257,17 @@ impl ClusterOverviewCollector {
             context_filter,
             kubeconfig_selection: KubeconfigSelection::Automatic,
             connection_keys: ConnectionKeys::default(),
+            observed_nodes: None,
         }
+    }
+
+    /// Once a desktop observation session exists, roster fallback consumes its
+    /// evidence, including failures, instead of making a hidden Node list.
+    pub fn set_observed_nodes(
+        &mut self,
+        nodes: Option<crate::kubernetes_summary::Part<Vec<crate::kubernetes_summary::NodeSummary>>>,
+    ) {
+        self.observed_nodes = nodes;
     }
 
     /// Replaces the talosconfig path used by subsequent connections.
@@ -688,6 +700,33 @@ impl ClusterOverviewCollector {
         client: &TalosClient,
         prepared: &mut Option<PreparedKubeconfig>,
     ) {
+        if let Some(observed) = &self.observed_nodes {
+            if let Some(nodes) = observed.loaded() {
+                let members = k8s_nodes_to_discovery_members(
+                    nodes
+                        .iter()
+                        .map(|node| K8sNodeInfo {
+                            name: node.name.clone(),
+                            internal_ip: node
+                                .addresses
+                                .iter()
+                                .find(|(kind, _)| kind == "InternalIP")
+                                .map(|(_, address)| address.clone()),
+                            is_control_plane: node
+                                .roles
+                                .iter()
+                                .any(|role| matches!(role.as_str(), "control-plane" | "master")),
+                        })
+                        .collect(),
+                );
+                replace_node_ips_from_discovery(cluster, &members);
+                cluster.discovery_members = members;
+            }
+            cluster.discovery_warning = observed
+                .error()
+                .map(|reason| format!("Shared Kubernetes roster: {reason}"));
+            return;
+        }
         let control_plane_ip = cluster.control_plane_ip();
         match control_plane_ip {
             Some(_) => {

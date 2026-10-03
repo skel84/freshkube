@@ -52,6 +52,7 @@ fn mount_sized(
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
+        cx.set_reduce_motion(true);
     });
     let source = source(node);
     let mut screen = None;
@@ -295,4 +296,158 @@ fn versions_parse_with_suffixes() {
     assert_eq!(parse_version("1.13.2-rc1"), Some((1, 13, 2)));
     assert_eq!(parse_version("v1.30.0+k3s1"), Some((1, 30, 0)));
     assert_eq!(parse_version("garbage"), None);
+}
+
+#[gpui_kit::test]
+fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_absence(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::kubernetes_summary::{Session, SessionIdentity, Source, SubscriptionKey};
+    use k8s_openapi::api::core::v1::Node;
+    use kube::runtime::watcher::Event;
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    let session = Session::new(SessionIdentity::new("fixture-lifecycle", 1));
+    let mut node: Node = serde_json::from_value(serde_json::json!({
+        "metadata":{"name":"talos-cp-fra1-01","uid":"node-uid","resourceVersion":"1"},
+        "status":{"nodeInfo":{"kubeletVersion":"v1.32.3"},"addresses":[{"type":"InternalIP","address":"10.0.0.1"}]}
+    })).unwrap();
+    session
+        .apply::<Node>(0, Event::Init, chrono::Utc::now())
+        .unwrap();
+    session
+        .apply(0, Event::InitApply(node.clone()), chrono::Utc::now())
+        .unwrap();
+    session
+        .apply::<Node>(0, Event::InitDone, chrono::Utc::now())
+        .unwrap();
+    let subscription = session
+        .subscribe(SubscriptionKey::summary(
+            session.identity().clone(),
+            Source::Nodes,
+        ))
+        .unwrap();
+    for version in ["v1.32.3", "v1.33.1"] {
+        let delayed = (version == "v1.33.1").then(|| {
+            cx.update(|cx| {
+                screen.update(cx, |screen, _| {
+                    let old = screen.loader.data().unwrap().clone();
+                    let request = screen
+                        .loader
+                        .state
+                        .begin(screen.source.as_ref().unwrap().target.clone());
+                    (request, old)
+                })
+            })
+        });
+        node.status
+            .as_mut()
+            .unwrap()
+            .node_info
+            .as_mut()
+            .unwrap()
+            .kubelet_version = version.into();
+        node.metadata.resource_version = Some(version.into());
+        session
+            .apply(0, Event::Apply(node.clone()), chrono::Utc::now())
+            .unwrap();
+        let publication = session.derive(chrono::Utc::now());
+        session.publish(publication.clone());
+        cx.update_window(handle.into(), |_, window, cx| {
+            screen.update(cx, |screen, cx| {
+                screen.observe_nodes(Some(subscription.clone()), cx)
+            });
+            let data = screen.read(cx).loader.data().unwrap();
+            assert_eq!(screen.read(cx).loader.is_loading(), delayed.is_some());
+            assert_eq!(
+                data.snapshot.kubernetes_roster,
+                publication.summary.node_roster()
+            );
+            assert_eq!(data.kubelets.value().unwrap()[0].version, version);
+            assert!(Arc::ptr_eq(
+                &screen
+                    .read(cx)
+                    .summary_nodes
+                    .as_ref()
+                    .unwrap()
+                    .latest()
+                    .unwrap(),
+                &publication
+            ));
+            window.render_frame(cx);
+            window.find("lifecycle-details");
+        })
+        .unwrap();
+        if let Some((request, old)) = delayed {
+            cx.update(|cx| {
+                screen.update(cx, |screen, cx| {
+                    assert!(screen.loader.state.apply(&request, Ok(old)));
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let data = screen.read(cx).loader.data().unwrap();
+                assert_eq!(data.kubelets.value().unwrap()[0].version, version);
+                assert_eq!(
+                    data.snapshot.kubernetes_roster,
+                    publication.summary.node_roster()
+                );
+            });
+        }
+    }
+    let timestamps = cx.update(|cx| {
+        screen.update(cx, |screen, _| {
+            let request = screen
+                .loader
+                .state
+                .begin(screen.source.as_ref().unwrap().target.clone());
+            assert!(
+                screen
+                    .loader
+                    .state
+                    .apply(&request, Err("Talos unavailable".into()))
+            );
+            (
+                screen.loader.last_successful(),
+                screen.loader.last_failure(),
+            )
+        })
+    });
+    session
+        .apply::<Node>(0, Event::Init, chrono::Utc::now())
+        .unwrap();
+    session.publish(session.derive(chrono::Utc::now()));
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.observe_nodes(Some(subscription), cx)
+        });
+        let data = screen.read(cx).loader.data().unwrap();
+        assert_eq!(screen.read(cx).loader.error(), Some("Talos unavailable"));
+        assert_eq!(
+            (
+                screen.read(cx).loader.last_successful(),
+                screen.read(cx).loader.last_failure()
+            ),
+            timestamps
+        );
+        assert!(!data.snapshot.kubernetes_roster.is_available());
+        assert!(
+            data.display
+                .rows
+                .iter()
+                .all(|row| row.in_kubernetes.is_none())
+        );
+        assert!(
+            !data
+                .display
+                .alerts
+                .iter()
+                .any(|alert| alert.message.contains("not registered in Kubernetes"))
+        );
+        assert_eq!(data.kubelets.value().unwrap()[0].version, "v1.33.1");
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| screen.observe_nodes(None, cx));
+        assert!(screen.read(cx).summary_nodes.is_none());
+    })
+    .unwrap();
 }
