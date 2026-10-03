@@ -94,16 +94,16 @@ These come from the GPUI evaluation plan (G09–G12) and the follow-ups it liste
 | F01 | Observations and evidence |
 | F02 | Shared resource store |
 | F03 | Consistent workload health |
-| F04 | Ownership and reconciliation |
+| F04 | Argo CD applications, ownership and reconciliation |
 | F05 | Traffic paths |
 | F06 | Planned changes |
 | F07 | Integration contracts |
-| F08 | One deep operator workflow |
+| F08 | CloudNativePG database investigation |
 | F09 | Change history |
 | F10 | Several clusters at once |
 | F11 | CLI and MCP explanations |
 
-The first semantic slice is F01 → F02 → F03, then F04 and F05. F06 is the first task that changes the cluster.
+The first semantic slice starts with F01 → F02 → F03 and Argo-first F04, with the minimum F07 contracts developed alongside CloudNativePG in F08. Its connected workflow is Application → database → failed backup or instance → storage/node evidence, with Talos inspection where available. F05 adds traffic diagnosis afterward. Flux and cert-manager, then Prometheus and Loki, are the next integration candidates detailed in [FUTURE_IDEAS.md](FUTURE_IDEAS.md#integration-rollout-after-cloudnativepg-and-argo-cd). F06 introduces reviewed resource mutations; it is separate from the existing explicit pod exec and port-forward sessions.
 
 ## History
 
