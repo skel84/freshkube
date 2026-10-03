@@ -2,6 +2,17 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
+## 0.2.1 (2026-10-03)
+
+### Monitoring
+
+- **Dashboards from the cluster's Prometheus**, drawn natively in the Console look: timeseries, stats, gauges, bar lists and tables. Freshkube finds Prometheus through the Kubernetes API's service proxy and remembers the Service per context. It sends GET requests only, and reads nothing while the page is hidden.
+- **Built-in Cluster and Workloads dashboards**, then your own folder of Grafana JSON (Settings → Dashboards folder). Variables, a time picker and auto-refresh work as in Grafana. Only panels in or near view are asked.
+- **One cursor across every chart** on the page. Hovering a legend entry fades the other series, and a panel's title shows its PromQL after interpolation, with Copy. With many series, the readout shows the highest values that fit the panel.
+- **Deploy and node markers** on every timeseries: a Deployment's new ReplicaSet, and nodes turning NotReady, rebooting or Ready again.
+- **CPU and memory over the last hour** near the top of a pod's Overview and in the node pane, from the Prometheus the Monitoring page found.
+- **Crowded dashboards stay fast.** Dozens of series past the six colours draw as one grey line and area, rather than one GPU pass per series.
+
 ## 0.2.0 (2026-10-03)
 
 The first release of **Freshkube**, a native macOS app for Talos Linux and Kubernetes clusters. It began as a fork of [talos-pilot](https://github.com/Handfish/talos-pilot), whose terminal UI stays upstream. Freshkube reads by default. It changes a cluster only through Talos operations behind their own confirmation, and through a pod shell or port forward that you start yourself.
