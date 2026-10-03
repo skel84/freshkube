@@ -125,6 +125,16 @@ pub trait HasHealth {
     }
 }
 
+impl HasHealth for talos_rs::ServiceInfo {
+    fn health(&self) -> HealthIndicator {
+        match &self.health {
+            Some(health) if !health.unknown && health.healthy => HealthIndicator::Healthy,
+            Some(health) if !health.unknown => HealthIndicator::Error,
+            _ => HealthIndicator::Unknown,
+        }
+    }
+}
+
 /// Connection state indicator
 ///
 /// Represents the connection state of a node or service.
@@ -296,6 +306,31 @@ impl HasHealth for SafetyStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn talos_service_health_uses_reported_health_not_service_state() {
+        for state in ["Running", "Stopped", "Failed"] {
+            let mut service = talos_rs::ServiceInfo {
+                id: "kubelet".into(),
+                state: state.into(),
+                health: None,
+            };
+            assert_eq!(service.health(), HealthIndicator::Unknown);
+            for (unknown, healthy, expected) in [
+                (true, true, HealthIndicator::Unknown),
+                (true, false, HealthIndicator::Unknown),
+                (false, true, HealthIndicator::Healthy),
+                (false, false, HealthIndicator::Error),
+            ] {
+                service.health = Some(talos_rs::ServiceHealth {
+                    unknown,
+                    healthy,
+                    last_message: String::new(),
+                });
+                assert_eq!(service.health(), expected);
+            }
+        }
+    }
 
     #[test]
     fn test_health_indicator_severity() {

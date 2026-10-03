@@ -38,6 +38,7 @@ pub mod logs;
 pub mod maintenance;
 pub mod monitoring;
 pub mod network;
+pub mod node_health;
 pub mod operations;
 pub mod pcap;
 pub mod resources;
