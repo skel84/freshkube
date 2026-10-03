@@ -214,6 +214,7 @@ pub(crate) struct ResourcesScreen {
     store: ResourceStore,
     projection: ResourceProjection,
     layout: TableLayout,
+    hidden_columns: BTreeSet<layout::ColumnSource>,
     visible: bool,
     /// The selection to find again once a restarted read lists it.
     restore: Option<ResourceIdentity>,
@@ -364,6 +365,7 @@ impl ResourcesScreen {
             store: ResourceStore::new(),
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
+            hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
             now: live::now(),
@@ -558,6 +560,8 @@ impl ResourcesScreen {
             return;
         }
         self.kind = kind;
+        self.hidden_columns.clear();
+        self.projection.set_pod_filter(&self.store, None);
         self.leave_detail(cx);
         self.restore = None;
         self.projection.reset_sort();
@@ -767,6 +771,7 @@ impl ResourcesScreen {
             let _span = crate::perf::span("table.layout");
             self.layout =
                 TableLayout::new(&self.store, self.lists_all_namespaces(), self.lists_pods());
+            self.layout.hide(&self.hidden_columns);
             drop(_span);
             // A restarted read selects the same object again if it still
             // exists; only its first list can tell.
@@ -913,7 +918,11 @@ impl ResourcesScreen {
         }
     }
 
-    fn set_namespace(
+    pub(crate) fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
+
+    pub(crate) fn set_namespace(
         &mut self,
         namespace: Option<String>,
         window: &mut Window,
@@ -1206,6 +1215,7 @@ pub(crate) enum NodePodsEvent {
 impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
 mod cells;
+mod controls;
 mod layout;
 mod pods;
 mod view;

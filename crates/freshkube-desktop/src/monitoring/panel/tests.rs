@@ -486,7 +486,7 @@ fn crowded(
     (handle, panels, result)
 }
 
-/// Forty series past the six colours: the grey lines draw as one path and
+/// Forty series past the two colours: the grey lines draw as one path and
 /// the grey areas as another, not one of each per series.
 #[gpui_kit::test]
 fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) {
@@ -496,8 +496,8 @@ fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) 
     frame(cx, handle);
     let series = cx.read(|cx| panels[0].read(cx).chart().unwrap().series.len());
     assert_eq!(series, 40);
-    // Six coloured series and the grey rest, each a line and an area.
-    assert_eq!(probe::count("monitoring-path") - before, 7 * 2);
+    // Two coloured series and the grey rest, each a line and an area.
+    assert_eq!(probe::count("monitoring-path") - before, 3 * 2);
 }
 
 /// Past what fits, the readout names the highest values and the picked

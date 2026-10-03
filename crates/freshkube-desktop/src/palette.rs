@@ -1,5 +1,5 @@
 //! Semantic colors the gpui-kit theme doesn't carry (status inks, soft
-//! fills). Values match `assets/theme.json`; the dark set is the Console
+//! fills). Values match `assets/theme.json`; the dark set is the Fog
 //! look in docs/DESIGN.md.
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{App, Hsla, rgb, rgba};
@@ -33,6 +33,9 @@ pub(crate) struct Palette {
     pub(crate) unk_ink: Hsla,
     pub(crate) unk_soft: Hsla,
     pub(crate) mark: Hsla,
+    pub(crate) memory: Hsla,
+    pub(crate) integration: Hsla,
+    pub(crate) on_fill: Hsla,
 }
 
 fn hex(value: u32) -> Hsla {
@@ -72,39 +75,45 @@ fn light() -> Palette {
         unk_ink: hex(0x566070),
         unk_soft: hexa(0x8A93A226),
         mark: hexa(0xFAB21966),
+        memory: hex(0x7560B9),
+        integration: hex(0x7560B9),
+        on_fill: hex(0xFFFFFF),
     }
 }
 
-/// The Console look (docs/DESIGN.md).
+/// The Fog look (docs/DESIGN.md).
 fn dark() -> Palette {
     Palette {
-        surface: hex(0x17181B),
-        surface_2: hex(0x1E2024),
-        hover: hex(0x25272C),
-        ink: hex(0xF2F3F5),
-        ink_2: hex(0xC9CCD1),
-        muted: hex(0x8E939B),
-        faint: hex(0x5E636B),
-        line: hex(0x24262A),
-        line_strong: hex(0x33363C),
-        track: hex(0x25272C),
-        accent: hex(0x4797FF),
-        accent_soft: hexa(0x4797FF29),
-        accent_line: hexa(0x4797FF80),
-        good: hex(0x3DD68C),
-        good_ink: hex(0x3DD68C),
-        good_soft: hexa(0x3DD68C24),
-        warn: hex(0xF5A623),
-        warn_ink: hex(0xF5A623),
-        warn_soft: hexa(0xF5A62324),
-        warn_line: hexa(0xF5A62366),
-        crit: hex(0xF0484E),
-        crit_ink: hex(0xFF6B70),
-        crit_soft: hexa(0xF0484E29),
-        unk: hex(0x5E636B),
-        unk_ink: hex(0x8E939B),
-        unk_soft: hexa(0x8E939B24),
-        mark: hexa(0xF5A62352),
+        surface: hex(0x2C3037),
+        surface_2: hex(0x343943),
+        hover: hex(0x3C424D),
+        ink: hex(0xEEF1F5),
+        ink_2: hex(0xCDD3DC),
+        muted: hex(0xA0A7B2),
+        faint: hex(0x737A85),
+        line: hex(0x393E47),
+        line_strong: hex(0x4A505B),
+        track: hex(0x3C424D),
+        accent: hex(0x8AB4F8),
+        accent_soft: hexa(0x8AB4F829),
+        accent_line: hexa(0x8AB4F880),
+        good: hex(0x82D4AB),
+        good_ink: hex(0x82D4AB),
+        good_soft: hexa(0x82D4AB24),
+        warn: hex(0xF2C46D),
+        warn_ink: hex(0xF2C46D),
+        warn_soft: hexa(0xF2C46D24),
+        warn_line: hexa(0xF2C46D66),
+        crit: hex(0xF28B82),
+        crit_ink: hex(0xF5A097),
+        crit_soft: hexa(0xF28B8229),
+        unk: hex(0x737A85),
+        unk_ink: hex(0xA0A7B2),
+        unk_soft: hexa(0xA0A7B224),
+        mark: hexa(0xF2C46D52),
+        memory: hex(0xB7AAF7),
+        integration: hex(0xB7AAF7),
+        on_fill: hex(0x14223B),
     }
 }
 
@@ -136,11 +145,11 @@ const TERMINAL_LIGHT: TerminalColors = TerminalColors {
 
 const TERMINAL_DARK: TerminalColors = TerminalColors {
     ansi: [
-        0x25272C, 0xF0484E, 0x3DD68C, 0xF5A623, 0x4797FF, 0xB08CF0, 0x3FC4D0, 0xC9CCD1, 0x5E636B,
-        0xFF6B70, 0x6FE3A8, 0xFFC25C, 0x7AB4FF, 0xC9AEF7, 0x72D9E2, 0xF2F3F5,
+        0x3C424D, 0xF28B82, 0x82D4AB, 0xF2C46D, 0x8AB4F8, 0xB08CF0, 0x3FC4D0, 0xCDD3DC, 0x737A85,
+        0xF5A097, 0x6FE3A8, 0xFFC25C, 0x7AB4FF, 0xC9AEF7, 0x72D9E2, 0xEEF1F5,
     ],
-    foreground: 0xF2F3F5,
-    background: 0x17181B,
+    foreground: 0xEEF1F5,
+    background: 0x2C3037,
 };
 
 pub(crate) fn terminal_colors(cx: &App) -> &'static TerminalColors {
@@ -149,4 +158,21 @@ pub(crate) fn terminal_colors(cx: &App) -> &'static TerminalColors {
     } else {
         &TERMINAL_LIGHT
     }
+}
+
+/// Semantic diff inks, with white labels above 5:1.
+pub(crate) fn flame_color(delta: i8) -> Hsla {
+    hex(match delta {
+        d if d < -10 => 0x3F65A0,
+        d if d < 0 => 0x3F5A80,
+        0 => 0x454B56,
+        d if d < 15 => 0x7E4A49,
+        _ => 0xA64B46,
+    })
+}
+/// Ordered latency buckets and their separate semantic error row.
+pub(crate) fn heat_color(level: usize, error: bool) -> Hsla {
+    const BLUE: [u32; 6] = [0x323845, 0x33466A, 0x3D5C92, 0x5379BB, 0x7AA0E6, 0xB3CEFA];
+    const ERROR: [u32; 6] = [0x3A3036, 0x604044, 0x885553, 0xB36962, 0xD97B72, 0xF28B82];
+    hex(if error { ERROR } else { BLUE }[level.min(5)])
 }

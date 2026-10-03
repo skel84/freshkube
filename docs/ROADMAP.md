@@ -16,6 +16,7 @@ These hold for every step until a later one deliberately changes them.
 
 | Step | What landed | Commit |
 | --- | --- | --- |
+| Fog and H1–H7 observability fixtures | Fog tokens, Figtree / IBM Plex Mono, the collapsible contextual sidebar, Problems-first Pods controls and bullet meters. A retained Observability workspace provides interactive applications, maps, reports, incidents, release diffs, profiling and traces with bounded fictional data. Real connections show Integration required; fixes and rollback only preview. [Validation and remaining scope](#done-fog-and-the-observability-prototype) | the commit that adds this row |
 | Operations policy in core | Remove the unused rolling runner; execute confirmed selections in core with fake-client coverage for whole-selection and per-node gates, deadlines, identity changes, cancellation without aborting a submitted mutation, partial failures, panic recovery, drain options and both audit layers. The desktop retains access revalidation, fingerprint confirmation, the operation slot and detached channel/task lifetime. Core preparation and the screen's rendering/example/test split are separate mechanical commits. | `cdac5ae`, `391628f`, `855702d`, `4c0d311` |
 | Remaining etcd tolerance | One core quorum calculation provides required votes, designed tolerance and remaining tolerance. Overview and the etcd screen display additional failures still tolerated, warning at zero; tests cover 2/3 and 3/5, healthy margins and voting-member correlation. Lifecycle, Operations and attention use the same calculation. | `03dde56` |
 | Watch-backed summary and shared Nodes ([#1](https://github.com/skel84/freshkube/issues/1), [#3](https://github.com/skel84/freshkube/issues/3)) | Nine session-owned compact reflector stores, independent refusal/coverage, debounced summaries, explicit relist and shared Lifecycle Nodes. Typed Health/Lifecycle handoffs retain the navigation entities. Fixture/UI and fake-API regressions pass; [memory acceptance and missed burst-performance targets](PERFORMANCE.md#watch-backed-summary-read-model-acceptance-4-october-2026) are recorded below | `c08d470`, `8ba9bb5`, `a3ef82b` |
@@ -233,19 +234,19 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 - The detail pane's recreated state (same name, new UID) is covered by UI tests only; no object on the cluster is recreated on its own. Checked live (2 October): with a node Lease open, 4 renewals in 50 seconds gave exactly 4 reads, and the 400 list batches about other leases gave none. An Event open when the API server expired it turned Deleted at once, kept its last-read document and was not read again.
 - Launched as an app bundle, the app couldn't reach a LAN cluster that the terminal-launched binary reached. The macOS packaging now includes `NSLocalNetworkUsageDescription`, a stable bundle identifier and a checked executable UUID. Apple's Local Network privacy rules are consistent with the difference, but metadata alone does not prove the cause or fix. Still open: launch the installed bundle on a chosen LAN context, grant permission and retry; verify reliable identity with Developer ID signing ([MACOS_PACKAGING.md](MACOS_PACKAGING.md#local-network-privacy)).
 
-## Next: the Console look
+## Done: Fog and the observability prototype
 
-The visual direction chosen on the design canvas: Console tokens and type, one status glyph language, a header with an icon rail and a contextual second column, dense problems-first tables and a pod detail that opens on the cause. The decisions, the open questions and the five-step build order are in [DESIGN.md](DESIGN.md).
+The user selected Fog and the canonical G7/G7c, G8 and H1–H7 PDF comps. [DESIGN.md](DESIGN.md) supersedes Console's tokens, typography, frame, meters and chart palette. This pass adds interactive H1–H7 fixtures and an Integration required state for real connections. Threshold edits and incident muting stay in the example session; fixes and rollback are previews. The existing Prometheus dashboards retain their live provider.
 
-1. Tokens and type. Done.
-2. Status glyphs. Done.
-3. App frame. Done.
-4. Tables, pods first. Done.
-5. Pod detail. Done.
+`ObservabilityPage` owns its selections and prepared display data and emits navigation events to the shell's existing guards. It has no runtime handle, credentials or provider. Live Coroot integration follows [COROOT.md](COROOT.md): provider I/O and typed observations belong in core, with explicit provider identity, freshness and capabilities; stable application identities must replace fixture indices. Missing OK or unknown signals must not become inferred healthy states, and unavailable profiling or deployment comparisons must stay explicit. Diagnostics and Lifecycle rule extractions are independent follow-ups.
+
+Validated on main `235ad5b` with all 941 workspace tests (including doctests), strict workspace/all-target Clippy and formatting passing. The subsequent rebase onto the docs-only `6e000bc` preserves the Coroot plan and sequencing with no application changes. Native fixture captures cover G7/G7c, G8 and H1–H7; the sidebar's expanded/collapsed states and the minimum 760 × 560 window at 20 px text were checked. The watch session, namespace Pod counts, typed Health/Lifecycle handles, Operations/quorum changes and Architecture review follow-up are preserved. AGENTS.md and the unused `AsyncState` cleanup remain with the architecture follow-through.
+
+This is not a pixel-by-pixel audit: group headers currently follow the virtual list's selected row density, and the pinned text API does not expose caption tracking. The earlier light palette remains until a Fog light theme is designed. No release performance benchmark was run for this visual pass; watch's [#22](https://github.com/skel84/freshkube/issues/22) performance target remains open. A graph renderer evaluation and the real Coroot provider remain separate work.
 
 ## Next: Monitoring
 
-Grafana-like dashboards in the Console look (F4), drawn natively from the cluster's Prometheus through the Kubernetes API's service proxy, read-only and GET only. Freshkube reuses grafaui's model and query crates and draws its own panels. The review, the decisions and the build order are in [MONITORING.md](MONITORING.md). Observability on Coroot's data comes after.
+Grafana-like dashboards, now using Fog, drawn natively from the cluster's Prometheus through the Kubernetes API's service proxy, read-only and GET only. Freshkube reuses grafaui's model and query crates and draws its own panels. The review, the decisions and the build order are in [MONITORING.md](MONITORING.md). Observability on Coroot's data comes after.
 
 0. Grafaui seam: a sans-I/O variable planner, GET requests, `reqwest` behind a feature. Done.
 1. Core: Prometheus discovery, the proxy transport, the scrape interval, example data. Done.

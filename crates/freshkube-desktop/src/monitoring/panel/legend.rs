@@ -57,7 +57,7 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
         .px(dp(16.))
         .pt(dp(2.))
         .text_size(dp(10.5))
-        .text_color(p.faint)
+        .text_color(p.muted)
         .children(legend.headings.iter().enumerate().map(|(index, heading)| {
             div()
                 .when(index > 0, |this| this.w(dp(36.)).text_right())
@@ -92,7 +92,7 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                         div()
                             .px(dp(4.))
                             .text_size(dp(11.))
-                            .text_color(p.faint)
+                            .text_color(p.muted)
                             .child(format!("and {} more", legend.more)),
                     )
                 }),
@@ -190,5 +190,5 @@ fn entry(
 /// The time of a series' last value, when it stopped before the window's
 /// end.
 fn stale(at: gpui_kit::SharedString, cx: &Context<PanelView>) -> impl IntoElement {
-    div().text_color(palette(cx).faint).child(format!("({at})"))
+    div().text_color(palette(cx).muted).child(format!("({at})"))
 }

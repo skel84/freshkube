@@ -326,7 +326,7 @@ impl PanelView {
                     .text_size(dp(11.))
                     .child(div().text_color(p.muted).child(cursor.time.clone()))
                     .when(cursor.more > 0, |this| {
-                        this.child(div().text_color(p.faint).child(format!(
+                        this.child(div().text_color(p.muted).child(format!(
                             "top {} of {}",
                             cursor.rows.len(),
                             cursor.rows.len() + cursor.more

@@ -8,7 +8,7 @@ use gpui_kit::{
     canvas, div, fill, point, px, relative, size,
 };
 
-use crate::monitoring::colors::Tier;
+use crate::monitoring::colors::{Ink, Tier};
 use crate::monitoring::derive::{BarRow, Spark, Stat, TableData};
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
@@ -64,11 +64,7 @@ pub(super) fn stats(stats: &[Stat], cx: &App) -> AnyElement {
             .pb(dp(10.))
             .child(stat_value(stat, dp(22.), cx))
             .children(stat.gauge.map(|gauge| bar(gauge, stat.tier, cx)))
-            .children(
-                stat.spark
-                    .clone()
-                    .map(|spark| sparkline(spark, stat.tier, cx)),
-            )
+            .children(stat.spark.clone().map(|spark| sparkline(spark, cx)))
             .into_any_element();
     }
     let p = palette(cx);
@@ -95,11 +91,7 @@ pub(super) fn stats(stats: &[Stat], cx: &App) -> AnyElement {
                 }))
                 .child(stat_value(stat, dp(18.), cx))
                 .children(stat.gauge.map(|gauge| bar(gauge, stat.tier, cx)))
-                .children(
-                    stat.spark
-                        .clone()
-                        .map(|spark| sparkline(spark, stat.tier, cx)),
-                )
+                .children(stat.spark.clone().map(|spark| sparkline(spark, cx)))
         }))
         .into_any_element()
 }
@@ -148,11 +140,11 @@ fn bar(fraction: f32, tier: Option<Tier>, cx: &App) -> impl IntoElement {
         )
 }
 
-/// Grey history, and the last stretch in the stat's tone or the accent,
-/// ending in a dot.
-fn sparkline(spark: Spark, tier: Option<Tier>, cx: &App) -> impl IntoElement {
+/// Grey history, and the last stretch in the first series colour. Status
+/// belongs to the stat's glyph, never to its timeseries.
+fn sparkline(spark: Spark, cx: &App) -> impl IntoElement {
     let p = palette(cx);
-    let (history, recent) = (p.faint, tier.map_or(p.accent, |tier| tier.color(cx)));
+    let (history, recent) = (p.faint, Ink::Slot(0).color(false));
     canvas(
         |_, _, _| {},
         move |bounds: Bounds<Pixels>, _, window, _| {
@@ -255,7 +247,7 @@ pub(super) fn bars(id: SharedString, rows: &[BarRow], cx: &App) -> AnyElement {
                         .whitespace_nowrap()
                         .font_family(ui::MONO_FONT)
                         .text_size(dp(12.))
-                        .text_color(if row.missing { p.faint } else { p.ink })
+                        .text_color(if row.missing { p.muted } else { p.ink })
                         .child(row.value.clone()),
                 )
         }))
@@ -320,7 +312,7 @@ pub(super) fn table(id: SharedString, table: &TableData, cx: &App) -> AnyElement
                             .border_t_1()
                             .border_color(p.line)
                             .text_size(dp(11.5))
-                            .text_color(p.faint)
+                            .text_color(p.muted)
                             .child(format!(
                                 "Showing {} of {} rows",
                                 table.rows.len(),

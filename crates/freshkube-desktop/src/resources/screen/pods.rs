@@ -94,9 +94,10 @@ impl ResourcesScreen {
     }
 
     pub(crate) fn set_list_view(&mut self, view: ListView, cx: &mut Context<Self>) {
-        if self.list_view == view {
+        if self.list_view == view && self.projection.pod_filter().is_none() {
             return;
         }
+        self.projection.set_pod_filter(&self.store, None);
         self.list_view = view;
         self.regroup();
         self.scroll_to_selection(ScrollStrategy::Top);

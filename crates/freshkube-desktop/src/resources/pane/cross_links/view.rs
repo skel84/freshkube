@@ -20,7 +20,7 @@ impl DetailPane {
         Button::new(owner.id.clone())
             .ghost()
             .small()
-            .label(owner.label.clone())
+            .child(ui::reference(owner.label.clone(), &palette(cx)))
             .on_click(cx.listener(move |_, _, _, cx| cx.emit(DetailEvent::Link(intent.clone()))))
     }
     pub(in crate::resources::pane) fn pod_sections(&self, cx: &Context<Self>) -> AnyElement {
@@ -29,7 +29,22 @@ impl DetailPane {
         if !links.pod {
             return div().into_any_element();
         }
-        let section = |label: &str| v_flex().gap(dp(7.)).child(ui::caption(label, cx));
+        let section = |label: &str| {
+            v_flex()
+                .min_w_0()
+                .p(dp(14.))
+                .gap(dp(10.))
+                .rounded(px(12.))
+                .bg(p.surface)
+                .border_1()
+                .border_color(p.line)
+                .child(
+                    div()
+                        .text_size(dp(14.))
+                        .font_weight(ui::HEADING_WEIGHT)
+                        .child(label.to_owned()),
+                )
+        };
         let runs_on = section("Runs on")
             .when_some(links.node.as_ref(), |this, node| {
                 let name = node.name.clone();
@@ -42,7 +57,7 @@ impl DetailPane {
                             Button::new("pod-runs-on")
                                 .ghost()
                                 .small()
-                                .label(node.name.clone())
+                                .child(ui::reference(node.name.clone(), &p))
                                 .on_click(cx.listener(move |_, _, _, cx| {
                                     cx.emit(DetailEvent::Link(ResourceLink::Node(
                                         name.clone(),
@@ -60,6 +75,12 @@ impl DetailPane {
                             ))
                         })),
                 )
+                .when_some(node.memory, |this, memory| this.child(
+                    h_flex().id("pod-node-memory").gap(dp(8.)).text_size(dp(12.)).text_color(p.ink_2)
+                        .child("Memory").child(crate::meters::bullet(crate::meters::Resource::Memory,
+                            memory.used as f64, None, Some(memory.total as f64), node.memory_stale, &p))
+                        .child(node.memory_label.clone())
+                        .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("Node memory used / physical capacity · requests not available in this snapshot").build(window, cx))))
                 .children(node.problems.iter().map(|problem| {
                     div()
                         .text_size(dp(12.))
@@ -122,7 +143,7 @@ impl DetailPane {
                         Button::new("pod-service-open")
                             .ghost()
                             .small()
-                            .label(service.label.clone())
+                            .child(ui::reference(service.label.clone(), &p))
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(DetailEvent::Link(ResourceLink::Object(
                                     freshkube_core::resources::builtin("services").unwrap(),

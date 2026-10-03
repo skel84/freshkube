@@ -99,9 +99,7 @@ fn deliver(screen: &Entity<ResourcesScreen>, events: Vec<ResourceEvent>, cx: &mu
 }
 
 #[gpui_kit::test]
-fn header_controls_share_one_row_and_fit_a_narrow_page(cx: &mut TestAppContext) {
-    // The page alone, in windows as wide as the app's: breakpoints leave
-    // out the sidebar, so 760, the narrowest window, leaves the page 480.
+fn header_controls_fit_beside_the_title_or_stack_on_a_narrow_page(cx: &mut TestAppContext) {
     for (width, beside_title) in [(1280., true), (760., false)] {
         let (_runtime, _screen, handle) = mount_sized(cx, Some("homelab"), width);
         cx.update_window(handle, |_, window, cx| {
@@ -111,19 +109,20 @@ fn header_controls_share_one_row_and_fit_a_narrow_page(cx: &mut TestAppContext) 
             let filter = window.find("resource-filter").bounds();
             let refresh = window.find("resource-refresh").bounds();
             for control in [namespace, filter, refresh] {
-                assert_eq!(control.center().y, filter.center().y, "{width}");
                 assert!(control.left() >= px(0.), "{width}: {control:?}");
                 assert!(control.right() <= px(width), "{width}: {control:?}");
             }
-            assert!(namespace.right() <= filter.left());
-            assert!(filter.right() <= refresh.left());
+            assert!(title.right() <= filter.left());
+            assert!(namespace.right() <= refresh.left());
+            assert_eq!(namespace.center().y, refresh.center().y);
             assert!(filter.size.width >= px(120.), "{width}: {filter:?}");
             if beside_title {
-                assert!(namespace.left() > title.right(), "{namespace:?}");
+                assert_eq!(namespace.center().y, filter.center().y);
+                assert!(filter.right() <= namespace.left());
             } else {
-                assert!(namespace.top() > title.bottom(), "{namespace:?}");
+                assert!(namespace.top() > filter.bottom(), "{namespace:?}");
             }
-            assert!(window.find("resource-list").bounds().top() > filter.bottom());
+            assert!(window.find("resource-list").bounds().top() > refresh.bottom());
         })
         .unwrap();
     }
@@ -156,7 +155,7 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         assert!(window.try_find(("resource-sort", 8usize)).is_none());
 
         let third = identity_at(&screen, 2, cx);
-        window.click(row_id(&third), cx);
+        window.within(row_id(&third)).click("name", cx);
         window.render_frame(cx);
         assert_eq!(selected(&screen, cx), Some(third.clone()));
         assert_eq!(window.find(row_id(&third)).selected(), Some(true));
@@ -379,7 +378,7 @@ fn a_kind_no_longer_served_says_so_and_closes_its_details(cx: &mut TestAppContex
         assert_eq!(screen.read(cx).noun(), "certificates");
         assert_eq!(screen.read(cx).store.len(), 5);
         let first = identity_at(&screen, 0, cx);
-        window.click(row_id(&first), cx);
+        window.within(row_id(&first)).click("name", cx);
         window.render_frame(cx);
         assert_eq!(shown(&screen, cx), Some(first));
     })
@@ -487,7 +486,7 @@ fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(screen.read(cx).store.len(), 22);
         let first = identity_at(&screen, 0, cx);
-        window.click(row_id(&first), cx);
+        window.within(row_id(&first)).click("name", cx);
 
         // Another connection keeps nothing from the last one.
         screen.update(cx, |screen, cx| {
@@ -510,7 +509,7 @@ fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppC
             window.render_frame(cx);
             assert!(window.try_find("resource-detail").is_none());
             let third = identity_at(&screen, 2, cx);
-            window.click(row_id(&third), cx);
+            window.within(row_id(&third)).click("name", cx);
             window.render_frame(cx);
             assert_eq!(shown(&screen, cx), Some(third.clone()));
             assert_eq!(
@@ -548,7 +547,7 @@ fn arrow_keys_show_the_next_row_once_the_keyboard_pauses(cx: &mut TestAppContext
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let first = identity_at(&screen, 0, cx);
-        window.click(row_id(&first), cx);
+        window.within(row_id(&first)).click("name", cx);
         window.render_frame(cx);
         assert!(window.try_find("detail-state").is_none());
 
@@ -577,7 +576,7 @@ fn a_deleted_row_marks_its_details_and_offers_the_new_object(cx: &mut TestAppCon
             window.render_frame(cx);
             let first = identity_at(&screen, 0, cx);
             let row = screen.read(cx).store.get(&first).cloned().unwrap();
-            window.click(row_id(&first), cx);
+            window.within(row_id(&first)).click("name", cx);
             deliver(&screen, vec![ResourceEvent::Delete(first.clone())], cx);
             window.render_frame(cx);
             assert!(window.find("detail-deleted").visible());
@@ -614,7 +613,9 @@ fn another_kind_namespace_or_connection_closes_the_details(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         let open_first = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
             window.render_frame(cx);
-            window.click(row_id(&identity_at(&screen, 0, cx)), cx);
+            window
+                .within(row_id(&identity_at(&screen, 0, cx)))
+                .click("name", cx);
             window.render_frame(cx);
             assert!(window.find("resource-detail").visible());
         };
@@ -864,7 +865,7 @@ fn a_running_shell_pins_the_pane_until_the_user_ends_it(cx: &mut TestAppContext)
     step(cx, &|window, cx| {
         let ix = running_row(&screen, cx);
         let pod = identity_at(&screen, ix, cx);
-        window.click(row_id(&pod), cx);
+        window.within(row_id(&pod)).click("name", cx);
         *pinned.borrow_mut() = Some(pod);
     });
     let pod = pinned.borrow().clone().unwrap();
@@ -912,7 +913,7 @@ fn a_running_shell_pins_the_pane_until_the_user_ends_it(cx: &mut TestAppContext)
     step(cx, &|window, cx| {
         assert_eq!(shown(&screen, cx).as_ref(), Some(&pod));
         // Clicking the shell's own row doesn't ask.
-        window.click(row_id(&pod), cx);
+        window.within(row_id(&pod)).click("name", cx);
     });
     assert!(!cx.has_pending_prompt());
     step(cx, &|window, cx| {
@@ -947,7 +948,9 @@ fn a_forward_runs_on_through_another_context_and_names_its_own(cx: &mut TestAppC
     };
     step(cx, &|window, cx| {
         let ix = running_row(&screen, cx);
-        window.click(row_id(&identity_at(&screen, ix, cx)), cx);
+        window
+            .within(row_id(&identity_at(&screen, ix, cx)))
+            .click("name", cx);
     });
     step(cx, &|window, cx| window.click("detail-tab-ports", cx));
     step(cx, &|window, cx| window.click("ports-forward-8080", cx));
@@ -1235,7 +1238,7 @@ fn x_marks_rows_and_a_group_selects_all_of_its_own(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let first = identity_at(&screen, 0, cx);
-        window.click(row_id(&first), cx);
+        window.within(row_id(&first)).click("name", cx);
         window.press("x", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).marked.contains(&first));
@@ -1289,7 +1292,7 @@ fn l_opens_the_selected_pod_on_its_logs(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let first = identity_at(&screen, 0, cx);
-        window.click(row_id(&first), cx);
+        window.within(row_id(&first)).click("name", cx);
         window.render_frame(cx);
         window.press("l", cx);
         window.render_frame(cx);
@@ -1388,6 +1391,60 @@ fn workloads_take_their_glyph_from_replicas_ready(cx: &mut TestAppContext) {
         ));
         assert!(screen.read(cx).projection.grouping().is_none());
         assert!(window.try_find("resource-view").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn fog_glyph_filters_and_column_choices_change_the_table(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("example"));
+    let before = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for control in ["resource-density", "resource-columns", "resource-refresh"] {
+                assert!(window.find(control).visible(), "{control}");
+                assert!(
+                    window.find(control).bounds().bottom()
+                        <= window.find("resource-list").bounds().top()
+                );
+            }
+            window.click("resource-tally-healthy", cx);
+            assert_eq!(
+                screen.read(cx).projection.pod_filter(),
+                Some(crate::resources::projection::PodFilter::Healthy)
+            );
+            assert_eq!(
+                screen.read(cx).projection.len(),
+                screen.read(cx).projection.tally().healthy
+            );
+            window.click("resource-view-all", cx);
+            assert!(screen.read(cx).projection.pod_filter().is_none());
+            assert_eq!(
+                screen.read(cx).projection.len(),
+                screen.read(cx).store.len()
+            );
+            let before = screen.read(cx).layout.width;
+            window.click("resource-columns", cx);
+            window.render_frame(cx);
+            // The first optional column is Owner; the Name and glyph stay fixed.
+            window.within("popup-menu").click(0usize, cx);
+            assert!(
+                screen
+                    .read(cx)
+                    .hidden_columns
+                    .contains(&super::layout::ColumnSource::Owner)
+            );
+            assert!(screen.read(cx).layout.width < before);
+            before
+        })
+        .unwrap();
+    // Let the menu's deferred dismiss finish before opening it again.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-columns", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(0usize, cx);
+        assert_eq!(screen.read(cx).layout.width, before);
     })
     .unwrap();
 }
