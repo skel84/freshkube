@@ -1471,3 +1471,50 @@ fn workloads_take_their_glyph_from_replicas_ready(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn namespaces_survive_a_kind_change_but_reject_a_source_round_trip(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let generation = screen.namespace_generation;
+            screen.set_kind(kind("deployments.apps"), window, cx);
+            assert!(screen.finish_namespaces(generation, Ok(vec!["current".into()]), window, cx));
+            assert_eq!(screen.namespaces, ["current"]);
+            screen.set_source(Some(source("prod-fra")), window, cx);
+            screen.set_source(Some(source("homelab")), window, cx);
+            let current = screen.namespaces.clone();
+            assert!(!screen.finish_namespaces(generation, Ok(vec!["obsolete".into()]), window, cx));
+            assert_eq!(screen.namespaces, current);
+            assert!(screen.finish_namespaces(
+                screen.namespace_generation,
+                Ok(vec!["fresh".into()]),
+                window,
+                cx
+            ));
+            assert_eq!(screen.namespaces, ["fresh"]);
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn old_metrics_cannot_change_the_new_access_or_a_disconnected_page(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let epoch = screen.store.epoch();
+            screen.set_source(Some(source("prod-fra")), window, cx);
+            assert!(!screen.apply_usage(epoch, Err("late failure".into()), cx));
+            assert_eq!(screen.usage_state, super::UsageState::Known);
+            let epoch = screen.store.epoch();
+            assert!(screen.apply_usage(epoch, Err("current failure".into()), cx));
+            assert_eq!(screen.usage_state, super::UsageState::Stale);
+            screen.set_source(None, window, cx);
+            assert!(screen.usage.is_none());
+            assert!(!screen.apply_usage(epoch, Ok(Vec::new()), cx));
+            assert_eq!(screen.usage_state, super::UsageState::Unknown);
+        });
+    })
+    .unwrap();
+}
