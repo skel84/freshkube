@@ -1,5 +1,5 @@
 use crate::{
-    desktop::{Page, tests::fixture},
+    desktop::{Area, Page, tests::fixture},
     resources::{KubeAccess, Tab},
 };
 use gpui_kit::{AppContext, TestAppContext, component::WindowExt, test::TestWindowExt};
@@ -100,23 +100,43 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
-fn fixture_panel_gallery_opens_from_example_data_and_leaves_on_navigation(cx: &mut TestAppContext) {
+fn fixture_monitoring_opens_its_dashboard_from_example_data_and_hides_on_navigation(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("monitoring-panels"), None, Some("dark"), window, cx)
+            pilot.startup_selection(Some("monitoring"), None, Some("dark"), window, cx)
         });
+        window.render_frame(cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.find("monitoring-gallery").visible());
+        assert_eq!(pilot.read(cx).area, Area::Monitoring);
+        assert!(window.find("monitoring-grid").visible());
+        assert!(window.find("monitoring-variable-node").visible());
         assert!(window.find("monitoring-panel-0-title").visible());
         assert!(window.try_find("monitoring-panel-0-failed").is_none());
+        assert!(
+            window
+                .find("monitoring-dashboard-freshkube-cluster")
+                .visible()
+        );
+        window.click("monitoring-dashboard-freshkube-workloads", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            pilot.read(cx).monitoring.read(cx).chosen(),
+            &crate::monitoring::page::EntryId::Builtin("freshkube-workloads")
+        );
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
         window.render_frame(cx);
-        assert!(window.try_find("monitoring-gallery").is_none());
+        assert!(window.try_find("monitoring-grid").is_none());
         assert!(window.find("tile-pods").visible());
     })
     .unwrap();

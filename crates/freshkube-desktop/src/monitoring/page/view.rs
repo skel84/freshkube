@@ -1,0 +1,501 @@
+//! Drawing the page: the header with the time picker and auto-refresh, the
+//! variables, then the grid or the state that stands in for it. Everything
+//! shown was derived when it changed; `render` only reads it.
+use freshkube_core::monitoring::{LOOKED_FOR, catalog::REFRESH_CHOICES, catalog::refresh_label};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    Icon, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
+    menu::{DropdownMenu, PopupMenuItem},
+    v_flex,
+};
+use gpui_kit::prelude::*;
+use gpui_kit::{
+    AnyElement, Bounds, Context, FontWeight, IntoElement, Pixels, Render, SharedString,
+    StyleRefinement, TestSupportExt, Window, canvas, div, px, relative,
+};
+
+use super::board::Board;
+use super::connection::{Connection, Missing};
+use super::layout::{NARROW, ROW_HEADER};
+use super::{MonitoringPage, Viewport};
+use crate::palette::palette;
+use crate::ui::{self, dp, dp_px};
+
+impl Render for MonitoringPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::desktop::probe::hit("monitoring-page");
+        let p = palette(cx);
+        let narrow = crate::screens::content_width(window) < NARROW;
+        v_flex()
+            .id("monitoring-page")
+            .key_context("Monitoring")
+            .track_focus(&self.focus)
+            .size_full()
+            .bg(p.surface_2)
+            .px(dp(20.))
+            .pt(dp(14.))
+            .gap(dp(10.))
+            .child(self.render_header(cx))
+            .children(self.render_variables(cx))
+            .children(self.render_variable_error(cx))
+            .child(div().flex_1().min_h_0().child(self.render_body(narrow, cx)))
+            .test_support()
+    }
+}
+
+impl MonitoringPage {
+    /// "Dashboards / title", where the data comes from, the time picker
+    /// and auto-refresh.
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let title = self.board.as_ref().map_or_else(
+            || SharedString::from("Monitoring"),
+            |board| board.title.clone(),
+        );
+        h_flex()
+            .flex_none()
+            .flex_wrap()
+            .gap(dp(8.))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(dp(12.5))
+                    .text_color(p.muted)
+                    .child("Dashboards"),
+            )
+            .child(div().flex_none().text_color(p.faint).child("/"))
+            .child(
+                div()
+                    .id("monitoring-title")
+                    .flex_1()
+                    .min_w(dp(120.))
+                    .truncate()
+                    .text_size(dp(20.))
+                    .font_weight(ui::TITLE_WEIGHT)
+                    .child(title)
+                    .test_support(),
+            )
+            // Wraps as one, kept to the right.
+            .child(
+                h_flex()
+                    .flex_none()
+                    .ml_auto()
+                    .gap(dp(8.))
+                    .child(self.render_status(cx))
+                    .children(
+                        self.board
+                            .as_ref()
+                            .filter(|board| board.error.is_none())
+                            .map(|board| self.render_time(board, cx)),
+                    )
+                    .child(self.render_refresh(cx)),
+            )
+    }
+
+    /// Where the answers come from, or what the page is waiting for.
+    fn render_status(&self, cx: &Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let (tone, text, tooltip): (Option<ui::Tone>, SharedString, Option<SharedString>) =
+            match &self.connection {
+                Connection::None if self.source.is_none() => (None, "Not connected".into(), None),
+                Connection::None | Connection::Looking { .. } => {
+                    (None, "Looking for Prometheus…".into(), None)
+                }
+                Connection::Example => (None, "Example data".into(), None),
+                Connection::Ready { label, version, .. } => {
+                    (Some(ui::Tone::Good), label.clone(), Some(version.clone()))
+                }
+                Connection::Missing(_) => (Some(ui::Tone::Warn), "No Prometheus".into(), None),
+                Connection::Refused(_) => (Some(ui::Tone::Crit), "Not allowed".into(), None),
+                Connection::Failed(_) => (Some(ui::Tone::Crit), "Unreachable".into(), None),
+            };
+        h_flex()
+            .id("monitoring-source")
+            .flex_none()
+            .gap(dp(6.))
+            .px(dp(4.))
+            .font_family(ui::MONO_FONT)
+            .text_size(dp(11.5))
+            .text_color(p.muted)
+            .children(tone.and_then(|tone| ui::status_glyph(tone, cx)))
+            .child(text)
+            .when_some(tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                })
+            })
+            .test_support()
+            .into_any_element()
+    }
+
+    fn render_time(&self, board: &Board, cx: &Context<Self>) -> AnyElement {
+        let page = cx.entity().downgrade();
+        let (ranges, current) = (board.ranges.clone(), board.span);
+        Button::new("monitoring-range")
+            .outline()
+            .small()
+            .icon(IconName::Clock)
+            .label(board.range_label.clone())
+            .dropdown_caret(true)
+            .accessibility_label("Time range")
+            .dropdown_menu(move |mut menu, _, _| {
+                for (span, label) in ranges.iter() {
+                    let (page, span) = (page.clone(), *span);
+                    menu = menu.item(
+                        PopupMenuItem::new(label.clone())
+                            .checked(span == current)
+                            .on_click(move |_, _, cx| {
+                                _ = page.update(cx, |page, cx| page.set_range(span, cx));
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
+    }
+
+    /// Refresh now, and the auto-refresh interval with a dot while on.
+    fn render_refresh(&self, cx: &Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let page = cx.entity().downgrade();
+        let every = self.refresh_every;
+        h_flex()
+            .flex_none()
+            .gap(dp(4.))
+            .child(
+                Button::new("monitoring-refresh")
+                    .outline()
+                    .small()
+                    .icon(IconName::RefreshCw)
+                    .tooltip("Read every panel again")
+                    .on_click(cx.listener(|page, _, _, cx| page.refresh(cx))),
+            )
+            .child(
+                Button::new("monitoring-auto-refresh")
+                    .outline()
+                    .small()
+                    .when(every.is_some(), |this| {
+                        this.child(div().size(dp(6.)).rounded_full().bg(p.good))
+                    })
+                    .label(refresh_label(every))
+                    .dropdown_caret(true)
+                    .tooltip("Auto-refresh while the page shows")
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for choice in REFRESH_CHOICES {
+                            let page = page.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(refresh_label(choice))
+                                    .checked(choice == every)
+                                    .on_click(move |_, _, cx| {
+                                        _ = page
+                                            .update(cx, |page, cx| page.set_refresh(choice, cx));
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            )
+    }
+
+    /// One chip per shown variable: its name, then its value as a menu.
+    fn render_variables(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let board = self.board.as_ref()?;
+        if board.controls.is_empty() {
+            return None;
+        }
+        let p = palette(cx);
+        let page = cx.entity().downgrade();
+        Some(
+            h_flex()
+                .flex_none()
+                .flex_wrap()
+                .gap(dp(8.))
+                .children(board.controls.iter().map(|control| {
+                    let (page, index) = (page.clone(), control.index);
+                    let (options, current) = (control.options.clone(), control.value.clone());
+                    h_flex()
+                        .h(dp(28.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(p.line)
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .px(dp(9.))
+                                .bg(p.surface_2)
+                                .font_family(ui::MONO_FONT)
+                                .text_size(dp(11.5))
+                                .text_color(p.muted)
+                                .child(control.label.clone()),
+                        )
+                        .child(
+                            Button::new(control.id.clone())
+                                .ghost()
+                                .small()
+                                .label(control.value.clone())
+                                .dropdown_caret(true)
+                                .dropdown_menu(move |mut menu, _, _| {
+                                    for option in options.iter() {
+                                        let (page, value) = (page.clone(), option.clone());
+                                        menu = menu.item(
+                                            PopupMenuItem::new(option.clone())
+                                                .checked(*option == current)
+                                                .on_click(move |_, _, cx| {
+                                                    let value = value.clone();
+                                                    _ = page.update(cx, |page, cx| {
+                                                        page.set_variable(index, value, cx)
+                                                    });
+                                                }),
+                                        );
+                                    }
+                                    menu
+                                }),
+                        )
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn render_variable_error(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let error = self.board.as_ref()?.variable_error.clone()?;
+        Some(
+            ui::warning_banner(
+                Some("Couldn't read the variables".into()),
+                error,
+                Some(
+                    Button::new("monitoring-variables-retry")
+                        .outline()
+                        .small()
+                        .label("Try again")
+                        .on_click(cx.listener(|page, _, _, cx| page.resolve_variables(cx)))
+                        .into_any_element(),
+                ),
+                cx,
+            )
+            .flex_none()
+            .into_any_element(),
+        )
+    }
+
+    fn render_body(&mut self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+        let page = cx.entity().downgrade();
+        let retry = move |id: &'static str, label: &'static str| {
+            let page = page.clone();
+            Button::new(id)
+                .outline()
+                .small()
+                .label(label)
+                .on_click(move |_, _, cx| {
+                    _ = page.update(cx, |page, cx| page.retry(cx));
+                })
+                .into_any_element()
+        };
+        if let Some(error) = self.board.as_ref().and_then(|board| board.error.clone()) {
+            return ui::empty_state(
+                IconName::FileText,
+                "This dashboard doesn't read",
+                "Freshkube reads Grafana's JSON export of a dashboard.",
+                Some(error.to_string()),
+                Vec::new(),
+                cx,
+            )
+            .into_any_element();
+        }
+        match &self.connection {
+            Connection::None if self.source.is_none() => ui::empty_state(
+                IconName::Unplug,
+                "Not connected",
+                "Choose a context to read its Prometheus.",
+                None,
+                Vec::new(),
+                cx,
+            )
+            .into_any_element(),
+            Connection::Missing(missing) => self.render_missing(missing, retry, cx),
+            Connection::Refused(message) => ui::empty_state(
+                IconName::ShieldX,
+                message.clone(),
+                "Dashboards read Prometheus through the Kubernetes service proxy, which needs get on services/proxy in its namespace.",
+                None,
+                vec![retry("monitoring-retry", "Try again")],
+                cx,
+            )
+            .into_any_element(),
+            Connection::Failed(message) => ui::empty_state(
+                IconName::CircleAlert,
+                "Couldn't reach Prometheus",
+                "The service proxy didn't answer as Prometheus.",
+                Some(message.to_string()),
+                vec![retry("monitoring-retry", "Try again")],
+                cx,
+            )
+            .into_any_element(),
+            _ => self.render_grid(narrow, cx),
+        }
+    }
+
+    fn render_missing(
+        &self,
+        missing: &Missing,
+        retry: impl Fn(&'static str, &'static str) -> AnyElement,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let page = cx.entity().downgrade();
+        let confirming = missing.confirming.as_ref().map(|(service, _)| service);
+        let mut actions: Vec<AnyElement> = missing
+            .candidates
+            .iter()
+            .take(4)
+            .enumerate()
+            .map(|(index, (service, label))| {
+                let (page, service) = (page.clone(), service.clone());
+                Button::new(SharedString::from(format!("monitoring-candidate-{index}")))
+                    .outline()
+                    .small()
+                    .loading(confirming == Some(&service))
+                    .label(format!("Use {label}"))
+                    .on_click(move |_, _, cx| {
+                        let service = service.clone();
+                        _ = page.update(cx, |page, cx| page.pick_service(service, cx));
+                    })
+                    .into_any_element()
+            })
+            .collect();
+        actions.push(retry("monitoring-retry", "Look again"));
+        let context = self
+            .source
+            .as_ref()
+            .map_or_else(String::new, |source| format!(" in {}", source.context));
+        ui::empty_state(
+            IconName::SearchX,
+            format!("No Prometheus found{context}"),
+            format!("Freshkube looked for {LOOKED_FOR}."),
+            missing.tried.as_ref().map(ToString::to_string),
+            actions,
+            cx,
+        )
+        .into_any_element()
+    }
+
+    /// The dashboard's rows and panels, scrolled as one. A canvas reports
+    /// what is in view once laid out, so the panels coming into it are
+    /// asked on the next frame.
+    fn render_grid(&mut self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+        let Some(board) = &self.board else {
+            return div().into_any_element();
+        };
+        let p = palette(cx);
+        let layout = board.layout(narrow);
+        let gap = freshkube_core::monitoring::model::layout::GAP;
+        let rows = layout.rows.iter().map(|(section, top)| {
+            let collapsed = board.is_collapsed(*section);
+            let header = board.rows[*section].as_ref();
+            let section = *section;
+            h_flex()
+                .id(header.map_or_else(
+                    || SharedString::from("monitoring-row"),
+                    |row| row.id.clone(),
+                ))
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(dp(*top))
+                .h(dp(ROW_HEADER))
+                .gap(dp(8.))
+                .cursor_pointer()
+                .child(
+                    Icon::new(if collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .size(dp(14.))
+                    .text_color(p.muted),
+                )
+                .children(header.map(|row| {
+                    div()
+                        .text_size(dp(14.))
+                        .font_weight(FontWeight::BOLD)
+                        .child(row.title.clone())
+                }))
+                .when(collapsed, |this| {
+                    this.children(header.map(|row| {
+                        div()
+                            .text_size(dp(12.))
+                            .text_color(p.muted)
+                            .child(row.count.clone())
+                    }))
+                })
+                .on_click(cx.listener(move |page, _, _, cx| page.toggle_row(section, cx)))
+                .test_support()
+        });
+        let panels = layout.panels.iter().map(|place| {
+            div()
+                .absolute()
+                .left(relative(place.left))
+                .w(relative(place.width))
+                .top(dp(place.top))
+                .h(dp(place.height))
+                .pr(dp(gap))
+                .pb(dp(gap))
+                .child(
+                    board.slots[place.slot]
+                        .view
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                )
+        });
+        let (viewport, scroll, page) = (
+            self.viewport.clone(),
+            self.scroll.clone(),
+            cx.entity().downgrade(),
+        );
+        let watch = canvas(
+            move |bounds: Bounds<Pixels>, window, _| {
+                let frame = scroll.bounds();
+                if frame.size.height <= px(0.) {
+                    return;
+                }
+                let unit = dp_px(1., window);
+                let now = Viewport {
+                    top: ((frame.origin.y - bounds.origin.y) / unit).max(0.),
+                    height: frame.size.height / unit,
+                    narrow,
+                };
+                if viewport.get() != now {
+                    viewport.set(now);
+                    let page = page.clone();
+                    window.on_next_frame(move |_, cx| {
+                        _ = page.update(cx, |page, cx| page.ask_visible(cx));
+                    });
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        div()
+            .id("monitoring-grid")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(dp(layout.height + 12.))
+                    .child(watch)
+                    .children(rows)
+                    .children(panels),
+            )
+            .test_support()
+            .into_any_element()
+    }
+}

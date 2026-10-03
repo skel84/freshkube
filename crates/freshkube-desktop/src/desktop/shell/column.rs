@@ -28,6 +28,7 @@ impl Pilot {
                     self.custom_resources(current.as_deref(), self.column_reveal.as_ref(), cx);
                 (custom.rows, custom.reveal, custom.settled)
             }
+            Area::Monitoring => (self.monitoring_rows(cx), None, true),
             _ => (self.control_plane_rows(cx), None, true),
         };
         // Scrolling needs the column's size, which the first frame of a
@@ -120,6 +121,120 @@ impl Pilot {
             _ => None,
         };
         (rows, reveal)
+    }
+
+    /// The built-in dashboards, then the user's folder or how to add one.
+    fn monitoring_rows(&self, cx: &Context<Self>) -> Vec<AnyElement> {
+        let p = palette(cx);
+        let monitoring = self.monitoring.read(cx);
+        let open = (self.page == Page::Monitoring).then(|| monitoring.chosen());
+        let caption = |text: SharedString| {
+            div()
+                .px(dp(10.))
+                .pt(dp(12.))
+                .pb(dp(4.))
+                .child(ui::caption(&text, cx))
+                .into_any_element()
+        };
+        let entry = |entry: &Entry| {
+            let mut row = NavRow::new(entry.element_id.clone(), entry.title.clone(), dp(10.));
+            if let Some(tooltip) = &entry.tooltip {
+                row = row.tooltip(tooltip.clone());
+            }
+            let id = entry.id.clone();
+            let monitoring = self.monitoring.clone();
+            self.column_item(
+                row,
+                open == Some(&entry.id),
+                cx.listener(move |view, _, window, cx| {
+                    let id = id.clone();
+                    monitoring.update(cx, |monitoring, cx| monitoring.open(id, cx));
+                    view.navigate_from_keyboard(Page::Monitoring, window, cx);
+                }),
+                cx,
+            )
+        };
+        let catalog = monitoring.catalog();
+        let mut rows = vec![caption("Built in".into())];
+        rows.extend(catalog.builtins.iter().map(entry));
+        match &catalog.folder {
+            FolderState::None => rows.push(
+                v_flex()
+                    .px(dp(10.))
+                    .pt(dp(12.))
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(dp(12.))
+                            .text_color(p.muted)
+                            .child("Add your own Grafana dashboards from a folder of JSON"),
+                    )
+                    .child(
+                        Button::new("monitoring-add-folder")
+                            .ghost()
+                            .small()
+                            .label("Choose a folder")
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                view.settings_open = true;
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element(),
+            ),
+            FolderState::Reading { name, .. } => {
+                rows.push(caption(name.clone()));
+                rows.push(self.nav_status(
+                    NavRow::new("monitoring-folder-reading", "Reading…", dp(10.)),
+                    None,
+                    cx,
+                ));
+            }
+            FolderState::Read {
+                name,
+                path,
+                entries,
+                note,
+            } => {
+                rows.push(caption(name.clone()));
+                if entries.is_empty() {
+                    rows.push(
+                        self.nav_status(
+                            NavRow::new("monitoring-folder-empty", "No dashboards", dp(10.))
+                                .tooltip(path.clone()),
+                            None,
+                            cx,
+                        ),
+                    );
+                }
+                rows.extend(entries.iter().map(entry));
+                if let Some(note) = note {
+                    rows.push(self.nav_status(
+                        NavRow::new("monitoring-folder-note", note.clone(), dp(10.)),
+                        None,
+                        cx,
+                    ));
+                }
+            }
+            FolderState::Failed { name, error } => {
+                rows.push(caption(name.clone()));
+                let monitoring = self.monitoring.downgrade();
+                rows.push(
+                    self.nav_status(
+                        NavRow::new(
+                            "monitoring-folder-failed",
+                            "Couldn't read the folder",
+                            dp(10.),
+                        )
+                        .tooltip(error.clone()),
+                        Some(Box::new(move |_, _, cx| {
+                            _ = monitoring.update(cx, |monitoring, cx| monitoring.read_folder(cx));
+                        })),
+                        cx,
+                    ),
+                );
+            }
+        }
+        rows
     }
 
     /// The Talos pages, or without a talosconfig, how to add one.

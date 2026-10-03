@@ -49,6 +49,9 @@ impl Pilot {
             self.navigate(page, window, cx);
         }
         match page {
+            Some("monitoring") if self.fixture => self
+                .monitoring
+                .update(cx, |monitoring, cx| monitoring.answer_example_now(cx)),
             Some("node-logs" | "node-overview") => {
                 let name = if page == Some("node-overview") {
                     self.node_workspace
@@ -100,12 +103,6 @@ impl Pilot {
                 }
             }
             Some("kubernetes-only") if self.fixture => self.fixture_kubernetes_only(window, cx),
-            Some("monitoring-panels") if self.fixture => {
-                let end = chrono::Utc::now().timestamp();
-                let gallery = cx.new(|cx| crate::monitoring::gallery::Gallery::new(end, cx));
-                self.gallery = Some(gallery.into());
-                cx.notify();
-            }
             _ => {}
         }
         if let Some(kind) = kind.and_then(|key| {

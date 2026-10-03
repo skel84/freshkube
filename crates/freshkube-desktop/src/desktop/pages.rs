@@ -18,6 +18,7 @@ pub(crate) enum Page {
     Security,
     Lifecycle,
     Operations,
+    Monitoring,
 }
 
 /// The retained inspection views, including those embedded in the node pane.
@@ -68,6 +69,8 @@ pub(crate) enum Area {
     Nodes,
     Namespaces,
     Events,
+    /// Dashboards from Prometheus, listed in its column.
+    Monitoring,
     /// A built-in group of Kubernetes kinds, by its navigation slug.
     Group(&'static str),
     Custom,
@@ -77,7 +80,13 @@ pub(crate) enum Area {
 impl Area {
     /// The rail's buttons in order, as sections split by a divider.
     pub(crate) const RAIL: [&'static [Self]; 3] = [
-        &[Self::Overview, Self::Nodes, Self::Namespaces, Self::Events],
+        &[
+            Self::Overview,
+            Self::Nodes,
+            Self::Namespaces,
+            Self::Events,
+            Self::Monitoring,
+        ],
         &[
             Self::Group("workloads"),
             Self::Group("networking"),
@@ -106,6 +115,7 @@ impl Area {
             | Page::Security
             | Page::Lifecycle
             | Page::Operations => Self::ControlPlane,
+            Page::Monitoring => Self::Monitoring,
         }
     }
 
@@ -115,6 +125,7 @@ impl Area {
             Self::Nodes => "Nodes",
             Self::Namespaces => "Namespaces",
             Self::Events => "Events",
+            Self::Monitoring => "Monitoring",
             Self::Group(slug) => navigation::NAVIGATION
                 .iter()
                 .find(|group| group.slug == slug)
@@ -131,6 +142,7 @@ impl Area {
             Self::Nodes => "nav-nodes".into(),
             Self::Namespaces => "nav-k8s-namespaces".into(),
             Self::Events => "nav-k8s-events".into(),
+            Self::Monitoring => "nav-monitoring".into(),
             Self::Group(slug) => format!("nav-k8s-group-{slug}").into(),
             Self::Custom => "nav-k8s-group-custom".into(),
             Self::ControlPlane => "nav-control-plane".into(),
@@ -150,12 +162,15 @@ impl Area {
 
     /// Whether the navigation column lists the area's pages or kinds.
     pub(crate) fn has_column(self) -> bool {
-        matches!(self, Self::Group(_) | Self::Custom | Self::ControlPlane)
+        matches!(
+            self,
+            Self::Monitoring | Self::Group(_) | Self::Custom | Self::ControlPlane
+        )
     }
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 9] = [
+    pub(super) const ALL: [Page; 10] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -165,6 +180,7 @@ impl Page {
         Self::Security,
         Self::Lifecycle,
         Self::Operations,
+        Self::Monitoring,
     ];
 
     pub(super) fn screen(self) -> Option<ScreenKind> {
@@ -188,6 +204,7 @@ impl Page {
             Self::Security => "Security",
             Self::Lifecycle => "Lifecycle",
             Self::Operations => "Operations",
+            Self::Monitoring => "Monitoring",
         }
     }
     pub(crate) fn slug(self) -> &'static str {
@@ -201,6 +218,7 @@ impl Page {
             Self::Security => "security",
             Self::Lifecycle => "lifecycle",
             Self::Operations => "operations",
+            Self::Monitoring => "monitoring",
         }
     }
 }
@@ -282,6 +300,8 @@ impl Pilot {
             Page::Nodes => 1,
             Page::Resources if self.resource_kind.key() == "namespaces" => 2,
             Page::Resources if self.resource_kind.key() == "events" => 3,
+            // Between Events and Health, which has no row of its own.
+            Page::Monitoring => 3,
             Page::Health => 4,
             Page::Resources => 5,
             Page::Etcd => 6,
@@ -331,6 +351,9 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
+        } else if self.page == Page::Monitoring {
+            let focus = self.monitoring.read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
         } else if self.page == Page::Nodes
             && self.node_workspace.open
             && self.node_workspace.tab == super::nodes::NodeTab::Logs
@@ -358,7 +381,6 @@ impl Pilot {
     /// Log collection keeps running in the background across screens; other
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        self.gallery = None;
         self.object_open_job = None;
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
@@ -376,6 +398,9 @@ impl Pilot {
         if page == Page::Resources {
             self.column_reveal = Some(ColumnReveal::Kind(self.resource_kind.key()));
         }
+        self.monitoring.update(cx, |monitoring, cx| {
+            monitoring.set_visible(page == Page::Monitoring, cx)
+        });
         self.resources.update(cx, |resources, cx| {
             resources.set_visible(page == Page::Resources, window, cx);
             if page == Page::Resources {
@@ -464,6 +489,7 @@ impl Pilot {
             Area::Nodes => self.navigate_from_keyboard(Page::Nodes, window, cx),
             Area::Namespaces => self.open_builtin("namespaces", window, cx),
             Area::Events => self.open_builtin("events", window, cx),
+            Area::Monitoring => self.navigate_from_keyboard(Page::Monitoring, window, cx),
             Area::Group(slug) => {
                 let key = self.group_kinds.get(slug).cloned().or_else(|| {
                     navigation::NAVIGATION

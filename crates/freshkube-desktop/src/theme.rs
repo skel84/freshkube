@@ -12,6 +12,7 @@ gpui_kit::assets::icon_assets!(
     ExtraIcons,
     [
         ServerCog,
+        ChartLine,
         HeartPulse,
         ScrollText,
         Database,

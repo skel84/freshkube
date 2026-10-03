@@ -10,11 +10,18 @@ pub struct Builtin {
     pub json: &'static str,
 }
 
-pub const BUILTINS: &[Builtin] = &[Builtin {
-    uid: "freshkube-cluster",
-    title: "Cluster",
-    json: include_str!("cluster.json"),
-}];
+pub const BUILTINS: &[Builtin] = &[
+    Builtin {
+        uid: "freshkube-cluster",
+        title: "Cluster",
+        json: include_str!("cluster.json"),
+    },
+    Builtin {
+        uid: "freshkube-workloads",
+        title: "Workloads",
+        json: include_str!("workloads.json"),
+    },
+];
 
 #[cfg(test)]
 mod tests {

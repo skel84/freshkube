@@ -9,6 +9,7 @@
 //! `get` on `services/proxy` and nothing more.
 
 pub mod builtin;
+pub mod catalog;
 mod discovery;
 mod example;
 mod transport;

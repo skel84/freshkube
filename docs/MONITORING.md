@@ -75,7 +75,19 @@ Step 2 draws a panel from a frame, before the page exists (`monitoring/derive/` 
 - **Stats.** The value at 22 dp. When the value has crossed a threshold, a tag says which one ("◆ above 20"). A sparkline shows the history in grey and the last stretch in the tier's colour or the accent. A gauge adds a bar. Several values wrap as cells, at most 24.
 - **Bar lists and tables.** A bar list's name splits a `namespace/` prefix off in muted text, measures against the largest value and shows at most 50 rows. A table follows the organize transform's order, renames and exclusions, puts numbers in mono on the right, and caps at 100 rows with "Showing 100 of N rows".
 - **The built-in Cluster dashboard** (`freshkube-core::monitoring::builtin`): ready nodes, CPU and memory requested, API p99 and pod restarts as stats; CPU and memory by node with a 90% threshold; API server latency by quantile; top pods by CPU; and firing alerts.
-- **Fixture check.** With `--fixture`, `FRESHKUBE_PAGE=monitoring-panels` opens the Cluster dashboard on its grid, answered from example data. Step 3's page replaces it.
+- **The built-in Workloads dashboard:** running pods, pods not ready, restarts in the hour and CPU used; CPU and memory by pod; and network received and sent by pod in a folded row. Both built-ins filter by namespace, and Cluster by node too.
+
+### Page as built
+
+Step 3 puts the panels on a page (`monitoring/page/`), its own rail area with a column of dashboards.
+
+- **The column.** "Built in" lists Cluster and Workloads. Settings → Dashboards folder chooses a folder; its top-level `.json` files (at most 200, 8 MiB each) are read off the UI thread and listed under the folder's name, by title. A file that isn't a dashboard keeps its file name and says why, in its tooltip and in place of the grid. The folder and each context's Prometheus Service are saved in `monitoring.json` beside the preferences.
+- **The header.** "Dashboards / title", where the answers come from (`namespace/name:port`, its version on hover, or "Example data"), the time range, Refresh and auto-refresh. The ranges are the dashboard's relative quick ranges, else its `time_options`, else 5 minutes to 30 days, always with its own start. Auto-refresh starts at the dashboard's `refresh` when it is 30 s, 1 m or 5 m, and runs only while the page shows. Variables follow as chips, a name and a menu of values with All first where the dashboard allows it. The header wraps at narrow widths, its controls kept together on the right.
+- **The grid.** Panels sit on the dashboard's 24 columns, 38 dp a grid row. Rows fold as the dashboard says; a folded row shows how many panels it holds and asks none until opened. Under 720 dp the panels stack in one column, small ones (eight columns or fewer) in pairs.
+- **Reads.** The page finds Prometheus, resolves the variables in order, then asks the panels within half a screen above and a screen below what shows, as the grid scrolls. Each request runs on Tokio through `backend::spawn_job` with a 45 s deadline; dropping it cancels the read. A variable, range or refresh takes a new generation over a window ending now, and every answer for an older generation is dropped. A panel keeps its last answer while asked again, and marks it stale when the refresh fails.
+- **The cursor and the PromQL.** A chart's cursor goes to every other timeseries on the page. The info icon beside a title shows the PromQL as sent, after interpolation; a click copies it.
+- **States.** Not connected; looking; no Prometheus found, with what was looked for, what answered and why, and up to four candidates to use; not allowed (`services/proxy`); unreachable; variables that failed, as a banner over the last grid; and a dashboard that doesn't read.
+- **Fixture check.** With `--fixture`, `FRESHKUBE_PAGE=monitoring` opens the Cluster dashboard, answered at once from example data so that a capture shows it.
 
 ### Markers
 

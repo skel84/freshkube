@@ -1,0 +1,289 @@
+//! The Monitoring page: one dashboard at a time, from the built-ins or the
+//! user's folder, answered by the cluster's own Prometheus through the
+//! service proxy, or by example data with `--fixture`.
+//!
+//! The shell owns the page and tells it when it shows. Only a visible page
+//! reads: it finds Prometheus, resolves the variables, and asks the panels
+//! in or near the viewport. Every change that asks again (a source, a
+//! dashboard, a variable, a range, a refresh) takes a new generation, and
+//! an answer for an older one is dropped. Hiding drops every request.
+mod board;
+mod catalog;
+mod connection;
+mod layout;
+mod settings;
+#[cfg(test)]
+mod tests;
+mod view;
+
+use std::cell::Cell;
+use std::future::Future;
+use std::rc::Rc;
+use std::time::Duration;
+
+use freshkube_core::monitoring::{ErrorKind, QueryError};
+use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task};
+use tokio::runtime::Handle;
+
+use super::store::{MonitoringStore, Saved};
+use crate::backend::{self, OwnedJob};
+use crate::resources::{KubeAccess, KubeSource};
+
+use board::Board;
+pub(crate) use catalog::{Catalog, Entry, EntryId, FolderState};
+use connection::Connection;
+pub(crate) use settings::settings_section;
+
+/// How long one request through the proxy may take, past the transport's
+/// own timeout, before the page gives up on it.
+const DEADLINE: Duration = Duration::from_secs(45);
+
+/// What the page tells the shell.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum MonitoringEvent {
+    /// The column's dashboards changed, or which one is open.
+    Catalog,
+}
+
+/// The part of the dashboard in view, in dp from the grid's top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Viewport {
+    top: f32,
+    height: f32,
+    /// The panels stack in one column.
+    narrow: bool,
+}
+
+impl Default for Viewport {
+    /// Before the first frame lays the page out: a tall window at the top.
+    fn default() -> Self {
+        Self {
+            top: 0.,
+            height: 900.,
+            narrow: false,
+        }
+    }
+}
+
+/// A read in flight. Dropping it cancels the work and its answer.
+pub(super) struct Request {
+    _job: Option<OwnedJob>,
+    _task: Task<()>,
+}
+
+pub(crate) struct MonitoringPage {
+    runtime: Handle,
+    store: Option<MonitoringStore>,
+    saved: Saved,
+    visible: bool,
+    source: Option<KubeSource>,
+    connection: Connection,
+    catalog: Catalog,
+    /// The dashboard chosen, kept across contexts.
+    chosen: EntryId,
+    board: Option<Board>,
+    /// Counts every change that asks the panels again; answers carry it.
+    generation: u64,
+    refresh_every: Option<u64>,
+    refresh_task: Option<Task<()>>,
+    scroll: ScrollHandle,
+    viewport: Rc<Cell<Viewport>>,
+    focus: FocusHandle,
+    /// Why the last save failed, for Settings.
+    save_error: Option<gpui_kit::SharedString>,
+    /// Unix seconds now. Tests fix it, so example data is the same each run.
+    now: fn() -> i64,
+}
+
+impl EventEmitter<MonitoringEvent> for MonitoringPage {}
+
+impl MonitoringPage {
+    pub(crate) fn new(
+        runtime: Handle,
+        preferences: Option<&std::path::Path>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let saved = preferences.map(super::store::load).unwrap_or_default();
+        let store = preferences.map(|path| MonitoringStore::new(path, saved.clone()));
+        let mut page = Self {
+            runtime,
+            store,
+            saved,
+            visible: false,
+            source: None,
+            connection: Connection::None,
+            catalog: Catalog::new(),
+            chosen: EntryId::Builtin(freshkube_core::monitoring::builtin::BUILTINS[0].uid),
+            board: None,
+            generation: 0,
+            refresh_every: None,
+            refresh_task: None,
+            scroll: ScrollHandle::new(),
+            viewport: Rc::default(),
+            focus: cx.focus_handle(),
+            save_error: None,
+            now: || chrono::Utc::now().timestamp(),
+        };
+        page.read_folder(cx);
+        page
+    }
+
+    pub(crate) fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
+
+    pub(crate) fn chosen(&self) -> &EntryId {
+        &self.chosen
+    }
+
+    pub(crate) fn focus_handle(&self) -> &FocusHandle {
+        &self.focus
+    }
+
+    /// Shows or hides the page. Showing connects and asks what the viewport
+    /// needs; hiding drops every request and the refresh timer.
+    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if visible {
+            if self.board.is_none() {
+                self.load_board(cx);
+            }
+            self.connect(cx);
+            self.start_refresh(cx);
+        } else {
+            self.connection.hide();
+            if let Some(board) = &mut self.board {
+                board.hide();
+            }
+            self.refresh_task = None;
+        }
+        cx.notify();
+    }
+
+    /// A new source from the shell. The same connection keeps everything;
+    /// another one forgets the Prometheus found and asks again.
+    pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
+        let id = |source: &Option<KubeSource>| source.as_ref().map(|source| source.id.clone());
+        let same = id(&self.source) == id(&source);
+        self.source = source;
+        if same {
+            return;
+        }
+        self.connection = Connection::None;
+        // Another cluster's answers never show as this one's.
+        self.board = None;
+        if self.visible {
+            self.load_board(cx);
+        }
+        cx.notify();
+    }
+
+    /// The shell's Refresh: look again for Prometheus when it wasn't found,
+    /// else read the variables and every panel again.
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        if !self.visible {
+            return;
+        }
+        if self.connection.usable() {
+            self.resolve_variables(cx);
+        } else {
+            self.connection = Connection::None;
+            self.connect(cx);
+        }
+        cx.notify();
+    }
+
+    fn example(&self) -> bool {
+        matches!(
+            self.source.as_ref().map(|source| &source.access),
+            Some(KubeAccess::Example)
+        )
+    }
+
+    fn context(&self) -> Option<String> {
+        self.source.as_ref().map(|source| source.context.clone())
+    }
+
+    fn save(&self, change: impl FnOnce(&mut Saved), cx: &mut Context<Self>) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        store.update(change);
+        let saving = cx.background_spawn(async move { store.save_latest() });
+        cx.spawn(async move |this, cx| {
+            let error = saving.await.err().map(|error| error.to_string().into());
+            _ = this.update(cx, |this, cx| {
+                this.save_error = error;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Runs `work` where its source answers (Tokio for Prometheus, the
+    /// background executor for example data) and hands the result to
+    /// `done`, unless the request is dropped first.
+    fn run<T: Send + 'static>(
+        &self,
+        work: impl Future<Output = Result<T, QueryError>> + Send + 'static,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Self, Result<T, QueryError>, &mut Context<Self>) + 'static,
+    ) -> Request {
+        if self.example() {
+            let work = cx.background_spawn(work);
+            let task = cx.spawn(async move |this, cx| {
+                let result = work.await;
+                _ = this.update(cx, |this, cx| done(this, result, cx));
+            });
+            return Request {
+                _job: None,
+                _task: task,
+            };
+        }
+        let (job, receiver) = backend::spawn_job(
+            &self.runtime,
+            DEADLINE,
+            "Prometheus didn't answer in time".into(),
+            async move { Ok(work.await) },
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let result = match receiver.await {
+                Ok(Ok(result)) => result,
+                Ok(Err(message)) => Err(QueryError::new(ErrorKind::TimedOut, message)),
+                Err(_) => return,
+            };
+            _ = this.update(cx, |this, cx| done(this, result, cx));
+        });
+        Request {
+            _job: Some(job),
+            _task: task,
+        }
+    }
+
+    /// Asks again on the chosen interval while the page shows.
+    fn start_refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_task = None;
+        let (true, Some(every)) = (self.visible, self.refresh_every) else {
+            return;
+        };
+        self.refresh_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(every))
+                    .await;
+                if this.update(cx, |this, cx| this.ask_again(cx)).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    pub(super) fn set_refresh(&mut self, every: Option<u64>, cx: &mut Context<Self>) {
+        self.refresh_every = every;
+        self.start_refresh(cx);
+        cx.notify();
+    }
+}

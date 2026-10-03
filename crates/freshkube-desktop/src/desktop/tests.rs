@@ -2413,7 +2413,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         for page in Page::ALL.into_iter().filter(|page| {
             !matches!(
                 page,
-                Page::Overview | Page::Resources | Page::Health | Page::Nodes
+                Page::Overview | Page::Resources | Page::Health | Page::Nodes | Page::Monitoring
             )
         }) {
             view.update(cx, |view, cx| view.navigate(page, window, cx));
@@ -2421,6 +2421,13 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
             assert_eq!(view.read(cx).page, page);
             assert!(window.find("needs-talosconfig").visible(), "{page:?}");
         }
+        // Monitoring reads the cluster's Prometheus, which needs no Talos.
+        view.update(cx, |view, cx| view.navigate(Page::Monitoring, window, cx));
+        window.render_frame(cx);
+        assert!(window.find("monitoring-page").visible());
+        assert!(window.try_find("needs-talosconfig").is_none());
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx));
+        window.render_frame(cx);
         window.click("browse-kubernetes", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);

@@ -22,8 +22,8 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
-    StyleRefinement, TestSupportExt, Window, div, px,
+    AnyElement, ClipboardItem, Context, Entity, EventEmitter, FontWeight, IntoElement, Render,
+    SharedString, StyleRefinement, TestSupportExt, Window, div, px,
 };
 
 use super::derive::{self, Body, PanelData};
@@ -59,6 +59,8 @@ pub(crate) struct PanelView {
     /// The PromQL sent, after interpolation, and anything the panel can't
     /// show, for the title's tooltip.
     about: SharedString,
+    /// Just the PromQL, which a click on the info icon copies.
+    promql: SharedString,
     plot: Option<Entity<PlotView>>,
     /// The plot's inner rectangle, set when the plot paints.
     geometry: Rc<Cell<Geometry>>,
@@ -75,6 +77,7 @@ impl PanelView {
     /// from the page's other panels, as `monitoring-panel-<id>`.
     pub(crate) fn new(id: impl Into<SharedString>, spec: Rc<PanelSpec>) -> Self {
         let about = about(&spec, &[], &[]);
+        let promql = promql(&spec, &[]);
         Self {
             id: format!("monitoring-panel-{}", id.into()).into(),
             spec,
@@ -82,6 +85,7 @@ impl PanelView {
             data: None,
             stale: None,
             about,
+            promql,
             plot: None,
             geometry: Rc::default(),
             hovered: None,
@@ -100,6 +104,7 @@ impl PanelView {
     ) {
         let data = derive::derive(&self.spec, result.frame, window);
         self.about = about(&self.spec, &result.expressions, &result.warnings);
+        self.promql = promql(&self.spec, &result.expressions);
         self.plot = match &data.body {
             Body::Chart(chart) => Some(match self.plot.take() {
                 Some(plot) => {
@@ -135,6 +140,18 @@ impl PanelView {
         cx.notify();
     }
 
+    /// Whether an answer shows, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn is_ready(&self) -> bool {
+        self.state == State::Ready
+    }
+
+    /// Whether a crosshair shows, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn has_cursor(&self) -> bool {
+        self.cursor.is_some()
+    }
+
     fn focus(&self) -> Option<usize> {
         self.hovered.or(self.picked)
     }
@@ -164,21 +181,37 @@ impl PanelView {
     }
 }
 
+/// Each query's PromQL as sent, after interpolation, or as written before
+/// the first answer.
+fn promql(spec: &PanelSpec, expressions: &[(String, String)]) -> SharedString {
+    let lines: Vec<String> = if expressions.is_empty() {
+        spec.queries
+            .iter()
+            .filter_map(|query| query.text.clone())
+            .collect()
+    } else {
+        let several = expressions.len() > 1;
+        expressions
+            .iter()
+            .map(|(id, expr)| {
+                if several {
+                    format!("{id}: {expr}")
+                } else {
+                    expr.clone()
+                }
+            })
+            .collect()
+    };
+    lines.join("\n").into()
+}
+
 /// The title's tooltip: each query's PromQL, then any warnings and the
 /// settings the panel doesn't draw.
 fn about(spec: &PanelSpec, expressions: &[(String, String)], warnings: &[String]) -> SharedString {
     let mut lines: Vec<String> = Vec::new();
-    if expressions.is_empty() {
-        lines.extend(spec.queries.iter().filter_map(|query| query.text.clone()));
-    } else {
-        let several = expressions.len() > 1;
-        lines.extend(expressions.iter().map(|(id, expr)| {
-            if several {
-                format!("{id}: {expr}")
-            } else {
-                expr.clone()
-            }
-        }));
+    let promql = promql(spec, expressions);
+    if !promql.is_empty() {
+        lines.push(promql.to_string());
     }
     lines.extend(warnings.iter().cloned());
     if !spec.ignored.is_empty() {
@@ -226,6 +259,9 @@ impl PanelView {
         let p = palette(cx);
         let unit = self.data.as_ref().and_then(|data| data.unit.clone());
         let about = self.about.clone();
+        let promql = self.promql.clone();
+        let copy: Option<SharedString> =
+            (!promql.is_empty()).then(|| "Click to copy the PromQL".into());
         h_flex()
             .flex_none()
             .gap(dp(8.))
@@ -259,15 +295,30 @@ impl PanelView {
                         .id(self.element_id("query"))
                         .flex_none()
                         .child(Icon::new(IconName::Info).size(dp(13.)).text_color(p.faint))
+                        .when(!promql.is_empty(), |this| {
+                            this.cursor_pointer().on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(promql.to_string()))
+                            })
+                        })
                         .tooltip(move |window, cx| {
-                            let about = about.clone();
-                            Tooltip::element(move |_, _| {
-                                div()
+                            let (about, copy) = (about.clone(), copy.clone());
+                            Tooltip::element(move |_, cx| {
+                                v_flex()
                                     .max_w(dp(420.))
-                                    .font_family(ui::MONO_FONT)
-                                    .text_size(dp(11.5))
-                                    .whitespace_normal()
-                                    .child(about.clone())
+                                    .gap(dp(6.))
+                                    .child(
+                                        div()
+                                            .font_family(ui::MONO_FONT)
+                                            .text_size(dp(11.5))
+                                            .whitespace_normal()
+                                            .child(about.clone()),
+                                    )
+                                    .children(copy.clone().map(|copy| {
+                                        div()
+                                            .text_size(dp(11.5))
+                                            .text_color(palette(cx).muted)
+                                            .child(copy)
+                                    }))
                             })
                             .build(window, cx)
                         })

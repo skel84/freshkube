@@ -25,6 +25,7 @@ use crate::{
     forwards::ForwardsIndicator,
     logs::LogPanel,
     maintenance::MaintenanceView,
+    monitoring::page::{MonitoringEvent, MonitoringPage},
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
     resources::{
@@ -326,8 +327,8 @@ pub(crate) struct Pilot {
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
     search: Entity<search::Search>,
-    /// The panel gallery a debug fixture check shows in place of the page.
-    gallery: Option<gpui_kit::AnyView>,
+    /// The Monitoring page, which reads only while it shows.
+    monitoring: Entity<MonitoringPage>,
     /// The rail's area, whose pages or kinds the column lists.
     area: Area,
     /// The kind each built-in group showed last, by group slug.
@@ -542,6 +543,13 @@ impl Pilot {
             },
         ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
+        let monitoring =
+            cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
+        subscriptions.push(cx.subscribe_in(
+            &monitoring,
+            window,
+            |_, _, MonitoringEvent::Catalog, _, cx| cx.notify(),
+        ));
         subscriptions.extend([
             cx.observe(&custom, |_, _, cx| cx.notify()),
             // A kind that stopped being served may have taken its group's
@@ -645,7 +653,7 @@ impl Pilot {
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
-            gallery: None,
+            monitoring,
             area: Area::Overview,
             group_kinds: BTreeMap::new(),
             last_custom: None,
@@ -1032,6 +1040,9 @@ impl Pilot {
         self.node_pods.update(cx, |resources, cx| {
             resources.set_source(source.clone(), window, cx)
         });
+        self.monitoring.update(cx, |monitoring, cx| {
+            monitoring.set_source(source.clone(), cx)
+        });
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
@@ -1043,6 +1054,10 @@ impl Pilot {
         if self.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.refresh(window, cx));
+        }
+        if self.page == Page::Monitoring {
+            self.monitoring
+                .update(cx, |monitoring, cx| monitoring.refresh(cx));
         }
     }
 

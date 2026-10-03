@@ -192,6 +192,7 @@ pub(super) fn settings_content(
     let Some(view) = pilot.upgrade() else {
         return div().into_any_element();
     };
+    let monitoring = view.read(cx).monitoring.clone();
     let (fixture, kubernetes_only, loading, automatic, appearance) = {
         let view = view.read(cx);
         (
@@ -375,5 +376,11 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
+        .child(div().h(px(1.)).bg(p.line))
+        .child(crate::monitoring::page::settings_section(
+            &monitoring,
+            popover.clone(),
+            cx,
+        ))
         .into_any_element()
 }

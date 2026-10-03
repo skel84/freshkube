@@ -4,6 +4,7 @@ use super::kubernetes_only::{self, KubeConnection};
 use super::{
     AUTO_REFRESH, Appearance, Area, COLUMN_WIDTH, ColumnReveal, Page, Pilot, RAIL_WIDTH, clock,
 };
+use crate::monitoring::page::{Entry, FolderState};
 use crate::mutation::Operations;
 use crate::palette::palette;
 use crate::resources::custom::{CustomGroup, Discovery};
