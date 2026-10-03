@@ -3,6 +3,7 @@
 //! and filtered locally, and selected by identity. Read-only: nothing here
 //! changes the cluster.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::time::{Duration, SystemTime};
 
@@ -12,7 +13,7 @@ use freshkube_core::resources::{
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, IndexPath, Sizable,
-    button::{Button, ButtonVariants},
+    button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
@@ -41,12 +42,12 @@ use crate::palette::palette;
 use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
 use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
 use layout::TableLayout;
+use pods::{ListView, NotReady, UsageState};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
 const EMBEDDED_CONTEXT: &str = "NodePods";
 const FILTER_CONTEXT: &str = "KubeResourcesFilter";
-const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Ages are redrawn this often while the page is visible.
 const AGE_TICK: Duration = Duration::from_secs(5);
@@ -89,7 +90,9 @@ actions!(
         ClearFilter,
         LeaveFilter,
         OpenSelected,
-        ChooseNamespace
+        ChooseNamespace,
+        ToggleMark,
+        OpenLogs
     ]
 );
 
@@ -228,6 +231,18 @@ pub(crate) struct ResourcesScreen {
     detail: Entity<DetailPane>,
     split: Entity<ResizableState>,
     stacked: Entity<ResizableState>,
+    /// Pods: problems first, or all in one list.
+    list_view: ListView,
+    /// The healthy pods show under the problems.
+    healthy_open: bool,
+    not_ready: NotReady,
+    /// Compact rows, from the density toggle; comfortable by default.
+    compact: bool,
+    /// Rows marked with X or a group's Select all, by identity.
+    marked: BTreeSet<ResourceIdentity>,
+    /// Reads pods' use while the pods list shows.
+    usage: Option<Task<()>>,
+    usage_state: UsageState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -245,6 +260,8 @@ impl ResourcesScreen {
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
             KeyBinding::new("enter", OpenSelected, Some(CONTEXT)),
             KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
+            KeyBinding::new("x", ToggleMark, Some(CONTEXT)),
+            KeyBinding::new("l", OpenLogs, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
@@ -360,6 +377,13 @@ impl ResourcesScreen {
             detail,
             split: cx.new(|_| ResizableState::default()),
             stacked: cx.new(|_| ResizableState::default()),
+            list_view: ListView::default(),
+            healthy_open: false,
+            not_ready: NotReady::new(),
+            compact: false,
+            marked: BTreeSet::new(),
+            usage: None,
+            usage_state: UsageState::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -406,6 +430,7 @@ impl ResourcesScreen {
         rows: std::sync::Arc<Vec<crate::desktop::nodes::NodeRow>>,
         cx: &mut Context<Self>,
     ) {
+        self.set_not_ready(&rows, cx);
         self.detail
             .update(cx, |pane, cx| pane.set_node_rows(rows, cx));
     }
@@ -555,6 +580,7 @@ impl ResourcesScreen {
         } else {
             self.watch = None;
             self.tick = None;
+            self.usage = None;
             if self.namespace_job.take().is_some() {
                 self.namespaces_for = None;
             }
@@ -614,7 +640,9 @@ impl ResourcesScreen {
             self.restore = Some(selected.clone());
         }
         let epoch = self.store.start_session();
-        self.projection.rebuild(&self.store);
+        self.marked.clear();
+        self.usage_state = UsageState::Unknown;
+        self.regroup();
         self.layout = TableLayout::default();
         self.updated = None;
         self.now = live::now();
@@ -645,6 +673,7 @@ impl ResourcesScreen {
                 None => vec![ResourceEvent::Read(ReadState::Loaded)],
             };
             self.apply(ResourceBatch { epoch, events }, cx);
+            self.poll_usage(window, cx);
             return;
         }
         let (sender, receiver) = mpsc::channel(8);
@@ -658,6 +687,7 @@ impl ResourcesScreen {
         )));
         let task = self.receive(epoch, receiver, cx);
         self.watch = Some((job, task));
+        self.poll_usage(window, cx);
     }
 
     /// Applies what a read sends until it stops, at most once per
@@ -715,17 +745,17 @@ impl ResourcesScreen {
         self.updated = Some(SystemTime::now());
         self.now = live::now();
         self.projection.rebuild(&self.store);
+        self.prune_marks();
         if reset {
             let _span = crate::perf::span("table.layout");
-            self.layout = TableLayout::new(&self.store, self.lists_all_namespaces());
+            self.layout =
+                TableLayout::new(&self.store, self.lists_all_namespaces(), self.lists_pods());
             drop(_span);
             // A restarted read selects the same object again if it still
             // exists; only its first list can tell.
             if let Some(identity) = self.restore.take() {
-                self.projection.select_identity(&self.store, &identity);
-                if let Some(ix) = self.projection.selected_index() {
-                    self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
-                }
+                self.show_identity(&identity);
+                self.scroll_to_selection(ScrollStrategy::Nearest);
             }
         }
         self.follow_detail(cx);
@@ -953,9 +983,31 @@ impl ResourcesScreen {
         cx: &mut Context<Self>,
     ) {
         self.restore = None;
-        self.projection.select_identity(&self.store, identity);
+        self.show_identity(identity);
+        self.scroll_to_selection(ScrollStrategy::Nearest);
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    /// Selects `identity`, unfolding the healthy pods when it is among them.
+    fn show_identity(&mut self, identity: &ResourceIdentity) {
+        if self.projection.hides(&self.store, identity) {
+            self.healthy_open = true;
+            self.regroup();
+        }
+        self.projection.select_identity(&self.store, identity);
+    }
+
+    /// Scrolls the list to the selected row's line, below its group's
+    /// header.
+    fn scroll_to_selection(&self, strategy: ScrollStrategy) {
+        match self.projection.selected_index() {
+            Some(ix) => self
+                .scroll
+                .scroll_to_item(self.projection.line_of(ix), strategy),
+            None if strategy == ScrollStrategy::Top => self.scroll.scroll_to_item(0, strategy),
+            None => {}
+        }
     }
 
     /// A click opens the row at once.
@@ -1028,7 +1080,7 @@ impl ResourcesScreen {
         };
         self.restore = None;
         self.projection.select(&self.store, Some(next));
-        self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        self.scroll_to_selection(ScrollStrategy::Nearest);
         if let Some(identity) = self.projection.selected().cloned()
             && self.pinned(cx).is_none()
         {
@@ -1048,9 +1100,7 @@ impl ResourcesScreen {
         };
         self.projection.sort(&self.store, key, direction);
         // The selection follows its object to wherever the sort put it.
-        if let Some(ix) = self.projection.selected_index() {
-            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
-        }
+        self.scroll_to_selection(ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -1107,6 +1157,7 @@ async fn watch(
     };
     let (raw_sender, mut raw) = mpsc::channel::<WatchBatch>(4);
     let forward = async move {
+        let mut columns = Vec::new();
         while let Some(batch) = raw.recv().await {
             let transient = batch.events.iter().any(|event| {
                 matches!(event, WatchEvent::Failed { failure, .. } if !failure.kind.is_permanent())
@@ -1115,7 +1166,7 @@ async fn watch(
                 access.forget();
             }
             if sender
-                .send(live::convert(&connection, &key, batch.events))
+                .send(live::convert(&connection, &key, &mut columns, batch.events))
                 .await
                 .is_err()
             {
@@ -1137,7 +1188,9 @@ pub(crate) enum NodePodsEvent {
 }
 impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
+mod cells;
 mod layout;
+mod pods;
 mod view;
 
 #[cfg(test)]

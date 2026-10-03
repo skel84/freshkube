@@ -58,6 +58,7 @@ These hold for every step until a later one deliberately changes them.
 | Console 1. Tokens and type | The dark theme, palette and terminal take the Console tokens; Lato (400, 700, 900) and Source Code Pro (400, 600) replace IBM Plex Sans Condensed and JetBrains Mono in both modes; page titles are 22 px Black, headings and captions Bold; radii 8 and 12. The light theme keeps its colours until a Console light mode is designed ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 | Console 3. App frame | A 52 px header (context switcher, the location, Search everything, Refresh, appearance and Settings), a 64 px icon rail of twelve areas with problem dots from the Overview's cards, and a 208 px column for the areas with several pages or kinds: each Kubernetes group, Custom Resources and Control plane. A group reopens the kind it showed last; Custom Resources discovers only while its column shows. Every page, shortcut and key context is kept ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 | Console 2. Status glyphs | One shape per status everywhere: ● OK, outlined ▲ warning, ◆ critical, ○ pending or unknown. Status tags lead with their glyph and drop their Lucide icons; standalone marks have tooltips; tags become pills. Status bars, the context switcher, service and etcd lists and the node pane's Services tab use the glyphs ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
+| Console 4. Tables | The F2″ rules on the Resources list. Pods list with their full object and read their use from metrics-server every 15 s while shown; they open on Problems, grouped by cause (Failing, each NotReady node, Not ready, Pending, Terminating, Unknown) with healthy pods folded into "Showing N of M · Show all". Every kind has the glyph column, muted namespace prefix, dimmed generated suffix, an Owner column and a comfortable or compact density; pods merge ready and restarts, show the reason after the name, CPU and memory bars against the limit with a request tick (grey when last known) and node names without their shared prefix. X marks rows and a group's Select all marks its rows, with Copy names and Clear; L opens a pod's logs. Unit and UI tests cover the grouping, folding, Show all, NotReady nodes, marks, density, use sorting and keys ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
@@ -81,7 +82,7 @@ The visual direction chosen on the design canvas: Console tokens and type, one s
 1. Tokens and type. Done.
 2. Status glyphs. Done.
 3. App frame. Done.
-4. Tables, pods first.
+4. Tables, pods first. Done.
 5. Pod detail.
 
 ## Then: a daily-use workflow

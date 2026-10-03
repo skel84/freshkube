@@ -84,7 +84,12 @@ gpui_kit::assets::icon_assets!(
         Folders,
         SlidersHorizontal,
         Cog,
-        Puzzle
+        Puzzle,
+        // The resource table.
+        Rows2,
+        Rows4,
+        SquareCheck,
+        Logs
     ]
 );
 

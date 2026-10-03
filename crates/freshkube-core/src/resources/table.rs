@@ -12,9 +12,11 @@ use serde::Deserialize;
 
 use super::failure::{Failure, FailureKind};
 use super::kinds::ResourceKind;
+use super::pod_row::{self, PodFacts, PodSpec, PodStatus, lenient};
 
 /// Asks for a table, falling back to plain JSON on servers without one.
-/// `includeObject=Metadata` adds each row's identity.
+/// `includeObject=Metadata` adds each row's identity; pods include the whole
+/// object, whose status and resources their rows show.
 const TABLE_ACCEPT: &str = "application/json;as=Table;v=v1;g=meta.k8s.io,application/json;as=Table;v=v1beta1;g=meta.k8s.io,application/json";
 const PAGE_SIZE: usize = 500;
 const WATCH_SECONDS: u32 = 290;
@@ -67,6 +69,11 @@ pub struct TableRow {
 pub struct RowObject {
     #[serde(default, deserialize_with = "nullable")]
     pub metadata: RowMetadata,
+    /// Present only for pods, whose rows include the whole object.
+    #[serde(default, deserialize_with = "lenient")]
+    spec: Option<PodSpec>,
+    #[serde(default, deserialize_with = "lenient")]
+    status: Option<PodStatus>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -86,6 +93,32 @@ pub struct RowMetadata {
     pub deletion_timestamp: Option<String>,
     #[serde(default, deserialize_with = "nullable")]
     pub labels: BTreeMap<String, String>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub owner_references: Vec<OwnerReference>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerReference {
+    #[serde(default, deserialize_with = "nullable")]
+    pub api_version: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub kind: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub name: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub uid: String,
+    #[serde(default)]
+    pub controller: Option<bool>,
+}
+
+impl RowMetadata {
+    /// The reference that manages the object, such as a pod's ReplicaSet.
+    pub fn controller(&self) -> Option<&OwnerReference> {
+        self.owner_references
+            .iter()
+            .find(|owner| owner.controller == Some(true))
+    }
 }
 
 /// Go encodes an empty list or map as `null`; take that as empty.
@@ -100,6 +133,15 @@ where
 impl TableRow {
     pub fn metadata(&self) -> Option<&RowMetadata> {
         self.object.as_ref().map(|object| &object.metadata)
+    }
+
+    /// A pod's facts, when the row includes the whole pod.
+    pub fn pod(&self) -> Option<PodFacts> {
+        let object = self.object.as_ref()?;
+        object
+            .spec
+            .as_ref()
+            .map(|spec| pod_row::facts(spec, object.status.as_ref()))
     }
 }
 
@@ -121,7 +163,10 @@ pub async fn list_table(
     let mut table = Table::default();
     let mut continue_token = String::new();
     loop {
-        let mut path = format!("{base}?includeObject=Metadata&limit={PAGE_SIZE}");
+        let mut path = format!(
+            "{base}?includeObject={}&limit={PAGE_SIZE}",
+            include_object(kind)
+        );
         if let Some(selector) = field_selector {
             path.push_str("&fieldSelector=");
             path.push_str(&query_value(selector));
@@ -156,8 +201,9 @@ pub(crate) async fn watch_table(
     resource_version: &str,
 ) -> Result<impl Stream<Item = kube::Result<WatchEvent<Table>>> + use<>, Failure> {
     let mut path = format!(
-        "{}?watch=1&includeObject=Metadata&resourceVersion={}&timeoutSeconds={WATCH_SECONDS}",
+        "{}?watch=1&includeObject={}&resourceVersion={}&timeoutSeconds={WATCH_SECONDS}",
         kind.collection_path(namespace),
+        include_object(kind),
         query_value(resource_version)
     );
     if let Some(selector) = field_selector {
@@ -168,6 +214,12 @@ pub(crate) async fn watch_table(
         .request_events::<Table>(table_request(path)?)
         .await
         .map_err(Failure::from_kube)
+}
+
+/// What each row carries of its object: a pod's row needs its containers'
+/// states and resources, any other only its identity.
+fn include_object(kind: &ResourceKind) -> &'static str {
+    if kind.is_pod() { "Object" } else { "Metadata" }
 }
 
 /// Percent-encodes a query value. Continue tokens are opaque and may carry

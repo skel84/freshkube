@@ -2767,6 +2767,8 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         let kind = example::kind("pods").unwrap();
         view.update(cx, |view, cx| view.open_kind(kind, window, cx));
     });
+    // A healthy pod is folded under the problems; All lists it.
+    step(cx, &|window, cx| window.click("resource-view-all", cx));
     step(cx, &|window, cx| window.click(row.clone(), cx));
     step(cx, &|window, cx| window.click("detail-tab-shell", cx));
     step(cx, &|window, cx| window.click("pod-shell-start", cx));

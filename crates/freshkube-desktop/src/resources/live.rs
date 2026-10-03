@@ -3,6 +3,7 @@
 use freshkube_core::resources::{FailureKind, TableColumn, TableRow, WatchEvent};
 
 use super::model::{ColumnKind, ReadState, ResourceColumn, ResourceIdentity, ResourceRow};
+use super::rows;
 use super::store::ResourceEvent;
 
 pub(crate) fn columns(definitions: &[TableColumn]) -> Vec<ResourceColumn> {
@@ -27,12 +28,17 @@ pub(crate) fn columns(definitions: &[TableColumn]) -> Vec<ResourceColumn> {
 
 /// A printed row with its identity. Rows without object metadata, which the
 /// server includes for every real object, are skipped.
-pub(crate) fn row(connection: &str, resource: &str, row: &TableRow) -> Option<ResourceRow> {
-    let metadata = row.metadata()?;
+pub(crate) fn row(
+    connection: &str,
+    resource: &str,
+    columns: &[ResourceColumn],
+    table_row: &TableRow,
+) -> Option<ResourceRow> {
+    let metadata = table_row.metadata()?;
     if metadata.name.is_empty() {
         return None;
     }
-    Some(ResourceRow {
+    let mut row = ResourceRow {
         identity: ResourceIdentity {
             connection: connection.into(),
             resource: resource.into(),
@@ -40,14 +46,28 @@ pub(crate) fn row(connection: &str, resource: &str, row: &TableRow) -> Option<Re
             name: metadata.name.clone(),
             uid: metadata.uid.clone(),
         },
-        cells: row.cells.iter().map(cell_text).collect(),
+        cells: table_row.cells.iter().map(cell_text).collect(),
         created: metadata
             .creation_timestamp
             .as_deref()
             .and_then(parse_timestamp),
         terminating: metadata.deletion_timestamp.is_some(),
         resource_version: metadata.resource_version.clone(),
-    })
+        owner: None,
+        generated: None,
+        pod: None,
+    };
+    let controller = metadata
+        .controller()
+        .map(|owner| (owner.kind.as_str(), owner.name.as_str()));
+    rows::derive(
+        &mut row,
+        columns,
+        controller,
+        &metadata.labels,
+        table_row.pod(),
+    );
+    Some(row)
 }
 
 /// Cells are usually strings, but integer columns (an event's count) arrive
@@ -77,31 +97,37 @@ pub(crate) fn now() -> i64 {
 /// One watch batch as store events. A reset also marks the read loaded; a
 /// refusal (403) and a collection the server doesn't serve (404) are told
 /// apart from other failures, which the store shows as stale while rows
-/// remain.
+/// remain. Watch events carry no columns, so `columns` keeps the last
+/// list's for reading their cells.
 pub(crate) fn convert(
     connection: &str,
     resource: &str,
+    columns: &mut Vec<ResourceColumn>,
     events: Vec<WatchEvent>,
 ) -> Vec<ResourceEvent> {
     let mut converted = Vec::with_capacity(events.len() + 1);
     for event in events {
         match event {
-            WatchEvent::Reset { columns, rows } => {
+            WatchEvent::Reset {
+                columns: definitions,
+                rows,
+            } => {
+                *columns = self::columns(&definitions);
                 converted.push(ResourceEvent::reset(
-                    self::columns(&columns),
+                    columns.clone(),
                     rows.iter()
-                        .filter_map(|table_row| row(connection, resource, table_row))
+                        .filter_map(|table_row| row(connection, resource, columns, table_row))
                         .collect(),
                 ));
                 converted.push(ResourceEvent::Read(ReadState::Loaded));
             }
             WatchEvent::Upsert(table_row) => {
-                if let Some(row) = row(connection, resource, &table_row) {
+                if let Some(row) = row(connection, resource, columns, &table_row) {
                     converted.push(ResourceEvent::Upsert(row));
                 }
             }
             WatchEvent::Delete(table_row) => {
-                if let Some(row) = row(connection, resource, &table_row) {
+                if let Some(row) = row(connection, resource, columns, &table_row) {
                     converted.push(ResourceEvent::Delete(row.identity));
                 }
             }
@@ -153,7 +179,7 @@ mod tests {
     #[test]
     fn rows_carry_identity_cells_creation_and_termination() {
         let table = table();
-        let first = row("ctx", "deployments.apps", &table.rows[0]).unwrap();
+        let first = row("ctx", "deployments.apps", &[], &table.rows[0]).unwrap();
         assert_eq!(first.identity.address(), "shop/web");
         assert_eq!(first.identity.resource, "deployments.apps");
         assert_eq!(first.cells, ["web", "3", "5d", ""]);
@@ -161,12 +187,64 @@ mod tests {
         assert!(first.terminating);
         assert_eq!(first.resource_version, "7");
         // Cluster-scoped rows have no namespace.
-        let node = row("ctx", "nodes", &table.rows[1]).unwrap();
+        let node = row("ctx", "nodes", &[], &table.rows[1]).unwrap();
         assert_eq!(node.identity.namespace, "");
         assert_eq!(node.identity.address(), "node-1");
         assert!(!node.terminating);
         // A row without object metadata has no identity and is skipped.
-        assert!(row("ctx", "nodes", &table.rows[2]).is_none());
+        assert!(row("ctx", "nodes", &[], &table.rows[2]).is_none());
+    }
+
+    #[test]
+    fn pod_rows_read_their_cells_by_the_last_listed_columns() {
+        let table: Table = serde_json::from_str(
+            r#"{"columnDefinitions":[
+                  {"name":"Name","type":"string","priority":0},
+                  {"name":"Ready","type":"string","priority":0},
+                  {"name":"Status","type":"string","priority":0},
+                  {"name":"Restarts","type":"string","priority":0},
+                  {"name":"Node","type":"string","priority":1}],
+                "rows":[{"cells":["api-6c4f-x2","0/1","CrashLoopBackOff","3 (1m ago)","wk-1"],
+                  "object":{"metadata":{"name":"api-6c4f-x2","namespace":"shop","uid":"u1",
+                    "labels":{"pod-template-hash":"6c4f"},
+                    "ownerReferences":[{"kind":"ReplicaSet","name":"api-6c4f","controller":true}]},
+                  "spec":{"containers":[{"name":"app"}]},
+                  "status":{"containerStatuses":[{"name":"app","restartCount":3,
+                    "lastState":{"terminated":{"exitCode":2}}}]}}}]}"#,
+        )
+        .unwrap();
+        let mut columns = Vec::new();
+        let mut upsert = table.rows[0].clone();
+        upsert.cells[2] = serde_json::json!("Running");
+        upsert.cells[1] = serde_json::json!("1/1");
+        let events = convert(
+            "ctx",
+            "pods",
+            &mut columns,
+            vec![WatchEvent::Reset {
+                columns: table.column_definitions.clone(),
+                rows: table.rows.clone(),
+            }],
+        );
+        let ResourceEvent::Reset(_) = &events[0] else {
+            panic!("a reset first");
+        };
+        let events = convert(
+            "ctx",
+            "pods",
+            &mut columns,
+            vec![WatchEvent::Upsert(upsert)],
+        );
+        let ResourceEvent::Upsert(row) = &events[0] else {
+            panic!("an upsert");
+        };
+        let pod = row.pod.as_ref().unwrap();
+        assert_eq!(pod.state, rows::PodState::Running);
+        assert_eq!((pod.restarts, pod.node.as_str()), (3, "wk-1"));
+        assert_eq!(row.owner.as_ref().unwrap().label(), "deploy/api");
+        assert_eq!(row.generated, Some(3));
+        let first = super::row("ctx", "pods", &columns, &table.rows[0]).unwrap();
+        assert_eq!(first.pod.unwrap().reason, "CrashLoopBackOff · exit 2");
     }
 
     #[test]
@@ -187,6 +265,7 @@ mod tests {
         let events = convert(
             "ctx",
             "deployments.apps",
+            &mut Vec::new(),
             vec![
                 WatchEvent::Reset {
                     columns: table.column_definitions.clone(),
