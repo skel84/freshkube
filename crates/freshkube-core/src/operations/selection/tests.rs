@@ -30,7 +30,7 @@ impl Drop for PatchGuard {
 
 #[derive(Default)]
 struct ApiState {
-    requests: Vec<(Method, String, Value)>,
+    requests: Vec<(Method, http::Uri, Value)>,
     nodes: BTreeMap<String, Value>,
     pods: Vec<Value>,
     fail_patch: BTreeSet<String>,
@@ -43,7 +43,7 @@ fn fake_client(state: Arc<Mutex<ApiState>>) -> Client {
         let state = state.clone();
         async move {
             let method = request.method().clone();
-            let uri = request.uri().to_string();
+            let uri = request.uri().clone();
             let path = request.uri().path().to_owned();
             let bytes = request.into_body().collect().await.unwrap().to_bytes();
             let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
@@ -271,7 +271,7 @@ impl Harness {
             .requests
             .iter()
             .filter(|(method, _, _)| method != Method::GET)
-            .map(|(method, path, _)| (method.clone(), path.clone()))
+            .map(|(method, uri, _)| (method.clone(), uri.path().to_owned()))
             .collect()
     }
 
