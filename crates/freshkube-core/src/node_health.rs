@@ -250,7 +250,8 @@ mod tests {
             Some(&kube),
             true,
             false,
-        ).with_kubernetes_current(false);
+        )
+        .with_kubernetes_current(false);
         assert_eq!(talos_failure.health(), HealthIndicator::Error);
         assert_eq!(talos_failure.problems(), [NodeProblem::TalosUnresponsive]);
     }

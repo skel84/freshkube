@@ -48,6 +48,10 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
             continue;
         };
         pods.total += 1;
+        *pods
+            .by_namespace
+            .entry(object.namespace.clone())
+            .or_default() += 1;
         *pods.phases.entry(pod.phase.clone()).or_default() += 1;
         if let Some(node) = &pod.node {
             *pod_counts.entry(node.clone()).or_insert(0) += 1;

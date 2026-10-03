@@ -87,6 +87,12 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
         self.data.as_ref()
     }
 
+    /// Updates an independent projection without changing the request, its
+    /// coverage, error or success/failure timestamps.
+    pub(crate) fn data_mut(&mut self) -> Option<&mut T> {
+        self.data.as_mut()
+    }
+
     pub(crate) fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }

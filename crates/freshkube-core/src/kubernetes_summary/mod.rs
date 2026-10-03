@@ -144,6 +144,8 @@ impl NodeSummary {
 #[non_exhaustive]
 pub struct PodSummary {
     pub total: usize,
+    /// Counts from the same complete Pod observation, for namespace navigation.
+    pub by_namespace: BTreeMap<String, usize>,
     pub phases: BTreeMap<String, usize>,
     pub issues_by_status: BTreeMap<String, usize>,
     pub on_not_ready: usize,

@@ -270,6 +270,8 @@ fn capped_issue_rows_preserve_health_of_every_namespace() {
     let publication = session.derive(now());
     let summary = &publication.summary;
     assert_eq!(summary.pods.loaded().unwrap().issues.len(), ISSUE_LIMIT);
+    assert_eq!(summary.pods.loaded().unwrap().by_namespace.len(), 300);
+    assert_eq!(summary.pods.loaded().unwrap().by_namespace["ns-299"], 1);
     let snapshot = summary.workloads.snapshot().unwrap();
     assert_eq!(snapshot.total_pods_degraded, 300);
     assert_eq!(snapshot.namespaces.len(), 300);
@@ -278,5 +280,30 @@ fn capped_issue_rows_preserve_health_of_every_namespace() {
             .namespaces
             .iter()
             .all(|ns| ns.health == crate::workloads::HealthState::Pending)
+    );
+    let healthy = pod("healthy", "healthy", "2");
+    session
+        .apply(0, Event::Apply(healthy.clone()), now())
+        .unwrap();
+    assert_eq!(
+        session
+            .derive(now())
+            .summary
+            .pods
+            .loaded()
+            .unwrap()
+            .by_namespace["ns"],
+        1
+    );
+    session.apply(0, Event::Delete(healthy), now()).unwrap();
+    assert!(
+        !session
+            .derive(now())
+            .summary
+            .pods
+            .loaded()
+            .unwrap()
+            .by_namespace
+            .contains_key("ns")
     );
 }

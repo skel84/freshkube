@@ -327,6 +327,18 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
         ))
         .unwrap();
     for version in ["v1.32.3", "v1.33.1"] {
+        let delayed = (version == "v1.33.1").then(|| {
+            cx.update(|cx| {
+                screen.update(cx, |screen, _| {
+                    let old = screen.loader.data().unwrap().clone();
+                    let request = screen
+                        .loader
+                        .state
+                        .begin(screen.source.as_ref().unwrap().target.clone());
+                    (request, old)
+                })
+            })
+        });
         node.status
             .as_mut()
             .unwrap()
@@ -345,6 +357,7 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
                 screen.set_summary_nodes(Some(subscription.clone()), cx)
             });
             let data = screen.read(cx).loader.data().unwrap();
+            assert_eq!(screen.read(cx).loader.is_loading(), delayed.is_some());
             assert_eq!(
                 data.snapshot.kubernetes_roster,
                 publication.summary.node_roster()
@@ -364,7 +377,42 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
             window.find("lifecycle-details");
         })
         .unwrap();
+        if let Some((request, old)) = delayed {
+            cx.update(|cx| {
+                screen.update(cx, |screen, cx| {
+                    assert!(screen.loader.state.apply(&request, Ok(old)));
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let data = screen.read(cx).loader.data().unwrap();
+                assert_eq!(data.kubelets.value().unwrap()[0].version, version);
+                assert_eq!(
+                    data.snapshot.kubernetes_roster,
+                    publication.summary.node_roster()
+                );
+            });
+        }
     }
+    let timestamps = cx.update(|cx| {
+        screen.update(cx, |screen, _| {
+            let request = screen
+                .loader
+                .state
+                .begin(screen.source.as_ref().unwrap().target.clone());
+            assert!(
+                screen
+                    .loader
+                    .state
+                    .apply(&request, Err("Talos unavailable".into()))
+            );
+            (
+                screen.loader.last_successful(),
+                screen.loader.last_failure(),
+            )
+        })
+    });
     session
         .apply::<Node>(0, Event::Init, chrono::Utc::now())
         .unwrap();
@@ -374,6 +422,14 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
             screen.set_summary_nodes(Some(subscription), cx)
         });
         let data = screen.read(cx).loader.data().unwrap();
+        assert_eq!(screen.read(cx).loader.error(), Some("Talos unavailable"));
+        assert_eq!(
+            (
+                screen.read(cx).loader.last_successful(),
+                screen.read(cx).loader.last_failure()
+            ),
+            timestamps
+        );
         assert!(!data.snapshot.kubernetes_roster.is_available());
         assert!(
             data.display

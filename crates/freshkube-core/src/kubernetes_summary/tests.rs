@@ -42,6 +42,10 @@ fn ready_since_pod_issues_and_not_ready_counts_come_from_status() {
     assert_eq!(nodes[0].pods, 2);
     let pods = data.pods.loaded().unwrap();
     assert_eq!(pods.total, 2);
+    assert_eq!(
+        pods.by_namespace,
+        BTreeMap::from([("batch".into(), 1), ("payments".into(), 1)])
+    );
     assert_eq!(pods.on_not_ready, 2);
     assert!(
         pods.issues

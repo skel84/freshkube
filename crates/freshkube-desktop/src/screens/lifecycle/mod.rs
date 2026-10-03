@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use freshkube_core::HealthIndicator;
 use freshkube_core::QuorumState;
-use freshkube_core::kubernetes_summary::{Part, Publication, Subscription};
+use freshkube_core::kubernetes_summary::{Part, Publication, SessionIdentity, Subscription};
 use freshkube_core::security_lifecycle::{
     ClusterIdentity, DiscoveryRosterEntry, EtcdPreOperationAudit, KubernetesNodeRosterEntry,
     LifecycleAlert, LifecycleAlertKind, LifecycleCollector, LifecycleSnapshot,
@@ -73,6 +73,7 @@ actions!(
 struct LifecycleView {
     snapshot: LifecycleSnapshot,
     kubelets: SourceSnapshot<Vec<KubeletEntry>>,
+    node_observation: Option<(SessionIdentity, u64)>,
     display: LifecycleDisplay,
 }
 
@@ -94,6 +95,7 @@ pub(crate) struct LifecycleScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
     summary_nodes: Option<Subscription>,
+    _observation: gpui_kit::Subscription,
     loader: Loader<LifecycleView>,
     selected: Option<Item>,
     focus: FocusHandle,
@@ -104,19 +106,7 @@ impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 impl ScreenPanel for LifecycleScreen {
     fn set_summary_nodes(&mut self, nodes: Option<Subscription>, cx: &mut Context<Self>) {
         self.summary_nodes = nodes;
-        if let (Some(publication), Some(data), Some(source)) = (
-            self.summary_nodes.as_ref().and_then(Subscription::latest),
-            self.loader.data().cloned(),
-            self.source.as_ref(),
-        ) {
-            if !self.loader.is_loading() {
-                self.loader.resolve(
-                    source.target.clone(),
-                    Ok(data.with_nodes(&publication).prepare()),
-                );
-                cx.notify();
-            }
-        }
+        self.sync_shared_nodes(cx);
     }
 
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -131,6 +121,7 @@ impl ScreenPanel for LifecycleScreen {
             runtime,
             source: None,
             summary_nodes: None,
+            _observation: cx.observe_self(Self::sync_shared_nodes),
             loader: Loader::default(),
             selected: None,
             focus: cx.focus_handle(),
@@ -210,6 +201,7 @@ impl ScreenPanel for LifecycleScreen {
                 let data = LifecycleView {
                     snapshot,
                     kubelets,
+                    node_observation: None,
                     display: Default::default(),
                 };
                 let data = if let Some(publication) = nodes.as_ref().and_then(Subscription::latest)
@@ -224,6 +216,25 @@ impl ScreenPanel for LifecycleScreen {
             cx,
         );
         cx.notify();
+    }
+}
+
+impl LifecycleScreen {
+    /// A Talos read may have been prepared before the latest watch update.
+    /// Reconcile on delivery as well as on publication, without resolving or
+    /// cancelling the Talos request or erasing its independent failure state.
+    fn sync_shared_nodes(&mut self, cx: &mut Context<Self>) {
+        let Some(publication) = self.summary_nodes.as_ref().and_then(Subscription::latest) else {
+            return;
+        };
+        let Some(data) = self.loader.state.data_mut() else {
+            return;
+        };
+        let observation = (publication.identity.clone(), publication.revision);
+        if data.node_observation.as_ref() != Some(&observation) {
+            *data = data.clone().with_nodes(&publication).prepare();
+            cx.notify();
+        }
     }
 }
 
@@ -266,6 +277,7 @@ fn observed_kubelets(publication: &Publication) -> SourceSnapshot<Vec<KubeletEnt
 }
 impl LifecycleView {
     fn with_nodes(mut self, publication: &Publication) -> Self {
+        self.node_observation = Some((publication.identity.clone(), publication.revision));
         self.snapshot
             .set_kubernetes_roster(publication.summary.node_roster());
         self.kubelets = observed_kubelets(publication);

@@ -249,6 +249,9 @@ fn summarize_pods(pods: &[Pod], nodes: &[NodeSummary]) -> PodSummary {
         ..Default::default()
     };
     for pod in pods {
+        if let Some(namespace) = &pod.metadata.namespace {
+            *summary.by_namespace.entry(namespace.clone()).or_default() += 1;
+        }
         let phase = pod
             .status
             .as_ref()
