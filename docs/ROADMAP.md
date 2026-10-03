@@ -183,13 +183,13 @@ Validation followed the coordinated pushed-branch `workflow_dispatch` route unde
 
 ## Architecture review follow-up
 
-The October review used large files to choose what to inspect. The work below follows responsibility boundaries, duplicated rules and untested behavior; it does not impose a 1,000-line limit. Operations' live policy and the remaining etcd tolerance fix landed in [PR #20](https://github.com/skel84/freshkube/pull/20), with fake-client safety tests and separate commits for the dead runner removal and module moves.
+The October review used large files to choose what to inspect. The [original critique](reviews/2026-10-04-architecture.md) is preserved as historical evidence against `1836c42`; this section records its current disposition. The work below follows responsibility boundaries, duplicated rules and untested behavior; it does not impose a 1,000-line limit. Operations' live policy and the remaining etcd tolerance fix landed in [PR #20](https://github.com/skel84/freshkube/pull/20), with fake-client safety tests and separate commits for the dead runner removal and module moves.
 
 Finish the current integration before starting another architecture pass:
 
 1. The watch read model landed in [PR #21](https://github.com/skel84/freshkube/pull/21), merge `4874f2b`, after [integrated CI passed](https://github.com/skel84/freshkube/actions/runs/37159497231). It preserves independent source failures, session replacement, bounded retention and typed Health/Lifecycle handoffs. Its FPS indicator is separate in [PR #19](https://github.com/skel84/freshkube/pull/19). The bounded read model is accepted at the measured 20,000-Pod scale with the burst limitation tracked in [#22](https://github.com/skel84/freshkube/issues/22); green functional checks and memory acceptance do not close that CPU and main-thread timing target.
 2. Complete [#2](https://github.com/skel84/freshkube/issues/2) access-identity wiring against the landed observation session. Configuration replacement and transport retry must keep their different lifetime semantics.
-3. After watch and design2 land, replace AGENTS.md's unused `AsyncState` guidance and TUI example with the actual `Snapshot`, `Loader`, `OwnedJob`, `LogView` and mutation-slot contracts. Confirm there are no consumers before removing `AsyncState`.
+3. After watch and design2 land, replace AGENTS.md's unused `AsyncState` guidance and TUI example with the actual `Snapshot`, `Loader`, `OwnedJob`, `LogView` and mutation-slot contracts ([#24](https://github.com/skel84/freshkube/issues/24)). Confirm there are no consumers and check the exported API's compatibility requirements before removing `AsyncState`.
 
 The other findings remain explicit below, alongside the existing [domain-boundary issue #4](https://github.com/skel84/freshkube/issues/4), [ownership/module issue #5](https://github.com/skel84/freshkube/issues/5) and [architecture index #7](https://github.com/skel84/freshkube/issues/7). These are follow-ups for the next work in the named feature, not an instruction to split every file now.
 
@@ -206,6 +206,17 @@ The other findings remain explicit below, alongside the existing [domain-boundar
 | Small test and package cleanup | The existing Operations UI `wait_until` still uses wall-clock waits; replace that when those interaction tests are next changed. Confirm the core crate's intended publication policy before adding the missing `publish = false`. These are separate from the large-module decisions. | Executor-clock interaction tests without sleeps; package metadata consistent with the intended distribution. |
 
 After the current integration and guide correction, stop the architecture pass. Promote a row above to an active step only when feature work or measurements establish its scope. Keep file moves separate from logic changes so a reviewer can verify both.
+
+## Next: Coroot observability
+
+The user selected connecting design2's H1–H7 mocks to the `coroot-rs` library in `skel84/corust` as the next feature. [COROOT.md](COROOT.md) records the source review, ownership, capability gaps and validation; [#25](https://github.com/skel84/freshkube/issues/25) tracks delivery. This is planned work, with no live Coroot implementation or verification claimed.
+
+1. Start the independent [corust signal fix #1](https://github.com/skel84/corust/issues/1): preserve empty healthy, empty unknown and absent signals as distinct library results.
+2. Finish design2 and [access identity #2](https://github.com/skel84/freshkube/issues/2), then use their integrated UI/session contracts. The [guide correction #24](https://github.com/skel84/freshkube/issues/24) follows design2; library/core preparation need not wait for UI checks.
+3. Add a bounded core Coroot provider and connect Applications → service map → supported application reports, with shared fixture/live projection, stable AppIds and request cancellation/result guards. Record transport, project/cluster association and credential handling before building the settings surface.
+4. Extend to incidents and supported traces, then complete chart/profile/deployment-comparison data through verified typed APIs ([corust #2](https://github.com/skel84/corust/issues/2)). Keep missing capabilities explicit and live mutations outside this first integration.
+
+The Diagnostics collection/evaluation and Lifecycle compatibility/skew extractions remain in [#4](https://github.com/skel84/freshkube/issues/4); neither blocks the Coroot pages. Revisit Diagnostics if later shared Health/attention work reaches that evaluator. Keep [#22](https://github.com/skel84/freshkube/issues/22) open for the measured Table/summary burst cost, independently of Coroot delivery. Split files only where the selected feature exposes a responsibility boundary.
 
 ## Next: finish Kubernetes browsing
 
