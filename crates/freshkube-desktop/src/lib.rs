@@ -137,6 +137,7 @@ mod fixture;
 mod forwards;
 mod logs;
 mod maintenance;
+mod monitoring;
 mod mutation;
 mod palette;
 mod perf;

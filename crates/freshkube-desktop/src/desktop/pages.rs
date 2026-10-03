@@ -358,6 +358,7 @@ impl Pilot {
     /// Log collection keeps running in the background across screens; other
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        self.gallery = None;
         self.object_open_job = None;
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);

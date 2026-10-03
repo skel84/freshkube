@@ -326,6 +326,8 @@ pub(crate) struct Pilot {
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
     search: Entity<search::Search>,
+    /// The panel gallery a debug fixture check shows in place of the page.
+    gallery: Option<gpui_kit::AnyView>,
     /// The rail's area, whose pages or kinds the column lists.
     area: Area,
     /// The kind each built-in group showed last, by group slug.
@@ -643,6 +645,7 @@ impl Pilot {
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
+            gallery: None,
             area: Area::Overview,
             group_kinds: BTreeMap::new(),
             last_custom: None,

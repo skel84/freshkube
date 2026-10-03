@@ -4,6 +4,12 @@ impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let page = match self.page {
+            _ if self.gallery.is_some() => self
+                .gallery
+                .clone()
+                .unwrap()
+                .cached(cached_page_style())
+                .into_any_element(),
             Page::Resources => self
                 .resources
                 .clone()

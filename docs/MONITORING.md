@@ -63,6 +63,20 @@ Defaults the plan follows until the user says otherwise:
 - **Reads.** Only a visible page queries, and only for panels in or near the viewport. Every answer carries the dashboard, time range and variable epoch, and an older one is dropped. A panel keeps its last frame, marked stale, when a refresh fails. Display data (paths, axis ticks, legend values) is derived when a frame arrives or the width changes, never in `render`.
 - **States.** Each one is distinct: no Prometheus found (with what was looked for and a way to pick a Service), refused, failed, loading, empty answer, and a stale panel.
 
+### Panels as built
+
+Step 2 draws a panel from a frame, before the page exists (`monitoring/derive/` and `monitoring/panel/`).
+
+- **Derived on arrival.** `derive` turns a `PanelSpec` and its frame into everything a panel shows: series inks, axis ranges and ticks, threshold lines and bands, legend rows, stat values, bar rows and table cells. `PanelView` keeps the result; `render` only reads it. A timeseries' plot is its own cached `PlotView`, and its paths are kept in Kit's `PathCaches`, keyed by the answer's revision and the plot's size. Moving the cursor or fading a series builds no path. GPUI renders a cached view again whenever a cached parent does, so the plot's `render` still runs when its panel redraws; that `render` is cheap, and the UI tests count path builds, not renders.
+- **Threshold tiers.** A threshold step's colour gives only its meaning. Of several steps the highest is critical (red) and the rest are warnings (amber); a single step is a warning. Lines are drawn only when the dashboard's `thresholdsStyle` asks for a line, and bands only when it asks for an area. A label such as "90% threshold" sits on the line.
+- **Units.** When every tick on an axis carries the same unit, the unit moves to the panel's title ("API server latency ms") and the ticks and legend values drop it. A zero ("0 s" beside "600 ms") doesn't count against it. A second unit goes to the right-hand axis.
+- **Legends.** Hidden when the dashboard hides it. A table when the dashboard names calculations (its columns are those calculations) or when there are more than four series (last and max). Otherwise inline, with the last value. A table pairs its rows in two columns, scrolls past half the panel and lists at most 30, then "and N more". A series that stops before the window's end shows the time of its last value. Hovering a row fades the other series; a click keeps that series in front until clicked again.
+- **The cursor.** Hovering a plot draws a crosshair, a dot on each series and a readout of up to ten rows with the time. The panel emits the time, and the page passes it to every other timeseries, which draws the crosshair without a readout.
+- **Stats.** The value at 22 dp. When the value has crossed a threshold, a tag says which one ("◆ above 20"). A sparkline shows the history in grey and the last stretch in the tier's colour or the accent. A gauge adds a bar. Several values wrap as cells, at most 24.
+- **Bar lists and tables.** A bar list's name splits a `namespace/` prefix off in muted text, measures against the largest value and shows at most 50 rows. A table follows the organize transform's order, renames and exclusions, puts numbers in mono on the right, and caps at 100 rows with "Showing 100 of N rows".
+- **The built-in Cluster dashboard** (`freshkube-core::monitoring::builtin`): ready nodes, CPU and memory requested, API p99 and pod restarts as stats; CPU and memory by node with a 90% threshold; API server latency by quantile; top pods by CPU; and firing alerts.
+- **Fixture check.** With `--fixture`, `FRESHKUBE_PAGE=monitoring-panels` opens the Cluster dashboard on its grid, answered from example data. Step 3's page replaces it.
+
 ### Markers
 
 - **Deploys:** a Deployment's ReplicaSet changing, read from the events and ReplicaSets the resource store already lists, drawn as a thin vertical line in accent blue (#4797FF, 55% opacity) with the Deployment's name and new revision on hover, as in the mock.

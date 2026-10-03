@@ -100,6 +100,29 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn fixture_panel_gallery_opens_from_example_data_and_leaves_on_navigation(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("monitoring-panels"), None, Some("dark"), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("monitoring-gallery").visible());
+        assert!(window.find("monitoring-panel-0-title").visible());
+        assert!(window.try_find("monitoring-panel-0-failed").is_none());
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("monitoring-gallery").is_none());
+        assert!(window.find("tile-pods").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
