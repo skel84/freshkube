@@ -26,6 +26,8 @@ pub struct KubeContext {
 /// broken file never hides the contexts of the others.
 #[derive(Clone, Debug, Default)]
 pub struct KubeconfigReport {
+    /// Revision inspected on the worker, before an access session is created.
+    pub revision: crate::ConfigurationRevision,
     /// The files read, in merge order.
     pub sources: Vec<PathBuf>,
     /// Every context, in merge order, each name once.
@@ -112,6 +114,7 @@ pub fn discover_contexts(sources: &[PathBuf]) -> KubeconfigReport {
 pub(crate) fn load(sources: &[PathBuf]) -> (KubeconfigReport, Option<Kubeconfig>) {
     let mut report = KubeconfigReport {
         sources: sources.to_vec(),
+        revision: crate::ConfigurationRevision::from_kubeconfig_sources(sources),
         ..KubeconfigReport::default()
     };
     let mut merged: Option<Kubeconfig> = None;

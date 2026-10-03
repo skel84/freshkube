@@ -181,6 +181,7 @@ impl ResourcesScreen {
     /// shows; anything else stops it.
     pub(super) fn poll_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.usage = None;
+        self.usage_generation = self.usage_generation.wrapping_add(1);
         if !self.visible || !self.lists_pods() {
             return;
         }
@@ -189,11 +190,12 @@ impl ResourcesScreen {
         };
         let namespace = self.namespace.clone();
         let runtime = self.runtime.clone();
+        let generation = self.usage_generation;
         // Example use applies at once, as example rows do; later ticks
         // drift it.
         let example = matches!(source.access, KubeAccess::Example);
         if example {
-            self.apply_usage(Ok(example::pod_usage(&source.context, 0)), cx);
+            self.apply_usage(generation, Ok(example::pod_usage(&source.context, 0)), cx);
         }
         self.usage = Some(cx.spawn_in(window, async move |this, cx| {
             let mut tick = 0;
@@ -231,8 +233,8 @@ impl ResourcesScreen {
                             .unwrap_or_else(|_| Err("Reading pods' use stopped".into()))
                     }
                 };
-                let applied = this.update(cx, |view, cx| view.apply_usage(result, cx));
-                if applied.is_err() {
+                let applied = this.update(cx, |view, cx| view.apply_usage(generation, result, cx));
+                if !matches!(applied, Ok(true)) {
                     break;
                 }
                 if !example {
@@ -242,9 +244,16 @@ impl ResourcesScreen {
         }));
     }
 
-    /// Every new read replaces the task, so an answer always belongs to
-    /// the current one.
-    fn apply_usage(&mut self, result: Result<Vec<PodUsage>, String>, cx: &mut Context<Self>) {
+    /// Cancellation and the request generation protect another source or scope.
+    pub(super) fn apply_usage(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<PodUsage>, String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.usage_generation != generation || !self.visible {
+            return false;
+        }
         match result {
             Ok(list) => {
                 let mut usage: Usage = HashMap::new();
@@ -266,5 +275,6 @@ impl ResourcesScreen {
             Err(reason) => self.usage_state = UsageState::Unavailable(reason),
         }
         cx.notify();
+        true
     }
 }

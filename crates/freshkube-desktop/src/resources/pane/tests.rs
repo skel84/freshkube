@@ -159,6 +159,39 @@ fn reads_for_another_object_or_an_older_request_are_dropped(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn late_detail_results_cannot_cross_access_sessions_for_the_same_object(cx: &mut TestAppContext) {
+    use freshkube_core::{AccessIdentity, AccessSessionId, ConfigurationRevision};
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (example, _) = crashing_pod();
+    let mut previous = example.clone();
+    previous.identity.connection =
+        AccessIdentity::new(AccessSessionId::new(), ConfigurationRevision::default()).key();
+    let mut current = previous.clone();
+    current.identity.connection =
+        AccessIdentity::new(AccessSessionId::new(), ConfigurationRevision::default()).key();
+    cx.update_window(handle, |_, _, cx| {
+        open(&pane, &previous, Duration::from_secs(1), cx);
+        let old_sequence = pane.read(cx).read_seq;
+        open(&pane, &current, Duration::from_secs(1), cx);
+        pane.update(cx, |pane, cx| {
+            let sequence = pane.read_seq;
+            assert_ne!(sequence, old_sequence);
+            pane.finish_read(&previous.identity, sequence, Ok(example_view(&example)), cx);
+            pane.finish_read(
+                &current.identity,
+                old_sequence,
+                Ok(example_view(&example)),
+                cx,
+            );
+            assert_eq!(pane.detail.as_ref().unwrap().read, DocumentRead::Loading);
+            pane.finish_read(&current.identity, sequence, Ok(example_view(&example)), cx);
+            assert_eq!(pane.detail.as_ref().unwrap().read, DocumentRead::Loaded);
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn refusals_failures_and_stale_reads_each_say_so(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (pod, _) = crashing_pod();

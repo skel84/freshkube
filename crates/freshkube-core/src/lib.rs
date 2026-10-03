@@ -49,6 +49,7 @@ pub mod workloads;
 
 // Re-export commonly used items at crate root
 pub use async_state::*;
+pub use client_cache::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 pub use cluster_overview::*;
 pub use diagnostics::*;
 pub use errors::*;

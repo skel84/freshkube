@@ -573,6 +573,7 @@ fn history_reads_where_the_page_found_or_remembers_prometheus(cx: &mut TestAppCo
         access: KubeAccess::Direct(crate::resources::direct::DirectAccess::new(
             Vec::new(),
             "prod-ams".into(),
+            freshkube_core::ConfigurationRevision::default(),
         )),
     };
     cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(live.clone()), cx)));

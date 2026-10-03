@@ -634,7 +634,7 @@ fn another_kind_namespace_or_connection_closes_the_details(cx: &mut TestAppConte
         window.render_frame(cx);
         assert!(window.try_find("resource-detail").is_none());
 
-        // The same connection again (new credentials) keeps it open.
+        // Another snapshot of the same access session keeps it open.
         open_first(window, cx);
         screen.update(cx, |screen, cx| {
             screen.set_source(Some(source("homelab")), window, cx)
@@ -647,6 +647,86 @@ fn another_kind_namespace_or_connection_closes_the_details(cx: &mut TestAppConte
         window.render_frame(cx);
         assert!(window.try_find("resource-detail").is_none());
         assert_eq!(shown(&screen, cx), None);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
+    cx: &mut TestAppContext,
+) {
+    use crate::resources::direct::DirectAccess;
+    let (_runtime, screen, handle) = mount(cx, None);
+    let source = || {
+        let access = DirectAccess::new(
+            Vec::new(),
+            "homelab".into(),
+            freshkube_core::ConfigurationRevision::default(),
+        );
+        KubeSource {
+            id: access.id(),
+            context: "homelab".into(),
+            access: KubeAccess::Direct(access),
+        }
+    };
+    let previous = source();
+    let current = source();
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            // Feed controlled completions without making network requests.
+            screen.set_visible(false, window, cx);
+            screen.set_source(Some(previous.clone()), window, cx);
+            let (columns, mut rows) =
+                example::read("homelab", "pods", None, super::live::now()).unwrap();
+            rows.truncate(1);
+            rows[0].identity.connection = previous.id.clone();
+            let old_identity = rows[0].identity.clone();
+            let old_epoch = screen.store.epoch();
+            screen.apply(
+                ResourceBatch {
+                    epoch: old_epoch,
+                    events: vec![ResourceEvent::reset(columns.clone(), rows.clone())],
+                },
+                cx,
+            );
+            screen
+                .projection
+                .select_identity(&screen.store, &old_identity);
+            screen.set_source(Some(previous.clone()), window, cx);
+            assert_eq!(screen.store.epoch(), old_epoch);
+            assert_eq!(screen.projection.selected(), Some(&old_identity));
+            screen.set_source(Some(current.clone()), window, cx);
+            let epoch = screen.store.epoch();
+            assert_ne!(epoch, old_epoch);
+            assert!(screen.store.is_empty());
+            screen.apply(
+                ResourceBatch {
+                    epoch: old_epoch,
+                    events: vec![ResourceEvent::reset(columns.clone(), rows.clone())],
+                },
+                cx,
+            );
+            assert!(
+                screen.store.is_empty(),
+                "a late reset must not repopulate the next session"
+            );
+            assert!(screen.projection.selected().is_none());
+            rows[0].identity.connection = current.id.clone();
+            let new_identity = rows[0].identity.clone();
+            assert_eq!(old_identity.name, new_identity.name);
+            assert_eq!(old_identity.uid, new_identity.uid);
+            assert_ne!(old_identity, new_identity);
+            screen.apply(
+                ResourceBatch {
+                    epoch,
+                    events: vec![ResourceEvent::reset(columns, rows)],
+                },
+                cx,
+            );
+            assert_eq!(screen.store.len(), 1);
+            assert!(screen.store.get(&old_identity).is_none());
+            assert!(screen.store.get(&new_identity).is_some());
+        });
     })
     .unwrap();
 }
@@ -1445,6 +1525,53 @@ fn fog_glyph_filters_and_column_choices_change_the_table(cx: &mut TestAppContext
         window.render_frame(cx);
         window.within("popup-menu").click(0usize, cx);
         assert_eq!(screen.read(cx).layout.width, before);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn namespaces_survive_a_kind_change_but_reject_a_source_round_trip(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let generation = screen.namespace_generation;
+            screen.set_kind(kind("deployments.apps"), window, cx);
+            assert!(screen.finish_namespaces(generation, Ok(vec!["current".into()]), window, cx));
+            assert_eq!(screen.namespaces, ["current"]);
+            screen.set_source(Some(source("prod-fra")), window, cx);
+            screen.set_source(Some(source("homelab")), window, cx);
+            let current = screen.namespaces.clone();
+            assert!(!screen.finish_namespaces(generation, Ok(vec!["obsolete".into()]), window, cx));
+            assert_eq!(screen.namespaces, current);
+            assert!(screen.finish_namespaces(
+                screen.namespace_generation,
+                Ok(vec!["fresh".into()]),
+                window,
+                cx
+            ));
+            assert_eq!(screen.namespaces, ["fresh"]);
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn old_metrics_cannot_change_the_new_access_or_a_disconnected_page(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let generation = screen.usage_generation;
+            screen.set_source(Some(source("prod-fra")), window, cx);
+            assert!(!screen.apply_usage(generation, Err("late failure".into()), cx));
+            assert_eq!(screen.usage_state, super::UsageState::Known);
+            let generation = screen.usage_generation;
+            assert!(screen.apply_usage(generation, Err("current failure".into()), cx));
+            assert_eq!(screen.usage_state, super::UsageState::Stale);
+            screen.set_source(None, window, cx);
+            assert!(screen.usage.is_none());
+            assert!(!screen.apply_usage(generation, Ok(Vec::new()), cx));
+            assert_eq!(screen.usage_state, super::UsageState::Unknown);
+        });
     })
     .unwrap();
 }

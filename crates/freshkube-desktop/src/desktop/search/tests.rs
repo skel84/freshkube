@@ -6,6 +6,25 @@ use crate::{
 use gpui_kit::{AppContext, TestAppContext, component::WindowExt, test::TestWindowExt};
 
 #[gpui_kit::test]
+fn access_replacement_invalidates_an_open_search_and_its_late_answers(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_search(window, cx));
+        let search = pilot.read(cx).search.clone();
+        let sequence = search.read(cx).sequence;
+        pilot.update(cx, |pilot, cx| pilot.invalidate_target(window, cx));
+        search.update(cx, |search, cx| {
+            // An answer already queued before cancellation cannot repopulate
+            // this generation, even with the same displayed context name.
+            search.answer(sequence, "pods", Err("obsolete session".into()), cx);
+            assert!(search.parts.get("pods").is_none_or(Result::is_ok));
+            assert_ne!(sequence, search.sequence);
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
     let pod = example::read("prod-fra", "pods", None, chrono::Utc::now().timestamp())

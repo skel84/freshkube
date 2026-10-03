@@ -39,7 +39,7 @@ use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
-use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
+use crate::screens::{SCREEN_DEADLINE, content_width, mono, panel};
 use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
 use layout::TableLayout;
 use pods::{ListView, NotReady, UsageState};
@@ -112,7 +112,7 @@ pub(crate) enum KubeAccess {
     /// Made-up objects for `--fixture`; nothing is contacted.
     Example,
     /// The Kubernetes client the Talos side sets up for its cluster.
-    Talos(Box<LiveSource>),
+    Talos(Box<super::talos::TalosAccess>),
     /// A kubeconfig context, without Talos.
     Direct(DirectAccess),
 }
@@ -121,7 +121,7 @@ impl KubeAccess {
     pub(crate) async fn client(&self) -> Result<kube::Client, String> {
         match self {
             KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
-            KubeAccess::Talos(live) => live.kubernetes().await,
+            KubeAccess::Talos(live) => live.client().await,
             KubeAccess::Direct(direct) => {
                 direct.connect().await.map(|connection| connection.client)
             }
@@ -132,7 +132,7 @@ impl KubeAccess {
     pub(crate) fn forget(&self) {
         match self {
             KubeAccess::Example => {}
-            KubeAccess::Talos(live) => live.forget_kubernetes(),
+            KubeAccess::Talos(live) => live.forget(),
             KubeAccess::Direct(direct) => direct.forget(),
         }
     }
@@ -209,6 +209,7 @@ pub(crate) struct ResourcesScreen {
     /// Namespaces for the picker, listed once per connection.
     namespaces: Vec<String>,
     namespaces_for: Option<String>,
+    namespace_generation: u64,
     namespace_select: Entity<SelectState<SearchableVec<NamespaceChoice>>>,
     query: Entity<InputState>,
     store: ResourceStore,
@@ -243,6 +244,7 @@ pub(crate) struct ResourcesScreen {
     marked: BTreeSet<ResourceIdentity>,
     /// Reads pods' use while the pods list shows.
     usage: Option<Task<()>>,
+    usage_generation: u64,
     usage_state: UsageState,
     _subscriptions: Vec<Subscription>,
 }
@@ -360,6 +362,7 @@ impl ResourcesScreen {
             namespace: None,
             namespaces: Vec::new(),
             namespaces_for: None,
+            namespace_generation: 0,
             namespace_select,
             query,
             store: ResourceStore::new(),
@@ -385,6 +388,7 @@ impl ResourcesScreen {
             compact: false,
             marked: BTreeSet::new(),
             usage: None,
+            usage_generation: 0,
             usage_state: UsageState::default(),
             _subscriptions: subscriptions,
         }
@@ -527,6 +531,7 @@ impl ResourcesScreen {
         self.namespace = None;
         self.namespaces.clear();
         self.namespaces_for = None;
+        self.namespace_generation = self.namespace_generation.wrapping_add(1);
         self.namespace_job = None;
         self.sync_namespace_choices(window, cx);
         self.restart(window, cx);
@@ -657,6 +662,8 @@ impl ResourcesScreen {
     /// and watches the kind for the current connection and namespace.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch = None;
+        self.usage = None;
+        self.usage_generation = self.usage_generation.wrapping_add(1);
         if let Some(selected) = self.projection.selected() {
             self.restore = Some(selected.clone());
         }
@@ -948,6 +955,8 @@ impl ResourcesScreen {
             return;
         }
         self.namespaces_for = Some(source.id);
+        self.namespace_generation = self.namespace_generation.wrapping_add(1);
+        let generation = self.namespace_generation;
         let access = match source.access {
             KubeAccess::Example => {
                 self.namespaces = example::namespaces();
@@ -978,18 +987,33 @@ impl ResourcesScreen {
             },
         );
         let task = cx.spawn_in(window, async move |this, cx| {
-            let result = receiver.await;
+            let result = receiver
+                .await
+                .unwrap_or_else(|_| Err("Listing namespaces stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                view.namespace_job = None;
-                // A refused or failed list leaves the picker with every
-                // namespace and the current one.
-                if let Ok(Ok(names)) = result {
-                    view.namespaces = names;
-                    view.sync_namespace_choices(window, cx);
-                }
+                view.finish_namespaces(generation, result, window, cx);
             });
         });
         self.namespace_job = Some((job, task));
+    }
+
+    fn finish_namespaces(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<String>, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if generation != self.namespace_generation || !self.visible {
+            return false;
+        }
+        self.namespace_job = None;
+        // Refusal leaves the all-namespaces and current-namespace choices.
+        if let Ok(names) = result {
+            self.namespaces = names;
+            self.sync_namespace_choices(window, cx);
+        }
+        true
     }
 
     fn sync_namespace_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
