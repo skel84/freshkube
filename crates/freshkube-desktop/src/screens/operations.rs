@@ -43,12 +43,12 @@ use freshkube_core::{
     },
     operations::{
         AuditEntry, AuditPhase, BlockingPdb, DrainOptions, DrainSummary, EtcdQuorumImpact,
-        NodeOperationRequest, NodeOperationResult, NodePreflight, NodeTarget,
-        OperationConfirmation, OperationContext, OperationKind, OperationProgressEvent,
-        OperationStatus, OperationStep, OperationsEvent, POD_SAMPLE_LIMIT, PodReference,
-        RollingProgressEvent, SchedulingState, audit_result, blocking_pdbs, etcd_impact,
-        evaluate_operation_safety, move_target, not_started, ordered_sequence, panic_outcomes,
-        preflight_nodes, run_node_operation, selection_toggle,
+        NodeOperationResult, NodeTarget, OperationConfirmation, OperationKind,
+        OperationProgressEvent, OperationStatus, OperationStep, OperationsEvent, POD_SAMPLE_LIMIT,
+        PREFLIGHT_TIMEOUT, PodReference, RollingProgressEvent, SchedulingState, SelectionEvent,
+        SelectionRequest, blocking_pdbs, etcd_impact, evaluate_operation_safety, move_target,
+        not_started, ordered_sequence, panic_outcomes, preflight_nodes, run_selection,
+        selection_blocked_reason as first_blocking, selection_toggle,
     },
 };
 use futures::FutureExt;
@@ -80,7 +80,6 @@ const PLAN_WIDTH: f32 = 400.;
 const GAP: f32 = 14.;
 const PROGRESS_LIMIT: usize = 256;
 const AUDIT_ENTRIES: usize = 25;
-const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(45);
 /// How long one simulated step takes.
 const SIMULATED_STEP: Duration = Duration::from_millis(650);
 
@@ -720,29 +719,6 @@ fn sequence_delay(options: &Options, targets: usize) -> Duration {
     }
 }
 
-fn first_blocking(
-    operation: OperationKind,
-    targets: &[NodeTarget],
-    impacts: &[EtcdQuorumImpact],
-) -> Option<String> {
-    if !operation.is_destructive() {
-        return None;
-    }
-    targets.iter().zip(impacts).find_map(|(target, impact)| {
-        match evaluate_operation_safety(operation, impact) {
-            SafetyStatus::Unsafe(reason) => Some(format!(
-                "Whole-selection preflight blocked {}: {reason}",
-                target.name
-            )),
-            SafetyStatus::Unknown => Some(format!(
-                "Whole-selection preflight blocked {}: etcd quorum impact is unknown",
-                target.name
-            )),
-            _ => None,
-        }
-    })
-}
-
 /// The real run. Mutations happen only through core's runner, which audits
 /// them; a sequence re-checks etcd and Kubernetes before each node.
 async fn run_live(
@@ -750,140 +726,52 @@ async fn run_live(
     live: super::LiveSource,
     cancel: Cancel,
     tx: mpsc::UnboundedSender<RunEvent>,
-    retained: Retained,
 ) -> Done {
     let audit = mutation::audit_log(&plan.context);
-    let operation = plan.operation;
-    let targets = plan.targets.clone();
-    let body = async {
-        if cancel() {
-            return Err("Cancelled before the latest prechecks; no mutation was made".to_owned());
-        }
-        // A mutating run always revalidates the Kubernetes identity first.
+    let delay = sequence_delay(&plan.options, plan.targets.len());
+    let mut request = SelectionRequest::new(
+        plan.operation,
+        plan.targets,
+        plan.endpoint,
+        OperationConfirmation::confirmed(),
+    );
+    request.drain_options = plan.options.drain;
+    request.stop_on_failure = plan.options.stop_on_failure;
+    request.delay_between_nodes = delay;
+    let client = live.client.clone();
+    // Identity revalidation belongs to the desktop's access session. Core polls this
+    // future after its confirmation/cancellation gates and catches access failures.
+    let connect = async move {
         live.forget_kubernetes();
-        let kubernetes = live.kubernetes().await?;
-        let check = |targets: Vec<NodeTarget>| {
-            let (kubernetes, client, endpoint) = (
-                kubernetes.clone(),
-                live.client.clone(),
-                plan.endpoint.clone(),
-            );
-            async move {
-                tokio::time::timeout(
-                    PREFLIGHT_TIMEOUT,
-                    preflight_nodes(&kubernetes, client, endpoint, &targets),
-                )
-                .await
-                .map_err(|_| "Latest prechecks timed out; no mutation was made".to_owned())?
-            }
-        };
-        let latest = check(targets.clone()).await?;
-        let impacts: Vec<_> = latest.iter().map(|node| node.impact.clone()).collect();
-        if let Some(reason) = first_blocking(operation, &targets, &impacts) {
-            return Err(reason);
-        }
-        let total = targets.len();
-        let results = ordered_sequence(
-            operation,
-            &targets,
-            plan.options.stop_on_failure,
-            sequence_delay(&plan.options, total),
-            &*cancel,
-            |index, target| {
-                let (check, tx, retained, cancel, kubernetes, audit) = (
-                    check,
-                    tx.clone(),
-                    retained.clone(),
-                    cancel.clone(),
-                    kubernetes.clone(),
-                    audit.clone(),
-                );
-                let (client, options) = (live.client.clone(), plan.options.clone());
-                let first = latest.first().cloned().filter(|_| total == 1);
-                async move {
-                    let fresh: Result<NodePreflight, String> = match first {
-                        Some(node) => Ok(node),
-                        None => {
-                            emit(
-                                &tx,
-                                OperationsEvent::Rolling(RollingProgressEvent {
-                                    operation,
-                                    current_node_index: index,
-                                    total_nodes: total,
-                                    target: Some(target.clone()),
-                                    phase: AuditPhase::Progress,
-                                    step: OperationStep::Preflight,
-                                    message: format!(
-                                        "Fresh etcd and Kubernetes checks for {} ({})",
-                                        target.name, target.address
-                                    ),
-                                }),
-                            );
-                            check(vec![target.clone()]).await.and_then(|mut nodes| {
-                                (!nodes.is_empty())
-                                    .then(|| nodes.remove(0))
-                                    .ok_or_else(|| "No precheck result".to_owned())
-                            })
-                        }
-                    };
-                    let result = match fresh {
-                        Ok(node) => {
-                            let cancelled = {
-                                let cancel = cancel.clone();
-                                move || cancel()
-                            };
-                            let context = OperationContext {
-                                kubernetes: &kubernetes,
-                                talos: Some(&client),
-                                audit: &audit,
-                                is_cancelled: &cancelled,
-                            };
-                            let mut request = NodeOperationRequest::new(operation, target);
-                            request.etcd_impact = node.impact;
-                            request.drain_options = options.drain;
-                            let progress_tx = tx.clone();
-                            let mut callback = move |event| emit(&progress_tx, event);
-                            run_node_operation(
-                                request,
-                                &context,
-                                OperationConfirmation::confirmed(),
-                                &mut callback,
-                            )
-                            .await
-                        }
-                        Err(error) => not_started(operation, &[target], &error, cancel()).remove(0),
-                    };
-                    retained.lock().unwrap().push(result.clone());
-                    let _ = tx.send(RunEvent::NodeDone(result.clone()));
-                    result
-                }
-            },
-        )
-        .await;
-        Ok::<_, String>(results)
+        live.kubernetes().await
     };
-    finish_run(
-        &plan,
-        body,
-        &cancel,
-        &retained,
-        Some((&audit, &plan.context)),
-    )
-    .await
+    let outcome = run_selection(request, client, connect, &audit, cancel, move |event| {
+        let event = match event {
+            SelectionEvent::Progress(event) => RunEvent::Progress(event),
+            SelectionEvent::NodeDone(result) => RunEvent::NodeDone(result),
+        };
+        // A closed receiver stops display only; the submitted run carries on.
+        let _ = tx.send(event);
+    })
+    .await;
+    Done {
+        results: outcome.results,
+        note: outcome.note,
+        audit: Vec::new(),
+    }
 }
 
 /// Turns the body's outcome into the run's results: an early error becomes a
-/// result for every target, a panic keeps what already finished, and every
-/// result is audited when there is an audit file to write.
-async fn finish_run(
+/// result for every target, and a panic keeps what already finished. Example
+/// outcomes are kept in memory and never touch the audit file.
+async fn finish_example(
     plan: &RunPlan,
     body: impl std::future::Future<Output = Result<Vec<NodeOperationResult>, String>>,
     cancel: &Cancel,
     retained: &Retained,
-    audit: Option<(&freshkube_core::operations::AuditLog, &str)>,
 ) -> Done {
     let operation = plan.operation;
-    let (mut results, note) = match AssertUnwindSafe(body).catch_unwind().await {
+    let (results, note) = match AssertUnwindSafe(body).catch_unwind().await {
         Ok(Ok(results)) => (results, None),
         Ok(Err(error)) => (
             not_started(operation, &plan.targets, &error, cancel()),
@@ -894,11 +782,6 @@ async fn finish_run(
             Some("The operation worker panicked; inspect the nodes and the audit log.".to_owned()),
         ),
     };
-    if let Some((audit, context)) = audit {
-        for result in &mut results {
-            audit_result(audit, context, result);
-        }
-    }
     Done {
         results,
         note,
@@ -1363,7 +1246,7 @@ async fn run_example(
         )
         .await)
     };
-    let mut done = finish_run(&plan, body, &cancel, &retained, None).await;
+    let mut done = finish_example(&plan, body, &cancel, &retained).await;
     // In memory only: shown on this screen, never written.
     done.audit = done
         .results
@@ -1962,7 +1845,7 @@ impl OperationsScreen {
             let live = source.live.clone();
             async move {
                 let done = match live {
-                    Some(live) => run_live(plan, live, cancel, tx.clone(), retained).await,
+                    Some(live) => run_live(plan, live, cancel, tx.clone()).await,
                     None => run_example(plan, cancel, tx.clone(), retained).await,
                 };
                 let _ = tx.send(RunEvent::Done(done));

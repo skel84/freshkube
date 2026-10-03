@@ -24,6 +24,13 @@ use thiserror::Error;
 use crate::indicators::{QuorumState, SafetyStatus};
 use crate::inspection::EtcdHealthSnapshot;
 
+mod selection;
+
+pub use selection::{
+    PREFLIGHT_TIMEOUT, SelectionEvent, SelectionOutcome, SelectionRequest, run_selection,
+    selection_blocked_reason,
+};
+
 /// An explicit Kubernetes/Talos target. Kubernetes mutations use [`Self::name`] and Talos
 /// mutations use [`Self::address`]; callers must not infer one from the other.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1997,6 +2004,25 @@ pub async fn preflight_nodes(
     endpoint: crate::inspection::InspectionTarget,
     targets: &[NodeTarget],
 ) -> Result<Vec<NodePreflight>, String> {
+    let mut found = preflight_kubernetes(kubernetes, targets).await?;
+    let etcd = crate::inspection::collect_etcd_health(
+        talos,
+        crate::inspection::EtcdInspectionRequest::new(endpoint),
+    )
+    .await;
+    for node in &mut found {
+        node.impact = match &etcd {
+            Ok(snapshot) => etcd_impact(snapshot, &node.target),
+            Err(error) => EtcdQuorumImpact::unavailable(error.to_string()),
+        };
+    }
+    Ok(found)
+}
+
+async fn preflight_kubernetes(
+    kubernetes: &Client,
+    targets: &[NodeTarget],
+) -> Result<Vec<NodePreflight>, String> {
     let nodes: Api<Node> = Api::all(kubernetes.clone());
     let pods: Api<Pod> = Api::all(kubernetes.clone());
     let mut found = Vec::with_capacity(targets.len());
@@ -2041,17 +2067,6 @@ pub async fn preflight_nodes(
             pod_count,
             impact: EtcdQuorumImpact::unavailable("etcd was not sampled"),
         });
-    }
-    let etcd = crate::inspection::collect_etcd_health(
-        talos,
-        crate::inspection::EtcdInspectionRequest::new(endpoint),
-    )
-    .await;
-    for node in &mut found {
-        node.impact = match &etcd {
-            Ok(snapshot) => etcd_impact(snapshot, &node.target),
-            Err(error) => EtcdQuorumImpact::unavailable(error.to_string()),
-        };
     }
     Ok(found)
 }
