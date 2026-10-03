@@ -92,7 +92,10 @@ jobs:
           match = re.search(rf"^## {re.escape(version)}\b.*?\n(.*?)(?=^## |\Z)", text, re.M | re.S)
           if not match:
               sys.exit(f"::error::CHANGELOG.md has no '## {version}' section.")
-          print(match.group(1).strip())
+          # Relative links don't resolve on the Releases page; point them at the tag.
+          notes = re.sub(r"\]\((?!https?:|#)([^)]+)\)",
+                         rf"](https://github.com/skel84/freshkube/blob/v{version}/\1)", match.group(1))
+          print(notes.strip())
           print("""
           ## Install
 
