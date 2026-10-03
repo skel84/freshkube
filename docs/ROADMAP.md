@@ -86,6 +86,18 @@ The visual direction chosen on the design canvas: Console tokens and type, one s
 4. Tables, pods first. Done.
 5. Pod detail. Done.
 
+## Next: Monitoring
+
+Grafana-like dashboards in the Console look (F4), drawn natively from the cluster's Prometheus through the Kubernetes API's service proxy, read-only and GET only. Freshkube reuses grafaui's model and query crates and draws its own panels. The review, the decisions and the build order are in [MONITORING.md](MONITORING.md). Observability on Coroot's data comes after.
+
+0. Grafaui seam: a sans-I/O variable planner, GET requests, `reqwest` behind a feature.
+1. Core: Prometheus discovery, the proxy transport, the scrape interval, example data.
+2. Console panels: timeseries, stat, bar gauge, table, bar list, in the Console palette (never Grafana's).
+3. Monitoring page: rail area, dashboards, variables, time picker, shared cursor, legend fade, PromQL on hover.
+4. Deploy and node markers.
+5. CPU and memory history in the pod detail and the node pane.
+6. Live check on a context the user names.
+
 ## Then: a daily-use workflow
 
 These come from the GPUI evaluation plan (G09–G12) and the follow-ups it listed.

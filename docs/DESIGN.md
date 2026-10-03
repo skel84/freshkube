@@ -12,7 +12,7 @@ The mockups are on the design canvas "Freshkube holistic layout" (https://claude
 | F2, F2′ Pods | `ConsolePods`, `ConsolePodsCompact` | Superseded by F2″ |
 | F2″ Pods, the reference table | `ConsolePodsGlyph` | Decided |
 | F3 Pod detail | `ConsolePod` | Decided |
-| F4 Monitoring | `ConsoleMetrics` | Built on the canvas, not committed to |
+| F4 Monitoring | `ConsoleMetrics` | Decided; building ([MONITORING.md](MONITORING.md)) |
 | O1–O7 Observability | `Obs*` | Explored, open |
 
 Rubick was a reference the user liked but it must not be copied: no neutral charcoal look and no multicolour hashed resource names.
@@ -97,10 +97,13 @@ Every compact element has a hover tooltip: glyphs, shortened node names, meters,
 
 F3 (`ConsolePod`) opens on the cause: a "Why it's failing" card with the state, last exit code, next restart and last log lines. Then the restart timeline, containers, Runs on (the node, Talos kubelet health and a link to its system services), Relations (ReplicaSet → Deployment, Service, ServiceAccount, IP and QoS) and recent events. Logs is the primary action.
 
+### F4 Monitoring
+
+Grafana-like dashboards in the Console look, with dashboard-wide filter dropdowns, a time picker, a cursor linked across charts, deploy and node event markers, thresholds, legend hover that fades the other lines, and the PromQL query on hover. A panel editor and an Explore screen are explicitly not wanted for now. Charts use the chart series and blue ramp above, never Grafana's palette or a dashboard's own colours; deploy markers are accent blue, node markers critical red and thresholds dashed amber or red, as in `ConsoleMetrics`. Dashboards are read with grafaui's model and query crates and drawn as Console panels; [MONITORING.md](MONITORING.md) has the decisions and the build order.
+
 ## Built on the canvas, not committed to
 
 - **F, the Console dashboard:** ring gauges with legends, a "Needs attention" table and a Health-by-area card.
-- **F4, Monitoring:** Grafana-like dashboards in the Console look, with dashboard-wide filter dropdowns, a time picker, a cursor linked across charts, deploy and node event markers, thresholds, legend hover that fades the other lines, and the PromQL query on hover. A panel editor and an Explore screen are explicitly not wanted for now.
 
 ## Open
 
@@ -113,7 +116,7 @@ F3 (`ConsolePod`) opens on the cause: a "Why it's failing" card with the state, 
   - O6 profiling: a flame graph coloured by change against the previous 24 h;
   - O7 traces: a latency and error heatmap with the SLO line, error causes and a sample trace waterfall.
 
-  The data sources shown are Prometheus, Coroot's node agent (eBPF), ClickHouse (logs and traces) and the Talos API. Still to decide: embed Coroot through its API or reimplement the concepts, which screens come first, and the Risks, Logs patterns and Costs screens, which aren't designed.
+  The data sources shown are Prometheus, Coroot's node agent (eBPF), ClickHouse (logs and traces) and the Talos API. The user runs Coroot, and these screens will read its API rather than reimplement its analysis, after Monitoring. Still to decide: which screens come first, and the Risks, Logs patterns and Costs screens, which aren't designed.
 - **A light mode** for the Console look.
 - **The default row density,** compact or comfortable.
 - **Grouping problems by cause** beyond "pods on a NotReady node". Linking a crashing pod to the database it depends on is harder.
@@ -128,4 +131,4 @@ Each step is its own commit (or a preparation commit and then the step), with UI
 4. **Tables** (done). Pods list with their full object (`includeObject=Object`), so readiness, restarts, the owner, the node, requests and limits come from the pod itself; watch events reuse the last listed columns. Every kind gets the glyph column (from Status or Ready where the kind prints one), the muted namespace prefix and dimmed generated suffix, an Owner column when any row has an owner, and the density toggle. Pods also merge ready and restarts, put the waiting or failing reason after the name, show CPU and memory bars from metrics.k8s.io every 15 s (grey when last known, "isn't installed" on a 404, "not permitted" on a 403) and drop the node prefix every node shares. The pods page opens on Problems: groups for Failing, each NotReady node, Not ready, Pending, Terminating and Unknown, healthy pods folded into one line under them with "Showing 50 of 140 · Show all"; All lists every pod in one sort, and a filter shows every match. X marks a row, a group's Select all marks its rows, and the marks banner copies or clears them; L opens the selected pod's logs. Density stays per session until the default is decided.
 5. **Pod detail** (done). A pod's Overview opens with Logs as its primary action, then, when its status says something is wrong, a card titled "Why it's failing", "Why it's waiting" or "Why it isn't ready": the state, the kubelet's message, the container, its last exit, restarts and the next restart estimated from the kubelet's back-off, the last instance's termination message, and its logs. Then the restart timeline of that container (or the one restarted most), containers, Runs on with Talos's kubelet service and a link to the node's system services, Relations (the controller chain, selecting Services, ServiceAccount, Pod IP and QoS class) and recent warnings. The diagnosis is core's `PodStatus::diagnose`, from the status alone. The card doesn't show the last log lines: the previous instance is read only when the user asks, so "Logs of the last instance" opens it.
 
-The Console dashboard, Monitoring, Observability and the light mode wait for the user's decision.
+Monitoring is decided and follows [MONITORING.md](MONITORING.md). The Console dashboard, Observability and the light mode wait for the user's decision.
