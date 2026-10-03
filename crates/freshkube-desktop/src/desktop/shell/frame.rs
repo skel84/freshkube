@@ -3,10 +3,11 @@ use super::*;
 impl Pilot {
     pub(in crate::desktop) fn render_status_bar(
         &mut self,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
+        let compact = window.viewport_size().width < ui::dp_px(1080., window);
         let status = Self::status(&self.overview);
         let context = self.applied.context.clone().unwrap_or_default();
         let glyph = |tone: Tone| ui::status_glyph(tone, cx);
@@ -141,22 +142,25 @@ impl Pilot {
                 .children(
                     self.overview
                         .last_successful()
+                        .filter(|_| !compact)
                         .map(|time| div().child(format!("Last success {}", clock(time)))),
                 )
                 .children(
                     self.overview
                         .last_failure()
-                        .filter(|_| self.overview.is_stale())
+                        .filter(|_| !compact && self.overview.is_stale())
                         .map(|time| {
                             div()
                                 .text_color(p.warn_ink)
                                 .child(format!("Failed {}", clock(time)))
                         }),
                 )
-                .child(if self.automatic {
-                    "Talos refresh every 15 s"
-                } else {
-                    "Talos auto-refresh off"
+                .when(!compact, |this| {
+                    this.child(if self.automatic {
+                        "Talos refresh every 15 s"
+                    } else {
+                        "Talos auto-refresh off"
+                    })
                 })
                 .when(self.fixture, |this| {
                     this.child(
@@ -176,8 +180,13 @@ impl Pilot {
             .h(dp(28.))
             .px_3()
             .text_size(dp(11.5))
-            .left(left)
-            .right(right)
+            .left(
+                div()
+                    .min_w_0()
+                    .when(compact, |this| this.max_w(dp(160.)))
+                    .child(left),
+            )
+            .right(right.child(self.fps.clone()))
             .into_any_element()
     }
 }
