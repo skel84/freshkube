@@ -1,0 +1,24 @@
+# Throwaway spike: does the rpi agent loop fit Freshkube's embedded investigation
+# agent? Its own workspace, so the app's lockfile and checks stay untouched.
+[package]
+name = "freshkube-agent-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rpi-agent = "=0.3.13"
+rpi-ai = { version = "=0.3.13", features = ["providers"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+futures = "0.3"
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+agent-client-protocol = "=2.2.0"
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server", "client", "transport-streamable-http-client-reqwest"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
