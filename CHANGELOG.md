@@ -1,23 +1,47 @@
 # Changelog
 
-## Unreleased: Freshkube
+Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
-talos-pilot becomes **Freshkube**, a native desktop app for Talos Linux and Kubernetes clusters.
+## 0.2.0 (2026-10-03)
 
-- The GPUI Kit desktop frontend is now the only interface. The terminal UI, the egui GUI and the Dioxus prototype were removed; upstream [talos-pilot](https://github.com/Handfish/talos-pilot) keeps the terminal UI.
-- Crates renamed: `talos-pilot-core` → `freshkube-core`, `talos-pilot-gpui` → `freshkube-desktop`; the binary is `freshkube`. The `--ui` option is gone, and `--fixture` opens the app with synthetic example data.
-- Operations audit files move from `~/.talos-pilot/` to `~/.freshkube/`; debug pages open with `FRESHKUBE_PAGE` (was `TALOS_PILOT_GPUI_PAGE`).
-- UI tests no longer need a feature flag and run with reduced motion, which fixed two dialog tests that failed deterministically.
-- CI and release builds cover macOS only until GPUI's Linux and Windows builds are verified; Homebrew publishing to the upstream tap was removed.
-- Pull requests run formatting, Clippy and the tests; merges to `main` also build both app bundles. Pushing a version tag drafts a GitHub pre-release from those same bundles, without building again ([docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#releases)).
-- Kubernetes resource browsing, read-only and in progress: a KUBERNETES sidebar section groups kinds as Kubeli does, and the Resources page lists any kind through the server's table view, kept current by a watch, with a namespace picker and filter. In Talos mode it uses the cluster's Kubernetes connection from Talos.
-- Kubernetes-only mode: without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names; a named context that is missing is reported, never replaced. Talos pages ask for a talosconfig.
-- A detail pane shows the selected Kubernetes object's Overview, YAML and Events, beside the list or below it in a narrow window. It reads the object when selected and again when the list sees a new version, at most once a second. It never shows another object's answer, and it says when a read is refused, failed or stale, or the object was deleted or recreated. The YAML view has search, line selection and copy; events are matched by UID, newest first. Secret values stay hidden: reveal, copy or hide one key at a time, and Copy YAML always copies the hidden form.
-- Custom resources: the sidebar's Custom Resources section lists the cluster's API groups when opened, and a group's kinds when the group opens. Custom kinds open on the Resources page like built-in ones, with the columns the server prints for them. A group that is refused, unreachable or has nothing to list says so, with Retry, rather than looking empty; so does a version that couldn't be read while others were. A kind whose API the server stops serving says so on the page, and its group is discovered again.
-- With wrapping on, resizing the logs panel lays out only the lines on screen and catches up the rest once the width holds, instead of every retained line on every step. [docs/LONG_LISTS.md](docs/LONG_LISTS.md) sets the rules for long lists.
-- [docs/ROADMAP.md](docs/ROADMAP.md) records what comes next.
+The first release of **Freshkube**, a native macOS app for Talos Linux and Kubernetes clusters. It began as a fork of [talos-pilot](https://github.com/Handfish/talos-pilot), whose terminal UI stays upstream. Freshkube reads by default. It changes a cluster only through Talos operations behind their own confirmation, and through a pod shell or port forward that you start yourself.
 
-Entries below this one are talos-pilot's history.
+### Cluster
+
+- **Overview** shows cluster cards and an Attention list of what needs a look (node problems, services, pods, workloads, claims and etcd alarms), each linked to the object, its logs or its node. Health reads the same snapshot.
+- **Nodes** joins Kubernetes and Talos into one table or set of cards. A node's pane holds its Talos screens, service logs, Events, YAML and the pods running on it.
+- **Navigation:** the sidebar groups Cluster, Resources and Control plane (etcd, System services, Security, Lifecycle and Operations). The context switcher sits above it; Command-1 to Command-9 open the numbered rows, and Control-Tab switches to the last other kind.
+- **Search everything** (Command-K) finds pages, kinds, nodes and objects by name. It reads only metadata, capped per kind, and never asks for Secret data.
+
+### Kubernetes resources
+
+- **Browsing:** the Resources page lists any kind through the server's table view, kept current by a watch, with a namespace picker and filter. In Talos mode it uses the cluster's Kubernetes connection from Talos.
+- **Kubernetes-only mode:** without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. A named context that is missing is reported, never replaced.
+- **Detail pane:** the selected object's Overview, YAML and Events, beside the list or below it in a narrow window. It reads the object again when the list sees a new version, at most once a second, and says when a read is refused, failed or stale, or the object was deleted or recreated. Secret values stay hidden: you reveal, copy or hide one key at a time, and Copy YAML always copies the hidden form.
+- **Cross-links:** a pod's Overview links its Services, owners, node and recent warnings. Every link opens through the same guard, which keeps a matching namespace and asks before ending a running shell.
+- **Custom resources:** the sidebar lists the cluster's API groups and their kinds when opened. Custom kinds open like built-in ones, with the server's columns. A group that is refused or unreachable says so, with Retry, rather than looking empty.
+- **Pod logs:** a Logs tab with a container picker, tail length, timestamps, Stop and Resume from the last line, and the previous instance on request. Restarts and reconnects show as marker rows.
+- **Pod shell:** a Shell tab starts a shell in a running container, only when you press Start. While it runs, anything that would end it asks first.
+- **Port forwarding:** a Ports tab on pods, Services and workloads forwards a declared or typed port to a local one. Forwards run until you stop them, across pages and contexts, and the status bar lists them all with Copy address, Open in browser, Stop and Start again.
+
+### App
+
+- **The keyboard** goes from context to namespace, kind, object and details. Enter opens, Escape steps back one level at a time, and Command-F and Command-G find in whatever has focus.
+- **Text size:** Command-= and Command-- step through 12–20 px, and the whole layout scales with it. Settings has the same choice.
+- **Choose a talosconfig in Finder:** open the app, pick a talosconfig and a context, and both are remembered as a path and a name. Credentials are never copied.
+- **Performance:** a first list of 50,000 pods costs the main thread 1 ms; watch bursts apply at most ten times a second; logs keep up at 10,000 lines a second.
+
+### Changes from talos-pilot
+
+- The GPUI Kit desktop app is the only interface. The terminal UI, the egui GUI and the Dioxus prototype were removed.
+- Crates renamed: `talos-pilot-core` → `freshkube-core`, `talos-pilot-gpui` → `freshkube-desktop`. The binary is `freshkube`, the `--ui` option is gone, and `--fixture` opens the app with example data.
+- Operations audit files move from `~/.talos-pilot/` to `~/.freshkube/`. Debug pages open with `FRESHKUBE_PAGE` (was `TALOS_PILOT_GPUI_PAGE`).
+
+### Packaging
+
+- macOS only, for Apple silicon and Intel, as `.app` bundles for macOS 15 or later. They are ad-hoc signed, not notarized, so macOS asks you to allow the first open. Linux and Windows wait until GPUI's builds there are verified. Homebrew publishing to the upstream tap was removed.
+- Pull requests run formatting, Clippy and the tests, and merges to `main` also build both bundles. A version tag drafts a GitHub pre-release from those same bundles without building again ([docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#releases)).
+
 
 ## 0.1.11
 

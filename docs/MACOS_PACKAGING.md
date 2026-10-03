@@ -142,7 +142,7 @@ artifact ZIP. In the directory with the files:
 
 ```sh
 shasum -a 256 -c Freshkube-*-adhoc.zip.sha256
-ditto -x -k Freshkube-0.1.11-x86_64-apple-darwin-adhoc.zip .
+ditto -x -k Freshkube-0.2.0-x86_64-apple-darwin-adhoc.zip .
 codesign --verify --deep --strict --verbose=2 Freshkube.app
 ```
 
@@ -330,7 +330,8 @@ its native executable. Clicking the updated ARM app and connecting with the
 chosen file on the user's Mac remains the live check. The pipeline still signs
 ad-hoc and does not notarize or publish releases.
 
-Both hosted runs used manual dispatch. Although the CI workflow is active and
-declares push/PR triggers, publishing these revisions to `main` did not produce
-an automatic run during verification. Automatic push/PR triggering still needs
-investigation; manual candidate dispatch is the verified build path.
+Both hosted runs used manual dispatch. GitHub never started CI for a push or
+pull request while `ci.yml` also declared `workflow_call`. Once that trigger was
+removed, in favour of `workflow_dispatch`, pull request #12 and its merge to
+`main` (`0861fb4`) ran CI by themselves. Removing it is the only trigger change
+that coincides with the fix; the cause wasn't confirmed further.
