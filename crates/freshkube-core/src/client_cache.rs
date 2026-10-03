@@ -9,10 +9,13 @@
 
 use std::{
     collections::HashMap,
-    hash::Hash,
+    hash::{BuildHasher, Hash},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex},
-    time::{Duration, Instant, SystemTime},
+    sync::{
+        LazyLock, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use kube::Client;
@@ -93,21 +96,6 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
     }
 }
 
-/// Cheap change detector for a file: length plus modification time. A missing
-/// or unreadable file has no stamp, which never equals a present file's.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub(crate) struct FileStamp(Option<(u64, Option<SystemTime>)>);
-
-impl FileStamp {
-    pub(crate) fn of(path: &Path) -> Self {
-        Self(
-            std::fs::metadata(path)
-                .ok()
-                .map(|meta| (meta.len(), meta.modified().ok())),
-        )
-    }
-}
-
 /// Opaque content fingerprint of a loaded talosconfig, for change detection only.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConfigIdentity(u64);
@@ -119,6 +107,155 @@ impl ConfigIdentity {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         hasher.write(bytes);
         Self(hasher.finish())
+    }
+}
+
+/// One authenticated access lifetime. Cloning or retrying its transport keeps
+/// this identity; replacing the access starts another lifetime. Node selection
+/// and individual request generations are deliberately separate.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AccessSessionId {
+    origin: SessionOrigin,
+    serial: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum SessionOrigin {
+    Direct,
+    Talos,
+}
+
+impl AccessSessionId {
+    /// Starts a direct Kubernetes access session, before its first connection.
+    pub fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self {
+            origin: SessionOrigin::Direct,
+            serial: NEXT.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    fn talos(client: &TalosClient) -> Self {
+        Self {
+            origin: SessionOrigin::Talos,
+            serial: client.connection_id(),
+        }
+    }
+}
+
+impl Default for AccessSessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Opaque revision of local configuration and referenced credential files.
+/// Reading a revision performs bounded local I/O and belongs on a worker.
+/// Contents and their fingerprints are never formatted or logged.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConfigurationRevision(u64);
+
+fn fingerprint(value: impl Hash) -> u64 {
+    static HASHER: LazyLock<std::collections::hash_map::RandomState> =
+        LazyLock::new(std::collections::hash_map::RandomState::new);
+    HASHER.hash_one(value)
+}
+
+fn file_revision(path: &Path) -> Option<ConfigIdentity> {
+    crate::kubeconfig_selection::read_bounded_regular_file(path, 4 * 1024 * 1024)
+        .ok()
+        .map(|bytes| ConfigIdentity::from_bytes(&bytes))
+}
+
+fn kubeconfig_revision(path: &Path) -> u64 {
+    let references = crate::kubeconfig_selection::read_selected_file(path)
+        .ok()
+        .map(|config| {
+            let authorities = config
+                .clusters
+                .into_iter()
+                .filter_map(|entry| entry.cluster)
+                .filter_map(|cluster| cluster.certificate_authority);
+            let credentials = config
+                .auth_infos
+                .into_iter()
+                .filter_map(|entry| entry.auth_info)
+                .flat_map(|user| [user.client_certificate, user.client_key, user.token_file])
+                .flatten();
+            authorities
+                .chain(credentials)
+                .map(|path| {
+                    let revision = file_revision(Path::new(&path));
+                    (path, revision)
+                })
+                .collect::<Vec<_>>()
+        });
+    fingerprint((file_revision(path), references))
+}
+
+impl ConfigurationRevision {
+    /// Includes merge order, paths, exact file contents and referenced CA,
+    /// certificate, key and token files. Missing files have a distinct revision.
+    pub fn from_kubeconfig_sources(paths: &[PathBuf]) -> Self {
+        Self(fingerprint(
+            paths
+                .iter()
+                .map(|path| (path, kubeconfig_revision(path)))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn selection(selection: &KubeconfigSelection) -> Self {
+        Self(fingerprint(selection_key(selection)))
+    }
+}
+
+impl Default for ConfigurationRevision {
+    fn default() -> Self {
+        Self::from_kubeconfig_sources(&[])
+    }
+}
+
+impl std::fmt::Debug for ConfigurationRevision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConfigurationRevision(..)")
+    }
+}
+
+/// Identity shared by ordinary reads and caches, independent of the selected
+/// node and each read's generation. A revision change invalidates old work even
+/// when the selected path and context are unchanged.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AccessIdentity {
+    session: AccessSessionId,
+    configuration: ConfigurationRevision,
+}
+
+impl AccessIdentity {
+    pub fn new(session: AccessSessionId, configuration: ConfigurationRevision) -> Self {
+        Self {
+            session,
+            configuration,
+        }
+    }
+
+    /// Shares Talos's authenticated connection identity, including across
+    /// `with_node` copies, and the cache's kubeconfig revision policy.
+    pub fn for_talos(client: &TalosClient, selection: &KubeconfigSelection) -> Self {
+        Self::new(
+            AccessSessionId::talos(client),
+            ConfigurationRevision::selection(selection),
+        )
+    }
+
+    /// Adapter for existing resource/source keys. Process-local and opaque;
+    /// never a path, context name, credential or raw credential fingerprint.
+    pub fn key(&self) -> String {
+        format!("access:{:016x}", fingerprint(self))
+    }
+
+    pub fn configuration(&self) -> ConfigurationRevision {
+        self.configuration
     }
 }
 
@@ -135,16 +272,16 @@ pub(crate) struct TalosKey {
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum SelectionKey {
     /// Automatic selection can use ambient `KUBECONFIG`, so its files are part of the key.
-    Automatic(Vec<(PathBuf, FileStamp)>),
+    Automatic(Vec<(PathBuf, u64)>),
     TalosControlPlane,
     File {
         path: PathBuf,
         context: Option<String>,
-        stamp: FileStamp,
+        revision: u64,
     },
 }
 
-fn ambient_files() -> Vec<(PathBuf, FileStamp)> {
+fn ambient_files() -> Vec<(PathBuf, u64)> {
     let paths = match std::env::var_os("KUBECONFIG") {
         Some(value) if !value.is_empty() => std::env::split_paths(&value).collect(),
         _ => dirs_next::home_dir()
@@ -154,8 +291,8 @@ fn ambient_files() -> Vec<(PathBuf, FileStamp)> {
     paths
         .into_iter()
         .map(|path| {
-            let stamp = FileStamp::of(&path);
-            (path, stamp)
+            let revision = kubeconfig_revision(&path);
+            (path, revision)
         })
         .collect()
 }
@@ -167,7 +304,7 @@ fn selection_key(selection: &KubeconfigSelection) -> SelectionKey {
         KubeconfigSelection::File { path, context } => SelectionKey::File {
             path: path.clone(),
             context: context.clone(),
-            stamp: FileStamp::of(path),
+            revision: kubeconfig_revision(path),
         },
     }
 }
@@ -175,10 +312,9 @@ fn selection_key(selection: &KubeconfigSelection) -> SelectionKey {
 /// Everything that determines a validated Kubernetes client or prepared kubeconfig.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct KubernetesKey {
-    connection_id: u64,
+    access: AccessIdentity,
     context: String,
     node: Option<String>,
-    selection: SelectionKey,
 }
 
 impl KubernetesKey {
@@ -189,10 +325,9 @@ impl KubernetesKey {
         selection: &KubeconfigSelection,
     ) -> Self {
         Self {
-            connection_id: client.connection_id(),
+            access: AccessIdentity::for_talos(client, selection),
             context: context.to_owned(),
             node: pinned_node.map(str::to_owned),
-            selection: selection_key(selection),
         }
     }
 }
@@ -257,9 +392,10 @@ pub(crate) fn store_prepared_kubeconfig(key: KubernetesKey, prepared: &PreparedK
 /// Forgets every Kubernetes client and prepared kubeconfig for one Talos
 /// connection and context, whatever the selection.
 pub(crate) fn forget_kubernetes(client: &TalosClient, context: &str) {
-    let id = client.connection_id();
-    lock(&KUBERNETES_CLIENTS).remove_where(|key| key.connection_id == id && key.context == context);
-    lock(&PREPARED).remove_where(|key| key.connection_id == id && key.context == context);
+    let session = AccessSessionId::talos(client);
+    lock(&KUBERNETES_CLIENTS)
+        .remove_where(|key| key.access.session == session && key.context == context);
+    lock(&PREPARED).remove_where(|key| key.access.session == session && key.context == context);
 }
 
 pub(crate) fn forget_all_kubernetes() {
@@ -297,6 +433,114 @@ pub(crate) fn connection_unusable(endpoint_failed: bool, node_transport_failures
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "freshkube-access-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn same_size_same_timestamp_configuration_replacement_invalidates_the_cache() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("config");
+        std::fs::write(&path, "old configuration").unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let selection = KubeconfigSelection::File {
+            path: path.clone(),
+            context: Some("lab".into()),
+        };
+        let before = selection_key(&selection);
+        let mut cache = TtlCache::new(None, 8);
+        let now = Instant::now();
+        cache.insert(before.clone(), "old client", now);
+        assert_eq!(
+            cache.get(&selection_key(&selection), now),
+            Some("old client")
+        );
+        std::fs::write(&path, "new configuration").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert!(before != selection_key(&selection));
+        assert_eq!(cache.get(&selection_key(&selection), now), None);
+    }
+
+    #[test]
+    fn referenced_credentials_and_missing_files_change_the_revision() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("config");
+        std::fs::write(
+            &path,
+            "apiVersion: v1\nkind: Config\nusers:\n- name: lab\n  user:\n    tokenFile: token\n",
+        )
+        .unwrap();
+        let sources = vec![path];
+        let missing = ConfigurationRevision::from_kubeconfig_sources(&sources);
+        let token = scratch.0.join("token");
+        std::fs::write(&token, "synthetic first").unwrap();
+        let first = ConfigurationRevision::from_kubeconfig_sources(&sources);
+        assert_ne!(missing, first);
+        assert_eq!(
+            first,
+            ConfigurationRevision::from_kubeconfig_sources(&sources)
+        );
+        std::fs::write(&token, "synthetic other").unwrap();
+        assert_ne!(
+            first,
+            ConfigurationRevision::from_kubeconfig_sources(&sources)
+        );
+        std::fs::remove_file(token).unwrap();
+        assert_eq!(
+            missing,
+            ConfigurationRevision::from_kubeconfig_sources(&sources)
+        );
+        assert_eq!(format!("{first:?}"), "ConfigurationRevision(..)");
+    }
+
+    #[test]
+    fn access_keys_distinguish_sessions_and_revisions_without_request_generations() {
+        let session = AccessSessionId::new();
+        let revision = ConfigurationRevision::default();
+        let before = AccessIdentity::new(session, revision);
+        assert_eq!(before.key(), AccessIdentity::new(session, revision).key());
+        assert_ne!(
+            before.key(),
+            AccessIdentity::new(AccessSessionId::new(), revision).key()
+        );
+        assert_ne!(
+            before.key(),
+            AccessIdentity::new(session, ConfigurationRevision(revision.0.wrapping_add(1))).key()
+        );
+        let mut cache = TtlCache::new(None, 8);
+        let now = Instant::now();
+        cache.insert(before, "previous client", now);
+        assert_eq!(cache.get(&before, now), Some("previous client"));
+        assert_eq!(
+            cache.get(&AccessIdentity::new(AccessSessionId::new(), revision), now),
+            None
+        );
+    }
 
     fn at(base: Instant, seconds: u64) -> Instant {
         base + Duration::from_secs(seconds)

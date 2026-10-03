@@ -32,6 +32,7 @@ pub(super) struct KubernetesOnly {
     explicit: Option<PathBuf>,
     /// The files read, in merge order.
     pub(super) sources: Vec<PathBuf>,
+    revision: freshkube_core::ConfigurationRevision,
     /// `--kube-context`, used once the contexts first load.
     requested: Option<String>,
     /// The chosen context; its client is shared with every read.
@@ -46,6 +47,7 @@ impl KubernetesOnly {
         Self {
             explicit,
             sources: Vec::new(),
+            revision: freshkube_core::ConfigurationRevision::default(),
             requested,
             access: None,
             connection: KubeConnection::Idle,
@@ -143,6 +145,7 @@ impl Pilot {
             return;
         };
         kube.sources = report.sources.clone();
+        kube.revision = report.revision;
         // A file that can't be read matters only when no other one has
         // contexts.
         if report.contexts.is_empty() {
@@ -188,7 +191,7 @@ impl Pilot {
         kube.connection = KubeConnection::Idle;
         kube.access = context
             .clone()
-            .map(|context| DirectAccess::new(kube.sources.clone(), context));
+            .map(|context| DirectAccess::new(kube.sources.clone(), context, kube.revision));
         self.epoch = self.epoch.wrapping_add(1);
         self.kubernetes_summary = Snapshot::default();
         self.rebuild_joined_nodes();

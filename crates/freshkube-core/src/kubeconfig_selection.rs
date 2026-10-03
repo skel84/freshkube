@@ -76,7 +76,7 @@ fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, &'static str> {
     Ok(bytes)
 }
 
-fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, &'static str> {
+pub(crate) fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, &'static str> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
