@@ -48,6 +48,7 @@ const TICK: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Copy, Debug)]
 enum Scenario {
+    Summary,
     Table { pods: usize },
     Burst { pods: usize, rate: u32 },
     PodLogs { rate: u32 },
@@ -64,6 +65,7 @@ impl Scenario {
                 .map_or(Some(default), |value| value.parse().ok())
         };
         Some(match args.first().map(String::as_str)? {
+            "summary" => Scenario::Summary,
             "table" => Scenario::Table {
                 pods: number(1, 20_000)? as usize,
             },
@@ -91,6 +93,7 @@ impl Scenario {
     fn defaults(self) -> Vec<(&'static str, String)> {
         let pods = ("FRESHKUBE_KIND", "pods".to_owned());
         match self {
+            Scenario::Summary => vec![("FRESHKUBE_PAGE", "health".into())],
             Scenario::Table { .. } => vec![
                 pods,
                 (
@@ -108,7 +111,7 @@ impl Scenario {
                 ),
             ],
             Scenario::TalosLogs { rate } => vec![
-                ("FRESHKUBE_PAGE", "logs".into()),
+                ("FRESHKUBE_PAGE", "node-logs".into()),
                 ("FRESHKUBE_STRESS_TALOS_RATE", rate.to_string()),
             ],
             Scenario::Terminal { .. } | Scenario::TerminalTop | Scenario::TerminalSample => {
@@ -122,7 +125,7 @@ fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(scenario) = Scenario::parse(&args) else {
         eprintln!(
-            "usage: stress table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample"
+            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample"
         );
         std::process::exit(2);
     };
@@ -232,6 +235,7 @@ impl Pods {
 impl World {
     fn new(scenario: Scenario) -> Self {
         let count = match scenario {
+            Scenario::Summary => 20_000,
             Scenario::Table { pods } | Scenario::Burst { pods, .. } => pods,
             _ => 20,
         };
@@ -287,6 +291,18 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
     };
     let watching = matches!(param("watch").as_deref(), Some("1" | "true"));
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let table = request
+        .headers()
+        .get("accept")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|accept| accept.contains("as=Table"));
+    if !watching
+        && !table
+        && let Some(response) = summary_list(world, &path)
+    {
+        return response;
+    }
+
     match segments.as_slice() {
         ["version"] => json_response(json!({
             "major": "1", "minor": "32", "gitVersion": "v1.32.3", "platform": "linux/amd64"
@@ -573,4 +589,30 @@ fn log_stream(world: &World) -> Response<Body> {
         }
     });
     stream_response(receiver, "text/plain")
+}
+
+/// Typed cache-backed answers, separate from the browsing Table API.
+fn summary_list(world: &World, path: &str) -> Option<Response<Body>> {
+    let (kind, items) = match path {
+        "/api/v1/pods" => {
+            let pods = world.pods.lock().expect("pods");
+            let items = pods.rows.iter().enumerate().map(|(ix,pod)| json!({"metadata":{"name":pod.name,"namespace":pod.namespace,"uid":pod.uid,"creationTimestamp":"2026-09-27T00:00:00Z"},"spec":{"nodeName":format!("worker-{}",ix%100),"containers":[{"name":"app","image":"example:1"}]},"status":{"phase":"Running","containerStatuses":[{"name":"app","image":"example:1","imageID":"example","ready":true,"restartCount":pod.restarts,"state":if ix%20==0 {json!({"waiting":{"reason":"CrashLoopBackOff"}})} else {json!({"running":{}})}}]}})).collect();
+            ("PodList",items)
+        }
+        "/apis/apps/v1/deployments" => ("DeploymentList",(0..if matches!(world.scenario,Scenario::Summary) {2000} else {20}).map(|ix|json!({"metadata":{"name":format!("deploy-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"status":{"replicas":3,"readyReplicas":if ix%10==0 {0} else {3},"availableReplicas":if ix%10==0 {0} else {3}}})).collect()),
+        "/apis/apps/v1/statefulsets" => ("StatefulSetList",Vec::new()),
+        "/apis/apps/v1/daemonsets" => ("DaemonSetList",Vec::new()),
+        "/api/v1/nodes" => ("NodeList",(0..100).map(|ix|json!({"metadata":{"name":format!("worker-{ix}")},"status":{"conditions":[{"type":"Ready","status":if ix%10==0 {"False"} else {"True"}}]}})).collect()),
+        "/api/v1/namespaces" => ("NamespaceList",(0..NAMESPACES).map(|ix|json!({"metadata":{"name":format!("ns-{ix:02}")}})).collect()),
+        "/api/v1/persistentvolumeclaims" => ("PersistentVolumeClaimList",Vec::new()),
+        "/api/v1/persistentvolumes" => ("PersistentVolumeList",Vec::new()),
+        "/api/v1/events" => {
+            let now=Utc::now().to_rfc3339();
+            ("EventList",(0..if matches!(world.scenario,Scenario::Summary) {5000} else {0}).map(|ix|json!({"metadata":{"name":format!("warning-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"involvedObject":{"kind":"Pod","name":format!("pod-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"type":"Warning","reason":"BackOff","message":"Example warning","lastTimestamp":now})).collect())
+        }
+        _=>return None,
+    };
+    Some(json_response(
+        json!({"apiVersion":"v1","kind":kind,"metadata":{"resourceVersion":"1"},"items":items}),
+    ))
 }

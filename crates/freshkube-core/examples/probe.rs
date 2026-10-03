@@ -78,6 +78,7 @@ async fn main() {
         connection.client.clone(),
         kind.clone(),
         namespace.clone(),
+        None,
         sender,
     ));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);

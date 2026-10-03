@@ -29,6 +29,7 @@ use super::{example, live};
 use crate::backend::{self, OwnedJob};
 use crate::logs::PodLogView;
 
+mod cross_links;
 mod events;
 mod overview;
 mod ports;
@@ -76,10 +77,11 @@ pub(crate) enum DetailEvent {
     /// The user chose to open this object: the one now at the address of
     /// the deleted object the pane shows.
     Open(ResourceIdentity),
+    Link(super::ResourceLink),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tab {
+pub(crate) enum Tab {
     Overview,
     Yaml,
     Events,
@@ -128,6 +130,7 @@ fn local_time(time: DateTime<Utc>) -> String {
 type Job = (OwnedJob, Task<()>);
 
 pub(crate) struct DetailPane {
+    embedded_node: bool,
     runtime: Handle,
     access: Option<KubeAccess>,
     /// Only an active pane, on a visible page, reads.
@@ -135,6 +138,11 @@ pub(crate) struct DetailPane {
     detail: Option<Detail>,
     title: SharedString,
     summary: Option<Summary>,
+    node_rows: std::sync::Arc<Vec<crate::desktop::nodes::NodeRow>>,
+    cross_links: cross_links::CrossLinks,
+    pod_links: Option<freshkube_core::resources::PodLinks>,
+    links_job: Option<Job>,
+    links_seq: u64,
     event_lines: Vec<EventLine>,
     follow: Follow,
     /// Advance with each read and each events watch; results tagged with an
@@ -204,6 +212,13 @@ impl DetailPane {
             KeyBinding::new("right", NextTab, Some(TABS_CONTEXT)),
             KeyBinding::new("left", PreviousTab, Some(TABS_CONTEXT)),
         ]);
+        cx.bind_keys([
+            KeyBinding::new("secondary-f", FindInYaml, Some("NodeDocument")),
+            KeyBinding::new("secondary-a", SelectAllLines, Some("NodeDocument")),
+            KeyBinding::new("secondary-c", CopyLines, Some("NodeDocument")),
+            KeyBinding::new("secondary-g", FindNextMatch, Some("NodeDocument")),
+            KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some("NodeDocument")),
+        ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
         let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
         let shell = cx.new(|cx| ShellView::new(runtime.clone(), window, cx));
@@ -230,12 +245,18 @@ impl DetailPane {
             cx.observe(&find, |_, _, cx| cx.notify()),
         ];
         Self {
+            embedded_node: false,
             runtime,
             access: None,
             active: false,
             detail: None,
             title: SharedString::default(),
             summary: None,
+            node_rows: Default::default(),
+            cross_links: Default::default(),
+            pod_links: None,
+            links_job: None,
+            links_seq: 0,
             event_lines: Vec::new(),
             follow: Follow::default(),
             read_seq: 0,
@@ -261,6 +282,16 @@ impl DetailPane {
             ports,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub(crate) fn embed_node(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.embedded_node = true;
+        self.set_tab(tab, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn log_container<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        self.logs.read(cx).selected_container()
     }
 
     pub(crate) fn target_identity(&self) -> Option<&ResourceIdentity> {
@@ -336,6 +367,8 @@ impl DetailPane {
         self.detail = Some(Detail::new(target));
         self.follow = Follow::new(version);
         self.summary = None;
+        self.cross_links = Default::default();
+        self.pod_links = None;
         self.event_lines.clear();
         self.matches.clear();
         self.current = None;
@@ -366,6 +399,8 @@ impl DetailPane {
             .update(cx, |ports, cx| ports.show(None, None, cx));
         self.detail = None;
         self.summary = None;
+        self.cross_links = Default::default();
+        self.pod_links = None;
         self.event_lines.clear();
         self.matches.clear();
         self.current = None;
@@ -426,6 +461,8 @@ impl DetailPane {
         self.reveal_jobs.clear();
         self.read_seq += 1;
         self.events_seq += 1;
+        self.links_job = None;
+        self.links_seq = self.links_seq.wrapping_add(1);
         if let Some(detail) = self.detail.as_mut() {
             detail.clear_reveals();
         }
@@ -551,6 +588,8 @@ impl DetailPane {
                 .update(cx, |ports, cx| ports.set_ports(declared, cx));
         }
         self.summary = Some(Summary::new(&view));
+        self.rebuild_links();
+        self.start_links(cx);
         self.matches = view.find(&self.query);
         self.current = match self.current {
             Some(current) if current < self.matches.len() => Some(current),
@@ -647,6 +686,7 @@ impl DetailPane {
         };
         detail.events.apply(update);
         self.event_lines = detail.events.shown().iter().map(EventLine::new).collect();
+        self.rebuild_links();
         cx.notify();
     }
 
@@ -785,7 +825,12 @@ impl DetailPane {
         cx.notify();
     }
 
-    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+    #[cfg(test)]
+    pub(crate) fn tab(&self) -> Tab {
+        self.tab
+    }
+
+    pub(crate) fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.feedback = None;
         self.show_tab(cx);

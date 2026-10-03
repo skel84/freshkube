@@ -23,7 +23,7 @@ pub(crate) use operations::OperationsScreen;
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
-pub(crate) use workloads::WorkloadsScreen;
+pub(crate) use workloads::{WorkloadData, WorkloadsScreen};
 
 use std::{future::Future, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
@@ -138,17 +138,33 @@ impl LiveSource {
 /// Requests a screen makes of the shell.
 #[derive(Clone, Debug)]
 pub(crate) enum ScreenEvent {
+    /// Refresh the shell's shared Kubernetes facts.
+    RefreshSummary,
+    Back,
     /// Collect this service's logs on the target node and show the Logs page.
     OpenLogs(String),
     /// Make this node the target.
     SelectNode(String),
     /// Make `node` the target, then show `service`'s logs there. Ignored when
     /// the node isn't in the roster.
-    OpenLogsOn { node: String, service: String },
+    OpenLogsOn {
+        node: String,
+        service: String,
+    },
 }
 
 /// The contract between the shell and a screen.
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
+    fn set_embedded(&mut self, _embedded: bool, _cx: &mut Context<Self>) {}
+
+    fn set_workloads(
+        &mut self,
+        _context: &str,
+        _data: Result<Arc<WorkloadData>, String>,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Called whenever the target or its cluster snapshot changes. A different
@@ -175,6 +191,8 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
+type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
+type WorkloadsFn = Rc<dyn Fn(&str, Result<Arc<WorkloadData>, String>, &mut App)>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -184,6 +202,8 @@ pub(crate) struct ScreenHandle {
     activate: WindowFn,
     refresh: WindowFn,
     focus: WindowFn,
+    workloads: WorkloadsFn,
+    embedded: EmbeddedFn,
 }
 
 impl ScreenHandle {
@@ -194,7 +214,15 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
+        let workloads = entity.clone();
+        let embedded = entity.clone();
         Self {
+            embedded: Rc::new(move |value, cx| {
+                embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
+            }),
+            workloads: Rc::new(move |context, data, cx| {
+                workloads.update(cx, |screen, cx| screen.set_workloads(context, data, cx))
+            }),
             view: entity.into(),
             set_source: Rc::new(
                 move |source: Option<ScreenSource>, window: &mut Window, cx: &mut App| {
@@ -211,6 +239,19 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
+    }
+
+    pub(crate) fn set_workloads(
+        &self,
+        context: &str,
+        data: Result<Arc<WorkloadData>, String>,
+        cx: &mut App,
+    ) {
+        (self.workloads)(context, data, cx)
+    }
+
+    pub(crate) fn set_embedded(&self, embedded: bool, cx: &mut App) {
+        (self.embedded)(embedded, cx)
     }
 
     pub(crate) fn view(&self) -> AnyView {
@@ -361,6 +402,17 @@ pub(crate) fn header<V: ScreenPanel, T: Send + 'static>(
     loader: &Loader<T>,
     cx: &mut Context<V>,
 ) -> Div {
+    header_mode(title, source, scope, loader, false, cx)
+}
+
+pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
+    title: &'static str,
+    source: &ScreenSource,
+    scope: Scope,
+    loader: &Loader<T>,
+    embedded: bool,
+    cx: &mut Context<V>,
+) -> Div {
     let p = palette(cx);
     let target = &source.target;
     let scope_line = match scope {
@@ -393,7 +445,7 @@ pub(crate) fn header<V: ScreenPanel, T: Send + 'static>(
                         .line_height(dp(32.))
                         .child(title),
                 )
-                .child(scope_line),
+                .when(!embedded, |this| this.child(scope_line)),
         )
         .child(div().flex_1())
         .child(
@@ -500,8 +552,22 @@ pub(crate) fn gated_page<V: ScreenPanel, T: Send + 'static>(
     what: &str,
     cx: &mut Context<V>,
 ) -> Option<AnyElement> {
+    gated_page_mode(id, title, scope, source, loader, what, false, cx)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gated_page_mode<V: ScreenPanel, T: Send + 'static>(
+    id: &'static str,
+    title: &'static str,
+    scope: Scope,
+    source: Option<&ScreenSource>,
+    loader: &Loader<T>,
+    what: &str,
+    embedded: bool,
+    cx: &mut Context<V>,
+) -> Option<AnyElement> {
     let content = gate(source, loader, scope, what, cx)?;
-    let header = source.map(|source| header(title, source, scope, loader, cx));
+    let header = source.map(|source| header_mode(title, source, scope, loader, embedded, cx));
     Some(
         page_scroll(id)
             .child(page_body().children(header).child(content))

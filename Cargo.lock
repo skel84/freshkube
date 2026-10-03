@@ -2392,7 +2392,9 @@ dependencies = [
  "hyper-util",
  "kube",
  "libc",
+ "serde",
  "serde_json",
+ "serde_yaml",
  "talos-rs",
  "tokio",
 ]

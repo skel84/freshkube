@@ -359,7 +359,11 @@ impl Render for DetailPane {
         panel(cx)
             .id("resource-detail")
             .test_support()
-            .key_context(CONTEXT)
+            .key_context(if self.embedded_node {
+                "NodeDocument"
+            } else {
+                CONTEXT
+            })
             .track_focus(&self.focus)
             .on_action(cx.listener(|pane, _: &FindInYaml, window, cx| pane.focus_find(window, cx)))
             .on_action(cx.listener(|pane, _: &SelectAllLines, _, cx| pane.select_all(cx)))
@@ -373,9 +377,13 @@ impl Render for DetailPane {
             )
             .size_full()
             .overflow_hidden()
-            .child(self.header(detail, cx))
+            .when(!self.embedded_node, |this| {
+                this.child(self.header(detail, cx))
+            })
             .children(self.notice(detail, cx))
-            .child(self.tabs(detail, cx))
+            .when(!self.embedded_node, |this| {
+                this.child(self.tabs(detail, cx))
+            })
             .child(div().flex_1().min_h_0().child(body))
             .children(self.feedback.clone().map(|feedback| {
                 div()

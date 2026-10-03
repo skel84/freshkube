@@ -36,8 +36,16 @@ pub(super) fn certificate_yaml(row: &ResourceRow, ix: usize, created: i64) -> St
 pub(super) fn find(identity: &ResourceIdentity, now: i64) -> Option<(ResourceRow, usize)> {
     let context = identity.connection.strip_prefix("example:")?;
     let (_, rows) = read(context, &identity.resource, None, now)?;
-    let row = rows.into_iter().find(|row| row.identity == *identity)?;
-    let ix = usize::from_str_radix(identity.uid.rsplit('-').next()?, 16).ok()?;
+    let (position, row) = rows
+        .into_iter()
+        .enumerate()
+        .find(|(_, row)| row.identity == *identity)?;
+    let ix = identity
+        .uid
+        .rsplit('-')
+        .next()
+        .and_then(|suffix| usize::from_str_radix(suffix, 16).ok())
+        .unwrap_or(position);
     Some((row, ix))
 }
 
@@ -90,9 +98,23 @@ pub(super) fn metadata(kind: &str, api_version: &str, row: &ResourceRow, extra: 
 /// The full object behind an example row, written as the server would
 /// return it. `None` for anything the example cluster doesn't have.
 pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument> {
+    if identity.resource == "secrets" {
+        crate::desktop::probe::hit("example.secret-document");
+    }
     let (row, ix) = find(identity, now)?;
     let created = row.created.unwrap_or_default();
     let yaml = match identity.resource.as_str() {
+        "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
+            let context = identity.connection.strip_prefix("example:")?;
+            let object = super::summary::extra_objects(context, &identity.resource, now)
+                .into_iter()
+                .find(|object| {
+                    object["metadata"]["name"].as_str() == Some(&identity.name)
+                        && object["metadata"]["namespace"].as_str().unwrap_or_default()
+                            == identity.namespace
+                })?;
+            serde_yaml::to_string(&object).ok()?
+        }
         "pods" => pod_yaml(&row, ix, created, now),
         "deployments.apps" => deployment_yaml(&row, ix, created),
         "services" => service_yaml(&row, ix),
@@ -135,8 +157,8 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
         .and_then(|count| count.parse().ok())
         .unwrap_or(0);
     let labels = format!(
-        "  generateName: {app}-{hash}-\n  labels:\n    app: {app}\n    pod-template-hash: '{hash}'\n  ownerReferences:\n  - apiVersion: apps/v1\n    kind: ReplicaSet\n    name: {app}-{hash}\n    uid: {}-rs\n    controller: true\n    blockOwnerDeletion: true\n",
-        row.identity.uid
+        "  generateName: {app}-{hash}-\n  labels:\n    app: {app}\n    pod-template-hash: '{hash}'\n  ownerReferences:\n  - apiVersion: apps/v1\n    kind: ReplicaSet\n    name: {app}-{hash}\n    uid: replicasets.apps-{}-{app}-{hash}\n    controller: true\n    blockOwnerDeletion: true\n",
+        row.identity.namespace
     );
     let scheduled = status != "Pending";
     let init = has_init_container(ix);
@@ -161,7 +183,7 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
     yaml.push_str(&format!("  phase: {phase}\n  conditions:\n"));
     if scheduled {
         yaml.push_str(&format!(
-            "  - type: Ready\n    status: '{}'\n    lastTransitionTime: '{}'\n{}  - type: PodScheduled\n    status: 'True'\n    lastTransitionTime: '{}'\n  podIP: {}\n  startTime: '{}'\n{}  containerStatuses:\n  - name: {app}\n    image: {image}\n    ready: {ready}\n    restartCount: {restarts}\n{}    state:\n",
+            "  - type: Ready\n    status: '{}'\n    lastTransitionTime: '{}'\n{}  - type: PodScheduled\n    status: 'True'\n    lastTransitionTime: '{}'\n  podIP: {}\n  startTime: '{}'\n{}  containerStatuses:\n  - name: {app}\n    image: {image}\n    imageID: example://app\n    ready: {ready}\n    restartCount: {restarts}\n{}    state:\n",
             if ready { "True" } else { "False" },
             timestamp(created + 40),
             if ready {
@@ -174,7 +196,7 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
             timestamp(created),
             if init {
                 format!(
-                    "  initContainerStatuses:\n  - name: {INIT_CONTAINER}\n    image: busybox:1.37\n    ready: true\n    restartCount: 0\n    state:\n      terminated:\n        exitCode: 0\n        reason: Completed\n        finishedAt: '{}'\n",
+                    "  initContainerStatuses:\n  - name: {INIT_CONTAINER}\n    image: busybox:1.37\n    imageID: example://init\n    ready: true\n    restartCount: 0\n    state:\n      terminated:\n        exitCode: 0\n        reason: Completed\n        finishedAt: '{}'\n",
                     timestamp(created + 25)
                 )
             } else {
@@ -473,7 +495,7 @@ pub(super) fn node_yaml(row: &ResourceRow, created: i64) -> String {
         )
     });
     yaml.push_str(&format!(
-        "  nodeInfo:\n    architecture: amd64\n    containerRuntimeVersion: containerd://2.1.4\n    kernelVersion: 6.12.48-talos\n    kubeletVersion: {}\n    operatingSystem: linux\n    osImage: Talos (v1.11.2)\n",
+        "  nodeInfo:\n    bootID: example\n    machineID: example\n    systemUUID: example\n    architecture: amd64\n    containerRuntimeVersion: containerd://2.1.4\n    kernelVersion: 6.12.48-talos\n    kubeletVersion: {}\n    operatingSystem: linux\n    osImage: Talos (v1.11.2)\n",
         row.cells[4]
     ));
     yaml

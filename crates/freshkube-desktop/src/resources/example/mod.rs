@@ -11,8 +11,12 @@ use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
-pub(crate) const KINDS: [&str; 7] = [
+pub(crate) const KINDS: [&str; 11] = [
     "pods",
+    "replicasets.apps",
+    "events",
+    "persistentvolumeclaims",
+    "persistentvolumes",
     "deployments.apps",
     "services",
     "nodes",
@@ -229,10 +233,12 @@ pub(crate) fn read(
             WORKLOADS
                 .iter()
                 .enumerate()
-                .filter(|(_, (namespace, ..))| *namespace != "batch")
                 .map(|(ix, _)| deployment(&connection, ix, now))
                 .collect(),
         ),
+        "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
+            summary::extra_rows(&connection, context, key, now)
+        }
         "services" => (service_columns(), services(&connection, now)),
         "nodes" => (node_columns(), nodes(&connection, context, now)),
         "secrets" => (secret_columns(), secrets(&connection, now)),
@@ -372,7 +378,7 @@ pub(crate) fn runs_app(namespace: &str, app: &str) -> bool {
 fn pod_count(context: &str) -> usize {
     match context {
         "staging-eu" => 48,
-        "homelab" => 22,
+        "homelab" | "talos-production-frankfurt-equinix-fr5-baremetal-b7" => 22,
         _ => 140,
     }
 }
@@ -671,8 +677,9 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 }
 
 mod objects;
+mod summary;
 pub(crate) use objects::{document, events, pod_log, pod_log_line, secret_value};
-
+pub(crate) use summary::summary;
 #[cfg(test)]
 const TEST_NOW: i64 = 1_790_000_000;
 
@@ -711,3 +718,21 @@ pub(crate) fn deployment_rows(count: usize) -> Vec<ResourceRow> {
 
 #[cfg(test)]
 mod tests;
+
+/// Node lists use the same objects as the all-namespace resource list.
+pub(crate) fn read_filtered(
+    context: &str,
+    key: &str,
+    namespace: Option<&str>,
+    selector: Option<&str>,
+    now: i64,
+) -> Option<(Vec<ResourceColumn>, Vec<ResourceRow>)> {
+    let (columns, mut rows) = read(context, key, namespace, now)?;
+    if key == "pods"
+        && let Some(node) = selector.and_then(|selector| selector.strip_prefix("spec.nodeName="))
+    {
+        let column = columns.iter().position(|column| column.name == "Node")?;
+        rows.retain(|row| row.cells.get(column).is_some_and(|value| value == node));
+    }
+    Some((columns, rows))
+}

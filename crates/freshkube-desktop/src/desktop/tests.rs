@@ -8,7 +8,7 @@ use gpui_kit::{
 use std::cell::Cell;
 use std::rc::Rc;
 
-fn fixture(
+pub(super) fn fixture(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
@@ -42,12 +42,87 @@ fn mount(
     (runtime, window.into(), view.unwrap())
 }
 
-/// Chooses a target through the title bar picker, which is always on screen.
+fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entity<Pilot> {
+    window
+        .root::<Root>()
+        .unwrap()
+        .unwrap()
+        .read(cx)
+        .view()
+        .clone()
+        .downcast::<Pilot>()
+        .unwrap()
+}
+
+/// Choose through the Nodes page, then return to the previously visible view.
 fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
-    window.click("target-node", cx);
+    let view = root_pilot(window, cx);
+    let page = view.read(cx).page;
+    let tab = view.read(cx).node_workspace.tab;
+    window.click("nav-nodes", cx);
     window.render_frame(cx);
-    window.click(("target-option", ix), cx);
+    if view.read(cx).node_workspace.open {
+        window.click("node-close", cx);
+        window.render_frame(cx);
+    }
+    let id = view.read(cx).node_workspace.rows[ix].id.clone();
+    window.click(id, cx);
     window.render_frame(cx);
+    if page == Page::Nodes {
+        view.update(cx, |view, cx| view.show_node_tab(tab, window, cx));
+    } else {
+        view.update(cx, |view, cx| view.navigate(page, window, cx));
+    }
+    window.render_frame(cx);
+}
+
+/// Old page coverage now follows the actual node-pane tab controls.
+fn open_node_tab(
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::App,
+    tab: super::nodes::NodeTab,
+) {
+    let view = root_pilot(window, cx);
+    let name = view.read(cx).selected_node.clone().unwrap();
+    window.click("nav-nodes", cx);
+    window.render_frame(cx);
+    if !view.read(cx).node_workspace.open {
+        let id = view
+            .read(cx)
+            .node_workspace
+            .rows
+            .iter()
+            .find(|row| row.key.talos.as_ref() == Some(&name))
+            .unwrap()
+            .id
+            .clone();
+        window.click(id, cx);
+        window.render_frame(cx);
+    }
+    if window.try_find(tab.id()).is_some_and(|button| {
+        let pane = window.find("node-pane").bounds();
+        button.visible()
+            && button.bounds().left() >= pane.left()
+            && button.bounds().right() <= pane.right()
+    }) {
+        window.click(tab.id(), cx);
+    } else {
+        for _ in 0..10 {
+            if view.read(cx).node_workspace.tab == tab {
+                break;
+            }
+            window.press("secondary-}", cx);
+            window.render_frame(cx);
+        }
+    }
+    window.render_frame(cx);
+}
+
+fn contexts(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    if !root_pilot(window, cx).read(cx).context_display.open {
+        window.click("context-switcher", cx);
+        window.render_frame(cx);
+    }
 }
 
 const FIRST_NODE: &str = "talos-cp-fra1-01";
@@ -61,7 +136,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
         window.render_frame(cx);
         assert_eq!(Theme::global(cx).mode, ThemeMode::Light);
         pick_target(window, cx, 4);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.within("services-region").click("containerd", cx);
     })
@@ -69,11 +144,15 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
     cx.run_until_parked();
     for (nav, page) in [
         ("nav-overview", Page::Overview),
-        ("nav-services", Page::Services),
-        ("nav-logs", Page::Logs),
+        ("node-tab-services", Page::Nodes),
+        ("node-tab-logs", Page::Nodes),
     ] {
         cx.update_window(handle, |_, window, cx| {
-            window.click(nav, cx);
+            match nav {
+                "node-tab-services" => open_node_tab(window, cx, super::nodes::NodeTab::Services),
+                "node-tab-logs" => open_node_tab(window, cx, super::nodes::NodeTab::Logs),
+                _ => window.click(nav, cx),
+            };
             window.render_frame(cx);
             let pilot = view.read(cx);
             assert_eq!(pilot.selected_node.as_deref(), Some(DEGRADED_NODE));
@@ -91,7 +170,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             let logs = pilot.logs.clone();
             let light_background = cx.theme().background;
             assert_eq!(window.find("theme-toggle").label(), Some("Dark mode"));
-            if page == Page::Logs {
+            if nav == "node-tab-logs" {
                 assert_eq!(
                     window.find("logs-collection").label(),
                     Some("Start collecting")
@@ -134,7 +213,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(pilot.nodes.len(), node_count);
             assert_eq!(pilot.services.data().unwrap().len(), service_count);
             assert_eq!(pilot.logs, logs);
-            if page == Page::Logs {
+            if nav == "node-tab-logs" {
                 assert!(window.find("logs-viewport").visible());
                 assert_eq!(
                     window.find("logs-collection").label(),
@@ -150,9 +229,12 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
 fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(FIRST_NODE));
-        window.within("nodes-region").click(FIRST_NODE, cx);
+        window
+            .within("nodes-page")
+            .click("node-talos-cp-fra1-01", cx);
         window.press("down", cx);
     })
     .unwrap();
@@ -165,13 +247,16 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         );
         assert_eq!(
             window
-                .within("nodes-region")
-                .find("talos-cp-fra1-02")
+                .within("nodes-page")
+                .find("node-talos-cp-fra1-02")
                 .selected(),
             Some(true)
         );
         assert_eq!(
-            window.within("nodes-region").find(FIRST_NODE).selected(),
+            window
+                .within("nodes-page")
+                .find("node-talos-cp-fra1-01")
+                .selected(),
             Some(false)
         );
         assert!(
@@ -193,7 +278,7 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.within("services-region").click("kubelet", cx);
     })
@@ -205,7 +290,8 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.within("sidebar").click(("context", 1usize), cx);
+        contexts(window, cx);
+        window.click(("context", 1usize), cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -223,16 +309,11 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
                 .unwrap()
                 .contains("staging-eu")
         );
-        assert_eq!(
-            window
-                .within("sidebar")
-                .find(("context", 1usize))
-                .selected(),
-            Some(true)
-        );
+        contexts(window, cx);
+        assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
         // Nothing is selected, so there is no logs action to trigger.
         assert!(window.try_find("service-logs").is_none());
-        assert_eq!(view.read(cx).page, Page::Services);
+        assert_eq!(view.read(cx).page, Page::Nodes);
     })
     .unwrap();
 }
@@ -242,7 +323,7 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.within("services-region").click("apid", cx);
         window.press("down", cx);
@@ -307,7 +388,7 @@ fn health_filter_narrows_the_list_and_shows_the_unhealthy_message(cx: &mut TestA
         window.render_frame(cx);
         pick_target(window, cx, 4);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.click("health-unhealthy", cx);
         window.render_frame(cx);
@@ -339,7 +420,7 @@ fn selected_service_opens_matching_log_collection(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.within("services-region").click("containerd", cx);
     })
@@ -353,7 +434,7 @@ fn selected_service_opens_matching_log_collection(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Logs);
+        assert_eq!(view.read(cx).page, Page::Nodes);
         assert!(window.find("logs-viewport").visible());
         assert_eq!(
             window
@@ -374,7 +455,7 @@ fn log_collection_keeps_running_on_other_screens(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-logs", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Logs);
         window.render_frame(cx);
         window.click("logs-collection", cx);
         window.render_frame(cx);
@@ -384,7 +465,7 @@ fn log_collection_keeps_running_on_other_screens(cx: &mut TestAppContext) {
         assert_eq!(view.read(cx).page, Page::Overview);
         assert!(view.read(cx).logs.read(cx).is_collecting());
         assert!(view.read(cx).logs.read(cx).collecting_count() > 0);
-        window.click("nav-logs", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Logs);
         window.render_frame(cx);
         assert_eq!(
             window.find("logs-collection").label(),
@@ -417,7 +498,14 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
                 .contains("Stale")
         );
         assert!(window.find("retry").visible());
-        assert!(window.within("nodes-region").find(DEGRADED_NODE).visible());
+        assert!(window.find("tile-services").visible());
+        assert!(
+            view.read(cx)
+                .attention
+                .rows
+                .iter()
+                .any(|row| row.name.contains(DEGRADED_NODE))
+        );
         window.click("refresh", cx);
         window.render_frame(cx);
         assert!(!view.read(cx).overview.is_stale());
@@ -445,25 +533,26 @@ fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("target-node", cx);
+        window.click("nav-nodes", cx);
         window.render_frame(cx);
-        assert_eq!(
-            window.find(("target-option", 0usize)).selected(),
-            Some(true)
-        );
-        window.click(("target-option", 3usize), cx);
-        window.render_frame(cx);
+        assert!(window.try_find("target-node").is_none());
+        pick_target(window, cx, 3);
         assert_eq!(
             view.read(cx).selected_node.as_deref(),
             Some("talos-wk-fra1-01")
         );
-        assert!(window.try_find("target-options").is_none());
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
         window.click("tile-services", cx);
         window.render_frame(cx);
         let pilot = view.read(cx);
-        assert_eq!(pilot.page, Page::Services);
-        assert_eq!(pilot.selected_node.as_deref(), Some(DEGRADED_NODE));
-        assert_eq!(pilot.selected_service.as_deref(), Some("kubelet"));
+        assert_eq!(pilot.page, Page::SystemServices);
+        assert_eq!(pilot.selected_node.as_deref(), Some("talos-wk-fra1-01"));
+        assert!(
+            window
+                .find("system-service-talos-wk-fra1-02-kubelet")
+                .visible()
+        );
     })
     .unwrap();
 }
@@ -473,10 +562,12 @@ fn silent_node_is_unknown_not_failed(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let card = window.within("nodes-region").find(SILENT_NODE);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let card = window.find("node-talos-wk-fra1-03");
         assert!(card.label().unwrap().contains(SILENT_NODE));
         pick_target(window, cx, 5);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(SILENT_NODE));
         assert!(window.find("back-to-overview").visible());
@@ -493,26 +584,35 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("view-table", cx);
+        window.click("nav-nodes", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).node_view, NodeView::Table);
+        window.click("nodes-view-table", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).node_workspace.view, NodeView::Table);
         assert_eq!(
-            window.within("nodes-region").find(FIRST_NODE).selected(),
-            Some(true)
+            window
+                .within("nodes-page")
+                .find("node-talos-cp-fra1-01")
+                .selected(),
+            Some(false)
         );
-        window.within("nodes-region").click("talos-wk-fra1-01", cx);
+        window
+            .within("nodes-page")
+            .click("node-talos-wk-fra1-01", cx);
         window.render_frame(cx);
         assert_eq!(
             view.read(cx).selected_node.as_deref(),
             Some("talos-wk-fra1-01")
         );
-        window.click("view-cards", cx);
+        window.click("node-close", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).node_view, NodeView::Cards);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).node_workspace.view, NodeView::Cards);
         assert_eq!(
             window
-                .within("nodes-region")
-                .find("talos-wk-fra1-01")
+                .within("nodes-page")
+                .find("node-talos-wk-fra1-01")
                 .selected(),
             Some(true)
         );
@@ -528,17 +628,17 @@ fn narrow_window_keeps_screens_and_actions_reachable(cx: &mut TestAppContext) {
         assert!(window.find("refresh").visible());
         assert!(window.find("theme-toggle").visible());
         assert!(window.find("theme-toggle").bounds().right() <= px(760.));
-        assert!(window.find("target-node").bounds().right() <= px(760.));
-        assert!(window.find("nodes-region").visible());
-        assert!(window.find("nodes-region").bounds().right() <= px(760.));
-        window.click("nav-services", cx);
+        assert!(window.find("context-switcher").bounds().right() <= px(760.));
+        assert!(window.find("overview-cards").visible());
+        assert!(window.find("overview-cards").bounds().right() <= px(760.));
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         assert!(window.find("theme-toggle").visible());
         assert!(window.find("service-filter").visible());
         assert!(window.find("services-region").bounds().size.height > px(0.));
         assert!(window.find("services-region").bounds().right() <= px(760.));
         assert!(window.find("services-region").bounds().top() < px(560.));
-        window.click("nav-logs", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Logs);
         window.render_frame(cx);
         assert!(window.find("theme-toggle").visible());
         assert!(window.find("theme-toggle").bounds().right() <= px(760.));
@@ -564,34 +664,39 @@ fn named_keys_navigate_all_screens_and_configured_contexts(cx: &mut TestAppConte
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.press("secondary-2", cx);
-        window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Services);
-        assert!(window.find("service-filter").visible());
-        assert_eq!(window.find("nav-services").selected(), Some(true));
-        window.press("secondary-3", cx);
-        window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Logs);
-        assert!(window.find("logs-viewport").visible());
+        for (key, page, kind) in [
+            ("secondary-1", Page::Overview, None),
+            ("secondary-2", Page::Nodes, None),
+            ("secondary-3", Page::Resources, Some("namespaces")),
+            ("secondary-4", Page::Resources, Some("events")),
+            ("secondary-5", Page::Health, None),
+            ("secondary-6", Page::Etcd, None),
+            ("secondary-7", Page::SystemServices, None),
+            ("secondary-8", Page::Security, None),
+            ("secondary-9", Page::Lifecycle, None),
+        ] {
+            window.press(key, cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, page);
+            if let Some(kind) = kind {
+                assert_eq!(view.read(cx).resource_kind.key(), kind);
+            }
+        }
         window.press("secondary-1", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Overview);
-        assert!(window.find("nodes-region").visible());
         window.press("alt-down", cx);
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging-eu"));
         window.press("alt-up", cx);
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("prod-fra"));
         window.press("alt-up", cx);
-        assert_eq!(view.read(cx).applied.context.as_deref(), Some("homelab"));
-        window.render_frame(cx);
-        assert!(window.within("sidebar").find(("context", 0usize)).visible());
         assert_eq!(
-            window
-                .within("sidebar")
-                .find(("context", 2usize))
-                .selected(),
-            Some(true)
+            view.read(cx).applied.context.as_deref(),
+            Some("talos-production-frankfurt-equinix-fr5-baremetal-b7")
         );
+        window.render_frame(cx);
+        contexts(window, cx);
+        assert!(window.find(("context", 0usize)).visible());
+        assert_eq!(window.find(("context", 3usize)).selected(), Some(true));
     })
     .unwrap();
 }
@@ -609,7 +714,7 @@ fn shell_keys_work_while_a_kind_shows_no_rows(cx: &mut TestAppContext) {
         assert_eq!(window.find("resource-body").focused(), Some(true));
         window.press("secondary-2", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Services);
+        assert_eq!(view.read(cx).page, Page::Nodes);
     })
     .unwrap();
 }
@@ -642,7 +747,8 @@ fn another_context_hands_the_keyboard_back_to_the_list(cx: &mut TestAppContext) 
         window.render_frame(cx);
         assert!(window.find("detail-close").visible());
         // Clicking a context in the sidebar hands the keyboard back too.
-        window.within("sidebar").click(("context", 2usize), cx);
+        contexts(window, cx);
+        window.click(("context", 2usize), cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -659,9 +765,9 @@ fn the_logs_page_puts_the_keyboard_on_its_lines(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.press("secondary-3", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Logs);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Logs);
+        assert_eq!(view.read(cx).page, Page::Nodes);
         assert_eq!(window.find("logs-viewport").focused(), Some(true));
         // Command-F finds in the logs, and the shell's keys still work.
         window.press("secondary-f", cx);
@@ -682,11 +788,17 @@ fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
         window.press("secondary-9", cx);
         window.render_frame(cx);
         for expected in [
-            Page::Security,
-            Page::Lifecycle,
-            Page::Resources,
             Page::Operations,
             Page::Overview,
+            Page::Nodes,
+            Page::Resources,
+            Page::Resources,
+            Page::Health,
+            Page::Resources,
+            Page::Etcd,
+            Page::SystemServices,
+            Page::Security,
+            Page::Lifecycle,
         ] {
             window.press("ctrl-tab", cx);
             window.render_frame(cx);
@@ -694,7 +806,7 @@ fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
         }
         window.press("ctrl-shift-tab", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Operations);
+        assert_eq!(view.read(cx).page, Page::Security);
     })
     .unwrap();
 }
@@ -705,16 +817,22 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        for page in Page::SCREENS {
+        for page in [
+            Page::Etcd,
+            Page::Health,
+            Page::Security,
+            Page::Lifecycle,
+            Page::Operations,
+        ] {
             let nav = SharedString::from(format!("nav-{}", page.slug()));
             assert!(window.try_find(nav.clone()).is_some(), "{nav} is missing");
         }
         // Hidden screens never ask for data.
         assert!(window.try_find("processes-page").is_none());
-        window.press("secondary-4", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Processes);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Processes);
-        assert_eq!(window.find("nav-processes").selected(), Some(true));
+        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(window.find("node-tab-processes").checked(), Some(true));
         assert!(window.find("process-list").visible());
         assert!(window.find(("process", 0usize)).visible());
         // Navigating focuses the list, so arrow keys work without a click.
@@ -726,14 +844,30 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
         window.render_frame(cx);
         assert!(window.find("partial-notice").visible());
+        // The retained screen scrolls under the node header in a short pane.
+        for _ in 0..10 {
+            if window.find("process-list").visible() {
+                break;
+            }
+            window.scroll(
+                "processes-page",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-60.))),
+                cx,
+            );
+            window.render_frame(cx);
+        }
         assert!(window.find("process-list").visible());
-        for (key, page) in [
-            ("secondary-5", Page::Storage),
-            ("secondary-6", Page::Network),
-            ("secondary-7", Page::Diagnostics),
-            ("secondary-8", Page::Etcd),
-            ("secondary-9", Page::Workloads),
+        for tab in [
+            super::nodes::NodeTab::Storage,
+            super::nodes::NodeTab::Network,
+            super::nodes::NodeTab::Diagnostics,
+            super::nodes::NodeTab::Logs,
+            super::nodes::NodeTab::Services,
         ] {
+            open_node_tab(window, cx, tab);
+            assert_eq!(view.read(cx).node_workspace.tab, tab);
+        }
+        for (key, page) in [("secondary-6", Page::Etcd), ("secondary-5", Page::Health)] {
             window.press(key, cx);
             window.render_frame(cx);
             assert_eq!(view.read(cx).page, page);
@@ -755,7 +889,8 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         assert_eq!(window.find("nav-k8s-pods").selected(), Some(true));
         assert!(window.find("resource-list").visible());
         // Contexts stay in view below the scrolled navigation.
-        assert!(window.within("sidebar").find(("context", 0usize)).visible());
+        contexts(window, cx);
+        assert!(window.find(("context", 0usize)).visible());
         reveal(window, cx, "nav-operations");
         window.click("nav-operations", cx);
         window.render_frame(cx);
@@ -876,7 +1011,7 @@ fn kubernetes_groups_collapse_and_kinds_open_the_resources_page(cx: &mut TestApp
         window.press("secondary-1", cx);
         window.render_frame(cx);
         assert!(window.try_find("resources-page").is_none());
-        for _ in 0..11 {
+        for _ in 0..5 {
             window.press("ctrl-tab", cx);
             window.render_frame(cx);
         }
@@ -1120,8 +1255,8 @@ fn narrow_shell_log_catalog_and_multiline_errors_preserve_viewport(cx: &mut Test
             logs.set_fixture_failures(failures, cx);
         });
         window.render_frame(cx);
-        // Navigate through the same production action as a keyboard user.
-        window.press("secondary-3", cx);
+        // Reach the same retained log view through the node pane.
+        open_node_tab(window, cx, super::nodes::NodeTab::Logs);
         window.render_frame(cx);
         let viewport = window.find("logs-viewport");
         let panel = window.find("logs-panel");
@@ -1247,6 +1382,7 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
     .await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        contexts(window, cx);
         window.click(("context", 1usize), cx);
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("beta"));
     })
@@ -1275,6 +1411,7 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
         let pilot = view2.read(cx);
         assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));
         assert_eq!(pilot.applied.context.as_deref(), Some("beta"));
+        contexts(window, cx);
         assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
     })
     .unwrap();
@@ -1642,7 +1779,7 @@ fn a_dropped_ticket_frees_the_slot(cx: &mut TestAppContext) {
 fn open_restart(cx: &mut TestAppContext, handle: AnyWindowHandle, service: &'static str) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.within("services-region").click(service, cx);
         window.render_frame(cx);
@@ -1657,7 +1794,7 @@ fn restart_is_offered_only_for_a_selected_service_on_an_answering_node(cx: &mut 
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-services", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
         window.render_frame(cx);
         // Nothing selected yet: there is nothing to restart.
         assert!(window.try_find("service-restart").is_none());
@@ -1873,7 +2010,7 @@ fn hidden_log_batches_do_not_redraw_the_window(cx: &mut TestAppContext) {
         assert!(logs.update(cx, |logs, cx| {
             logs.push_fixture_batch(vec!["level=info held".into()], cx)
         }));
-        window.click("nav-logs", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Logs);
         draw(window, cx);
         assert_eq!(logs.read(cx).applied_and_held().1, 0);
         assert!(count("logs") > 0);
@@ -1903,7 +2040,7 @@ fn tick_does_not_redraw_the_active_screen(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-processes", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Processes);
         window.render_frame(cx);
         draw(window, cx);
         draw(window, cx);
@@ -1955,7 +2092,7 @@ fn cached_screen_redraws_after_data_and_theme_change(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-processes", cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Processes);
         window.render_frame(cx);
         draw(window, cx);
         draw(window, cx);
@@ -2100,14 +2237,27 @@ fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext)
     let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("ctrl-tab"), None);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
-        // Every other page would only say it needs a talosconfig.
-        window.press("ctrl-tab", cx);
-        window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
-        window.press("secondary-2", cx);
-        window.render_frame(cx);
-        assert!(window.find("needs-talosconfig").visible());
+        assert_eq!(view.read(cx).page, Page::Overview);
+        for (page, kind) in [
+            (Page::Nodes, None),
+            (Page::Resources, Some("namespaces")),
+            (Page::Resources, Some("events")),
+            (Page::Health, None),
+            (Page::Resources, Some("pods")),
+            (Page::Overview, None),
+        ] {
+            window.press("ctrl-tab", cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, page);
+            if let Some(kind) = kind {
+                assert_eq!(view.read(cx).resource_kind.key(), kind);
+            }
+        }
+        for key in ["secondary-6", "secondary-7", "secondary-8", "secondary-9"] {
+            window.press(key, cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, Page::Overview);
+        }
         window.press("ctrl-shift-tab", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);
@@ -2124,6 +2274,11 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
     wait_until(cx, handle, "lab to refuse", |window, _| {
         kubernetes_status(window).starts_with("Couldn't connect to lab: ")
     });
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(view.read(cx).page, Page::Overview);
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+    })
+    .unwrap();
     // The page read through that same connection, and failed with it.
     wait_until(cx, handle, "the page to fail", |window, _| {
         window.try_find("resource-failed").is_some()
@@ -2134,6 +2289,8 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
         assert_eq!(pilot.contexts, ["lab", "staging"]);
         assert_eq!(pilot.applied.context.as_deref(), Some("lab"));
         assert_eq!(pilot.page, Page::Resources);
+        assert_eq!(pilot.context_display.detail.as_ref(), "Couldn't connect");
+        contexts(window, cx);
         assert_eq!(window.find(("context", 0usize)).selected(), Some(true));
         assert_eq!(window.find("page-title").label(), Some("Pods"));
         assert!(
@@ -2147,6 +2304,7 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
         assert!(window.try_find("target-node").is_none());
 
         // Choosing the failed context again retries it.
+        contexts(window, cx);
         window.click(("context", 0usize), cx);
         window.render_frame(cx);
         assert_eq!(kubernetes_status(window), "Connecting to lab…");
@@ -2157,10 +2315,13 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
     });
 
     cx.update_window(handle, |_, window, cx| {
+        contexts(window, cx);
         window.click(("context", 1usize), cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging"));
+        contexts(window, cx);
         assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
+        contexts(window, cx);
         assert_eq!(window.find(("context", 0usize)).selected(), Some(false));
     })
     .unwrap();
@@ -2175,13 +2336,13 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = kubernetes_only(cx, path.clone(), None);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        for page in Page::ALL
-            .into_iter()
-            .filter(|page| *page != Page::Resources)
-        {
-            let nav = format!("nav-{}", page.slug());
-            reveal(window, cx, &nav);
-            window.click(SharedString::from(nav), cx);
+        for page in Page::ALL.into_iter().filter(|page| {
+            !matches!(
+                page,
+                Page::Overview | Page::Resources | Page::Health | Page::Nodes
+            )
+        }) {
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
             window.render_frame(cx);
             assert_eq!(view.read(cx).page, page);
             assert!(window.find("needs-talosconfig").visible(), "{page:?}");
@@ -2191,8 +2352,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         assert_eq!(view.read(cx).page, Page::Resources);
         assert!(window.try_find("needs-talosconfig").is_none());
 
-        reveal(window, cx, "nav-etcd");
-        window.click("nav-etcd", cx);
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx));
         window.render_frame(cx);
         window.click("open-settings", cx);
     })
@@ -2222,6 +2382,7 @@ fn kubernetes_only_never_swaps_in_another_context(cx: &mut TestAppContext) {
         let pilot = view.read(cx);
         assert_eq!(pilot.applied.context.as_deref(), Some("prod"));
         assert_eq!(pilot.contexts, ["lab", "staging"]);
+        contexts(window, cx);
         assert_eq!(window.find(("context", 0usize)).selected(), Some(false));
     })
     .unwrap();
@@ -2241,6 +2402,8 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
             "{status}"
         );
         assert!(view.read(cx).contexts.is_empty());
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+        window.render_frame(cx);
         assert!(window.find("resource-disconnected").visible());
 
         // Applying no talosconfig keeps the window as it is: the default
@@ -2256,7 +2419,7 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
         });
         window.render_frame(cx);
         assert!(view.read(cx).kubernetes_only.is_none());
-        assert!(window.find("target-node").visible());
+        assert!(window.find("context-switcher").visible());
         assert!(window.try_find("kubernetes-status").is_none());
     })
     .unwrap();
@@ -2407,7 +2570,7 @@ fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
         let measure = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
             window.render_frame(cx);
             let sidebar = window.find("sidebar-scroll").bounds().size.width;
-            let nav = window.find("nav-services").bounds().size.height;
+            let nav = window.find("nav-system-services").bounds().size.height;
             (sidebar, nav)
         };
         let (sidebar, nav) = measure(window, cx);
@@ -2576,4 +2739,140 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         })
         .unwrap();
     assert!(close && !cx.has_pending_prompt());
+}
+
+#[gpui_kit::test]
+fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppContext) {
+    use freshkube_core::kubernetes_summary::Part;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            let mut summary = (**view.kubernetes_summary.data().unwrap()).clone();
+            summary.events = Part::Refused("Can't list events: forbidden".into());
+            let health = crate::screens::WorkloadData::from_outcome(&summary.workloads);
+            let request = view.kubernetes_summary.begin(view.applied.clone());
+            view.kubernetes_summary
+                .apply(&request, Ok(std::sync::Arc::new(summary)));
+            view.summary_health = Some(health.clone());
+            view.deliver_workloads(health, cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.click("nav-health", cx);
+        window.find("workload-list");
+        let summary = view.read(cx).kubernetes_summary.data().unwrap();
+        assert!(summary.pods.loaded().is_some());
+        assert!(summary.nodes.loaded().is_some());
+        assert_eq!(summary.events.error(), Some("Can't list events: forbidden"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let previous = cx.update(|cx| view.read(cx).kubernetes_summary.data().unwrap().clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-health", cx);
+        window.click("screen-refresh", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!std::sync::Arc::ptr_eq(
+            &previous,
+            view.read(cx).kubernetes_summary.data().unwrap()
+        ));
+        view.update(cx, |view, cx| {
+            let request = view.kubernetes_summary.begin(view.applied.clone());
+            view.select_context("staging-eu".into(), window, cx);
+            assert!(
+                !view
+                    .kubernetes_summary
+                    .apply(&request, Ok(previous.clone()))
+            );
+            assert_eq!(view.applied.context.as_deref(), Some("staging-eu"));
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn long_context_names_keep_both_ends_and_wrap_in_the_popover(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let full = "talos-production-frankfurt-equinix-fr5-baremetal-b7";
+    for text_size in [14., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            view.update(cx, |view, cx| view.select_context(full.into(), window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let short = window
+                .find("context-short-name")
+                .label()
+                .unwrap()
+                .to_owned();
+            assert!(short.contains('…'), "{short}");
+            assert!(short.starts_with("talos-"), "{short}");
+            assert!(short.ends_with("-b7"), "{short}");
+            assert_eq!(window.find("context-switcher").label(), Some(full));
+            contexts(window, cx);
+            let row = window.find(("context", 3usize));
+            assert_eq!(row.label(), Some(full));
+            assert!(row.bounds().size.height >= crate::ui::dp_px(32., window));
+            window.press("escape", cx);
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let row = "system-service-talos-wk-fra1-02-kubelet";
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::SystemServices);
+        assert!(window.find(row).visible());
+        assert!(window.try_find("restart-service").is_none());
+        window.within(row).click("open", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
+        assert_eq!(view.read(cx).selected_service.as_deref(), Some("kubelet"));
+        assert_eq!(
+            view.read(cx).node_workspace.tab,
+            super::nodes::NodeTab::Services
+        );
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        window.within(row).click("logs", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            view.read(cx).node_workspace.tab,
+            super::nodes::NodeTab::Logs
+        );
+        assert_eq!(
+            window.find("logs-collection").label(),
+            Some("Stop collecting")
+        );
+        assert!(window.find("logs-status").visible());
+    })
+    .unwrap();
 }

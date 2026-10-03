@@ -45,6 +45,7 @@ fn mount_sized(
         .unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
         crate::theme::install(cx);
     });
     let source = source(node);
@@ -215,13 +216,16 @@ fn partial_results_name_what_is_missing(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            let target = screen.source.as_ref().unwrap().target.clone();
-            let mut data: WorkloadData = (**screen.loader.data().unwrap()).clone();
-            data.unavailable.push(WorkloadSourceError {
-                source: WorkloadSource::Pods,
-                message: "forbidden".into(),
-            });
-            screen.loader.resolve(target, Ok(Arc::new(data)));
+            let snapshot = screen.loader.data().unwrap().snapshot.clone();
+            let outcome = freshkube_core::workloads::WorkloadCollectionOutcome::Partial {
+                snapshot,
+                unavailable: vec![WorkloadSourceError {
+                    source: WorkloadSource::Pods,
+                    message: "forbidden".into(),
+                }],
+            };
+            let data = WorkloadData::from_outcome(&outcome);
+            screen.set_workloads("prod-fra", data, cx);
             cx.notify();
         });
         window.render_frame(cx);

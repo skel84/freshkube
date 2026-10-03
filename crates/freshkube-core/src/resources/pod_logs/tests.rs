@@ -446,3 +446,15 @@ async fn repeated_failures_give_up_after_the_last_attempt() {
     );
     assert_eq!(seen.lock().unwrap().len(), MAX_ATTEMPTS as usize);
 }
+
+#[test]
+fn a_restart_count_exposes_previous_logs_even_without_last_state() {
+    let document = crate::resources::object_from_yaml(
+        &crate::resources::builtin("pods").unwrap(),
+        &pod("Always", "Running", running(2)),
+    )
+    .unwrap();
+    let container = &document.overview.pod.unwrap().containers[0];
+    assert!(container.has_previous());
+    assert!(container.started());
+}

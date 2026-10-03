@@ -20,7 +20,9 @@ const CONTEXT: &str = "homelab";
 type Emitted = Rc<RefCell<Vec<DetailEvent>>>;
 
 /// The pane on its own, active, with what it emits collected.
-fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<DetailPane>, AnyWindowHandle, Emitted) {
+pub(super) fn mount(
+    cx: &mut TestAppContext,
+) -> (Runtime, Entity<DetailPane>, AnyWindowHandle, Emitted) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -65,11 +67,16 @@ fn target(key: &str, pick: impl Fn(&[String], &str) -> bool) -> (DetailTarget, S
     (target, row.resource_version.clone())
 }
 
-fn crashing_pod() -> (DetailTarget, String) {
+pub(super) fn crashing_pod() -> (DetailTarget, String) {
     target("pods", |cells, _| cells[2] == "CrashLoopBackOff")
 }
 
-fn open(pane: &Entity<DetailPane>, target: &DetailTarget, delay: Duration, cx: &mut App) {
+pub(super) fn open(
+    pane: &Entity<DetailPane>,
+    target: &DetailTarget,
+    delay: Duration,
+    cx: &mut App,
+) {
     let target = target.clone();
     pane.update(cx, |pane, cx| {
         pane.open(target, KubeAccess::Example, "1", delay, cx)

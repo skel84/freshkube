@@ -7,7 +7,12 @@ use talos_rs::{
     ServiceHealth, ServiceInfo, VersionInfo,
 };
 
-pub(crate) const CONTEXTS: [&str; 3] = ["prod-fra", "staging-eu", "homelab"];
+pub(crate) const CONTEXTS: [&str; 4] = [
+    "prod-fra",
+    "staging-eu",
+    "homelab",
+    "talos-production-frankfurt-equinix-fr5-baremetal-b7",
+];
 
 const GIB: f64 = 1024. * 1024. * 1024.;
 const CONTROL_PLANE_SERVICES: [&str; 11] = [
@@ -83,7 +88,7 @@ fn specs(context: &str) -> Vec<NodeSpec> {
                 ..spec("stg-wk-02", "198.51.100.21", false, 4, 16., 5.1, 0.7)
             },
         ],
-        "homelab" => vec![NodeSpec {
+        "homelab" | "talos-production-frankfurt-equinix-fr5-baremetal-b7" => vec![NodeSpec {
             arch: "arm64",
             ..spec("talos-home", "203.0.113.5", true, 4, 8., 3.2, 0.35)
         }],

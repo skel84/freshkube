@@ -43,6 +43,7 @@ use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
+const EMBEDDED_CONTEXT: &str = "NodePods";
 const FILTER_CONTEXT: &str = "KubeResourcesFilter";
 const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
@@ -305,6 +306,8 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
+    field_selector: Option<String>,
+    embedded: bool,
     runtime: Handle,
     source: Option<KubeSource>,
     kind: ResourceKind,
@@ -328,6 +331,7 @@ pub(crate) struct ResourcesScreen {
     updated: Option<SystemTime>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    page_scroll: ScrollHandle,
     watch: Option<(OwnedJob, Task<()>)>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
     tick: Option<Task<()>>,
@@ -356,6 +360,18 @@ impl ResourcesScreen {
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
+        ]);
+        cx.bind_keys([
+            KeyBinding::new("down", NextItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("up", PreviousItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("home", FirstItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("end", LastItem, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("pagedown", NextPage, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("pageup", PreviousPage, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("/", FocusFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("secondary-f", FocusFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("escape", ClearFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("enter", OpenSelected, Some(EMBEDDED_CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
         let detail = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
@@ -415,7 +431,12 @@ impl ResourcesScreen {
                 window,
                 |this, _, event: &DetailEvent, window, cx| match event {
                     DetailEvent::Closed => this.close_pane(window, cx),
-                    DetailEvent::Leave => window.focus(&this.focus, cx),
+                    DetailEvent::Leave => {
+                        this.page_scroll.set_offset(point(px(0.), px(0.)));
+                        window.focus(&this.focus, cx);
+                        cx.notify();
+                    }
+                    DetailEvent::Link(intent) => cx.emit(intent.clone()),
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
                         this.open_now(identity.clone(), window, |_, _, _| {}, cx);
@@ -424,6 +445,8 @@ impl ResourcesScreen {
             ),
         ];
         Self {
+            field_selector: None,
+            embedded: false,
             runtime,
             source: None,
             kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
@@ -441,6 +464,7 @@ impl ResourcesScreen {
             updated: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            page_scroll: ScrollHandle::new(),
             watch: None,
             namespace_job: None,
             tick: None,
@@ -449,6 +473,117 @@ impl ResourcesScreen {
             stacked: cx.new(|_| ResizableState::default()),
             _subscriptions: subscriptions,
         }
+    }
+
+    pub(crate) fn set_node(
+        &mut self,
+        name: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.embedded = true;
+        let selector = name.map(|name| format!("spec.nodeName={name}"));
+        if self.field_selector == selector {
+            return;
+        }
+        self.field_selector = selector;
+        self.namespace = None;
+        self.restore = None;
+        self.projection.select(&self.store, None);
+        self.restart(window, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn filter_value(&self, cx: &App) -> String {
+        self.query.read(cx).value().to_string()
+    }
+    #[cfg(test)]
+    pub(crate) fn field_selector_value(&self) -> Option<&str> {
+        self.field_selector.as_deref()
+    }
+    #[cfg(test)]
+    pub(crate) fn detail_log_container<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        self.detail.read(cx).log_container(cx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
+        self.detail.read(cx).tab()
+    }
+
+    /// Called only after the shell's navigation question has been accepted.
+    pub(crate) fn set_node_rows(
+        &mut self,
+        rows: std::sync::Arc<Vec<crate::desktop::nodes::NodeRow>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |pane, cx| pane.set_node_rows(rows, cx));
+    }
+    pub(crate) fn close_for_link(&mut self, cx: &mut Context<Self>) {
+        self.close_detail(cx);
+    }
+
+    pub(crate) fn identity_named(&self, namespace: &str, name: &str) -> Option<ResourceIdentity> {
+        self.store
+            .entries()
+            .iter()
+            .find(|entry| {
+                entry.row().identity.namespace == namespace && entry.row().identity.name == name
+            })
+            .map(|entry| entry.row().identity.clone())
+    }
+    pub(crate) fn detail_identity<'a>(&'a self, cx: &'a App) -> Option<&'a ResourceIdentity> {
+        self.detail.read(cx).target_identity()
+    }
+    pub(crate) fn showing(&self, identity: &ResourceIdentity, cx: &App) -> bool {
+        self.detail.read(cx).target_identity() == Some(identity)
+    }
+    pub(crate) fn set_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query
+            .update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+        self.projection.filter(&self.store, text);
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+    pub(crate) fn open_identity_on(
+        &mut self,
+        identity: ResourceIdentity,
+        tab: crate::resources::Tab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .namespace
+            .as_ref()
+            .is_some_and(|namespace| namespace != &identity.namespace)
+        {
+            self.set_namespace(None, window, cx);
+        }
+        let query = self.query.read(cx).value().to_lowercase();
+        let shown = self
+            .store
+            .entries()
+            .iter()
+            .find(|entry| entry.row().identity == identity)
+            .is_some_and(|entry| entry.search_key().contains(&query));
+        if !shown {
+            self.clear_filter(window, cx);
+        }
+        self.select_identity(&identity, window, cx);
+        self.restore = Some(identity.clone());
+        self.open_now(
+            identity,
+            window,
+            move |this, window, cx| {
+                this.detail.update(cx, |detail, cx| {
+                    detail.set_tab(tab, cx);
+                    detail.focus(window, cx);
+                })
+            },
+            cx,
+        );
     }
 
     /// A source with the same `id` only refreshes the handles; another one
@@ -601,18 +736,25 @@ impl ResourcesScreen {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.load_namespaces(window, cx);
+        if !self.embedded {
+            self.load_namespaces(window, cx);
+        }
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
         if let KubeAccess::Example = source.access {
-            let events =
-                match example::read(&source.context, &kind.key(), namespace.as_deref(), self.now) {
-                    Some((columns, rows)) => vec![
-                        ResourceEvent::reset(columns, rows),
-                        ResourceEvent::Read(ReadState::Loaded),
-                    ],
-                    None => vec![ResourceEvent::Read(ReadState::Loaded)],
-                };
+            let events = match example::read_filtered(
+                &source.context,
+                &kind.key(),
+                namespace.as_deref(),
+                self.field_selector.as_deref(),
+                self.now,
+            ) {
+                Some((columns, rows)) => vec![
+                    ResourceEvent::reset(columns, rows),
+                    ResourceEvent::Read(ReadState::Loaded),
+                ],
+                None => vec![ResourceEvent::Read(ReadState::Loaded)],
+            };
             self.apply(ResourceBatch { epoch, events }, cx);
             return;
         }
@@ -621,6 +763,7 @@ impl ResourcesScreen {
             source.access,
             kind,
             namespace,
+            self.field_selector.clone(),
             source.id,
             sender,
         )));
@@ -743,6 +886,9 @@ impl ResourcesScreen {
 
     /// Shows `identity` in the pane, reading it after `delay`.
     fn open_detail(&mut self, identity: ResourceIdentity, delay: Duration, cx: &mut Context<Self>) {
+        if self.embedded {
+            return;
+        }
         let Some(source) = self.source.as_ref() else {
             return;
         };
@@ -761,6 +907,7 @@ impl ResourcesScreen {
             detail.set_context(context, cx);
             detail.open(target, access, &version, delay, cx)
         });
+        self.page_scroll.scroll_to_bottom();
         cx.notify();
     }
 
@@ -811,6 +958,7 @@ impl ResourcesScreen {
 
     /// Closes the pane and clears the selection it showed.
     fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
         self.detail.update(cx, |detail, cx| detail.close(cx));
         self.projection.select(&self.store, None);
         self.restore = None;
@@ -870,7 +1018,7 @@ impl ResourcesScreen {
             async move {
                 let client = access.client().await?;
                 let kind = builtin("namespaces").ok_or("Namespaces aren't a known kind")?;
-                let table = list_table(&client, &kind, None)
+                let table = list_table(&client, &kind, None, None)
                     .await
                     .map_err(|failure| failure.to_string())?;
                 let mut names: Vec<String> = table
@@ -929,6 +1077,10 @@ impl ResourcesScreen {
         cx: &mut Context<Self>,
     ) {
         self.select_identity(identity, window, cx);
+        if self.embedded {
+            cx.emit(NodePodsEvent::Open(identity.clone()));
+            return;
+        }
         self.open_now(identity.clone(), window, |_, _, _| {}, cx);
     }
 
@@ -941,6 +1093,10 @@ impl ResourcesScreen {
             cx.propagate();
             return;
         };
+        if self.embedded {
+            cx.emit(NodePodsEvent::Open(identity));
+            return;
+        }
         self.open_now(
             identity,
             window,
@@ -955,9 +1111,10 @@ impl ResourcesScreen {
     /// N on the list opens the namespace picker, as Enter on it would.
     /// Choosing or cancelling hands the keyboard back to the list.
     fn choose_namespace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.kind.namespaced {
+        if !self.kind.namespaced || self.embedded {
             return;
         }
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
         let focus = self.namespace_select.focus_handle(cx);
         window.focus(&focus, cx);
         focus.dispatch_action(&base::actions::Confirm { secondary: false }, window, cx);
@@ -1012,6 +1169,8 @@ impl ResourcesScreen {
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.query.read(cx).value().is_empty() {
             self.clear_filter(window, cx);
+        } else if self.embedded {
+            cx.emit(NodePodsEvent::Back);
         } else if self.detail.read(cx).target_identity().is_some() {
             self.close_pane(window, cx);
         }
@@ -1034,502 +1193,6 @@ impl ResourcesScreen {
         self.projection.filter(&self.store, "");
         cx.notify();
     }
-
-    fn header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let example = self
-            .source
-            .as_ref()
-            .is_some_and(|source| matches!(source.access, KubeAccess::Example));
-        let read = self.store.read_state();
-        let state = match read {
-            ReadState::Loading => "loading",
-            ReadState::Loaded if example => "example data",
-            ReadState::Loaded => "watching",
-            ReadState::Stale(_) => "reconnecting",
-            ReadState::Refused(_) => "not permitted",
-            ReadState::Failed(_) => "failed",
-            ReadState::Missing(_) => "not served",
-        };
-        let (total, shown) = (self.store.len(), self.projection.len());
-        let scope = h_flex()
-            .id("resource-scope")
-            .test_support()
-            .gap_1p5()
-            .flex_wrap()
-            .text_size(dp(12.5))
-            .text_color(p.muted)
-            .map(|this| match &self.source {
-                Some(source) => this.child("in").child(mono(source.context.clone())),
-                None => this.child("not connected"),
-            })
-            .when(read.shows_rows(), |this| {
-                this.child("·").child(if shown == total {
-                    total.to_string()
-                } else {
-                    format!("{shown} of {total}")
-                })
-            })
-            .when(self.source.is_some(), |this| this.child("·").child(state))
-            .when_some(self.updated, |this, time| {
-                this.child("·").child(clock(time))
-            });
-        // The controls keep to one row: beside the title when they fit,
-        // below it otherwise, where a narrow page shrinks the filter. A page
-        // too narrow even for that, such as a small window at a large text
-        // size, puts the filter on a line of its own. (A wrapping row would
-        // be measured without its gaps and wrap early, so this is decided
-        // here.)
-        let one_row = CONTROLS_MIN_WIDTH
-            + if self.kind.namespaced {
-                NAMESPACE_WIDTH + 8.
-            } else {
-                0.
-            };
-        let stacked = content_width(window) < one_row;
-        let namespace = self.kind.namespaced.then(|| {
-            div()
-                .when_else(
-                    stacked,
-                    |this| this.flex_1().min_w_0(),
-                    |this| this.flex_none(),
-                )
-                .child(
-                    Select::new(&self.namespace_select)
-                        .id("resource-namespace")
-                        .small()
-                        .when_else(
-                            stacked,
-                            |this| this.w_full(),
-                            |this| this.w(dp(NAMESPACE_WIDTH)),
-                        )
-                        .menu_width(dp(260.))
-                        .search_placeholder("Find a namespace")
-                        .accessibility_label("Namespace"),
-                )
-        });
-        let filter = div()
-                    .when_else(stacked, |this| this.w_full(), |this| this.w(dp(240.)))
-                    .min_w(dp(120.))
-                    .key_context(FILTER_CONTEXT)
-                    .on_action(cx.listener(|view, _: &LeaveFilter, window, cx| {
-                        view.leave_filter(window, cx)
-                    }))
-                    .child(
-                        Input::new(&self.query)
-                            .id("resource-filter")
-                            .aria_label("Filter by name, namespace or any column; Escape clears it, then returns to the list")
-                            .small()
-                            .cleanable(true)
-                            .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                    );
-        let refresh = div().flex_none().child(
-            Button::new("resource-refresh")
-                .outline()
-                .small()
-                .icon(IconName::RefreshCw)
-                .label("Refresh")
-                .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
-        );
-        let controls = if stacked {
-            v_flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .children(namespace)
-                        .when(!self.kind.namespaced, |this| this.child(div().flex_1()))
-                        .child(refresh),
-                )
-                .child(filter)
-        } else {
-            h_flex()
-                .max_w_full()
-                .gap_2()
-                .children(namespace)
-                .child(filter)
-                .child(refresh)
-        };
-        h_flex()
-            .items_end()
-            .gap_3()
-            .flex_wrap()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w(dp(240.))
-                    .gap(dp(7.))
-                    .child(
-                        div()
-                            .id("resource-title")
-                            .test_support()
-                            .font_family(DISPLAY_FONT)
-                            .text_size(dp(28.))
-                            .line_height(dp(32.))
-                            .child(self.title()),
-                    )
-                    .child(scope),
-            )
-            .child(controls)
-    }
-
-    fn head(&self, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let (key, direction) = self.projection.sort_state();
-        h_flex()
-            .w_full()
-            .py(dp(7.))
-            .border_b_1()
-            .border_color(p.line)
-            .children(self.layout.columns.iter().enumerate().map(|(ix, column)| {
-                let sort = column.sort_key();
-                let order =
-                    (key == sort)
-                        .then_some(direction)
-                        .and_then(|direction| match direction {
-                            SortDirection::Ascending => Some(("ascending", IconName::ArrowUp)),
-                            SortDirection::Descending => Some(("descending", IconName::ArrowDown)),
-                            SortDirection::Default => None,
-                        });
-                cell(column)
-                    .id(("resource-sort", ix))
-                    .test_support()
-                    .role(Role::ColumnHeader)
-                    .aria_label(match order {
-                        Some((order, _)) => format!("{}, sorted {order}", column.label),
-                        None => column.label.to_string(),
-                    })
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .cursor_pointer()
-                    .child(ui::caption(&column.label, cx))
-                    .children(
-                        order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)),
-                    )
-                    .on_click(cx.listener(move |view, _, _, cx| view.sort_by(sort, cx)))
-            }))
-    }
-
-    fn render_row(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let row = self.projection.row(&self.store, ix)?;
-        let p = palette(cx);
-        let selected = self.projection.selected_index() == Some(ix);
-        let identity = row.identity.clone();
-        let mut element = h_flex()
-            .id(row_id(&identity))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(format!(
-                "{} · {}",
-                identity.address(),
-                row.cells.join(" · ")
-            ))
-            .w_full()
-            .h(dp(ROW_HEIGHT))
-            .font_family(MONO_FONT)
-            .text_size(dp(12.))
-            .cursor_pointer()
-            .when(row.terminating, |this| this.text_color(p.muted))
-            .when(selected, |this| this.bg(p.accent_soft))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)));
-        for column in &self.layout.columns {
-            let text: SharedString = match column.source {
-                ColumnSource::Namespace => identity.namespace.clone().into(),
-                ColumnSource::Cell(cell_ix) => {
-                    let printed = row.cells.get(cell_ix).map(String::as_str).unwrap_or("");
-                    match column.kind {
-                        ColumnKind::Age => row
-                            .age(self.now)
-                            .map(SharedString::from)
-                            .unwrap_or_else(|| printed.to_owned().into()),
-                        _ => printed.to_owned().into(),
-                    }
-                }
-            };
-            let tone = column
-                .status
-                .then(|| match status_tone(&text) {
-                    StatusTone::Success => Some(p.good_ink),
-                    StatusTone::Warning => Some(p.warn_ink),
-                    StatusTone::Danger => Some(p.crit_ink),
-                    StatusTone::Neutral => None,
-                })
-                .flatten();
-            element = element.child(
-                cell(column)
-                    .when_some(tone, |this, color| this.text_color(color))
-                    .child(text),
-            );
-        }
-        Some(
-            element
-                .on_click(
-                    cx.listener(move |view, _, window, cx| view.click_row(&identity, window, cx)),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn table(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let count = self.projection.len();
-        let title = self.noun();
-        let empty = (count == 0).then(|| {
-            if !self.store.is_empty() {
-                format!("No {title} match this filter.")
-            } else if let Some(namespace) = self.namespace.as_ref().filter(|_| self.kind.namespaced)
-            {
-                format!("No {title} in {namespace}.")
-            } else {
-                format!("No {title} found.")
-            }
-        });
-        let list = div()
-            .id("resource-list")
-            .test_support()
-            .role(Role::ListBox)
-            .aria_label(format!(
-                "{}; arrows select and show details, Enter moves to them, slash or Command-F filters, N chooses the namespace, Escape clears the filter, then closes the details",
-                self.title()
-            ))
-            .flex_1()
-            .min_h_0()
-            .map(|this| match empty {
-                Some(text) => this.child(
-                    div()
-                        .id("resource-empty")
-                        .test_support()
-                        .px_3()
-                        .py_3p5()
-                        .text_size(dp(12.5))
-                        .text_color(p.muted)
-                        .child(text),
-                ),
-                None => this.child(
-                    uniform_list(
-                        "resource-rows",
-                        count,
-                        cx.processor(|view, range: Range<usize>, _, cx| {
-                            range
-                                .filter_map(|ix| view.render_row(ix, cx))
-                                .collect::<Vec<_>>()
-                        }),
-                    )
-                    .track_scroll(&self.scroll)
-                    .size_full(),
-                ),
-            });
-        panel(cx)
-            .flex_1()
-            .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .child(
-                div()
-                    .id("resource-table-scroll")
-                    .test_support()
-                    .size_full()
-                    .overflow_x_scroll()
-                    .child(
-                        v_flex()
-                            .h_full()
-                            .w_full()
-                            .min_w(dp(self.layout.width))
-                            .child(self.head(cx))
-                            .child(list),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    /// The list's keys and the page's focus, around the table or whatever
-    /// replaces it, so the keyboard keeps working while no rows show.
-    fn keyed(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .id("resource-body")
-            .test_support()
-            .key_context(CONTEXT)
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
-            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
-            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
-            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
-            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
-                let focus = view.query.read(cx).focus_handle(cx);
-                window.focus(&focus, cx);
-            }))
-            .on_action(cx.listener(|view, _: &ClearFilter, window, cx| view.escape(window, cx)))
-            .on_action(
-                cx.listener(|view, _: &OpenSelected, window, cx| view.open_selected(window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &ChooseNamespace, window, cx| {
-                view.choose_namespace(window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
-            .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .w_full()
-            .child(body)
-            .into_any_element()
-    }
-
-    fn retry(&self, id: &'static str, cx: &mut Context<Self>) -> Button {
-        Button::new(id)
-            .icon(IconName::RefreshCw)
-            .label("Retry")
-            .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
-    }
-
-    /// What replaces the table: no connection, the first list, a refusal,
-    /// a failure with nothing to show, or a kind the example data lacks.
-    fn placeholder(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let title = self.title();
-        let scope = match self.namespace.as_ref().filter(|_| self.kind.namespaced) {
-            Some(namespace) => format!("in {namespace}"),
-            None if self.kind.namespaced => "across all namespaces".to_owned(),
-            None => "in this cluster".to_owned(),
-        };
-        let state = |id: &'static str, element: Div| {
-            Some(
-                element
-                    .id(id)
-                    .test_support()
-                    .role(Role::Status)
-                    .into_any_element(),
-            )
-        };
-        let Some(source) = self.source.as_ref() else {
-            return state(
-                "resource-disconnected",
-                ui::empty_state(
-                    IconName::Unplug,
-                    "Not connected to Kubernetes",
-                    "Resources are read through the cluster's Kubernetes API once a context is connected. If it doesn't connect, check the kubeconfig in Settings.",
-                    None,
-                    Vec::new(),
-                    cx,
-                ),
-            );
-        };
-        match self.store.read_state() {
-            ReadState::Loading => state(
-                "resource-loading",
-                panel(cx)
-                    .p_3()
-                    .gap_3()
-                    .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
-            ),
-            ReadState::Refused(reason) => state(
-                "resource-refused",
-                ui::empty_state(
-                    IconName::ShieldX,
-                    format!("Not permitted to list {title}"),
-                    format!(
-                        "The identity of {} may not list {} {scope}. That says nothing about whether any exist.",
-                        source.context,
-                        self.noun()
-                    ),
-                    Some(reason.clone()),
-                    Vec::new(),
-                    cx,
-                ),
-            ),
-            ReadState::Missing(reason) => state(
-                "resource-not-served",
-                ui::empty_state(
-                    IconName::SearchX,
-                    format!("{title} isn't served here"),
-                    self.not_served(&source.context),
-                    Some(reason.clone()),
-                    vec![self.retry("resource-missing-retry", cx).into_any_element()],
-                    cx,
-                ),
-            ),
-            ReadState::Failed(reason) => state(
-                "resource-failed",
-                ui::empty_state(
-                    IconName::CircleDashed,
-                    format!("Couldn't list {title}"),
-                    "Nothing is known yet, so nothing is shown as missing. A failed list retries by itself; Retry starts over.",
-                    Some(reason.clone()),
-                    vec![
-                        self.retry("resource-retry", cx)
-                            .primary()
-                            .into_any_element(),
-                    ],
-                    cx,
-                ),
-            ),
-            ReadState::Loaded
-                if self.store.columns().is_empty()
-                    && matches!(source.access, KubeAccess::Example) =>
-            {
-                let kinds: Vec<SharedString> = example::KINDS
-                    .iter()
-                    .filter_map(|key| example::kind(key))
-                    .map(|kind| self::title(&kind))
-                    .collect();
-                state(
-                    "resource-not-in-example",
-                    ui::empty_state(
-                        IconName::Inbox,
-                        format!("Example data doesn't include {title}"),
-                        format!(
-                            "It includes {}. Connect to a cluster to list every kind.",
-                            kinds.join(", ")
-                        ),
-                        None,
-                        Vec::new(),
-                        cx,
-                    ),
-                )
-            }
-            _ => None,
-        }
-    }
-
-    fn stale_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let ReadState::Stale(reason) = self.store.read_state() else {
-            return None;
-        };
-        let seen = self
-            .updated
-            .map(|time| format!(" at {}", clock(time)))
-            .unwrap_or_default();
-        Some(
-            div()
-                .id("resource-stale")
-                .test_support()
-                .role(Role::Status)
-                .child(ui::warning_banner(
-                    Some("The watch was interrupted; reconnecting.".into()),
-                    format!("Showing {} as last seen{seen}. {reason}", self.noun()),
-                    Some(
-                        self.retry("resource-stale-retry", cx)
-                            .small()
-                            .into_any_element(),
-                    ),
-                    cx,
-                ))
-                .into_any_element(),
-        )
-    }
-}
-
-fn cell(column: &DisplayColumn) -> Div {
-    let cell = div().px_3().min_w_0().whitespace_nowrap().truncate();
-    if column.flexible {
-        cell.flex_1().min_w(dp(column.width))
-    } else {
-        cell.flex_none().w(dp(column.width))
-    }
 }
 
 /// Lists and watches one collection on Tokio, converting batches there so
@@ -1538,6 +1201,7 @@ async fn watch(
     access: KubeAccess,
     kind: ResourceKind,
     namespace: Option<String>,
+    field_selector: Option<String>,
     connection: String,
     sender: mpsc::Sender<Vec<ResourceEvent>>,
 ) {
@@ -1571,73 +1235,22 @@ async fn watch(
         }
     };
     tokio::join!(
-        watch_collection(client, kind, namespace, raw_sender),
+        watch_collection(client, kind, namespace, field_selector, raw_sender),
         forward
     );
 }
 
 impl EventEmitter<NotServed> for ResourcesScreen {}
 
-impl Render for ResourcesScreen {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::desktop::probe::hit("resources");
-        let _span = crate::perf::span("table.render");
-        let list = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
-        let list = self.keyed(list, cx);
-        let body = if self.detail.read(cx).target_identity().is_some() {
-            // Cached: list updates and age ticks don't redraw the pane.
-            let pane =
-                AnyView::from(self.detail.clone()).cached(StyleRefinement::default().size_full());
-            let split = if content_width(window) >= SPLIT_WIDTH {
-                h_resizable("resource-split")
-                    .with_state(&self.split)
-                    .child(
-                        resizable_panel()
-                            .size_range(dp_px(LIST_MIN_WIDTH, window)..Pixels::MAX)
-                            .child(list),
-                    )
-                    .child(
-                        resizable_panel()
-                            .size(dp_px(PANE_WIDTH, window))
-                            .size_range(dp_px(PANE_MIN_WIDTH, window)..Pixels::MAX)
-                            .flex_none()
-                            .pl(dp(SPLIT_GAP))
-                            .child(pane),
-                    )
-            } else {
-                v_resizable("resource-split-stacked")
-                    .with_state(&self.stacked)
-                    .child(
-                        resizable_panel()
-                            .size(dp_px(STACKED_LIST_HEIGHT, window))
-                            .size_range(dp_px(LIST_MIN_HEIGHT, window)..Pixels::MAX)
-                            .child(list),
-                    )
-                    .child(
-                        resizable_panel()
-                            .size(dp_px(PANE_HEIGHT, window))
-                            .size_range(dp_px(PANE_MIN_HEIGHT, window)..Pixels::MAX)
-                            .pt(dp(SPLIT_GAP))
-                            .child(pane),
-                    )
-            };
-            v_flex().flex_1().min_h_0().child(split).into_any_element()
-        } else {
-            list
-        };
-        v_flex()
-            .id("resources-page")
-            .size_full()
-            .min_h_0()
-            .px(dp(PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
-            .child(self.header(window, cx))
-            .children(self.stale_banner(cx))
-            .child(body)
-    }
+pub(crate) enum NodePodsEvent {
+    Open(ResourceIdentity),
+    Back,
 }
+impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
+
+mod view;
 
 #[cfg(test)]
 mod tests;
+
+impl EventEmitter<super::ResourceLink> for ResourcesScreen {}

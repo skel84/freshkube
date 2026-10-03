@@ -1,13 +1,21 @@
 mod connection;
-mod kind_switcher;
 mod kubeconfig;
 mod kubernetes_only;
+mod kubernetes_summary;
+pub(crate) mod nodes;
+mod object_links;
 mod overview;
 mod pages;
+mod search;
 mod services;
 mod shell;
+#[cfg(any(debug_assertions, feature = "stress"))]
+mod startup;
+mod system_services;
+mod target;
 #[cfg(test)]
 mod tests;
+mod view;
 
 use crate::{
     GpuiOptions,
@@ -38,7 +46,6 @@ use freshkube_core::cluster_overview::{
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{
     ActiveTheme, Theme, ThemeMode, TitleBar,
-    command::CommandState,
     input::{InputEvent, InputState},
     v_flex,
 };
@@ -79,7 +86,7 @@ pub(crate) mod probe {
 }
 
 pub(crate) use pages::Page;
-use pages::SidebarReveal;
+use pages::{ScreenKind, SidebarReveal};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 pub(crate) const SIDEBAR_WIDTH: f32 = 228.;
@@ -121,14 +128,14 @@ gpui_kit::actions!(
         Quit,
         Refresh,
         ShowOverview,
-        ShowServices,
-        ShowLogs,
-        ShowProcesses,
-        ShowStorage,
-        ShowNetwork,
-        ShowDiagnostics,
+        ShowNodes,
+        ShowNamespaces,
+        ShowEvents,
+        ShowHealth,
         ShowEtcd,
-        ShowWorkloads,
+        ShowSystemServices,
+        ShowSecurity,
+        ShowLifecycle,
         NextScreen,
         PreviousScreen,
         PreviousContext,
@@ -176,8 +183,13 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                 }
             })
             .detach();
+            #[cfg(not(any(debug_assertions, feature = "stress")))]
+            let window_size = size(px(1320.), px(860.));
+            #[cfg(any(debug_assertions, feature = "stress"))]
+            let window_size =
+                startup::window_size(std::env::var("FRESHKUBE_WINDOW_SIZE").ok().as_deref());
             let window_options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1320.), px(860.)), cx)),
+                window_bounds: Some(WindowBounds::centered(window_size, cx)),
                 window_min_size: Some(size(px(760.), px(560.))),
                 titlebar: Some(TitlebarOptions {
                     title: Some(
@@ -255,7 +267,8 @@ impl Render for PageHost {
         self.pilot
             .update(cx, |pilot, cx| match page {
                 Page::Overview => pilot.render_overview(window, cx),
-                _ => pilot.render_services(window, cx),
+                Page::Nodes => pilot.render_nodes(window, cx),
+                _ => pilot.system_services.clone().into_any_element(),
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
@@ -277,12 +290,21 @@ pub(crate) struct Pilot {
     contexts: Vec<String>,
     /// Node counts for contexts that loaded at least once this session.
     context_nodes: BTreeMap<String, usize>,
+    context_display: shell::ContextDisplay,
     config_error: Option<String>,
     config_loading: bool,
     config_generation: u64,
     epoch: u64,
     overview: Snapshot<ClusterOverview>,
+    kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
+    summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
+    summary_job: Option<OwnedJob>,
+    summary_task: Option<Task<()>>,
+    object_open_job: Option<OwnedJob>,
+    object_open_task: Option<Task<()>>,
+    object_open_sequence: u64,
     services: Snapshot<Vec<ServiceInfo>, Target>,
+    service_display: services::ServiceDisplay,
     nodes: Vec<NodeSummary>,
     load_history: LoadHistory,
     selected_node: Option<String>,
@@ -293,14 +315,19 @@ pub(crate) struct Pilot {
     forwards: Entity<ForwardsIndicator>,
     overview_page: Entity<PageHost>,
     services_page: Entity<PageHost>,
-    screens: Vec<(Page, ScreenHandle)>,
+    nodes_page: Entity<PageHost>,
+    node_workspace: nodes::Nodes,
+    node_pods: Entity<ResourcesScreen>,
+    screens: Vec<(ScreenKind, ScreenHandle)>,
     resources: Entity<ResourcesScreen>,
     /// The Kubernetes kind the Resources page shows.
     resource_kind: ResourceKind,
+    last_kind: ResourceKind,
+    system_services: Entity<system_services::SystemServices>,
     /// The sidebar's Custom Resources, discovered when opened.
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
-    kind_switcher: Entity<CommandState>,
+    search: Entity<search::Search>,
     /// Kubernetes navigation groups shown open in the sidebar, by slug.
     kubernetes_groups: BTreeSet<&'static str>,
     sidebar_scroll: ScrollHandle,
@@ -315,7 +342,9 @@ pub(crate) struct Pilot {
     settings_open: bool,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
-    node_view: NodeView,
+    overview_display: crate::presentation::overview::Overview,
+    attention: crate::presentation::attention::Attention,
+    attention_expanded: bool,
     health_filter: HealthFilter,
     appearance: Appearance,
     automatic: bool,
@@ -344,14 +373,14 @@ impl Pilot {
     ) -> Self {
         cx.bind_keys([
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
-            KeyBinding::new("secondary-2", ShowServices, Some("Freshkube")),
-            KeyBinding::new("secondary-3", ShowLogs, Some("Freshkube")),
-            KeyBinding::new("secondary-4", ShowProcesses, Some("Freshkube")),
-            KeyBinding::new("secondary-5", ShowStorage, Some("Freshkube")),
-            KeyBinding::new("secondary-6", ShowNetwork, Some("Freshkube")),
-            KeyBinding::new("secondary-7", ShowDiagnostics, Some("Freshkube")),
-            KeyBinding::new("secondary-8", ShowEtcd, Some("Freshkube")),
-            KeyBinding::new("secondary-9", ShowWorkloads, Some("Freshkube")),
+            KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
+            KeyBinding::new("secondary-3", ShowNamespaces, Some("Freshkube")),
+            KeyBinding::new("secondary-4", ShowEvents, Some("Freshkube")),
+            KeyBinding::new("secondary-5", ShowHealth, Some("Freshkube")),
+            KeyBinding::new("secondary-6", ShowEtcd, Some("Freshkube")),
+            KeyBinding::new("secondary-7", ShowSystemServices, Some("Freshkube")),
+            KeyBinding::new("secondary-8", ShowSecurity, Some("Freshkube")),
+            KeyBinding::new("secondary-9", ShowLifecycle, Some("Freshkube")),
             // Reaches the screens without a number of their own.
             KeyBinding::new("ctrl-tab", NextScreen, Some("Freshkube")),
             KeyBinding::new("ctrl-shift-tab", PreviousScreen, Some("Freshkube")),
@@ -392,14 +421,24 @@ impl Pilot {
             pilot: pilot.clone(),
             page: Page::Overview,
         });
+        let nodes_page = cx.new(|_| PageHost {
+            pilot: pilot.clone(),
+            page: Page::Nodes,
+        });
+        let node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let services_page = cx.new(|_| PageHost {
             pilot,
-            page: Page::Services,
+            page: Page::SystemServices,
         });
         let mut subscriptions = Vec::new();
         // The hosted pages read the shell's state, so whatever notifies the
         // shell redraws them; the countdown tick notifies only its ring.
-        let hosted = [overview_page.clone(), services_page.clone()];
+        let hosted = [
+            overview_page.clone(),
+            services_page.clone(),
+            nodes_page.clone(),
+        ];
         subscriptions.push(cx.observe(&cx.entity(), move |_, _, cx| {
             for page in &hosted {
                 page.update(cx, |_, cx| cx.notify());
@@ -416,40 +455,68 @@ impl Pilot {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
         });
-        let screens = Page::SCREENS
+        subscriptions.push(cx.subscribe_in(
+            &node_pods,
+            window,
+            |this, _, event: &resources::NodePodsEvent, window, cx| match event {
+                resources::NodePodsEvent::Back => this.node_back(window, cx),
+                resources::NodePodsEvent::Open(identity) => {
+                    let identity = identity.clone();
+                    this.open_object(
+                        builtin("pods").expect("pod kind"),
+                        identity.into(),
+                        resources::Tab::Overview,
+                        window,
+                        cx,
+                    );
+                }
+            },
+        ));
+        cx.bind_keys([
+            KeyBinding::new("down", NextNode, Some("NodeWorkspace")),
+            KeyBinding::new("up", PreviousNode, Some("NodeWorkspace")),
+            KeyBinding::new("enter", nodes::OpenNode, Some("NodeWorkspace")),
+            KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
+            KeyBinding::new(
+                "secondary-shift-enter",
+                nodes::ExpandNode,
+                Some("NodeWorkspace"),
+            ),
+            KeyBinding::new("secondary-}", nodes::NextNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("secondary-{", nodes::PreviousNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
+            KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
+        ]);
+        let screens = ScreenKind::ALL
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    Page::Processes => {
+                    ScreenKind::Processes => {
                         Self::screen::<ProcessesScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Storage => {
+                    ScreenKind::Storage => {
                         Self::screen::<StorageScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Network => {
+                    ScreenKind::Network => {
                         Self::screen::<NetworkScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Diagnostics => {
+                    ScreenKind::Diagnostics => {
                         Self::screen::<DiagnosticsScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Etcd => {
+                    ScreenKind::Etcd => {
                         Self::screen::<EtcdScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Workloads => {
+                    ScreenKind::Health => {
                         Self::screen::<WorkloadsScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Security => {
+                    ScreenKind::Security => {
                         Self::screen::<SecurityScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Lifecycle => {
+                    ScreenKind::Lifecycle => {
                         Self::screen::<LifecycleScreen>(runtime, &mut subscriptions, window, cx)
                     }
-                    Page::Operations
-                    | Page::Overview
-                    | Page::Services
-                    | Page::Logs
-                    | Page::Resources => {
+                    ScreenKind::Operations => {
                         Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
                     }
                 };
@@ -457,6 +524,13 @@ impl Pilot {
             })
             .collect();
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        subscriptions.push(cx.subscribe_in(
+            &resources,
+            window,
+            |this, _, event: &resources::ResourceLink, window, cx| {
+                this.resource_link(event.clone(), window, cx)
+            },
+        ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         subscriptions.extend([
             cx.observe(&custom, |_, _, cx| cx.notify()),
@@ -470,13 +544,15 @@ impl Pilot {
         ]);
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
-        subscriptions.push(cx.observe_global::<Theme>(|view, cx| {
+        subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            view.prepare_context_display(window, cx);
             view.notify_cached(cx);
             cx.notify();
         }));
         subscriptions.extend([
-            cx.subscribe_in(&service_filter, window, |_, _, event, _, cx| {
+            cx.subscribe_in(&service_filter, window, |view, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
+                    view.rebuild_service_rows(cx);
                     cx.notify();
                 }
             }),
@@ -514,7 +590,7 @@ impl Pilot {
             }
         });
         let mut view = Self {
-            runtime,
+            runtime: runtime.clone(),
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
             loaded_config_path: None,
             applied: AppliedConfig {
@@ -525,12 +601,21 @@ impl Pilot {
             service_filter,
             contexts: Vec::new(),
             context_nodes: BTreeMap::new(),
+            context_display: shell::ContextDisplay::default(),
             config_error: None,
             config_loading: false,
             config_generation: 0,
             epoch: 0,
             overview: Snapshot::default(),
+            kubernetes_summary: Snapshot::default(),
+            summary_health: None,
+            summary_job: None,
+            summary_task: None,
+            object_open_job: None,
+            object_open_task: None,
+            object_open_sequence: 0,
             services: Snapshot::default(),
+            service_display: services::ServiceDisplay::default(),
             nodes: Vec::new(),
             load_history: LoadHistory::default(),
             selected_node: None,
@@ -540,11 +625,16 @@ impl Pilot {
             forwards: cx.new(ForwardsIndicator::new),
             overview_page,
             services_page,
+            nodes_page,
+            node_workspace,
+            node_pods,
             screens,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
+            last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
+            system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             custom,
-            kind_switcher: cx.new(|cx| CommandState::new(window, cx)),
+            search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             kubernetes_groups: BTreeSet::from([navigation::NAVIGATION[0].slug]),
             sidebar_scroll: ScrollHandle::new(),
             sidebar_reveal: None,
@@ -553,7 +643,9 @@ impl Pilot {
             settings_open: false,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
-            node_view: NodeView::Cards,
+            overview_display: Default::default(),
+            attention: Default::default(),
+            attention_expanded: false,
             health_filter: HealthFilter::All,
             appearance: Appearance::System,
             automatic: true,
@@ -592,36 +684,35 @@ impl Pilot {
                 view.inspect_kubeconfig_file(path, window, cx);
             }
         }
+        view._subscriptions.push(cx.subscribe_in(
+            &view.system_services,
+            window,
+            |this, _, event: &system_services::ServiceEvent, window, cx| {
+                let (node, service, tab) = match event {
+                    system_services::ServiceEvent::Logs(node, service) => {
+                        (node, service, nodes::NodeTab::Logs)
+                    }
+                    system_services::ServiceEvent::Open(node, service) => {
+                        (node, service, nodes::NodeTab::Services)
+                    }
+                };
+                this.open_node_by_name(node, tab, window, cx);
+                this.selected_service = Some(service.clone());
+                if tab == nodes::NodeTab::Logs {
+                    this.open_logs(window, cx);
+                }
+                cx.notify();
+            },
+        ));
+        view.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&view.focus, cx);
         // Without Talos, the one page that reads is the first one shown.
         if view.kubernetes_only.is_some() {
-            view.navigate_from_keyboard(Page::Resources, window, cx);
+            view.navigate_from_keyboard(Page::Overview, window, cx);
         }
-        // Debug builds can open on a page by slug, for visual checks, and
-        // so can the stress example.
         #[cfg(any(debug_assertions, feature = "stress"))]
-        if let Some(page) = std::env::var("FRESHKUBE_PAGE")
-            .ok()
-            .and_then(|slug| Page::ALL.into_iter().find(|page| page.slug() == slug))
-        {
-            view.navigate(page, window, cx);
-        }
-        // Built-in kinds, and with example data its custom kinds too.
-        #[cfg(any(debug_assertions, feature = "stress"))]
-        if let Some(kind) =
-            std::env::var("FRESHKUBE_KIND")
-                .ok()
-                .and_then(|key| match navigation::known(&key) {
-                    Some(key) => builtin(key),
-                    None => view
-                        .fixture
-                        .then(|| resources::example::kind(&key))
-                        .flatten(),
-                })
-        {
-            view.open_kind(kind, window, cx);
-        }
+        view.open_startup_page(window, cx);
         #[cfg(feature = "stress")]
         crate::stress::start(window, cx);
         view
@@ -636,9 +727,30 @@ impl Pilot {
         self.selected_node = None;
         self.selected_service = None;
         self.nodes.clear();
+        self.system_services
+            .update(cx, |services, cx| services.set_nodes(&[], cx));
+        self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
+        self.kubernetes_summary = Snapshot::default();
+        self.system_services
+            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
+        self.rebuild_joined_nodes();
+        self.push_node_rows(cx);
+        self.prepare_context_display(window, cx);
+        self.node_workspace
+            .document
+            .update(cx, |pane, cx| pane.close(cx));
+        self.sync_node_visibility(window, cx);
+        self.summary_health = None;
+        self.summary_job = None;
+        self.summary_task = None;
+        self.attention_expanded = false;
+        self.object_open_job = None;
+        self.object_open_task = None;
+        self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
         self.services = Snapshot::default();
+        self.rebuild_service_rows(cx);
         self.logs
             .update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
         self.push_source(window, cx);
@@ -780,16 +892,20 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         match event {
+            ScreenEvent::Back => self.node_back(window, cx),
+            ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
             ScreenEvent::OpenLogs(service) => {
                 self.selected_service = Some(service.clone());
                 self.open_logs(window, cx);
             }
-            ScreenEvent::SelectNode(node) => self.select_node_by_name(node.clone(), window, cx),
+            ScreenEvent::SelectNode(node) => {
+                self.open_node_by_name(node, nodes::NodeTab::Overview, window, cx)
+            }
             ScreenEvent::OpenLogsOn { node, service } => {
                 if !self.nodes.iter().any(|known| &known.name == node) {
                     return;
                 }
-                self.select_node_by_name(node.clone(), window, cx);
+                self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);
                 self.selected_service = Some(service.clone());
                 self.open_logs(window, cx);
             }
@@ -832,6 +948,14 @@ impl Pilot {
     /// API of the Talos cluster. Its id covers what picks the cluster and
     /// its credentials, not the target node, so changing node keeps a watch.
     fn kube_source(&self) -> Option<KubeSource> {
+        if self.fixture {
+            let context = self.applied.context.clone()?;
+            return Some(KubeSource {
+                id: resources::example::connection(&context),
+                context,
+                access: KubeAccess::Example,
+            });
+        }
         if let Some(kube) = &self.kubernetes_only {
             let access = kube.access()?.clone();
             return Some(KubeSource {
@@ -841,13 +965,6 @@ impl Pilot {
             });
         }
         let context = self.applied.context.clone()?;
-        if self.fixture {
-            return Some(KubeSource {
-                id: resources::example::connection(&context),
-                context,
-                access: KubeAccess::Example,
-            });
-        }
         let cluster = self.overview.data()?;
         let mut collector =
             ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
@@ -871,9 +988,14 @@ impl Pilot {
     }
 
     fn active_screen(&self) -> Option<ScreenHandle> {
+        let page = if self.page == Page::Nodes && self.node_workspace.open {
+            self.node_workspace.tab.screen()?
+        } else {
+            self.page.screen()?
+        };
         self.screens
             .iter()
-            .find(|(page, _)| *page == self.page)
+            .find(|(candidate, _)| *candidate == page)
             .map(|(_, handle)| handle.clone())
     }
 
@@ -883,12 +1005,18 @@ impl Pilot {
         for (_, screen) in &self.screens {
             screen.set_source(source.clone(), window, cx);
         }
+        if let Some(data) = self.summary_health.clone() {
+            self.deliver_workloads(data, cx);
+        }
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
         }
         let source = self.kube_source();
         self.custom
             .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
+        self.node_pods.update(cx, |resources, cx| {
+            resources.set_source(source.clone(), window, cx)
+        });
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
@@ -906,6 +1034,7 @@ impl Pilot {
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.kubernetes_only.is_some() {
             self.refresh_kubernetes(window, cx);
+            self.refresh_summary(window, cx);
             return;
         }
         if self.config_loading || self.overview.is_loading() {
@@ -921,6 +1050,7 @@ impl Pilot {
             self.overview_succeeded();
             self.sync_nodes(window, cx);
             self.refresh_services(window, cx);
+            self.refresh_summary(window, cx);
             self.refresh_screen(window, cx);
             cx.notify();
             return;
@@ -954,6 +1084,7 @@ impl Pilot {
                     view.sync_nodes(window, cx);
                     if fresh {
                         view.refresh_services(window, cx);
+                        view.refresh_summary(window, cx);
                     }
                 }
                 cx.notify();
@@ -963,6 +1094,9 @@ impl Pilot {
     }
 
     fn refresh_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Health {
+            return;
+        }
         if let Some(screen) = self.active_screen() {
             screen.refresh(window, cx);
         }
@@ -990,191 +1124,6 @@ impl Pilot {
         if let Some(context) = self.applied.context.clone() {
             self.context_nodes.insert(context, nodes.len());
         }
-    }
-
-    fn sync_nodes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let old_target = self.target().map(|(target, _)| target);
-        self.nodes = self
-            .overview
-            .data()
-            .map(presentation::node_summaries)
-            .unwrap_or_default();
-        let selected = self
-            .selected_node
-            .clone()
-            .filter(|name| self.nodes.iter().any(|node| &node.name == name))
-            .or_else(|| {
-                self.nodes
-                    .iter()
-                    .find(|node| node.responding)
-                    .or_else(|| self.nodes.first())
-                    .map(|node| node.name.clone())
-            });
-        if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
-            self.select_node(selected, window, cx);
-        } else {
-            self.push_source(window, cx);
-        }
-    }
-
-    fn select_node(
-        &mut self,
-        selected: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.epoch = self.epoch.wrapping_add(1);
-        // Cancel rather than let an old foreground node refresh keep loading.
-        if self.overview.is_loading() {
-            self.overview_job = None;
-            self.overview_task = None;
-            let request = self.overview.begin(self.applied.clone());
-            self.overview
-                .apply(&request, Err("Node changed; refresh cancelled".into()));
-        }
-        self.selected_node = selected;
-        self.selected_service = None;
-        self.service_task = None;
-        self.service_job = None;
-        self.services = Snapshot::default();
-        if self.fixture {
-            let context = self.applied.context.clone().unwrap_or_default();
-            let node = self.selected_node.clone().unwrap_or_default();
-            let catalog = fixture::services(&context, &node);
-            let events = fixture::logs(&node, &catalog);
-            let address = self
-                .selected_summary()
-                .map(|summary| summary.address.clone())
-                .unwrap_or_default();
-            self.logs.update(cx, |logs, cx| {
-                logs.set_fixture_catalog(events, &catalog, &node, &address, window, cx)
-            });
-        } else {
-            let target = self.target();
-            self.logs.update(cx, |logs, cx| {
-                logs.set_target(target, Vec::new(), window, cx)
-            });
-        }
-        self.refresh_services(window, cx);
-        self.push_source(window, cx);
-        cx.notify();
-    }
-
-    fn select_node_by_name(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_node.as_ref() != Some(&name)
-            && self.nodes.iter().any(|node| node.name == name)
-        {
-            self.select_node(Some(name), window, cx);
-        }
-    }
-
-    fn step_node(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nodes.is_empty() {
-            return;
-        }
-        let current = self
-            .nodes
-            .iter()
-            .position(|node| Some(&node.name) == self.selected_node.as_ref());
-        let next = match current {
-            Some(ix) => ix.saturating_add_signed(delta).min(self.nodes.len() - 1),
-            None => 0,
-        };
-        let name = self.nodes[next].name.clone();
-        self.select_node_by_name(name, window, cx);
-    }
-
-    fn refresh_services(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.services.is_loading() {
-            return;
-        }
-        if self.fixture {
-            let identity = Target {
-                epoch: self.epoch,
-                context: self.applied.context.clone().unwrap_or_default(),
-                node: self.selected_node.clone().unwrap_or_default(),
-                address: "fixture".into(),
-            };
-            let request = self.services.begin(identity.clone());
-            let catalog = fixture::services(&identity.context, &identity.node);
-            let result = if catalog.is_empty() {
-                Err(format!("{} didn't answer the Talos API", identity.node))
-            } else {
-                Ok(catalog)
-            };
-            self.services.apply(&request, result);
-            self.retain_selected_service();
-            return;
-        }
-        let Some((target, client)) = self.target() else {
-            return;
-        };
-        let request = self.services.begin(target.clone());
-        let (job, receiver) = backend::services(self.runtime.clone(), client, target.clone());
-        self.service_job = Some(job);
-        self.service_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = receiver
-                .await
-                .unwrap_or_else(|_| Err("Services worker stopped".into()));
-            _ = this.update_in(cx, |view, window, cx| {
-                if view.target().as_ref().map(|(identity, _)| identity) != Some(&target) {
-                    return;
-                }
-                view.service_job = None;
-                if view.services.apply(&request, result) {
-                    view.retain_selected_service();
-                    let catalog = view.services.data().cloned().unwrap_or_default();
-                    let current = view.target();
-                    view.logs
-                        .update(cx, |logs, cx| logs.set_target(current, catalog, window, cx));
-                }
-                cx.notify();
-            });
-        }));
-        cx.notify();
-    }
-
-    fn retain_selected_service(&mut self) {
-        let services = self.services.data().cloned().unwrap_or_default();
-        if presentation::selected_service(&services, self.selected_service.as_deref()).is_none() {
-            self.selected_service = None;
-        }
-    }
-
-    /// Services on the target node that pass the name and health filters.
-    fn visible_services(&self, cx: &App) -> Vec<ServiceInfo> {
-        let query = self.service_filter.read(cx).value().to_lowercase();
-        self.services
-            .data()
-            .map(|services| {
-                services
-                    .iter()
-                    .filter(|service| service.id.to_lowercase().contains(&query))
-                    .filter(|service| {
-                        self.health_filter
-                            .accepts(presentation::service_health(service))
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn step_service(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let visible = self.visible_services(cx);
-        if visible.is_empty() {
-            return;
-        }
-        let current = visible
-            .iter()
-            .position(|service| Some(&service.id) == self.selected_service.as_ref());
-        let next = match current {
-            Some(ix) => ix.saturating_add_signed(delta).min(visible.len() - 1),
-            None if delta < 0 => visible.len() - 1,
-            None => 0,
-        };
-        self.selected_service = Some(visible[next].id.clone());
-        cx.notify();
     }
 
     fn set_appearance(
@@ -1249,6 +1198,9 @@ impl Pilot {
         App::notify(cx, detail);
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.services_page.entity_id());
+        App::notify(cx, self.nodes_page.entity_id());
+        App::notify(cx, self.node_pods.entity_id());
+        App::notify(cx, self.node_workspace.document.entity_id());
     }
 
     /// Whether contexts or a connection are loading, for the refresh button.
@@ -1277,95 +1229,5 @@ impl Pilot {
                 cx.notify();
             }
         });
-    }
-}
-
-impl Render for Pilot {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        probe::hit("shell");
-        let page = match self.page {
-            Page::Resources => self
-                .resources
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            _ if self.kubernetes_only.is_some() => self.render_needs_talosconfig(cx),
-            Page::Overview => self
-                .overview_page
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            Page::Services => self
-                .services_page
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            Page::Logs => self.render_logs_page(),
-            // Screens redraw when their own state changes, not with the shell.
-            _ => self
-                .active_screen()
-                .map(|screen| screen.view().cached(cached_page_style()).into_any_element())
-                .unwrap_or_else(|| div().into_any_element()),
-        };
-        v_flex()
-            .size_full()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            .key_context("Freshkube")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
-            .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
-                view.navigate_from_keyboard(Page::Overview, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowServices, window, cx| {
-                view.navigate_from_keyboard(Page::Services, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowLogs, window, cx| {
-                view.navigate_from_keyboard(Page::Logs, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowProcesses, window, cx| {
-                view.navigate_from_keyboard(Page::Processes, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowStorage, window, cx| {
-                view.navigate_from_keyboard(Page::Storage, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowNetwork, window, cx| {
-                view.navigate_from_keyboard(Page::Network, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowDiagnostics, window, cx| {
-                view.navigate_from_keyboard(Page::Diagnostics, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowEtcd, window, cx| {
-                view.navigate_from_keyboard(Page::Etcd, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowWorkloads, window, cx| {
-                view.navigate_from_keyboard(Page::Workloads, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &NextScreen, window, cx| {
-                view.navigate_from_keyboard(view.adjacent_page(true), window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &PreviousScreen, window, cx| {
-                view.navigate_from_keyboard(view.adjacent_page(false), window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
-                view.adjacent_context(false, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &NextContext, window, cx| {
-                view.adjacent_context(true, window, cx)
-            }))
-            .on_action(
-                cx.listener(|view, _: &GoToKind, window, cx| view.open_kind_switcher(window, cx)),
-            )
-            .child(self.render_title_bar(window, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_sidebar(window, cx))
-                    .child(div().flex_1().min_w_0().min_h_0().child(page)),
-            )
-            .child(self.render_status_bar(window, cx))
     }
 }

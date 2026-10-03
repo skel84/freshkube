@@ -65,13 +65,6 @@ pub struct Listeners {
 #[derive(Debug)]
 struct Held(u16);
 
-impl Held {
-    fn new(port: u16) -> Self {
-        held(|ports| ports.insert(port));
-        Self(port)
-    }
-}
-
 impl Drop for Held {
     fn drop(&mut self) {
         held(|ports| ports.remove(&self.0));
@@ -119,30 +112,35 @@ pub fn is_taken(error: &io::Error) -> bool {
 }
 
 fn bind_both(port: u16) -> io::Result<Listeners> {
-    let v4 = bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))?;
+    // Keep the check, both binds and reservation together: another bind
+    // must not probe a listener we have just opened.
+    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let ports = held.get_or_insert_with(HashSet::new);
+    let v4 = bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)), ports)?;
     let port = v4.local_addr()?.port();
-    let v6 = match bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port))) {
+    let v6 = match bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port)), ports) {
         Ok(listener) => Some(listener),
         Err(error) if is_taken(&error) => return Err(error),
         // No IPv6 loopback on this Mac: 127.0.0.1 alone will do.
         Err(_) => None,
     };
+    ports.insert(port);
     Ok(Listeners {
         port,
         v4,
         v6,
-        _held: Held::new(port),
+        _held: Held(port),
     })
 }
 
 /// Listens on `address`, reusing it only when what holds it is no
 /// listener: closed connections waiting out TIME_WAIT.
-fn bind(address: SocketAddr) -> io::Result<TcpListener> {
+fn bind(address: SocketAddr, ports: &HashSet<u16>) -> io::Result<TcpListener> {
     match listen(address, false) {
         Err(error)
             if is_taken(&error)
                 && address.port() != 0
-                && !held(|ports| ports.contains(&address.port()))
+                && !ports.contains(&address.port())
                 && !accepts(address) =>
         {
             listen(address, true)
@@ -264,6 +262,29 @@ mod tests {
         let second = bind_automatic(remote).unwrap();
         assert_eq!(first.port, remote + 10_000);
         assert_eq!(second.port, remote + 20_000);
+    }
+
+    #[tokio::test]
+    async fn concurrent_binds_do_not_probe_their_listeners() {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(32));
+        let mut tasks = Vec::new();
+        for _ in 0..32 {
+            let barrier = barrier.clone();
+            tasks.push(tokio::task::spawn_blocking(move || {
+                barrier.wait();
+                let listeners = bind_automatic(9876).unwrap();
+                barrier.wait();
+                let v4 = listeners.v4.into_std().unwrap();
+                assert!(matches!(v4.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock), "a bind must not open a connection to another forward");
+                if let Some(v6) = listeners.v6 {
+                    let v6 = v6.into_std().unwrap();
+                    assert!(matches!(v6.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
+                }
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
     }
 
     #[tokio::test]

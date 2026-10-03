@@ -13,5 +13,21 @@ pub(crate) mod projection;
 mod screen;
 pub(crate) mod store;
 
-pub(crate) use pane::shell;
-pub(crate) use screen::{KubeAccess, KubeSource, NotServed, ResourcesScreen, title};
+pub(crate) use pane::{DetailPane, Tab, shell};
+pub(crate) use screen::{KubeAccess, KubeSource, NodePodsEvent, NotServed, ResourcesScreen, title};
+
+/// Navigation requested by an explicit relationship link in a resource pane.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ResourceLink {
+    Object(
+        freshkube_core::resources::ResourceKind,
+        model::ObjectRef,
+        Tab,
+    ),
+    Owner {
+        api_version: String,
+        kind: String,
+        object: model::ObjectRef,
+    },
+    Node(String, crate::desktop::nodes::NodeTab),
+}

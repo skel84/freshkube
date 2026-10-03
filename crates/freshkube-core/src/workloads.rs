@@ -301,7 +301,7 @@ pub async fn collect_workloads_with_timeout(
     let statefulsets_api: Api<StatefulSet> = Api::all(client.clone());
     let daemonsets_api: Api<DaemonSet> = Api::all(client.clone());
     let pods_api: Api<Pod> = Api::all(client);
-    let list_params = ListParams::default();
+    let list_params = ListParams::default().match_any();
 
     let fetched = tokio::time::timeout(timeout, async {
         tokio::join!(
@@ -386,7 +386,7 @@ fn source_error(source: WorkloadSource, error: kube::Error) -> WorkloadSourceErr
     }
 }
 
-fn build_snapshot(
+pub(crate) fn build_snapshot(
     target: String,
     deployments: Vec<Deployment>,
     statefulsets: Vec<StatefulSet>,
@@ -598,7 +598,7 @@ struct ContainerState<'a> {
     terminated_reason: Option<&'a str>,
 }
 
-fn analyze_pod(pod: &Pod) -> (i32, Option<PodIssue>) {
+pub(crate) fn analyze_pod(pod: &Pod) -> (i32, Option<PodIssue>) {
     let Some(status) = pod.status.as_ref() else {
         return (0, None);
     };

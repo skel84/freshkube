@@ -2,34 +2,40 @@
 
 A native desktop app for [Talos Linux](https://www.talos.dev/) and Kubernetes clusters, built with [GPUI Kit](https://gpui-kit.com).
 
-Freshkube covers both layers of a Talos cluster: the operating system through the Talos API (nodes, services, logs, etcd, diagnostics, safe node operations) and, as work in progress, Kubernetes resource browsing in the style of Kubeli or Lens.
+Freshkube brings Talos machines and Kubernetes resources into one cluster view. Overview and Health share cluster facts, Nodes holds machine inspection, and pod relationships and search connect the two layers.
 
 Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pilot) by Ken Udovic. talos-pilot's terminal UI, egui and Dioxus frontends were removed; its GPUI desktop frontend is the basis of this application. If you want a terminal tool, use talos-pilot.
 
-**Status:** macOS is the only verified platform. Kubernetes resource browsing is being ported from the first Freshkube prototype.
+**Status:** macOS is the only verified platform.
 
 ## Features
 
 | Page | What it shows |
 | --- | --- |
-| **Overview** | Cluster summary (nodes responding, etcd quorum, service health, peak memory) and a card or table row per node with a load sparkline and memory use |
-| **Services** | Talos services per node with health and detail, linked to their logs |
-| **Logs** | Live, interleaved logs from several services: level filters, search, follow or pause, wrapping, selection and copy |
-| **Processes** | Process list and tree with CPU and memory sorting |
-| **Storage** | Disks with size, transport, serial and system-disk indicators |
-| **Network** | Interface traffic, connections, KubeSpan peers and packet capture |
-| **Diagnostics** | Automated health checks (system, Kubernetes components, CNI, addons, services) with actionable fixes |
+| **Nodes** | Kubernetes and Talos machines in one table or card grid; open a node for its summary, Pods, system services, processes, storage, network, diagnostics, logs, Events and YAML |
+| **Overview** | Eight cards for Kubernetes and Talos, plus Needs attention with links to objects, logs and node inspection; Kubernetes-only mode has four cards |
+| **System services** | Cluster service health with filters and links to the node pane; per-node details and restart stay in Nodes |
+| **Node Logs** | Live, interleaved logs from several services: level filters, search, follow or pause, wrapping, selection and copy |
+| **Node Processes** | Process list and tree with CPU and memory sorting |
+| **Node Storage** | Disks with size, transport, serial and system-disk indicators |
+| **Node Network** | Interface traffic, connections, KubeSpan peers and packet capture |
+| **Node Diagnostics** | Automated health checks (system, Kubernetes components, CNI, addons, services) with actionable fixes |
 | **etcd** | Quorum health, members, alarms and leader |
-| **Workloads** | Deployments, StatefulSets, DaemonSets and pods by namespace, with issues highlighted |
+| **Resources** | Kubernetes lists, watched tables and object panes with Overview, YAML and Events; pods add Logs, Shell and Ports |
+| **Health** | Deployments, StatefulSets, DaemonSets and pods by namespace, with issues highlighted |
 | **Security** | PKI certificate expiry and encryption status |
 | **Lifecycle** | Talos and Kubernetes versions, configuration drift and alerts |
 | **Operations** | Cordon, uncordon, drain, reboot and shutdown of one node or a rolling selection, with a preflight preview, etcd safety checks, confirmation and an audit log |
 
 Maintenance mode (`--insecure --endpoint <node>`) opens a bootstrap wizard for nodes that have no configuration yet.
 
-Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. Talos pages ask for a talosconfig.
+Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. It starts on Overview; Control plane is replaced by an Add a talosconfig link. Talos views reached another way ask for a talosconfig.
 
-The sidebar switches pages and Talos contexts; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
+The context switcher sits above Cluster, Resources and Control plane navigation. Node inspection views and logs are tabs in Nodes; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
+
+Pod Overview links to its node, controllers and matching Services, with container logs, previous instances and recent warnings. Owner links work on other kinds too; the kubelet’s node detail links to its Pods tab.
+
+Search everything (⌘K) finds pages, nodes, kinds and object names. It lists metadata when opened, shows permission refusals per kind, and never reads Secret values. Enter opens the result.
 
 ## Design philosophy
 
@@ -94,7 +100,7 @@ freshkube --debug
 
 | Key | Action |
 | --- | --- |
-| ⌘1 … ⌘9 | Overview, Services, Logs, Processes, Storage, Network, Diagnostics, etcd, Workloads |
+| ⌘1 … ⌘9 | Overview, Nodes, Namespaces, Events, Health, etcd, System services, Security, Lifecycle |
 | Ctrl-Tab / Ctrl-Shift-Tab | Next or previous page |
 | Alt-↑ / Alt-↓ | Previous or next Talos context |
 | ⌘R | Refresh |
@@ -140,3 +146,17 @@ MIT; see [LICENSE](LICENSE). Freshkube includes talos-pilot, copyright Ken Udovi
 - [Talos Linux](https://www.talos.dev/) by Sidero Labs
 - [GPUI Kit](https://gpui-kit.com) by Longbridge, and [GPUI](https://www.gpui.rs/) by Zed Industries
 - [Kubeli](https://github.com/atilladeniz/Kubeli) and [k9s](https://k9scli.io/) for Kubernetes browsing ideas
+
+The shell refreshes Kubernetes health alongside the Talos overview every 15 s, from the API server cache. Workload health uses that shared snapshot, including in Kubernetes-only mode. A refused list leaves the other summary parts available.
+
+Nodes joins names first and addresses second. Its pane follows the selected Talos target, remembers its tab across nodes, and expands with Command-Shift-Return. Below the split width it shows a Back button. The Pods tab lists across namespaces with `spec.nodeName` and opens a pod on Resources through the shell confirmation guard.
+
+### Fixture layout review
+
+Debug builds can open each review view without window automation:
+
+```sh
+FRESHKUBE_PAGE=overview FRESHKUBE_THEME=dark FRESHKUBE_TEXT_SIZE=20 FRESHKUBE_WINDOW_SIZE=760x560 cargo run -- --fixture
+```
+
+Pages also include `nodes`, `node-overview`, `pod-overview`, `search` and `kubernetes-only`. Use `FRESHKUBE_KIND=<key>` for a Resources list. The [layout design](docs/HOLISTIC_LAYOUT.md) records the checks and cost gate.

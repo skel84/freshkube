@@ -1,6 +1,8 @@
 //! Kubernetes-only mode: no talosconfig. The kubeconfig's contexts fill the
 //! contexts list, the Resources page reads the chosen one directly, and the
 //! Talos pages wait for a talosconfig.
+use crate::state::Snapshot;
+
 use super::{PAGE_PADDING, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
@@ -85,6 +87,9 @@ impl Pilot {
     /// Reads the kubeconfig files and lists their contexts, then connects
     /// to the one asked for, or else the current one.
     pub(super) fn load_kube_contexts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.fixture {
+            return;
+        }
         let Some(kube) = self.kubernetes_only.as_ref() else {
             return;
         };
@@ -168,6 +173,13 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.fixture {
+            self.applied.context = context;
+            self.invalidate_target(window, cx);
+            self.refresh_summary(window, cx);
+            self.prepare_context_display(window, cx);
+            return;
+        }
         let Some(kube) = self.kubernetes_only.as_mut() else {
             return;
         };
@@ -177,6 +189,16 @@ impl Pilot {
         kube.access = context
             .clone()
             .map(|context| DirectAccess::new(kube.sources.clone(), context));
+        self.epoch = self.epoch.wrapping_add(1);
+        self.kubernetes_summary = Snapshot::default();
+        self.rebuild_joined_nodes();
+        self.node_workspace
+            .document
+            .update(cx, |pane, cx| pane.close(cx));
+        self.sync_node_visibility(window, cx);
+        self.summary_health = None;
+        self.summary_job = None;
+        self.summary_task = None;
         self.applied.context = context;
         self.push_source(window, cx);
         self.check_kube_connection(window, cx);
@@ -187,6 +209,9 @@ impl Pilot {
     /// whether the context answers. After a failure, the page lists again
     /// once it does.
     pub(super) fn check_kube_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.fixture {
+            return;
+        }
         let Some(kube) = self.kubernetes_only.as_mut() else {
             return;
         };
@@ -220,6 +245,7 @@ impl Pilot {
                 match result {
                     Ok(version) => {
                         kube.connection = KubeConnection::Connected { version };
+                        view.refresh_summary(window, cx);
                         if recovering {
                             view.resources
                                 .update(cx, |resources, cx| resources.refresh(window, cx));
@@ -230,9 +256,11 @@ impl Pilot {
                         kube.connection = KubeConnection::Failed(error);
                     }
                 }
+                view.prepare_context_display(window, cx);
                 cx.notify();
             });
         }));
+        self.prepare_context_display(window, cx);
         cx.notify();
     }
 
@@ -262,7 +290,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kubernetes_only.is_none() {
+        if self.fixture || self.kubernetes_only.is_none() {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {

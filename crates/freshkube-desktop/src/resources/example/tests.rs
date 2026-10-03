@@ -151,3 +151,48 @@ fn a_namespace_reads_only_its_objects() {
     let (_, nodes) = read("prod-fra", "nodes", Some("payments"), TEST_NOW).unwrap();
     assert_eq!(nodes.len(), fixture::kubernetes_nodes("prod-fra").len());
 }
+
+#[test]
+fn summary_matches_the_example_lists_and_owner_chain() {
+    for context in fixture::CONTEXTS {
+        let summary = summary(context, TEST_NOW);
+        assert_eq!(
+            summary.pods.loaded().unwrap().total,
+            read(context, "pods", None, TEST_NOW).unwrap().1.len()
+        );
+        assert_eq!(summary.namespaces.loaded(), Some(&namespaces().len()));
+        assert_eq!(
+            summary.claims.loaded().unwrap().pending[0].name,
+            "report-data"
+        );
+        let (_, rows) = read(context, "replicasets.apps", None, TEST_NOW).unwrap();
+        let (_, deployments) = read(context, "deployments.apps", None, TEST_NOW).unwrap();
+        for row in rows {
+            let object = document(&row.identity, TEST_NOW).unwrap();
+            let owner = &object.overview.owners[0];
+            assert_eq!(owner.kind, "Deployment");
+            assert!(
+                deployments
+                    .iter()
+                    .any(
+                        |deployment| deployment.identity.namespace == row.identity.namespace
+                            && deployment.identity.name == owner.name
+                            && deployment.identity.uid == owner.uid
+                    )
+            );
+        }
+    }
+}
+
+#[test]
+fn long_context_keeps_the_homelab_shape() {
+    let long = "talos-production-frankfurt-equinix-fr5-baremetal-b7";
+    assert_eq!(
+        read(long, "pods", None, TEST_NOW).unwrap().1.len(),
+        read("homelab", "pods", None, TEST_NOW).unwrap().1.len()
+    );
+    assert_eq!(
+        read(long, "nodes", None, TEST_NOW).unwrap().1.len(),
+        read("homelab", "nodes", None, TEST_NOW).unwrap().1.len()
+    );
+}
