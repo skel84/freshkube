@@ -47,7 +47,7 @@ use crate::desktop::{PAGE_PADDING, SIDEBAR_WIDTH};
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
 use crate::state::Snapshot;
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
+use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
 
 /// Upper bound for one screen request, including Kubernetes client setup.
 pub(crate) const SCREEN_DEADLINE: Duration = Duration::from_secs(60);
@@ -438,13 +438,7 @@ pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
         .child(
             v_flex()
                 .gap(dp(7.))
-                .child(
-                    div()
-                        .font_family(DISPLAY_FONT)
-                        .text_size(dp(28.))
-                        .line_height(dp(32.))
-                        .child(title),
-                )
+                .child(ui::page_title(title))
                 .when(!embedded, |this| this.child(scope_line)),
         )
         .child(div().flex_1())
@@ -695,7 +689,7 @@ pub(crate) fn stat(label: &str, value: impl Into<SharedString>, cx: &App) -> Div
         .child(ui::caption(label, cx))
         .child(
             div()
-                .font_family(DISPLAY_FONT)
+                .font_weight(ui::TITLE_WEIGHT)
                 .text_size(dp(18.))
                 .child(value.into()),
         )

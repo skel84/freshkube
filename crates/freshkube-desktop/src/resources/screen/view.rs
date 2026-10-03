@@ -128,13 +128,9 @@ impl ResourcesScreen {
                     .min_w(dp(240.))
                     .gap(dp(7.))
                     .child(
-                        div()
+                        ui::page_title(self.title())
                             .id("resource-title")
-                            .test_support()
-                            .font_family(DISPLAY_FONT)
-                            .text_size(dp(28.))
-                            .line_height(dp(32.))
-                            .child(self.title()),
+                            .test_support(),
                     )
                     .child(scope),
             )

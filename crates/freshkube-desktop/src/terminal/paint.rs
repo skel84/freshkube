@@ -31,7 +31,8 @@ pub(super) struct Fonts {
 impl Fonts {
     pub(super) fn new(family: SharedString, size: Pixels) -> Self {
         // Without ligatures characters show as typed, and shaping costs half:
-        // JetBrains Mono's contextual alternates were most of the paint.
+        // JetBrains Mono's contextual alternates were most of the paint
+        // (docs/PERFORMANCE.md); no mono face needs them here.
         let regular = Font {
             features: gpui_kit::FontFeatures::disable_ligatures(),
             ..font(family)

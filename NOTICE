@@ -10,16 +10,17 @@ alacritty_terminal 0.26.0
   Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
   Used unmodified, as a library.
 
-JetBrains Mono
-  https://github.com/JetBrains/JetBrainsMono
-  Copyright 2020 The JetBrains Mono Project Authors
+Lato
+  https://www.latofonts.com
+  Copyright (c) 2010-2014 by tyPoland Lukasz Dziedzic with Reserved Font Name "Lato"
   Licensed under the SIL Open Font License, Version 1.1; see
-  crates/freshkube-desktop/assets/fonts/OFL-JetBrainsMono.txt.
+  crates/freshkube-desktop/assets/fonts/OFL-Lato.txt.
 
-IBM Plex Sans Condensed
-  Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
+Source Code Pro
+  https://github.com/adobe-fonts/source-code-pro
+  Copyright 2023 Adobe, with Reserved Font Name 'Source'
   Licensed under the SIL Open Font License, Version 1.1; see
-  crates/freshkube-desktop/assets/fonts/OFL-IBMPlexSansCondensed.txt.
+  crates/freshkube-desktop/assets/fonts/OFL-SourceCodePro.txt.
 
 GPUI Kit 0.7.0 and gpui-pre 0.3.7
   The native UI toolkit and framework, used as libraries.

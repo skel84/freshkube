@@ -47,7 +47,7 @@ use crate::{
     mutation::{self, Confirmation, Operations},
     palette::palette,
     screens::{field, mono, page_body, page_scroll, panel},
-    ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp},
+    ui::{self, MONO_FONT, Tone, dp},
 };
 
 /// Cooperative cancellation handed to a runner; checked before each step.
@@ -922,7 +922,7 @@ fn readiness_rows(evidence: &BootstrapReadinessEvidence) -> Vec<(&'static str, T
 
 fn heading(text: &'static str) -> Div {
     div()
-        .font_family(DISPLAY_FONT)
+        .font_weight(ui::HEADING_WEIGHT)
         .text_size(dp(16.))
         .child(text)
 }

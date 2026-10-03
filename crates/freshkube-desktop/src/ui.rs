@@ -17,10 +17,22 @@ use gpui_kit::{
 use crate::palette::palette;
 use crate::presentation::{Health, MemoryLevel};
 
-/// Condensed face for headings, figures and uppercase labels.
-pub(crate) const DISPLAY_FONT: &str = "IBM Plex Sans Condensed SemiBold";
-/// Monospace face for hostnames, addresses, versions and logs.
-pub(crate) const MONO_FONT: &str = "JetBrains Mono";
+/// Monospace face for resource names, hostnames, addresses, numbers and
+/// logs. The interface face, Lato, is the theme's `font.family`.
+pub(crate) const MONO_FONT: &str = "Source Code Pro";
+/// Weight of page titles and figures.
+pub(crate) const TITLE_WEIGHT: FontWeight = FontWeight::BLACK;
+/// Weight of section headings and uppercase captions.
+pub(crate) const HEADING_WEIGHT: FontWeight = FontWeight::BOLD;
+
+/// A page's title.
+pub(crate) fn page_title(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(dp(22.))
+        .line_height(dp(28.))
+        .font_weight(TITLE_WEIGHT)
+        .child(text.into())
+}
 
 /// The theme's base text size at the default text size, in pixels. `dp`
 /// lengths are pixels at this size.
@@ -146,10 +158,10 @@ pub(crate) fn glyph(health: Health, cx: &App) -> AnyElement {
     }
 }
 
-/// Uppercase condensed caption used for section and field labels.
+/// Uppercase caption used for section, column and field labels.
 pub(crate) fn caption(text: &str, cx: &App) -> Div {
     div()
-        .font_family(DISPLAY_FONT)
+        .font_weight(HEADING_WEIGHT)
         .text_size(dp(11.))
         .text_color(palette(cx).muted)
         .whitespace_nowrap()
@@ -364,7 +376,7 @@ pub(crate) fn empty_state(
                         )
                         .title(
                             EmptyTitle::new()
-                                .font_family(DISPLAY_FONT)
+                                .font_weight(HEADING_WEIGHT)
                                 .text_size(dp(19.))
                                 .text_color(p.ink)
                                 .child(title.into()),

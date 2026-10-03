@@ -2,7 +2,7 @@
 use super::{PAGE_PADDING, Pilot, clock};
 use crate::palette::palette;
 use crate::presentation::{attention::Destination, overview::CardTarget};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Sizable,
@@ -143,12 +143,7 @@ impl Pilot {
                 h_flex()
                     .gap(dp(10.))
                     .flex_wrap()
-                    .child(
-                        div()
-                            .font_family(DISPLAY_FONT)
-                            .text_size(dp(28.))
-                            .child(context),
-                    )
+                    .child(ui::page_title(context))
                     .child(ui::tag(
                         if self.overview.is_stale() || self.kubernetes_summary.is_stale() {
                             Tone::Warn
@@ -208,7 +203,7 @@ impl Pilot {
                             .child(ui::caption(card.label, cx))
                             .child(
                                 div()
-                                    .font_family(DISPLAY_FONT)
+                                    .font_weight(ui::TITLE_WEIGHT)
                                     .text_size(dp(25.))
                                     .text_color(match card.tone {
                                         Tone::Good => p.good_ink,
@@ -365,7 +360,7 @@ impl Pilot {
             .gap(dp(10.))
             .child(
                 div()
-                    .font_family(DISPLAY_FONT)
+                    .font_weight(ui::HEADING_WEIGHT)
                     .text_size(dp(20.))
                     .child("Needs attention"),
             )

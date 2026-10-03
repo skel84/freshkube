@@ -581,22 +581,13 @@ impl LogView<TalosLogs> {
             .child(
                 v_flex()
                     .gap(ui::dp(7.))
-                    .child(
-                        h_flex()
-                            .gap_2p5()
-                            .child(
-                                div()
-                                    .font_family(ui::DISPLAY_FONT)
-                                    .text_size(ui::dp(28.))
-                                    .line_height(ui::dp(32.))
-                                    .child("Logs"),
-                            )
-                            .child(if self.source.collection_active {
-                                ui::tag(ui::Tone::Good, None, "Collecting", cx)
-                            } else {
-                                ui::tag(ui::Tone::Unknown, Some(IconName::Pause), "Stopped", cx)
-                            }),
-                    )
+                    .child(h_flex().gap_2p5().child(ui::page_title("Logs")).child(
+                        if self.source.collection_active {
+                            ui::tag(ui::Tone::Good, None, "Collecting", cx)
+                        } else {
+                            ui::tag(ui::Tone::Unknown, Some(IconName::Pause), "Stopped", cx)
+                        },
+                    ))
                     .child(
                         h_flex()
                             .gap_1p5()

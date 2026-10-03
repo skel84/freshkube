@@ -122,7 +122,7 @@ F3 (`ConsolePod`) opens on the cause: a "Why it's failing" card with the state, 
 
 Each step is its own commit (or a preparation commit and then the step), with UI tests where behaviour changes. The app stays usable after every step.
 
-1. **Tokens and type.** The dark theme and palette take the Console tokens; Lato and Source Code Pro replace IBM Plex Sans Condensed and JetBrains Mono; radii follow the table above. Until a Console light mode is designed, the light theme keeps its colours and takes only the new type and radii.
+1. **Tokens and type** (done). The dark theme and palette take the Console tokens; Lato and Source Code Pro replace IBM Plex Sans Condensed and JetBrains Mono; radii follow the table above. Until a Console light mode is designed, the light theme keeps its colours and takes only the new type and radii.
 2. **Status glyphs.** One glyph set for the status language, used by every tag, list and attention row, each with a tooltip.
 3. **App frame.** Header, icon rail, contextual second column and status bar replace today's sidebar and title bar, keeping every page, shortcut and key context.
 4. **Tables.** The F2″ rules on the Resources list, starting with pods: toolbar, density, glyph column, merged cells, Owner, mini bars, name shortening and tooltips; then problems-first grouping for the causes core can establish.

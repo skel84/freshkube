@@ -39,7 +39,7 @@ use crate::backend::{self, OwnedJob};
 use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
 use crate::screens::{LiveSource, SCREEN_DEADLINE, content_width, mono, panel};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, clock, dp, dp_px};
+use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.

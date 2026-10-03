@@ -221,12 +221,7 @@ impl Render for SystemServices {
             .size_full()
             .p(dp(20.))
             .gap_3()
-            .child(
-                div()
-                    .text_size(dp(28.))
-                    .font_family(ui::DISPLAY_FONT)
-                    .child("System services"),
-            )
+            .child(ui::page_title("System services"))
             .child(
                 h_flex()
                     .gap_2()

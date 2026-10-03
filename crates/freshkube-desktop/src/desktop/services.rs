@@ -5,7 +5,7 @@ use crate::backend;
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::{self, Health};
-use crate::ui::{self, DISPLAY_FONT, MONO_FONT, Tone, dp};
+use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -104,39 +104,31 @@ impl Pilot {
             .items_end()
             .gap_3()
             .flex_wrap()
-            .child(
-                v_flex()
-                    .gap(dp(7.))
-                    .child(
-                        div()
-                            .font_family(DISPLAY_FONT)
-                            .text_size(dp(28.))
-                            .line_height(dp(32.))
-                            .child("Services"),
+            .child(v_flex().gap(dp(7.)).child(ui::page_title("Services")).when(
+                self.page != Page::Nodes,
+                |this| {
+                    this.child(
+                        h_flex()
+                            .gap_1p5()
+                            .text_size(dp(12.5))
+                            .text_color(p.muted)
+                            .child("on")
+                            .child(
+                                div()
+                                    .font_family(MONO_FONT)
+                                    .text_size(dp(12.))
+                                    .child(node.name.clone()),
+                            )
+                            .child("·")
+                            .child(
+                                div()
+                                    .font_family(MONO_FONT)
+                                    .text_size(dp(12.))
+                                    .child(node.address.clone()),
+                            ),
                     )
-                    .when(self.page != Page::Nodes, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1p5()
-                                .text_size(dp(12.5))
-                                .text_color(p.muted)
-                                .child("on")
-                                .child(
-                                    div()
-                                        .font_family(MONO_FONT)
-                                        .text_size(dp(12.))
-                                        .child(node.name.clone()),
-                                )
-                                .child("·")
-                                .child(
-                                    div()
-                                        .font_family(MONO_FONT)
-                                        .text_size(dp(12.))
-                                        .child(node.address.clone()),
-                                ),
-                        )
-                    }),
-            )
+                },
+            ))
             .child(div().flex_1())
             .child(
                 Button::new("refresh-services")

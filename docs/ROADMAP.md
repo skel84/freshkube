@@ -55,6 +55,7 @@ These hold for every step until a later one deliberately changes them.
 | Holistic layout step 7 preparation: isolate the existing debug page entry points without changing navigation | Done | the commit that adds this row |
 | Holistic layout step 7: docs, 48 fixture visual combinations, minimum-window navigation and clipping regressions | Done | the commit that adds this row |
 | Layout and macOS packaging integration | Preserve the complete layout, native packaging and remembered Finder selection; config persistence regression uses the new context switcher | the commit that adds this row |
+| Console 1. Tokens and type | The dark theme, palette and terminal take the Console tokens; Lato (400, 700, 900) and Source Code Pro (400, 600) replace IBM Plex Sans Condensed and JetBrains Mono in both modes; page titles are 22 px Black, headings and captions Bold; radii 8 and 12. The light theme keeps its colours until a Console light mode is designed ([DESIGN.md](DESIGN.md)) | the commit that adds this row |
 
 ## Next: finish Kubernetes browsing
 
@@ -75,7 +76,7 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 
 The visual direction chosen on the design canvas: Console tokens and type, one status glyph language, a header with an icon rail and a contextual second column, dense problems-first tables and a pod detail that opens on the cause. The decisions, the open questions and the five-step build order are in [DESIGN.md](DESIGN.md).
 
-1. Tokens and type.
+1. Tokens and type. Done.
 2. Status glyphs.
 3. App frame.
 4. Tables, pods first.
