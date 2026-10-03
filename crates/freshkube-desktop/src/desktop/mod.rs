@@ -313,7 +313,6 @@ pub(crate) struct Pilot {
     selected_service: Option<String>,
     logs: Entity<LogPanel>,
     countdown: Entity<Countdown>,
-    fps: Entity<shell::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
     forwards: Entity<ForwardsIndicator>,
     overview_page: Entity<PageHost>,
@@ -652,7 +651,6 @@ impl Pilot {
             selected_service: None,
             logs,
             countdown,
-            fps: cx.new(shell::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
             overview_page,
             services_page,

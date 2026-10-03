@@ -499,7 +499,6 @@ impl Pilot {
 mod column;
 mod context;
 pub(super) use context::ContextDisplay;
-pub(super) mod fps;
 mod frame;
 use frame::settings_content;
 mod header;

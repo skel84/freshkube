@@ -68,12 +68,6 @@ snapshots, at most eight active snapshots and a 100,000-event replay ring shared
 by typed and Table watches. A replay gap produces a 410 rather than missing
 deletes silently. Process memory includes that API and its replay ring.
 
-The bottom bar's FPS indicator passively samples painted frames during activity;
-it never requests a continuous animation. It refreshes its own label at most
-once a second: green at 55+, amber at 30–54, red below 30. Gaps of 250 ms or more
-and samples with fewer than three frame intervals are neutral idle readings.
-This is redraw cadence during bursts, not a GPU throughput benchmark.
-
 When a number looks wrong, profile the run with macOS `sample`:
 
 ```sh
