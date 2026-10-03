@@ -300,6 +300,9 @@ impl Pilot {
         if kube.revision_check.is_some() {
             return;
         }
+        let retrying = matches!(kube.connection, KubeConnection::Failed(_));
+        let previous = retrying.then(|| kube.connection.clone());
+        let connection_generation = kube.connection_generation;
         let sources = kube.sources.clone();
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
@@ -323,16 +326,31 @@ impl Pilot {
                     return;
                 }
                 kube.revision_check = None;
+                // Local inspection is part of the retry. Restore its previous
+                // failure before deciding whether to reconnect or ask about a
+                // replacement; a newer connection attempt owns its own state.
+                if kube.connection_generation == connection_generation
+                    && let Some(previous) = previous
+                {
+                    kube.connection = previous;
+                }
                 match result {
                     Ok(report) => view.kubeconfig_checked(access, report, window, cx),
                     Err(error) => {
                         kube.connection = KubeConnection::Failed(error);
                     }
                 }
+                view.prepare_context_display(window, cx);
                 cx.notify();
             });
         });
-        self.kubernetes_only.as_mut().unwrap().revision_check = Some((job, task));
+        let kube = self.kubernetes_only.as_mut().unwrap();
+        kube.revision_check = Some((job, task));
+        if retrying {
+            kube.connection = KubeConnection::Connecting;
+            self.prepare_context_display(window, cx);
+            cx.notify();
+        }
     }
 
     fn kubeconfig_checked(
