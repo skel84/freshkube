@@ -1,9 +1,10 @@
 # macOS application packaging
 
 Freshkube packages as two separate `Freshkube.app` bundles for macOS 15 or
-later. The current pipeline ad-hoc signs them without Apple credentials. These
-are development artifacts, **not notarized distributables**. No workflow creates
-repositories, tags or GitHub Releases.
+later. The pipeline ad-hoc signs them without Apple credentials, so they are
+**not notarized distributables**. A version tag drafts a GitHub pre-release from
+the bundles `main` already built; a person publishes it
+([Releases](#releases)).
 
 ## Build locally
 
@@ -46,13 +47,26 @@ Homebrew installation. Cross builds need the Rust target installed and a suitabl
 SDK; their CLI smoke test is skipped. CI uses native hosts for both architectures.
 The app currently uses the system's generic application icon.
 
-## CI and release candidates
+## CI
 
-[CI](../.github/workflows/ci.yml) is configured for pushes to `main` and pull requests
-against `main`. It runs formatting, Clippy and the workspace tests (including
-headless UI tests), and calls the shared
-[macOS packaging workflow](../.github/workflows/macos-app.yml). Packaging uses
-these standard native runners:
+[CI](../.github/workflows/ci.yml) runs on pull requests against `main`, on pushes
+to `main` and by hand:
+
+| Event | Checks (fmt, Clippy, tests) | Both app bundles |
+| --- | --- | --- |
+| Pull request | Yes | No |
+| Push to `main` (a merge) | Yes | Yes, kept 90 days |
+| Run by hand on a branch | Yes | Yes |
+
+The checks are formatting, Clippy with warnings denied and the workspace tests,
+including headless UI tests. A change that touches only `spikes/`, `docs/` or
+Markdown files skips them; the skipped job counts as passed, so it never blocks
+a merge. A spike has its own workspace and tests that CI doesn't run. A new push
+to a pull request cancels its previous run.
+
+The bundles come from the shared
+[macOS packaging workflow](../.github/workflows/macos-app.yml), on these standard
+native runners:
 
 | Rust target | GitHub runner | Executable architecture |
 | --- | --- | --- |
@@ -64,34 +78,67 @@ These labels are listed for both public and private repositories in
 (checked 2 October 2026). Each job checks Rust's host triple to catch a changed
 runner architecture.
 
-[Package release candidate](../.github/workflows/release.yml) runs **only** via
-`workflow_dispatch` and invokes the same checks and packaging at the selected
-branch or existing tag. In Actions, choose that workflow, **Run workflow**, and
-the branch to review. An existing tag can be selected
-with `gh workflow run release.yml --repo skel84/freshkube --ref <tag>`. A candidate is acceptable only when the whole run is green;
-artifacts from an otherwise failed CI run are diagnostic builds. Version tags
-alone trigger nothing. The old cargo-dist publishing workflow, shell installer,
-updater configuration and dist profile have been removed; do not regenerate the
-legacy workflow with `cargo dist init`.
+Each architecture uploads a `freshkube-<target>` artifact containing the ZIP,
+checksum and manifest, kept for 90 days, the longest GitHub allows, because a
+release promotes these files. The `.app` is archived with `ditto` before upload,
+so the GitHub artifact wrapper cannot strip its executable permissions. To get
+bundles of a branch before merging it, run CI by hand: in
+[Actions](https://github.com/skel84/freshkube/actions/workflows/ci.yml), **Run
+workflow** on the branch, or
+`gh workflow run ci.yml --repo skel84/freshkube --ref <branch>`. Artifacts from a
+run that failed anywhere are diagnostic builds only.
+
+CI has only `contents: read` permission and needs no Apple secrets. The old
+cargo-dist publishing workflow, shell installer, updater configuration and dist
+profile have been removed; do not regenerate them with `cargo dist init`.
+
+## Releases
+
+A release ships the bundles `main` built for the release commit; it never
+compiles again. [Release](../.github/workflows/release.yml) runs when a tag
+`v*` is pushed:
+
+1. It checks that the tag is `v` plus the `workspace.package` version in
+   `Cargo.toml`, and that the tagged commit is on `main`.
+2. It finds the successful CI run of that commit on `main` and downloads both
+   bundles. Without one (still running, failed, skipped or expired) it stops and
+   says so; it never builds a replacement.
+3. It verifies each ZIP against its checksum, and each manifest's version,
+   target, source commit and clean tree against the tag.
+4. It takes the release notes from the `## <version>` section of
+   `CHANGELOG.md`, adds install instructions, and creates a **draft
+   pre-release** with the ZIPs, checksums and manifests.
+
+To release:
+
+1. Open a pull request that sets the version in `Cargo.toml` (and `Cargo.lock`)
+   and renames the changelog's Unreleased section to `## <version> (<date>)`.
+2. Merge it, and wait for CI on `main` to finish both bundles.
+3. Tag the merge commit and push the tag:
+   `git tag -a v<version> -m "Freshkube <version>" <commit>` then
+   `git push origin v<version>`.
+4. Review the draft on the
+   [Releases page](https://github.com/skel84/freshkube/releases), and publish it.
+
+To retry after a failure, fix the cause, delete the tag
+(`git push origin :refs/tags/v<version>`, and any draft it left), and push it
+again. Release needs `contents: write` to create the draft and `actions: read` to
+download CI's artifacts, and nothing else.
+
+Releases stay pre-releases while they are ad-hoc signed. Developer ID signing
+and notarization would be added to the Release workflow, after the download and
+before the draft ([Trusted distribution prerequisites](#trusted-distribution-prerequisites)).
 
 The destination is the public [skel84/freshkube repository](https://github.com/skel84/freshkube).
-Cargo metadata and artifact manifests refer to that destination. The manual
-workflow is available from its default branch in [Actions](https://github.com/skel84/freshkube/actions).
+Cargo metadata and artifact manifests refer to that destination.
 
-Both workflows have only `contents: read` permission and need no Apple secrets.
-Each architecture uploads a `freshkube-<target>` artifact for 14 days, containing
-the ZIP, checksum and manifest. The `.app` is archived with `ditto` before upload,
-so the GitHub artifact wrapper cannot strip its executable permissions.
+## Install a release
 
-A future release flow should explicitly approve a versioned commit, run this
-candidate workflow, validate both downloaded architectures and LAN access,
-complete signing and notarization, and only then create and publish a release in
-the chosen repository. No publication step is enabled here.
-
-## Install a workflow artifact
-
-Download the artifact for your Mac from the successful run's Actions page and
-extract GitHub's outer artifact ZIP. In the extracted directory:
+Download the ZIP and its `.sha256` for your Mac from the
+[Releases page](https://github.com/skel84/freshkube/releases): `aarch64` for
+Apple silicon, `x86_64` for Intel. For a build from a CI run instead, download
+the `freshkube-<target>` artifact from the run's page and extract GitHub's outer
+artifact ZIP. In the directory with the files:
 
 ```sh
 shasum -a 256 -c Freshkube-*-adhoc.zip.sha256

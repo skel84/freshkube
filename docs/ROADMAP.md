@@ -17,6 +17,7 @@ These hold for every step until a later one deliberately changes them.
 | Step | What landed | Commit |
 | --- | --- | --- |
 | Attention derivation ([#8](https://github.com/skel84/freshkube/issues/8)) | Category builders separate node problems, services, pods, workloads, claims and etcd from final ordering and grouping. Row identities, severity, destinations and limits are preserved; focused regression tests cover partial sources, unknown health, object links, alarms and per-node retention | the commit that adds this row |
+| Pipeline and releases | Pull requests run the checks, skipped when only spikes, docs or Markdown change; merges to `main` also build both bundles, kept 90 days; a `v*` tag promotes `main`'s bundles for that commit, verified against checksum and manifest, to a draft pre-release with notes from the changelog. Nothing is rebuilt for a release ([MACOS_PACKAGING.md](MACOS_PACKAGING.md#releases)) | the commit that adds this row |
 | Foundation | talos-pilot fork renamed to Freshkube; the GPUI Kit app is the only frontend | `c878fa9` |
 | 1. Core | Read-only listing and watching of any kind through the server-side Table API (kube 0.98), checked against a live cluster | `86294f9` |
 | 2a. Browse | KUBERNETES sidebar groups in Kubeli's order; one Resources page with a live list and watch, namespace picker and filter; Talos mode reads through the Talos-derived Kubernetes client | `361b9d5` |

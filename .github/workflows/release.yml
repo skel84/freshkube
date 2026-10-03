@@ -1,13 +1,111 @@
-# Release candidates are artifacts only. Publishing needs a separate decision.
-name: Package release candidate
+name: Release
 
+# Pushing a tag vX.Y.Z drafts a GitHub Release from the bundles CI built for
+# that commit on main. Nothing is compiled here: the release ships the files
+# that were checked and built. Publishing the draft is a person's decision.
 on:
-  workflow_dispatch:
+  push:
+    tags: ['v*']
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+
 jobs:
-  candidate:
-    name: Check and package selected revision
-    uses: ./.github/workflows/ci.yml
+  draft:
+    name: Draft release from main's bundles
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the draft release
+      actions: read # find and download main's bundles
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG doesn't match the version in Cargo.toml ($version)."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG points at $SHA, which isn't on main."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Find main's build of this commit
+        run: |
+          run=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=$SHA&status=success" \
+            --jq '.workflow_runs[0].id // empty')
+          if [ -z "$run" ]; then
+            echo "::error::No successful CI run on main for $SHA. Wait for it, or re-run it, then push the tag again."
+            exit 1
+          fi
+          echo "Promoting run https://github.com/$GH_REPO/actions/runs/$run"
+          echo "RUN=$run" >> "$GITHUB_ENV"
+
+      - name: Download and verify the bundles
+        run: |
+          names=()
+          for target in $TARGETS; do names+=(-n "freshkube-$target"); done
+          if ! gh run download "$RUN" "${names[@]}" -D dist; then
+            echo "::error::Run $RUN has no bundles to promote; they may have expired (90 days) or been skipped."
+            exit 1
+          fi
+          for target in $TARGETS; do
+            dir="dist/freshkube-$target"
+            base="Freshkube-$VERSION-$target-adhoc"
+            (cd "$dir" && sha256sum -c "$base.zip.sha256")
+            python3 - "$dir/$base.json" "$VERSION" "$target" "$SHA" <<'EOF'
+          import json, sys
+          path, version, target, sha = sys.argv[1:]
+          manifest = json.load(open(path))
+          expected = {"version": version, "target": target, "source_commit": sha, "source_dirty": False}
+          wrong = {k: manifest.get(k) for k, v in expected.items() if manifest.get(k) != v}
+          if wrong:
+              sys.exit(f"::error::{path} doesn't match the tag: {wrong}")
+          EOF
+          done
+
+      - name: Write the release notes
+        run: |
+          python3 - "$VERSION" > notes.md <<'EOF'
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          match = re.search(rf"^## {re.escape(version)}\b.*?\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+          if not match:
+              sys.exit(f"::error::CHANGELOG.md has no '## {version}' section.")
+          print(match.group(1).strip())
+          print("""
+          ## Install
+
+          Download the ZIP for your Mac: `aarch64` for Apple silicon, `x86_64` for Intel.
+          These builds are ad-hoc signed and not notarized, so macOS blocks the first
+          open: try to open Freshkube, then choose **System Settings → Privacy & Security
+          → Open Anyway**. Check a download with `shasum -a 256 -c <file>.zip.sha256`.
+          See [macOS packaging](https://github.com/skel84/freshkube/blob/main/docs/MACOS_PACKAGING.md#install-a-release).""")
+          EOF
+          cat notes.md
+
+      - name: Create the draft
+        run: |
+          gh release create "$TAG" --draft --prerelease --verify-tag \
+            --title "Freshkube $VERSION" --notes-file notes.md \
+            dist/freshkube-*/Freshkube-*

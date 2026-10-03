@@ -1,14 +1,23 @@
 name: CI
 
+# Pull requests run the checks. Pushes to main also build both app bundles,
+# which a release later promotes as they are (release.yml). Run it by hand on a
+# branch to get bundles before merging. Changes only to spikes/, docs/ or
+# Markdown files skip the checks; a skipped required check counts as passed.
 on:
-  workflow_call:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  # A new push to a pull request replaces its run; every other run finishes.
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,17 +26,54 @@ env:
 # macOS is the only verified platform. GPUI's Linux and Windows builds need
 # their own system dependencies and checks before they are added here.
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Did the app change?
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$BASE" "$HEAD" > changed.txt
+          cat changed.txt
+          if grep -Ev '^(spikes|docs)/|\.md$' changed.txt > /dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Only spikes, docs or Markdown changed; skipping the checks."
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          fi
+
   check:
     name: Check, lint and test (macOS)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - name: Install build tools
         run: brew install protobuf
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore main's cache but don't save their own.
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -37,4 +83,6 @@ jobs:
 
   build:
     name: macOS application bundles
+    needs: check
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/macos-app.yml
