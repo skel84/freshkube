@@ -8,6 +8,16 @@ Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pil
 
 **Status:** macOS is the only verified platform.
 
+## Installing
+
+Freshkube needs macOS 15 or later, on Apple silicon or Intel. Install it with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask skel84/tap/freshkube
+```
+
+This puts `Freshkube.app` in `/Applications` and links the `freshkube` command; `brew upgrade --cask freshkube` updates it. Builds are ad-hoc signed and not notarized, so macOS blocks the first open: open Freshkube once, then choose **System Settings → Privacy & Security → Open Anyway**. You can also download a ZIP from the [Releases page](https://github.com/skel84/freshkube/releases) ([installing by hand](docs/MACOS_PACKAGING.md#install-a-release)).
+
 ## Features
 
 | Page | What it shows |
@@ -69,7 +79,7 @@ cargo build --release
 ./target/release/freshkube
 ```
 
-There are no published Freshkube releases yet. The [macOS packaging guide](docs/MACOS_PACKAGING.md) covers local `.app` builds, CI artifacts and signing prerequisites. CI produces ad-hoc signed development bundles for Apple Silicon and Intel; these are not notarized. A Nix flake is included (`nix run .` or `nix develop`).
+The [macOS packaging guide](docs/MACOS_PACKAGING.md) covers local `.app` builds, CI artifacts and signing prerequisites. CI produces ad-hoc signed development bundles for Apple Silicon and Intel; these are not notarized. A Nix flake is included (`nix run .` or `nix develop`).
 
 ## Usage
 
