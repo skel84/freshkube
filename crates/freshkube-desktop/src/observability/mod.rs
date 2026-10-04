@@ -505,6 +505,7 @@ impl Render for ObservabilityPage {
             .child(
                 div()
                     .id("obs-scroll")
+                    .test_support()
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()

@@ -214,7 +214,7 @@ impl Pilot {
                                         .right(dp(3.))
                                         .size(dp(7.))
                                         .rounded_full()
-                                        .bg(p.crit),
+                                        .bg(if self.fixture { p.crit } else { p.muted }),
                                 )
                             },
                             |this| {
@@ -225,8 +225,8 @@ impl Pilot {
                                         .top(dp(5.))
                                         .px(dp(5.))
                                         .rounded_full()
-                                        .bg(p.crit)
-                                        .text_color(p.on_fill)
+                                        .bg(if self.fixture { p.crit } else { p.surface })
+                                        .text_color(if self.fixture { p.on_fill } else { p.ink_2 })
                                         .text_size(dp(11.))
                                         .child(count.to_string()),
                                 )

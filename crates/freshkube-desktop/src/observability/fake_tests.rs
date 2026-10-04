@@ -387,6 +387,22 @@ async fn incidents_keep_identity_stale_evidence_and_read_only_links(cx: &mut Tes
     incident_loaded(cx, handle, &page).await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        for _ in 0..20 {
+            if window
+                .find("obs-incident-app-cluster-a:prod:Deployment:worker")
+                .visible()
+            {
+                break;
+            }
+            window.scroll(
+                "obs-scroll",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-100.),
+                )),
+                cx,
+            );
+        }
         window.click("obs-incident-app-cluster-a:prod:Deployment:worker", cx);
         assert_eq!(
             page.read(cx).selected_app.as_ref().unwrap().as_str(),
