@@ -3,13 +3,13 @@
 use super::Pilot;
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
-use crate::ui::{MONO_FONT, dp};
+use crate::ui::{self, MONO_FONT, dp};
 use freshkube_core::cluster_overview::{
     KubeconfigFileInfo, KubeconfigSelection, inspect_kubeconfig,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Disableable, Icon, Selectable, Sizable,
+    Disableable, Icon, Sizable,
     button::{Button, ButtonGroup},
     h_flex,
     popover::PopoverState,
@@ -236,24 +236,24 @@ pub(super) fn settings_section(
             ButtonGroup::new("kubeconfig-mode")
                 .outline()
                 .small()
-                .child(
+                .child(ui::choice(
                     Button::new("kubeconfig-automatic")
                         .label("Automatic")
-                        .selected(mode == KubeconfigMode::Automatic)
                         .disabled(fixture),
-                )
-                .child(
+                    mode == KubeconfigMode::Automatic,
+                ))
+                .child(ui::choice(
                     Button::new("kubeconfig-talos")
                         .label("From Talos")
-                        .selected(mode == KubeconfigMode::TalosControlPlane)
                         .disabled(fixture),
-                )
-                .child(
+                    mode == KubeconfigMode::TalosControlPlane,
+                ))
+                .child(ui::choice(
                     Button::new("kubeconfig-file")
                         .label("File")
-                        .selected(mode == KubeconfigMode::File)
                         .disabled(fixture),
-                )
+                    mode == KubeconfigMode::File,
+                ))
                 .on_click(move |selected: &Vec<usize>, window, cx| {
                     let mode = match selected.first() {
                         Some(1) => KubeconfigMode::TalosControlPlane,

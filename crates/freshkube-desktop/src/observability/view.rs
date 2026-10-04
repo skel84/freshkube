@@ -93,12 +93,35 @@ pub(super) fn pair(label: &'static str, value: impl Into<SharedString>, cx: &App
 }
 
 impl ObservabilityPage {
+    /// The one empty state before Coroot answers: what it adds, then the
+    /// form or project picker that gets there.
     pub(super) fn render_unavailable(&self, cx: &Context<Self>) -> AnyElement {
-        v_flex().id("obs-integration-required").test_support().gap(dp(16.)).max_w(dp(600.)).pt(dp(60.))
-            .child(line().child(status(Status::Integration,cx)).child(ui::page_title("Integration required")))
-            .child(text("Connect Coroot to inspect application health, service dependencies and supported report evidence."))
-            .child(muted("Enter a reachable Coroot URL, connect, and explicitly choose a project above.",cx))
-            .child(action("obs-open-dashboards","Open Prometheus dashboards").on_click(cx.listener(|_,_,_,cx|cx.emit(ObservabilityEvent::Dashboards)))).into_any_element()
+        let p = palette(cx);
+        v_flex()
+            .id("obs-integration-required")
+            .test_support()
+            .gap(dp(16.))
+            .pt(dp(24.))
+            .child(
+                v_flex()
+                    .gap(dp(6.))
+                    .max_w(dp(560.))
+                    .child(line().child(status(Status::Integration, cx)).child(ui::page_title("Connect Coroot")))
+                    .child(text("Application health, service dependencies and report evidence, read from your Coroot server.").text_color(p.ink_2)),
+            )
+            .child(self.render_connection(cx))
+            .child(
+                line()
+                    .child(muted("Prometheus dashboards work without Coroot.", cx))
+                    .child(
+                        Button::new("obs-open-dashboards")
+                            .link()
+                            .small()
+                            .label("Open dashboards")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::Dashboards))),
+                    ),
+            )
+            .into_any_element()
     }
     pub(super) fn breadcrumbs(
         &self,

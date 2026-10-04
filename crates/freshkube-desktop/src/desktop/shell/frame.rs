@@ -332,21 +332,18 @@ pub(super) fn settings_content(
                     ButtonGroup::new("appearance")
                         .outline()
                         .small()
-                        .child(
-                            Button::new("appearance-system")
-                                .label("System")
-                                .selected(appearance == Appearance::System),
-                        )
-                        .child(
-                            Button::new("appearance-light")
-                                .label("Light")
-                                .selected(appearance == Appearance::Light),
-                        )
-                        .child(
-                            Button::new("appearance-dark")
-                                .label("Dark")
-                                .selected(appearance == Appearance::Dark),
-                        )
+                        .child(ui::choice(
+                            Button::new("appearance-system").label("System"),
+                            appearance == Appearance::System,
+                        ))
+                        .child(ui::choice(
+                            Button::new("appearance-light").label("Light"),
+                            appearance == Appearance::Light,
+                        ))
+                        .child(ui::choice(
+                            Button::new("appearance-dark").label("Dark"),
+                            appearance == Appearance::Dark,
+                        ))
                         .on_click(move |selected: &Vec<usize>, window, cx| {
                             let choice = match selected.first() {
                                 Some(0) => Appearance::System,
@@ -371,12 +368,12 @@ pub(super) fn settings_content(
                         .fold(
                             ButtonGroup::new("text-size").outline().small(),
                             |group, size| {
-                                group.child(
+                                group.child(ui::choice(
                                     Button::new(("text-size", *size as usize))
                                         .label(format!("{size:.0}"))
-                                        .selected(*size == text_size)
                                         .tooltip("Command-= and Command-- step the size; Command-0 resets it"),
-                                )
+                                    *size == text_size,
+                                ))
                             },
                         )
                         .on_click(|selected: &Vec<usize>, _, cx| {

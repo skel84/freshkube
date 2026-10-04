@@ -93,34 +93,36 @@ impl ObservabilityPage {
         let filters = line()
             .flex_wrap()
             .children(Filter::ALL.into_iter().enumerate().map(|(ix, filter)| {
-                Button::new(SharedString::from(format!("obs-filter-{}", filter.slug())))
-                    .outline()
-                    .group("fog-control")
-                    .small()
-                    .rounded_full()
-                    .selected(self.filter == filter)
-                    .when(
-                        !matches!(filter, Filter::All | Filter::Problems),
-                        |button| {
-                            button.child(status(
-                                match filter {
-                                    Filter::Critical => Status::Critical,
-                                    Filter::Warning => Status::Warning,
-                                    Filter::Logs => Status::LogError,
-                                    Filter::Integration => Status::Unknown,
-                                    _ => Status::Ok,
-                                },
-                                cx,
-                            ))
-                        },
-                    )
-                    .child(text(self.count_labels[ix].clone()))
-                    .accessibility_label(self.count_labels[ix].clone())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.filter = filter;
-                        this.project();
-                        cx.notify();
-                    }))
+                ui::choice(
+                    Button::new(SharedString::from(format!("obs-filter-{}", filter.slug())))
+                        .outline()
+                        .group("fog-control")
+                        .small()
+                        .rounded_full(),
+                    self.filter == filter,
+                )
+                .when(
+                    !matches!(filter, Filter::All | Filter::Problems),
+                    |button| {
+                        button.child(status(
+                            match filter {
+                                Filter::Critical => Status::Critical,
+                                Filter::Warning => Status::Warning,
+                                Filter::Logs => Status::LogError,
+                                Filter::Integration => Status::Unknown,
+                                _ => Status::Ok,
+                            },
+                            cx,
+                        ))
+                    },
+                )
+                .child(text(self.count_labels[ix].clone()))
+                .accessibility_label(self.count_labels[ix].clone())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.filter = filter;
+                    this.project();
+                    cx.notify();
+                }))
             }));
         let header = h_flex()
             .h(dp(30.))
@@ -159,7 +161,11 @@ impl ObservabilityPage {
                 |this| {
                     this.child(
                         body()
-                            .child(text(if self.applications.is_empty() {"No applications were returned"} else {"No applications match these filters"}))
+                            .child(text(if self.applications.is_empty() {
+                                "No applications were returned"
+                            } else {
+                                "No applications match these filters"
+                            }))
                             .child(muted(
                                 "Clear the search or choose All to see every application.",
                                 cx,
@@ -175,7 +181,7 @@ impl ObservabilityPage {
                     .border_t_1()
                     .border_color(p.line)
                     .child(muted(
-                        "Healthy, unknown and not reported are distinct · Coroot supplies each check",
+                        "● healthy · ○ unknown · — not reported · Coroot supplies each check",
                         cx,
                     )),
             );
@@ -274,14 +280,16 @@ impl ObservabilityPage {
                             } else {
                                 p.muted
                             })
-                            .when(check.status != Status::Ok, |button| {
-                                button.child(status(check.status, cx))
+                            .child(status(check.status, cx))
+                            .when(!check.value.is_empty(), |button| {
+                                button.child(
+                                    text(check.value.clone())
+                                        .truncate()
+                                        .group_hover("fog-control", |style| {
+                                            style.text_color(p.ink_2)
+                                        }),
+                                )
                             })
-                            .child(
-                                text(check.value.clone())
-                                    .truncate()
-                                    .group_hover("fog-control", |style| style.text_color(p.ink_2)),
-                            )
                             .tooltip(check.tooltip.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_app(app_id.clone(), report, cx)

@@ -240,14 +240,79 @@ pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
     let apps = applications();
     let value = apps.iter().find(|a| a.id == *app);
     let worker = *app == id(WORKER);
-    let reports = ["SLO","Instances","CPU","Memory","Storage","Net","DNS","Logs"].into_iter().map(|name| {
-        let problem=worker && matches!(name,"Net"|"Instances"|"Logs");
-        api::Report {name:name.into(),status:if problem {api::Status::Critical} else {api::Status::Unknown},
-            issues:if problem {vec![api::Issue {id:format!("{name}Check"),title:"Connection errors".into(),status:api::Status::Critical,message:"The worker cannot connect to ledger-db:5432. The Service exposes port 6432.".into()}]} else {vec![]},
-            charts:if extended && name=="CPU" { vec![api::Chart {title:"CPU usage (cores)".into(),series:vec![api::SeriesSummary {name:"worker".into(),last:Some(0.1),min:Some(0.0),max:Some(0.2),avg:Some(0.1),sparkline:vec![Some(0.1),None,Some(0.2)],..Default::default()}],series_omitted:0}] } else {vec![]},
-            log_patterns:if extended && name=="Logs" {vec![api::LogPatternSummary {hash:"example-connect".into(),severity:"error".into(),sample:"Connection refused (sanitized example)".into(),messages:212}]} else {vec![]},
+    // Each report takes the worst of the checks the matrix shows for it, so
+    // the report agrees with the row the user opened it from.
+    let reports = [
+        "SLO",
+        "Instances",
+        "CPU",
+        "Memory",
+        "Storage",
+        "Net",
+        "DNS",
+        "Logs",
+    ]
+    .into_iter()
+    .map(|name| {
+        let checks: Vec<_> = Report::ALL
+            .into_iter()
+            .filter(|r| r.server_name() == name)
+            .filter_map(|r| Some((r, value?.signals.get(r.signal())?)))
+            .collect();
+        let status = checks
+            .iter()
+            .map(|(_, signal)| signal.status)
+            .max()
+            .unwrap_or_default();
+        let issues = checks
+            .iter()
+            .filter(|(_, signal)| signal.status > api::Status::Info)
+            .map(|(report, signal)| api::Issue {
+                id: format!("{}Check", report.label().replace(' ', "")),
+                title: issue_title(*report).into(),
+                status: signal.status,
+                message: if worker && *report == Report::Net {
+                    "The worker cannot connect to ledger-db:5432. The Service exposes port 6432."
+                        .into()
+                } else {
+                    format!("{} reported {}.", report.label(), signal.value)
+                },
+            })
+            .collect();
+        api::Report {
+            name: name.into(),
+            status,
+            issues,
+            charts: if extended && name == "CPU" {
+                vec![api::Chart {
+                    title: "CPU usage (cores)".into(),
+                    series: vec![api::SeriesSummary {
+                        name: "worker".into(),
+                        last: Some(0.1),
+                        min: Some(0.0),
+                        max: Some(0.2),
+                        avg: Some(0.1),
+                        sparkline: vec![Some(0.1), None, Some(0.2)],
+                        ..Default::default()
+                    }],
+                    series_omitted: 0,
+                }]
+            } else {
+                vec![]
+            },
+            log_patterns: if extended && worker && name == "Logs" {
+                vec![api::LogPatternSummary {
+                    hash: "example-connect".into(),
+                    severity: "error".into(),
+                    sample: "Connection refused (sanitized example)".into(),
+                    messages: 212,
+                }]
+            } else {
+                vec![]
+            },
         }
-    }).collect();
+    })
+    .collect();
     api::AppHealth {
         id: app.clone(),
         namespace: app.namespace().unwrap_or_default().into(),
@@ -279,6 +344,23 @@ pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
         } else {
             vec![]
         },
+    }
+}
+
+fn issue_title(report: Report) -> &'static str {
+    match report {
+        Report::Errors => "Requests failing",
+        Report::Latency => "Requests slow",
+        Report::Upstreams => "Upstream failing",
+        Report::Instances => "Instances unavailable",
+        Report::Restarts => "Containers restarting",
+        Report::Cpu => "CPU throttled",
+        Report::Memory => "Memory near its limit",
+        Report::Disk => "Disk filling up",
+        Report::DiskIo => "Disk saturated",
+        Report::Net => "Connection errors",
+        Report::Dns => "DNS errors",
+        Report::Logs => "Errors in logs",
     }
 }
 

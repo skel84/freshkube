@@ -449,9 +449,9 @@ impl Focusable for ObservabilityPage {
 impl Render for ObservabilityPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let content = if !self.fixture
-            && (self.live.provider.is_none() || self.live.source.is_none())
-        {
+        let unavailable =
+            !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());
+        let content = if unavailable {
             self.render_unavailable(cx)
         } else if let Some(placeholder) = self.read_placeholder(cx) {
             placeholder
@@ -514,8 +514,10 @@ impl Render for ObservabilityPage {
                     .child(
                         v_flex()
                             .gap(dp(16.))
-                            .child(self.render_connection(cx))
-                            .child(self.render_read_state(cx))
+                            .when(!self.fixture && !unavailable, |this| {
+                                this.child(self.render_connection(cx))
+                                    .child(self.render_read_state(cx))
+                            })
                             .child(content),
                     ),
             )

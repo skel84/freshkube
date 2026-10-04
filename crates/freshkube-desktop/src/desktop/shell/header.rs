@@ -154,15 +154,17 @@ impl Pilot {
             .bg(palette(cx).surface_2)
             .children(
                 [(1, "1h"), (3, "3h"), (24, "24h"), (168, "7d")].map(|(span, label)| {
-                    Button::new(SharedString::from(format!("obs-time-{span}")))
-                        .ghost()
-                        .xsmall()
-                        .label(label)
-                        .selected(hours == span)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.observability
-                                .update(cx, |page, cx| page.set_range(span, cx))
-                        }))
+                    ui::segment(
+                        Button::new(SharedString::from(format!("obs-time-{span}"))),
+                        hours == span,
+                        cx,
+                    )
+                    .xsmall()
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.observability
+                            .update(cx, |page, cx| page.set_range(span, cx))
+                    }))
                 }),
             )
             .into_any_element()
