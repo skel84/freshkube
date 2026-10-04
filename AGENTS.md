@@ -74,8 +74,10 @@ GPUI suits Rust well: views are entities changed through `update`, `cx.notify()`
 GPUI has its own executor; tonic and kube need Tokio. The binary owns the Tokio runtime and passes its handle to the app.
 
 - Run cluster I/O on Tokio, send the result back to a GPUI task, and update entities there. Never block the UI thread.
-- Tie each request to its target (the epoch in `Target`) and keep its handle (`OwnedJob`) on the entity that needs the result. Replacing or dropping the handle cancels the work; a result for a target that is no longer current is ignored.
-- Hidden screens never contact the cluster. The shell's Kubernetes summary is the exception: one session owns nine compact reflector stores on every page and publishes changes after a 500 ms coalescing window. Health and visible Lifecycle consume those observations. The 15 s shell cycle and countdown are for Talos; metrics keep their separate polling schedules.
+- Give ordinary reads both a source/target identity and a request generation. Keep the Tokio `OwnedJob` and GPUI delivery `Task` on their actual owner; replacement drops both, and completion checks identity/generation before publishing. `Snapshot` tracks data and freshness; it does not cancel work or inspect credentials. [State and request lifetimes](docs/STATE_LIFETIMES.md) describes the current owners and exceptions.
+- The shell activates and periodically refreshes only the visible `ScreenPanel`; it sends source updates to every retained screen. The trait has no hide hook: navigation alone does not cancel a `Loader`, and Operations' once-activated source handler can read its preview/audit again. Resources, Monitoring and Observability have explicit hide cancellation. New page-owned reads should start only while shown; preserve the existing log and user-started session lifetimes below.
+- The shell's Kubernetes summary is session-owned: nine compact reflector stores run on every page and publish after a 500 ms coalescing window. Health and visible Lifecycle consume those observations; selecting a Talos node does not replace the session. The 15 s shell cycle and countdown are for Talos; metrics keep their separate polling schedules.
+- Operations mutations have a separate lifetime: a detached delivery task holds the app-wide operation ticket until core's runner ends. Cancellation is cooperative, before/between steps; await a submitted mutation. Never wrap the submitted run in an ordinary `OwnedJob` or abort it when its screen changes.
 
 ### Learning the API
 
@@ -214,43 +216,30 @@ A diagnostic showing failure for a healthy system is worse than showing unknown.
 
 ## Code Patterns
 
-### Using AsyncState<T>
+### Using Snapshot<T, I> and Loader<T>
 
-Data-holding state uses `AsyncState<T>` for consistent loading/error handling:
+Desktop's [state::Snapshot](crates/freshkube-desktop/src/state.rs) retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. This small example uses the same identity labels as its unit tests:
 
 ```rust
-pub struct MyComponent {
-    state: AsyncState<MyData>,
-    // ... UI state (selection, scroll, etc.)
-}
+use crate::state::Snapshot;
 
-#[derive(Debug, Clone, Default)]
-pub struct MyData {
-    // All async-loaded data goes here
-}
+let mut state = Snapshot::<u32, &str>::default();
+let initial = state.begin("node-a");
+assert!(state.apply(&initial, Ok(7)));
+let refresh = state.begin("node-a");
+assert!(state.apply(&refresh, Err("offline".into())));
+assert_eq!(state.data(), Some(&7));
+assert!(state.is_stale());
 
-impl MyComponent {
-    pub async fn refresh(&mut self, client: &TalosClient) -> Result<()> {
-        self.state.start_loading();
-
-        match load_data(client).await {
-            Ok(data) => self.state.set_data(data),
-            Err(e) => self.state.set_error_with_retry(format_talos_error(&e)),
-        }
-        Ok(())
-    }
-
-    fn draw(&self, frame: &mut Frame, area: Rect) {
-        if self.state.is_loading() && !self.state.has_data() {
-            // Show loading spinner
-        } else if let Some(error) = self.state.error() {
-            // Show error message
-        } else if let Some(data) = self.state.data() {
-            // Render data
-        }
-    }
-}
+let replacement = state.begin("node-b");
+assert!(state.data().is_none());
+assert!(!state.apply(&refresh, Ok(99)));
+assert!(state.apply(&replacement, Ok(8)));
 ```
+
+For ordinary inspection reads, [screens::Loader](crates/freshkube-desktop/src/screens/mod.rs) owns `Snapshot<T, Target>`, `Option<OwnedJob>` and `Option<Task<()>>`. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](docs/STATE_LIFETIMES.md#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
+
+Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`. The exported core `AsyncState` remains a [legacy compatibility API](docs/STATE_LIFETIMES.md#asyncstate-compatibility); it provides neither identity checks nor owned cancellation and is not the desktop pattern.
 
 ### Using HasHealth Trait
 
@@ -316,7 +305,9 @@ Diagnostic checks follow the reliability rules below: find the source of truth f
 ### Do
 
 - Check actual system state (files, APIs)
-- Use `AsyncState<T>` for loaded data
+- Use desktop `Snapshot<T, I>` and, for ordinary inspection reads, `Loader<T>`; preserve feature-specific owners
+- Check access/target identity and request generation before publishing; retain same-identity refresh failures as stale
+- Keep submitted Operations runs outside the ordinary read-job abort lifetime
 - Implement `HasHealth` for health enums
 - Provide actionable fix suggestions
 - Degrade gracefully when sources are unavailable
