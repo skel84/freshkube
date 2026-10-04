@@ -35,6 +35,7 @@ pub mod formatting;
 pub mod indicators;
 pub mod inspection;
 mod kubeconfig_selection;
+pub mod lifecycle_versions;
 pub mod logs;
 pub mod maintenance;
 pub mod monitoring;
