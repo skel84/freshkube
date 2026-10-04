@@ -47,7 +47,9 @@ impl Server {
                     reads.fetch_add(1,Ordering::SeqCst);
                     let path=request.split_whitespace().nth(1).unwrap_or("");
                     captured.lock().unwrap().push(path.to_string());
-                    let status=if path.contains("mcp") {404} else {state.load(Ordering::SeqCst)};
+                    // Like Coroot, any API key but the right one, exactly, is refused.
+                    let key=request.lines().find_map(|line| line.strip_prefix("authorization: ").or_else(|| line.strip_prefix("Authorization: ")));
+                    let status=if key.is_some_and(|key| key!="Bearer sanitized-key") {401} else if path.contains("mcp") {404} else {state.load(Ordering::SeqCst)};
                     let selected_mode=mode.load(Ordering::SeqCst);
                     if path.contains("/incident/k1") && selected_mode==5 {gate.notified().await;}
                     let body=if path.contains("/incidents") {
@@ -654,4 +656,54 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
         assert!(error.contains("stays in memory"), "{error}");
         assert!(!error.contains("sanitized-key"));
     });
+}
+
+#[gpui_kit::test]
+async fn a_pasted_key_is_trimmed_and_a_refused_one_says_which_key_coroot_wants(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    let connect = |cx: &mut TestAppContext, url: String, key: &'static str| {
+        cx.update_window(handle, |_, window, cx| {
+            page.update(cx, |page, cx| {
+                page.url
+                    .update(cx, |input, cx| input.set_value(url, window, cx));
+                page.secret
+                    .update(cx, |input, cx| input.set_value(key, window, cx));
+                page.connect(cx);
+            })
+        })
+        .unwrap();
+    };
+    connect(cx, server.url.clone(), "crt_wrong");
+    settled(cx, handle, &page).await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert!(page.live.provider.is_none());
+        let error = page.live.error.clone().unwrap();
+        assert!(error.contains("user API key"), "{error}");
+        assert!(!error.contains("crt_wrong"), "{error}");
+    });
+
+    // Spaces around a pasted URL and key are not part of them.
+    connect(cx, format!("  {}  ", server.url), "  sanitized-key  ");
+    settled(cx, handle, &page).await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert!(page.live.provider.is_some(), "{:?}", page.live.error);
+    });
+}
+
+async fn settled(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) {
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        !observed.read(cx).live.connecting
+    })
+    .await;
 }

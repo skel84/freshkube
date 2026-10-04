@@ -254,8 +254,9 @@ impl ObservabilityPage {
         if self.fixture || !self.live.visible {
             return;
         }
-        let url = self.url.read(cx).value().to_string();
-        let typed = self.secret.read(cx).value().to_string();
+        // A pasted URL or key often brings a space or line break with it.
+        let url = self.url.read(cx).value().trim().to_owned();
+        let typed = self.secret.read(cx).value().trim().to_owned();
         let value = self.credential_value(&url, typed);
         let (auth, saved_url, saved_value) = (self.auth, url.clone(), value.clone());
         let credentials = match self.auth {
@@ -286,7 +287,7 @@ impl ObservabilityPage {
                         this.settings_open = false;
                         this.remember_connection(saved_url, auth, saved_value, cx);
                     }
-                    Err(error) => this.live.error = Some(error.to_string()),
+                    Err(error) => this.live.error = Some(connect_error(error, auth)),
                 }
                 cx.notify();
             },
@@ -531,5 +532,16 @@ mod tests {
             assert!(state.apply(&current, Ok(42)));
             assert_eq!(state.data(), Some(&42));
         }
+    }
+}
+
+/// Coroot has two kinds of API key, and only a user's reads its API.
+fn connect_error(error: api::ReadError, auth: usize) -> String {
+    if error == api::ReadError::Authentication && auth == 0 {
+        format!(
+            "{error} Coroot reads need a user API key (crt_…), made under the user menu → API keys; a project's API keys only send data."
+        )
+    } else {
+        error.to_string()
     }
 }
