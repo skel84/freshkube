@@ -66,31 +66,33 @@ impl ObservabilityPage {
                 }
                 menu
             });
-        content = content.child(
-            line()
-                .flex_wrap()
-                .child(text(
-                    self.live
-                        .provider
-                        .as_ref()
-                        .map_or("Coroot".into(), |p| p.url().to_string()),
-                ))
-                .child(picker)
-                .child(
-                    action("obs-connect-settings", "Connection…")
-                        .on_click(cx.listener(|this, _, _, cx| this.show_connection(cx))),
-                )
-                .child(
-                    action("obs-refresh", "Refresh")
-                        .disabled(self.live.source.is_none())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_current(cx))),
-                )
-                .child(
-                    action("obs-disconnect", "Disconnect")
-                        .on_click(cx.listener(|this, _, window, cx| this.disconnect(window, cx))),
-                ),
-        );
-        content = content.child(muted(self.live.range_label.clone(), cx));
+        if self.live.provider.is_some() {
+            content =
+                content.child(
+                    line()
+                        .flex_wrap()
+                        .child(text(
+                            self.live
+                                .provider
+                                .as_ref()
+                                .map_or("Coroot".into(), |p| p.url().to_string()),
+                        ))
+                        .child(picker)
+                        .child(
+                            action("obs-connect-settings", "Connection…")
+                                .on_click(cx.listener(|this, _, _, cx| this.show_connection(cx))),
+                        )
+                        .child(
+                            action("obs-refresh", "Refresh")
+                                .disabled(self.live.source.is_none())
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh_current(cx))),
+                        )
+                        .child(action("obs-disconnect", "Disconnect").on_click(
+                            cx.listener(|this, _, window, cx| this.disconnect(window, cx)),
+                        )),
+                );
+            content = content.child(muted(self.live.range_label.clone(), cx));
+        }
         if let Some(source) = &self.live.source {
             if let Some(association) = source.association() {
                 content = content.child(
@@ -133,19 +135,77 @@ impl ObservabilityPage {
             }
         }
         if self.settings_open || self.live.provider.is_none() {
-            content=content.child(card("Coroot connection",cx).child(body()
-                .child(muted("Reachable HTTP(S) URL. Credentials stay in memory until Disconnect or the window closes.",cx))
-                .child(text("Server URL"))
-                .child(Input::new(&self.url).id("obs-url").aria_label("Coroot server URL"))
-                .child(line().flex_wrap().children(["API key","Session cookie","Anonymous"].into_iter().enumerate().map(|(ix,label)| {
-                    action(SharedString::from(format!("obs-auth-{ix}")),label).selected(self.auth==ix).on_click(cx.listener(move |this,_,_,cx|{this.auth=ix;this.invalidate_connection();cx.notify();}))
-                })))
-                .when(self.auth!=2,|body| body.child(text(if self.auth==0 {"API key"} else {"coroot_session value"}))
-                    .child(Input::new(&self.secret).id("obs-credential").aria_label("Coroot credential")))
-                .child(action("obs-connect",if self.live.connecting {"Connecting…"} else {"Connect"})
-                    .disabled(self.live.connecting)
-                    .on_click(cx.listener(|this,_,_,cx|this.connect(cx))))
-                .when_some(self.live.error.clone(),|body,error| body.child(text(error).text_color(palette(cx).crit_ink)))));
+            let p = palette(cx);
+            let auth = line()
+                .gap(dp(2.))
+                .p(dp(3.))
+                .rounded(px(8.))
+                .bg(p.surface_2)
+                .children(
+                    ["API key", "Session cookie", "Anonymous"]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ix, label)| {
+                            ui::segment(
+                                Button::new(SharedString::from(format!("obs-auth-{ix}"))),
+                                self.auth == ix,
+                                cx,
+                            )
+                            .small()
+                            .label(label)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.auth = ix;
+                                    this.invalidate_connection();
+                                    cx.notify();
+                                },
+                            ))
+                        }),
+                );
+            let field = |label: &'static str| ui::caption(label, cx);
+            content = content.child(
+                card("Coroot connection", cx).max_w(dp(560.)).child(
+                    body()
+                        .child(field("Server URL"))
+                        .child(Input::new(&self.url).id("obs-url").aria_label("Coroot server URL"))
+                        .child(field("Sign in with"))
+                        .child(line().child(auth))
+                        .when(self.auth != 2, |body| {
+                            body.child(field(if self.auth == 0 { "API key" } else { "coroot_session value" }))
+                                .child(Input::new(&self.secret).id("obs-credential").aria_label("Coroot credential"))
+                        })
+                        .when_some(self.live.error.clone(), |body, error| {
+                            body.child(text(error).text_color(p.crit_ink))
+                        })
+                        .child(
+                            line()
+                                .pt(dp(4.))
+                                .child(
+                                    Button::new("obs-connect")
+                                        .primary()
+                                        .small()
+                                        .label(if self.live.connecting { "Connecting…" } else { "Connect" })
+                                        .disabled(self.live.connecting)
+                                        .on_click(cx.listener(|this, _, _, cx| this.connect(cx))),
+                                )
+                                .when(self.live.provider.is_none(), |row| {
+                                    row.child(
+                                        Button::new("obs-disconnect")
+                                            .ghost()
+                                            .small()
+                                            .label("Clear")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.disconnect(window, cx)
+                                            })),
+                                    )
+                                })
+                                .child(muted(
+                                    "Credentials stay in memory until Disconnect or the window closes.",
+                                    cx,
+                                )),
+                        ),
+                ),
+            );
         }
         if self.live.provider.is_some() && self.live.projects.is_empty() {
             content = content.child(text("No accessible projects were returned."));

@@ -1,12 +1,25 @@
 use super::*;
 const NODES_PER_PAGE: usize = 24;
 const EDGE_MARKERS: usize = 24;
+// The layout's grid, in dp at the default text size.
+const NODE_W: f32 = 148.;
+const NODE_H: f32 = 54.;
+const COLUMN: f32 = NODE_W + 40.;
+const ROW: f32 = NODE_H + 22.;
+const PAD: f32 = 16.;
+const ARROW: f32 = 7.;
+/// A column taller than this wraps into another beside it.
+const MAX_ROWS: usize = 8;
 
 #[derive(Default)]
 pub(super) struct MapDisplay {
     nodes: std::rc::Rc<Vec<MapNode>>,
     connections: std::rc::Rc<Vec<Connection>>,
     markers: Vec<usize>,
+    /// Each drawn connection's midpoint, where its marker sits.
+    midpoints: Vec<(f32, f32)>,
+    width: f32,
+    height: f32,
     summary: String,
     page_label: String,
     connection_count: String,
@@ -54,16 +67,20 @@ impl ObservabilityPage {
                 }
             }
         }
-        let rows = nodes.len().div_ceil(4).max(1);
-        for (ix, node) in nodes.iter_mut().enumerate() {
-            node.x = (ix % 4) as f32 * 0.25;
-            node.y = (ix / 4) as f32 / rows as f32;
-        }
         let positions: BTreeMap<_, _> = nodes
             .iter()
             .enumerate()
-            .map(|(ix, node)| (&node.app, ix))
+            .map(|(ix, node)| (node.app.clone(), ix))
             .collect();
+        // Lay out by every connection between these nodes, not only the
+        // filtered ones, so the problem filter doesn't move the boxes.
+        let links: Vec<_> = self
+            .connections
+            .iter()
+            .filter_map(|edge| Some((*positions.get(&edge.id.0)?, *positions.get(&edge.id.1)?)))
+            .filter(|(from, to)| from != to)
+            .collect();
+        let (width, height) = layered(&mut nodes, &links);
         let connections: Vec<_> = self
             .visible_links
             .iter()
@@ -72,6 +89,16 @@ impl ObservabilityPage {
                 edge.from = *positions.get(&edge.id.0)?;
                 edge.to = *positions.get(&edge.id.1)?;
                 Some(edge)
+            })
+            .collect();
+        let midpoints = connections
+            .iter()
+            .map(|edge| {
+                let [a, b, c, d] = curve(&nodes[edge.from], &nodes[edge.to]);
+                (
+                    (a.0 + 3. * b.0 + 3. * c.0 + d.0) / 8.,
+                    (a.1 + 3. * b.1 + 3. * c.1 + d.1) / 8.,
+                )
             })
             .collect();
         let mut markers: Vec<_> = (0..connections.len().min(EDGE_MARKERS)).collect();
@@ -99,6 +126,9 @@ impl ObservabilityPage {
             nodes: nodes.into(),
             connections: connections.into(),
             markers,
+            midpoints,
+            width,
+            height,
             pages,
         };
     }
@@ -136,13 +166,15 @@ impl ObservabilityPage {
                 )
             })
             .child(
-                action("obs-map-problems", "Problem connections")
-                    .selected(self.map_problems)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.map_problems = !this.map_problems;
-                        this.prepare_map();
-                        cx.notify();
-                    })),
+                ui::choice(
+                    action("obs-map-problems", "Problem connections"),
+                    self.map_problems,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.map_problems = !this.map_problems;
+                    this.prepare_map();
+                    cx.notify();
+                })),
             )
     }
     fn map_graph(&self, cx: &Context<Self>) -> AnyElement {
@@ -150,74 +182,81 @@ impl ObservabilityPage {
         let nodes = self.map_display.nodes.clone();
         let connections = self.map_display.connections.clone();
         let selected = self.selected_link.clone();
-
         let edges = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
-                for edge in connections.iter() {
-                    let from = &nodes[edge.from];
-                    let to = &nodes[edge.to];
-                    let y = |node: &MapNode| node.y;
-                    let a = point(
-                        bounds.left() + bounds.size.width * (from.x + 0.18),
-                        bounds.top() + bounds.size.height * y(from) + ui::dp_px(27., window),
+                // One dp in this window's pixels, so the closure holds no borrow.
+                let unit = ui::dp_px(1., window);
+                let at =
+                    |(x, y): (f32, f32)| point(bounds.left() + unit * x, bounds.top() + unit * y);
+                // The selected connection is drawn last, over the others.
+                let order = connections
+                    .iter()
+                    .filter(|e| selected.as_ref() != Some(&e.id))
+                    .chain(
+                        connections
+                            .iter()
+                            .filter(|e| selected.as_ref() == Some(&e.id)),
                     );
-                    let b = point(
-                        bounds.left() + bounds.size.width * to.x,
-                        bounds.top() + bounds.size.height * y(to) + ui::dp_px(27., window),
-                    );
+                for edge in order {
+                    let (from, to) = (&nodes[edge.from], &nodes[edge.to]);
+                    let [a, b, c, d] = curve(from, to);
                     let color = if selected.as_ref() == Some(&edge.id) {
                         p.accent
                     } else {
                         match edge.status {
                             Status::Critical => p.crit,
                             Status::Warning => p.warn,
-                            _ => p.faint,
+                            _ => p.line_strong,
                         }
                     };
-                    let mut path = PathBuilder::stroke(px(edge.traffic));
-                    if edge.status == Status::Ok {
-                        path.move_to(a);
-                        path.line_to(b);
-                    } else {
-                        for part in (0..20).step_by(2) {
-                            let t = part as f32 / 20.;
-                            let next = (part + 1) as f32 / 20.;
-                            path.move_to(a + (b - a) * t);
-                            path.line_to(a + (b - a) * next);
-                        }
+                    let width = unit * (0.5 + edge.traffic * 0.6);
+                    let mut path = PathBuilder::stroke(width);
+                    if edge.status != Status::Ok {
+                        let dash = unit * 5.;
+                        path = path.dash_array(&[dash, dash * 0.6]);
                     }
+                    path.move_to(at(a));
+                    path.cubic_bezier_to(at(d), at(b), at(c));
                     if let Ok(path) = path.build() {
                         window.paint_path(path, color);
+                    }
+                    let tip = (d.0 + ARROW, d.1);
+                    let mut head = PathBuilder::fill();
+                    head.move_to(at(tip));
+                    head.line_to(at((d.0, d.1 - ARROW * 0.6)));
+                    head.line_to(at((d.0, d.1 + ARROW * 0.6)));
+                    head.close();
+                    if let Ok(head) = head.build() {
+                        window.paint_path(head, color);
                     }
                 }
             },
         )
         .size_full();
-        let map = div()
+        let selected_app = self.selected_app.as_ref();
+        div()
             .id("obs-service-map")
             .test_support()
             .relative()
-            .min_w(dp(600.))
-            .h(dp(
-                (self.map_display.nodes.len().div_ceil(4).max(6) * 85) as f32
-            ))
+            .flex_none()
+            .w(dp(self.map_display.width))
+            .h(dp(self.map_display.height))
             .child(edges)
             .children(self.map_display.markers.iter().map(|&ix| {
                 let edge = &self.map_display.connections[ix];
-                let from = &self.map_display.nodes[edge.from];
-                let to = &self.map_display.nodes[edge.to];
-                let y = (from.y + to.y) / 2.;
+                let (x, y) = self.map_display.midpoints[ix];
                 let id = edge.id.clone();
                 Button::new(edge.element_id.clone())
                     .ghost()
                     .group("fog-control")
                     .absolute()
-                    .left(relative((from.x + 0.20 + to.x) / 2. - 0.01))
-                    .top(relative(y + 0.04))
-                    .w(dp(24.))
-                    .h(dp(22.))
+                    .left(dp(x - 11.))
+                    .top(dp(y - 11.))
+                    .size(dp(22.))
                     .px_0()
+                    .rounded_full()
+                    .bg(p.surface)
                     .child(status(edge.status, cx))
                     .tooltip(edge.tooltip.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -227,18 +266,18 @@ impl ObservabilityPage {
             }))
             .children(self.map_display.nodes.iter().map(|node| {
                 let key = node.app.clone();
-                let ypos = node.y;
                 Button::new(node.element_id.clone())
                     .outline()
                     .group("fog-control")
                     .absolute()
-                    .left(relative(node.x))
-                    .top(relative(ypos))
-                    .w(relative(0.20))
-                    .h(dp(54.))
+                    .left(dp(node.x))
+                    .top(dp(node.y))
+                    .w(dp(NODE_W))
+                    .h(dp(NODE_H))
                     .px(dp(10.))
+                    .gap(dp(8.))
                     .bg(p.surface_2)
-                    .border_color(if self.selected_app.as_ref() == Some(&node.app) {
+                    .border_color(if selected_app == Some(&node.app) {
                         p.accent_line
                     } else {
                         p.line_strong
@@ -248,20 +287,22 @@ impl ObservabilityPage {
                     .child(
                         v_flex()
                             .min_w_0()
+                            .flex_1()
                             .items_start()
                             .child(
                                 mono(node.label.clone())
+                                    .w_full()
                                     .truncate()
                                     .font_weight(ui::HEADING_WEIGHT),
                             )
-                            .child(muted(node.namespace.clone(), cx).truncate()),
+                            .child(muted(node.namespace.clone(), cx).w_full().truncate()),
                     )
                     .tooltip(node.tooltip.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_app(key.clone(), Report::Net, cx)
                     }))
-            }));
-        map.into_any_element()
+            }))
+            .into_any_element()
     }
     fn map_inspector(&self, stacked: bool, cx: &mut Context<Self>) -> Div {
         let mut inspector = card("Connections", cx).when_else(
@@ -317,24 +358,31 @@ impl ObservabilityPage {
         let edge = &self.connections[ix];
         let id = edge.id.clone();
         div().h(dp(30.)).w_full().child(
-            Button::new(edge.button_id.clone())
-                .ghost()
-                .small()
-                .w_full()
-                .justify_start()
-                .selected(self.selected_link.as_ref() == Some(&edge.id))
-                .child(status(edge.status, cx))
-                .child(text(edge.label.clone()).truncate())
-                .tooltip(edge.tooltip.clone())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.select_link(id.clone());
-                    cx.notify();
-                })),
+            ui::segment(
+                Button::new(edge.button_id.clone()),
+                self.selected_link.as_ref() == Some(&edge.id),
+                cx,
+            )
+            .small()
+            .w_full()
+            .child(
+                line()
+                    .w_full()
+                    .child(status(edge.status, cx))
+                    .child(mono(edge.label.clone()).flex_1().truncate()),
+            )
+            .tooltip(edge.tooltip.clone())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.select_link(id.clone());
+                cx.notify();
+            })),
         )
     }
     pub(super) fn render_map(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let stacked = crate::screens::content_width(window) < 900.;
+        // The inspector moves below once the whole map can't sit beside it.
+        let stacked =
+            crate::screens::content_width(window) < self.map_display.width.max(560.) + 320.;
         if self.nodes.is_empty() {
             return v_flex()
                 .gap(dp(12.))
@@ -383,7 +431,7 @@ impl ObservabilityPage {
                         }),
                     )
                     .child(muted(
-                        "Line width = traffic · first 24 markers shown · every connection is in the inspector",
+                        "Callers on the left · line width is traffic · dashed lines have a problem · every connection is listed in Connections",
                         cx,
                     )),
             );
@@ -402,6 +450,95 @@ impl ObservabilityPage {
             )
             .into_any_element()
     }
+}
+
+/// Places callers left of what they call: each node's column is the length
+/// of the longest chain of callers above it, tall columns wrap, and each
+/// column is ordered by where its callers sit to keep crossings down. Nodes
+/// with no connection share a last column. Returns the map's size in dp.
+fn layered(nodes: &mut [MapNode], links: &[(usize, usize)]) -> (f32, f32) {
+    let n = nodes.len();
+    if n == 0 {
+        return (0., 0.);
+    }
+    let mut layer = vec![0usize; n];
+    // Longest path by relaxation; a cycle stops changing after n passes.
+    for _ in 0..n {
+        let mut changed = false;
+        for &(from, to) in links {
+            if layer[to] < layer[from] + 1 && layer[from] + 1 < n {
+                layer[to] = layer[from] + 1;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let linked: Vec<bool> = (0..n)
+        .map(|ix| links.iter().any(|&(a, b)| a == ix || b == ix))
+        .collect();
+    let last = layer
+        .iter()
+        .zip(&linked)
+        .filter(|(_, l)| **l)
+        .map(|(l, _)| *l)
+        .max();
+    let mut columns: Vec<Vec<usize>> = vec![vec![]; last.map_or(0, |l| l + 1)];
+    let mut loose = vec![];
+    for ix in 0..n {
+        if linked[ix] {
+            columns[layer[ix]].push(ix);
+        } else {
+            loose.push(ix);
+        }
+    }
+    let mut row = vec![0f32; n];
+    for column in &mut columns {
+        let key = |ix: usize| {
+            let callers: Vec<f32> = links
+                .iter()
+                .filter(|&&(from, to)| to == ix && layer[from] < layer[ix])
+                .map(|&(from, _)| row[from])
+                .collect();
+            if callers.is_empty() {
+                f32::MAX
+            } else {
+                callers.iter().sum::<f32>() / callers.len() as f32
+            }
+        };
+        column.sort_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)));
+        for (ix, &node) in column.iter().enumerate() {
+            row[node] = ix as f32;
+        }
+    }
+    if !loose.is_empty() {
+        columns.push(loose);
+    }
+    let (mut x, mut rows) = (0, 0);
+    for column in columns {
+        for chunk in column.chunks(MAX_ROWS) {
+            for (r, &ix) in chunk.iter().enumerate() {
+                nodes[ix].x = PAD + x as f32 * COLUMN;
+                nodes[ix].y = PAD + r as f32 * ROW;
+            }
+            rows = rows.max(chunk.len());
+            x += 1;
+        }
+    }
+    (
+        2. * PAD + x as f32 * COLUMN - (COLUMN - NODE_W),
+        2. * PAD + rows as f32 * ROW - (ROW - NODE_H),
+    )
+}
+
+/// A connection's curve in dp: from the caller's right edge to just short of
+/// the callee's left edge, where the arrowhead takes over.
+fn curve(from: &MapNode, to: &MapNode) -> [(f32, f32); 4] {
+    let a = (from.x + NODE_W, from.y + NODE_H / 2.);
+    let d = (to.x - ARROW, to.y + NODE_H / 2.);
+    let pull = ((d.0 - a.0).abs() / 2.).max(48.);
+    [a, (a.0 + pull, a.1), (d.0 - pull, d.1), d]
 }
 
 #[cfg(test)]
@@ -488,7 +625,16 @@ mod tests {
             assert!(panel.right() <= px(760.));
             assert!(viewport.right() <= panel.right());
             assert!(before.size.width > viewport.size.width);
-            let node = page.read(cx).nodes[0].element_id.clone();
+            // The top-left box is in view before the map scrolls.
+            let node = page
+                .read(cx)
+                .map_display
+                .nodes
+                .iter()
+                .min_by(|a, b| (a.x + a.y).total_cmp(&(b.x + b.y)))
+                .unwrap()
+                .element_id
+                .clone();
             window.scroll(node, ScrollDelta::Pixels(point(px(-1000.), px(0.))), cx);
             window.render_frame(cx);
             assert!(window.find("obs-service-map").bounds().left() < before.left());

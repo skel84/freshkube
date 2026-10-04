@@ -1,7 +1,8 @@
 //! Small shared building blocks for the Freshkube screens.
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon,
+    Icon, Selectable,
+    button::{Button, ButtonVariants},
     empty::{
         EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
     },
@@ -156,6 +157,26 @@ pub(crate) fn tag(
             }),
         })
         .child(text.into())
+}
+
+/// The chosen option of a segmented control or chip row. Kit marks an
+/// outline button's selection with a faint input tint that Fog's surfaces
+/// hide; the design marks selection in blue, so the chosen option takes the
+/// primary outline.
+pub(crate) fn choice(button: Button, selected: bool) -> Button {
+    let button = button.selected(selected);
+    if selected { button.primary() } else { button }
+}
+
+/// One segment of a ghost segmented control on a `surface_2` track. Kit
+/// marks a selected ghost button with `secondary.active`, which is the
+/// track's own colour in Fog, so the chosen segment takes the accent tint.
+pub(crate) fn segment(button: Button, selected: bool, cx: &App) -> Button {
+    let p = palette(cx);
+    button
+        .ghost()
+        .toggled(selected)
+        .when(selected, |b| b.bg(p.accent_soft).text_color(p.accent))
 }
 
 /// The status language of docs/DESIGN.md, shape and color together: ● OK,

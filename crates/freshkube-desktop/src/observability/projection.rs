@@ -62,18 +62,20 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
             let checks = Report::ALL.map(|report| {
                 let signal = app.signals.get(report.signal());
                 let state = signal.map_or(Status::Absent, |signal| signal.status.into());
-                let value = signal
-                    .filter(|s| !s.value.is_empty())
-                    .map_or_else(|| state.label().to_string(), |s| s.value.clone());
+                // Only the source's own figure is drawn; the glyph says the rest.
+                let value = signal.map_or(String::new(), |s| s.value.clone());
                 Check {
                     status: state,
-                    tooltip: format!(
-                        "{} · {}: {} · {}",
-                        app.id,
-                        report.label(),
-                        state.label(),
-                        value
-                    ),
+                    tooltip: if value.is_empty() {
+                        format!("{} · {}: {}", app.id, report.label(), state.label())
+                    } else {
+                        format!(
+                            "{} · {}: {} · {value}",
+                            app.id,
+                            report.label(),
+                            state.label()
+                        )
+                    },
                     value,
                     element_id: format!("obs-check-{}-{}", app.id, report.slug()).into(),
                 }

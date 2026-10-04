@@ -86,6 +86,7 @@ gpui_kit::assets::icon_assets!(
         SlidersHorizontal,
         Cog,
         Puzzle,
+        Radar,
         // The resource table.
         Rows2,
         Rows4,
