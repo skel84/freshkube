@@ -12,10 +12,35 @@
 #   screen_owner_pid PID      watch another process, e.g. the app once it's up
 #   screen_touch              note activity; fails if another worktree holds the screen
 #   screen_release            let the next worktree in
+#
+# A locked screen spoils the same things: macOS shows the lock screen to
+# captures, GPUI stops drawing a window it thinks is covered, and keystrokes go
+# nowhere. Taking or using the screen therefore waits until it is unlocked.
 
 SCREEN_LOCK=${FRESHKUBE_SCREEN_LOCK:-$HOME/.cache/freshkube/screen.lock}
 SCREEN_IDLE=${FRESHKUBE_SCREEN_IDLE:-600}
 SCREEN_WAIT=${FRESHKUBE_SCREEN_WAIT:-3600}
+
+screen_locked() { ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked"=Yes'; }
+
+# Wait for the user to unlock the screen, holding on to the lock meanwhile.
+screen_wait_unlocked() {
+  local waited=0
+  screen_locked || return 0
+  echo "screen: locked; waiting for the user to unlock it (captures and keys need an unlocked screen)" >&2
+  while screen_locked; do
+    if [ "$waited" -ge "$SCREEN_WAIT" ]; then
+      echo "screen: still locked after ${SCREEN_WAIT}s" >&2
+      return 1
+    fi
+    screen_mine && touch "$SCREEN_LOCK/owner"
+    sleep 10
+    waited=$((waited + 10))
+  done
+  echo "screen: unlocked" >&2
+  # Windows draw again only once the session is back; give them a moment.
+  sleep 2
+}
 
 screen_field() { sed -n "$1p" "$SCREEN_LOCK/owner" 2>/dev/null; }
 
@@ -45,11 +70,13 @@ screen_acquire() {
   while :; do
     if mkdir "$SCREEN_LOCK" 2>/dev/null; then
       screen_write "$kind" "$pid"
-      return 0
+      screen_wait_unlocked
+      return
     fi
     if screen_mine; then
       screen_write "$kind" "$pid"
-      return 0
+      screen_wait_unlocked
+      return
     fi
     if screen_stale; then
       # An idle smoke app keeps running; stop it so its window leaves the screen.
@@ -76,7 +103,8 @@ screen_owner_pid() { screen_mine && screen_write "$(screen_field 2)" "$1"; }
 screen_touch() {
   if screen_mine; then
     touch "$SCREEN_LOCK/owner"
-    return 0
+    screen_wait_unlocked
+    return
   fi
   if [ -d "$SCREEN_LOCK" ]; then
     echo "screen: $(screen_field 1) holds the screen ($(screen_field 2)); start again to wait for it" >&2
