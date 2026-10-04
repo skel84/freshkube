@@ -1,5 +1,6 @@
-//! Presentation snapshots for the observability prototype. These contain no
+//! Prepared presentation snapshots for Coroot observations and fixture previews. These contain no
 //! credentials, clients or commands capable of changing a cluster.
+use freshkube_core::coroot::AppId;
 use gpui_kit::assets::IconName;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,12 +66,13 @@ pub(super) enum Report {
     Cpu,
     Memory,
     Disk,
+    DiskIo,
     Net,
     Dns,
     Logs,
 }
 impl Report {
-    pub(super) const ALL: [Self; 11] = [
+    pub(super) const ALL: [Self; 12] = [
         Self::Errors,
         Self::Latency,
         Self::Upstreams,
@@ -79,6 +81,7 @@ impl Report {
         Self::Cpu,
         Self::Memory,
         Self::Disk,
+        Self::DiskIo,
         Self::Net,
         Self::Dns,
         Self::Logs,
@@ -93,6 +96,7 @@ impl Report {
             Self::Cpu => "CPU",
             Self::Memory => "Memory",
             Self::Disk => "Disk",
+            Self::DiskIo => "Disk I/O",
             Self::Net => "Net",
             Self::Dns => "DNS",
             Self::Logs => "Logs",
@@ -108,6 +112,7 @@ impl Report {
             Self::Cpu => "cpu",
             Self::Memory => "memory",
             Self::Disk => "disk",
+            Self::DiskIo => "disk-io",
             Self::Net => "net",
             Self::Dns => "dns",
             Self::Logs => "logs",
@@ -127,9 +132,9 @@ impl Report {
             Self::Restarts => 66.,
             Self::Latency => 62.,
             Self::Cpu | Self::Dns => 50.,
-            Self::Memory => 54.,
+            Self::Memory => 72.,
             Self::Net => 80.,
-            Self::Errors | Self::Disk | Self::Logs => 58.,
+            Self::Errors | Self::Disk | Self::DiskIo | Self::Logs => 58.,
         }
     }
     pub(super) fn index(self) -> usize {
@@ -144,22 +149,30 @@ pub(super) enum Status {
     Unknown,
     Integration,
     LogError,
+    Info,
+    Absent,
 }
 #[derive(Clone)]
 pub(super) struct Check {
     pub status: Status,
     pub value: String,
+    pub tooltip: String,
+    pub element_id: gpui_kit::SharedString,
 }
 #[derive(Clone)]
 pub(super) struct Application {
+    pub id: AppId,
     pub key: String,
     pub namespace: String,
+    pub namespace_prefix: String,
     pub name: String,
-    pub language: &'static str,
-    pub category: usize,
+    pub language: String,
+    pub category: String,
     pub status: Status,
-    pub checks: [Check; 11],
+    pub checks: [Check; 12],
     pub search: String,
+    pub row_id: gpui_kit::SharedString,
+    pub name_id: gpui_kit::SharedString,
 }
 impl Application {
     pub fn check(&self, report: Report) -> &Check {
@@ -191,10 +204,10 @@ impl Filter {
         match self {
             Self::Problems => "Problems",
             Self::All => "All",
-            Self::Critical => "SLO violation",
+            Self::Critical => "Critical",
             Self::Warning => "Warning",
             Self::Logs => "Errors in logs",
-            Self::Integration => "Integration required",
+            Self::Integration => "Unknown",
             Self::Ok => "OK",
         }
     }
@@ -212,41 +225,51 @@ impl Filter {
     pub(super) fn matches(self, app: &Application) -> bool {
         match self {
             Self::All => true,
-            Self::Problems => app.status != Status::Ok,
-            Self::Critical => app.check(Report::Errors).status == Status::Critical,
+            Self::Problems => matches!(
+                app.status,
+                Status::Critical | Status::Warning | Status::Unknown
+            ),
+            Self::Critical => app.status == Status::Critical,
             Self::Warning => app.status == Status::Warning,
-            Self::Logs => app.check(Report::Logs).status == Status::LogError,
-            Self::Integration => app.checks.iter().any(|c| c.status == Status::Integration),
+            Self::Logs => matches!(
+                app.check(Report::Logs).status,
+                Status::Warning | Status::Critical | Status::LogError
+            ),
+            Self::Integration => app.status == Status::Unknown,
             Self::Ok => app.status == Status::Ok,
         }
     }
 }
 #[derive(Clone)]
 pub(super) enum MatrixRow {
-    Group {
-        label: String,
-        shown: usize,
-        hidden: usize,
-    },
+    Group { label: String, summary: String },
     App(usize),
 }
 #[derive(Clone)]
 pub(super) struct MapNode {
-    pub app: &'static str,
-    pub label: &'static str,
-    pub namespace: &'static str,
+    pub app: AppId,
+    pub label: String,
+    pub tooltip: String,
+    pub namespace: String,
+    pub element_id: gpui_kit::SharedString,
     pub x: f32,
     pub y: f32,
     pub status: Status,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct LinkId(pub AppId, pub AppId);
 #[derive(Clone)]
 pub(super) struct Connection {
+    pub id: LinkId,
+    pub element_id: gpui_kit::SharedString,
+    pub button_id: gpui_kit::SharedString,
     pub from: usize,
     pub to: usize,
     pub status: Status,
     pub traffic: f32,
-    pub label: &'static str,
-    pub detail: &'static str,
+    pub label: String,
+    pub detail: String,
+    pub tooltip: String,
 }
 #[derive(Clone)]
 pub(super) struct FlameFrame {

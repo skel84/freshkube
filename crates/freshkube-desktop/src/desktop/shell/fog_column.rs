@@ -256,53 +256,22 @@ impl Pilot {
                     this.navigate_from_keyboard(Page::Monitoring, window, cx)
                 })),
         );
-        let sources = if collapsed {
-            div().relative().child(Button::new("obs-data-sources").ghost().size(dp(36.)).icon(IconName::Database).tooltip(if self.fixture{"Example data sources: Prometheus · node agent 5/6 · ClickHouse · Talos"}else{"Coroot integration required"}).tooltip_placement(Placement::Right)
-                .on_click(cx.listener(|_,_,window,cx|{window.open_dialog(cx,|dialog,_,_|dialog.title("Data sources").child("Coroot observability currently uses fictional data in fixture mode. Live integration will be added separately."));})))
-                .child(div().absolute().top(dp(3.)).right(dp(3.)).size(dp(7.)).rounded_full().bg(p.warn)).into_any_element()
-        } else {
-            v_flex()
-                .p(dp(12.))
-                .gap(dp(12.))
-                .rounded(px(12.))
-                .border_1()
-                .border_color(p.line_strong)
-                .child(ui::caption("Data sources", cx))
-                .children(
-                    [
-                        ("Prometheus", "in-cluster", Tone::Good),
-                        ("node-agent (eBPF)", "5 / 6", Tone::Warn),
-                        ("ClickHouse", "logs · traces", Tone::Good),
-                        ("Talos API", "5 / 6", Tone::Good),
-                    ]
-                    .map(|(name, value, tone)| {
-                        h_flex()
-                            .gap(dp(7.))
-                            .children(ui::status_glyph(
-                                if self.fixture { tone } else { Tone::Unknown },
-                                cx,
-                            ))
-                            .child(div().text_size(dp(11.5)).flex_1().child(name))
-                            .child(
-                                div()
-                                    .text_size(dp(11.))
-                                    .text_color(p.muted)
-                                    .child(if self.fixture { value } else { "—" }),
-                            )
-                    }),
-                )
-                .child(
-                    div()
-                        .text_size(dp(11.))
-                        .text_color(p.muted)
-                        .child(if self.fixture {
-                            "Example data"
-                        } else {
-                            "Integration required"
-                        }),
-                )
-                .into_any_element()
-        };
+        let sources = Button::new("obs-data-sources")
+            .ghost().small().icon(IconName::Database)
+            .tooltip(if self.fixture { "Sanitized example observations" } else { "Coroot connection and project" })
+            .tooltip_placement(Placement::Right)
+            .when_else(collapsed, |button| button.size(dp(36.)), |button| {
+                button.w_full().label(if self.fixture { "Example data" } else { "Coroot connection…" })
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                if this.fixture {
+                    window.open_dialog(cx, |dialog, _, _| dialog.title("Example data")
+                        .child("Sanitized Coroot observations use the same presentation as live data. Later destinations and mutation controls are local previews."));
+                } else {
+                    this.observability.update(cx, |page, cx| page.show_connection(cx));
+                    this.navigate_from_keyboard(Page::Observability, window, cx);
+                }
+            }));
         v_flex()
             .id("nav-column")
             .test_support()

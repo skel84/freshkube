@@ -26,6 +26,9 @@ http-body-util = "0.1"
 # Monitoring: dashboards and Prometheus queries, sent through the service proxy
 grafaui-model.workspace = true
 grafaui-prometheus.workspace = true
+coroot-rs.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+url = "2"
 
 # TLS and logging
 rustls.workspace = true

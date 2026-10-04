@@ -564,8 +564,14 @@ impl Pilot {
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let monitoring =
             cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
-        let observability =
-            cx.new(|cx| crate::observability::ObservabilityPage::new(options.fixture, window, cx));
+        let observability = cx.new(|cx| {
+            crate::observability::ObservabilityPage::new(
+                options.fixture,
+                runtime.clone(),
+                window,
+                cx,
+            )
+        });
         subscriptions.push(cx.subscribe_in(
             &observability,
             window,
@@ -576,11 +582,15 @@ impl Pilot {
                     ObservabilityEvent::Dashboards => {
                         this.navigate_from_keyboard(Page::Monitoring, window, cx)
                     }
-                    ObservabilityEvent::OpenPod { logs } if this.fixture => this.open_object(
+                    ObservabilityEvent::OpenExamplePod {
+                        namespace,
+                        name,
+                        logs,
+                    } if this.fixture => this.open_object(
                         builtin("pods").unwrap(),
                         resources::model::ObjectRef {
-                            namespace: "payments".into(),
-                            name: "worker-6c4f8da0-bbbbh".into(),
+                            namespace: namespace.clone(),
+                            name: name.clone(),
                             uid: String::new(),
                         },
                         if *logs {
@@ -591,7 +601,33 @@ impl Pilot {
                         window,
                         cx,
                     ),
-                    ObservabilityEvent::OpenPod { .. } => {}
+                    ObservabilityEvent::OpenExamplePod { .. } => {}
+                    ObservabilityEvent::OpenObject {
+                        source,
+                        app,
+                        subject,
+                    } => {
+                        if this
+                            .observability
+                            .read(cx)
+                            .link_is_current(source, app, subject)
+                            && this
+                                .kube_source()
+                                .is_some_and(|source| source.id == subject.access())
+                        {
+                            this.open_object(
+                                subject.kind().clone(),
+                                resources::model::ObjectRef {
+                                    namespace: subject.namespace().into(),
+                                    name: subject.name().into(),
+                                    uid: String::new(),
+                                },
+                                resources::Tab::Overview,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
                 }
             },
         ));
@@ -1119,6 +1155,8 @@ impl Pilot {
         self.monitoring.update(cx, |monitoring, cx| {
             monitoring.set_source(source.clone(), cx)
         });
+        self.observability
+            .update(cx, |page, cx| page.set_source(source.clone(), cx));
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
@@ -1146,6 +1184,10 @@ impl Pilot {
         if self.page == Page::Monitoring {
             self.monitoring
                 .update(cx, |monitoring, cx| monitoring.refresh(cx));
+        }
+        if self.page == Page::Observability {
+            self.observability
+                .update(cx, |page, cx| page.refresh_current(cx));
         }
         if self.page == Page::Nodes {
             self.node_history
