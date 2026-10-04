@@ -66,6 +66,10 @@ impl Server {
                         v
                     } else if path.contains("api/user") {
                         serde_json::json!({"projects":[{"id":"p1","name":"Same name"},{"id":"p2","name":"Same name"}]})
+                    } else if path.contains("/tracing") {
+                        tracing_wire(path)
+                    } else if path.contains("/profiling") {
+                        profiling_wire(path)
                     } else if path.contains("/app/") {
                         serde_json::json!({"app_map":{"application":{"status":"warning"}},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available"}]}]})
                     } else if path.contains("map") {
@@ -219,6 +223,43 @@ async fn loaded(
         !page.read(cx).live.apps.is_loading()
     })
     .await;
+}
+
+#[gpui_kit::test]
+async fn a_connected_page_folds_its_connection_into_one_line(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, handle, page) = mount(cx, false);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, _| {
+            let provider =
+                api::Provider::new("http://127.0.0.1:1", api::Credentials::None).unwrap();
+            let source = provider
+                .source(&api::ProjectInfo {
+                    id: "p".into(),
+                    name: "Project".into(),
+                })
+                .with_association(Some(api::Association::new(
+                    "access:a".into(),
+                    "cluster-a".into(),
+                )));
+            page.live.provider = Some(provider);
+            page.live.source = Some(source);
+            page.live.access = Some("access:a".into());
+            page.settings_open = false;
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("obs-refresh").is_some());
+        assert!(window.try_find("obs-disconnect").is_none());
+        assert!(window.try_find("obs-unmap").is_none());
+        window.click("obs-connect-settings", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("obs-disconnect").is_some());
+        assert!(window.try_find("obs-unmap").is_some());
+        window.click("obs-connect-settings", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("obs-disconnect").is_none());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -390,9 +431,10 @@ async fn incidents_keep_identity_stale_evidence_and_read_only_links(cx: &mut Tes
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         for _ in 0..20 {
-            if window
-                .find("obs-incident-app-cluster-a:prod:Deployment:worker")
-                .visible()
+            // Wholly inside the scroll area, so the click lands on it.
+            let link = window.find("obs-incident-app-cluster-a:prod:Deployment:worker");
+            if link.visible()
+                && link.bounds().bottom() <= window.find("obs-scroll").bounds().bottom()
             {
                 break;
             }
@@ -706,4 +748,235 @@ async fn settled(
         !observed.read(cx).live.connecting
     })
     .await;
+}
+
+fn span_wire(id: &str, parent: &str, at: i64, ms: f64, error: bool) -> serde_json::Value {
+    serde_json::json!({"service":"api","trace_id":"t1","id":id,"parent_id":parent,
+        "name":format!("op {id}"),"timestamp":at,"duration":ms,"client":"web",
+        "status":{"error":error,"message":if error {"HTTP 503"} else {""}},
+        "details":{"text":"","lang":""},"attributes":{"http.route":"/cart"},"events":null})
+}
+fn tracing_wire(path: &str) -> serde_json::Value {
+    let at = 1_789_999_000_000_i64;
+    let sources = serde_json::json!([
+        {"type":"otel","name":"OpenTelemetry","selected":!path.contains("agent")},
+        {"type":"agent","name":"OpenTelemetry (eBPF)","selected":path.contains("agent")}]);
+    if path.contains("t1%3A%3A") {
+        return serde_json::json!({"status":"ok","message":"","sources":sources,"heatmap":null,
+            "spans":[span_wire("root","",at,100.,false),span_wire("child","root",at+40,20.,true)],"limit":0});
+    }
+    serde_json::json!({"status":"ok","message":"Using traces of <i>api</i>","sources":sources,
+        "heatmap":{"ctx":{"from":at-3_600_000,"to":at,"step":60_000},"title":"",
+            "series":[
+                {"name":"5ms","value":"0.005","data":[1.5,null,2]},
+                {"name":">5s","value":"inf","data":[null,null,0.1]},
+                {"name":"errors","value":"err","data":[0,0.2,null]}],"annotations":null},
+        "spans":[span_wire("root","",at,100.,true)],"limit":0})
+}
+fn profiling_wire(path: &str) -> serde_json::Value {
+    let diff = path.contains("diff");
+    serde_json::json!({"status":"ok","message":"OK","services":[],
+        "profiles":[{"type":"go:profile_cpu:nanoseconds","name":"CPU"},{"type":"go:heap_inuse_space:bytes","name":"Memory"}],
+        "profile":{"type":"go:profile_cpu:nanoseconds","diff":diff,"flamegraph":
+            {"name":"total","total":200,"self":0,"comp":100,"children":[
+                {"name":"gc","total":50,"self":50,"comp":10,"children":null},
+                {"name":"main","total":150,"self":50,"comp":90,"children":[
+                    {"name":"handle","total":100,"self":100,"comp":70,"children":[]}]}]}},
+        "chart":null,"instances":["api-0","api-1"]})
+}
+
+async fn connected(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+    url: String,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.url
+                .update(cx, |input, cx| input.set_value(url, window, cx));
+            page.secret
+                .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
+            page.connect(cx);
+        })
+    })
+    .unwrap();
+    settled(cx, handle, page).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let project = page.live.projects[0].clone();
+            page.select_project(&project, cx);
+        })
+    });
+    loaded(cx, handle, page).await;
+}
+
+async fn traced(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) {
+    let page = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        let live = &page.read(cx).live;
+        !live.tracing.is_loading() && !live.trace.is_loading()
+    })
+    .await;
+}
+
+fn last_path(server: &Server, part: &str) -> String {
+    server
+        .paths
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        // The selected trace is read after its list; skip it.
+        .find(|path| path.contains(part) && !path.contains("t1%3A%3A"))
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[gpui_kit::test]
+async fn traces_list_requests_open_a_trace_and_narrow_to_a_cell(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            let app = page.applications[0].id.clone();
+            page.open_app(app, Report::Cpu, cx);
+        });
+        window.render_frame(cx);
+        window.click("obs-app-traces", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        let current = page.read(cx);
+        assert_eq!(current.destination, Destination::Traces);
+        assert_eq!(current.live.trace.data().unwrap().spans.len(), 2);
+        window.render_frame(cx);
+        // Failed requests first, then slowest: errors, >5s, 5ms.
+        assert!(window.try_find("obs-live-bucket-2-2").is_some());
+        assert!(window.try_find("obs-live-span-0").is_some());
+        assert!(window.try_find("obs-live-trace-span-1").is_some());
+        assert!(window.try_find("obs-live-trace-span-2").is_none());
+        window.click("obs-live-trace-span-1", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("obs-live-span-detail").is_some());
+        window.click("obs-live-bucket-1-0", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    let path = last_path(&server, "/tracing");
+    assert!(path.contains("0.005-inf"), "{path}");
+    assert!(!path.contains("t1%3A%3A"), "{path}");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-trace-failed", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    let path = last_path(&server, "/tracing");
+    assert!(path.contains("inf-err"), "{path}");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-trace-source-agent", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    assert!(last_path(&server, "/tracing").contains("trace=agent%3A"));
+
+    // Hidden, the page asks nothing more.
+    cx.update(|cx| page.update(cx, |page, cx| page.set_visible(false, cx)));
+    let reads = server.requests.load(Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    cx.run_until_parked();
+    assert_eq!(server.requests.load(Ordering::SeqCst), reads);
+}
+
+#[gpui_kit::test]
+async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    let profiled = |page: &gpui_kit::Entity<ObservabilityPage>| {
+        let page = page.clone();
+        move |_: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+            !page.read(cx).live.profiling.is_loading()
+        }
+    };
+    // The picker finds an application by part of its name.
+    let wanted = cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.selected_app = None;
+            page.open(Destination::Profiling, cx);
+            page.applications.last().unwrap().id.clone()
+        })
+    });
+    for act in [
+        &(|window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+            window.within("obs-profile-app").click("input", cx)
+        }) as &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App),
+        &|window, cx| window.input(wanted.name(), cx),
+        &|window, cx| window.press("enter", cx),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        cx.update(|cx| page.read(cx).selected_app.clone()),
+        Some(wanted)
+    );
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let app = page.applications[0].id.clone();
+            page.selected_app = Some(app);
+            page.refresh(cx);
+        })
+    });
+    cx.wait_for(handle, std::time::Duration::from_secs(5), profiled(&page))
+        .await;
+    assert!(last_path(&server, "/profiling").contains("query=cpu"));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for ix in 0..4 {
+            assert!(
+                window
+                    .try_find(gpui_kit::SharedString::from(format!("obs-live-flame-{ix}")))
+                    .is_some()
+            );
+        }
+        assert!(window.try_find("obs-live-increase-2").is_none());
+        window.click("obs-live-flame-2", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("obs-live-frame-detail").is_some());
+        window.click("obs-live-profile-compare", cx);
+    })
+    .unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), profiled(&page))
+        .await;
+    let path = last_path(&server, "/profiling");
+    assert!(
+        path.contains("diff") && path.contains("profile_cpu"),
+        "{path}"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // main gained 30 points of the total; gc lost them.
+        assert!(window.try_find("obs-live-increase-2").is_some());
+        assert!(window.try_find("obs-live-increase-1").is_none());
+    })
+    .unwrap();
 }

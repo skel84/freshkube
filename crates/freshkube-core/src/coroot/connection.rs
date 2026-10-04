@@ -20,7 +20,7 @@ pub struct ProviderId(u64);
 #[derive(Clone)]
 pub struct Provider {
     id: ProviderId,
-    client: coroot_rs::Client,
+    pub(super) client: coroot_rs::Client,
     slots: Arc<Semaphore>,
 }
 
@@ -98,7 +98,11 @@ impl Provider {
         }
     }
 
-    fn project(&self, source: &Source, range: TimeRange) -> Result<coroot_rs::Project, ReadError> {
+    pub(super) fn project(
+        &self,
+        source: &Source,
+        range: TimeRange,
+    ) -> Result<coroot_rs::Project, ReadError> {
         if source.provider != self.id || source.project.is_empty() || source.project.len() > 256 {
             return Err(ReadError::InvalidSelection);
         }
@@ -144,7 +148,7 @@ impl Provider {
         if extended && !self.has_api_key() {
             return Err(ReadError::Unsupported);
         }
-        let health = if extended {
+        let mut health = if extended {
             self.read(project.app_health(app)).await?
         } else {
             self.read(project.app_health_rest(app)).await?
@@ -153,6 +157,7 @@ impl Provider {
             return Err(ReadError::InvalidResponse);
         }
         limits::health(&health)?;
+        plain_health(&mut health);
         Ok(health)
     }
 
@@ -235,5 +240,22 @@ impl Source {
     pub fn with_association(mut self, association: Option<Association>) -> Self {
         self.association = association;
         self
+    }
+}
+
+/// Coroot writes report titles and messages for its web page, with markup.
+pub(super) fn plain_health(health: &mut AppHealth) {
+    let plain = super::tracing::plain;
+    for report in &mut health.reports {
+        for issue in &mut report.issues {
+            issue.title = plain(&issue.title);
+            issue.message = plain(&issue.message);
+        }
+        for chart in &mut report.charts {
+            chart.title = plain(&chart.title);
+        }
+    }
+    for dependency in &mut health.dependencies {
+        dependency.connectivity_message = plain(&dependency.connectivity_message);
     }
 }

@@ -249,7 +249,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 - **Found in:** live checks of browsing steps 2 and 3, and the performance pass.
 - **Symptom:** captures of a live page taken with the screen locked or the window covered showed only the first frames, before any read finished. A stress run on a locked screen draws nothing, so its drawing numbers mean nothing; the `table.*` spans still measure.
 - **Source (GPUI):** intended and documented. `gpui-pre` 0.3.7 `src/platform.rs:85-112` (`WindowVisibility`: on macOS it comes from `NSWindow.occlusionState`, and the platform requests no frames while the window is hidden). The same comment says that Windows, and X11 with a compositor, keep reporting a covered window as visible.
-- **Freshkube workaround:** `scripts/stress.sh` refuses to run on a locked screen, and visual checks confirm that the screen is unlocked first ([Visual checks](../AGENTS.md#visual-checks)).
+- **Freshkube workaround:** `scripts/stress.sh` refuses to run on a locked screen, and smoke tests confirm that the screen is unlocked first ([Smoke tests](../AGENTS.md#smoke-tests)).
 - **Classification:** platform limitation. GPUI documents it; this entry records the cost to checks and measurements.
 
 ## Strengths observed

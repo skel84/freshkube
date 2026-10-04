@@ -159,3 +159,111 @@ impl ObservabilityPage {
             ))
     }
 }
+
+/// An application as the pickers name it: namespace / name.
+pub(super) fn app_label(id: &freshkube_core::coroot::AppId) -> String {
+    match id.namespace() {
+        Some(namespace) if !namespace.is_empty() => format!("{namespace} / {}", id.name()),
+        _ => id.name().to_string(),
+    }
+}
+
+impl ObservabilityPage {
+    /// A live evidence page's title, its application picker and a way back
+    /// to the application's report.
+    pub(super) fn evidence_header(
+        &self,
+        title: &'static str,
+        id: &'static str,
+        cx: &Context<Self>,
+    ) -> Div {
+        // Kit's Select fills its parent, so a box sets its size in the row.
+        let picker = div().w(dp(300.)).flex_none().child(
+            Select::new(&self.app_select)
+                .id(id)
+                .small()
+                .menu_width(dp(420.))
+                .placeholder("Choose an application")
+                .search_placeholder("Find an application")
+                .accessibility_label("Application")
+                .disabled(self.app_choices.is_empty()),
+        );
+        line()
+            .flex_wrap()
+            .child(section(title))
+            .child(picker)
+            .when_some(self.selected_application(), |this, app| {
+                this.child(status(app.status, cx))
+            })
+            .child(div().flex_1())
+            .when(self.selected_app.is_some(), |this| {
+                this.child(
+                    action(
+                        SharedString::from(format!("{id}-report")),
+                        "Application report",
+                    )
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.open(Destination::Application, cx)),
+                    ),
+                )
+            })
+    }
+
+    /// Brings the application picker up to date with the applications and
+    /// the selection. Runs from render, and does work only after a change.
+    pub(super) fn sync_app_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let stale = !Rc::ptr_eq(&self.app_select_source, &self.app_choices);
+        let selected = self.app_select.read(cx).selected_value().cloned();
+        if !stale && selected == self.selected_app {
+            return;
+        }
+        let items = SearchableVec::new(
+            self.app_choices
+                .iter()
+                .map(|(value, label)| AppChoice {
+                    label: label.clone(),
+                    value: value.clone(),
+                })
+                .collect::<Vec<_>>(),
+        );
+        self.app_select_source = self.app_choices.clone();
+        let current = self.selected_app.clone();
+        self.app_select.update(cx, |state, cx| {
+            if stale {
+                state.set_items(items, window, cx);
+            }
+            match &current {
+                Some(app) => state.set_selected_value(app, window, cx),
+                None => state.set_selected_index(None, window, cx),
+            }
+        });
+    }
+
+    pub(super) fn choose_app(&mut self, id: freshkube_core::coroot::AppId, cx: &mut Context<Self>) {
+        if self.selected_app.as_ref() == Some(&id) {
+            return;
+        }
+        self.selected_app = Some(id);
+        self.report_snapshot = None;
+        self.refresh(cx);
+    }
+}
+
+/// One application in the Traces and Profiling picker.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct AppChoice {
+    label: SharedString,
+    value: freshkube_core::coroot::AppId,
+}
+
+impl SelectItem for AppChoice {
+    type Value = freshkube_core::coroot::AppId;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.value
+    }
+}

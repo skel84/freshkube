@@ -10,6 +10,7 @@ mod chart;
 mod summary;
 #[cfg(test)]
 mod tests;
+mod text;
 mod ticks;
 
 use std::rc::Rc;
@@ -62,7 +63,9 @@ pub(crate) fn derive(spec: &PanelSpec, frame: Frame, window: TimeWindow) -> Pane
     let plain = |body| PanelData { body, unit: None };
     match &spec.viz {
         Viz::Table => plain(summary::table(spec, &frame)),
-        Viz::Text(options) => plain(Body::Text(options.content.clone().into())),
+        Viz::Text(options) => plain(Body::Text(
+            text::readable(options.mode, &options.content).into(),
+        )),
         Viz::TimeSeries(options) => {
             let shown = shown(spec, frame.clone(), |field, context| {
                 field.for_time_series_field(context, options)

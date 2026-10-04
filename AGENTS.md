@@ -31,6 +31,8 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
 
+Worktrees on one machine share a build directory: `export CARGO_TARGET_DIR=~/.cache/freshkube/target`. Dependencies then build once, each worktree's own crates keep separate artifacts, and Cargo's lock queues builds instead of running two at once. "Blocking waiting for file lock" means another worktree is building; wait for it rather than switching directories.
+
 ```sh
 cargo build
 cargo run -- --fixture            # synthetic example data, no credentials or cluster
@@ -43,7 +45,7 @@ cargo fmt --all -- --check
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
 
 ## Cluster safety
 
@@ -110,11 +112,33 @@ Headless UI tests render the real app, find elements by id and click or type int
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
 - Time anything a test depends on with the executor's clock (`cx.background_executor().now()`), not `Instant::now()`, so tests step it with `advance_clock` instead of sleeping. Example data dated from the wall clock must not be generated again for a stream already read: a second later it passes for new lines. Both made tests fail on a loaded machine.
 
-### Visual checks
+### Smoke tests
 
-macOS ignores synthetic keystrokes once the window loses focus, so driving the running app from outside is unreliable. Open the page you need with `FRESHKUBE_PAGE`, capture it, and keep interaction checks in UI tests.
+**Every change a person would notice in the app — a page, a control, a flow, a layout — gets a smoke test in the running app before it is called done.** UI tests prove the logic; a smoke test proves it looks and works right on screen. Use the helper, don't improvise one:
 
-GPUI stops drawing a window that is covered or on a locked screen. Such a capture shows the first frames only, before any read finishes. Fixture pages still look right because their data is there at once. Live pages don't, so check that the screen is unlocked before trusting a capture of one.
+```sh
+scripts/smoke.sh start --page observability-traces          # builds, launches with --fixture, waits for the window
+scripts/smoke.sh shot traces                                # → target/smoke/<worktree>/traces.png; open it and look
+scripts/smoke.sh key 'keystroke "k" using command down'     # any System Events key clause
+scripts/smoke.sh click 640 220                              # points from the window's top-left
+scripts/smoke.sh scroll 900 500 600                         # wheel at a point, 600 points down
+scripts/smoke.sh full traces                                # traces-0.png, traces-1.png, … the whole scrolling page
+scripts/smoke.sh stop
+scripts/smoke.sh pages                                      # every page, one capture each
+scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name> --kubeconfig <file>
+```
+
+- Smoke the pages and flows the change touches, in fixture mode and, when the change reads a cluster or Coroot, against the context the user chose. Run `scripts/smoke.sh pages` when a change reaches the frame, the theme or shared components.
+- Look at every capture yourself, then report what you checked and what you saw: the captures that show the change, anything wrong, and anything you could not check.
+- Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
+- `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
+- Live checks only look and navigate. Never press Operations or maintenance actions, and keep credentials out of captures you share.
+- One worktree uses the screen at a time. `start`, `browser.sh open` and `stress.sh` wait for a lock (`scripts/smoke/lock.sh`, in `~/.cache/freshkube/screen.lock`) that `stop` and `close` release; a dead owner's lock, or a smoke test idle for ten minutes, is taken over. Build before you start, keep the session short, and always `stop`. "screen: waiting for …" means another worktree is checking; let it finish.
+- A live `start` after a new build plays a sound: the app may ask Keychain for the remembered Coroot key, and only the user answers it.
+
+To compare a page with the tool it reads from (Coroot, Grafana), `scripts/browser.sh` drives a Chrome window with the same commands: `open URL`, `go URL`, `shot`, `full`, `scroll`, `click`, `key`, `url` and `close`, with captures in `target/smoke/browser/`. Sign-ins are the user's: when a page asks for one, stop and ask them to sign in in that window.
+
+The terminal needs Screen Recording and Accessibility in System Settings → Privacy & Security, and the screen must be unlocked. GPUI stops drawing a covered window, so a capture of a covered window or a locked screen shows only the first frames, before any read finishes. macOS drops keys sent to a window that isn't frontmost, so every helper command brings the app forward first. Keep interaction logic in UI tests too; a smoke test adds to them, it doesn't replace them.
 
 ## Talos Linux Reference
 
