@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{
     Drift, Item, LifecycleScreen, LifecycleView, ScreenPanel, ScreenSource, alert_rows,
-    etcd_verdict, example, node_rows, parse_version,
+    etcd_verdict, example, node_rows,
 };
 use crate::backend::Target;
 use crate::ui::Tone;
@@ -290,14 +290,6 @@ fn drift_needs_two_observed_hashes() {
     assert_eq!(rows[1].drift, Drift::Differs);
 }
 
-#[test]
-fn versions_parse_with_suffixes() {
-    assert_eq!(parse_version("v1.34.3"), Some((1, 34, 3)));
-    assert_eq!(parse_version("1.13.2-rc1"), Some((1, 13, 2)));
-    assert_eq!(parse_version("v1.30.0+k3s1"), Some((1, 30, 0)));
-    assert_eq!(parse_version("garbage"), None);
-}
-
 #[gpui_kit::test]
 fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_absence(
     cx: &mut TestAppContext,
@@ -450,4 +442,126 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
         assert!(screen.read(cx).summary_nodes.is_none());
     })
     .unwrap();
+}
+
+#[test]
+fn partial_kubelets_keep_row_skew_but_suppress_cluster_alerts() {
+    let mut view = example_view();
+    let known = view.kubelets.value().unwrap().clone();
+    view.kubelets = SourceSnapshot::Partial {
+        value: known.clone(),
+        warnings: vec!["Refreshing Nodes; showing last known versions".into()],
+    };
+    let rows = node_rows(&view);
+    assert!(rows.iter().any(|row| row.kubelet_behind));
+    assert!(alert_rows(&view, &rows).is_empty());
+
+    view.kubelets = SourceSnapshot::Available(known);
+    let rows = node_rows(&view);
+    assert!(
+        alert_rows(&view, &rows)
+            .iter()
+            .any(|alert| alert.message.starts_with("Kubelet patch version skew:"))
+    );
+
+    for source in [
+        SourceSnapshot::Unavailable {
+            reason: "Nodes refused".into(),
+        },
+        SourceSnapshot::Available(Vec::new()),
+    ] {
+        view.kubelets = source;
+        let rows = node_rows(&view);
+        assert!(rows.iter().all(|row| !row.kubelet_behind));
+        assert!(alert_rows(&view, &rows).is_empty());
+    }
+}
+
+#[test]
+fn support_alert_uses_first_reported_talos_instead_of_newest_or_majority() {
+    let mut view = example_view();
+    for node in &mut view.snapshot.nodes {
+        node.version = SourceSnapshot::Available("v1.12.0".into());
+    }
+    view.snapshot.nodes[0].version = SourceSnapshot::Available("v1.6.0".into());
+    let rows = node_rows(&view);
+    let support = alert_rows(&view, &rows)
+        .into_iter()
+        .find(|alert| alert.message.contains("outside the Kubernetes range"))
+        .unwrap();
+    assert!(
+        support
+            .message
+            .contains("Talos v1.6.0 supports (v1.24 – v1.29)")
+    );
+    assert_eq!(support.nodes.len(), rows.len());
+    assert_eq!(support.evidence.len(), rows.len());
+
+    // An unlisted (or malformed) first version must not fall through to a
+    // later reported version that happens to have a known support range.
+    for version in ["v1.13.2", "garbage"] {
+        view.snapshot.nodes[0].version = SourceSnapshot::Available(version.into());
+        let rows = node_rows(&view);
+        assert!(
+            !alert_rows(&view, &rows)
+                .iter()
+                .any(|alert| alert.message.contains("outside the Kubernetes range"))
+        );
+    }
+    view.snapshot.nodes[0].version = SourceSnapshot::Unavailable {
+        reason: "Talos did not answer".into(),
+    };
+    let rows = node_rows(&view);
+    assert!(
+        !alert_rows(&view, &rows)
+            .iter()
+            .any(|alert| alert.message.contains("outside the Kubernetes range"))
+    );
+}
+
+#[test]
+fn minor_and_support_alerts_keep_wording_node_order_and_evidence() {
+    let mut view = example_view();
+    let mut kubelets = view.kubelets.value().unwrap().clone();
+    for entry in &mut kubelets {
+        entry.version = "garbage".into();
+    }
+    kubelets[0].version = "v1.29.9".into();
+    kubelets[1].version = "v1.36.0+k3s1".into();
+    let names = [kubelets[0].name.clone(), kubelets[1].name.clone()];
+    view.kubelets = SourceSnapshot::Available(kubelets);
+    view.snapshot.nodes[0].version = SourceSnapshot::Available("v1.12.0".into());
+    let rows = node_rows(&view);
+    assert!(rows[0].kubelet_behind);
+    assert!(!rows[1].kubelet_behind);
+    assert!(rows.iter().skip(2).all(|row| !row.kubelet_behind));
+    let alerts = alert_rows(&view, &rows);
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(
+        alerts[0].message,
+        format!(
+            "Kubelet minor version skew: {} behind v1.36.0+k3s1",
+            names[0]
+        )
+    );
+    assert_eq!(alerts[0].nodes, [names[0].clone()]);
+    let evidence = vec![
+        (names[0].clone(), "v1.29.9".into()),
+        (names[1].clone(), "v1.36.0+k3s1".into()),
+    ];
+    assert_eq!(alerts[0].evidence, evidence);
+    assert_eq!(alerts[1].evidence, evidence);
+    assert_eq!(alerts[1].nodes, names);
+    assert_eq!(
+        alerts[1].message,
+        format!(
+            "Kubelet on {} and {} is outside the Kubernetes range Talos v1.12.0 supports (v1.30 – v1.35)",
+            names[0], names[1]
+        )
+    );
+    assert!(
+        alerts
+            .iter()
+            .all(|alert| alert.health == freshkube_core::HealthIndicator::Warning)
+    );
 }
