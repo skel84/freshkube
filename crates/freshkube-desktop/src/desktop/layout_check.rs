@@ -7,7 +7,7 @@
 
 use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{App, ElementId, FontWeight, Pixels, Role, SharedString, TextRun, Window, font, px};
+use gpui_kit::{App, ElementId, Pixels, Role, SharedString, TextRun, Window, font, px};
 
 use super::PAGE_PADDING;
 use crate::ui::dp_px;
@@ -172,7 +172,7 @@ fn title_text(window: &Window, page: &TablePage, width: Pixels) -> Pixels {
 
 fn shaped_width(window: &Window, text: &str, size: Pixels) -> Pixels {
     let mut face = font(".SystemUIFont");
-    face.weight = FontWeight::BLACK;
+    face.weight = crate::ui::TITLE_WEIGHT;
     let run = TextRun {
         len: text.len(),
         font: face,
