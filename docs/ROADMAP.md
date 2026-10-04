@@ -234,6 +234,18 @@ The other findings remain explicit below, alongside the existing [domain-boundar
 
 After the current integration and guide correction, stop the architecture pass. Promote a row above to an active step only when feature work or measurements establish its scope. Keep file moves separate from logic changes so a reviewer can verify both.
 
+## Next: one visual system
+
+Every page should look like Pods. Only the Resources screen does today; Nodes, Overview, Observability, Monitoring and the control-plane pages each draw their own header, padding, cards, tables, chips and states. [#46](https://github.com/skel84/freshkube/issues/46) turns the Pods look into shared components and enforces it, so a page can't drift without failing a check. Its proposed decisions (one time picker in each page's header, page padding 26, control-plane pages migrated when next touched) are recorded there.
+
+1. Land the work in flight on `observability/`, and record `scripts/smoke.sh pages` captures and `scripts/stress.sh` numbers as the baseline.
+2. Name the page types (table page, dashboard, canvas, detail pane) and their components in [DESIGN.md](DESIGN.md).
+3. Extract Pods' page header and table into `ui/`, with no visible change ([#47](https://github.com/skel84/freshkube/issues/47)).
+4. Add layout tests and a CI style check with a shrinking allowlist ([#48](https://github.com/skel84/freshkube/issues/48)).
+5. Migrate one page per change: Nodes ([#49](https://github.com/skel84/freshkube/issues/49)), Observability Applications ([#50](https://github.com/skel84/freshkube/issues/50)), Incidents and the trace list, Overview, Monitoring, then each control-plane page when it is next changed.
+
+No new entities ([#5](https://github.com/skel84/freshkube/issues/5)), moves in their own commits, stress numbers before and after table changes ([#22](https://github.com/skel84/freshkube/issues/22)), and generic row keys so the session registry ([#44](https://github.com/skel84/freshkube/issues/44)) can add a session. New platform pages ([#42](https://github.com/skel84/freshkube/issues/42)) start on these components.
+
 ## Next: Coroot observability
 
 The user selected connecting design2's H1–H7 mocks to the `coroot-rs` library in `skel84/corust` as the next feature. [COROOT.md](COROOT.md) records the source review, ownership, capability gaps and validation; [#25](https://github.com/skel84/freshkube/issues/25) tracks delivery. The first read-only slice is delivered in `05d03ce` and `1b16b42` ([PR #31](https://github.com/skel84/freshkube/pull/31)); its actual validation and limitations are recorded in [COROOT.md](COROOT.md#validation). Read-only Incidents landed as `8d3c5d7` ([PR #35](https://github.com/skel84/freshkube/pull/35)), after the audited additive client API in [corust PR #7](https://github.com/skel84/corust/pull/7), merge `362b8d9`. [Its contract and validation](COROOT.md#read-only-incidents-slice) are documented separately. Traces and Profiling read Coroot's per-application views ([contract](COROOT.md#traces-and-profiling)). The broader issue stays open for chart histories, deployment comparisons and shared Health/attention.
