@@ -2,6 +2,10 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
+## Unreleased
+
+- Install with Homebrew: `brew install --cask skel84/tap/freshkube`. The cask in [skel84/homebrew-tap](https://github.com/skel84/homebrew-tap) follows published releases, pre-releases included, and links the `freshkube` command.
+
 ## 0.3.0 (2026-10-04)
 
 ### Fog interface
