@@ -452,6 +452,17 @@ impl ObservabilityPage {
     }
 }
 
+/// Coroot has two kinds of API key, and only a user's reads its API.
+fn connect_error(error: api::ReadError, auth: usize) -> String {
+    if error == api::ReadError::Authentication && auth == 0 {
+        format!(
+            "{error} Coroot reads need a user API key (crt_…), made under the user menu → API keys; a project's API keys only send data."
+        )
+    } else {
+        error.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ReadIdentity, Subject};
@@ -532,16 +543,5 @@ mod tests {
             assert!(state.apply(&current, Ok(42)));
             assert_eq!(state.data(), Some(&42));
         }
-    }
-}
-
-/// Coroot has two kinds of API key, and only a user's reads its API.
-fn connect_error(error: api::ReadError, auth: usize) -> String {
-    if error == api::ReadError::Authentication && auth == 0 {
-        format!(
-            "{error} Coroot reads need a user API key (crt_…), made under the user menu → API keys; a project's API keys only send data."
-        )
-    } else {
-        error.to_string()
     }
 }
