@@ -14,7 +14,10 @@ use gpui_kit::{
 };
 
 use crate::palette::palette;
+
+mod data;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+pub use data::{Line, SortOrder, TableIds, TableRow, TableSource, TableState, data_table};
 
 /// Comfortable rows, and the compact ones the density toggle picks. Group
 /// rows take the same height, so the list stays uniform.

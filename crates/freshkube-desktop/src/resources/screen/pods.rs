@@ -19,9 +19,6 @@ use crate::screens::SCREEN_DEADLINE;
 /// How often pods' use is read while the pods list shows.
 pub(super) const USAGE_INTERVAL: Duration = Duration::from_secs(15);
 
-/// Comfortable rows and the compact ones the density toggle picks.
-pub(super) use freshkube_ui::table::{COMPACT_ROW_HEIGHT, ROW_HEIGHT};
-
 /// The pods list shows problems first, healthy pods collapsed, or every pod
 /// in one sorted list.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -52,11 +49,7 @@ impl ResourcesScreen {
     }
 
     pub(super) fn row_height(&self) -> f32 {
-        if self.compact {
-            COMPACT_ROW_HEIGHT
-        } else {
-            ROW_HEIGHT
-        }
+        self.table.row_height()
     }
 
     /// Problems first applies to the pods page; a node's pods list all.
@@ -111,7 +104,7 @@ impl ResourcesScreen {
     }
 
     pub(super) fn toggle_density(&mut self, cx: &mut Context<Self>) {
-        self.compact = !self.compact;
+        self.table.compact = !self.table.compact;
         cx.notify();
     }
 

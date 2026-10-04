@@ -3,10 +3,10 @@
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Div, ElementId, Stateful, TestSupportExt, div, px};
+use gpui_kit::{AnyElement, App, Div, ElementId, SharedString, Stateful, TestSupportExt, div, px};
 
 use crate::palette::palette;
-use crate::ui::dp;
+use crate::ui::{dp, page_title};
 
 /// Left and right padding of every page.
 pub const PAGE_PADDING: f32 = 26.;
@@ -57,28 +57,41 @@ pub fn meta_line(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> 
 }
 
 /// A page's header: the title and filter, the status chips, then the
-/// controls at the right, with the meta line below. The caller builds each
-/// part with its own ids; the header lays them out, on one row when the
-/// content is at least [`HEADER_NARROW`] wide and stacked otherwise.
+/// controls at the right, with the meta line below. Its ids derive from the
+/// page's prefix: it draws `<prefix>-title` and `<prefix>-scope`, and
+/// [`id`](Self::id) names the parts the caller builds. It lays them out on
+/// one row when the content is at least [`HEADER_NARROW`] wide and stacked
+/// otherwise.
 pub struct PageHeader {
-    title: AnyElement,
+    prefix: SharedString,
+    title: SharedString,
     filter: Option<Div>,
     chips: Option<AnyElement>,
     controls: Vec<AnyElement>,
-    meta: Option<AnyElement>,
+    meta: Vec<AnyElement>,
     narrow: bool,
 }
 
 impl PageHeader {
-    pub fn new(title: impl IntoElement, narrow: bool) -> Self {
+    pub fn new(
+        prefix: impl Into<SharedString>,
+        title: impl Into<SharedString>,
+        narrow: bool,
+    ) -> Self {
         Self {
-            title: title.into_any_element(),
+            prefix: prefix.into(),
+            title: title.into(),
             filter: None,
             chips: None,
             controls: Vec::new(),
-            meta: None,
+            meta: Vec::new(),
             narrow,
         }
+    }
+
+    /// `<prefix>-<part>`, for the filter, chips and controls.
+    pub fn id(&self, part: &str) -> SharedString {
+        format!("{}-{part}", self.prefix).into()
     }
 
     /// The filter beside the title; the header sizes it.
@@ -100,17 +113,20 @@ impl PageHeader {
         self
     }
 
-    pub fn meta(mut self, meta: impl IntoElement) -> Self {
-        self.meta = Some(meta.into_any_element());
+    /// The meta line's parts: source, count, state, time.
+    pub fn meta(mut self, parts: impl IntoIterator<Item = AnyElement>) -> Self {
+        self.meta.extend(parts);
         self
     }
 
-    pub fn render(self) -> Div {
+    pub fn render(self, cx: &App) -> Div {
         let narrow = self.narrow;
+        let title_id = self.id("title");
+        let scope_id = self.id("scope");
         let leading = h_flex()
             .gap(dp(8.))
             .min_w_0()
-            .child(self.title)
+            .child(page_title(self.title).id(title_id).test_support())
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
@@ -137,11 +153,12 @@ impl PageHeader {
                 .child(div().flex_1())
                 .child(controls)
         };
+        let meta = (!self.meta.is_empty()).then(|| meta_line(scope_id, cx).children(self.meta));
         v_flex()
             .w_full()
             .flex_none()
             .gap(dp(8.))
             .child(toolbar)
-            .children(self.meta)
+            .children(meta)
     }
 }

@@ -6,9 +6,7 @@ use layout::ColumnSource;
 impl ResourcesScreen {
     pub(super) fn pods_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let narrow = content_width(window) < page::HEADER_NARROW;
-        let title = ui::page_title(self.title())
-            .id("resource-title")
-            .test_support();
+        let header = page::PageHeader::new("resource", self.title(), narrow);
         let filter = div()
             .key_context(FILTER_CONTEXT)
             .on_action(
@@ -16,70 +14,67 @@ impl ResourcesScreen {
             )
             .child(
                 Input::new(&self.query)
-                    .id("resource-filter")
+                    .id(header.id("filter"))
                     .small()
                     .cleanable(true)
                     .aria_label("Filter pods by name, namespace or status")
                     .prefix(Icon::new(IconName::Search).size(dp(14.))),
             );
-        let meta = page::meta_line("resource-scope", cx)
-            .child(match &self.source {
-                Some(source) if matches!(source.access, KubeAccess::Example) => {
-                    "Example data".to_owned()
-                }
-                Some(source) => format!("{} · {} pods", source.context, self.store.len()),
-                None => "Not connected".into(),
+        let source = match &self.source {
+            Some(source) if matches!(source.access, KubeAccess::Example) => {
+                "Example data".to_owned()
+            }
+            Some(source) => format!("{} · {} pods", source.context, self.store.len()),
+            None => "Not connected".into(),
+        };
+        let state = match self.store.read_state() {
+            ReadState::Loading => " · loading",
+            ReadState::Loaded => "",
+            ReadState::Stale(_) => " · reconnecting",
+            ReadState::Refused(_) => " · not permitted",
+            ReadState::Failed(_) => " · failed",
+            ReadState::Missing(_) => " · not served",
+        };
+        let mut meta = vec![source.into_any_element(), state.into_any_element()];
+        if let Some(time) = self.updated {
+            meta.extend([" · ".into_any_element(), clock(time).into_any_element()]);
+        }
+        let namespace = Select::new(&self.namespace_select)
+            .id(header.id("namespace"))
+            .small()
+            .w(dp(132.))
+            .menu_width(dp(260.))
+            .search_placeholder("Find a namespace")
+            .accessibility_label("Namespace");
+        let density = Button::new(header.id("density"))
+            .outline()
+            .small()
+            .icon(if self.table.compact {
+                IconName::Rows4
+            } else {
+                IconName::Rows2
             })
-            .child(match self.store.read_state() {
-                ReadState::Loading => " · loading",
-                ReadState::Loaded => "",
-                ReadState::Stale(_) => " · reconnecting",
-                ReadState::Refused(_) => " · not permitted",
-                ReadState::Failed(_) => " · failed",
-                ReadState::Missing(_) => " · not served",
+            .tooltip(if self.table.compact {
+                "Compact · 26px rows. Switch to comfortable"
+            } else {
+                "Comfortable · 34px rows. Switch to compact"
             })
-            .when_some(self.updated, |this, time| {
-                this.child(" · ").child(clock(time))
-            });
-        page::PageHeader::new(title, narrow)
+            .on_click(cx.listener(|view, _, _, cx| view.toggle_density(cx)));
+        let refresh = Button::new(header.id("refresh"))
+            .ghost()
+            .small()
+            .icon(IconName::RefreshCw)
+            .tooltip("Refresh pods")
+            .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)));
+        header
             .filter(filter)
             .chips(self.pod_switch(cx))
-            .control(
-                Select::new(&self.namespace_select)
-                    .id("resource-namespace")
-                    .small()
-                    .w(dp(132.))
-                    .menu_width(dp(260.))
-                    .search_placeholder("Find a namespace")
-                    .accessibility_label("Namespace"),
-            )
-            .control(
-                Button::new("resource-density")
-                    .outline()
-                    .small()
-                    .icon(if self.compact {
-                        IconName::Rows4
-                    } else {
-                        IconName::Rows2
-                    })
-                    .tooltip(if self.compact {
-                        "Compact · 26px rows. Switch to comfortable"
-                    } else {
-                        "Comfortable · 34px rows. Switch to compact"
-                    })
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_density(cx))),
-            )
+            .control(namespace)
+            .control(density)
             .control(div().flex_none().child(self.columns_menu(cx)))
-            .control(
-                Button::new("resource-refresh")
-                    .ghost()
-                    .small()
-                    .icon(IconName::RefreshCw)
-                    .tooltip("Refresh pods")
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
-            )
+            .control(refresh)
             .meta(meta)
-            .render()
+            .render(cx)
     }
 
     fn columns_menu(&self, cx: &Context<Self>) -> AnyElement {
