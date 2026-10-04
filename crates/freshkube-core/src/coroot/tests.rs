@@ -633,3 +633,19 @@ fn a_deep_profile_parses_and_a_runaway_one_is_refused() {
         ReadError::InvalidResponse
     );
 }
+
+#[test]
+fn coroot_markup_becomes_plain_text_without_eating_comparisons() {
+    let plain = super::tracing::plain;
+    assert_eq!(
+        plain("Requests to the <var>medplum-redis</var> app, per second"),
+        "Requests to the medplum-redis app, per second"
+    );
+    assert_eq!(
+        plain("latency < 500ms and > 1s"),
+        "latency < 500ms and > 1s"
+    );
+    assert_eq!(plain("a &lt;b&gt; &amp; c&nbsp;d"), "a <b> & c d");
+    assert_eq!(plain("AT&T <b>bold"), "AT&T bold");
+    assert_eq!(plain("<i>x</i> <<i>y</i>"), "x <y");
+}

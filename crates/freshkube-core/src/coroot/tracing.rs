@@ -213,18 +213,51 @@ pub(super) fn decode(data: serde_json::Value) -> Result<Tracing, ReadError> {
     })
 }
 
-/// Coroot's notes carry a little HTML, such as `<i>service</i>`.
+/// Coroot's notes and chart titles carry a little HTML, such as
+/// `<i>service</i>` or `<var>app</var>`. Only something shaped like a tag is
+/// dropped, so `latency < 500ms` keeps its `<`; the common entities are decoded.
 pub(super) fn plain(message: &str) -> String {
+    if !message.contains(['<', '&']) {
+        return message.into();
+    }
     let mut out = String::with_capacity(message.len());
-    let mut in_tag = false;
-    for c in message.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
+    let mut rest = message;
+    while let Some(at) = rest.find(['<', '&']) {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if rest.starts_with('<') {
+            let tag = rest[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '/');
+            match rest.find('>').filter(|_| tag) {
+                Some(end) if !rest[1..end].contains('<') => rest = &rest[end + 1..],
+                _ => {
+                    out.push('<');
+                    rest = &rest[1..];
+                }
+            }
+            continue;
+        }
+        let entity = [
+            ("&amp;", '&'),
+            ("&lt;", '<'),
+            ("&gt;", '>'),
+            ("&quot;", '"'),
+            ("&#39;", '\''),
+            ("&nbsp;", ' '),
+        ]
+        .into_iter()
+        .find(|(name, _)| rest.starts_with(name));
+        match entity {
+            Some((name, c)) => {
+                out.push(c);
+                rest = &rest[name.len()..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
         }
     }
+    out.push_str(rest);
     out
 }
 

@@ -129,7 +129,7 @@ impl ObservabilityPage {
             .px(dp(8.))
             .bg(p.surface_2)
             .child(div().w(dp(22.)).flex_none())
-            .child(ui::caption("Application", cx).w(dp(178.)).flex_none())
+            .child(ui::caption("Application", cx).flex_1().min_w(dp(178.)))
             .child(ui::caption("Type", cx).w(dp(54.)).flex_none())
             .children(Report::ALL.into_iter().map(|report| {
                 ui::caption(report.label(), cx)
@@ -150,6 +150,7 @@ impl ObservabilityPage {
         let table = v_flex()
             .id("obs-matrix")
             .test_support()
+            .w_full()
             .min_w(dp(MATRIX_WIDTH))
             .bg(p.surface)
             .rounded(px(12.))
@@ -192,6 +193,7 @@ impl ObservabilityPage {
             .child(
                 div()
                     .id("obs-matrix-horizontal")
+                    .w_full()
                     .overflow_x_scroll()
                     .child(table),
             )
@@ -229,7 +231,8 @@ impl ObservabilityPage {
                             .ghost()
                             .group("fog-control")
                             .small()
-                            .w(dp(178.))
+                            .flex_1()
+                            .min_w(dp(178.))
                             .justify_start()
                             .px_0()
                             .overflow_hidden()
@@ -241,7 +244,7 @@ impl ObservabilityPage {
                                     .gap_0()
                                     .child(
                                         mono(app.namespace_prefix.clone())
-                                            .max_w(dp(92.))
+                                            .max_w(relative(0.45))
                                             .flex_none()
                                             .truncate()
                                             .text_color(p.muted)

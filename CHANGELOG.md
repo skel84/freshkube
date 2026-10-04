@@ -2,6 +2,19 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
+## Unreleased
+
+### Coroot
+
+- **Live Traces:** an application's latency and error heatmap, its latest requests, and the selected trace as a waterfall with each span's status, attributes and events. Click a cell to list that bucket's requests, or list the failed ones; choose OpenTelemetry or eBPF when Coroot has both.
+- **Live Profiling:** an application's profile types, instances and flame graph, with zoom, search and a comparison with the window before that colours each frame by its change and lists the biggest increases.
+- **A tidier Observability page:** a connected page shows one line (server, project, window, Refresh and Connection…), with Disconnect and the Kubernetes link behind Connection…. The column uses the shell's usual rows, so only the open destination is highlighted, and Deployments shows only with example data. Application names take the table's spare width. Traces and Profiling pick an application by typing part of its name. The flame graph names only frames wide enough to read, outlines the selected one and shows its details above the graph.
+- **Coroot's markup no longer shows:** report titles and messages lose HTML tags such as `<var>` and decode entities, keeping a plain `<` or `>` in text such as "latency < 500ms".
+
+### Other changes
+
+- Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.
+
 ## 0.5.0 (2026-10-04)
 
 ### Metrics sources
