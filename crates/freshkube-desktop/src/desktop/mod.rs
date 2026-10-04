@@ -24,7 +24,7 @@ use crate::{
     connection_preferences::ConnectionStore,
     fixture,
     forwards::ForwardsIndicator,
-    logs::LogPanel,
+    logs::{LogPanel, TalosPanel},
     maintenance::MaintenanceView,
     monitoring::history::HistoryView,
     monitoring::page::{MonitoringEvent, MonitoringPage, TalosNodes},

@@ -27,7 +27,7 @@ use super::model::ResourceIdentity;
 use super::screen::KubeAccess;
 use super::{example, live};
 use crate::backend::{self, OwnedJob};
-use crate::logs::PodLogView;
+use crate::logs::{PodLogPanel, PodLogView};
 use crate::monitoring::history::{HistorySource, HistoryView};
 use freshkube_core::monitoring::history::Subject;
 

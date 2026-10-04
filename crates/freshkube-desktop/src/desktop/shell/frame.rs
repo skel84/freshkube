@@ -1,4 +1,5 @@
 use super::*;
+use crate::logs::TalosPanel;
 
 impl Pilot {
     pub(in crate::desktop) fn render_status_bar(

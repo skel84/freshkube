@@ -1,4 +1,5 @@
 use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot};
+use crate::logs::TalosPanel;
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,

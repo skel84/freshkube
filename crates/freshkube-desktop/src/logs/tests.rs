@@ -8,7 +8,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
-use super::LogPanel;
+use super::{LogPanel, TalosPanel};
 use crate::backend::StreamEvent;
 
 fn fixture_events() -> Vec<LogEvent> {

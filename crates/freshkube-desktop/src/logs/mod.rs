@@ -20,6 +20,7 @@
 mod measure;
 mod pod;
 mod review;
+mod source_api;
 mod talos;
 mod view;
 
@@ -46,9 +47,9 @@ use gpui_kit::{
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
-pub(crate) use pod::{PodLogView, choice_label, role_heading};
+pub(crate) use pod::{PodLogPanel, PodLogView, choice_label, role_heading};
 use review::{LogReview, MAX_SELECTED_LINES};
-pub(crate) use talos::TalosLogs;
+pub(crate) use talos::{TalosLogs, TalosPanel};
 
 /// The Talos Logs page.
 pub(crate) type LogPanel = LogView<TalosLogs>;
@@ -100,9 +101,9 @@ struct MeasurementKey {
 /// Which of the optional columns rows show. A source with one stream has
 /// no use for the source column; pod logs may hide their timestamps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Columns {
-    pub(super) time: bool,
-    pub(super) source: bool,
+pub struct Columns {
+    pub time: bool,
+    pub source: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -336,33 +337,6 @@ impl<S: LogSource> LogView<S> {
         }
     }
 
-    /// Applies the lines held while hidden.
-    fn flush_backlog(&mut self, cx: &mut Context<Self>) {
-        if self.backlog.is_empty() {
-            return;
-        }
-        let lines = std::mem::take(&mut self.backlog);
-        self.apply_lines(lines, cx);
-    }
-
-    /// Takes lines the source accepted for its current stream. A hidden
-    /// view doesn't spend main-thread time per batch: it holds lines and
-    /// applies them in coalesced groups.
-    fn ingest(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
-        if !self.visible {
-            self.backlog.extend(lines);
-            // The executor's clock, so tests can step it.
-            let now = cx.background_executor().now();
-            if now.saturating_duration_since(self.last_applied) < HIDDEN_APPLY_INTERVAL {
-                return;
-            }
-            let lines = std::mem::take(&mut self.backlog);
-            self.apply_lines(lines, cx);
-            return;
-        }
-        self.apply_lines(lines, cx);
-    }
-
     fn apply_lines(&mut self, lines: Vec<LogEvent>, cx: &mut Context<Self>) {
         let _span = crate::perf::span("logs.apply");
         crate::perf::value("logs.batch", lines.len() as f64);
@@ -383,56 +357,6 @@ impl<S: LogSource> LogView<S> {
         }
     }
 
-    /// Starts an empty review for a new source identity, such as another
-    /// node: lines, filters, scroll position and search all start over.
-    /// Measurements are keyed by line identity and stay cached.
-    fn reset(&mut self, address: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_lines(address);
-        // Setting the input's value from code emits no change event.
-        self.review.query.clear();
-        self.query
-            .update(cx, |query, cx| query.set_value("", window, cx));
-    }
-
-    /// Like [`Self::reset`], but the search carries over to the new lines.
-    fn reset_lines(&mut self, address: &str) {
-        let query = std::mem::take(&mut self.review.query);
-        self.backlog.clear();
-        self.generation += 1;
-        self.review = LogReview::new(address);
-        self.showing.clear();
-        self.review_anchor = None;
-        self.anchor_evicted = false;
-        self.feedback = None;
-        self.following = true;
-        self.measured = None;
-        self.sizes = Rc::new(Vec::new());
-        self.row_widths.clear();
-        self.row_exact.clear();
-        self.scroll = VirtualListScrollHandle::new();
-        self.manual_review = Rc::new(Cell::new(false));
-        self.review.query = query;
-    }
-
-    /// Shows or hides the optional columns, keeping the review in place.
-    fn set_columns(&mut self, columns: Columns, cx: &mut Context<Self>) {
-        if self.columns != columns {
-            self.capture_anchor();
-            self.columns = columns;
-            cx.notify();
-        }
-    }
-
-    /// Shows or hides one source's lines without touching its stream.
-    fn toggle_shown(&mut self, source: &ServiceId, cx: &mut Context<Self>) {
-        self.capture_anchor();
-        if !self.showing.remove(source) {
-            self.showing.insert(source.clone());
-        }
-        self.review.set_service_filter(self.showing.clone());
-        cx.notify();
-    }
-
     /// Identity of the last visible row, which following keeps in view.
     fn last_row_id(&self) -> Option<u64> {
         self.review
@@ -440,26 +364,6 @@ impl<S: LogSource> LogView<S> {
             .len()
             .checked_sub(1)
             .map(|ix| self.review.id(ix))
-    }
-
-    fn capture_anchor(&mut self) {
-        if self.following
-            || self.review.visible.is_empty()
-            || self.sizes.len() != self.review.visible.len()
-        {
-            return;
-        }
-        let mut offset = -self.scroll.offset().y;
-        for (ix, row) in self.sizes.iter().enumerate() {
-            if offset < row.height || ix + 1 == self.sizes.len() {
-                self.review_anchor = Some(ReviewAnchor {
-                    id: self.review.id(ix),
-                    within_row: offset.max(px(0.)),
-                });
-                return;
-            }
-            offset -= row.height;
-        }
     }
 
     fn restore_anchor(&mut self) {

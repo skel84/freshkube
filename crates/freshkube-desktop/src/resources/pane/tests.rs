@@ -10,6 +10,7 @@ use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{DetailEvent, DetailPane};
+use crate::logs::PodLogPanel;
 use crate::resources::detail::{DetailTarget, DocumentRead, DocumentView, FOLLOW_INTERVAL, Reveal};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
