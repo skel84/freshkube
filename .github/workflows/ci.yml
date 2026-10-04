@@ -91,6 +91,12 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Style check
+        # Pages use the shared components (docs/DESIGN.md, Checks); the
+        # allowlist only shrinks. The script's own test runs first.
+        run: |
+          scripts/check-style.test.sh
+          scripts/check-style.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)

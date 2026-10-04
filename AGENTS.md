@@ -42,6 +42,7 @@ cargo run -- --kubernetes-only --kubeconfig <file> --kube-context <name>   # no 
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
+scripts/check-style.sh            # pages use the shared components; see DESIGN.md "Checks"
 ```
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
@@ -130,6 +131,7 @@ scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name
 ```
 
 - Smoke the pages and flows the change touches, in fixture mode and, when the change reads a cluster or Coroot, against the context the user chose. Run `scripts/smoke.sh pages` when a change reaches the frame, the theme or shared components.
+- A page moved onto the shared components is compared with Pods side by side: capture both at the same size, theme and text size (`FRESHKUBE_KIND=pods scripts/smoke.sh start --page resources`, then the page) and check that title, padding, header, rows, group rows, glyphs and states line up.
 - Look at every capture yourself, then report what you checked and what you saw: the captures that show the change, anything wrong, and anything you could not check.
 - Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
 - `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
@@ -318,10 +320,11 @@ The keyboard follows one path through the page, and each level owns a key contex
 
 ## Adding a screen
 
-1. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
-2. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
-3. Put cluster logic in `freshkube-core` and keep the screen to presentation.
-4. Add UI tests for loading, empty, failure and the main interactions.
+1. Pick the page's type from [DESIGN.md](docs/DESIGN.md#page-types) (table page, dashboard, canvas or detail pane) and build it from that type's shared components: the page header, the table, group rows, status glyphs and states. Don't draw your own title, table, glyphs or radii; `scripts/check-style.sh` fails on them, and its allowlist only shrinks.
+2. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
+3. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
+4. Put cluster logic in `freshkube-core` and keep the screen to presentation.
+5. Add UI tests for loading, empty, failure and the main interactions. A table page also calls `desktop::layout_check::assert_table_page`, which measures its header, rows, group rows, padding and title against Pods' sizes.
 
 Diagnostic checks follow the reliability rules below: find the source of truth first, use the `DiagnosticCheck` constructors, provide an actionable fix where possible, and return `unknown` rather than failing when data is unavailable.
 
