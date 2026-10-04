@@ -75,6 +75,12 @@ permission with `chmod +x`, and select it with `FRESHKUBE_STRESS_BINARY`. CI bui
 but does not run the GUI benchmark; it still needs the local visible window.
 Record the compiler and commit when comparing saved binaries.
 
+The bottom bar's FPS indicator passively samples painted frames during activity;
+it never requests a continuous animation. It refreshes its own label at most
+once a second: green at 55+, amber at 30–54, red below 30. Gaps of 250 ms or more
+and samples with fewer than three frame intervals are neutral idle readings.
+This is redraw cadence during bursts, not a GPU throughput benchmark.
+
 When a number looks wrong, profile the run with macOS `sample`:
 
 ```sh
