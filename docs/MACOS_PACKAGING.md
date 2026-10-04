@@ -220,6 +220,15 @@ Kubernetes-only, fixture and maintenance launches do not restore a Talos
 selection over their requested mode. Preferences for text size remain in the
 separate `preferences.json` file.
 
+A Coroot API key or session value is saved only when **Remember key in
+Keychain** is checked, as a login-keychain item named `Freshkube` whose
+account is `Coroot <server URL>`; `coroot.json` holds the rest of the
+connection and no key. The keychain trusts the app by its signature, and an
+ad-hoc signature changes with every build, so after an update macOS may ask
+whether Freshkube may use the item; **Always Allow** answers for that build.
+Disconnect deletes the item; `brew uninstall --zap` does not, so remove it in
+Keychain Access if you uninstall without disconnecting.
+
 Most browsing uses the built-in Talos and Kubernetes clients;
 `talosctl` is used by particular COSI queries and maintenance features, and a
 kubeconfig may require its own exec authentication tool. Those tools are not

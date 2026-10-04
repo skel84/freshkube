@@ -1413,6 +1413,21 @@ async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn settings_shows_the_metrics_source_read_only_for_example_data(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("monitoring-source-settings").is_some());
+        // Example data has nothing to choose.
+        assert!(window.try_find("monitoring-source-mode").is_none());
+        assert!(window.try_find("monitoring-source-test").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn browse_is_unavailable_for_example_data(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {

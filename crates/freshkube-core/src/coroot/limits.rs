@@ -30,9 +30,11 @@ pub(super) fn applications(values: &[Application]) -> Result<(), ReadError> {
     }
     Ok(())
 }
+/// As many applications as the Applications list takes; the map view pages
+/// them and draws only the connections in view.
 pub(super) fn map(value: &ServiceMap) -> Result<(), ReadError> {
-    count(value.nodes.len(), 120)?;
-    count(value.edges.len(), 300)?;
+    count(value.nodes.len(), 2_000)?;
+    count(value.edges.len(), 20_000)?;
     let mut nodes = HashSet::new();
     for node in &value.nodes {
         text(node.id.as_str(), 1024)?;

@@ -1,4 +1,5 @@
-//! Prometheus through the Kubernetes API's service proxy, GET only.
+//! The Prometheus HTTP API through the Kubernetes API's service proxy or at
+//! a URL, GET only.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use kube::client::Body;
 use serde_json::Value;
 use tokio::sync::Semaphore;
 
-use super::{ErrorKind, ExampleSource, PrometheusService, QueryError};
+use super::{Endpoint, ErrorKind, ExampleSource, PrometheusService, QueryError};
 
 /// How long one request may take, as grafaui's client allows.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -22,21 +23,35 @@ pub const MAX_CONCURRENT: usize = 4;
 /// Seconds, when the targets report no scrape interval.
 pub const DEFAULT_SCRAPE_INTERVAL: f64 = 30.;
 
-/// One confirmed Prometheus behind the service proxy. Clones share the
-/// client and the request slots.
+/// One confirmed Prometheus API, behind the service proxy or at a URL.
+/// Clones share the client and the request slots.
 #[derive(Clone)]
 pub struct Prometheus {
-    client: kube::Client,
-    service: PrometheusService,
+    endpoint: Endpoint,
+    transport: Transport,
     scrape_interval: f64,
     slots: Arc<Semaphore>,
     timeout: Duration,
     limit: usize,
 }
 
+/// How requests travel.
+#[derive(Clone)]
+enum Transport {
+    Proxy(kube::Client),
+    /// The bearer token is only ever sent to this endpoint's URL: the
+    /// client follows no redirects.
+    Direct {
+        http: reqwest::Client,
+        token: Option<Arc<str>>,
+    },
+}
+
+/// What the server says it is. Servers other than Prometheus may not
+/// answer `buildinfo`, or answer with the Prometheus version they imitate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuildInfo {
-    pub version: String,
+    pub version: Option<String>,
 }
 
 /// A panel's data, with the PromQL that was sent for it, after
@@ -51,9 +66,32 @@ pub struct PanelResult {
 
 impl Prometheus {
     pub fn new(client: kube::Client, service: PrometheusService) -> Self {
+        Self::with_transport(Endpoint::Service(service), Transport::Proxy(client))
+    }
+
+    /// A server at a URL from [`super::normalise_url`], with an optional
+    /// bearer token.
+    pub fn direct(url: String, token: Option<String>) -> Result<Self, QueryError> {
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| {
+                QueryError::new(ErrorKind::Unavailable, "Couldn't set up an HTTP client")
+            })?;
+        let token = token
+            .map(|token| token.trim().to_owned())
+            .filter(|token| !token.is_empty())
+            .map(Arc::from);
+        Ok(Self::with_transport(
+            Endpoint::Url(url),
+            Transport::Direct { http, token },
+        ))
+    }
+
+    fn with_transport(endpoint: Endpoint, transport: Transport) -> Self {
         Self {
-            client,
-            service,
+            endpoint,
+            transport,
             scrape_interval: DEFAULT_SCRAPE_INTERVAL,
             slots: Arc::new(Semaphore::new(MAX_CONCURRENT)),
             timeout: REQUEST_TIMEOUT,
@@ -61,8 +99,16 @@ impl Prometheus {
         }
     }
 
-    pub fn service(&self) -> &PrometheusService {
-        &self.service
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
+    /// The Service, when requests go through the proxy.
+    pub fn service(&self) -> Option<&PrometheusService> {
+        match &self.endpoint {
+            Endpoint::Service(service) => Some(service),
+            Endpoint::Url(_) => None,
+        }
     }
 
     pub fn scrape_interval(&self) -> f64 {
@@ -92,32 +138,102 @@ impl Prometheus {
     /// own error envelopes come back as [`ErrorKind::Rejected`].
     pub async fn get(&self, request: &ApiRequest) -> Result<Value, QueryError> {
         let target = request.get_target().map_err(QueryError::unsupported)?;
-        let uri = format!("{}{target}", self.service.proxy_base());
         let _slot = self
             .slots
             .acquire()
             .await
             .map_err(|_| QueryError::new(ErrorKind::Unavailable, "The connection closed"))?;
-        let request = Request::get(uri)
-            .header(http::header::ACCEPT, "application/json")
-            .body(Body::empty())
-            .map_err(|_| QueryError::unsupported("The request couldn't be built"))?;
-        let (status, bytes) = tokio::time::timeout(self.timeout, self.send(request))
-            .await
-            .map_err(|_| {
-                QueryError::new(
-                    ErrorKind::TimedOut,
-                    format!(
-                        "Prometheus didn't answer within {} s",
-                        self.timeout.as_secs()
-                    ),
-                )
-            })??;
-        classify(status, &bytes)
+        let answer = async {
+            match (&self.transport, &self.endpoint) {
+                (Transport::Proxy(client), Endpoint::Service(service)) => {
+                    let request = Request::get(format!("{}{target}", service.proxy_base()))
+                        .header(http::header::ACCEPT, "application/json")
+                        .body(Body::empty())
+                        .map_err(|_| QueryError::unsupported("The request couldn't be built"))?;
+                    self.send(client, request).await
+                }
+                (Transport::Direct { http, token }, Endpoint::Url(url)) => {
+                    self.send_direct(http, token.as_deref(), &format!("{url}{target}"))
+                        .await
+                }
+                _ => Err(QueryError::unsupported(
+                    "The connection doesn't match its endpoint",
+                )),
+            }
+        };
+        let (status, bytes) =
+            tokio::time::timeout(self.timeout, answer)
+                .await
+                .map_err(|_| {
+                    QueryError::new(
+                        ErrorKind::TimedOut,
+                        format!(
+                            "Prometheus didn't answer within {} s",
+                            self.timeout.as_secs()
+                        ),
+                    )
+                })??;
+        let direct = matches!(self.transport, Transport::Direct { .. });
+        classify(status, &bytes).map_err(|error| {
+            if direct && error.kind == ErrorKind::Refused {
+                QueryError::token_refused()
+            } else {
+                error
+            }
+        })
     }
 
-    async fn send(&self, request: Request<Body>) -> Result<(u16, Vec<u8>), QueryError> {
-        let response = self.client.send(request).await.map_err(|error| {
+    /// One GET to the URL's server. Errors name neither the URL nor the
+    /// token.
+    async fn send_direct(
+        &self,
+        http: &reqwest::Client,
+        token: Option<&str>,
+        url: &str,
+    ) -> Result<(u16, Vec<u8>), QueryError> {
+        let mut request = http
+            .get(url)
+            .header(http::header::ACCEPT, "application/json");
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let mut response = request.send().await.map_err(|error| {
+            let message = if error.is_timeout() {
+                "The server didn't answer in time"
+            } else if error.is_connect() {
+                "Couldn't connect to the server"
+            } else {
+                "Couldn't reach the server"
+            };
+            QueryError::new(ErrorKind::Unavailable, message)
+        })?;
+        let status = response.status().as_u16();
+        if (300..400).contains(&status) {
+            return Err(QueryError::new(
+                ErrorKind::Unavailable,
+                format!("The server redirected (HTTP {status}); enter the address it redirects to"),
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| QueryError::new(ErrorKind::Unavailable, "The answer was cut off"))?
+        {
+            if bytes.len() + chunk.len() > self.limit {
+                return Err(too_large(self.limit));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((status, bytes))
+    }
+
+    async fn send(
+        &self,
+        client: &kube::Client,
+        request: Request<Body>,
+    ) -> Result<(u16, Vec<u8>), QueryError> {
+        let response = client.send(request).await.map_err(|error| {
             // kube's transport errors can name the server; keep them out.
             let message = match error {
                 kube::Error::Auth(_) => {
@@ -138,13 +254,7 @@ impl Prometheus {
                 .map_err(|_| QueryError::new(ErrorKind::Unavailable, "The answer was cut off"))?;
             if let Some(data) = frame.data_ref() {
                 if bytes.len() + data.len() > self.limit {
-                    return Err(QueryError::new(
-                        ErrorKind::BadAnswer,
-                        format!(
-                            "Prometheus's answer is larger than {} MiB",
-                            self.limit.div_ceil(1024 * 1024)
-                        ),
-                    ));
+                    return Err(too_large(self.limit));
                 }
                 bytes.extend_from_slice(data);
             }
@@ -152,7 +262,24 @@ impl Prometheus {
         Ok((status, bytes))
     }
 
-    /// Confirms the Service is a Prometheus: `/api/v1/status/buildinfo`.
+    /// Confirms the server answers the Prometheus API: a query for `1`.
+    /// Unlike a readiness check, this needs the same access as a dashboard,
+    /// so a wrong token or a missing path prefix fails here.
+    pub async fn probe(&self) -> Result<(), QueryError> {
+        let value = self
+            .get(&ApiRequest::new(
+                "query",
+                vec![("query".into(), "1".into())],
+            ))
+            .await?;
+        let (data, _) = response::envelope(&value).map_err(bad_answer)?;
+        if data.get("resultType").and_then(Value::as_str).is_none() {
+            return Err(bad_answer("The answer isn't a Prometheus query result"));
+        }
+        Ok(())
+    }
+
+    /// The version from `/api/v1/status/buildinfo`.
     pub async fn build_info(&self) -> Result<BuildInfo, QueryError> {
         let value = self
             .get(&ApiRequest::new("status/buildinfo", Vec::new()))
@@ -164,7 +291,7 @@ impl Prometheus {
             .filter(|version| !version.is_empty())
             .ok_or_else(|| bad_answer("The answer has no Prometheus version"))?;
         Ok(BuildInfo {
-            version: version.to_owned(),
+            version: Some(version.to_owned()),
         })
     }
 
@@ -310,6 +437,16 @@ pub(super) fn panel_warnings(panel: &PanelSpec) -> Vec<String> {
         warnings.push("Range table targets currently reduce each series to one row".into());
     }
     warnings
+}
+
+fn too_large(limit: usize) -> QueryError {
+    QueryError::new(
+        ErrorKind::BadAnswer,
+        format!(
+            "Prometheus's answer is larger than {} MiB",
+            limit.div_ceil(1024 * 1024)
+        ),
+    )
 }
 
 fn bad_answer(message: impl Into<String>) -> QueryError {

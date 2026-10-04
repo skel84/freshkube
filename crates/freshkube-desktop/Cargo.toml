@@ -20,6 +20,10 @@ serde.workspace = true
 serde_yaml.workspace = true
 # The terminal emulator behind the pod shell (Apache-2.0; see NOTICE).
 alacritty_terminal = { version = "=0.26.0", default-features = false }
+# Where preferences live on each platform.
+dirs = "6"
+# Keys the user asks to remember: Keychain, Credential Manager or Secret Service.
+keyring = "4"
 bytes = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1", features = ["server", "http1"], optional = true }

@@ -1,7 +1,9 @@
 //! What Monitoring remembers between launches: the user's dashboards
-//! folder and, per context, the Prometheus Service that answered. Its own
-//! file beside the preferences, so its writes never overwrite theirs, and
-//! nothing in it is a credential.
+//! folder and, per context, the metrics source the user chose and the
+//! Service that last answered discovery. Its own file beside the
+//! preferences, so its writes never overwrite theirs. Nothing in it is a
+//! credential: a URL's token lives in the system's credential store, and
+//! this file only says whether one was saved.
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -17,8 +19,70 @@ use serde_json::{Value, json};
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Saved {
     pub(crate) folder: Option<PathBuf>,
-    /// The confirmed Service by context name.
+    /// The Service discovery confirmed, by context name.
     pub(crate) services: BTreeMap<String, PrometheusService>,
+    /// The source the user chose, by context name; none is automatic.
+    pub(crate) choices: BTreeMap<String, Choice>,
+}
+
+/// A metrics source the user chose for a context instead of discovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Choice {
+    /// This Service only, through the Kubernetes API's service proxy.
+    Service(PrometheusService),
+    /// A URL from `normalise_url`, and whether a token for it is saved.
+    Url { url: String, token: bool },
+}
+
+/// The credential store account that holds a URL's token.
+pub(crate) fn token_account(url: &str) -> String {
+    format!("Prometheus {url}")
+}
+
+fn read_service(value: &Value) -> Option<PrometheusService> {
+    let text = |key: &str| value.get(key)?.as_str().map(str::to_owned);
+    let port = u16::try_from(value.get("port")?.as_u64()?).ok()?;
+    Some(PrometheusService {
+        namespace: text("namespace")?,
+        name: text("name")?,
+        port,
+        https: value.get("https").and_then(Value::as_bool) == Some(true),
+        path: freshkube_core::monitoring::normalise_path(&text("path").unwrap_or_default()),
+    })
+}
+
+fn write_service(service: &PrometheusService) -> Value {
+    json!({
+        "namespace": service.namespace,
+        "name": service.name,
+        "port": service.port,
+        "https": service.https,
+        "path": service.path,
+    })
+}
+
+fn read_choice(value: &Value) -> Option<Choice> {
+    match value.get("kind")?.as_str()? {
+        "service" => read_service(value).map(Choice::Service),
+        "url" => {
+            let url =
+                freshkube_core::monitoring::normalise_url(value.get("url")?.as_str()?).ok()?;
+            let token = value.get("token").and_then(Value::as_bool) == Some(true);
+            Some(Choice::Url { url, token })
+        }
+        _ => None,
+    }
+}
+
+fn write_choice(choice: &Choice) -> Value {
+    match choice {
+        Choice::Service(service) => {
+            let mut value = write_service(service);
+            value["kind"] = "service".into();
+            value
+        }
+        Choice::Url { url, token } => json!({"kind": "url", "url": url, "token": token}),
+    }
 }
 
 fn file(preferences: &Path) -> PathBuf {
@@ -39,29 +103,28 @@ pub(crate) fn load(preferences: &Path) -> Saved {
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .filter(|path| path.is_absolute());
-    let services = value
-        .get("prometheus")
-        .and_then(Value::as_object)
-        .map(|services| {
-            services
-                .iter()
-                .filter_map(|(context, service)| {
-                    let text = |key: &str| service.get(key)?.as_str().map(str::to_owned);
-                    let port = u16::try_from(service.get("port")?.as_u64()?).ok()?;
-                    Some((
-                        context.clone(),
-                        PrometheusService {
-                            namespace: text("namespace")?,
-                            name: text("name")?,
-                            port,
-                            https: service.get("https").and_then(Value::as_bool) == Some(true),
-                        },
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Saved { folder, services }
+    let by_context = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(context, value)| (context.clone(), value))
+            .collect::<Vec<_>>()
+    };
+    let services = by_context("prometheus")
+        .into_iter()
+        .filter_map(|(context, value)| Some((context, read_service(value)?)))
+        .collect();
+    let choices = by_context("sources")
+        .into_iter()
+        .filter_map(|(context, value)| Some((context, read_choice(value)?)))
+        .collect();
+    Saved {
+        folder,
+        services,
+        choices,
+    }
 }
 
 /// Saves the latest state on a background thread. Writes are serialized,
@@ -100,19 +163,18 @@ impl MonitoringStore {
         let services: serde_json::Map<String, Value> = saved
             .services
             .iter()
-            .map(|(context, service)| {
-                (
-                    context.clone(),
-                    json!({
-                        "namespace": service.namespace,
-                        "name": service.name,
-                        "port": service.port,
-                        "https": service.https,
-                    }),
-                )
-            })
+            .map(|(context, service)| (context.clone(), write_service(service)))
             .collect();
-        let value = json!({ "dashboards": saved.folder, "prometheus": services });
+        let choices: serde_json::Map<String, Value> = saved
+            .choices
+            .iter()
+            .map(|(context, choice)| (context.clone(), write_choice(choice)))
+            .collect();
+        let value = json!({
+            "dashboards": saved.folder,
+            "prometheus": services,
+            "sources": choices,
+        });
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -157,14 +219,26 @@ mod tests {
         let store = MonitoringStore::new(&preferences, Saved::default());
         let mut service = PrometheusService::new("monitoring", "prometheus-operated", 9090);
         service.https = true;
+        let select =
+            PrometheusService::new("vm", "vmselect", 8481).with_path("/select/0/prometheus/");
+        let url = Choice::Url {
+            url: "https://metrics.example.com/".into(),
+            token: true,
+        };
         store.update(|saved| {
             saved.folder = Some(directory.join("dashboards"));
             saved.services.insert("prod".into(), service.clone());
+            saved
+                .choices
+                .insert("prod".into(), Choice::Service(select.clone()));
+            saved.choices.insert("lab".into(), url.clone());
         });
         store.save_latest().unwrap();
         let saved = load(&preferences);
         assert_eq!(saved.folder, Some(directory.join("dashboards")));
         assert_eq!(saved.services.get("prod"), Some(&service));
+        assert_eq!(saved.choices.get("prod"), Some(&Choice::Service(select)));
+        assert_eq!(saved.choices.get("lab"), Some(&url));
         // The text size is another file's business.
         assert_eq!(
             std::fs::read_to_string(&preferences).unwrap(),

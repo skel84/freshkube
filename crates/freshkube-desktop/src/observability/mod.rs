@@ -29,6 +29,7 @@ mod model;
 mod plots;
 mod profiling;
 mod projection;
+mod remember;
 mod reports;
 mod settings;
 #[cfg(test)]
@@ -63,6 +64,9 @@ pub(crate) struct ObservabilityPage {
     secret: Entity<InputState>,
     auth: usize,
     settings_open: bool,
+    /// What the connection remembers between launches; none in fixture
+    /// mode or without a preferences folder.
+    memory: Option<remember::Memory>,
     categories: std::rc::Rc<Vec<String>>,
     namespaces: std::rc::Rc<Vec<String>>,
     cluster_ids: Vec<String>,
@@ -124,6 +128,8 @@ impl ObservabilityPage {
     pub(crate) fn new(
         fixture: bool,
         runtime: tokio::runtime::Handle,
+        preferences: Option<&std::path::Path>,
+        secrets: Option<crate::secrets::Secrets>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -183,6 +189,9 @@ impl ObservabilityPage {
             secret,
             auth: 0,
             settings_open: false,
+            memory: preferences
+                .filter(|_| !fixture)
+                .map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
             cluster_ids: vec![],
@@ -248,6 +257,7 @@ impl ObservabilityPage {
         if fixture {
             this.apply_applications(&example::applications());
         }
+        this.fill_from_memory(window, cx);
         this.project();
         this.prepare_map();
         this.prepare_report();

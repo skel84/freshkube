@@ -47,7 +47,9 @@ impl Server {
                     reads.fetch_add(1,Ordering::SeqCst);
                     let path=request.split_whitespace().nth(1).unwrap_or("");
                     captured.lock().unwrap().push(path.to_string());
-                    let status=if path.contains("mcp") {404} else {state.load(Ordering::SeqCst)};
+                    // Like Coroot, any API key but the right one, exactly, is refused.
+                    let key=request.lines().find_map(|line| line.strip_prefix("authorization: ").or_else(|| line.strip_prefix("Authorization: ")));
+                    let status=if key.is_some_and(|key| key!="Bearer sanitized-key") {401} else if path.contains("mcp") {404} else {state.load(Ordering::SeqCst)};
                     let selected_mode=mode.load(Ordering::SeqCst);
                     if path.contains("/incident/k1") && selected_mode==5 {gate.notified().await;}
                     let body=if path.contains("/incidents") {
@@ -523,4 +525,185 @@ async fn incidents_drop_delayed_replaced_hidden_and_project_answers(cx: &mut Tes
             assert_eq!(page.incident_count(), None);
         })
     });
+}
+
+#[gpui_kit::test]
+async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_store(
+    cx: &mut TestAppContext,
+) {
+    use super::remember::account;
+    use crate::secrets::MemoryStore;
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let file = directory.path().join("coroot.json");
+    let store = Arc::new(MemoryStore::default());
+    let (runtime, handle, page) = super::tests::mount_remembering(cx, &preferences, store.clone());
+    let server = Server::new(&runtime);
+    let key_account = account(&server.url);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-remember", cx);
+        page.update(cx, |page, cx| {
+            assert!(page.memory.as_ref().unwrap().saved.remember);
+            page.url.update(cx, |input, cx| {
+                input.set_value(server.url.clone(), window, cx)
+            });
+            page.secret
+                .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
+            page.connect(cx);
+        });
+    })
+    .unwrap();
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        observed.read(cx).live.provider.is_some()
+    })
+    .await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let project = page.live.projects[1].clone();
+            page.select_project(&project, cx);
+        })
+    });
+    let (saved, account_name) = (store.clone(), key_account.clone());
+    let path = file.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+        saved.keys.lock().unwrap().contains_key(&account_name)
+            && std::fs::read_to_string(&path).is_ok_and(|text| text.contains("p2"))
+    })
+    .await;
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        !text.contains("sanitized-key"),
+        "the key never reaches the file"
+    );
+    assert_eq!(
+        store
+            .keys
+            .lock()
+            .unwrap()
+            .get(&key_account)
+            .map(String::as_str),
+        Some("sanitized-key")
+    );
+
+    // The next launch connects again with the stored key and opens the project.
+    let (_second_runtime, second, reopened) =
+        super::tests::mount_remembering(cx, &preferences, store.clone());
+    let observed = reopened.clone();
+    cx.wait_for(second, std::time::Duration::from_secs(5), move |_, cx| {
+        observed
+            .read(cx)
+            .live
+            .source
+            .as_ref()
+            .is_some_and(|source| source.project() == "p2")
+    })
+    .await;
+    cx.update(|cx| {
+        let page = reopened.read(cx);
+        assert_eq!(page.url.read(cx).value(), server.url.as_str());
+        assert!(
+            page.secret.read(cx).value().is_empty(),
+            "the stored key is never put in the field"
+        );
+    });
+
+    // Disconnect forgets the key and stops reconnecting.
+    cx.update_window(second, |_, window, cx| {
+        reopened.update(cx, |page, cx| page.disconnect(window, cx))
+    })
+    .unwrap();
+    let (saved, account_name, path) = (store.clone(), key_account.clone(), file.clone());
+    cx.wait_for(second, std::time::Duration::from_secs(5), move |_, _| {
+        !saved.keys.lock().unwrap().contains_key(&account_name)
+            && std::fs::read_to_string(&path)
+                .is_ok_and(|text| text.contains("\"reconnect\": false"))
+    })
+    .await;
+
+    // A store that can't save turns Remember off and says so.
+    store
+        .unavailable
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    cx.update_window(second, |_, window, cx| {
+        reopened.update(cx, |page, cx| {
+            page.secret
+                .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
+            page.connect(cx);
+        })
+    })
+    .unwrap();
+    let observed = reopened.clone();
+    cx.wait_for(second, std::time::Duration::from_secs(5), move |_, cx| {
+        observed
+            .read(cx)
+            .memory
+            .as_ref()
+            .is_some_and(|memory| !memory.saved.remember && memory.error.is_some())
+    })
+    .await;
+    cx.update(|cx| {
+        let error = reopened
+            .read(cx)
+            .memory
+            .as_ref()
+            .unwrap()
+            .error
+            .clone()
+            .unwrap();
+        assert!(error.contains("stays in memory"), "{error}");
+        assert!(!error.contains("sanitized-key"));
+    });
+}
+
+#[gpui_kit::test]
+async fn a_pasted_key_is_trimmed_and_a_refused_one_says_which_key_coroot_wants(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    let connect = |cx: &mut TestAppContext, url: String, key: &'static str| {
+        cx.update_window(handle, |_, window, cx| {
+            page.update(cx, |page, cx| {
+                page.url
+                    .update(cx, |input, cx| input.set_value(url, window, cx));
+                page.secret
+                    .update(cx, |input, cx| input.set_value(key, window, cx));
+                page.connect(cx);
+            })
+        })
+        .unwrap();
+    };
+    connect(cx, server.url.clone(), "crt_wrong");
+    settled(cx, handle, &page).await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert!(page.live.provider.is_none());
+        let error = page.live.error.clone().unwrap();
+        assert!(error.contains("user API key"), "{error}");
+        assert!(!error.contains("crt_wrong"), "{error}");
+    });
+
+    // Spaces around a pasted URL and key are not part of them.
+    connect(cx, format!("  {}  ", server.url), "  sanitized-key  ");
+    settled(cx, handle, &page).await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert!(page.live.provider.is_some(), "{:?}", page.live.error);
+    });
+}
+
+async fn settled(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) {
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        !observed.read(cx).live.connecting
+    })
+    .await;
 }

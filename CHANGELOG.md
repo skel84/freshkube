@@ -2,6 +2,24 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
+## 0.5.0 (2026-10-04)
+
+### Metrics sources
+
+- **Monitoring reads any Prometheus API:** besides Prometheus, discovery finds VictoriaMetrics (single-node and vmselect), Thanos Query and Mimir query frontends, with their ports and path prefixes. Each is confirmed with a query before use, so a missing prefix or refused token shows at once.
+- **Settings → Metrics source**, per context: Automatic, one Service through the Kubernetes API (namespace, name, port, path prefix, HTTPS), or a URL read directly from your Mac with an optional bearer token. **Test** checks the form before you save it. The token is kept in the Keychain; `monitoring.json` only notes that one exists.
+
+### Coroot
+
+- **Read-only Incidents:** the project's latest incidents, each with its SLO objective, compliance and burn rates, root-cause analysis and suggested fixes as Coroot reports them, and links from propagated applications to their reports. Missing evidence is marked not reported, never invented. See [COROOT.md](docs/COROOT.md#read-only-incidents-slice).
+- **Freshkube remembers the Coroot connection:** server, sign-in choice and last project, in `coroot.json` beside the preferences. **Remember key in Keychain** keeps the key in the system's credential store, sent only to its own server. The page reconnects when it first shows, and Disconnect forgets the key.
+- **A visual pass:** Observability gets its own rail icon; chosen chips, toggles and segments are blue everywhere, Settings included; reports merge REST and MCP evidence with formatted units; the service map is layered with weighted, arrowed links; and an unconnected page shows one Connect Coroot state.
+
+### Other changes
+
+- On Linux and Windows, preferences move to the platform's folder: `~/.config/freshkube` and `%APPDATA%\Freshkube`. macOS keeps `~/Library/Application Support/Freshkube`.
+- Lifecycle's Kubernetes version rules move into core, with no change in behaviour.
+
 ## 0.4.0 (2026-10-04)
 
 ### Live Coroot

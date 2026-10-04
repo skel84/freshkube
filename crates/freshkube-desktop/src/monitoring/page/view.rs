@@ -22,6 +22,7 @@ use super::layout::{NARROW, ROW_HEADER};
 use super::markers::MarkerToggle;
 use super::{MonitoringPage, Viewport};
 use crate::monitoring::panel::marker_glyph;
+use crate::monitoring::store::Choice;
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
 
@@ -382,7 +383,10 @@ impl MonitoringPage {
             Connection::Refused(message) => ui::empty_state(
                 IconName::ShieldX,
                 message.clone(),
-                "Dashboards read Prometheus through the Kubernetes service proxy, which needs get on services/proxy in its namespace.",
+                match self.chosen_source() {
+                    Some(Choice::Url { .. }) => "The URL chosen in Settings refused the request. Enter or replace its token in Settings.",
+                    _ => "Dashboards read Prometheus through the Kubernetes service proxy, which needs get on services/proxy in its namespace.",
+                },
                 None,
                 vec![retry("monitoring-retry", "Try again")],
                 cx,
@@ -391,7 +395,11 @@ impl MonitoringPage {
             Connection::Failed(message) => ui::empty_state(
                 IconName::CircleAlert,
                 "Couldn't reach Prometheus",
-                "The service proxy didn't answer as Prometheus.",
+                match self.chosen_source() {
+                    Some(Choice::Url { .. }) => "The URL chosen in Settings didn't answer the Prometheus API. Change it in Settings.",
+                    Some(Choice::Service(_)) => "The Service chosen in Settings didn't answer the Prometheus API through the service proxy. Change it in Settings.",
+                    None => "The service proxy didn't answer as Prometheus.",
+                },
                 Some(message.to_string()),
                 vec![retry("monitoring-retry", "Try again")],
                 cx,
