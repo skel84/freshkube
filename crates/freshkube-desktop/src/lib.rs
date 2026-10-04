@@ -150,7 +150,6 @@ mod monitoring;
 mod mutation;
 mod observability;
 mod palette;
-mod perf;
 mod presentation;
 mod resources;
 // Framework pieces land before the screens that use them; drop this once
@@ -164,6 +163,8 @@ mod terminal;
 mod text_size;
 mod theme;
 mod ui;
+
+use freshkube_probe::perf;
 
 /// Where the app keeps its preferences: `preferences.json` in
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`

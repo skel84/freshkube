@@ -2,7 +2,7 @@
 //! here is empty, so instrumented code costs nothing in the shipped app.
 //!
 //! Samples are kept per thread; the app records them on the main thread and
-//! `crate::stress` reports them from there.
+//! the `stress` binary reports them from there.
 
 #[cfg(feature = "stress")]
 use std::{cell::RefCell, collections::BTreeMap, time::Instant};
@@ -15,7 +15,7 @@ thread_local! {
 
 /// Times its scope in milliseconds under `name`.
 #[must_use]
-pub(crate) struct Span {
+pub struct Span {
     #[cfg(feature = "stress")]
     name: &'static str,
     #[cfg(feature = "stress")]
@@ -24,7 +24,7 @@ pub(crate) struct Span {
 
 #[cfg(feature = "stress")]
 #[inline]
-pub(crate) fn span(name: &'static str) -> Span {
+pub fn span(name: &'static str) -> Span {
     Span {
         name,
         started: Instant::now(),
@@ -33,7 +33,7 @@ pub(crate) fn span(name: &'static str) -> Span {
 
 #[cfg(not(feature = "stress"))]
 #[inline(always)]
-pub(crate) fn span(_: &'static str) -> Span {
+pub fn span(_: &'static str) -> Span {
     Span {}
 }
 
@@ -46,18 +46,18 @@ impl Drop for Span {
 
 /// Records one sample under `name`.
 #[cfg(feature = "stress")]
-pub(crate) fn value(name: &'static str, value: f64) {
+pub fn value(name: &'static str, value: f64) {
     SAMPLES.with(|samples| samples.borrow_mut().entry(name).or_default().push(value));
 }
 
 #[cfg(not(feature = "stress"))]
 #[inline(always)]
-pub(crate) fn value(_: &'static str, _: f64) {}
+pub fn value(_: &'static str, _: f64) {}
 
 /// How far behind the newest line of a batch is, from the RFC 3339 time it
 /// starts with, in milliseconds.
 #[cfg(feature = "stress")]
-pub(crate) fn line_lag(name: &'static str, line: Option<&str>) {
+pub fn line_lag(name: &'static str, line: Option<&str>) {
     let Some(token) = line.and_then(|line| line.split(' ').next()) else {
         return;
     };
@@ -69,10 +69,10 @@ pub(crate) fn line_lag(name: &'static str, line: Option<&str>) {
 
 #[cfg(not(feature = "stress"))]
 #[inline(always)]
-pub(crate) fn line_lag(_: &'static str, _: Option<&str>) {}
+pub fn line_lag(_: &'static str, _: Option<&str>) {}
 
 /// Takes every sample recorded on this thread so far.
 #[cfg(feature = "stress")]
-pub(crate) fn drain() -> BTreeMap<&'static str, Vec<f64>> {
+pub fn drain() -> BTreeMap<&'static str, Vec<f64>> {
     SAMPLES.with(|samples| std::mem::take(&mut *samples.borrow_mut()))
 }
