@@ -1,5 +1,11 @@
 # Access and observation identity
 
+[State and request lifetimes](STATE_LIFETIMES.md) documents `Snapshot`/`Loader`
+transitions, read/delivery ownership, feature visibility and the separate
+Operations mutation lifetime. Access identity and request generation remain
+independent: a same-access refresh can supersede a request without clearing its
+retained data.
+
 Ordinary Kubernetes reads use the opaque `KubeSource.id` derived from core's
 `AccessIdentity`. Resource rows, detail requests, discovery, search and the
 summary share that access boundary. Node selection is independent.
