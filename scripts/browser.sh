@@ -4,7 +4,7 @@
 #
 #   scripts/browser.sh open URL [WxH]          a new Chrome window at the top-left (default 1792x1075)
 #   scripts/browser.sh go URL [SETTLE]         load URL in that window
-#   scripts/browser.sh shot NAME [SETTLE]      capture it to target/smoke/browser/NAME.png
+#   scripts/browser.sh shot NAME [SETTLE]      capture it to target/smoke/<worktree>/browser/NAME.png
 #   scripts/browser.sh full NAME [X Y] [MAX]   NAME-0.png, NAME-1.png, … one per screenful,
 #                                              scrolling at X Y until the page stops moving
 #   scripts/browser.sh click X Y               click at points from the window's top-left
@@ -19,13 +19,16 @@
 # credentials and secret values out of the captures you share.
 #
 # Needs the same Screen Recording and Accessibility permissions as smoke.sh.
+# Takes the same screen lock (scripts/smoke/lock.sh): open waits for any other
+# worktree's smoke test or stress run, and close lets the next one in.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARGET=${CARGO_TARGET_DIR:-$ROOT/target}
-OUT=$TARGET/smoke/browser
+OUT=$TARGET/smoke/$(basename "$ROOT")/browser
 HELPER=$TARGET/smoke/bin/window
 mkdir -p "$OUT" "$(dirname "$HELPER")"
+. "$ROOT/scripts/smoke/lock.sh"
 
 helper() {
   if [[ ! -x $HELPER || $ROOT/scripts/smoke/window.swift -nt $HELPER ]]; then
@@ -41,6 +44,7 @@ pid() {
 }
 
 front() {
+  screen_touch || exit 1
   chrome activate >/dev/null
   sleep 0.3
 }
@@ -48,6 +52,7 @@ front() {
 open() {
   local url=${1:?url} size=${2:-1792x1075}
   local w=${size%x*} h=${size#*x}
+  screen_acquire browser $$
   osascript >/dev/null <<OSA
 tell application "Google Chrome"
   activate
@@ -56,6 +61,7 @@ tell application "Google Chrome"
   set URL of active tab of front window to "$url"
 end tell
 OSA
+  screen_owner_pid "$(pgrep -x "Google Chrome" | head -1)"
   sleep 3
   echo "browser: opened $url"
 }
@@ -111,9 +117,13 @@ key() {
 
 url() { chrome 'get URL of active tab of front window'; }
 
-close() { chrome 'close front window' >/dev/null; }
+close() {
+  screen_touch || exit 1
+  chrome 'close front window' >/dev/null
+  screen_release
+}
 
 case ${1:-} in
   open | go | shot | full | click | scroll | key | url | close) cmd=$1; shift; "$cmd" "$@" ;;
-  *) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

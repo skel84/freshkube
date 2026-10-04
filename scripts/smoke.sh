@@ -3,7 +3,7 @@
 # press keys and click, the way a person would. See AGENTS.md, "Smoke tests".
 #
 #   scripts/smoke.sh start [--page SLUG] [--theme light|dark] [--size WxH] [--release] [-- APP_ARGS...]
-#   scripts/smoke.sh shot NAME [SETTLE_SECONDS]   capture the window to target/smoke/NAME.png
+#   scripts/smoke.sh shot NAME [SETTLE_SECONDS]   capture the window to target/smoke/<worktree>/NAME.png
 #   scripts/smoke.sh key 'keystroke "k" using command down'   any System Events key clause
 #   scripts/smoke.sh click X Y                    click at points from the window's top-left
 #   scripts/smoke.sh scroll X Y DY                scroll at X Y by DY points; DY > 0 goes down
@@ -20,14 +20,19 @@
 # System Settings → Privacy & Security, and the screen must be unlocked:
 # GPUI stops drawing a covered window, and macOS drops keys sent to a window
 # that isn't frontmost, so every command brings the app forward first.
+#
+# One worktree uses the screen at a time (scripts/smoke/lock.sh): start waits
+# for any other worktree's smoke test, browser check or stress run, and stop
+# lets the next one in. Always stop when done.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARGET=${CARGO_TARGET_DIR:-$ROOT/target}
-OUT=$TARGET/smoke
-HELPER=$OUT/bin/window
+OUT=$TARGET/smoke/$(basename "$ROOT")
+HELPER=$TARGET/smoke/bin/window
 PIDFILE=$OUT/pid
-mkdir -p "$OUT/bin"
+mkdir -p "$OUT" "$(dirname "$HELPER")"
+. "$ROOT/scripts/smoke/lock.sh"
 
 PAGES=(overview nodes health resources etcd system-services security lifecycle operations monitoring
   observability-applications observability-service-map observability-incidents
@@ -46,11 +51,12 @@ pid() {
 }
 
 front() {
+  screen_touch || exit 1
   osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $(pid)) to true" >/dev/null
   sleep 0.3
 }
 
-stop() {
+stop_app() {
   if [[ -f $PIDFILE ]]; then
     local p; p=$(cat "$PIDFILE")
     kill "$p" 2>/dev/null || true
@@ -58,6 +64,11 @@ stop() {
     kill -9 "$p" 2>/dev/null || true
     rm -f "$PIDFILE"
   fi
+}
+
+stop() {
+  stop_app
+  screen_release
 }
 
 start() {
@@ -74,16 +85,26 @@ start() {
   done
   local args=("$@")
   [[ ${#args[@]} -eq 0 ]] && args=(--fixture)
-  stop
   if [[ $profile == release ]]; then
     cargo build -q --release --manifest-path "$ROOT/Cargo.toml" --bin freshkube
   else
     cargo build -q --manifest-path "$ROOT/Cargo.toml" --bin freshkube
   fi
   helper id 0 >/dev/null 2>&1 || true # build the helper before timing the window
+  screen_acquire smoke $$
+  stop_app
+  # A new build asks Keychain for a remembered Coroot key; only the user can
+  # answer, so call them with a sound on a live run.
+  local binary=$TARGET/$profile/freshkube stamp=$OUT/launched-$profile
+  if [[ ${args[0]} != --fixture && $binary -nt $stamp ]]; then
+    afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 &
+    echo "smoke: a new build; it may ask Keychain for the Coroot key, which the user answers" >&2
+  fi
+  touch "$stamp"
   FRESHKUBE_PAGE=$page FRESHKUBE_THEME=$theme FRESHKUBE_WINDOW_SIZE=$size \
     nohup "$TARGET/$profile/freshkube" "${args[@]}" >"$OUT/app.log" 2>&1 &
   echo $! >"$PIDFILE"
+  screen_owner_pid "$(cat "$PIDFILE")"
   for _ in {1..300}; do
     if helper id "$(pid)" >/dev/null 2>&1; then
       echo "smoke: freshkube $(pid) is up${page:+ on $page}"
@@ -92,6 +113,7 @@ start() {
     sleep 0.1
   done
   echo "smoke: no window after 30 s; see $OUT/app.log" >&2
+  stop
   exit 1
 }
 
@@ -122,23 +144,36 @@ scroll() {
   helper scroll $((x + ${1:?x})) $((y + ${2:?y})) "${3:?dy}"
 }
 
+# The window between its header and status bar. The header's refresh ring and
+# the status bar's clock and frame rate change on every capture, so `full`
+# compares this part to tell when the page itself stopped moving.
+content() {
+  local x y w h
+  read -r x y w h < <(helper bounds "$(pid)")
+  screencapture -x -R "$((x + 80)),$((y + 80)),$((w - 80)),$((h - 120))" "$1"
+}
+
 # Every screenful of a scrolling page, top to bottom, at X Y (the middle of
-# the window by default). Stops when a capture matches the one before it.
+# the window by default). Stops when the page no longer moves.
 full() {
   local name=${1:?name} x=${2:-} y=${3:-} max=${4:-12} w h step
   read -r _ _ w h < <(helper bounds "$(pid)")
   x=${x:-$((w / 2))} y=${y:-$((h / 2))} step=$((h * 3 / 4))
   shot "$name-0" >/dev/null
+  content "$OUT/full-prev.tmp.png"
   echo "$OUT/$name-0.png"
   for ((i = 1; i <= max; i++)); do
     scroll "$x" "$y" "$step"
     shot "$name-$i" 0.6 >/dev/null
-    if cmp -s "$OUT/$name-$i.png" "$OUT/$name-$((i - 1)).png"; then
+    content "$OUT/full-next.tmp.png"
+    if cmp -s "$OUT/full-next.tmp.png" "$OUT/full-prev.tmp.png"; then
       rm "$OUT/$name-$i.png"
       break
     fi
+    mv "$OUT/full-next.tmp.png" "$OUT/full-prev.tmp.png"
     echo "$OUT/$name-$i.png"
   done
+  rm -f "$OUT/full-prev.tmp.png" "$OUT/full-next.tmp.png"
 }
 
 pages() {
@@ -154,5 +189,5 @@ pages() {
 
 case ${1:-} in
   start | shot | key | click | scroll | full | stop | pages) cmd=$1; shift; "$cmd" "$@" ;;
-  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

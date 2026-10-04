@@ -31,6 +31,8 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
 
+Worktrees on one machine share a build directory: `export CARGO_TARGET_DIR=~/.cache/freshkube/target`. Dependencies then build once, each worktree's own crates keep separate artifacts, and Cargo's lock queues builds instead of running two at once. "Blocking waiting for file lock" means another worktree is building; wait for it rather than switching directories.
+
 ```sh
 cargo build
 cargo run -- --fixture            # synthetic example data, no credentials or cluster
@@ -116,7 +118,7 @@ Headless UI tests render the real app, find elements by id and click or type int
 
 ```sh
 scripts/smoke.sh start --page observability-traces          # builds, launches with --fixture, waits for the window
-scripts/smoke.sh shot traces                                # → target/smoke/traces.png; open it and look
+scripts/smoke.sh shot traces                                # → target/smoke/<worktree>/traces.png; open it and look
 scripts/smoke.sh key 'keystroke "k" using command down'     # any System Events key clause
 scripts/smoke.sh click 640 220                              # points from the window's top-left
 scripts/smoke.sh scroll 900 500 600                         # wheel at a point, 600 points down
@@ -131,6 +133,8 @@ scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name
 - Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
 - `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
 - Live checks only look and navigate. Never press Operations or maintenance actions, and keep credentials out of captures you share.
+- One worktree uses the screen at a time. `start`, `browser.sh open` and `stress.sh` wait for a lock (`scripts/smoke/lock.sh`, in `~/.cache/freshkube/screen.lock`) that `stop` and `close` release; a dead owner's lock, or a smoke test idle for ten minutes, is taken over. Build before you start, keep the session short, and always `stop`. "screen: waiting for …" means another worktree is checking; let it finish.
+- A live `start` after a new build plays a sound: the app may ask Keychain for the remembered Coroot key, and only the user answers it.
 
 To compare a page with the tool it reads from (Coroot, Grafana), `scripts/browser.sh` drives a Chrome window with the same commands: `open URL`, `go URL`, `shot`, `full`, `scroll`, `click`, `key`, `url` and `close`, with captures in `target/smoke/browser/`. Sign-ins are the user's: when a page asks for one, stop and ask them to sign in in that window.
 
