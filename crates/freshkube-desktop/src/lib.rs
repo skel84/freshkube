@@ -148,7 +148,6 @@ mod maintenance;
 mod monitoring;
 mod mutation;
 mod observability;
-mod perf;
 mod presentation;
 mod resources;
 // Framework pieces land before the screens that use them; drop this once
@@ -161,6 +160,7 @@ mod stress;
 mod terminal;
 mod ui;
 
+use freshkube_probe::perf;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
 use freshkube_ui::{meters, palette, text_size, theme};
 

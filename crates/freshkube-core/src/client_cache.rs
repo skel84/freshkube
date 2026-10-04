@@ -450,13 +450,17 @@ mod tests {
 
     impl Scratch {
         fn new() -> Self {
+            // macOS clocks tick in microseconds, so tests running in parallel
+            // can read the same time; the counter keeps their names apart.
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let path = std::env::temp_dir().join(format!(
-                "freshkube-access-{}-{}",
+                "freshkube-access-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             ));
             std::fs::create_dir(&path).unwrap();
             Self(path)

@@ -8,6 +8,7 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
+├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
 └── freshkube-desktop/   the GPUI Kit application (shell, screens, logs, theme)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
@@ -106,7 +107,7 @@ The user chooses the text size (`text_size.rs`), which becomes the window's rem 
 Headless UI tests render the real app, find elements by id and click or type into them; the suite runs in seconds. Prefer them over manual checks, and give every interactive element a stable, domain-based id.
 
 - Dialogs animate on the real clock, and advancing the test clock does not finish them. The shared test setup in `desktop/tests.rs` turns on reduced motion (`cx.set_reduce_motion(true)`); two confirmation-dialog tests failed every run without it. Do the same in any new test harness.
-- `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`).
+- `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`) from `freshkube-probe`. They count only with its `counting` feature, which a crate turns on from its dev-dependencies, as `freshkube-desktop` does.
 - Element snapshots can't tell whether a button is disabled. Assert the outcome instead: click it and check that nothing changed.
 - Setting an input's value from code does not emit its change event. Type into it with real input events (`window.input`) when the change handler matters.
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
@@ -133,7 +134,7 @@ scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name
 - Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
 - `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
 - Live checks only look and navigate. Never press Operations or maintenance actions, and keep credentials out of captures you share.
-- One worktree uses the screen at a time. `start`, `browser.sh open` and `stress.sh` wait for a lock (`scripts/smoke/lock.sh`, in `~/.cache/freshkube/screen.lock`) that `stop` and `close` release; a dead owner's lock, or a smoke test idle for ten minutes, is taken over. Build before you start, keep the session short, and always `stop`. "screen: waiting for …" means another worktree is checking; let it finish.
+- One worktree uses the screen at a time. `start`, `browser.sh open` and `stress.sh` wait for a lock (`scripts/smoke/lock.sh`, in `~/.cache/freshkube/screen.lock`) that `stop` and `close` release; a dead owner's lock, or a smoke test idle for ten minutes, is taken over. Build before you start, keep the session short, and always `stop`. "screen: waiting for …" means another worktree is checking; let it finish. A locked screen spoils captures and keys too, so every command waits for it to be unlocked ("screen: locked; waiting …"); keep the Mac awake for long unattended runs (`caffeinate -d -i`).
 - A live `start` after a new build plays a sound: the app may ask Keychain for the remembered Coroot key, and only the user answers it.
 
 To compare a page with the tool it reads from (Coroot, Grafana), `scripts/browser.sh` drives a Chrome window with the same commands: `open URL`, `go URL`, `shot`, `full`, `scroll`, `click`, `key`, `url` and `close`, with captures in `target/smoke/browser/`. Sign-ins are the user's: when a page asks for one, stop and ask them to sign in in that window.

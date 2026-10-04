@@ -66,8 +66,12 @@ to `main` and by hand:
 The checks are formatting, Clippy with warnings denied and the workspace tests,
 including headless UI tests. A change that touches only `spikes/`, `docs/` or
 Markdown files skips them; the skipped job counts as passed, so it never blocks
-a merge. A spike has its own workspace and tests that CI doesn't run. A new push
-to a pull request cancels its previous run.
+a merge. A draft pull request skips them as well, and they run when it is marked
+ready for review, so work in progress doesn't hold the macOS runners. A spike has
+its own workspace and tests that CI doesn't run. A new push to a pull request
+cancels its previous run. The checks build the workspace crates with line tables
+only, rather than full debug info, which keeps backtraces readable and the test
+binaries quicker to link.
 
 Both the checks and bundle jobs install protobuf before building. They generate
 the Talos client in their own Cargo output directory; no checked-in generated
