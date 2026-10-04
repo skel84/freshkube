@@ -21,7 +21,9 @@ mod deployments;
 mod example;
 #[cfg(test)]
 mod fake_tests;
+mod format;
 mod incidents;
+mod live_incidents;
 mod map;
 mod model;
 mod plots;
@@ -89,6 +91,7 @@ pub(crate) struct ObservabilityPage {
     map_problems: bool,
     incident: usize,
     incident_muted: bool,
+    incident_observations: live_incidents::Incidents,
     release: usize,
     comparison: usize,
     full_yaml: bool,
@@ -208,6 +211,7 @@ impl ObservabilityPage {
             map_problems: false,
             incident: 0,
             incident_muted: false,
+            incident_observations: Default::default(),
             release: 0,
             comparison: 1,
             full_yaml: false,
@@ -445,23 +449,25 @@ impl Focusable for ObservabilityPage {
 impl Render for ObservabilityPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let content =
-            if !self.fixture && (self.live.provider.is_none() || self.live.source.is_none()) {
-                self.render_unavailable(cx)
-            } else if let Some(placeholder) = self.read_placeholder(cx) {
-                placeholder
-            } else {
-                match self.destination {
-                    Destination::Applications => self.render_applications(window, cx),
-                    Destination::ServiceMap => self.render_map(window, cx),
-                    Destination::Application => self.render_report(window, cx),
-                    _ if !self.fixture => self.render_limited(cx),
-                    Destination::Incidents => self.render_incident(window, cx),
-                    Destination::Deployments => self.render_deployments(window, cx),
-                    Destination::Profiling => self.render_profiling(cx),
-                    Destination::Traces => self.render_traces(window, cx),
-                }
-            };
+        let content = if !self.fixture
+            && (self.live.provider.is_none() || self.live.source.is_none())
+        {
+            self.render_unavailable(cx)
+        } else if let Some(placeholder) = self.read_placeholder(cx) {
+            placeholder
+        } else {
+            match self.destination {
+                Destination::Applications => self.render_applications(window, cx),
+                Destination::ServiceMap => self.render_map(window, cx),
+                Destination::Application => self.render_report(window, cx),
+                Destination::Incidents if !self.fixture => self.render_live_incidents(window, cx),
+                _ if !self.fixture => self.render_limited(cx),
+                Destination::Incidents => self.render_incident(window, cx),
+                Destination::Deployments => self.render_deployments(window, cx),
+                Destination::Profiling => self.render_profiling(cx),
+                Destination::Traces => self.render_traces(window, cx),
+            }
+        };
         v_flex()
             .id("observability-page")
             .test_support()

@@ -8,8 +8,9 @@ mod tests;
 
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
-    AppHealth, AppId, Application, Chart, ClientLink, Credentials, Dependency, Issue,
-    LogPatternSummary, MapEdge, MapNode, ProjectInfo, Report, SeriesSummary, ServiceMap, Signal,
+    AppHealth, AppId, Application, BurnRate, Chart, ClientLink, Credentials, Dependency, Incident,
+    IncidentQuery, IncidentState, IncidentView, Issue, LogPatternSummary, MapEdge, MapNode,
+    ProjectInfo, Rca, Report, SeriesSummary, ServiceMap, Signal, Slo, SloObjective, StateFilter,
     Status, TimeRange,
 };
 pub use subject::ObjectSubject;
@@ -24,7 +25,7 @@ pub enum ReadError {
     Refused,
     #[error("This evidence is not supported by the server or authentication method.")]
     Unsupported,
-    #[error("The selected project or application is no longer available.")]
+    #[error("The selected project, application or incident is no longer available.")]
     Missing,
     #[error("Coroot could not be reached. Check the address and try again.")]
     Unreachable,

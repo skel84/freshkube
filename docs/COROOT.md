@@ -1,6 +1,6 @@
 # Coroot integration
 
-Freshkube's first Coroot slice connects Applications, the service map and the application-report evidence available through `coroot-rs`. Prometheus dashboards remain the separate Monitoring feature. [Freshkube #25](https://github.com/skel84/freshkube/issues/25) tracks the broader integration and stays open for later destinations.
+Freshkube connects Applications, the service map, supported application-report evidence and read-only Incidents through `coroot-rs`. Prometheus dashboards remain the separate Monitoring feature. [Freshkube #25](https://github.com/skel84/freshkube/issues/25) tracks the broader integration and stays open for later destinations.
 
 The first slice is implemented in `05d03ce`, with the Disconnect-state correction in `1b16b42` ([PR #31](https://github.com/skel84/freshkube/pull/31)). The validation record below distinguishes completed checks from the remaining integration scope.
 
@@ -10,14 +10,15 @@ The first slice is implemented in `05d03ce`, with the Disconnect-state correctio
 | --- | --- |
 | Preserve present signals | [corust PR #3](https://github.com/skel84/corust/pull/3), `605dced7850271668cf781e6589a0d3e7e66e5bc`, preserves empty healthy, empty unknown and absent signals. Freshkube keeps those distinctions. |
 | Access identity | Satisfied by [Freshkube PR #30](https://github.com/skel84/freshkube/pull/30), merged main `4bbc775b5361ac32d8f7876f470325da2e3df1c5`; #2 is closed. Desktop uses `KubeSource.id`, the opaque access-key adapter described in [ACCESS_IDENTITY.md](ACCESS_IDENTITY.md). |
-| Bounded responses | The dependency pins reviewed corust `c35f7138f208a5b84aae28c0ccbfe776f9d58e15`, including response bounds from [PR #4](https://github.com/skel84/corust/pull/4) and collection-shape validation from [PR #5](https://github.com/skel84/corust/pull/5). Freshkube sets an 8 MiB limit before REST/MCP decoding. No absolute local dependency path is committed. |
+| Bounded responses | The dependency pins incident-audited corust `a1fd85d649a9274d8a4ad774d16d671c4278781d` ([PR #7](https://github.com/skel84/corust/pull/7)), including response bounds from [PR #4](https://github.com/skel84/corust/pull/4) and collection-shape validation from [PR #5](https://github.com/skel84/corust/pull/5). Freshkube sets an 8 MiB limit before REST/MCP decoding. No absolute local dependency path is committed. |
 | First live slice | Core provider, explicit connection/project/access association, Applications → map → supported reports, shared fixture/live projection and guarded object navigation, implemented in `05d03ce`. Validation is recorded below. |
-| Later destinations | Incidents and supported trace exploration need their own desktop integration. Complete report histories, CPU profiling, historical deployment comparisons and missing trace detail remain in [corust #2](https://github.com/skel84/corust/issues/2). |
+| Read-only Incidents | Latest-project sample → selected incident → source SLO/RCA → application reports; [contract and bounds below](#read-only-incidents-slice). |
+| Later destinations | Supported trace exploration needs its own desktop integration. Complete report histories, CPU profiling, historical deployment comparisons and missing trace detail remain in [corust #2](https://github.com/skel84/corust/issues/2). |
 | Shared Health/attention | Separate future scope requiring provenance and deduplication. |
 
 The remaining lenient library list readers (nodes, deployments, risks, alerts and alert rules) need endpoint-contract audits before later adoption; tracked in [corust #6](https://github.com/skel84/corust/issues/6). This first slice does not call those readers.
 
-[Guidance cleanup #24](https://github.com/skel84/freshkube/issues/24) and [Diagnostics/Lifecycle extraction #4](https://github.com/skel84/freshkube/issues/4) are independent follow-ups. They are not prerequisites for reading Coroot's existing analysis. The separate Table/summary performance follow-up [#22](https://github.com/skel84/freshkube/issues/22) remains open.
+[Guidance cleanup #24](https://github.com/skel84/freshkube/issues/24) is complete; [Diagnostics/Lifecycle extraction #4](https://github.com/skel84/freshkube/issues/4) remains an independent follow-up. It is not a prerequisite for reading Coroot's existing analysis. The separate Table/summary performance follow-up [#22](https://github.com/skel84/freshkube/issues/22) remains open.
 
 ## Connection policy
 
@@ -50,7 +51,8 @@ Refresh and reopening capture a new Last N hours interval. Destination/report na
 | Service map | Stable AppId nodes and directed endpoint-pair links, prepared bounded grid layout, source status and available request/latency/traffic metrics. Missing metrics say Not reported. Statistics derived by the library from rounded Coroot display values are identified as potentially rounded. |
 | Application reports | Separate REST and additional MCP evidence: Coroot report statuses/issues, dependencies/clients, and available vitals, labeled chart summaries and log patterns. Dependency health and connection health remain separate. Summaries identify missing points and omitted series; complete histories are not implied. |
 | Capabilities | API-key presence allows an MCP attempt but does not prove server support. Session/anonymous access keeps REST available and reports richer evidence as unsupported. Authentication, refusal, missing subjects, unreachable sources, decoding failures, timeouts and size-limit failures have separate messages. |
-| Later destinations | Live Incidents, Deployments, Profiling and Traces show the current integration limitation. Their existing fixture screens remain previews. |
+| Incidents | Bounded latest-project sample, stable key/application selection, source-reported SLO objective/compliance and burn values, RCA source text and problem-propagation application links. No mutation, invented charts or ruled-out evidence. |
+| Later destinations | Live Deployments, Profiling and Traces show the current integration limitation. Their existing fixture screens remain previews. |
 
 Application and link selections use stable domain identities and survive response reorder. Removing the selected subject clears the selection safely. Sorting, filtering, group counts, labels and graph layout are prepared when observations or controls change. The applications list is virtualized. The map displays prepared pages of 24 applications, adding at most two endpoints for the selected connection. It states the displayed/retained counts; the first 24 connection markers plus the selection are shown on the graph. Every retained connection remains available in the virtualized inspector, including links between different pages. Category and namespace menus show at most 100 choices with an explicit hint; text search searches all retained applications.
 
@@ -71,6 +73,8 @@ This slice is read-only. Live pages do not offer threshold, mute, rollback or co
 | Map | 120 nodes / 300 directed links |
 | Report evidence | 32 reports, 200 total issue/log entries, 128 summarized series, 32 vitals, 300 dependency/client links |
 | Series | 512 summary points, 32 labels per series |
+| Incidents | Latest 100 across all states; 10 list rows and 10 propagation applications per rendered page; 100 retained propagation applications / 200 issue entries / 32 burn conditions |
+| Incident text | 64 KiB total RCA/propagation text, with individual bounds (root/fixes 16 KiB each, detailed analysis 32 KiB, issue 4 KiB) |
 | Strings | Individually bounded IDs, labels, messages, log samples, connectivity text and protocols before display preparation |
 
 Exceeded limits produce an explicit source failure; they do not masquerade as successful empty data. Previous successful evidence survives only a same-identity retry and is marked stale. These limits are first-slice product bounds, not Coroot's server limits.
@@ -96,3 +100,15 @@ The earlier unpaged map took 2,927.92 ms for ten frames while compilation was ac
 The optional anonymous HTTPS check reached the explicitly selected Coroot endpoint; `/api/user` returned HTTP 401. Live authenticated data has not been checked by this branch.
 
 The user authorized read-only verification through `~/code/home-ops/kubeconfig`, explicitly selected context `admin@kubernetes`. This does not authorize an ambient context, mutation or unnamed pod port-forward. Optional live evidence must record counts/statuses only and keep credentials and raw log/trace payloads out of the repository.
+
+## Read-only Incidents slice
+
+The prerequisite is [corust PR #7](https://github.com/skel84/corust/pull/7), pinned at `a1fd85d649a9274d8a4ad774d16d671c4278781d`. Its [contract audit](https://github.com/skel84/corust/blob/a1fd85d649a9274d8a4ad774d16d671c4278781d/crates/coroot-rs/INCIDENTS.md) names the upstream Coroot revision and handlers. Malformed envelopes, identities, required impact/duration and supported evidence fail explicitly. A reported zero remains zero; missing optional SLO/RCA evidence remains absent. The additive `incident_view` API preserves existing public record fields and methods.
+
+Coroot's REST list returns a bounded sample ordered open-first then newest. It does **not** filter history by the toolbar window; detail reads use the incident's own time context. The page states both facts. The sidebar labels open counts as sampled, and neither an empty result nor fewer than 100 rows proves a complete history. `data: null` before a world is available is an empty sample, with a refresh explanation; null detail cannot identify an incident and fails.
+
+The existing retained page owns list/detail snapshots, selection by incident key and application ID, prepared text and paging. Each detail has its own owned Tokio read plus GPUI delivery task, so a removed/replaced selection cancels it while retaining a concurrent list read. Page generation and snapshot identity/generation reject obsolete completions. Hiding, destination/source replacement and disconnect drop both jobs. A same-window retry retains successful evidence as stale; a new source/window clears it. A successful list removes an absent selection and its evidence. Detail application identity must match the listed application.
+
+SLO objective/compliance are Coroot-rendered strings. Violated flags and incident severity retain source meaning; affected-request impact is not used to reconstruct compliance. Burn windows, values and thresholds come from the response, never a fixed 14.4× rule. Missing objective/compliance, impact, burn rates and analysis are marked not reported. RCA status, summary, root cause, suggested fixes, analysis errors and problem propagation are read-only source text, with no executable Markdown links or mutation controls. Application links enter the existing report workflow; later Kubernetes links still require explicit association and shell guards. Stale incident links cannot navigate.
+
+List and propagation paging keep every bounded item reachable while rendering at most 10 each. The original fictional H4 fixture remains an explicit preview; fake-server tests exercise the production live projection. Incident charts, RCA widgets/healthy propagation links and structured ruled-out evidence are not represented by this client API. Traces, profiling, historical deployment comparisons, shared Health/attention and #22 performance work remain separate.

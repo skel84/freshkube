@@ -198,7 +198,9 @@ impl Pilot {
                             .update(cx, |page, cx| page.open(item, cx));
                         this.navigate_from_keyboard(Page::Observability, window, cx);
                     }));
-                if item == Destination::Incidents && self.fixture {
+                if item == Destination::Incidents
+                    && let Some(count) = self.observability.read(cx).incident_count()
+                {
                     div()
                         .relative()
                         .child(button)
@@ -226,7 +228,7 @@ impl Pilot {
                                         .bg(p.crit)
                                         .text_color(p.on_fill)
                                         .text_size(dp(11.))
-                                        .child("2"),
+                                        .child(count.to_string()),
                                 )
                             },
                         )
