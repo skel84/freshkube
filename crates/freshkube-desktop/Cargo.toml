@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-probe.workspace = true
 talos-rs.workspace = true
 tokio.workspace = true
 futures.workspace = true
@@ -33,7 +34,13 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 # The `stress` binary: timings, a key script, a log flood rate and a
 # synthetic Kubernetes API. A binary rather than an example, because
 # examples get the dev-dependencies, and with them GPUI's test support.
-stress = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util"]
+stress = [
+    "freshkube-probe/stress",
+    "dep:bytes",
+    "dep:http-body-util",
+    "dep:hyper",
+    "dep:hyper-util",
+]
 
 [[bin]]
 name = "stress"
@@ -45,3 +52,5 @@ libc = "0.2"
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 tempfile = "3"
+# Render probes count in tests (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }
