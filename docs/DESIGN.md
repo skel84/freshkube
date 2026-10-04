@@ -64,21 +64,21 @@ Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to 
 
 Open on the cause: state, last exit, next restart, termination output and a Logs action. Continue with the restart timeline, containers, Runs on (node and Talos kubelet health), relationships and recent events. The retained resource pane keeps its watch and shell/forward protections. Previous-instance logs are read only through an explicit Logs action; unavailable history is not invented. The node memory bullet uses Talos used/physical capacity when available and explicitly identifies unavailable requests.
 
-## H1–H7: observability prototype
+## H1–H7: observability
 
-These use Coroot's concepts in Fog's visual language. **The current implementation is an interactive prototype, enabled by `--fixture` only.** The workspace has no runtime handle, credentials or live provider. Outside fixture mode every route shows Integration required and a route to the existing Prometheus dashboards. Rollback and configuration actions show previews and never execute cluster writes. Thresholds and mute choices are session-local example state.
+These use Coroot's concepts in Fog's visual language. Applications, the service map and supported application-report evidence have a read-only Coroot connection; [COROOT.md](COROOT.md) records transport, identity, limits and validation. The retained page owns requests and prepared display data. H4–H7 remain interactive fixture previews and show explicit limitations in live mode. Rollback/configuration previews never execute writes; threshold and mute choices remain local to example mode.
 
 | Screen | Interaction |
 | --- | --- |
-| H1 Applications | 47 fictional apps, 11 check columns; problems first, grouped Applications / Control plane / Monitoring. Text, namespace, category and status filters; every cell opens its report. |
-| H2 Service map | Tiers/topology, healthy solid / degraded and failing dashed connections, widths by traffic; select a link to inspect it; nodes open app reports. |
-| H3 Application | Clients → instances → dependencies, one tab per check, written conditions and editable thresholds; worker links to its fixture pod/logs. |
+| H1 Applications | Shared fixture/live projection, stable AppIds, 12 check columns including separate disk usage and I/O. Problems first, grouped by Coroot category, with text/namespace/category/status filters. Healthy, unknown and not reported remain distinct. |
+| H2 Service map | Bounded prepared grid of stable AppId nodes and directed links, with Coroot status and available traffic/latency metrics. Link selection survives reorder; missing values stay explicit. Nodes open application reports. |
+| H3 Application | Source-reported checks and supported REST/MCP evidence in independent cards, dynamic report tabs, dependencies/clients and summarized charts. Explicitly mapped subjects open Kubernetes objects through the shell guard; complete histories and live mutations are unavailable. |
 | H4 Incident | Two incidents, SLO compliance and 1h/5m burn, root cause, cause chain, previewed fixes and ruled-out evidence. Burn threshold 14.4×. |
 | H5 Deployments | Four releases, selectable revisions, actual diff of the fictional Deployment specs, full selected YAML and rollback preview. |
 | H6 Profiling | Comparison toggle, CPU history, biggest increases, function search and a flame graph with zoom/reset. |
 | H7 Traces | Latency/error heatmap with SLO line, selectable buckets and error causes, matching sample waterfalls and span inspection. |
 
-The fictional snapshot ends at 15:00, with the worker deployment at 12:52 and node event at 14:48. Header ranges regenerate bounded history. The applications table is virtualized; maps, traces, profiles and releases have small fixed limits. A future Coroot provider must preserve source identity, cancellation and the visible-page-only I/O rules.
+The later fixture histories end at 15:00, with the worker deployment at 12:52 and node event at 14:48; header ranges regenerate that bounded example history. Live Refresh/reopen captures the current time interval, while report navigation and retries retain the displayed UTC interval. Applications are virtualized; maps and report evidence have explicit bounds. Hiding cancels ordinary requests, and changed provider/access/project/range generations reject old results.
 
 Debug entry points:
 
@@ -104,4 +104,4 @@ Heatmap levels: `#323845`, `#33466A`, `#3D5C92`, `#5379BB`, `#7AA0E6`, `#B3CEFA`
 - Default row density; comfortable remains the initial value.
 - More causal grouping beyond pod state and NotReady nodes.
 - Fog light theme.
-- A real Coroot integration, authentication, capabilities and a reviewed workflow for any fixes. No live Coroot integration is implied by the prototype.
+- Later Coroot destinations and a reviewed workflow for any fixes. The first live slice is read-only; [COROOT.md](COROOT.md) records its supported evidence and remaining API gaps.
