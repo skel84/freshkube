@@ -90,7 +90,7 @@ pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 /// The icon rail's width, and the navigation column's beside it, in dp.
 pub(crate) const RAIL_WIDTH: f32 = 64.;
 pub(crate) const COLUMN_WIDTH: f32 = 208.;
-pub(crate) const PAGE_PADDING: f32 = 26.;
+pub(crate) use freshkube_ui::page::PAGE_PADDING;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NodeView {

@@ -181,22 +181,16 @@ impl ResourcesScreen {
     /// marks.
     pub(super) fn pod_switch(&self, cx: &mut Context<Self>) -> Option<Div> {
         self.projection.grouping()?;
-        let p = palette(cx);
         let tally = self.projection.tally();
         let count = |tone: ui::Tone, count: usize, what: &'static str, filter: PodFilter| {
-            Button::new(SharedString::from(format!(
-                "resource-tally-{}",
-                what.replace(' ', "-")
-            )))
-            .ghost()
-            .small()
-            .px(dp(6.))
-            .selected(self.projection.pod_filter() == Some(filter))
-            .child(ui::status_glyph(tone, cx).unwrap())
-            .child(div().child(count.to_string()))
-            .text_color(p.ink_2)
-            .accessibility_label(format!("{count} {what}"))
-            .tooltip(format!("{count} {what} · click to filter"))
+            table::status_chip(
+                SharedString::from(format!("resource-tally-{}", what.replace(' ', "-"))),
+                tone,
+                count,
+                what,
+                self.projection.pod_filter() == Some(filter),
+                cx,
+            )
             .on_click(cx.listener(move |view, _, _, cx| {
                 let next = (view.projection.pod_filter() != Some(filter)).then_some(filter);
                 view.projection.set_pod_filter(&view.store, next);
@@ -231,39 +225,26 @@ impl ResourcesScreen {
                             view.set_list_view(next, cx);
                         })),
                 )
-                .child(
-                    h_flex()
-                        .id("resource-tally")
-                        .test_support()
-                        .gap(dp(2.))
-                        .font_family(MONO_FONT)
-                        .text_size(dp(12.))
-                        .text_color(p.muted)
-                        .child(count(
-                            ui::Tone::Crit,
-                            tally.failing,
-                            "failing",
-                            PodFilter::Failing,
-                        ))
-                        .child(count(
+                .child(table::status_chips(
+                    "resource-tally",
+                    [
+                        count(ui::Tone::Crit, tally.failing, "failing", PodFilter::Failing),
+                        count(
                             ui::Tone::Warn,
                             tally.warning,
                             "not ready",
                             PodFilter::Warning,
-                        ))
-                        .child(count(
+                        ),
+                        count(
                             ui::Tone::Unknown,
                             tally.waiting,
                             "waiting",
                             PodFilter::Waiting,
-                        ))
-                        .child(count(
-                            ui::Tone::Good,
-                            tally.healthy,
-                            "healthy",
-                            PodFilter::Healthy,
-                        )),
-                ),
+                        ),
+                        count(ui::Tone::Good, tally.healthy, "healthy", PodFilter::Healthy),
+                    ],
+                    cx,
+                )),
         )
     }
 
@@ -273,7 +254,7 @@ impl ResourcesScreen {
         let namespaced = self.layout.namespaced;
         h_flex()
             .w_full()
-            .h(dp(30.))
+            .h(dp(table::HEADER_HEIGHT))
             .flex_none()
             .bg(p.surface_2)
             .border_b_1()
@@ -333,7 +314,7 @@ impl ResourcesScreen {
         let node_ready = pod.is_none_or(|pod| !self.not_ready.contains_key(&pod.node));
         let stale = self.usage_state == UsageState::Stale || !node_ready;
         let mut element = h_flex()
-            .group("resource-row")
+            .group(table::ROW_GROUP)
             .id(row_id(&identity))
             .test_support()
             .role(Role::ListBoxOption)
@@ -494,7 +475,6 @@ impl ResourcesScreen {
     /// be done with them.
     fn group_header(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let group = self.projection.groups().get(ix)?.clone();
-        let p = palette(cx);
         let (tone, label) = match &group.cause {
             Cause::Failing => (ui::Tone::Crit, "Failing"),
             Cause::NodeNotReady(_) => (ui::Tone::Warn, "Node not ready"),
@@ -503,12 +483,6 @@ impl ResourcesScreen {
             Cause::Terminating => (ui::Tone::Unknown, "Terminating"),
             Cause::Unknown => (ui::Tone::Unknown, "Unknown state"),
             Cause::Healthy => (ui::Tone::Good, "Healthy"),
-        };
-        let color = match tone {
-            ui::Tone::Crit => p.crit_ink,
-            ui::Tone::Warn => p.warn_ink,
-            ui::Tone::Good => p.good_ink,
-            _ => p.muted,
         };
         let key = group_key(&group.cause);
         let pods = if group.total == 1 { "pod" } else { "pods" };
@@ -533,118 +507,67 @@ impl ResourcesScreen {
             Cause::NodeNotReady(node) => Some(node.clone()),
             _ => None,
         };
-        let actions = h_flex()
-            .flex_none()
-            .gap_1()
-            .when_some(node.clone(), |this, node| {
-                this.child(
-                    Button::new(SharedString::from(format!("{key}-open-node")))
-                        .ghost()
-                        .xsmall()
-                        .label("Open node")
-                        .on_click(
-                            cx.listener(move |view, _, _, cx| view.open_node(node.clone(), cx)),
-                        ),
-                )
-            })
-            .when(group.cause != Cause::Healthy, |this| {
-                let target = group.clone();
-                this.child(
-                    Button::new(SharedString::from(format!("{key}-select")))
-                        .ghost()
-                        .xsmall()
-                        .label(format!("Select all {}", group.total))
-                        .on_click(cx.listener(move |view, _, _, cx| view.mark_group(&target, cx))),
-                )
-            })
-            .when(group.cause == Cause::Healthy && problems, |this| {
-                this.child(
-                    Button::new(SharedString::from(format!("{key}-toggle")))
-                        .ghost()
-                        .xsmall()
-                        .label(if collapsed { "Expand" } else { "Collapse" })
-                        .on_click(cx.listener(|view, _, _, cx| view.toggle_healthy(cx))),
-                )
-            });
-        Some(
-            h_flex()
-                .id(SharedString::from(key))
-                .test_support()
-                .role(Role::Heading)
-                .aria_label(format!("{label} · {}", detail.join(" · ")))
-                .w_full()
-                .h(dp(self.row_height()))
-                .px_3()
-                .gap(dp(10.))
-                .bg(p.track.opacity(0.45))
-                .border_b_1()
-                .border_color(p.line)
-                .text_size(dp(12.))
-                .children(ui::status_glyph(tone, cx))
-                .child(
-                    div()
-                        .flex_none()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(color)
-                        .child(label),
-                )
-                .when_some(node, |this, node| {
-                    this.child(div().flex_none().font_family(MONO_FONT).child(node))
-                })
-                // The actions follow the text, so a table wider than its
-                // view still shows them.
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(p.muted)
-                        .child(format!("· {}", detail.join(" · "))),
-                )
-                .child(actions)
-                .into_any_element(),
+        let mut row = table::GroupRow::new(
+            SharedString::from(key.clone()),
+            tone,
+            label,
+            self.row_height(),
         )
+        .subject(node.clone())
+        .detail(detail);
+        if let Some(node) = node {
+            row = row.action(
+                Button::new(SharedString::from(format!("{key}-open-node")))
+                    .ghost()
+                    .xsmall()
+                    .label("Open node")
+                    .on_click(cx.listener(move |view, _, _, cx| view.open_node(node.clone(), cx))),
+            );
+        }
+        if group.cause != Cause::Healthy {
+            let target = group.clone();
+            row = row.action(
+                Button::new(SharedString::from(format!("{key}-select")))
+                    .ghost()
+                    .xsmall()
+                    .label(format!("Select all {}", group.total))
+                    .on_click(cx.listener(move |view, _, _, cx| view.mark_group(&target, cx))),
+            );
+        }
+        if group.cause == Cause::Healthy && problems {
+            row = row.action(
+                Button::new(SharedString::from(format!("{key}-toggle")))
+                    .ghost()
+                    .xsmall()
+                    .label(if collapsed { "Expand" } else { "Collapse" })
+                    .on_click(cx.listener(|view, _, _, cx| view.toggle_healthy(cx))),
+            );
+        }
+        Some(row.render(cx).into_any_element())
     }
 
     /// Above the rows: the marked rows' actions, and while healthy pods are
     /// folded, how many show.
     fn table_notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = palette(cx);
         let mut notes = Vec::new();
         if !self.marked.is_empty() {
+            let actions = [
+                Button::new("resource-marks-copy")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Copy)
+                    .label("Copy names")
+                    .on_click(cx.listener(|view, _, _, cx| view.copy_marks(cx)))
+                    .into_any_element(),
+                Button::new("resource-marks-clear")
+                    .ghost()
+                    .xsmall()
+                    .label("Clear")
+                    .on_click(cx.listener(|view, _, _, cx| view.clear_marks(cx)))
+                    .into_any_element(),
+            ];
             notes.push(
-                h_flex()
-                    .bg(p.accent_soft)
-                    .id("resource-marks")
-                    .test_support()
-                    .role(Role::Status)
-                    .px_3()
-                    .py(dp(5.))
-                    .gap_2()
-                    .bg(p.accent_soft)
-                    .border_b_1()
-                    .border_color(p.line)
-                    .text_size(dp(12.5))
-                    .child(
-                        div()
-                            .flex_1()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{} selected", self.marked.len())),
-                    )
-                    .child(
-                        Button::new("resource-marks-copy")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Copy)
-                            .label("Copy names")
-                            .on_click(cx.listener(|view, _, _, cx| view.copy_marks(cx))),
-                    )
-                    .child(
-                        Button::new("resource-marks-clear")
-                            .ghost()
-                            .xsmall()
-                            .label("Clear")
-                            .on_click(cx.listener(|view, _, _, cx| view.clear_marks(cx))),
-                    )
+                table::selection_bar("resource-marks", self.marked.len(), actions, cx)
                     .into_any_element(),
             );
         }
@@ -655,37 +578,20 @@ impl ResourcesScreen {
             .iter()
             .find(|group| group.cause == Cause::Healthy && group.shown < group.total);
         if folded.is_some() {
-            let shown = self.projection.len();
+            let show_all = Button::new("resource-show-all")
+                .ghost()
+                .xsmall()
+                .label(format!("Show all {}", tally.total()))
+                .on_click(cx.listener(|view, _, _, cx| view.set_list_view(ListView::All, cx)));
             notes.push(
-                h_flex()
-                    .bg(p.accent_soft)
-                    .id("resource-collapsed")
-                    .test_support()
-                    .role(Role::Status)
-                    .px_3()
-                    .py(dp(5.))
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(p.line)
-                    .text_size(dp(12.5))
-                    .text_color(p.ink_2)
-                    .flex_none()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(format!("Showing {shown} of {}", tally.total(),)),
-                    )
-                    .child(
-                        Button::new("resource-show-all")
-                            .ghost()
-                            .xsmall()
-                            .label(format!("Show all {}", tally.total()))
-                            .on_click(
-                                cx.listener(|view, _, _, cx| view.set_list_view(ListView::All, cx)),
-                            ),
-                    )
-                    .into_any_element(),
+                table::showing_bar(
+                    "resource-collapsed",
+                    self.projection.len(),
+                    tally.total(),
+                    show_all,
+                    cx,
+                )
+                .into_any_element(),
             );
         }
         notes
@@ -741,7 +647,7 @@ impl ResourcesScreen {
                 ),
             });
         let notes = self.table_notes(cx);
-        panel(cx)
+        page::card(cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
             .overflow_hidden()
@@ -852,7 +758,7 @@ impl ResourcesScreen {
         match self.store.read_state() {
             ReadState::Loading => state(
                 "resource-loading",
-                panel(cx)
+                page::card(cx)
                     .p_3()
                     .gap_3()
                     .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
@@ -1032,17 +938,9 @@ impl Render for ResourcesScreen {
                 .child(list)
                 .into_any_element()
         };
-        v_flex()
-            .id("resources-page")
-            .test_support()
+        page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| this.overflow_y_scroll())
-            .size_full()
-            .min_h_0()
-            .px(dp(PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
             .child(self.header(window, cx))
             .children(self.stale_banner(cx))
             .child(body)

@@ -20,8 +20,7 @@ use crate::screens::SCREEN_DEADLINE;
 pub(super) const USAGE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Comfortable rows and the compact ones the density toggle picks.
-pub(super) const ROW_HEIGHT: f32 = 34.;
-pub(super) const COMPACT_ROW_HEIGHT: f32 = 26.;
+pub(super) use freshkube_ui::table::{COMPACT_ROW_HEIGHT, ROW_HEIGHT};
 
 /// The pods list shows problems first, healthy pods collapsed, or every pod
 /// in one sorted list.

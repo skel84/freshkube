@@ -84,6 +84,20 @@ impl DisplayColumn {
     }
 }
 
+impl freshkube_ui::table::TableColumn for DisplayColumn {
+    fn label(&self) -> &SharedString {
+        &self.label
+    }
+
+    fn width(&self) -> f32 {
+        self.width
+    }
+
+    fn flexible(&self) -> bool {
+        self.flexible
+    }
+}
+
 /// Where a row's glyph comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ToneSource {

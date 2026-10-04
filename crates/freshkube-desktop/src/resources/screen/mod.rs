@@ -37,10 +37,10 @@ use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
-use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
-use crate::screens::{SCREEN_DEADLINE, content_width, mono, panel};
+use crate::screens::{SCREEN_DEADLINE, content_width, mono};
 use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
+use freshkube_ui::{page, table};
 use layout::TableLayout;
 use pods::{ListView, NotReady, UsageState};
 
