@@ -2,9 +2,11 @@
 //! this boundary owns explicit selection, limits and safe failure categories.
 mod connection;
 mod limits;
+mod profiling;
 mod subject;
 #[cfg(test)]
 mod tests;
+mod tracing;
 
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
@@ -13,7 +15,10 @@ pub use coroot_rs::{
     ProjectInfo, Rca, Report, SeriesSummary, ServiceMap, Signal, Slo, SloObjective, StateFilter,
     Status, TimeRange,
 };
+pub use coroot_rs::{Span, SpanEvent};
+pub use profiling::{FlameGraph, Frame, ProfileKind, ProfileQuery, ProfileUnit, Profiling};
 pub use subject::ObjectSubject;
+pub use tracing::{HeatRow, Heatmap, TraceSelection, TraceSource, Tracing};
 
 /// A source failure, never an application's health. Messages cannot include
 /// credentials, URLs, server response bodies or library error strings.

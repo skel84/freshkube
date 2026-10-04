@@ -18,7 +18,8 @@ tonic.workspace = true
 kube.workspace = true
 k8s-openapi.workspace = true
 serde_yaml.workspace = true
-serde_json.workspace = true
+# A flame graph nests deeper than the default recursion limit.
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 futures.workspace = true
 http.workspace = true
 http-body-util = "0.1"

@@ -20,7 +20,7 @@ pub struct ProviderId(u64);
 #[derive(Clone)]
 pub struct Provider {
     id: ProviderId,
-    client: coroot_rs::Client,
+    pub(super) client: coroot_rs::Client,
     slots: Arc<Semaphore>,
 }
 
@@ -98,7 +98,11 @@ impl Provider {
         }
     }
 
-    fn project(&self, source: &Source, range: TimeRange) -> Result<coroot_rs::Project, ReadError> {
+    pub(super) fn project(
+        &self,
+        source: &Source,
+        range: TimeRange,
+    ) -> Result<coroot_rs::Project, ReadError> {
         if source.provider != self.id || source.project.is_empty() || source.project.len() > 256 {
             return Err(ReadError::InvalidSelection);
         }
