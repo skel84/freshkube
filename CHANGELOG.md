@@ -2,7 +2,22 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
-## Unreleased
+## 0.4.0 (2026-10-04)
+
+### Live Coroot
+
+- **Read-only Applications, service map and application reports** from an explicitly selected Coroot server and project. Live observations and fixture data use the same presentation, preserving Coroot's reported health and evidence, including healthy, unknown and absent signals.
+- **Explicit connection settings:** enter an HTTP(S) URL and an API key or existing session cookie, or choose anonymous access. Credentials stay in memory; editing or clearing them cancels pending reads, and Disconnect forgets the connection.
+- **Kubernetes links target the cluster you associate:** explicitly associate a Coroot cluster with the selected Freshkube access before opening its objects. Navigation uses the existing object resolver and running-shell confirmation.
+- **Bounded reads and clear source states:** empty results, refused or failed requests, stale evidence, partial reports and unavailable capabilities remain distinct. Hiding Observability cancels its reads; selection survives reordering, and delayed responses cannot cross source, project, credential, time-range or application changes.
+- **The first slice stays read-only.** Live incidents, deployment comparisons, CPU profiling, full report histories and missing trace detail remain follow-up work. Fixture mute, threshold and rollback controls retain their preview behavior. See the [supported evidence and limitations](docs/COROOT.md).
+
+### Cluster reliability and interface
+
+- **Access identity follows authenticated access and configuration changes.** Reloading credentials or replacing a configuration at the same path invalidates ordinary cached observations and delayed answers. Compatible retries and node selection retain the cluster access; explicit port forwards keep their captured connection until stopped.
+- **Passive FPS readout in the status bar:** shows frame cadence during activity and a neutral state while idle, without requesting frames from its idle timer. The status bar adapts to narrow windows and larger text.
+
+### Installation
 
 - Install with Homebrew: `brew install --cask skel84/tap/freshkube`. The cask in [skel84/homebrew-tap](https://github.com/skel84/homebrew-tap) follows published releases, pre-releases included, and links the `freshkube` command.
 
