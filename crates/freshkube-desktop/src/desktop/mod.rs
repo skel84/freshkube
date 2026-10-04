@@ -3,6 +3,8 @@ mod connection;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
+#[cfg(test)]
+pub(crate) mod layout_check;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
