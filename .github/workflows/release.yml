@@ -99,7 +99,8 @@ jobs:
           print("""
           ## Install
 
-          Download the ZIP for your Mac: `aarch64` for Apple silicon, `x86_64` for Intel.
+          With Homebrew: `brew install --cask skel84/tap/freshkube`. The cask follows
+          published releases within a few hours. Or download the ZIP for your Mac: `aarch64` for Apple silicon, `x86_64` for Intel.
           These builds are ad-hoc signed and not notarized, so macOS blocks the first
           open: try to open Freshkube, then choose **System Settings → Privacy & Security
           → Open Anyway**. Check a download with `shasum -a 256 -c <file>.zip.sha256`.
