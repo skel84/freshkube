@@ -111,6 +111,73 @@ fn summary(series: &SeriesSummary) -> Result<(), ReadError> {
     }
     Ok(())
 }
+
+pub(super) fn incidents(values: &[Incident]) -> Result<(), ReadError> {
+    count(values.len(), 100)?;
+    let mut keys = HashSet::new();
+    for value in values {
+        if value.key.is_empty() || value.app.as_str().is_empty() || !keys.insert(&value.key) {
+            return Err(ReadError::InvalidResponse);
+        }
+        incident(value)?;
+    }
+    Ok(())
+}
+
+fn incident(value: &Incident) -> Result<(), ReadError> {
+    text(&value.key, 256)?;
+    text(value.app.as_str(), 1024)?;
+    text(&value.cluster, 1024)?;
+    text(&value.description, 4096)?;
+    if let Some(rca) = &value.rca {
+        text(&rca.status, 256)?;
+        text(&rca.summary, 4096)?;
+        text(&rca.root_cause, 16384)?;
+        text(&rca.immediate_fixes, 16384)?;
+        text(&rca.detailed_analysis, 32768)?;
+        text(&rca.error, 4096)?;
+        count(rca.propagation.len(), 100)?;
+        let mut entries = 0;
+        let mut bytes = rca.summary.len()
+            + rca.root_cause.len()
+            + rca.immediate_fixes.len()
+            + rca.detailed_analysis.len()
+            + rca.error.len();
+        let mut apps = HashSet::new();
+        for app in &rca.propagation {
+            if app.app_id.as_str().is_empty() || !apps.insert(&app.app_id) {
+                return Err(ReadError::InvalidResponse);
+            }
+            text(app.app_id.as_str(), 1024)?;
+            entries += app.issues.len();
+            for issue in &app.issues {
+                text(issue, 4096)?;
+                bytes += issue.len();
+            }
+        }
+        count(entries, 200)?;
+        count(bytes, 65536)?;
+    }
+    if let Some(slo) = &value.slo {
+        count(
+            slo.availability_burn_rates.len() + slo.latency_burn_rates.len(),
+            32,
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn incident_view(value: &IncidentView) -> Result<(), ReadError> {
+    incident(value.incident())?;
+    for objective in [value.availability(), value.latency()]
+        .into_iter()
+        .flatten()
+    {
+        text(objective.objective(), 4096)?;
+        text(objective.compliance(), 256)?;
+    }
+    Ok(())
+}
 fn count(value: usize, max: usize) -> Result<(), ReadError> {
     if value > max {
         Err(ReadError::Limit)

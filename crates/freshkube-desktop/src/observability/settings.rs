@@ -17,6 +17,11 @@ impl ObservabilityPage {
                 self.live.map.is_loading(),
                 self.live.map.error(),
             ),
+            Destination::Incidents => (
+                self.live.incidents.data().is_some(),
+                self.live.incidents.is_loading(),
+                self.live.incidents.error(),
+            ),
             _ => return None,
         };
         if has_data {
@@ -226,6 +231,11 @@ impl ObservabilityPage {
                 self.live.map.is_loading(),
                 self.live.map.is_stale(),
                 self.live.map.error(),
+            ),
+            Destination::Incidents => (
+                self.live.incidents.is_loading(),
+                self.live.incidents.is_stale(),
+                self.live.incidents.error(),
             ),
             _ => return div().into_any_element(),
         };

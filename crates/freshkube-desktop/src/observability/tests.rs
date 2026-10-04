@@ -317,7 +317,7 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
                 name: "Same name".into(),
             };
             page.live.source = Some(provider.source(&project));
-            page.destination = Destination::Incidents; // Unsupported destination starts no I/O.
+            page.destination = Destination::Deployments; // Unsupported destination starts no I/O.
             let generation = page.live.generation;
             page.select_project(
                 &ProjectInfo {

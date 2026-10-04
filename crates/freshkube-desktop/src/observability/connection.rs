@@ -14,6 +14,8 @@ pub(super) enum Subject {
     Applications,
     Map,
     Report(api::AppId, bool),
+    Incidents,
+    Incident(String, api::AppId),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReadIdentity {
@@ -37,6 +39,7 @@ pub(super) struct Live {
     pub project_labels: Vec<String>,
     pub generation: u64,
     pub jobs: Vec<ReadJob>,
+    pub incident_job: Option<ReadJob>,
     pub range: api::TimeRange,
     clock_origin: std::time::Instant,
     time_origin: chrono::DateTime<chrono::Utc>,
@@ -47,6 +50,8 @@ pub(super) struct Live {
     pub map: Snapshot<api::ServiceMap, ReadIdentity>,
     pub rest: Snapshot<api::AppHealth, ReadIdentity>,
     pub extended: Snapshot<api::AppHealth, ReadIdentity>,
+    pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity>,
+    pub incident: Snapshot<api::IncidentView, ReadIdentity>,
     pub capabilities: [api::Capability; 4],
 }
 impl Live {
@@ -72,6 +77,7 @@ impl Live {
             project_labels: vec![],
             generation: 0,
             jobs: vec![],
+            incident_job: None,
             range,
             clock_origin: now,
             time_origin,
@@ -82,12 +88,15 @@ impl Live {
             map: Snapshot::default(),
             rest: Snapshot::default(),
             extended: Snapshot::default(),
+            incidents: Snapshot::default(),
+            incident: Snapshot::default(),
             capabilities: [api::Capability::Unchecked; 4],
         }
     }
     fn cancel(&mut self) {
         self.generation += 1;
         self.jobs.clear();
+        self.incident_job = None;
         self.connecting = false;
     }
     fn clear(&mut self) {
@@ -96,6 +105,8 @@ impl Live {
         self.map = Snapshot::default();
         self.rest = Snapshot::default();
         self.extended = Snapshot::default();
+        self.incidents = Snapshot::default();
+        self.incident = Snapshot::default();
         self.capabilities = [api::Capability::Unchecked; 4];
     }
 }
@@ -149,6 +160,7 @@ impl ObservabilityPage {
     }
     pub(super) fn clear_observations(&mut self) {
         self.live.clear();
+        self.incident_observations = Default::default();
         if !self.fixture {
             self.applications.clear();
             self.nodes = Default::default();
@@ -176,6 +188,7 @@ impl ObservabilityPage {
         self.live.range = range(self.hours, to);
         self.live.range_label = range_label(self.live.range);
         self.live.clear();
+        self.incident_observations.clear_evidence();
         if !self.fixture {
             self.applications.clear();
             self.nodes = Default::default();
@@ -214,6 +227,7 @@ impl ObservabilityPage {
             cluster.map(|cluster| api::Association::new(access.clone(), cluster)),
         ));
         self.live.clear();
+        self.incident_observations.clear_evidence();
         self.report_snapshot = None;
         self.refresh(cx);
     }
@@ -279,6 +293,15 @@ impl ObservabilityPage {
         apply: impl FnOnce(&mut Self, Result<T, api::ReadError>, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
+        let job = self.spawn_owned_read(work, apply, cx);
+        self.live.jobs.push(job);
+    }
+    pub(super) fn spawn_owned_read<T: Send + 'static>(
+        &mut self,
+        work: impl Future<Output = Result<T, api::ReadError>> + Send + 'static,
+        apply: impl FnOnce(&mut Self, Result<T, api::ReadError>, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> ReadJob {
         let generation = self.live.generation;
         let (job, receiver) = backend::spawn_job(
             &self.live.runtime,
@@ -299,10 +322,10 @@ impl ObservabilityPage {
                 apply(this, result, cx);
             });
         });
-        self.live.jobs.push(ReadJob {
+        ReadJob {
             _job: job,
             _task: task,
-        });
+        }
     }
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.live.cancel();
@@ -327,6 +350,7 @@ impl ObservabilityPage {
             .expect("selected source");
         let range = self.live.range;
         match self.destination {
+            Destination::Incidents => self.read_incidents(provider, source, range, cx),
             Destination::Applications => {
                 let request = self.live.apps.begin(identity);
                 self.spawn_read(
