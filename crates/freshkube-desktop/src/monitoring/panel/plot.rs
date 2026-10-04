@@ -253,7 +253,7 @@ impl Paint {
                     origin + point(x, y - line_height / 2.),
                     align,
                     label,
-                    p.faint,
+                    p.muted,
                     window,
                     cx,
                 );
@@ -272,7 +272,7 @@ impl Paint {
                 origin + point(frame.x(tick.at), frame.bottom() + label * 0.6),
                 TextAlign::Center,
                 label,
-                p.faint,
+                p.muted,
                 window,
                 cx,
             );

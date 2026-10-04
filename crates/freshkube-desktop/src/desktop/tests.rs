@@ -897,7 +897,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         window.click("nav-k8s-pods", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Resources);
-        assert_eq!(window.find("nav-k8s-pods").selected(), Some(true));
+        assert_eq!(window.find("nav-k8s-pods").checked(), Some(true));
         assert!(window.find("resource-list").visible());
         contexts(window, cx);
         assert!(window.find(("context", 0usize)).visible());
@@ -983,7 +983,7 @@ fn opening_a_kind_scrolls_its_group_into_the_short_sidebar(cx: &mut TestAppConte
         window.render_frame(cx);
         window.render_frame(cx);
         assert!(shown_in_column(window, &nav));
-        assert_eq!(window.find(SharedString::from(nav)).selected(), Some(true));
+        assert_eq!(window.find(SharedString::from(nav)).checked(), Some(true));
         assert_eq!(
             window.find("page-title").label(),
             Some("Validating Admission Policy Bindings")
@@ -1106,6 +1106,7 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         // With no custom kind shown yet, the page stays while the column
         // discovers the groups.
         area(window, cx, "nav-k8s-group-custom");
+        window.click("nav-collapse", cx);
         window.render_frame(cx);
         assert_eq!(window.find("nav-k8s-group-custom").selected(), Some(true));
         assert_eq!(view.read(cx).page, Page::Overview);
@@ -1240,6 +1241,7 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
         let kind = crate::resources::example::kind("certificates.cert-manager.io").unwrap();
         view.update(cx, |view, cx| view.open_kind(kind, window, cx));
         window.render_frame(cx);
+        window.click("nav-collapse", cx);
         window.render_frame(cx);
         assert!(shown_in_column(window, certificates));
         // Another connection discovers again.
@@ -2413,7 +2415,12 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         for page in Page::ALL.into_iter().filter(|page| {
             !matches!(
                 page,
-                Page::Overview | Page::Resources | Page::Health | Page::Nodes | Page::Monitoring
+                Page::Overview
+                    | Page::Resources
+                    | Page::Health
+                    | Page::Nodes
+                    | Page::Monitoring
+                    | Page::Observability
             )
         }) {
             view.update(cx, |view, cx| view.navigate(page, window, cx));
@@ -2635,17 +2642,17 @@ fn text_size_steps_by_shortcut_and_settings_and_survives_appearance(cx: &mut Tes
         window.rem_size()
     };
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(rem(window, cx), px(14.));
+        assert_eq!(rem(window, cx), px(13.));
         window.press("secondary-=", cx);
-        assert_eq!(rem(window, cx), px(16.));
+        assert_eq!(rem(window, cx), px(14.));
         for _ in 0..3 {
             window.press("secondary-=", cx);
         }
         // The largest step holds.
         assert_eq!(rem(window, cx), px(20.));
-        assert_eq!(Theme::global(cx).mono_font_size, px(20. * 12. / 14.));
+        assert!((Theme::global(cx).mono_font_size - px(20. * 12.5 / 13.)).abs() < px(0.001));
         window.press("secondary-0", cx);
-        assert_eq!(rem(window, cx), px(14.));
+        assert_eq!(rem(window, cx), px(13.));
         window.press("secondary--", cx);
         window.press("secondary--", cx);
         assert_eq!(rem(window, cx), px(12.));
@@ -2675,11 +2682,11 @@ fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
             (sidebar, nav)
         };
         let (sidebar, nav) = measure(window, cx);
-        for _ in 0..3 {
+        for _ in 0..4 {
             window.press("secondary-=", cx);
         }
         let (larger_sidebar, larger_nav) = measure(window, cx);
-        let ratio = 20. / 14.;
+        let ratio = 20. / 13.;
         assert!(
             (larger_sidebar / sidebar - ratio).abs() < 0.01,
             "{larger_sidebar:?}"
@@ -2710,20 +2717,23 @@ fn the_resources_toolbar_wraps_rather_than_clip_at_a_large_size(cx: &mut TestApp
                 assert!(bounds.size.width > px(0.), "{id}");
             }
         };
-        // At the default size the controls share one row.
+        // Fog wraps its status filters and controls as the space changes.
         fit(window);
-        let filter = window.find("resource-filter").bounds();
-        let refresh = window.find("resource-refresh").bounds();
-        assert_eq!(filter.top(), refresh.top());
-        for _ in 0..3 {
+        for _ in 0..4 {
             window.press("secondary-=", cx);
         }
         window.render_frame(cx);
         fit(window);
-        // The filter moves to a line of its own, below the other two.
         let filter = window.find("resource-filter").bounds();
         let refresh = window.find("resource-refresh").bounds();
-        assert!(filter.top() >= refresh.bottom(), "{filter:?} {refresh:?}");
+        assert!(
+            filter.top() != refresh.top(),
+            "narrow controls should wrap: {filter:?} {refresh:?}"
+        );
+        assert!(
+            window.find("resource-list").bounds().size.height >= crate::ui::dp_px(68., window),
+            "The toolbar and legend must leave at least two rows of list space"
+        );
     })
     .unwrap();
 }
@@ -2735,12 +2745,12 @@ fn the_resources_page_scales_with_the_text_size(cx: &mut TestAppContext) {
         window.render_frame(cx);
         area(window, cx, "nav-k8s-group-workloads");
         let namespace = window.find("resource-namespace").bounds().size.width;
-        assert_eq!(namespace, px(200.));
+        assert_eq!(namespace, px(132.));
         window.press("secondary--", cx);
         window.render_frame(cx);
         let smaller = window.find("resource-namespace").bounds().size.width;
         assert!(
-            (smaller / namespace - 12. / 14.).abs() < 0.01,
+            (smaller / namespace - 12. / 13.).abs() < 0.01,
             "{smaller:?}"
         );
     })
@@ -2976,4 +2986,313 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
         assert!(window.find("logs-status").visible());
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("section-observability", cx);
+        assert_eq!(pilot.read(cx).page, Page::Observability);
+        window.click("nav-collapse", cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+        window.click("nav-obs-traces", cx);
+        assert_eq!(
+            pilot.read(cx).observability.read(cx).destination(),
+            crate::observability::Destination::Traces
+        );
+        window.click("obs-time-24", cx);
+        assert_eq!(pilot.read(cx).observability.read(cx).hours(), 24);
+        window.press("secondary-b", cx);
+        assert!(!pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+    // An expanded preference still yields to a narrow window, then returns.
+    cx.simulate_window_resize(handle, size(px(760.), px(560.)));
+    cx.update_window(handle, |_, window, cx| {
+        assert!(pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(1280.), px(880.)));
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn fog_narrow_sidebar_can_be_expanded_manually(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+        window.click("nav-collapse", cx);
+        assert!(!pilot.read(cx).column_collapsed(window));
+        window.click("nav-collapse", cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let (pod, access) = cx.read(|cx| {
+        let view = view.read(cx);
+        let source = view.kube_source().unwrap();
+        let pod = crate::resources::example::read(
+            &source.context,
+            "pods",
+            None,
+            crate::resources::live::now(),
+        )
+        .unwrap()
+        .1
+        .into_iter()
+        .find(|row| row.cells[2] == "Running")
+        .unwrap()
+        .identity;
+        (pod, source.id)
+    });
+    let mut old = None;
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.navigate(Page::Observability, window, cx);
+            old = Some(view.observability.update(cx, |page, cx| {
+                page.fixture_link(access.clone(), &pod.namespace, &pod.name, cx)
+            }));
+        });
+        window.render_frame(cx);
+        window.click("obs-open-object", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(
+            view.read(cx).resources.read(cx).detail_identity(cx),
+            Some(&pod)
+        );
+        view.update(cx, |view, cx| {
+            view.navigate(Page::Observability, window, cx);
+            view.observability.update(cx, |page, cx| {
+                page.fixture_link(access.clone(), &pod.namespace, &pod.name, cx);
+                cx.emit(old.take().unwrap());
+            });
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).page, Page::Observability));
+}
+
+#[gpui_kit::test]
+fn coroot_links_honor_shell_confirmation_and_recheck_access(cx: &mut TestAppContext) {
+    use crate::resources::{Tab, example, live, model::ObjectRef, shell};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let (pods, access) = cx.read(|cx| {
+        let source = view.read(cx).kube_source().unwrap();
+        let pods: Vec<_> = example::read(&source.context, "pods", None, live::now())
+            .unwrap()
+            .1
+            .into_iter()
+            .filter(|row| row.cells[2] == "Running")
+            .take(2)
+            .map(|row| row.identity)
+            .collect();
+        (pods, source.id)
+    });
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_object(
+                example::kind("pods").unwrap(),
+                ObjectRef {
+                    namespace: pods[0].namespace.clone(),
+                    name: pods[0].name.clone(),
+                    uid: pods[0].uid.clone(),
+                },
+                Tab::Shell,
+                window,
+                cx,
+            );
+        })
+    });
+    step(cx, &|window, cx| window.click("pod-shell-start", cx));
+    assert_eq!(
+        cx.read(shell::running_anywhere).as_deref(),
+        Some(pods[0].name.as_str())
+    );
+    step(cx, &|window, cx| {
+        view.update(cx, |view, cx| {
+            view.navigate(Page::Observability, window, cx);
+            view.observability.update(cx, |page, cx| {
+                page.fixture_link(access.clone(), &pods[1].namespace, &pods[1].name, cx);
+            });
+        })
+    });
+    step(cx, &|window, cx| window.click("obs-open-object", cx));
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(view.read(cx).page, Page::Observability);
+        assert_eq!(
+            shell::running_anywhere(cx).as_deref(),
+            Some(pods[0].name.as_str())
+        );
+    });
+    step(cx, &|window, cx| window.click("obs-open-object", cx));
+    cx.simulate_prompt_answer("End the shell");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(shell::running_anywhere(cx), None);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(
+            view.read(cx).resources.read(cx).detail_identity(cx),
+            Some(&pods[1])
+        );
+    });
+    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
+    step(cx, &|window, cx| window.click("pod-shell-start", cx));
+    step(cx, &|window, cx| {
+        view.update(cx, |view, cx| {
+            view.navigate(Page::Observability, window, cx);
+            view.observability.update(cx, |page, cx| {
+                page.fixture_link(access.clone(), &pods[0].namespace, &pods[0].name, cx);
+            });
+        })
+    });
+    step(cx, &|window, cx| window.click("obs-open-object", cx));
+    assert!(cx.has_pending_prompt());
+    // Isolate the access check from normal epoch/job cancellation: a
+    // confirmation captured the old access even if the epoch is unchanged.
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            view.applied.context = Some("staging-eu".into())
+        })
+    });
+    cx.simulate_prompt_answer("End the shell");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        // An obsolete confirmation must have no side effects, including ending
+        // the shell captured by a different access identity.
+        assert_eq!(
+            shell::running_anywhere(cx).as_deref(),
+            Some(pods[1].name.as_str())
+        );
+        assert_eq!(view.read(cx).page, Page::Observability);
+        assert_eq!(
+            view.read(cx).resources.read(cx).detail_identity(cx),
+            Some(&pods[1])
+        );
+    });
+}
+
+#[gpui_kit::test]
+async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change(
+    cx: &mut TestAppContext,
+) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let server_runtime = tokio::runtime::Runtime::new().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let received = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (seen, gate) = (received.clone(), release.clone());
+    let server = server_runtime.spawn(async move {
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let (seen, gate) = (seen.clone(), gate.clone());
+            tokio::spawn(async move {
+                let mut request = vec![0u8; 16384];
+                let n = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..n]);
+                let (status, body) = if request.starts_with("GET /api/v1/namespaces/prod/pods/later ") {
+                    assert!(request.contains("PartialObjectMetadata"));
+                    seen.store(true, Ordering::SeqCst);
+                    gate.notified().await;
+                    (200, serde_json::json!({"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"namespace":"prod","name":"later","uid":"old-access-uid"}}))
+                } else if request.starts_with("GET /version ") {
+                    (200, serde_json::json!({"major":"1","minor":"32","gitVersion":"v1.32.0","gitCommit":"fixture","gitTreeState":"clean","buildDate":"2026-01-01T00:00:00Z","goVersion":"go1.24","compiler":"gc","platform":"test"}))
+                } else {
+                    (404, serde_json::json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","code":404,"message":"No fixture for this endpoint"}))
+                };
+                let body = body.to_string();
+                let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config");
+    std::fs::write(
+        &config,
+        KUBECONFIG.replace("https://127.0.0.1:1", &format!("http://{address}")),
+    )
+    .unwrap();
+    let (_runtime, handle, view) = kubernetes_only(cx, config, Some("lab"));
+    let observed = view.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        observed.read(cx).kube_source().is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_object(
+                crate::resources::example::kind("pods").unwrap(),
+                crate::resources::model::ObjectRef {
+                    namespace: "prod".into(),
+                    name: "later".into(),
+                    uid: String::new(),
+                },
+                crate::resources::Tab::Overview,
+                window,
+                cx,
+            );
+        })
+    })
+    .unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+        received.load(Ordering::SeqCst)
+    })
+    .await;
+    let completion = cx.update(|cx| {
+        view.update(cx, |view, _| {
+            // Simulate a replacement access independently of the existing
+            // epoch/sequence guards, leaving the delayed worker alive.
+            view.fixture = true;
+            view.applied.context = Some("replacement".into());
+            view.object_open_task.take().unwrap()
+        })
+    });
+    release.notify_one();
+    completion.await;
+    cx.read(|cx| {
+        assert!(
+            view.read(cx)
+                .resources
+                .read(cx)
+                .detail_identity(cx)
+                .is_none()
+        )
+    });
+    server.abort();
 }

@@ -67,7 +67,7 @@ pub(crate) struct TableData {
 #[derive(Clone, Debug)]
 pub(crate) struct Column {
     pub name: SharedString,
-    /// Right-aligned in Source Code Pro.
+    /// Right-aligned in IBM Plex Mono.
     pub numeric: bool,
 }
 

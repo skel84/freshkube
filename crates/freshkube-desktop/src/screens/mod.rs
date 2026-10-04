@@ -644,7 +644,7 @@ pub(crate) fn partial_notice(missing: Vec<String>, cx: &App) -> Option<AnyElemen
 pub(crate) fn panel(cx: &App) -> Div {
     let p = palette(cx);
     v_flex()
-        .rounded(px(10.))
+        .rounded(px(12.))
         .border_1()
         .border_color(p.line)
         .bg(p.surface)

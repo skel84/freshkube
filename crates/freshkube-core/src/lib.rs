@@ -27,6 +27,7 @@ mod client_cache;
 pub mod cluster_overview;
 
 pub mod constants;
+pub mod coroot;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
@@ -49,6 +50,7 @@ pub mod workloads;
 
 // Re-export commonly used items at crate root
 pub use async_state::*;
+pub use client_cache::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 pub use cluster_overview::*;
 pub use diagnostics::*;
 pub use errors::*;

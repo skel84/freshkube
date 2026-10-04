@@ -121,7 +121,7 @@ const WORKLOADS: [(&str, &str, &str, u32); 11] = [
     ("monitoring", "prometheus", "prom/prometheus:v3.5.0", 1),
     ("monitoring", "grafana", "grafana/grafana:12.1.0", 1),
     ("payments", "api", "payments/api:2.14.3", 3),
-    ("payments", "worker", "payments/worker:2.14.3", 4),
+    ("payments", "worker", "ghcr.io/example/worker:1.8.2", 4),
     ("payments", "ledger", "payments/ledger:1.9.0", 2),
     ("web", "frontend", "web/frontend:5.2.0", 4),
     ("web", "gateway", "envoyproxy/envoy:v1.35.0", 2),

@@ -41,6 +41,26 @@ impl Cause {
     }
 }
 
+/// A glyph filter preserves the counts for every cause, so another status
+/// stays one click away. It combines with the text filter and the sort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PodFilter {
+    Failing,
+    Warning,
+    Waiting,
+    Healthy,
+}
+impl PodFilter {
+    fn matches(self, cause: &Cause) -> bool {
+        match self {
+            Self::Failing => matches!(cause, Cause::Failing),
+            Self::Warning => matches!(cause, Cause::NodeNotReady(_) | Cause::NotReady),
+            Self::Waiting => matches!(cause, Cause::Pending | Cause::Terminating | Cause::Unknown),
+            Self::Healthy => matches!(cause, Cause::Healthy),
+        }
+    }
+}
+
 /// A run of rows with one cause. `start` is its first row's visible
 /// position; a collapsed group shows none of its `total` rows.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,6 +139,7 @@ pub(crate) struct ResourceProjection {
     groups: Vec<Group>,
     items: Vec<Item>,
     tally: Tally,
+    pod_filter: Option<PodFilter>,
 }
 
 impl ResourceProjection {
@@ -135,11 +156,20 @@ impl ResourceProjection {
             groups: Vec::new(),
             items: Vec::new(),
             tally: Tally::default(),
+            pod_filter: None,
         }
     }
 
     pub(crate) fn grouping(&self) -> Option<&Grouping> {
         self.grouping.as_ref()
+    }
+
+    pub(crate) fn pod_filter(&self) -> Option<PodFilter> {
+        self.pod_filter
+    }
+    pub(crate) fn set_pod_filter(&mut self, store: &ResourceStore, filter: Option<PodFilter>) {
+        self.pod_filter = filter;
+        self.rebuild(store);
     }
 
     /// Groups rows by cause, or with `None`, lists them flat.
@@ -360,6 +390,14 @@ impl ResourceProjection {
                     let cause = Cause::of(store.entries()[*slot].row(), &grouping.not_ready);
                     self.tally.count(&cause);
                 }
+                if let Some(filter) = self.pod_filter {
+                    self.visible.retain(|slot| {
+                        filter.matches(&Cause::of(
+                            store.entries()[*slot].row(),
+                            &grouping.not_ready,
+                        ))
+                    });
+                }
             }
             self.items.extend((0..self.visible.len()).map(Item::Row));
             return;
@@ -375,7 +413,13 @@ impl ResourceProjection {
         for (cause, _) in &caused {
             self.tally.count(cause);
         }
-        let collapse = !grouping.healthy_open && self.tally.problems() > 0 && self.query.is_empty();
+        if let Some(filter) = self.pod_filter {
+            caused.retain(|(cause, _)| filter.matches(cause));
+        }
+        let collapse = self.pod_filter.is_none()
+            && !grouping.healthy_open
+            && self.tally.problems() > 0
+            && self.query.is_empty();
         let mut rest = caused.as_slice();
         while let Some((cause, _)) = rest.first() {
             let total = rest.iter().take_while(|(other, _)| other == cause).count();

@@ -1,4 +1,4 @@
-//! The Console chart palette (docs/MONITORING.md, Colours). Every colour a
+//! The Fog chart palette (docs/MONITORING.md, Colours). Every colour a
 //! dashboard asks for is ignored: palette modes, fixed and named colours,
 //! overrides, continuous schemes and threshold colours. A series' colour
 //! follows only from its position, or from its level when the series read
@@ -10,12 +10,12 @@ use gpui_kit::{App, Hsla, rgb};
 
 use crate::palette::palette;
 
-/// The six series slots, in their fixed order.
-pub(crate) const SLOTS: [u32; 6] = [0x3987e5, 0xd95926, 0x199e70, 0xc98500, 0xd55181, 0x008300];
+/// The two series slots, in their fixed order.
+pub(crate) const SLOTS: [u32; 2] = [0x5E93E6, 0xCC7C4A];
 /// Ordered levels (p50, p95, p99; le buckets), lowest level darkest.
-pub(crate) const RAMP: [u32; 3] = [0x1c5cab, 0x3987e5, 0x86b6ef];
-/// Series past the sixth, until hovered or picked.
-pub(crate) const OVERFLOW: u32 = 0x5E636B;
+pub(crate) const RAMP: [u32; 3] = [0x5379BB, 0x7AA0E6, 0xB3CEFA];
+/// Series past the second, until hovered or picked.
+pub(crate) const OVERFLOW: u32 = 0x737A85;
 /// Opacity of an area under its line.
 pub(crate) const AREA_OPACITY: f32 = 0.14;
 /// Opacity of the other series while one is hovered or picked.
@@ -24,9 +24,9 @@ pub(crate) const FADED_OPACITY: f32 = 0.15;
 /// How a series is coloured.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Ink {
-    /// One of the six slots.
+    /// One of the two slots.
     Slot(usize),
-    /// Past the sixth series: grey, its own slot only while focused.
+    /// Past the second series: grey, its own slot only while focused.
     Overflow(usize),
     /// A level on the blue ramp, 0 (lowest, darkest) to 1 (highest).
     Level(f32),
@@ -62,7 +62,7 @@ pub(crate) fn ramp(level: f32) -> Hsla {
 }
 
 /// Inks for series in frame order: the ramp when every series reads as a
-/// level, else the slots with grey past the sixth.
+/// level, else the slots with grey past the second.
 pub(crate) fn inks(series: &[(&str, &[(String, String)])]) -> Vec<Ink> {
     if let Some(levels) = levels(series) {
         return levels;
@@ -226,23 +226,23 @@ mod tests {
         let names: Vec<String> = (0..8).map(|n| format!("node-{n}")).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let inks = named(&names);
-        assert_eq!(&inks[..6], &(0..6).map(Ink::Slot).collect::<Vec<_>>()[..]);
+        assert_eq!(&inks[..2], &(0..2).map(Ink::Slot).collect::<Vec<_>>()[..]);
         assert_eq!(inks[6], Ink::Overflow(6));
-        assert_eq!(inks[0].color(false), hex(0x3987e5));
-        assert_eq!(inks[5].color(false), hex(0x008300));
+        assert_eq!(inks[0].color(false), hex(0x5E93E6));
+        assert_eq!(inks[5].color(false), hex(OVERFLOW));
         // Grey until focused, then its own slot (the first again).
         assert_eq!(inks[6].color(false), hex(OVERFLOW));
-        assert_eq!(inks[6].color(true), hex(0x3987e5));
-        assert_eq!(inks[7].color(true), hex(0xd95926));
+        assert_eq!(inks[6].color(true), hex(0x5E93E6));
+        assert_eq!(inks[7].color(true), hex(0xCC7C4A));
     }
 
     #[test]
     fn quantiles_take_the_ramp_lowest_darkest() {
         let inks = named(&["p99", "p50", "p95"]);
         assert_eq!(inks, [Ink::Level(1.), Ink::Level(0.), Ink::Level(0.5)]);
-        assert_eq!(inks[1].color(false), hex(0x1c5cab));
-        assert_eq!(inks[2].color(false), hex(0x3987e5));
-        assert_eq!(inks[0].color(false), hex(0x86b6ef));
+        assert_eq!(inks[1].color(false), hex(0x5379BB));
+        assert_eq!(inks[2].color(false), hex(0x7AA0E6));
+        assert_eq!(inks[0].color(false), hex(0xB3CEFA));
         assert_eq!(
             named(&["P50 latency", "99th percentile"]),
             [Ink::Level(0.), Ink::Level(1.)]
@@ -269,9 +269,9 @@ mod tests {
 
     #[test]
     fn the_ramp_interpolates_between_its_stops() {
-        assert_eq!(ramp(0.), hex(0x1c5cab));
-        assert_eq!(ramp(1.), hex(0x86b6ef));
-        assert_eq!(ramp(0.25), hex(0x2b72c8));
+        assert_eq!(ramp(0.), hex(0x5379BB));
+        assert_eq!(ramp(1.), hex(0xB3CEFA));
+        assert_eq!(ramp(0.25), hex(0x678DD1));
     }
 
     #[test]

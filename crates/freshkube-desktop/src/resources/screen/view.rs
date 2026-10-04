@@ -1,5 +1,5 @@
 use super::super::model::format_age;
-use super::super::projection::{Cause, Item};
+use super::super::projection::{Cause, Item, PodFilter};
 use super::super::rows::PodState;
 use super::layout::{ColumnSource, ToneSource};
 use super::*;
@@ -7,6 +7,9 @@ use gpui_kit::base::Selectable;
 
 impl ResourcesScreen {
     fn header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        if self.lists_pods() && !self.embedded {
+            return self.pods_toolbar(window, cx);
+        }
         let p = palette(cx);
         let example = self
             .source
@@ -176,39 +179,47 @@ impl ResourcesScreen {
 
     /// The pods page's Problems and All, with how many pods each glyph
     /// marks.
-    fn pod_switch(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn pod_switch(&self, cx: &mut Context<Self>) -> Option<Div> {
         self.projection.grouping()?;
         let p = palette(cx);
         let tally = self.projection.tally();
-        let count = |tone: ui::Tone, count: usize, what: &str| {
-            h_flex()
-                .gap(dp(5.))
-                .children(ui::status_glyph(tone, cx))
-                .child(count.to_string())
-                .when(count == 0, |this| this.text_color(p.faint))
-                .id(SharedString::from(format!(
-                    "resource-tally-{}",
-                    what.replace(' ', "-")
-                )))
-                .test_support()
-                .aria_label(format!("{count} {what}"))
+        let count = |tone: ui::Tone, count: usize, what: &'static str, filter: PodFilter| {
+            Button::new(SharedString::from(format!(
+                "resource-tally-{}",
+                what.replace(' ', "-")
+            )))
+            .ghost()
+            .small()
+            .px(dp(6.))
+            .selected(self.projection.pod_filter() == Some(filter))
+            .child(ui::status_glyph(tone, cx).unwrap())
+            .child(div().child(count.to_string()))
+            .text_color(p.ink_2)
+            .accessibility_label(format!("{count} {what}"))
+            .tooltip(format!("{count} {what} · click to filter"))
+            .on_click(cx.listener(move |view, _, _, cx| {
+                let next = (view.projection.pod_filter() != Some(filter)).then_some(filter);
+                view.projection.set_pod_filter(&view.store, next);
+                view.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                cx.notify();
+            }))
         };
         Some(
             h_flex()
                 .flex_none()
-                .gap(dp(14.))
+                .gap(dp(6.))
                 .child(
                     ButtonGroup::new("resource-view")
                         .outline()
                         .small()
                         .child(
                             Button::new("resource-view-problems")
-                                .label(format!("Problems {}", tally.problems()))
+                                .label("Problems")
                                 .selected(self.list_view == ListView::Problems),
                         )
                         .child(
                             Button::new("resource-view-all")
-                                .label(format!("All {}", tally.total()))
+                                .label("All")
                                 .selected(self.list_view == ListView::All),
                         )
                         .on_click(cx.listener(|view, choice: &Vec<usize>, _, cx| {
@@ -224,14 +235,34 @@ impl ResourcesScreen {
                     h_flex()
                         .id("resource-tally")
                         .test_support()
-                        .gap(dp(12.))
+                        .gap(dp(2.))
                         .font_family(MONO_FONT)
                         .text_size(dp(12.))
                         .text_color(p.muted)
-                        .child(count(ui::Tone::Crit, tally.failing, "failing"))
-                        .child(count(ui::Tone::Warn, tally.warning, "not ready"))
-                        .child(count(ui::Tone::Unknown, tally.waiting, "waiting"))
-                        .child(count(ui::Tone::Good, tally.healthy, "healthy")),
+                        .child(count(
+                            ui::Tone::Crit,
+                            tally.failing,
+                            "failing",
+                            PodFilter::Failing,
+                        ))
+                        .child(count(
+                            ui::Tone::Warn,
+                            tally.warning,
+                            "not ready",
+                            PodFilter::Warning,
+                        ))
+                        .child(count(
+                            ui::Tone::Unknown,
+                            tally.waiting,
+                            "waiting",
+                            PodFilter::Waiting,
+                        ))
+                        .child(count(
+                            ui::Tone::Good,
+                            tally.healthy,
+                            "healthy",
+                            PodFilter::Healthy,
+                        )),
                 ),
         )
     }
@@ -242,7 +273,9 @@ impl ResourcesScreen {
         let namespaced = self.layout.namespaced;
         h_flex()
             .w_full()
-            .py(dp(7.))
+            .h(dp(30.))
+            .flex_none()
+            .bg(p.surface_2)
             .border_b_1()
             .border_color(p.line)
             .children(self.layout.columns.iter().enumerate().map(|(ix, column)| {
@@ -289,14 +322,18 @@ impl ResourcesScreen {
     fn render_row(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let entry = self.projection.entry(&self.store, ix)?;
         let row = entry.row();
-        let p = palette(cx);
+        let mut p = palette(cx);
         let selected = self.projection.selected_index() == Some(ix);
         let marked = self.marked.contains(&row.identity);
+        if selected || marked {
+            p.muted = p.ink_2;
+        }
         let identity = row.identity.clone();
         let pod = row.pod.as_ref();
         let node_ready = pod.is_none_or(|pod| !self.not_ready.contains_key(&pod.node));
         let stale = self.usage_state == UsageState::Stale || !node_ready;
         let mut element = h_flex()
+            .group("resource-row")
             .id(row_id(&identity))
             .test_support()
             .role(Role::ListBoxOption)
@@ -312,13 +349,28 @@ impl ResourcesScreen {
             })
             .w_full()
             .h(dp(self.row_height()))
+            .border_1()
+            .border_color(if selected {
+                p.accent
+            } else {
+                ui::transparent()
+            })
             .font_family(MONO_FONT)
-            .text_size(dp(12.))
+            .text_size(dp(12.5))
             .cursor_pointer()
             .when(row.terminating, |this| this.text_color(p.muted))
             .when(marked && !selected, |this| this.bg(p.hover))
             .when(selected, |this| this.bg(p.accent_soft))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)));
+            .when(!selected, |this| {
+                this.hover(|style| {
+                    let style = style.bg(p.hover);
+                    if row.terminating {
+                        style.text_color(p.ink_2)
+                    } else {
+                        style
+                    }
+                })
+            });
         let printed = |cell_ix: usize| row.cells.get(cell_ix).map(String::as_str).unwrap_or("");
         for column in &self.layout.columns {
             let child = match column.source {
@@ -344,7 +396,13 @@ impl ResourcesScreen {
                         }
                         (None, None) => None,
                     };
-                    cells::glyph(column, tone, marked, cx)
+                    cells::glyph(
+                        column,
+                        tone,
+                        marked,
+                        pod.is_some_and(|pod| pod.state == PodState::Completed),
+                        cx,
+                    )
                 }
                 ColumnSource::Name(cell_ix) => {
                     let reason = pod.filter(|pod| !pod.reason.is_empty()).map(|pod| {
@@ -364,7 +422,13 @@ impl ResourcesScreen {
                         &p,
                     )
                 }
-                ColumnSource::Owner => cells::owner(column, row.owner.as_ref(), &p),
+                ColumnSource::Owner => cells::owner(
+                    column,
+                    row.owner.as_ref(),
+                    &row.identity.namespace,
+                    selected,
+                    cx,
+                ),
                 ColumnSource::Ready => match pod {
                     Some(pod) => cells::ready(column, pod, &p),
                     None => cells::cell(column).into_any_element(),
@@ -385,7 +449,7 @@ impl ResourcesScreen {
                         cells::node(column, &pod.node, self.store.node_prefix(), node_ready, cx)
                     }
                     None => cells::cell(column)
-                        .text_color(p.faint)
+                        .text_color(p.muted)
                         .child("—")
                         .into_any_element(),
                 },
@@ -549,6 +613,7 @@ impl ResourcesScreen {
         if !self.marked.is_empty() {
             notes.push(
                 h_flex()
+                    .bg(p.accent_soft)
                     .id("resource-marks")
                     .test_support()
                     .role(Role::Status)
@@ -589,10 +654,11 @@ impl ResourcesScreen {
             .groups()
             .iter()
             .find(|group| group.cause == Cause::Healthy && group.shown < group.total);
-        if let Some(folded) = folded {
+        if folded.is_some() {
             let shown = self.projection.len();
             notes.push(
                 h_flex()
+                    .bg(p.accent_soft)
                     .id("resource-collapsed")
                     .test_support()
                     .role(Role::Status)
@@ -602,17 +668,14 @@ impl ResourcesScreen {
                     .border_b_1()
                     .border_color(p.line)
                     .text_size(dp(12.5))
-                    .text_color(p.muted)
-                    .child(div().flex_1().min_w_0().child(format!(
-                        "Showing {shown} of {}. Grouped by cause — {} healthy {} collapsed.",
-                        tally.total(),
-                        folded.total,
-                        if folded.total == 1 {
-                            "pod is"
-                        } else {
-                            "pods are"
-                        },
-                    )))
+                    .text_color(p.ink_2)
+                    .flex_none()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(format!("Showing {shown} of {}", tally.total(),)),
+                    )
                     .child(
                         Button::new("resource-show-all")
                             .ghost()
@@ -628,7 +691,7 @@ impl ResourcesScreen {
         notes
     }
 
-    fn table(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn table(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let count = self.projection.items_len();
         let title = self.noun();
@@ -700,6 +763,9 @@ impl ResourcesScreen {
                             .child(list),
                     ),
             )
+            .when(self.lists_pods(), |this| {
+                this.child(self.meter_legend(content_width(window) < 600., cx))
+            })
             .into_any_element()
     }
 
@@ -906,7 +972,9 @@ impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
         let _span = crate::perf::span("table.render");
-        let list = self.placeholder(cx).unwrap_or_else(|| self.table(cx));
+        let list = self
+            .placeholder(cx)
+            .unwrap_or_else(|| self.table(window, cx));
         let list = self.keyed(list, cx);
         let short = content_width(window) < SPLIT_WIDTH
             && window.viewport_size().height < dp_px(620., window);
@@ -956,7 +1024,13 @@ impl Render for ResourcesScreen {
                 .child(split)
                 .into_any_element()
         } else {
-            list
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .when(short, |this| this.min_h(dp(180.)))
+                .child(list)
+                .into_any_element()
         };
         v_flex()
             .id("resources-page")

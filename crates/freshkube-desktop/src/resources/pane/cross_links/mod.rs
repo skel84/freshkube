@@ -42,6 +42,9 @@ impl OwnerLink {
     }
 }
 struct NodeLink {
+    memory: Option<crate::presentation::Memory>,
+    memory_label: SharedString,
+    memory_stale: bool,
     name: String,
     ready: SharedString,
     tone: crate::ui::Tone,
@@ -111,6 +114,15 @@ impl DetailPane {
                 .iter()
                 .find(|row| row.key.kubernetes.as_ref() == Some(name));
             NodeLink {
+                memory: row
+                    .and_then(|row| row.talos.as_ref())
+                    .and_then(|talos| talos.memory),
+                memory_label: row
+                    .map(|row| row.memory.clone())
+                    .unwrap_or_else(|| "Unavailable".into()),
+                memory_stale: row
+                    .and_then(|row| row.talos.as_ref())
+                    .is_none_or(|talos| !talos.responding),
                 name: name.clone(),
                 ready: row
                     .map(|row| row.ready)

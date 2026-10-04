@@ -25,17 +25,17 @@ promql-parser 0.11.0
   Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
   Used unmodified, as a library.
 
-Lato
-  https://www.latofonts.com
-  Copyright (c) 2010-2014 by tyPoland Lukasz Dziedzic with Reserved Font Name "Lato"
+Figtree 2.0.3 (Regular, SemiBold, Bold and Black)
+  https://github.com/erikdkennedy/figtree
+  Copyright 2022 The Figtree Project Authors
   Licensed under the SIL Open Font License, Version 1.1; see
-  crates/freshkube-desktop/assets/fonts/OFL-Lato.txt.
+  crates/freshkube-desktop/assets/fonts/OFL-Figtree.txt.
 
-Source Code Pro
-  https://github.com/adobe-fonts/source-code-pro
-  Copyright 2023 Adobe, with Reserved Font Name 'Source'
+IBM Plex Mono
+  https://github.com/IBM/plex
+  Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
   Licensed under the SIL Open Font License, Version 1.1; see
-  crates/freshkube-desktop/assets/fonts/OFL-SourceCodePro.txt.
+  crates/freshkube-desktop/assets/fonts/OFL-IBMPlexMono.txt.
 
 GPUI Kit 0.7.0 and gpui-pre 0.3.7
   The native UI toolkit and framework, used as libraries.

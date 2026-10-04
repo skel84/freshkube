@@ -13,6 +13,7 @@ pub(crate) mod projection;
 pub(crate) mod rows;
 mod screen;
 pub(crate) mod store;
+pub(crate) mod talos;
 
 pub(crate) use pane::{DetailPane, Tab, shell};
 pub(crate) use screen::{KubeAccess, KubeSource, NodePodsEvent, NotServed, ResourcesScreen, title};

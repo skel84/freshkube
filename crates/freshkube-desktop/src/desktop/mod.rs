@@ -1,3 +1,4 @@
+mod access;
 mod connection;
 mod kubeconfig;
 mod kubernetes_only;
@@ -143,7 +144,8 @@ gpui_kit::actions!(
         NextNode,
         PreviousService,
         NextService,
-        GoToKind
+        GoToKind,
+        ToggleColumn
     ]
 );
 
@@ -295,6 +297,12 @@ pub(crate) struct Pilot {
     config_loading: bool,
     config_generation: u64,
     epoch: u64,
+    access: Option<freshkube_core::AccessIdentity>,
+    access_configuration: Option<freshkube_core::ConfigurationRevision>,
+    prompted_access: Option<(
+        freshkube_core::ConfigurationRevision,
+        Option<freshkube_core::AccessIdentity>,
+    )>,
     overview: Snapshot<ClusterOverview>,
     kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
     summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
@@ -336,6 +344,8 @@ pub(crate) struct Pilot {
     search: Entity<search::Search>,
     /// The Monitoring page, which reads only while it shows.
     monitoring: Entity<MonitoringPage>,
+    observability: Entity<crate::observability::ObservabilityPage>,
+    column_state: shell::ColumnState,
     /// The node pane's CPU and memory, when the context has a Prometheus.
     node_history: Entity<HistoryView>,
     /// The rail's area, whose pages or kinds the column lists.
@@ -392,6 +402,7 @@ impl Pilot {
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
         cx.bind_keys([
+            KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
             KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
             KeyBinding::new("secondary-3", ShowNamespaces, Some("Freshkube")),
@@ -554,6 +565,73 @@ impl Pilot {
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let monitoring =
             cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
+        let observability = cx.new(|cx| {
+            crate::observability::ObservabilityPage::new(
+                options.fixture,
+                runtime.clone(),
+                window,
+                cx,
+            )
+        });
+        subscriptions.push(cx.subscribe_in(
+            &observability,
+            window,
+            |this, _, event, window, cx| {
+                use crate::observability::ObservabilityEvent;
+                match event {
+                    ObservabilityEvent::Navigation => cx.notify(),
+                    ObservabilityEvent::Dashboards => {
+                        this.navigate_from_keyboard(Page::Monitoring, window, cx)
+                    }
+                    ObservabilityEvent::OpenExamplePod {
+                        namespace,
+                        name,
+                        logs,
+                    } if this.fixture => this.open_object(
+                        builtin("pods").unwrap(),
+                        resources::model::ObjectRef {
+                            namespace: namespace.clone(),
+                            name: name.clone(),
+                            uid: String::new(),
+                        },
+                        if *logs {
+                            resources::Tab::Logs
+                        } else {
+                            resources::Tab::Overview
+                        },
+                        window,
+                        cx,
+                    ),
+                    ObservabilityEvent::OpenExamplePod { .. } => {}
+                    ObservabilityEvent::OpenObject {
+                        source,
+                        app,
+                        subject,
+                    } => {
+                        if this
+                            .observability
+                            .read(cx)
+                            .link_is_current(source, app, subject)
+                            && this
+                                .kube_source()
+                                .is_some_and(|source| source.id == subject.access())
+                        {
+                            this.open_object(
+                                subject.kind().clone(),
+                                resources::model::ObjectRef {
+                                    namespace: subject.namespace().into(),
+                                    name: subject.name().into(),
+                                    uid: String::new(),
+                                },
+                                resources::Tab::Overview,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                }
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &monitoring,
             window,
@@ -637,6 +715,9 @@ impl Pilot {
             config_loading: false,
             config_generation: 0,
             epoch: 0,
+            access: None,
+            access_configuration: None,
+            prompted_access: None,
             overview: Snapshot::default(),
             kubernetes_summary: Snapshot::default(),
             summary_health: None,
@@ -672,6 +753,8 @@ impl Pilot {
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             monitoring,
+            observability,
+            column_state: shell::ColumnState::new(options.preferences.as_deref()),
             node_history: cx.new(|_| HistoryView::new(runtime.clone(), "node")),
             area: Area::Overview,
             group_kinds: BTreeMap::new(),
@@ -762,6 +845,10 @@ impl Pilot {
 
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.epoch = self.epoch.wrapping_add(1);
+        self.access = None;
+        self.access_configuration = None;
+        self.prompted_access = None;
+        self.search.update(cx, |search, cx| search.invalidate(cx));
         self.overview_task = None;
         self.overview_job = None;
         self.service_task = None;
@@ -1019,20 +1106,18 @@ impl Pilot {
         let mut collector =
             ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
         collector.set_kubeconfig_selection(self.kubeconfig.clone());
-        let path = self
-            .applied
-            .path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
         Some(KubeSource {
-            id: format!("talos:{path}:{context}:{:?}", self.kubeconfig),
+            id: self.access?.key(),
             context: cluster.name.clone(),
-            access: KubeAccess::Talos(Box::new(LiveSource {
-                client: cluster.client.clone()?,
-                cluster: Arc::new(cluster.clone()),
-                collector,
-                config_path: self.applied.path.clone(),
+            access: KubeAccess::Talos(Box::new(resources::talos::TalosAccess {
+                configuration: self.access_configuration?,
+                selection: self.kubeconfig.clone(),
+                live: LiveSource {
+                    client: cluster.client.clone()?,
+                    cluster: Arc::new(cluster.clone()),
+                    collector,
+                    config_path: self.applied.path.clone(),
+                },
             })),
         })
     }
@@ -1063,6 +1148,7 @@ impl Pilot {
             screen.activate(window, cx);
         }
         let source = self.kube_source();
+        self.sync_search_source(source.clone(), window, cx);
         self.custom
             .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
         self.node_pods.update(cx, |resources, cx| {
@@ -1071,6 +1157,8 @@ impl Pilot {
         self.monitoring.update(cx, |monitoring, cx| {
             monitoring.set_source(source.clone(), cx)
         });
+        self.observability
+            .update(cx, |page, cx| page.set_source(source.clone(), cx));
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }
@@ -1088,6 +1176,7 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompted_access = None;
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
         if self.page == Page::Resources {
@@ -1097,6 +1186,10 @@ impl Pilot {
         if self.page == Page::Monitoring {
             self.monitoring
                 .update(cx, |monitoring, cx| monitoring.refresh(cx));
+        }
+        if self.page == Page::Observability {
+            self.observability
+                .update(cx, |page, cx| page.refresh_current(cx));
         }
         if self.page == Page::Nodes {
             self.node_history
@@ -1136,16 +1229,7 @@ impl Pilot {
             self.runtime.clone(),
             self.applied.clone(),
             self.kubeconfig.clone(),
-            self.summary_session.as_ref().map(|_| {
-                self.kubernetes_summary
-                    .data()
-                    .map(|summary| summary.nodes.clone())
-                    .unwrap_or_else(|| {
-                        freshkube_core::kubernetes_summary::Part::Failed(
-                            "Waiting for shared Nodes".into(),
-                        )
-                    })
-            }),
+            self.observed_nodes(),
         );
         self.overview_job = Some(job);
         self.overview_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -1153,24 +1237,7 @@ impl Pilot {
                 .await
                 .unwrap_or_else(|_| Err("Overview worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                // Node switches freeze the request too; don't apply a snapshot
-                // requested for a different foreground target.
-                if epoch != view.epoch {
-                    return;
-                }
-                view.overview_job = None;
-                if view.overview.apply(&request, result) {
-                    let fresh = !view.overview.is_stale() && view.overview.error().is_none();
-                    if fresh {
-                        view.overview_succeeded();
-                    }
-                    view.sync_nodes(window, cx);
-                    if fresh {
-                        view.refresh_services(window, cx);
-                        view.ensure_summary(window, cx);
-                    }
-                }
-                cx.notify();
+                view.overview_received(epoch, request, result, window, cx);
             });
         }));
         cx.notify();
@@ -1275,6 +1342,8 @@ impl Pilot {
         for (_, screen) in &self.screens {
             App::notify(cx, screen.view().entity_id());
         }
+        App::notify(cx, self.observability.entity_id());
+        App::notify(cx, self.monitoring.entity_id());
         App::notify(cx, self.logs.entity_id());
         App::notify(cx, self.resources.entity_id());
         let detail = self.resources.read(cx).detail_view();

@@ -81,7 +81,7 @@ fn a_few_series_get_slots_an_inline_legend_and_round_axis() {
     );
     let chart = chart_of(&data);
     let inks: Vec<Ink> = chart.series.iter().map(|series| series.ink).collect();
-    assert_eq!(inks, [Ink::Slot(0), Ink::Slot(1), Ink::Slot(2)]);
+    assert_eq!(inks, [Ink::Slot(0), Ink::Slot(1), Ink::Overflow(2)]);
     assert_eq!(chart.xs.first(), Some(&0.));
     assert_eq!(chart.xs.last(), Some(&1.));
     let axis = chart.axes[0].as_ref().unwrap();
@@ -146,7 +146,7 @@ fn many_series_get_a_table_legend_with_grey_overflow() {
     assert_eq!(chart.legend.headings, ["last", "max"]);
     assert_eq!(chart.legend.rows.len(), LEGEND_ROWS);
     assert_eq!(chart.legend.more, 3);
-    assert_eq!(chart.series[5].ink, Ink::Slot(5));
+    assert_eq!(chart.series[5].ink, Ink::Overflow(5));
     assert_eq!(chart.series[6].ink, Ink::Overflow(6));
 }
 

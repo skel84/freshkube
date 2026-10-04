@@ -11,7 +11,7 @@ pub(in crate::desktop) struct RailMarks(HashMap<Area, (Tone, SharedString)>);
 
 impl RailMarks {
     /// A warning or critical card marks its area; critical wins.
-    pub(in crate::desktop) fn from_cards(cards: &[Card]) -> Self {
+    pub(in crate::desktop) fn from_cards(cards: &[Card], fixture: bool) -> Self {
         let mut marks: HashMap<Area, (Tone, Vec<String>)> = HashMap::new();
         for card in cards {
             if !matches!(card.tone, Tone::Warn | Tone::Crit) {
@@ -30,6 +30,12 @@ impl RailMarks {
                 *tone = Tone::Crit;
             }
             lines.push(format!("{}: {} · {}", card.label, card.figure, card.detail));
+        }
+        if fixture {
+            marks.insert(
+                Area::Observability,
+                (Tone::Crit, vec!["Example data · 2 open incidents".into()]),
+            );
         }
         Self(
             marks
@@ -52,6 +58,7 @@ fn icon(area: Area) -> IconName {
         Area::Namespaces => IconName::Folders,
         Area::Events => IconName::Activity,
         Area::Monitoring => IconName::ChartLine,
+        Area::Observability => IconName::Activity,
         Area::Group("workloads") => IconName::Boxes,
         Area::Group("networking") => IconName::Network,
         Area::Group("configuration") => IconName::SlidersHorizontal,

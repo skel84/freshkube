@@ -41,6 +41,7 @@ struct NavRow {
     indent: Rems,
     key: Option<&'static str>,
     suffix: Option<AnyElement>,
+    icon: IconName,
 }
 
 impl NavRow {
@@ -52,6 +53,7 @@ impl NavRow {
             indent,
             key: None,
             suffix: None,
+            icon: IconName::Box,
         }
     }
 
@@ -374,6 +376,7 @@ impl Pilot {
             .when_some(row.tooltip, |this, tip| {
                 this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             })
+            .child(Icon::new(row.icon).size(dp(15.)).text_color(p.muted))
             .child(div().min_w_0().truncate().child(row.label))
             .child(div().flex_1())
             .children(row.suffix)
@@ -505,3 +508,7 @@ use frame::settings_content;
 mod header;
 mod rail;
 pub(super) use rail::RailMarks;
+
+mod column_state;
+pub(super) use column_state::ColumnState;
+mod fog_column;

@@ -44,6 +44,20 @@ pub(super) struct Search {
     jobs: Vec<(OwnedJob, Task<()>)>,
 }
 impl Search {
+    pub(super) fn invalidate(&mut self, cx: &mut Context<Self>) {
+        self.jobs.clear();
+        self.sequence = self.sequence.wrapping_add(1);
+        self.source_id = None;
+        self.closed_at = None;
+        self.parts.clear();
+        self.local.clear();
+        self.rebuild();
+        cx.notify();
+    }
+
+    pub(super) fn needs_source(&self, source: Option<&KubeSource>) -> bool {
+        self.open && self.source_id.as_deref() != source.map(|source| source.id.as_str())
+    }
     pub(super) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             runtime,
@@ -86,6 +100,19 @@ impl Search {
     }
 }
 impl Pilot {
+    pub(super) fn sync_search_source(
+        &self,
+        source: Option<KubeSource>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.search.read(cx).needs_source(source.as_ref()) {
+            let local = self.local_search_entries(cx);
+            self.search
+                .update(cx, |search, cx| search.begin(local, source, window, cx));
+        }
+    }
+
     pub(super) fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.has_active_dialog(cx) {
             return;
