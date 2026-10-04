@@ -199,7 +199,8 @@ async fn loaded(
 }
 
 #[gpui_kit::test]
-fn editing_credentials_invalidates_connection_and_object_links(cx: &mut TestAppContext) {
+async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (_runtime, handle, page) = mount(cx, false);
     cx.update_window(handle, |_, window, cx| {
         page.update(cx, |page, _| {
@@ -237,5 +238,60 @@ fn editing_credentials_invalidates_connection_and_object_links(cx: &mut TestAppC
         assert!(page.live.provider.is_none());
         assert!(page.live.source.is_none());
         assert!(page.selected_app.is_none());
+        assert_eq!(page.secret.read(cx).value(), "replacement");
     });
+    cx.update_window(handle, |_, window, cx| {
+        window.click("obs-disconnect", cx);
+        assert!(page.read(cx).secret.read(cx).value().is_empty());
+        window.click("obs-credential", cx);
+        window.input("retained-after-failure", cx);
+        window.click("obs-url", cx);
+        window.input("not-a-url", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.click("obs-connect", cx))
+        .unwrap();
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        observed.read(cx).live.error.is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.provider.is_none());
+        assert_eq!(
+            page.read(cx).secret.read(cx).value(),
+            "retained-after-failure"
+        );
+        window.click("obs-disconnect", cx);
+        assert!(page.read(cx).secret.read(cx).value().is_empty());
+        assert!(page.read(cx).live.error.is_none());
+        window.click("obs-credential", cx);
+        window.input("pending-credential", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        // Hold the same owned delivery path used by initial connection reads.
+        // No provider exists yet, and the request must remain cancellable.
+        page.update(cx, |page, cx| {
+            page.live.connecting = true;
+            page.spawn_read(
+                std::future::pending::<Result<(), api::ReadError>>(),
+                |_, _, _| {
+                    panic!("cancelled connection must not deliver");
+                },
+                cx,
+            );
+        });
+        let generation = page.read(cx).live.generation;
+        assert_eq!(page.read(cx).live.jobs.len(), 1);
+        window.click("obs-disconnect", cx);
+        let current = page.read(cx);
+        assert!(current.secret.read(cx).value().is_empty());
+        assert!(!current.live.connecting);
+        assert!(current.live.jobs.is_empty());
+        assert!(current.live.generation > generation);
+    })
+    .unwrap();
 }

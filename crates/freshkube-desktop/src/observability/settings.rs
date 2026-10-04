@@ -87,7 +87,6 @@ impl ObservabilityPage {
                 )
                 .child(
                     action("obs-disconnect", "Disconnect")
-                        .disabled(self.live.provider.is_none())
                         .on_click(cx.listener(|this, _, window, cx| this.disconnect(window, cx))),
                 ),
         );
