@@ -28,6 +28,7 @@ struct Objective {
     objective: String,
     compliance: String,
     severity: Status,
+    state: &'static str,
     impact: String,
     rates: Vec<String>,
 }
@@ -144,6 +145,13 @@ fn objective(
                 severity
             } else {
                 Status::Ok
+            }
+        }),
+        state: value.map_or("Not reported", |v| {
+            if v.is_violated() {
+                "Violated"
+            } else {
+                "Within objective"
             }
         }),
         impact: format!("Affected requests: {}", format::percent(impact)),
@@ -455,7 +463,8 @@ impl ObservabilityPage {
                     line()
                         .flex_wrap()
                         .child(status(o.severity, cx))
-                        .child(text(o.name).font_weight(ui::HEADING_WEIGHT)),
+                        .child(text(o.name).font_weight(ui::HEADING_WEIGHT))
+                        .child(muted(o.state, cx)),
                 )
                 .child(text(o.objective.clone()).whitespace_normal())
                 .child(pair("Compliance", o.compliance.clone(), cx))
@@ -643,6 +652,7 @@ mod tests {
         let projected = detail(&view);
         assert_eq!(projected.objectives[0].compliance, "Not reported");
         assert_eq!(projected.objectives[0].severity, super::Status::Unknown);
+        assert_eq!(projected.objectives[0].state, "Not reported");
         assert_eq!(
             projected.objectives[0].impact,
             "Affected requests: Not reported"
