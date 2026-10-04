@@ -14,6 +14,8 @@ struct Server {
     status: Arc<AtomicU16>,
     requests: Arc<AtomicUsize>,
     paths: Arc<Mutex<Vec<String>>>,
+    incident_mode: Arc<AtomicUsize>,
+    incident_gate: Arc<tokio::sync::Notify>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -32,10 +34,13 @@ impl Server {
         let requests = Arc::new(AtomicUsize::new(0));
         let paths = Arc::new(Mutex::new(Vec::new()));
         let (state, reads, captured) = (status.clone(), requests.clone(), paths.clone());
+        let incident_mode = Arc::new(AtomicUsize::new(0));
+        let incident_gate = Arc::new(tokio::sync::Notify::new());
+        let (mode, gate) = (incident_mode.clone(), incident_gate.clone());
         let task=runtime.spawn(async move {
             loop {
                 let (mut socket,_)=listener.accept().await.unwrap();
-                let (state,reads,captured)=(state.clone(),reads.clone(),captured.clone());
+                let (state,reads,captured,mode,gate)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone());
                 tokio::spawn(async move {
                     let mut buf=vec![0;16384]; let Ok(n)=socket.read(&mut buf).await else{return;};
                     let request=String::from_utf8_lossy(&buf[..n]);
@@ -43,7 +48,21 @@ impl Server {
                     let path=request.split_whitespace().nth(1).unwrap_or("");
                     captured.lock().unwrap().push(path.to_string());
                     let status=if path.contains("mcp") {404} else {state.load(Ordering::SeqCst)};
-                    let body=if path.contains("api/user") {
+                    let selected_mode=mode.load(Ordering::SeqCst);
+                    if path.contains("/incident/k1") && selected_mode==5 {gate.notified().await;}
+                    let body=if path.contains("/incidents") {
+                        let a=incident_wire("k1"); let b=incident_wire("k2");
+                        match selected_mode {
+                            1=>serde_json::json!([b,a]),2=>serde_json::json!([]),3=>serde_json::json!({}),4=>serde_json::json!([b]),
+                            _=>serde_json::json!([a,b]),
+                        }
+                    } else if path.contains("/incident/") {
+                        let mut v=incident_wire(if path.contains("/incident/k2"){"k2"}else{"k1"});
+                        v["availability_slo"]=serde_json::json!({"objective":"99% of requests should not fail","compliance":"97.2%","violated":true,"threshold":0});
+                        v["details"]=serde_json::json!({"availability_burn_rates":[{"severity":"critical","long_window":3600000,"short_window":300000,"long_window_burn_rate":18.4,"short_window_burn_rate":21,"threshold":6}]});
+                        v["rca"]=serde_json::json!({"status":"OK","root_cause":"Source-reported cause","propagation_map":{"applications":[{"id":"cluster-a:prod:Deployment:worker","status":"critical","issues":["Reported problem"]}]}});
+                        v
+                    } else if path.contains("api/user") {
                         serde_json::json!({"projects":[{"id":"p1","name":"Same name"},{"id":"p2","name":"Same name"}]})
                     } else if path.contains("/app/") {
                         serde_json::json!({"app_map":{"application":{"status":"warning"}},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available"}]}]})
@@ -66,6 +85,8 @@ impl Server {
             status,
             requests,
             paths,
+            incident_mode,
+            incident_gate,
             task,
         }
     }
@@ -294,4 +315,212 @@ async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut Te
         assert!(current.live.generation > generation);
     })
     .unwrap();
+}
+
+fn incident_wire(key: &str) -> serde_json::Value {
+    serde_json::json!({"key":key,"application_id":"cluster-a:prod:Deployment:api","cluster":"Production","severity":"critical","opened_at":1790000000000_i64,"resolved_at":null,"impact":2.8,"duration":120000,"short_description":"Source SLO violation"})
+}
+#[gpui_kit::test]
+async fn incidents_keep_identity_stale_evidence_and_read_only_links(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let provider = api::Provider::new(&server.url, api::Credentials::None).unwrap();
+            page.live.source = Some(provider.source(&api::ProjectInfo {
+                id: "p1".into(),
+                name: "Production".into(),
+            }));
+            page.live.provider = Some(provider);
+            page.open(Destination::Incidents, cx);
+        })
+    });
+    incident_loaded(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            page.read(cx).live.incident.data().unwrap().incident().key,
+            "k1"
+        );
+        assert_eq!(page.read(cx).incident_count(), Some("2 sampled"));
+        for id in [
+            "obs-incident-mute",
+            "obs-incident-fix",
+            "obs-incident-traces",
+        ] {
+            assert!(window.try_find(id).is_none());
+        }
+        window.click("obs-live-incident-k2", cx);
+    })
+    .unwrap();
+    incident_loaded(cx, handle, &page).await;
+    server.incident_mode.store(1, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    incident_loaded(cx, handle, &page).await;
+    cx.update(|cx| {
+        assert_eq!(
+            page.read(cx).live.incident.data().unwrap().incident().key,
+            "k2"
+        )
+    });
+    server.status.store(403, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    incident_loaded(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.incidents.is_stale());
+        assert!(page.read(cx).live.incident.is_stale());
+        window.render_frame(cx);
+        window.click("obs-incident-primary-app", cx);
+        assert_eq!(
+            page.read(cx).destination,
+            Destination::Incidents,
+            "stale source cannot navigate"
+        );
+    })
+    .unwrap();
+    server.status.store(200, Ordering::SeqCst);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("obs-incident-retry", cx)
+    })
+    .unwrap();
+    incident_loaded(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..20 {
+            if window
+                .find("obs-incident-app-cluster-a:prod:Deployment:worker")
+                .visible()
+            {
+                break;
+            }
+            window.scroll(
+                "obs-scroll",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-100.),
+                )),
+                cx,
+            );
+        }
+        window.click("obs-incident-app-cluster-a:prod:Deployment:worker", cx);
+        assert_eq!(
+            page.read(cx).selected_app.as_ref().unwrap().as_str(),
+            "cluster-a:prod:Deployment:worker"
+        );
+        assert_eq!(page.read(cx).destination, Destination::Application);
+    })
+    .unwrap();
+    server.incident_mode.store(2, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Incidents, cx)));
+    incident_loaded(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-incidents-empty").visible());
+        assert!(page.read(cx).live.incident.data().is_none());
+    })
+    .unwrap();
+}
+async fn incident_loaded(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) {
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        let live = &observed.read(cx).live;
+        !live.incidents.is_loading() && !live.incident.is_loading()
+    })
+    .await;
+}
+#[gpui_kit::test]
+async fn incidents_drop_delayed_replaced_hidden_and_project_answers(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.incident_mode.store(5, Ordering::SeqCst);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let provider = api::Provider::new(&server.url, api::Credentials::None).unwrap();
+            page.live.source = Some(provider.source(&api::ProjectInfo {
+                id: "p1".into(),
+                name: "Production".into(),
+            }));
+            page.live.provider = Some(provider);
+            page.open(Destination::Incidents, cx);
+        })
+    });
+    let paths = server.paths.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+        paths
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.contains("/incident/k1"))
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-live-incident-k2", cx);
+    })
+    .unwrap();
+    incident_loaded(cx, handle, &page).await;
+    server.incident_gate.notify_one();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            page.read(cx).live.incident.data().unwrap().incident().key,
+            "k2"
+        )
+    });
+    let previous = server
+        .paths
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.contains("/incident/k1"))
+        .count();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-live-incident-k1", cx);
+    })
+    .unwrap();
+    let paths = server.paths.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+        paths
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.contains("/incident/k1"))
+            .count()
+            > previous
+    })
+    .await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            assert!(page.live.jobs.is_empty());
+            assert!(page.live.incident_job.is_none());
+        })
+    });
+    let reads = server.requests.load(Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    cx.run_until_parked();
+    assert_eq!(server.requests.load(Ordering::SeqCst), reads);
+    server.incident_gate.notify_one();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.select_project(
+                &api::ProjectInfo {
+                    id: "p2".into(),
+                    name: "Production".into(),
+                },
+                cx,
+            );
+            assert!(page.live.incidents.data().is_none());
+            assert!(page.live.incident.data().is_none());
+            assert_eq!(page.incident_count(), None);
+        })
+    });
 }

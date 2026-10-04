@@ -155,6 +155,45 @@ impl Provider {
         limits::health(&health)?;
         Ok(health)
     }
+
+    /// Latest project incidents, in server order, across all states. This bounded
+    /// sample is not a history filtered by `range` or a complete incident count.
+    pub async fn incidents(
+        &self,
+        source: &Source,
+        range: TimeRange,
+    ) -> Result<Vec<Incident>, ReadError> {
+        let project = self.project(source, range)?;
+        let query = IncidentQuery {
+            app: None,
+            state: StateFilter::Any,
+            limit: 100,
+        };
+        let values = self.read(project.incidents(&query)).await?;
+        limits::incidents(&values)?;
+        Ok(values)
+    }
+
+    /// Detail uses Coroot's incident time context. The list's application identity
+    /// is revalidated before this observation can be shown or linked.
+    pub async fn incident(
+        &self,
+        source: &Source,
+        range: TimeRange,
+        key: &str,
+        app: &AppId,
+    ) -> Result<IncidentView, ReadError> {
+        let project = self.project(source, range)?;
+        if key.is_empty() || key.len() > 256 || app.as_str().is_empty() {
+            return Err(ReadError::InvalidSelection);
+        }
+        let value = self.read(project.incident_view(key)).await?;
+        if value.incident().key != key || value.incident().app != *app {
+            return Err(ReadError::InvalidResponse);
+        }
+        limits::incident_view(&value)?;
+        Ok(value)
+    }
 }
 
 /// Explicit mapping of one Coroot cluster ID to the shell's canonical
