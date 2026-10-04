@@ -198,20 +198,66 @@ pub(crate) fn load_contexts(
     (OwnedJob::new(task), receiver)
 }
 
+pub(crate) struct CollectedOverview {
+    pub(crate) configuration: freshkube_core::ConfigurationRevision,
+    pub(crate) access: Option<freshkube_core::AccessIdentity>,
+    pub(crate) cluster: Result<ClusterOverview, String>,
+}
+
+pub(crate) struct ObservedNodes {
+    pub(crate) access: freshkube_core::AccessIdentity,
+    pub(crate) nodes: freshkube_core::kubernetes_summary::Part<
+        Vec<freshkube_core::kubernetes_summary::NodeSummary>,
+    >,
+}
+
+impl ObservedNodes {
+    fn for_access(
+        self,
+        access: freshkube_core::AccessIdentity,
+    ) -> Option<
+        freshkube_core::kubernetes_summary::Part<
+            Vec<freshkube_core::kubernetes_summary::NodeSummary>,
+        >,
+    > {
+        (self.access == access).then_some(self.nodes)
+    }
+}
+
+async fn configuration_revision(
+    config: &AppliedConfig,
+    selection: &KubeconfigSelection,
+) -> Result<freshkube_core::ConfigurationRevision, String> {
+    let path = config.path.clone();
+    let selection = selection.clone();
+    tokio::task::spawn_blocking(move || {
+        freshkube_core::ConfigurationRevision::for_talos_sources(path.as_deref(), &selection)
+    })
+    .await
+    .map_err(|_| "Inspecting the access configuration stopped".to_owned())
+}
+
 pub(crate) fn collect(
     runtime: Handle,
     config: AppliedConfig,
     kubeconfig: KubeconfigSelection,
-) -> (OwnedJob, oneshot::Receiver<Result<ClusterOverview, String>>) {
+    nodes: Option<ObservedNodes>,
+) -> (
+    OwnedJob,
+    oneshot::Receiver<Result<CollectedOverview, String>>,
+) {
     let (mut sender, receiver) = oneshot::channel();
     let worker_runtime = runtime.clone();
     let task = runtime.spawn(async move {
         let operation = async move {
-            let (path, loaded, catalog, identity) = read_config(&worker_runtime, config).await?;
+            let configuration = configuration_revision(&config, &kubeconfig).await?;
+            let mut access = None;
+            let cluster = async {
+            let (path, loaded, catalog, identity) = read_config(&worker_runtime, config.clone()).await?;
             // Never refresh a previously populated snapshot: optional-source failures
             // in the shared collector retain data, which must not be labeled fresh here.
             let mut collector = ClusterOverviewCollector::new(Some(path), Some(catalog.current));
-            collector.set_kubeconfig_selection(kubeconfig);
+            collector.set_kubeconfig_selection(kubeconfig.clone());
             // The Talos connection is reused while path, content, context and endpoints
             // are unchanged, and dropped by the collector after transport failures.
             let mut snapshots = tokio::time::timeout(OPEN_DEADLINE, collector.connect_from_config_reusing(&loaded, identity))
@@ -222,8 +268,21 @@ pub(crate) fn collect(
             if snapshot.client.is_none() {
                 return Err(snapshot.connection.error().unwrap_or("Talos context is disconnected").to_string());
             }
+            let current = freshkube_core::AccessIdentity::for_talos(snapshot.client.as_ref().unwrap(), &kubeconfig);
+            access = Some(current);
+            collector.set_observed_nodes(nodes.and_then(|nodes| nodes.for_access(current)));
             collector.refresh(&mut snapshot).await;
+            if current != freshkube_core::AccessIdentity::for_talos(snapshot.client.as_ref().unwrap(), &kubeconfig) {
+                access = None;
+                return Err("Access configuration changed during refresh; refresh again".into());
+            }
             require_fresh_node_data(snapshot)
+            }.await;
+            let after = configuration_revision(&config, &kubeconfig).await?;
+            if after != configuration {
+                return Ok(CollectedOverview { configuration: after, access: None, cluster: Err("Access configuration changed during refresh; refresh again".into()) });
+            }
+            Ok(CollectedOverview { configuration, access, cluster })
         };
         tokio::select! {
             biased;
@@ -490,6 +549,57 @@ mod tests {
         format!(
             "context: {current}\ncontexts:\n  alpha: &entry\n    endpoints: [192.0.2.1]\n    ca: YQ==\n    crt: Yg==\n    key: Yw==\n  beta: *entry\n"
         )
+    }
+
+    #[test]
+    fn retained_nodes_belong_to_both_the_access_session_and_revision() {
+        use freshkube_core::kubernetes_summary::Part;
+        use freshkube_core::{AccessIdentity, AccessSessionId, ConfigurationRevision};
+        let directory = ConfigDirectory::new();
+        let path = directory.0.join("config");
+        std::fs::write(&path, "first").unwrap();
+        let before = ConfigurationRevision::from_kubeconfig_sources(std::slice::from_ref(&path));
+        let session = AccessSessionId::new();
+        let current = AccessIdentity::new(session, before);
+        let nodes = || ObservedNodes {
+            access: current,
+            nodes: Part::Refused("synthetic refusal".into()),
+        };
+        assert!(matches!(
+            nodes().for_access(current),
+            Some(Part::Refused(_))
+        ));
+        assert!(
+            nodes()
+                .for_access(AccessIdentity::new(AccessSessionId::new(), before))
+                .is_none()
+        );
+        std::fs::write(&path, "other").unwrap();
+        let after = ConfigurationRevision::from_kubeconfig_sources(&[path]);
+        assert!(
+            nodes()
+                .for_access(AccessIdentity::new(session, after))
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_replacement_still_reports_its_new_revision() {
+        let directory = ConfigDirectory::new();
+        let path = directory.0.join("config");
+        std::fs::write(&path, config_text("alpha")).unwrap();
+        let config = AppliedConfig {
+            path: Some(path.clone()),
+            context: Some("alpha".into()),
+        };
+        let selection = KubeconfigSelection::TalosControlPlane;
+        let before = configuration_revision(&config, &selection).await.unwrap();
+        std::fs::write(&path, "invalid: [").unwrap();
+        let (_job, receiver) = collect(Handle::current(), config, selection, None);
+        let result = receiver.await.unwrap().unwrap();
+        assert_ne!(before, result.configuration);
+        assert!(result.access.is_none());
+        assert!(result.cluster.is_err());
     }
 
     #[test]

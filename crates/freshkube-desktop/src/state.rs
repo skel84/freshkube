@@ -57,12 +57,13 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
         }
     }
 
+    pub(crate) fn is_current(&self, request: &Request<I>) -> bool {
+        request.generation == self.generation && self.identity.as_ref() == Some(&request.identity)
+    }
+
     /// Returns false without mutation for an obsolete or already-applied request.
     pub(crate) fn apply(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
-        if !self.loading
-            || request.generation != self.generation
-            || self.identity.as_ref() != Some(&request.identity)
-        {
+        if !self.loading || !self.is_current(request) {
             return false;
         }
         self.loading = false;
@@ -85,6 +86,12 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
 
     pub(crate) fn data(&self) -> Option<&T> {
         self.data.as_ref()
+    }
+
+    /// Updates an independent projection without changing the request, its
+    /// coverage, error or success/failure timestamps.
+    pub(crate) fn data_mut(&mut self) -> Option<&mut T> {
+        self.data.as_mut()
     }
 
     pub(crate) fn error(&self) -> Option<&str> {

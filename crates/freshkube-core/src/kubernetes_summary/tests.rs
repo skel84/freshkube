@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use chrono::{TimeZone, Utc};
 use serde_json::json;
 
@@ -42,6 +44,10 @@ fn ready_since_pod_issues_and_not_ready_counts_come_from_status() {
     assert_eq!(nodes[0].pods, 2);
     let pods = data.pods.loaded().unwrap();
     assert_eq!(pods.total, 2);
+    assert_eq!(
+        pods.by_namespace,
+        BTreeMap::from([("batch".into(), 1), ("payments".into(), 1)])
+    );
     assert_eq!(pods.on_not_ready, 2);
     assert!(
         pods.issues
@@ -74,6 +80,40 @@ fn recent_warnings_exclude_old_normal_and_future_and_explain_pending_claim() {
     assert_eq!(claims.pending_count, 1);
     assert_eq!(claims.pending[0].reason, "StorageClass fast not found");
     assert!(claims.pending[0].since.is_some());
+}
+
+#[test]
+fn missing_or_stale_pods_cannot_report_fresh_zero_counts() {
+    for pods in [
+        Part::Failed("Pods unavailable".into()),
+        Part::Refused(super::Unavailable {
+            failure: Some(super::ObservationFailure::Read(
+                crate::resources::FailureKind::Forbidden,
+            )),
+            message: "Pods refused".into(),
+            last_good: Some(Vec::new()),
+        }),
+        Part::Loaded(Vec::new()),
+    ] {
+        let current = pods.is_current();
+        let observed = pods.loaded().is_some();
+        let data = derive(
+            Part::Loaded("v1.32.3".into()),
+            Part::Loaded(serde_json::from_value(json!([{"metadata":{"name":"worker"}}])).unwrap()),
+            pods,
+            Part::Loaded(Vec::new()),
+            Part::Loaded(Vec::new()),
+            Part::Loaded(Vec::new()),
+            Part::Loaded(Vec::new()),
+            Part::Loaded(Vec::new()),
+            Part::Loaded(Vec::new()),
+            Part::Loaded(Vec::new()),
+            Utc.timestamp_opt(1_790_000_000, 0).unwrap(),
+        );
+        let node = &data.nodes.loaded().unwrap()[0];
+        assert_eq!(node.pods_current, current);
+        assert_eq!(node.pods_observed, observed);
+    }
 }
 
 #[test]

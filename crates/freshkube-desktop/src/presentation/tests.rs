@@ -59,11 +59,33 @@ fn memory_levels_follow_core_thresholds() {
     assert_eq!(memory_level(MEMORY_CRITICAL_PERCENT), MemoryLevel::Critical);
 }
 #[test]
-fn etcd_tolerance_counts_members_that_can_fail() {
-    assert_eq!(etcd_failure_tolerance(0), 0);
-    assert_eq!(etcd_failure_tolerance(1), 0);
-    assert_eq!(etcd_failure_tolerance(3), 1);
-    assert_eq!(etcd_failure_tolerance(5), 2);
+fn etcd_card_shows_remaining_tolerance_and_warns_when_none_remains() {
+    for (healthy, total, remaining) in [(2, 3, 0), (3, 5, 0), (3, 3, 1), (5, 5, 2)] {
+        let mut cluster = crate::fixture::cluster("prod-fra", 1);
+        cluster.etcd_summary = Some(freshkube_core::cluster_overview::EtcdSummary {
+            healthy,
+            total,
+            has_quorum: true,
+        });
+        let overview = overview::Overview::build(&[], &[], None, Some(&cluster), true, false);
+        let card = overview
+            .cards
+            .iter()
+            .find(|card| card.id == "tile-etcd")
+            .unwrap();
+        assert!(
+            card.detail
+                .contains(&format!("tolerates {remaining} additional member"))
+        );
+        assert_eq!(
+            card.tone,
+            if remaining > 0 {
+                crate::ui::Tone::Good
+            } else {
+                crate::ui::Tone::Warn
+            }
+        );
+    }
 }
 #[test]
 fn load_history_is_bounded_and_forgets_departed_nodes() {

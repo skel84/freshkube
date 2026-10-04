@@ -440,7 +440,7 @@ impl Render for HistoryView {
                             .truncate()
                             .font_family(ui::MONO_FONT)
                             .text_size(dp(11.))
-                            .text_color(p.faint)
+                            .text_color(p.muted)
                             .child(label),
                     ),
             )

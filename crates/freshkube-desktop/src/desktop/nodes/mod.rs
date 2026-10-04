@@ -178,6 +178,8 @@ impl Pilot {
     }
 
     pub(super) fn rebuild_joined_nodes(&mut self) {
+        self.column_state
+            .prepare(self.kubernetes_summary.data().map(|s| s.as_ref()));
         let kubernetes = self
             .kubernetes_summary
             .data()
@@ -186,7 +188,9 @@ impl Pilot {
             &self.nodes,
             kubernetes.map(Vec::as_slice).unwrap_or_default(),
             self.overview.data().is_some(),
-            kubernetes.is_some(),
+            self.kubernetes_summary
+                .data()
+                .is_some_and(|summary| summary.nodes.is_current()),
         ));
         if self
             .node_workspace
@@ -231,8 +235,10 @@ impl Pilot {
             self.fixture,
             self.kubernetes_only.is_some(),
         );
-        self.rail_marks =
-            crate::desktop::shell::RailMarks::from_cards(&self.overview_display.cards);
+        self.rail_marks = crate::desktop::shell::RailMarks::from_cards(
+            &self.overview_display.cards,
+            self.fixture,
+        );
         self.attention = crate::presentation::attention::build(
             &self.node_workspace.rows,
             self.kubernetes_summary

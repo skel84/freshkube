@@ -45,6 +45,8 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: python3 scripts/package-macos.py --target "$TARGET" --build-number "$GITHUB_RUN_NUMBER"
+      - name: Check packaging leaves the source tree clean
+        run: test -z "$(git status --porcelain)"
       # Upload the ditto archive, not the raw .app: artifact upload strips modes.
       - uses: actions/upload-artifact@v4
         with:

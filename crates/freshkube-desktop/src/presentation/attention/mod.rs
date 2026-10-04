@@ -44,6 +44,7 @@ pub(crate) struct AttentionRow {
 
 #[derive(Default)]
 pub(crate) struct Attention {
+    pub(crate) complete: bool,
     pub(crate) rows: Vec<AttentionRow>,
     pub(crate) by_node: BTreeMap<String, Vec<AttentionRow>>,
     pub(crate) total: usize,
@@ -96,11 +97,37 @@ pub(crate) fn build(
         append_pods(summary, &mut rows);
         append_workloads(summary, &mut rows);
         append_claims(summary, &mut rows);
+        for row in &mut rows {
+            use freshkube_core::kubernetes_summary::Source;
+            let source = match row.kind {
+                "Pod" => Some(Source::Pods),
+                "Deployment" => Some(Source::Deployments),
+                "StatefulSet" => Some(Source::StatefulSets),
+                "DaemonSet" => Some(Source::DaemonSets),
+                "Claim" => Some(Source::Claims),
+                _ => None,
+            };
+            if source
+                .and_then(|source| summary.observations.get(&source))
+                .is_some_and(|observation| observation.is_stale())
+            {
+                row.reason = format!("Last known · {}", row.reason).into();
+                row.tone = Tone::Unknown;
+            }
+        }
     }
     if let Some(cluster) = talos {
         append_etcd(cluster, &mut rows);
     }
-    finish(rows)
+    let mut result = finish(rows);
+    result.complete = kubernetes.is_some_and(|summary| {
+        summary.nodes.is_current()
+            && summary.pods.is_current()
+            && summary.claims.is_current()
+            && summary.events.is_current()
+            && summary.workloads.unavailable().is_empty()
+    });
+    result
 }
 
 fn append_node_problem(row: &NodeRow, now: DateTime<Utc>, rows: &mut Vec<AttentionRow>) {
@@ -112,6 +139,7 @@ fn append_node_problem(row: &NodeRow, now: DateTime<Utc>, rows: &mut Vec<Attenti
         tone = Tone::Crit;
     }
     if let Some(node) = &row.kubernetes
+        && row.kubernetes_current
         && !node.is_ready()
     {
         since = node.ready().and_then(|condition| condition.since);
@@ -283,7 +311,7 @@ fn append_etcd(cluster: &ClusterOverview, rows: &mut Vec<AttentionRow>) {
             "{} of {} members answered; quorum needs {}",
             etcd.healthy,
             etcd.total,
-            etcd.total / 2 + 1
+            freshkube_core::indicators::quorum(etcd.healthy, etcd.total).required
         ));
     }
     if let Some(alarms) = &cluster.etcd_alarms {
@@ -337,6 +365,7 @@ fn finish(mut rows: Vec<AttentionRow>) -> Attention {
     }
     rows.truncate(50);
     Attention {
+        complete: false,
         rows,
         by_node,
         total,

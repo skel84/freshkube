@@ -1,6 +1,7 @@
 //! The header: the context switcher, where the window is, Search
 //! everything, Refresh, appearance and Settings.
 use super::*;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 /// Command-K's hint on the search field.
 const SEARCH_KEY: &str = if cfg!(target_os = "macos") {
@@ -15,6 +16,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let minimal = window.viewport_size().width / ui::dp_px(1., window) < 680.;
         TitleBar::new()
             .h(dp(52.))
             .bg(cx.theme().title_bar)
@@ -22,10 +24,18 @@ impl Pilot {
             .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
             .child(
                 h_flex()
-                    .gap(dp(14.))
+                    .gap(dp(if minimal { 6. } else { 14. }))
                     .min_w_0()
-                    .child(self.render_context_switcher(cx))
-                    .child(self.render_location(cx)),
+                    .child(self.render_context_switcher(minimal, cx))
+                    .child(self.render_section_tabs(window, cx))
+                    .child(
+                        div()
+                            .absolute()
+                            .w(px(0.))
+                            .h(px(0.))
+                            .overflow_hidden()
+                            .child(self.render_location(cx)),
+                    ),
             )
             .child(
                 h_flex()
@@ -33,10 +43,127 @@ impl Pilot {
                     .pl(dp(12.))
                     .pr(dp(14.))
                     .flex_shrink_0()
+                    .when(self.page == Page::Observability, |this| {
+                        this.child(self.render_observability_range(window, cx))
+                    })
                     .child(self.render_search_field(window, cx))
-                    .child(self.render_refresh(cx))
-                    .child(self.render_appearance(cx))
+                    .when(!minimal, |this| {
+                        this.child(self.render_refresh(cx))
+                            .child(self.render_appearance(cx))
+                    })
                     .child(self.render_settings(cx)),
+            )
+            .into_any_element()
+    }
+
+    fn render_section_tabs(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let width = window.viewport_size().width / ui::dp_px(1., window);
+        let compact = width < 1120.;
+        let minimal = width < 680.;
+        h_flex()
+            .gap(dp(2.))
+            .children(
+                [
+                    (
+                        "dashboard",
+                        "Dashboard",
+                        Area::Overview,
+                        IconName::LayoutDashboard,
+                    ),
+                    ("nodes", "Nodes", Area::Nodes, IconName::Server),
+                    (
+                        "workloads",
+                        "Workloads",
+                        Area::Group("workloads"),
+                        IconName::Boxes,
+                    ),
+                    ("events", "Events", Area::Events, IconName::Activity),
+                    (
+                        "observability",
+                        "Observability",
+                        Area::Observability,
+                        IconName::ChartLine,
+                    ),
+                ]
+                .into_iter()
+                .filter(|(_, _, area, _)| !minimal || self.area == *area)
+                .map(|(id, label, area, icon)| {
+                    let selected = self.area == area;
+                    Button::new(SharedString::from(format!("section-{id}")))
+                        .ghost()
+                        .small()
+                        .toggled(selected)
+                        .h(dp(48.))
+                        .rounded(px(0.))
+                        .border_b_2()
+                        .border_color(if selected {
+                            p.accent
+                        } else {
+                            gpui_kit::transparent_black()
+                        })
+                        .text_color(if selected { p.ink } else { p.muted })
+                        .when_else(
+                            compact,
+                            |button| button.icon(icon).w(dp(34.)).tooltip(label),
+                            |button| button.label(label).px(dp(10.)),
+                        )
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.show_area(area, window, cx)
+                            }),
+                        )
+                }),
+            )
+            .into_any_element()
+    }
+
+    fn render_observability_range(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let hours = self.observability.read(cx).hours();
+        if window.viewport_size().width / ui::dp_px(1., window) < 950. {
+            let page = self.observability.downgrade();
+            return Button::new("obs-time-menu")
+                .outline()
+                .small()
+                .label(format!("{hours}h"))
+                .dropdown_caret(true)
+                .tooltip("Observability time range")
+                .dropdown_menu(move |mut menu, _, _| {
+                    for (span, label) in [
+                        (1, "1 hour"),
+                        (3, "3 hours"),
+                        (24, "24 hours"),
+                        (168, "7 days"),
+                    ] {
+                        let page = page.clone();
+                        menu =
+                            menu.item(PopupMenuItem::new(label).checked(hours == span).on_click(
+                                move |_, _, cx| {
+                                    _ = page.update(cx, |page, cx| page.set_range(span, cx));
+                                },
+                            ));
+                    }
+                    menu
+                })
+                .into_any_element();
+        }
+        h_flex()
+            .gap(dp(2.))
+            .p(dp(3.))
+            .rounded(px(8.))
+            .bg(palette(cx).surface_2)
+            .children(
+                [(1, "1h"), (3, "3h"), (24, "24h"), (168, "7d")].map(|(span, label)| {
+                    Button::new(SharedString::from(format!("obs-time-{span}")))
+                        .ghost()
+                        .xsmall()
+                        .label(label)
+                        .selected(hours == span)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.observability
+                                .update(cx, |page, cx| page.set_range(span, cx))
+                        }))
+                }),
             )
             .into_any_element()
     }
@@ -118,7 +245,7 @@ impl Pilot {
             .into_any_element()
     }
 
-    fn render_context_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_context_switcher(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let pilot = cx.entity().downgrade();
         let full = self
@@ -146,6 +273,7 @@ impl Pilot {
             .trigger(
                 Button::new("context-switcher")
                     .ghost()
+                    .when(compact, |button| button.max_w(dp(180.)))
                     .h(dp(36.))
                     .pl(dp(6.))
                     .pr(dp(10.))
@@ -177,6 +305,7 @@ impl Pilot {
                                     .items_start()
                                     .child(
                                         h_flex()
+                                            .min_w_0()
                                             .gap(dp(6.))
                                             .children(ui::status_glyph(tone, cx))
                                             .child(
@@ -187,6 +316,7 @@ impl Pilot {
                                                     .text_size(dp(13.))
                                                     .line_height(dp(15.))
                                                     .font_weight(ui::HEADING_WEIGHT)
+                                                    .truncate()
                                                     .child(label),
                                             ),
                                     )
@@ -195,6 +325,7 @@ impl Pilot {
                                             .text_size(dp(11.))
                                             .line_height(dp(13.))
                                             .text_color(p.muted)
+                                            .truncate()
                                             .child(detail),
                                     ),
                             ),
@@ -225,7 +356,12 @@ impl Pilot {
     /// Opens Search everything; it shrinks to its icon in a narrow window.
     fn render_search_field(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let narrow = window.viewport_size().width / ui::dp_px(1., window) < 1000.;
+        let narrow = window.viewport_size().width / ui::dp_px(1., window)
+            < if self.page == Page::Observability {
+                1450.
+            } else {
+                1180.
+            };
         h_flex()
             .id("search-everything")
             .test_support()
@@ -243,7 +379,7 @@ impl Pilot {
             .text_color(p.muted)
             .text_size(dp(12.5))
             .cursor_pointer()
-            .hover(|style| style.bg(p.hover))
+            .hover(|style| style.bg(p.hover).text_color(p.ink_2))
             .when(narrow, |this| {
                 this.tooltip(|window, cx| {
                     Tooltip::new(format!("Search everything  {SEARCH_KEY}")).build(window, cx)
@@ -262,7 +398,7 @@ impl Pilot {
                     div()
                         .flex_none()
                         .text_size(dp(11.))
-                        .text_color(p.faint)
+                        .text_color(p.muted)
                         .child(SEARCH_KEY),
                 )
             })
@@ -302,7 +438,7 @@ impl Pilot {
                     .loading(loading)
                     .accessibility_label("Refresh now")
                     .tooltip(if ring_visible {
-                        format!("Refresh now · next automatic refresh in {next_in} s")
+                        format!("Refresh now · next Talos refresh in {next_in} s")
                     } else {
                         "Refresh now".into()
                     })

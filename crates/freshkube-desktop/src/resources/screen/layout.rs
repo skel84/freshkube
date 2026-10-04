@@ -6,8 +6,8 @@ use gpui_kit::SharedString;
 use super::super::model::{ColumnKind, SortKey};
 use super::super::store::ResourceStore;
 
-/// Advance of one character in the 12 px table font.
-const CHAR_WIDTH: f32 = 7.2;
+/// Advance of one character in the 12.5 px table font.
+const CHAR_WIDTH: f32 = 7.5;
 const CELL_PADDING: f32 = 24.;
 const AGE_WIDTH: f32 = 64.;
 const MIN_COLUMN: f32 = 64.;
@@ -17,14 +17,14 @@ const MAX_FLEXIBLE: f32 = 440.;
 pub(super) const GLYPH_WIDTH: f32 = 34.;
 /// A pod's `0/1 ↻14`.
 const READY_WIDTH: f32 = 88.;
-/// A use figure and its 40-wide bar.
-const USAGE_WIDTH: f32 = 112.;
-const MAX_OWNER: f32 = 160.;
+/// A use figure and its 44-wide bullet.
+const USAGE_WIDTH: f32 = 116.;
+const MAX_OWNER: f32 = 132.;
 /// A pod's name and namespace take what is left, but no less than this.
-const MIN_POD_NAME: f32 = 240.;
+const MIN_POD_NAME: f32 = 224.;
 const MAX_NODE: f32 = 140.;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ColumnSource {
     /// A printed column, by index into the store's columns.
     Cell(usize),
@@ -98,6 +98,7 @@ pub(super) enum ToneSource {
 #[derive(Clone, Debug, Default)]
 pub(super) struct TableLayout {
     pub(super) columns: Vec<DisplayColumn>,
+    pub(super) all_columns: Vec<DisplayColumn>,
     pub(super) width: f32,
     /// The printed column that gives a row its glyph, for kinds other than
     /// pods, which have their own state.
@@ -206,11 +207,22 @@ impl TableLayout {
         }
         let width = columns.iter().map(|column| column.width).sum();
         Self {
+            all_columns: columns.clone(),
             columns,
             width,
             tone_from: tone_from.filter(|_| !pods),
             namespaced,
         }
+    }
+
+    pub(super) fn hide(&mut self, hidden: &std::collections::BTreeSet<ColumnSource>) {
+        self.columns = self
+            .all_columns
+            .iter()
+            .filter(|column| !hidden.contains(&column.source))
+            .cloned()
+            .collect();
+        self.width = self.columns.iter().map(|column| column.width).sum();
     }
 }
 

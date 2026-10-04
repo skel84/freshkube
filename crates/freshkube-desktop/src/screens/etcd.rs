@@ -159,14 +159,6 @@ impl ScreenPanel for EtcdScreen {
     }
 }
 
-/// "1 member failure", "2 member failures".
-fn failures(count: usize) -> String {
-    format!(
-        "{count} member failure{}",
-        if count == 1 { "" } else { "s" }
-    )
-}
-
 fn endpoint(info: &EtcdMemberInfo) -> String {
     info.client_urls
         .first()
@@ -240,7 +232,8 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
         .unavailable
         .iter()
         .any(|missing| missing.source == InspectionSource::EtcdStatus);
-    let tolerance = presentation::etcd_failure_tolerance(voting);
+    let quorum = freshkube_core::indicators::quorum(answered, voting);
+    let tolerance = quorum.remaining_tolerance;
     if voting == 0 {
         return QuorumView {
             tone: Tone::Unknown,
@@ -258,11 +251,22 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
     let tolerates = if voting <= 1 {
         "single member, so no failure tolerance".to_owned()
     } else {
-        format!("tolerates {}", failures(tolerance))
+        format!(
+            "tolerates {tolerance} additional member {}",
+            if tolerance == 1 {
+                "failure"
+            } else {
+                "failures"
+            }
+        )
     };
-    match snapshot.quorum {
+    match quorum.state {
         QuorumState::Healthy => QuorumView {
-            tone: Tone::Good,
+            tone: if tolerance > 0 {
+                Tone::Good
+            } else {
+                Tone::Warn
+            },
             label: "Quorum",
             detail: format!("All {voting} voting members answered · {tolerates}"),
         },
@@ -278,7 +282,7 @@ fn quorum_view(snapshot: &EtcdHealthSnapshot) -> QuorumView {
             label: "Quorum unconfirmed",
             detail: format!(
                 "Only {answered} of {voting} voting members answered; a quorum needs {}. Members that didn't answer are not reported, not failed.",
-                voting / 2 + 1
+                quorum.required
             ),
         },
     }
@@ -1110,7 +1114,10 @@ mod ui_tests {
             assert_eq!(window.find(("etcd-role", 0usize)).label(), Some("Leader"));
             assert_eq!(window.find(("etcd-role", 1usize)).label(), Some("Follower"));
             let label = window.find("etcd-quorum").label().unwrap().to_owned();
-            assert!(label.contains("tolerates 1 member failure"), "{label}");
+            assert!(
+                label.contains("tolerates 1 additional member failure"),
+                "{label}"
+            );
             assert!(window.try_find("partial-notice").is_none());
             let snapshot = screen.read(cx).loader.data().unwrap().clone();
             assert!(snapshot.quorum.has_quorum());
@@ -1151,6 +1158,10 @@ mod ui_tests {
             // Two of three still answer: degraded, never "no quorum".
             let quorum = window.find("etcd-quorum").label().unwrap().to_owned();
             assert!(quorum.starts_with("Degraded"), "{quorum}");
+            assert!(
+                quorum.contains("tolerates 0 additional member failures"),
+                "{quorum}"
+            );
             window.click(("etcd-member", 2usize), cx);
             window.render_frame(cx);
             assert_eq!(
@@ -1159,6 +1170,28 @@ mod ui_tests {
             );
         })
         .unwrap();
+    }
+
+    #[test]
+    fn quorum_display_has_no_spare_capacity_at_two_of_three_or_three_of_five() {
+        for (answered, total) in [(2, 3), (3, 5)] {
+            let snapshot = assemble_etcd_health(
+                freshkube_core::inspection::InspectionTarget::new("cp-a", "10.0.0.1"),
+                (1..=total)
+                    .map(|id| info(id, &format!("cp-{id}")))
+                    .collect(),
+                (1..=answered).map(|id| status(id, 1)).collect(),
+                Vec::new(),
+                Vec::new(),
+            );
+            let view = quorum_view(&snapshot);
+            assert_eq!(view.label, "Degraded");
+            assert_eq!(view.tone, crate::ui::Tone::Warn);
+            assert!(
+                view.detail
+                    .contains("tolerates 0 additional member failures")
+            );
+        }
     }
 
     #[test]

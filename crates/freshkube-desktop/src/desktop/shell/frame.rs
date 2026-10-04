@@ -154,9 +154,9 @@ impl Pilot {
                         }),
                 )
                 .child(if self.automatic {
-                    "Auto-refresh every 15 s"
+                    "Talos refresh every 15 s"
                 } else {
-                    "Auto-refresh off"
+                    "Talos auto-refresh off"
                 })
                 .when(self.fixture, |this| {
                     this.child(
@@ -295,13 +295,14 @@ pub(super) fn settings_content(
                 .gap_3()
                 .child(
                     v_flex()
-                        .child(field_label("Auto-refresh"))
-                        .child(hint("Every 15 s while a snapshot is current")),
+                        .child(field_label("Talos auto-refresh"))
+                        .child(hint("Every 15 s; Kubernetes updates are watched")),
                 )
                 .child(
                     Switch::new("auto-refresh")
                         .checked(automatic)
-                        .accessibility_label("Auto-refresh every 15 seconds")
+                        .disabled(kubernetes_only)
+                        .accessibility_label("Refresh Talos every 15 seconds")
                         .on_click(move |checked, _, cx| {
                             let checked = *checked;
                             let _ = switch_pilot.update(cx, |view, cx| {

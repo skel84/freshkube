@@ -3,6 +3,7 @@ pub(crate) mod overview;
 
 use freshkube_core::cluster_overview::{ClusterOverview, EtcdSummary};
 use freshkube_core::constants::{MEMORY_CRITICAL_PERCENT, MEMORY_WARNING_PERCENT};
+use freshkube_core::{HasHealth, HealthIndicator, NodeRole};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use talos_rs::ServiceInfo;
 
@@ -17,9 +18,9 @@ pub(crate) enum Health {
 }
 
 pub(crate) fn service_health(service: &ServiceInfo) -> Health {
-    match &service.health {
-        Some(health) if !health.unknown && health.healthy => Health::Healthy,
-        Some(health) if !health.unknown => Health::Unhealthy,
+    match service.health() {
+        HealthIndicator::Healthy => Health::Healthy,
+        HealthIndicator::Error => Health::Unhealthy,
         _ => Health::Unknown,
     }
 }
@@ -62,6 +63,26 @@ impl Role {
             Role::ControlPlane => "Control plane",
             Role::Worker => "Worker",
             Role::Unknown => "Unknown role",
+        }
+    }
+}
+
+impl From<Role> for NodeRole {
+    fn from(role: Role) -> Self {
+        match role {
+            Role::ControlPlane => Self::ControlPlane,
+            Role::Worker => Self::Worker,
+            Role::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<&NodeRole> for Role {
+    fn from(role: &NodeRole) -> Self {
+        match role {
+            NodeRole::ControlPlane => Self::ControlPlane,
+            NodeRole::Worker => Self::Worker,
+            NodeRole::Unknown => Self::Unknown,
         }
     }
 }
@@ -286,11 +307,6 @@ pub(crate) fn cluster_summary(cluster: &ClusterOverview, nodes: &[NodeSummary]) 
         peak_memory,
         etcd: cluster.etcd_summary.clone(),
     }
-}
-
-/// Members that can fail while etcd keeps quorum.
-pub(crate) fn etcd_failure_tolerance(total: usize) -> usize {
-    total.saturating_sub(1) / 2
 }
 
 /// Recent load1 samples per node, owned by the UI because the backend only

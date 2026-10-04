@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["Ken Udovic", "Francesco Cislaghi"]
 license = "MIT"
@@ -72,6 +72,7 @@ x509-parser = "0.16"
 # own), pinned by revision; Freshkube draws its own panels (docs/MONITORING.md).
 grafaui-model = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95" }
 grafaui-prometheus = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95", default-features = false }
+coroot-rs = { git = "https://github.com/skel84/corust", rev = "c35f7138f208a5b84aae28c0ccbfe776f9d58e15" }
 
 # Internal crates
 talos-rs = { path = "crates/talos-rs" }

@@ -494,7 +494,7 @@ impl NetworkScreen {
         };
         let counter = |value: u64, color: Hsla| {
             div()
-                .text_color(if value > 0 { color } else { p.faint })
+                .text_color(if value > 0 { color } else { p.muted })
                 .child(value.to_string())
         };
         let mut row = self

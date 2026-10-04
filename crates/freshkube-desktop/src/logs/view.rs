@@ -43,11 +43,11 @@ impl<S: LogSource> LogView<S> {
         let current = self.review.current_match == Some(id);
         let p = palette(cx);
         let (level, level_color, stripe) = match entry.level {
-            LogLevel::Error => ("ERROR", p.crit_ink, p.crit),
+            LogLevel::Error => ("ERROR", p.accent, p.accent),
             LogLevel::Warning => ("WARN", p.warn_ink, p.warn),
             LogLevel::Info => ("INFO", p.muted, ui::transparent()),
-            LogLevel::Debug => ("DEBUG", p.faint, ui::transparent()),
-            LogLevel::Unknown => ("—", p.faint, ui::transparent()),
+            LogLevel::Debug => ("DEBUG", p.muted, ui::transparent()),
+            LogLevel::Unknown => ("—", p.muted, ui::transparent()),
         };
         let time = entry
             .timestamp
@@ -211,7 +211,7 @@ impl<S: LogSource> LogView<S> {
         let counts = self.review.level_counts(&self.showing);
         h_flex().gap_1().flex_wrap().children(
             [
-                ("error", "Error", LogLevel::Error, Some(p.crit)),
+                ("error", "Error", LogLevel::Error, Some(p.accent)),
                 ("warning", "Warn", LogLevel::Warning, Some(p.warn)),
                 ("info", "Info", LogLevel::Info, None),
                 ("debug", "Debug", LogLevel::Debug, None),

@@ -543,7 +543,7 @@ fn add_workload(
         .push(workload);
 }
 
-fn finalize_namespace(mut summary: NamespaceSummary) -> NamespaceSummary {
+pub(crate) fn finalize_namespace(mut summary: NamespaceSummary) -> NamespaceSummary {
     summary.total_workloads = summary.workloads.len();
     summary.healthy_workloads = summary
         .workloads

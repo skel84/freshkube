@@ -6,6 +6,27 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 - Install with Homebrew: `brew install --cask skel84/tap/freshkube`. The cask in [skel84/homebrew-tap](https://github.com/skel84/homebrew-tap) follows published releases, pre-releases included, and links the `freshkube` command.
 
+## 0.3.0 (2026-10-04)
+
+### Fog interface
+
+- **A calmer, denser interface:** grey content, a blue-slate frame, Figtree for the UI and IBM Plex Mono for resource names and numbers. Status keeps a consistent glyph and colour; CPU and memory use compact bullet meters with explicit request, limit and stale-data states.
+- **Collapsible contextual navigation:** Command-B toggles the sidebar between its full list and an icon strip. The choice is remembered, narrow windows collapse automatically, and Workloads shows namespace Pod counts.
+- **Pods open on problems:** cause groups, status filters, comfortable/compact density, a Columns menu and bulk copy controls. Readiness and restarts share one cell; node and owner references stay quiet until hovered. The toolbar and detail layout adapt to small windows and larger text.
+- **Pod detail and charts follow Fog:** the cause stays first, Runs on adds a node memory bullet meter, and Prometheus panels use the new chart palette with neutral value text.
+
+### Observability prototype
+
+- **Seven interactive Coroot-inspired screens in fixture mode:** Applications, service map, application reports, incidents, deployment spec comparisons, CPU profiling and traces. Open them with `freshkube --fixture`.
+- **Fictional data only:** real connections show Integration required. Threshold edits and incident muting stay in the example session; fixes and rollback show previews. Live Coroot integration is planned separately ([integration plan](docs/COROOT.md)).
+
+### Cluster reliability and builds
+
+- **Kubernetes summaries stay current through session-owned watches**, with independent source availability and shared observations for Overview, Health and Lifecycle. Namespace Pod counts feed the new sidebar. The remaining CPU cost under large watch bursts is tracked in [#22](https://github.com/skel84/freshkube/issues/22).
+- **etcd reports remaining failure tolerance:** a cluster with 2 of 3 or 3 of 5 members available has no additional failure margin and shows a warning. Overview, etcd and operation checks share the same quorum calculation.
+- **Shared node-health and Operations policy**, with regression coverage for unavailable sources, per-node safety gates, cancellation, deadlines and partial failures.
+- **Talos protobuf code is generated in Cargo's build directory**, so native and CI builds leave the source checkout clean. Source builds still require `protoc`.
+
 ## 0.2.1 (2026-10-03)
 
 ### Monitoring

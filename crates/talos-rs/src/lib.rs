@@ -38,28 +38,28 @@ pub mod talosctl;
 pub mod proto {
     pub mod google {
         pub mod rpc {
-            include!("generated/google.rpc.rs");
+            tonic::include_proto!("google.rpc");
         }
     }
 
     pub mod common {
-        include!("generated/common.rs");
+        tonic::include_proto!("common");
     }
 
     pub mod machine {
-        include!("generated/machine.rs");
+        tonic::include_proto!("machine");
     }
 
     pub mod storage {
-        include!("generated/storage.rs");
+        tonic::include_proto!("storage");
     }
 
     pub mod time {
-        include!("generated/time.rs");
+        tonic::include_proto!("time");
     }
 
     pub mod inspect {
-        include!("generated/inspect.rs");
+        tonic::include_proto!("inspect");
     }
 }
 

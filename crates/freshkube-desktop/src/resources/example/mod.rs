@@ -121,7 +121,7 @@ const WORKLOADS: [(&str, &str, &str, u32); 11] = [
     ("monitoring", "prometheus", "prom/prometheus:v3.5.0", 1),
     ("monitoring", "grafana", "grafana/grafana:12.1.0", 1),
     ("payments", "api", "payments/api:2.14.3", 3),
-    ("payments", "worker", "payments/worker:2.14.3", 4),
+    ("payments", "worker", "ghcr.io/example/worker:1.8.2", 4),
     ("payments", "ledger", "payments/ledger:1.9.0", 2),
     ("web", "frontend", "web/frontend:5.2.0", 4),
     ("web", "gateway", "envoyproxy/envoy:v1.35.0", 2),
@@ -781,6 +781,8 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 mod objects;
 mod summary;
 pub(crate) use objects::{document, events, pod_log, pod_log_line, secret_value};
+pub(crate) use summary::seed_summary;
+#[cfg(test)]
 pub(crate) use summary::summary;
 #[cfg(test)]
 const TEST_NOW: i64 = 1_790_000_000;

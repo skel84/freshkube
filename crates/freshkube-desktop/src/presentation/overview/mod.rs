@@ -49,11 +49,19 @@ fn part<T>(
 ) -> (String, String, Tone) {
     match value {
         Some(Part::Loaded(value)) => loaded(value),
-        Some(Part::Refused(error) | Part::Failed(error)) => (
-            "Unavailable".into(),
-            format!("Can't list {kind}: {error}"),
-            Tone::Unknown,
-        ),
+        Some(Part::Refused(error) | Part::Failed(error)) => {
+            let figure = error
+                .last_good
+                .as_ref()
+                .map(|value| loaded(value).0)
+                .unwrap_or_else(|| "Unavailable".into());
+            let detail = if error.last_good.is_some() {
+                format!("Last known · {kind}: {error}")
+            } else {
+                format!("Can't read {kind}: {error}")
+            };
+            (figure, detail, Tone::Unknown)
+        }
         None => ("—".into(), format!("Waiting for {kind}"), Tone::Unknown),
     }
 }
@@ -93,12 +101,31 @@ impl Overview {
             if let Some(version) = kube.version.loaded() {
                 subtitles.push(format!("Kubernetes {version}"));
             }
-            subtitles.push(format!("{} nodes", rows.len()));
+            if kube.nodes.loaded().is_some() || talos.is_some() {
+                let suffix = if kube.nodes.is_current() {
+                    ""
+                } else {
+                    " (last known)"
+                };
+                subtitles.push(format!("{} nodes{suffix}", rows.len()));
+            } else {
+                subtitles.push("Nodes unavailable".into());
+            }
             if let Some(pods) = kube.pods.loaded() {
-                subtitles.push(format!("{} pods", pods.total));
+                let suffix = if kube.pods.is_current() {
+                    ""
+                } else {
+                    " (last known)"
+                };
+                subtitles.push(format!("{} pods{suffix}", pods.total));
             }
             if let Some(namespaces) = kube.namespaces.loaded() {
-                subtitles.push(format!("{namespaces} namespaces"));
+                let suffix = if kube.namespaces.is_current() {
+                    ""
+                } else {
+                    " (last known)"
+                };
+                subtitles.push(format!("{namespaces} namespaces{suffix}"));
             }
         }
         result.subtitle = subtitles.join(" · ").into();
@@ -163,19 +190,25 @@ impl Overview {
                 .as_ref()
                 .and_then(|summary| summary.etcd.as_ref())
                 .map(|etcd| {
+                    let quorum = freshkube_core::indicators::quorum(etcd.healthy, etcd.total);
+                    let tolerance = quorum.remaining_tolerance;
                     (
-                        if etcd.has_quorum {
+                        if quorum.state.has_quorum() {
                             "Quorum".to_owned()
                         } else {
                             "Quorum unconfirmed".to_owned()
                         },
                         format!(
-                            "{} of {} answered · tolerates {} member failures",
+                            "{} of {} answered · tolerates {tolerance} additional member {}",
                             etcd.healthy,
                             etcd.total,
-                            super::etcd_failure_tolerance(etcd.total)
+                            if tolerance == 1 {
+                                "failure"
+                            } else {
+                                "failures"
+                            }
                         ),
-                        if etcd.has_quorum {
+                        if quorum.state.has_quorum() && tolerance > 0 {
                             Tone::Good
                         } else {
                             Tone::Warn
@@ -185,7 +218,7 @@ impl Overview {
                 .unwrap_or(("—".into(), "No etcd status reported".into(), Tone::Unknown));
             let api = kube
                 .map(|kube| match &kube.version {
-                    Part::Loaded(_) => "Kubernetes API answering".to_owned(),
+                    Part::Loaded(_) => "Kubernetes version read".to_owned(),
                     Part::Refused(error) | Part::Failed(error) => {
                         format!("Kubernetes API: {error}")
                     }
@@ -257,6 +290,23 @@ impl Overview {
                 .unwrap_or("Waiting for workloads".into()),
                 Tone::Unknown,
             ));
+        let (detail, tone) =
+            if let Some(kube) = kube.filter(|kube| !kube.workloads.unavailable().is_empty()) {
+                (
+                    format!(
+                        "{detail} · {}",
+                        kube.workloads
+                            .unavailable()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    ),
+                    Tone::Unknown,
+                )
+            } else {
+                (detail, tone)
+            };
         result.cards.push(Card {
             id: "tile-workloads",
             label: "Workloads",
@@ -281,7 +331,7 @@ impl Overview {
             if pending > 0 {
                 parts.push(format!("{pending} Pending"));
             }
-            if pods.on_not_ready > 0 {
+            if pods.on_not_ready > 0 && kube.is_some_and(|kube| kube.nodes.is_current()) {
                 parts.push(format!("{} on a NotReady node", pods.on_not_ready));
             }
             if parts.is_empty() {
@@ -444,6 +494,21 @@ impl Overview {
                 meter: None,
                 target: CardTarget::Kind("persistentvolumeclaims", "Pending".into()),
             });
+        }
+        if let Some(kube) = kube {
+            result.warnings.extend(
+                kube.observations
+                    .iter()
+                    .filter_map(|(source, observation)| {
+                        observation.message().map(|message| {
+                            let when = observation
+                                .last_success()
+                                .map(|at| format!(" · last observed {} UTC", at.format("%H:%M:%S")))
+                                .unwrap_or_default();
+                            format!("{}: {message}{when}", source.resource()).into()
+                        })
+                    }),
+            );
         }
         result
     }

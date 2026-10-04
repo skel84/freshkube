@@ -153,17 +153,10 @@ pub(crate) enum ScreenEvent {
     },
 }
 
-/// The contract between the shell and a screen.
+/// Common lifecycle behavior between the shell and a screen. Feature-specific
+/// data is delivered through the screen's typed entity handle.
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn set_embedded(&mut self, _embedded: bool, _cx: &mut Context<Self>) {}
-
-    fn set_workloads(
-        &mut self,
-        _context: &str,
-        _data: Result<Arc<WorkloadData>, String>,
-        _cx: &mut Context<Self>,
-    ) {
-    }
 
     fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
@@ -184,6 +177,11 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     /// A manual or automatic refresh while the screen is visible.
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>);
 
+    /// An explicit request from the screen's Refresh or Retry button.
+    fn manual_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh(window, cx);
+    }
+
     /// The user navigated here: focus the main list so keys work at once.
     /// Not called on source changes, so it never steals focus from a popover.
     fn focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -192,7 +190,6 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
-type WorkloadsFn = Rc<dyn Fn(&str, Result<Arc<WorkloadData>, String>, &mut App)>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -202,7 +199,6 @@ pub(crate) struct ScreenHandle {
     activate: WindowFn,
     refresh: WindowFn,
     focus: WindowFn,
-    workloads: WorkloadsFn,
     embedded: EmbeddedFn,
 }
 
@@ -214,14 +210,10 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
-        let workloads = entity.clone();
         let embedded = entity.clone();
         Self {
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
-            }),
-            workloads: Rc::new(move |context, data, cx| {
-                workloads.update(cx, |screen, cx| screen.set_workloads(context, data, cx))
             }),
             view: entity.into(),
             set_source: Rc::new(
@@ -239,15 +231,6 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
-    }
-
-    pub(crate) fn set_workloads(
-        &self,
-        context: &str,
-        data: Result<Arc<WorkloadData>, String>,
-        cx: &mut App,
-    ) {
-        (self.workloads)(context, data, cx)
     }
 
     pub(crate) fn set_embedded(&self, embedded: bool, cx: &mut App) {
@@ -462,7 +445,7 @@ pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
                 .label("Refresh")
                 .loading(loading)
                 .disabled(loading)
-                .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
+                .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx))),
         )
 }
 
@@ -471,7 +454,7 @@ pub(crate) fn retry_button<V: ScreenPanel>(id: &'static str, cx: &mut Context<V>
         .primary()
         .icon(IconName::RefreshCw)
         .label("Retry")
-        .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
+        .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx)))
         .into_any_element()
 }
 
@@ -661,7 +644,7 @@ pub(crate) fn partial_notice(missing: Vec<String>, cx: &App) -> Option<AnyElemen
 pub(crate) fn panel(cx: &App) -> Div {
     let p = palette(cx);
     v_flex()
-        .rounded(px(10.))
+        .rounded(px(12.))
         .border_1()
         .border_color(p.line)
         .bg(p.surface)
