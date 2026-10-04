@@ -8,6 +8,7 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
+├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
 └── freshkube-desktop/   the GPUI Kit application (shell, screens, logs, theme)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
@@ -106,7 +107,7 @@ The user chooses the text size (`text_size.rs`), which becomes the window's rem 
 Headless UI tests render the real app, find elements by id and click or type into them; the suite runs in seconds. Prefer them over manual checks, and give every interactive element a stable, domain-based id.
 
 - Dialogs animate on the real clock, and advancing the test clock does not finish them. The shared test setup in `desktop/tests.rs` turns on reduced motion (`cx.set_reduce_motion(true)`); two confirmation-dialog tests failed every run without it. Do the same in any new test harness.
-- `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`).
+- `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`) from `freshkube-probe`. They count only with its `counting` feature, which a crate turns on from its dev-dependencies, as `freshkube-desktop` does.
 - Element snapshots can't tell whether a button is disabled. Assert the outcome instead: click it and check that nothing changed.
 - Setting an input's value from code does not emit its change event. Type into it with real input events (`window.input`) when the change handler matters.
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
