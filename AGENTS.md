@@ -21,7 +21,7 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 - **Turn a module into a directory when it mixes concerns,** or when its code, not counting tests, passes about 1,500 lines. Use `foo/mod.rs` with child modules, as `desktop/`, `resources/` and `logs/` do; don't mix in the `foo.rs` + `foo/` style.
 - **Keep the shared type in `mod.rs` and spread its `impl` blocks over the children.** A child module sees its ancestors' private items, so `logs/view.rs` and `logs/measure.rs` use `LogView`'s fields without widening them. A method one child calls from another needs `pub(super)`; sibling modules don't see each other's private items.
-- **Every log view is `LogView<S: LogSource>`** in `logs/`. It owns retention, search, selection, copy, the level filter, follow, wrap and row measurement; a source (`TalosLogs` in `logs/talos.rs`, `PodLogs` in `logs/pod/`) supplies its controls, empty message and per-stream errors, and feeds lines through `ingest`. A new kind of log adds a source; it never copies the view.
+- **Every log view is `LogView<S: LogSource>`** in `logs/`. It owns retention, search, selection, copy, the level filter, follow, wrap and row measurement; a source (`TalosLogs` in `logs/talos.rs`, `PodLogs` in `logs/pod/`) supplies its controls, empty message and per-stream errors, and feeds lines through `ingest`. A source reaches the view only through `logs/source_api.rs`, the contract a source's panel uses; the view's other fields stay private to it, so a source's own methods live in an extension trait (`TalosPanel`, `PodLogPanel`) that callers import. A new kind of log adds a source; it never copies the view.
 - **Keep small unit tests inline** in `#[cfg(test)] mod tests { … }`. When a module's tests are large, as UI tests usually are, put them in a sibling `tests.rs` (`#[cfg(test)] mod tests;`). It stays a child module, so the tests keep their access to private fields.
 - **Keep functions short.** A `render` that runs to hundreds of lines is harder to follow than a long file; split it into `render_*` helpers.
 - **Split a file when a step works on it,** not in a sweeping pass. Make the split its own commit with no logic changes, so the unchanged tests prove it.
@@ -42,6 +42,7 @@ cargo run -- --kubernetes-only --kubeconfig <file> --kube-context <name>   # no 
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
+scripts/check-style.sh            # pages use the shared components; see DESIGN.md "Checks"
 ```
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
@@ -130,6 +131,7 @@ scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name
 ```
 
 - Smoke the pages and flows the change touches, in fixture mode and, when the change reads a cluster or Coroot, against the context the user chose. Run `scripts/smoke.sh pages` when a change reaches the frame, the theme or shared components.
+- A page moved onto the shared components is compared with Pods side by side: capture both at the same size, theme and text size (`FRESHKUBE_KIND=pods scripts/smoke.sh start --page resources`, then the page) and check that title, padding, header, rows, group rows, glyphs and states line up.
 - Look at every capture yourself, then report what you checked and what you saw: the captures that show the change, anything wrong, and anything you could not check.
 - Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
 - `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
@@ -318,10 +320,11 @@ The keyboard follows one path through the page, and each level owns a key contex
 
 ## Adding a screen
 
-1. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
-2. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
-3. Put cluster logic in `freshkube-core` and keep the screen to presentation.
-4. Add UI tests for loading, empty, failure and the main interactions.
+1. Pick the page's type from [DESIGN.md](docs/DESIGN.md#page-types) (table page, dashboard, canvas or detail pane) and build it from that type's shared components: the page header, the table, group rows, status glyphs and states. Don't draw your own title, table, glyphs or radii; `scripts/check-style.sh` fails on them, and its allowlist only shrinks.
+2. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
+3. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
+4. Put cluster logic in `freshkube-core` and keep the screen to presentation.
+5. Add UI tests for loading, empty, failure and the main interactions. A table page also calls `desktop::layout_check::assert_table_page`, which measures its header, rows, group rows, padding and title against Pods' sizes.
 
 Diagnostic checks follow the reliability rules below: find the source of truth first, use the `DiagnosticCheck` constructors, provide an actionable fix where possible, and return `unknown` rather than failing when data is unavailable.
 
