@@ -1,108 +1,116 @@
-//! One bounded, deterministic fictional cluster shared by all seven screens.
+//! Sanitized observations and example-only later destinations.
 use super::model::*;
+use freshkube_core::coroot as api;
+use std::collections::BTreeMap;
 
-pub(super) const CATEGORIES: [&str; 3] = ["Applications", "Control plane", "Monitoring"];
 pub(super) const WORKER: &str = "payments/worker";
 pub(super) const POD: &str = "worker-6c4f8da0-bbbbh";
-
-pub(super) fn threshold(app: &str, report: Report) -> &'static str {
-    match (app, report) {
-        ("platform/keycloak", Report::Memory) => "70",
-        ("kube-system/etcd" | "monitoring/prometheus", Report::Disk) => "80",
-        ("kube-system/kube-apiserver", Report::Latency) => "250",
-        _ => report.default_threshold(),
-    }
+pub(super) fn id(key: &str) -> api::AppId {
+    let (ns, name) = key.split_once('/').unwrap_or(("_", key));
+    api::AppId::new(format!("fixture:{ns}:Deployment:{name}"))
+}
+pub(super) fn threshold(_: &str, report: Report) -> &'static str {
+    report.default_threshold()
 }
 
-pub(super) fn applications() -> Vec<Application> {
+pub(super) fn applications() -> Vec<api::Application> {
     let records = [
-        ("payments/api", "Go", 0, Status::Critical),
-        (WORKER, "Go", 0, Status::Critical),
-        ("payments/ledger", "Java", 0, Status::Warning),
-        ("payments/ledger-db", "Postgres", 0, Status::Warning),
-        ("platform/keycloak", "Java", 0, Status::Warning),
-        ("platform/oauth2-proxy", "Go", 0, Status::Warning),
-        ("cache/redis-cache", "Redis", 0, Status::Warning),
-        ("kube-system/kube-apiserver", "Go", 1, Status::Warning),
-        ("kube-system/etcd", "Talos", 1, Status::Warning),
-        ("kube-system/coredns", "Go", 1, Status::Warning),
-        ("kube-system/cilium", "Go", 1, Status::Warning),
+        ("payments/api", "Go", 0, api::Status::Critical),
+        (WORKER, "Go", 0, api::Status::Critical),
+        ("payments/ledger", "Java", 0, api::Status::Warning),
+        ("payments/ledger-db", "Postgres", 0, api::Status::Warning),
+        ("platform/keycloak", "Java", 0, api::Status::Warning),
+        ("platform/oauth2-proxy", "Go", 0, api::Status::Warning),
+        ("cache/redis-cache", "Redis", 0, api::Status::Warning),
+        ("kube-system/kube-apiserver", "Go", 1, api::Status::Warning),
+        ("kube-system/etcd", "Talos", 1, api::Status::Warning),
+        ("kube-system/coredns", "Go", 1, api::Status::Warning),
+        ("kube-system/cilium", "Go", 1, api::Status::Warning),
         (
             "argocd/argocd-application-controller",
             "Go",
             1,
-            Status::Warning,
+            api::Status::Warning,
         ),
-        ("ingress/ingress-nginx", "Nginx", 1, Status::Warning),
-        ("monitoring/prometheus", "Go", 2, Status::Warning),
-        ("monitoring/alertmanager", "Go", 2, Status::Warning),
-        ("logging/loki", "Go", 2, Status::Warning),
+        ("ingress/ingress-nginx", "Nginx", 1, api::Status::Warning),
+        ("monitoring/prometheus", "Go", 2, api::Status::Warning),
+        ("monitoring/alertmanager", "Go", 2, api::Status::Warning),
+        ("logging/loki", "Go", 2, api::Status::Warning),
     ];
     let mut apps: Vec<_> = records
         .into_iter()
-        .map(|(key, language, category, status)| {
-            let (namespace, name) = key.split_once('/').unwrap();
-            let defaults = [
-                "0%", "12ms", "ok", "1/1", "0", "9%", "27%", "—", "0.3ms", "0.5ms", "0",
-            ];
-            Application {
-                key: key.into(),
-                namespace: namespace.into(),
-                name: name.into(),
-                language,
-                category,
-                status,
-                checks: defaults.map(|value| Check {
-                    status: if value == "—" {
-                        Status::Unknown
-                    } else {
-                        Status::Ok
-                    },
-                    value: value.into(),
-                }),
-                search: format!("{key} {language}").to_lowercase(),
-            }
+        .map(|(key, language, category, status)| api::Application {
+            id: id(key),
+            cluster: "Fictional cluster".into(),
+            category: ["application", "control-plane", "monitoring"][category].into(),
+            app_type: language.into(),
+            status,
+            signals: Report::ALL
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.signal().into(),
+                        api::Signal {
+                            status: api::Status::Ok,
+                            value: String::new(),
+                        },
+                    )
+                })
+                .collect(),
         })
         .collect();
     let changes = [
-        (0, Report::Errors, Status::Critical, "2.8%"),
-        (0, Report::Upstreams, Status::Critical, "worker"),
-        (0, Report::Logs, Status::LogError, "1.9k"),
-        (1, Report::Upstreams, Status::Critical, "ledger-db"),
-        (1, Report::Instances, Status::Critical, "0/1"),
-        (1, Report::Restarts, Status::Warning, "14"),
-        (1, Report::Net, Status::Critical, "refused"),
-        (1, Report::Logs, Status::LogError, "212"),
-        (2, Report::Instances, Status::Warning, "1/2"),
-        (3, Report::Instances, Status::Warning, "1/2"),
-        (3, Report::Disk, Status::Integration, "required"),
-        (4, Report::Instances, Status::Warning, "1/2"),
-        (4, Report::Memory, Status::Warning, "76%"),
-        (5, Report::Instances, Status::Warning, "1/2"),
-        (6, Report::Instances, Status::Warning, "2/3"),
-        (7, Report::Latency, Status::Warning, "294ms"),
-        (8, Report::Disk, Status::Warning, "83%"),
-        (9, Report::Instances, Status::Warning, "1/2"),
-        (10, Report::Instances, Status::Warning, "5/6"),
-        (11, Report::Cpu, Status::Warning, "86%"),
-        (11, Report::Logs, Status::LogError, "41"),
-        (12, Report::Upstreams, Status::Critical, "api"),
-        (13, Report::Memory, Status::Warning, "88%"),
-        (13, Report::Disk, Status::Warning, "83%"),
-        (14, Report::Instances, Status::Warning, "1/2"),
-        (15, Report::Instances, Status::Warning, "1/2"),
+        (0, Report::Errors, api::Status::Critical, "2.8%"),
+        (0, Report::Upstreams, api::Status::Critical, "worker"),
+        (0, Report::Logs, api::Status::Warning, "1.9k"),
+        (1, Report::Upstreams, api::Status::Critical, "ledger-db"),
+        (1, Report::Instances, api::Status::Critical, "0/1"),
+        (1, Report::Restarts, api::Status::Warning, "14"),
+        (1, Report::Net, api::Status::Critical, "refused"),
+        (1, Report::Logs, api::Status::Warning, "212"),
+        (2, Report::Instances, api::Status::Warning, "1/2"),
+        (3, Report::Instances, api::Status::Warning, "1/2"),
+        (3, Report::Disk, api::Status::Unknown, "required"),
+        (4, Report::Instances, api::Status::Warning, "1/2"),
+        (4, Report::Memory, api::Status::Warning, "76%"),
+        (5, Report::Instances, api::Status::Warning, "1/2"),
+        (6, Report::Instances, api::Status::Warning, "2/3"),
+        (7, Report::Latency, api::Status::Warning, "294ms"),
+        (8, Report::Disk, api::Status::Warning, "83%"),
+        (9, Report::Instances, api::Status::Warning, "1/2"),
+        (10, Report::Instances, api::Status::Warning, "5/6"),
+        (11, Report::Cpu, api::Status::Warning, "86%"),
+        (11, Report::Logs, api::Status::Warning, "41"),
+        (12, Report::Upstreams, api::Status::Critical, "api"),
+        (13, Report::Memory, api::Status::Warning, "88%"),
+        (13, Report::Disk, api::Status::Warning, "83%"),
+        (14, Report::Instances, api::Status::Warning, "1/2"),
+        (15, Report::Instances, api::Status::Warning, "1/2"),
     ];
     for (app, report, status, value) in changes {
-        apps[app].checks[report.index()] = Check {
-            status,
-            value: value.into(),
-        };
+        apps[app].signals.insert(
+            report.signal().into(),
+            api::Signal {
+                status,
+                value: value.into(),
+            },
+        );
     }
-    apps[1].checks[Report::Cpu.index()].value = "0%".into();
-    apps[1].checks[Report::Errors.index()] = Check {
-        status: Status::Unknown,
-        value: "—".into(),
-    };
+    apps[1].signals.insert(
+        "cpu".into(),
+        api::Signal {
+            status: api::Status::Ok,
+            value: String::new(),
+        },
+    );
+    apps[1].signals.insert(
+        "errors".into(),
+        api::Signal {
+            status: api::Status::Unknown,
+            value: String::new(),
+        },
+    );
+    apps[1].signals.remove("disk_io_load");
     let healthy = [
         "checkout",
         "catalog",
@@ -145,174 +153,133 @@ pub(super) fn applications() -> Vec<Application> {
             2
         };
         let namespace = ["payments", "kube-system", "monitoring"][category];
-        let key = format!("{namespace}/{name}");
-        apps.push(Application {
-            namespace: namespace.into(),
-            name: name.into(),
-            search: key.clone(),
-            key,
-            language: "Go",
-            category,
-            status: Status::Ok,
-            checks: [
-                "0%", "8ms", "ok", "2/2", "0", "12%", "24%", "—", "0.2ms", "0.4ms", "0",
-            ]
-            .map(|value| Check {
-                status: if value == "—" {
-                    Status::Unknown
-                } else {
-                    Status::Ok
-                },
-                value: value.into(),
-            }),
+        apps.push(api::Application {
+            id: id(&format!("{namespace}/{name}")),
+            cluster: "Fictional cluster".into(),
+            category: ["application", "control-plane", "monitoring"][category].into(),
+            app_type: "Go".into(),
+            status: api::Status::Ok,
+            signals: Report::ALL
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.signal().into(),
+                        api::Signal {
+                            status: api::Status::Ok,
+                            value: String::new(),
+                        },
+                    )
+                })
+                .collect(),
         });
     }
     apps
 }
 
-pub(super) fn map() -> (Vec<MapNode>, Vec<Connection>) {
-    use Status::*;
-    let nodes = vec![
-        MapNode {
-            app: "ingress/ingress-nginx",
-            label: "ingress-nginx",
-            namespace: "ingress · from internet",
-            x: 0.02,
-            y: 0.40,
-            status: Warning,
-        },
-        MapNode {
-            app: "platform/oauth2-proxy",
-            label: "oauth2-proxy",
-            namespace: "platform",
-            x: 0.27,
-            y: 0.12,
-            status: Warning,
-        },
-        MapNode {
-            app: "payments/api",
-            label: "api",
-            namespace: "payments",
-            x: 0.27,
-            y: 0.40,
-            status: Critical,
-        },
-        MapNode {
-            app: "payments/harbor-core",
-            label: "harbor-core",
-            namespace: "payments",
-            x: 0.27,
-            y: 0.76,
-            status: Ok,
-        },
-        MapNode {
-            app: "platform/keycloak",
-            label: "keycloak",
-            namespace: "platform",
-            x: 0.52,
-            y: 0.12,
-            status: Warning,
-        },
-        MapNode {
-            app: WORKER,
-            label: "worker",
-            namespace: "payments",
-            x: 0.52,
-            y: 0.40,
-            status: Critical,
-        },
-        MapNode {
-            app: "payments/ledger",
-            label: "ledger",
-            namespace: "payments",
-            x: 0.52,
-            y: 0.76,
-            status: Warning,
-        },
-        MapNode {
-            app: "payments/ledger-db",
-            label: "ledger-db",
-            namespace: "payments · :6432",
-            x: 0.77,
-            y: 0.40,
-            status: Warning,
-        },
-        MapNode {
-            app: "cache/redis-cache",
-            label: "redis-cache",
-            namespace: "cache",
-            x: 0.77,
-            y: 0.76,
-            status: Warning,
-        },
+pub(super) fn map() -> api::ServiceMap {
+    let names = [
+        "ingress/ingress-nginx",
+        "platform/oauth2-proxy",
+        "payments/api",
+        "payments/ledger",
+        WORKER,
+        "payments/ledger-db",
+        "cache/redis-cache",
     ];
-    let links = vec![
-        Connection {
-            from: 0,
-            to: 1,
-            status: Ok,
-            traffic: 2.,
-            label: "ingress → auth",
-            detail: "42 requests/s · 0.2% errors · RTT 0.4ms",
+    let apps = applications();
+    let nodes = names
+        .iter()
+        .map(|key| {
+            let app = apps.iter().find(|a| a.id == id(key)).unwrap();
+            api::MapNode {
+                id: app.id.clone(),
+                cluster: app.cluster.clone(),
+                category: app.category.clone(),
+                status: app.status,
+                custom: false,
+                labels: BTreeMap::new(),
+                indicators: BTreeMap::new(),
+                distance: None,
+            }
+        })
+        .collect();
+    let edges = [
+        (0, 1, false),
+        (0, 2, false),
+        (1, 2, false),
+        (2, 3, true),
+        (2, 4, true),
+        (4, 5, true),
+        (4, 6, false),
+        (3, 5, true),
+    ]
+    .into_iter()
+    .map(|(from, to, problem)| api::MapEdge {
+        from: id(names[from]),
+        to: id(names[to]),
+        status: if problem {
+            api::Status::Critical
+        } else {
+            api::Status::Ok
         },
-        Connection {
-            from: 0,
-            to: 2,
-            status: Critical,
-            traffic: 3.,
-            label: "ingress → api",
-            detail: "120 requests/s · 2.8% errors · 4,212 requests impacted",
+        rps: Some(12.),
+        latency_seconds: Some(0.003),
+        sent_bytes_per_second: Some(2400.),
+        received_bytes_per_second: None,
+        issue: if problem {
+            "Connection errors reported by Coroot".into()
+        } else {
+            String::new()
         },
-        Connection {
-            from: 0,
-            to: 3,
-            status: Ok,
-            traffic: 1.,
-            label: "ingress → registry",
-            detail: "8 requests/s · 0% errors · RTT 0.2ms",
+    })
+    .collect();
+    api::ServiceMap { nodes, edges }
+}
+
+pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
+    let apps = applications();
+    let value = apps.iter().find(|a| a.id == *app);
+    let worker = *app == id(WORKER);
+    let reports = ["SLO","Instances","CPU","Memory","Storage","Net","DNS","Logs"].into_iter().map(|name| {
+        let problem=worker && matches!(name,"Net"|"Instances"|"Logs");
+        api::Report {name:name.into(),status:if problem {api::Status::Critical} else {api::Status::Unknown},
+            issues:if problem {vec![api::Issue {id:format!("{name}Check"),title:"Connection errors".into(),status:api::Status::Critical,message:"The worker cannot connect to ledger-db:5432. The Service exposes port 6432.".into()}]} else {vec![]},
+            charts:if extended && name=="CPU" { vec![api::Chart {title:"CPU usage (cores)".into(),series:vec![api::SeriesSummary {name:"worker".into(),last:Some(0.1),min:Some(0.0),max:Some(0.2),avg:Some(0.1),sparkline:vec![Some(0.1),None,Some(0.2)],..Default::default()}],series_omitted:0}] } else {vec![]},
+            log_patterns:if extended && name=="Logs" {vec![api::LogPatternSummary {hash:"example-connect".into(),severity:"error".into(),sample:"Connection refused (sanitized example)".into(),messages:212}]} else {vec![]},
+        }
+    }).collect();
+    api::AppHealth {
+        id: app.clone(),
+        namespace: app.namespace().unwrap_or_default().into(),
+        vitals: vec![],
+        status: value.map_or(api::Status::Unknown, |a| a.status),
+        reports,
+        dependencies: if worker {
+            vec![api::Dependency {
+                id: id("payments/ledger-db"),
+                status: api::Status::Warning,
+                connectivity: api::Status::Critical,
+                connectivity_message: "Connection refused".into(),
+                protocols: vec!["postgres".into()],
+                rtt_seconds: None,
+                rps: None,
+                errors_per_sec: None,
+                latency_seconds: None,
+            }]
+        } else {
+            vec![]
         },
-        Connection {
-            from: 1,
-            to: 4,
-            status: Warning,
-            traffic: 2.,
-            label: "auth → keycloak",
-            detail: "1 of 2 instances available · RTT 120ms",
+        clients: if worker {
+            vec![api::ClientLink {
+                id: id("payments/api"),
+                status: api::Status::Critical,
+                rps: Some(12.),
+                latency_seconds: Some(0.003),
+            }]
+        } else {
+            vec![]
         },
-        Connection {
-            from: 2,
-            to: 5,
-            status: Critical,
-            traffic: 3.,
-            label: "api → worker",
-            detail: "POST /v1/settlements returns 503 · worker has no ready instances",
-        },
-        Connection {
-            from: 5,
-            to: 7,
-            status: Critical,
-            traffic: 2.,
-            label: "worker → ledger-db",
-            detail: "0 established · 14 failed / 5 min · connection refused :5432",
-        },
-        Connection {
-            from: 5,
-            to: 8,
-            status: Ok,
-            traffic: 1.,
-            label: "worker → redis",
-            detail: "18 connections/s before restart · RTT 0.2ms",
-        },
-        Connection {
-            from: 6,
-            to: 7,
-            status: Warning,
-            traffic: 2.,
-            label: "ledger → database",
-            detail: "Primary is serving on :6432 · replica's node is NotReady",
-        },
-    ];
-    (nodes, links)
+    }
 }
 
 pub(super) fn flame() -> Vec<FlameFrame> {

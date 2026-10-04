@@ -7,9 +7,9 @@ pub(super) fn ink(status: Status, cx: &App) -> Hsla {
         Status::Ok => p.good,
         Status::Warning => p.warn_ink,
         Status::Critical => p.crit_ink,
-        Status::Unknown => p.muted,
+        Status::Unknown | Status::Absent => p.muted,
         Status::Integration => p.integration,
-        Status::LogError => p.accent,
+        Status::LogError | Status::Info => p.accent,
     }
 }
 pub(super) fn status(state: Status, cx: &App) -> AnyElement {
@@ -22,7 +22,8 @@ pub(super) fn status(state: Status, cx: &App) -> AnyElement {
             .rounded(px(1.))
             .flex_none()
             .into_any_element(),
-        Status::LogError => div()
+        Status::Absent => text("—").text_color(p.muted).into_any_element(),
+        Status::LogError | Status::Info => div()
             .size(dp(8.))
             .rounded_full()
             .bg(p.accent)
@@ -95,8 +96,8 @@ impl ObservabilityPage {
     pub(super) fn render_unavailable(&self, cx: &Context<Self>) -> AnyElement {
         v_flex().id("obs-integration-required").test_support().gap(dp(16.)).max_w(dp(600.)).pt(dp(60.))
             .child(line().child(status(Status::Integration,cx)).child(ui::page_title("Integration required")))
-            .child(text("Connect Coroot to inspect application health, service dependencies, incidents, profiles and traces."))
-            .child(muted("Live Coroot integration is not available yet. Observability examples are available in fixture mode.",cx))
+            .child(text("Connect Coroot to inspect application health, service dependencies and supported report evidence."))
+            .child(muted("Enter a reachable Coroot URL, connect, and explicitly choose a project above.",cx))
             .child(action("obs-open-dashboards","Open Prometheus dashboards").on_click(cx.listener(|_,_,_,cx|cx.emit(ObservabilityEvent::Dashboards)))).into_any_element()
     }
     pub(super) fn breadcrumbs(
@@ -105,7 +106,7 @@ impl ObservabilityPage {
         destination: Destination,
         cx: &Context<Self>,
     ) -> Div {
-        let app = &self.applications[self.selected_app];
+        let app = self.selected_app.as_ref();
         line()
             .child(
                 Button::new("obs-breadcrumb")
@@ -117,9 +118,21 @@ impl ObservabilityPage {
                     .on_click(cx.listener(move |this, _, _, cx| this.open(destination, cx))),
             )
             .child(muted("/", cx))
-            .child(muted(app.namespace.clone(), cx))
+            .child(muted(
+                app.and_then(|a| a.namespace())
+                    .unwrap_or("External / unmapped")
+                    .to_string(),
+                cx,
+            ))
             .child(muted("/", cx))
-            .child(ui::page_title(app.name.clone()))
-            .child(status(app.status, cx))
+            .child(ui::page_title(
+                app.map_or("Select an application", |a| a.name())
+                    .to_string(),
+            ))
+            .child(status(
+                self.selected_application()
+                    .map_or(Status::Unknown, |a| a.status),
+                cx,
+            ))
     }
 }

@@ -418,6 +418,9 @@ impl Pilot {
         self.monitoring.update(cx, |monitoring, cx| {
             monitoring.set_visible(page == Page::Monitoring, cx)
         });
+        self.observability.update(cx, |observability, cx| {
+            observability.set_visible(page == Page::Observability, cx)
+        });
         self.resources.update(cx, |resources, cx| {
             resources.set_visible(page == Page::Resources, window, cx);
             if page == Page::Resources {
@@ -604,6 +607,13 @@ impl Pilot {
         };
         let same = self.resources.read(cx).showing(&identity, cx);
         let open = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            // A shell confirmation may outlive the access used by this link.
+            if this
+                .kube_source()
+                .is_none_or(|current| current.id != source.id)
+            {
+                return;
+            }
             if !same {
                 this.resources
                     .update(cx, |resources, cx| resources.close_for_link(cx));
@@ -666,6 +676,9 @@ impl Pilot {
                 _ = this.update_in(cx, |this, window, cx| {
                     if this.epoch != epoch
                         || this.object_open_sequence != sequence
+                        || this
+                            .kube_source()
+                            .is_none_or(|source| source.id != identity.connection)
                         || this.resources.read(cx).detail_identity(cx).is_some()
                     {
                         return;

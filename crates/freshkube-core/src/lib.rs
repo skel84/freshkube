@@ -27,6 +27,7 @@ mod client_cache;
 pub mod cluster_overview;
 
 pub mod constants;
+pub mod coroot;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
