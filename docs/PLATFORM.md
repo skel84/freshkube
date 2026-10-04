@@ -2,7 +2,7 @@
 
 Freshkube today is a cluster browser with Talos inside it. This file proposes a different front door: a platform-engineering tool for teams that run on Kubernetes, which follows a change from the commit to the pods that run it, across every cluster the delivery passes through. Browsing Kubernetes objects stays, as the layer every link lands on, but it is no longer the first thing the app shows.
 
-It records the direction taken with the user, the stack it was shaped on, the screens, the model behind them and an order of work. Nothing here is built. The [roadmap](ROADMAP.md) decides when a step starts; the future ideas it extends are [F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation) (ownership and Argo CD), [F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes) (reviewed changes and their outcomes) and [F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) (simultaneous clusters). The writes follow the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md).
+It records the direction taken with the user, the stack it was shaped on, the screens, the model behind them and an order of work. Nothing here is built. The [roadmap](ROADMAP.md) decides when a step starts; the future ideas it extends are [F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation) (ownership and Argo CD), [F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes) (reviewed changes and their outcomes) and [F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) (simultaneous clusters). The writes follow the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md). [#42](https://github.com/skel84/freshkube/issues/42) tracks the work; the spike is [#43](https://github.com/skel84/freshkube/issues/43) and the session registry [#44](https://github.com/skel84/freshkube/issues/44).
 
 The mocks are static HTML pages with example data, in [`platform/`](platform/). Each screen below links its page. They show intent, not pixels: where a mock and this file differ, this file wins.
 
@@ -147,13 +147,13 @@ What is missing:
 5. **Cost.** [#22](https://github.com/skel84/freshkube/issues/22) (main-thread burst cost) is open, and six clusters multiply the summary sessions. Measure with `scripts/stress.sh` before and after the registry, and give each cluster a watch budget.
 6. **Navigation.** `Page` and `Area` describe one cluster's pages. An application with tabs across clusters needs another routing level, and links carry the cluster.
 
-Before step 1, a read-only spike against the real core and CI/CD clusters joins Freight, Stages, Argo CD Applications, Rollouts, PipelineRuns and pod digests in core, with no UI. It records the CRD versions, the RBAC the user's identity gets, how promotion and rollout steps are requested, and the answers to the open questions below. Screens beyond these mocks wait for it.
+Before step 1, a read-only spike ([#43](https://github.com/skel84/freshkube/issues/43)) against the real core and CI/CD clusters joins Freight, Stages, Argo CD Applications, Rollouts, PipelineRuns and pod digests in core, with no UI. It records the CRD versions, the RBAC the user's identity gets, how promotion and rollout steps are requested, and the answers to the open questions below. Screens beyond these mocks wait for it.
 
 ## Order of work
 
 Each step ships with example data in `--fixture` (the acme workspace in the mocks), a `FRESHKUBE_PAGE` slug for captures, UI tests for loading, empty, refused and failed states, and no live writes during verification.
 
-1. **Workspace and simultaneous sessions.** The workspace file and Settings page, one access session per cluster, cluster-qualified identities and links, and the Argo CD destination mapping. Today's single-context mode remains a workspace of one.
+1. **Workspace and simultaneous sessions** ([#44](https://github.com/skel84/freshkube/issues/44)). The workspace file and Settings page, one access session per cluster, cluster-qualified identities and links, and the Argo CD destination mapping. Today's single-context mode remains a workspace of one.
 2. **Applications.** The application model (Kargo Project, Argo CD Application, `part-of`, override) and the Applications area, with Resources reached for each application's objects in the right cluster.
 3. **Delivery, read-only.** Kargo Warehouse, Stages, Freight and verification, Argo CD sync and health, Rollout steps, and running digests from pods. The application's Delivery tab and the change page from Freight onwards.
 4. **Promote, Next step, Abort.** The confirmation, the requests and the followed outcome. This is the first write outside exec and forwarding, so it gets its own design pass in this file before building.
