@@ -718,7 +718,9 @@ mod ui_tests {
             assert!(window.try_find("obs-live-incident-k0").is_some());
             assert!(
                 window
-                    .try_find(&format!("obs-live-incident-k{PAGE_SIZE}"))
+                    .try_find(gpui_kit::SharedString::from(format!(
+                        "obs-live-incident-k{PAGE_SIZE}"
+                    )))
                     .is_none()
             );
             assert!(
