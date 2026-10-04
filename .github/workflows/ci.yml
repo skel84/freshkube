@@ -23,7 +23,10 @@ permissions:
 
 concurrency:
   # A new push to a pull request replaces its run; every other run finishes.
-  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  # Draft runs, which skip, keep their own group: pushing and marking a pull
+  # request ready at once sends both events, and the draft one must not
+  # cancel the real run.
+  group: ci-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.head_ref, github.event.pull_request.draft) || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -88,6 +91,12 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Style check
+        # Pages use the shared components (docs/DESIGN.md, Checks); the
+        # allowlist only shrinks. The script's own test runs first.
+        run: |
+          scripts/check-style.test.sh
+          scripts/check-style.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)

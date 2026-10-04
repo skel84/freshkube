@@ -151,6 +151,13 @@ Each state's element has role status and an id `<page>-<state>`.
 - **Group rows:** the row height (34 or 26), not a separate 28, so every list stays a uniform list.
 - **Headers on other Resources kinds:** they keep today's header (title with an inline scope line, Refresh with a label) through the extraction, which changes nothing visible, and take `PageHeader`'s form in their own change.
 
+### Checks
+
+Two checks keep pages on these components ([#48](https://github.com/skel84/freshkube/issues/48)).
+
+- **Layout tests.** A table page's UI test calls `desktop::layout_check::assert_table_page` with its page, title, table, list and density ids. It measures a headless render's painted bounds at both densities: the 30 header, 34 and 26 rows, group rows at the row height, 26 side padding and the 20 title on its 28 line. Pods' test runs it at the default text size and at 20 px; every migrated table page adds its own.
+- **Style check.** `scripts/check-style.sh` runs in CI beside Clippy. Outside the shared components (`crates/freshkube-ui`; until #47 lands, `ui.rs` and `resources/screen/`) a page may not run its own `uniform_list` or `VirtualList` (logs, YAML and the terminal measure their own rows), round a corner with `px` radii other than 3, 8, 10 or 12, set text 20 or larger with a literal, or draw a status glyph itself (a `●` `◆` `▲` `○` `✓` string, or a small `rounded_full` dot) instead of `ui::status_glyph`, `ui::status_mark` or `ui::health_mark`. `scripts/style-allowlist.txt` names, per rule, the files that broke a rule when the check arrived. It only shrinks: the check fails when an unlisted file breaks a rule and when a listed one no longer does, so a migration removes its entries in the same change. `--list` prints every offence with its line.
+
 ## Open
 
 - Whether integration-required lavender should become soft teal, to separate it from memory.

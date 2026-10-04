@@ -3312,3 +3312,35 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     });
     server.abort();
 }
+
+/// The table page every other table page is measured against.
+const PODS: super::layout_check::TablePage = super::layout_check::TablePage {
+    page: "resources-page",
+    title: "resource-title",
+    title_text: "Pods",
+    table: "resource-table-scroll",
+    list: "resource-list",
+    density: "resource-density",
+};
+
+#[gpui_kit::test]
+fn pods_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    for size in [None, Some(20.)] {
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(size) = size {
+                crate::text_size::set(size, cx);
+            }
+            view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            // Example pods include a failing one, so Problems shows groups.
+            let layout = super::layout_check::assert_table_page(window, cx, &PODS);
+            assert!(layout.group.is_some(), "{layout:#?}");
+        })
+        .unwrap();
+    }
+}
