@@ -72,7 +72,7 @@ This slice is read-only. Live pages do not offer threshold, mute, rollback or co
 | Reads | Two concurrent reads shared by provider clones; 20 s deadline including a queued slot; 5 s connection timeout |
 | Time interval | One minute to seven days in core; the desktop offers its existing hour ranges |
 | Projects / applications | 100 projects / 2,000 applications |
-| Map | 120 nodes / 300 directed links |
+| Map | 2,000 nodes / 20,000 directed links (paged 24 nodes at a time) |
 | Report evidence | 32 reports, 200 total issue/log entries, 128 summarized series, 32 vitals, 300 dependency/client links |
 | Series | 512 summary points, 32 labels per series |
 | Incidents | Latest 100 across all states; 10 list rows and 10 propagation applications per rendered page; 100 retained propagation applications / 200 issue entries / 32 burn conditions |

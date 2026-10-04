@@ -423,3 +423,37 @@ async fn incidents_enforce_collection_bounds() {
         ReadError::InvalidResponse
     );
 }
+
+#[test]
+fn a_cluster_sized_map_is_accepted_and_a_runaway_one_is_not() {
+    let node = |ix: usize| MapNode {
+        id: AppId::new(format!("c:ns:Deployment:app-{ix}")),
+        cluster: String::new(),
+        category: String::new(),
+        status: Status::Ok,
+        custom: false,
+        labels: Default::default(),
+        indicators: Default::default(),
+        distance: None,
+    };
+    let nodes: Vec<_> = (0..400).map(node).collect();
+    let edges: Vec<_> = (0..1_200)
+        .map(|ix| MapEdge {
+            from: nodes[ix % 400].id.clone(),
+            to: nodes[(ix / 400 + ix + 1) % 400].id.clone(),
+            status: Status::Ok,
+            rps: None,
+            latency_seconds: None,
+            sent_bytes_per_second: None,
+            received_bytes_per_second: None,
+            issue: String::new(),
+        })
+        .collect();
+    let map = ServiceMap { nodes, edges };
+    assert_eq!(limits::map(&map), Ok(()));
+    let runaway = ServiceMap {
+        nodes: (0..2_001).map(node).collect(),
+        edges: Vec::new(),
+    };
+    assert_eq!(limits::map(&runaway), Err(ReadError::Limit));
+}
