@@ -569,6 +569,10 @@ impl Pilot {
             crate::observability::ObservabilityPage::new(
                 options.fixture,
                 runtime.clone(),
+                options.preferences.as_deref(),
+                options.keyring.then(|| -> crate::secrets::Secrets {
+                    std::sync::Arc::new(crate::secrets::SystemStore)
+                }),
                 window,
                 cx,
             )

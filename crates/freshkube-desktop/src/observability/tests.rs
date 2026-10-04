@@ -22,6 +22,33 @@ pub(super) fn mount_size(
     AnyWindowHandle,
     Entity<ObservabilityPage>,
 ) {
+    mount_with(cx, fixture, width, height, None, None)
+}
+/// A live page that remembers its connection in `preferences`' folder and
+/// keeps keys in `secrets`.
+pub(super) fn mount_remembering(
+    cx: &mut TestAppContext,
+    preferences: &std::path::Path,
+    secrets: crate::secrets::Secrets,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<ObservabilityPage>,
+) {
+    mount_with(cx, false, 1260., 900., Some(preferences), Some(secrets))
+}
+fn mount_with(
+    cx: &mut TestAppContext,
+    fixture: bool,
+    width: f32,
+    height: f32,
+    preferences: Option<&std::path::Path>,
+    secrets: Option<crate::secrets::Secrets>,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<ObservabilityPage>,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -32,8 +59,16 @@ pub(super) fn mount_size(
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut page = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
-        let view =
-            cx.new(|cx| ObservabilityPage::new(fixture, runtime.handle().clone(), window, cx));
+        let view = cx.new(|cx| {
+            ObservabilityPage::new(
+                fixture,
+                runtime.handle().clone(),
+                preferences,
+                secrets.clone(),
+                window,
+                cx,
+            )
+        });
         page = Some(view.clone());
         Root::new(view, window, cx)
     });

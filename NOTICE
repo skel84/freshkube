@@ -18,6 +18,14 @@ grafaui-model and grafaui-prometheus 0.1.0
   Licensed under the MIT License; see licenses/grafaui-MIT.txt.
   Used unmodified, as libraries pinned by revision.
 
+keyring 4.2 and keyring-core 1.0
+  Keeps keys the user asks to remember in the system's credential store.
+  https://github.com/open-source-cooperative/keyring-rs
+  Copyright (c) 2016 keyring Developers
+  Licensed under the Apache License, Version 2.0 (or MIT, at your option); see
+  licenses/Apache-2.0.txt.
+  Used unmodified, as libraries.
+
 promql-parser 0.11.0
   Used by grafaui-prometheus to read PromQL selectors.
   https://github.com/GreptimeTeam/promql-parser

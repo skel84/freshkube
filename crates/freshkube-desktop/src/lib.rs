@@ -14,6 +14,7 @@ pub struct GpuiOptions {
     kubernetes_only: bool,
     kube_context: Option<String>,
     preferences: Option<PathBuf>,
+    keyring: bool,
 }
 
 impl GpuiOptions {
@@ -28,6 +29,7 @@ impl GpuiOptions {
             kubernetes_only: false,
             kube_context: None,
             preferences: None,
+            keyring: false,
         }
     }
     /// Opens without Talos: the Kubernetes pages read `kubeconfig`, or the
@@ -99,6 +101,12 @@ impl GpuiOptions {
         self.preferences = path;
         self
     }
+    /// Keeps the keys the user asks to remember in the system's credential
+    /// store. Off by default, so tests never touch it.
+    pub fn with_keyring(mut self) -> Self {
+        self.keyring = true;
+        self
+    }
     pub fn is_fixture(&self) -> bool {
         self.fixture
     }
@@ -148,6 +156,7 @@ mod resources;
 // Framework pieces land before the screens that use them; drop this once
 // every screen is built.
 mod screens;
+mod secrets;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
@@ -156,17 +165,16 @@ mod text_size;
 mod theme;
 mod ui;
 
-/// Where the app keeps its preferences:
-/// `~/Library/Application Support/Freshkube/preferences.json`.
+/// Where the app keeps its preferences: `preferences.json` in
+/// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`
+/// on Linux and `%APPDATA%\Freshkube` on Windows.
 pub fn preferences_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").filter(|home| !home.is_empty())?;
-    Some(
-        PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("Freshkube")
-            .join("preferences.json"),
-    )
+    let folder = if cfg!(any(target_os = "macos", windows)) {
+        "Freshkube"
+    } else {
+        "freshkube"
+    };
+    Some(dirs::config_dir()?.join(folder).join("preferences.json"))
 }
 
 pub fn run(options: GpuiOptions, runtime: tokio::runtime::Handle) -> color_eyre::Result<()> {

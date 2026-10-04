@@ -154,6 +154,7 @@ impl ObservabilityPage {
         self.live.visible = visible;
         if visible {
             self.refresh_current(cx);
+            self.restore(cx);
         } else {
             self.live.cancel();
         }
@@ -216,6 +217,7 @@ impl ObservabilityPage {
         }
         self.live.source = Some(provider.source(project));
         self.live.project_label = format!("{} · {}", project.name, project.id);
+        self.remember_project(&project.id, cx);
         self.clear_observations();
         self.refresh_current(cx);
     }
@@ -242,6 +244,7 @@ impl ObservabilityPage {
     }
     pub(super) fn disconnect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.invalidate_connection();
+        self.forget_connection(cx);
         self.secret
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_open = true;
@@ -252,7 +255,9 @@ impl ObservabilityPage {
             return;
         }
         let url = self.url.read(cx).value().to_string();
-        let value = self.secret.read(cx).value().to_string();
+        let typed = self.secret.read(cx).value().to_string();
+        let value = self.credential_value(&url, typed);
+        let (auth, saved_url, saved_value) = (self.auth, url.clone(), value.clone());
         let credentials = match self.auth {
             0 => api::Credentials::ApiKey(value),
             1 => api::Credentials::Session(value),
@@ -268,7 +273,7 @@ impl ObservabilityPage {
                 let projects = provider.projects().await?;
                 Ok((provider, projects))
             },
-            |this, result, cx| {
+            move |this, result, cx| {
                 this.live.connecting = false;
                 match result {
                     Ok((provider, projects)) => {
@@ -279,6 +284,7 @@ impl ObservabilityPage {
                             .collect();
                         this.live.projects = projects;
                         this.settings_open = false;
+                        this.remember_connection(saved_url, auth, saved_value, cx);
                     }
                     Err(error) => this.live.error = Some(error.to_string()),
                 }

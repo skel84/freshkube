@@ -172,13 +172,26 @@ impl ObservabilityPage {
                 card("Coroot connection", cx).max_w(dp(560.)).child(
                     body()
                         .child(field("Server URL"))
-                        .child(Input::new(&self.url).id("obs-url").aria_label("Coroot server URL"))
+                        .child(
+                            Input::new(&self.url)
+                                .id("obs-url")
+                                .aria_label("Coroot server URL"),
+                        )
                         .child(field("Sign in with"))
                         .child(line().child(auth))
                         .when(self.auth != 2, |body| {
-                            body.child(field(if self.auth == 0 { "API key" } else { "coroot_session value" }))
-                                .child(Input::new(&self.secret).id("obs-credential").aria_label("Coroot credential"))
+                            body.child(field(if self.auth == 0 {
+                                "API key"
+                            } else {
+                                "coroot_session value"
+                            }))
+                            .child(
+                                Input::new(&self.secret)
+                                    .id("obs-credential")
+                                    .aria_label("Coroot credential"),
+                            )
                         })
+                        .children(self.render_memory(cx))
                         .when_some(self.live.error.clone(), |body, error| {
                             body.child(text(error).text_color(p.crit_ink))
                         })
@@ -189,7 +202,11 @@ impl ObservabilityPage {
                                     Button::new("obs-connect")
                                         .primary()
                                         .small()
-                                        .label(if self.live.connecting { "Connecting…" } else { "Connect" })
+                                        .label(if self.live.connecting {
+                                            "Connecting…"
+                                        } else {
+                                            "Connect"
+                                        })
                                         .disabled(self.live.connecting)
                                         .on_click(cx.listener(|this, _, _, cx| this.connect(cx))),
                                 )
@@ -204,10 +221,7 @@ impl ObservabilityPage {
                                             })),
                                     )
                                 })
-                                .child(muted(
-                                    "Credentials stay in memory until Disconnect or the window closes.",
-                                    cx,
-                                )),
+                                .child(muted(self.credential_note(), cx)),
                         ),
                 ),
             );

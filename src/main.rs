@@ -161,9 +161,11 @@ fn main() -> Result<()> {
     } else if kubernetes_only {
         GpuiOptions::kubernetes_only(kubeconfig.map(PathBuf::from), kube_context, tail)
             .with_preferences(freshkube_desktop::preferences_path())
+            .with_keyring()
     } else {
         options(config, context, tail, kubeconfig, insecure, endpoint)
             .with_preferences(freshkube_desktop::preferences_path())
+            .with_keyring()
     };
     freshkube_desktop::run(options, runtime.handle().clone())?;
 
