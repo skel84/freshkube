@@ -113,7 +113,7 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 
 **The page frame.** Padding 26 left and right (`PAGE_PADDING`), 22 top, 18 bottom, and 14 between the header, banners and body, on the content background. Monitoring's 20/14/10 on `surface_2` moves to this when it migrates.
 
-**Cards.** 12 px radius, a `line` hairline, `surface` fill, no shadow (`screens::panel` today). Card padding 12–14.
+**Cards.** 12 px radius, a `line` hairline, `surface` fill, no shadow (`page::card`; desktop's `screens::panel` draws the same). Card padding 12–14.
 
 ### Components
 
@@ -141,6 +141,20 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 | Failed | Nothing known yet | An empty state: `Couldn't list pods`, that nothing is shown as missing, the reason, and Retry. In a card: one centred 12 line with the critical glyph. |
 
 Each state's element has role status and an id `<page>-<state>`.
+
+### In code
+
+[#47](https://github.com/skel84/freshkube/issues/47) moved what Pods draws into `freshkube-ui`, with ui.rs, the palette, theme, text size and meters; the app still reaches those by their old `crate::` paths.
+
+- `freshkube_ui::page`: `page(id)` is the frame, with `PAGE_PADDING`, `PAGE_TOP`, `PAGE_BOTTOM` and `PAGE_GAP`. Also `card(cx)` and `meta_line(id, cx)`.
+  - `PageHeader::new(prefix, title, narrow)` draws `<prefix>-title` and, from `.meta(…)`, `<prefix>-scope`. `header.id("density")` gives the caller its other ids. Then `.filter(div)`, `.chips(…)`, `.control(…)` (call it once per control, in order) and `.render(cx)`. Narrow means content width below `HEADER_NARROW`.
+- `freshkube_ui::table`: `data_table(source, window, cx)` draws the card for any page entity that implements `TableSource`. The page keeps a `TableState::new(prefix)` (scroll and density, and the ids `<prefix>-list`, `-rows`, `-table-scroll`, `-empty` and `-sort`), so several tables can share a page and supplies:
+  - its `columns()` (any `TableColumn`) and `width()`;
+  - `line_count()` and `line(n)`, either a `TableRow` with a `Key: Hash + Eq + Clone`, an element id, a label, selected, marked and muted, or a `Group(n)`;
+  - `cell(row, column)`, `group(n)`, `sorting(column)` and `sort(..)`, `click(key)`, `empty()`, `notes()` and `footer()`.
+
+  It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`.
+- Not in the crate yet: `StatCard` and `ChartCard`, which [#62](https://github.com/skel84/freshkube/issues/62) moves from `monitoring/panel`; `Breadcrumb`; and the states, which stay `ui::empty_state` and `ui::warning_banner`.
 
 ### Settled values
 
