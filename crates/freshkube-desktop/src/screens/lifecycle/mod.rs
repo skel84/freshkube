@@ -9,8 +9,10 @@ use std::collections::BTreeMap;
 
 use freshkube_core::HealthIndicator;
 use freshkube_core::QuorumState;
-use freshkube_core::lifecycle_versions::{kubernetes_support, parse_version};
 use freshkube_core::kubernetes_summary::{Part, Publication, SessionIdentity, Subscription};
+use freshkube_core::lifecycle_versions::{
+    KubeletSkew, KubeletVersions, kubelet_skew, kubernetes_support, newest_kubelet,
+};
 use freshkube_core::security_lifecycle::{
     ClusterIdentity, DiscoveryRosterEntry, EtcdPreOperationAudit, KubernetesNodeRosterEntry,
     LifecycleAlert, LifecycleAlertKind, LifecycleCollector, LifecycleSnapshot,
@@ -438,19 +440,15 @@ fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
     }
 
     // Kubelet skew: behind the newest version seen.
-    let newest = rows
-        .iter()
-        .filter_map(|row| row.kubelet.as_ref().ok())
-        .filter_map(|version| parse_version(version))
-        .max();
+    let newest = newest_kubelet(rows.iter().filter_map(|row| row.kubelet.as_deref().ok()));
     if let Some(newest) = newest {
         for row in &mut rows {
             row.kubelet_behind = row
                 .kubelet
-                .as_ref()
+                .as_deref()
                 .ok()
-                .and_then(|version| parse_version(version))
-                .is_some_and(|version| version < newest);
+                .and_then(|version| kubelet_skew(version, newest))
+                .is_some();
         }
     }
     rows
@@ -491,64 +489,46 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         .map(|alert| core_alert(alert, view, rows))
         .collect();
 
-    // Kubelet skew among the nodes whose kubelet version was read.
-    let kubelets: Vec<(&NodeRow, (u32, u32, u32), &String)> = rows
-        .iter()
-        .filter(|_| view.kubelets.is_available())
-        .filter_map(|row| {
-            let version = row.kubelet.as_ref().ok()?;
-            Some((row, parse_version(version)?, version))
-        })
-        .collect();
-    if let Some((_, newest, newest_text)) = kubelets.iter().max_by_key(|(_, parsed, _)| *parsed) {
-        let behind: Vec<&(&NodeRow, (u32, u32, u32), &String)> = kubelets
-            .iter()
-            .filter(|(_, parsed, _)| parsed < newest)
-            .collect();
-        if !behind.is_empty() {
-            let minor = behind
+    // Only complete kubelet evidence can raise cluster alerts. Rows may still
+    // mark last-known versions behind while this source is partial.
+    let kubelets = KubeletVersions::new(rows.iter().filter_map(|row| {
+        view.kubelets.is_available().then_some(())?;
+        Some((row.name.as_str(), row.kubelet.as_deref().ok()?))
+    }));
+    if let Some(skew) = kubelets.skew() {
+        let newest_text = kubelets.newest().unwrap().text();
+        let behind_names: Vec<&str> = kubelets.behind().map(|version| version.node()).collect();
+        let message = match skew {
+            KubeletSkew::Minor => format!(
+                "Kubelet minor version skew: {} behind {newest_text}",
+                names(&behind_names)
+            ),
+            KubeletSkew::Patch => format!(
+                "Kubelet patch version skew: {} behind {newest_text}",
+                names(&behind_names)
+            ),
+        };
+        alerts.push(AlertRow {
+            health: HealthIndicator::Warning,
+            message,
+            origin: DERIVED,
+            evidence: kubelets
+                .observed()
                 .iter()
-                .any(|(_, parsed, _)| (parsed.0, parsed.1) != (newest.0, newest.1));
-            let behind_names: Vec<&str> =
-                behind.iter().map(|(row, _, _)| row.name.as_str()).collect();
-            let message = if minor {
-                format!(
-                    "Kubelet minor version skew: {} behind {newest_text}",
-                    names(&behind_names)
-                )
-            } else {
-                format!(
-                    "Kubelet patch version skew: {} behind {newest_text}",
-                    names(&behind_names)
-                )
-            };
-            alerts.push(AlertRow {
-                health: HealthIndicator::Warning,
-                message,
-                origin: DERIVED,
-                evidence: kubelets
-                    .iter()
-                    .map(|(row, _, version)| (row.name.clone(), (*version).clone()))
-                    .collect(),
-                nodes: behind.iter().map(|(row, _, _)| row.name.clone()).collect(),
-            });
-        }
+                .map(|version| (version.node().to_owned(), version.text().to_owned()))
+                .collect(),
+            nodes: behind_names.into_iter().map(str::to_owned).collect(),
+        });
     }
 
-    // Kubelets outside what the cluster's Talos version supports.
+    // Preserve the first reported Talos version as the support-table input.
     let talos = rows.iter().find_map(|row| row.talos.as_ref().ok());
     if let Some((talos, (low, high))) =
         talos.and_then(|talos| Some((talos, kubernetes_support(talos)?)))
     {
-        let outside: Vec<&(&NodeRow, (u32, u32, u32), &String)> = kubelets
-            .iter()
-            .filter(|(_, parsed, _)| parsed.0 != 1 || parsed.1 < low || parsed.1 > high)
-            .collect();
+        let outside: Vec<_> = kubelets.outside_support(talos).collect();
         if !outside.is_empty() {
-            let outside_names: Vec<&str> = outside
-                .iter()
-                .map(|(row, _, _)| row.name.as_str())
-                .collect();
+            let outside_names: Vec<&str> = outside.iter().map(|version| version.node()).collect();
             alerts.push(AlertRow {
                 health: HealthIndicator::Warning,
                 message: format!(
@@ -558,9 +538,9 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
                 origin: DERIVED,
                 evidence: outside
                     .iter()
-                    .map(|(row, _, version)| (row.name.clone(), (*version).clone()))
+                    .map(|version| (version.node().to_owned(), version.text().to_owned()))
                     .collect(),
-                nodes: outside.iter().map(|(row, _, _)| row.name.clone()).collect(),
+                nodes: outside_names.into_iter().map(str::to_owned).collect(),
             });
         }
     }
