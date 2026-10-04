@@ -37,13 +37,13 @@ Figtree 2.0.3 (Regular, SemiBold, Bold and Black)
   https://github.com/erikdkennedy/figtree
   Copyright 2022 The Figtree Project Authors
   Licensed under the SIL Open Font License, Version 1.1; see
-  crates/freshkube-desktop/assets/fonts/OFL-Figtree.txt.
+  crates/freshkube-ui/assets/fonts/OFL-Figtree.txt.
 
 IBM Plex Mono
   https://github.com/IBM/plex
   Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
   Licensed under the SIL Open Font License, Version 1.1; see
-  crates/freshkube-desktop/assets/fonts/OFL-IBMPlexMono.txt.
+  crates/freshkube-ui/assets/fonts/OFL-IBMPlexMono.txt.
 
 GPUI Kit 0.7.0 and gpui-pre 0.3.7
   The native UI toolkit and framework, used as libraries.

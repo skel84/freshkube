@@ -7,12 +7,12 @@ use crate::{
 use gpui_kit::{prelude::*, *};
 
 #[derive(Clone, Copy)]
-pub(crate) enum Resource {
+pub enum Resource {
     Cpu,
     Memory,
 }
 
-pub(crate) fn bullet(
+pub fn bullet(
     resource: Resource,
     used: f64,
     request: Option<f64>,

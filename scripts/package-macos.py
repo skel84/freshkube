@@ -128,8 +128,8 @@ def package(args):
         shutil.copytree(ROOT / "licenses", resources / "licenses")
         # Preserve the licence paths referenced by NOTICE. Fonts, themes, icons
         # and Metal shaders are also embedded in the executable by Rust/GPUI.
-        shutil.copytree(ROOT / "crates/freshkube-desktop/assets",
-                        resources / "crates/freshkube-desktop/assets")
+        shutil.copytree(ROOT / "crates/freshkube-ui/assets",
+                        resources / "crates/freshkube-ui/assets")
         run("codesign", "--force", "--sign", "-", "--identifier", BUNDLE_ID, str(app))
         details = verify_bundle(app, args.target, version)
         staged_zip = stage / archive.name

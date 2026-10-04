@@ -2517,6 +2517,7 @@ dependencies = [
  "color-eyre",
  "dirs 6.0.0",
  "freshkube-core",
+ "freshkube-ui",
  "futures",
  "gpui-kit",
  "http-body-util",
@@ -2532,6 +2533,15 @@ dependencies = [
  "talos-rs",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "freshkube-ui"
+version = "0.5.0"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "serde_json",
 ]
 
 [[package]]

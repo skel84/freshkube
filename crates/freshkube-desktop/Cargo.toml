@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-ui.workspace = true
 talos-rs.workspace = true
 tokio.workspace = true
 futures.workspace = true
