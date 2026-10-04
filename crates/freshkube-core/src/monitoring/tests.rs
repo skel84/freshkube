@@ -67,6 +67,10 @@ fn status(code: u16, message: &str) -> String {
         .to_string()
 }
 
+fn query_one() -> String {
+    success(json!({"resultType": "scalar", "result": [1700000000, "1"]}))
+}
+
 fn build_info() -> String {
     success(json!({"version": "2.53.0", "revision": "abc"}))
 }
@@ -197,6 +201,9 @@ async fn discovery_confirms_the_operator_service_and_reads_its_scrape_interval()
                 operated(),
             ]),
         ),
+        "/api/v1/namespaces/monitoring/services/prometheus-operated:9090/proxy/api/v1/query" => {
+            (200, query_one())
+        }
         "/api/v1/namespaces/monitoring/services/prometheus-operated:9090/proxy/api/v1/status/buildinfo" => {
             (200, build_info())
         }
@@ -214,10 +221,10 @@ async fn discovery_confirms_the_operator_service_and_reads_its_scrape_interval()
         panic!("Prometheus should be found");
     };
     assert_eq!(
-        prometheus.service().label(),
+        prometheus.service().unwrap().label(),
         "monitoring/prometheus-operated:9090"
     );
-    assert_eq!(build.version, "2.53.0");
+    assert_eq!(build.version.as_deref(), Some("2.53.0"));
     assert_eq!(prometheus.scrape_interval(), 15.);
     assert!(tried.is_empty());
     let seen = seen.lock().unwrap();
@@ -225,9 +232,10 @@ async fn discovery_confirms_the_operator_service_and_reads_its_scrape_interval()
         seen.iter().all(|request| request.starts_with("GET ")),
         "{seen:?}"
     );
-    assert_eq!(seen.len(), 3, "{seen:?}");
+    assert_eq!(seen.len(), 4, "{seen:?}");
+    assert!(seen[1].ends_with("/api/v1/query?query=1"), "{seen:?}");
     assert!(
-        seen[2].ends_with("/api/v1/targets?state=active"),
+        seen[3].ends_with("/api/v1/targets?state=active"),
         "{seen:?}"
     );
 }
@@ -261,6 +269,7 @@ async fn discovery_moves_past_candidates_that_are_not_prometheus() {
                 "no endpoints available for service \"prometheus-operated\"",
             ),
         ),
+        p if p.contains("prometheus-k8s:9090/proxy/api/v1/query") => (200, query_one()),
         p if p.contains("prometheus-k8s:9090/proxy/api/v1/status/buildinfo") => (200, build_info()),
         p if p.contains("prometheus-k8s") => (500, "oops".into()),
         _ => (404, "404 page not found".into()),
@@ -271,7 +280,7 @@ async fn discovery_moves_past_candidates_that_are_not_prometheus() {
     else {
         panic!("Prometheus should be found");
     };
-    assert_eq!(prometheus.service().name, "prometheus-k8s");
+    assert_eq!(prometheus.service().unwrap().name, "prometheus-k8s");
     // A failed targets read keeps the default interval.
     assert_eq!(prometheus.scrape_interval(), DEFAULT_SCRAPE_INTERVAL);
     assert_eq!(tried.len(), 1);
@@ -348,6 +357,7 @@ async fn a_refused_service_list_falls_back_to_the_monitoring_namespaces() {
         "/api/v1/services" => (403, status(403, "forbidden")),
         "/api/v1/namespaces/monitoring/services" => (200, list(vec![operated()])),
         p if p.ends_with("/services") => (403, status(403, "forbidden")),
+        p if p.ends_with("/api/v1/query") => (200, query_one()),
         p if p.ends_with("/status/buildinfo") => (200, build_info()),
         _ => (404, status(404, "not found")),
     });
@@ -375,6 +385,7 @@ async fn a_refused_service_list_falls_back_to_the_monitoring_namespaces() {
 #[tokio::test]
 async fn the_remembered_service_is_tried_before_listing() {
     let (client, seen) = fake(|_, path, _| match path {
+        p if p.contains("/services/prom:9090/proxy/api/v1/query") => (200, query_one()),
         p if p.contains("/services/prom:9090/proxy/api/v1/status/buildinfo") => (200, build_info()),
         _ => (404, status(404, "not found")),
     });
@@ -384,7 +395,7 @@ async fn the_remembered_service_is_tried_before_listing() {
     else {
         panic!("the remembered Service should answer");
     };
-    assert_eq!(prometheus.service(), &remembered);
+    assert_eq!(prometheus.service(), Some(&remembered));
     assert!(
         !seen
             .lock()
@@ -654,4 +665,202 @@ async fn markers_read_what_they_may_and_name_what_was_refused() {
                 && request.contains("fieldSelector=involvedObject.kind%3DNode")),
         "{seen:?}"
     );
+}
+
+#[test]
+fn compatible_servers_rank_with_their_port_and_prefix() {
+    let candidate = |name: &str, labels: Value, ports: Value| {
+        rank(&parse(service("metrics", name, labels, ports)))
+    };
+    let single = candidate(
+        "vmsingle-victoria",
+        json!({"app.kubernetes.io/name": "vmsingle"}),
+        json!([{"name": "http", "port": 8429}]),
+    )
+    .unwrap();
+    assert_eq!(single.rank, Rank::Compatible);
+    assert_eq!(single.service.label(), "metrics/vmsingle-victoria:8429");
+    assert_eq!(single.service.backend(), Backend::VictoriaMetrics);
+
+    let select = candidate(
+        "vmselect-cluster",
+        json!({}),
+        json!([{"name": "http", "port": 8481}]),
+    )
+    .unwrap();
+    assert_eq!(
+        select.service.proxy_base(),
+        "/api/v1/namespaces/metrics/services/vmselect-cluster:8481/proxy/select/0/prometheus/"
+    );
+
+    let thanos = candidate(
+        "thanos-query",
+        json!({}),
+        json!([{"name": "grpc", "port": 10901}, {"name": "http", "port": 10902}]),
+    )
+    .unwrap();
+    assert_eq!(thanos.service.port, 10902);
+    assert_eq!(thanos.service.backend(), Backend::Thanos);
+
+    let mimir = candidate(
+        "mimir-query-frontend",
+        json!({}),
+        json!([{"name": "http-metrics", "port": 8080}]),
+    )
+    .unwrap();
+    assert_eq!(
+        mimir.service.label(),
+        "metrics/mimir-query-frontend:8080/prometheus"
+    );
+    assert_eq!(mimir.service.backend(), Backend::Mimir);
+
+    // The writers have no query API.
+    assert!(
+        candidate(
+            "vminsert-cluster",
+            json!({}),
+            json!([{"name": "http", "port": 8480}])
+        )
+        .is_none()
+    );
+    // Prometheus itself still outranks them.
+    assert!(Rank::Operated < Rank::Compatible && Rank::Labelled < Rank::Compatible);
+}
+
+#[test]
+fn paths_and_urls_are_normalised() {
+    assert_eq!(
+        normalise_path("/select//0/prometheus/"),
+        "select/0/prometheus"
+    );
+    assert_eq!(normalise_path("../a/./b"), "a/b");
+    assert_eq!(
+        normalise_url(" https://vm.example.com:8481/select/0/prometheus ").unwrap(),
+        "https://vm.example.com:8481/select/0/prometheus/"
+    );
+    assert_eq!(
+        normalise_url("http://prom.lan").unwrap(),
+        "http://prom.lan/"
+    );
+    assert!(normalise_url("ftp://prom.lan").is_err());
+    assert!(normalise_url("prom.lan:9090").is_err());
+    assert!(normalise_url("https://user:secret@prom.lan").is_err());
+    assert!(normalise_url("https://prom.lan/?token=x").is_err());
+}
+
+/// Each request's target and Authorization header.
+type Heard = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+/// A local HTTP server for one direct-URL test: it records each request's
+/// path and Authorization header and answers by path.
+async fn http_server(
+    route: impl Fn(&str) -> (u16, String) + Send + Sync + 'static,
+) -> (String, Heard) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen: Heard = Default::default();
+    let log = seen.clone();
+    let route = Arc::new(route);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let log = log.clone();
+            let route = route.clone();
+            tokio::spawn(async move {
+                let mut buffer = vec![0; 16 * 1024];
+                let mut read = 0;
+                while !buffer[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut buffer[read..]).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => read += n,
+                    }
+                }
+                let head = String::from_utf8_lossy(&buffer[..read]).into_owned();
+                let target = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                let auth = head
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("authorization: ")
+                            .or_else(|| line.strip_prefix("Authorization: "))
+                    })
+                    .map(str::to_owned);
+                let (status, body) = route(&target);
+                log.lock().unwrap().push((target, auth));
+                let answer = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(answer.as_bytes()).await;
+            });
+        }
+    });
+    (format!("http://{address}"), seen)
+}
+
+#[tokio::test]
+async fn a_url_is_confirmed_with_its_token_and_prefix() {
+    let (base, seen) = http_server(|target| match target {
+        "/select/0/prometheus/api/v1/query?query=1" => (200, query_one()),
+        // VictoriaMetrics answers buildinfo with the version it imitates.
+        "/select/0/prometheus/api/v1/status/buildinfo" => (200, build_info()),
+        _ => (404, "not found".into()),
+    })
+    .await;
+    let url = normalise_url(&format!("{base}/select/0/prometheus")).unwrap();
+    let (prometheus, build) = confirm_url(url.clone(), Some(" s3cret ".into()))
+        .await
+        .unwrap();
+    assert_eq!(prometheus.endpoint(), &Endpoint::Url(url));
+    assert!(prometheus.service().is_none());
+    assert_eq!(build.version.as_deref(), Some("2.53.0"));
+    // No targets endpoint: the default interval stays.
+    assert_eq!(prometheus.scrape_interval(), DEFAULT_SCRAPE_INTERVAL);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].0, "/select/0/prometheus/api/v1/query?query=1");
+    assert!(
+        seen.iter()
+            .all(|(_, auth)| auth.as_deref() == Some("Bearer s3cret")),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_url_without_buildinfo_is_still_confirmed_and_errors_hide_the_token() {
+    let (base, _) = http_server(|target| match target {
+        "/api/v1/query?query=1" => (200, query_one()),
+        _ => (404, "404 page not found".into()),
+    })
+    .await;
+    let (_, build) = confirm_url(normalise_url(&base).unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(build.version, None);
+
+    let (base, _) = http_server(|_| (401, "unauthorized".into())).await;
+    let error = confirm_url(normalise_url(&base).unwrap(), Some("s3cret".into()))
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ErrorKind::Refused);
+    assert!(!error.message.contains("s3cret"), "{}", error.message);
+    assert!(!error.message.contains("127.0.0.1"), "{}", error.message);
+
+    // Something that isn't a Prometheus API.
+    let (base, _) = http_server(|_| (200, "<html></html>".into())).await;
+    let error = confirm_url(normalise_url(&base).unwrap(), None)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ErrorKind::BadAnswer);
+
+    // Nothing listening.
+    let error = confirm_url("http://127.0.0.1:1/".into(), None)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ErrorKind::Unavailable);
+    assert_eq!(error.message, "Couldn't connect to the server");
 }

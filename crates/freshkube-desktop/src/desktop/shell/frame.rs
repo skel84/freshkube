@@ -202,6 +202,7 @@ pub(super) fn settings_content(
         return div().into_any_element();
     };
     let monitoring = view.read(cx).monitoring.clone();
+    monitoring.update(cx, |page, cx| page.source_form(window, cx));
     let (fixture, kubernetes_only, loading, automatic, appearance) = {
         let view = view.read(cx);
         (
@@ -383,6 +384,8 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
+        .child(div().h(px(1.)).bg(p.line))
+        .child(crate::monitoring::page::source_section(&monitoring, cx))
         .child(div().h(px(1.)).bg(p.line))
         .child(crate::monitoring::page::settings_section(
             &monitoring,

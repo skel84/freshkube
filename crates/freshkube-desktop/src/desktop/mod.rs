@@ -563,16 +563,23 @@ impl Pilot {
             },
         ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
-        let monitoring =
-            cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
+        let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
+            std::sync::Arc::new(crate::secrets::SystemStore)
+        });
+        let monitoring = cx.new(|cx| {
+            MonitoringPage::new(
+                runtime.clone(),
+                options.preferences.as_deref(),
+                secrets.clone(),
+                cx,
+            )
+        });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
                 options.fixture,
                 runtime.clone(),
                 options.preferences.as_deref(),
-                options.keyring.then(|| -> crate::secrets::Secrets {
-                    std::sync::Arc::new(crate::secrets::SystemStore)
-                }),
+                secrets,
                 window,
                 cx,
             )

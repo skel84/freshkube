@@ -13,7 +13,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::monitoring::{
-    ErrorKind, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError, Source,
+    Endpoint, ErrorKind, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError,
+    Source,
     history::{self, Subject},
     model::{data::QueryContext, time::TimeWindow},
     prometheus::Variables,
@@ -58,14 +59,16 @@ pub(crate) enum HistoryKind {
 }
 
 impl HistorySource {
-    /// What tells two sources apart: the connection, the Service and
+    /// What tells two sources apart: the connection, the endpoint and
     /// whether it was confirmed.
-    fn key(&self) -> (String, Option<PrometheusService>, bool) {
+    fn key(&self) -> (String, Option<Endpoint>, bool) {
         let id = self.id.clone();
         match &self.kind {
             HistoryKind::Example => (id, None, true),
-            HistoryKind::Ready(prometheus) => (id, Some(prometheus.service().clone()), true),
-            HistoryKind::Remembered { service, .. } => (id, Some(service.clone()), false),
+            HistoryKind::Ready(prometheus) => (id, Some(prometheus.endpoint().clone()), true),
+            HistoryKind::Remembered { service, .. } => {
+                (id, Some(Endpoint::Service(service.clone())), false)
+            }
         }
     }
 
@@ -422,7 +425,7 @@ impl Render for HistoryView {
         }
         let label: SharedString = match self.source.as_ref().map(|source| &source.kind) {
             Some(HistoryKind::Example) => "Example data".into(),
-            Some(HistoryKind::Ready(prometheus)) => prometheus.service().label().into(),
+            Some(HistoryKind::Ready(prometheus)) => prometheus.endpoint().label().into(),
             Some(HistoryKind::Remembered { service, .. }) => service.label().into(),
             None => SharedString::default(),
         };
