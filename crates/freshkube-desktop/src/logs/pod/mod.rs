@@ -30,6 +30,7 @@ use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example, live};
 use crate::ui::Tone;
+use controls::Controls;
 
 /// The detail pane's Logs tab.
 pub(crate) type PodLogView = LogView<PodLogs>;
@@ -393,15 +394,15 @@ impl LogSource for PodLogs {
     }
 
     fn empty_message(view: &PodLogView) -> SharedString {
-        if view.review.logs.buffer().entries().is_empty() {
-            view.source.empty.clone()
+        if view.retained().is_empty() {
+            view.source().empty.clone()
         } else {
             "No retained lines pass the level filter.".into()
         }
     }
 
     fn live(view: &PodLogView) -> bool {
-        !view.source.previous
+        !view.source().previous
     }
 
     fn errors(&self) -> &BTreeMap<ServiceId, String> {
@@ -409,36 +410,98 @@ impl LogSource for PodLogs {
     }
 }
 
-impl LogView<PodLogs> {
-    pub(crate) fn for_pods(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut view = Self::with_source(PodLogs::new(runtime), window, cx);
-        // One container at a time: its name would repeat on every row.
-        view.columns.source = false;
-        view
-    }
+/// What the detail pane, the controls and the tests ask of a pod's Logs tab.
+pub(crate) trait PodLogPanel: Sized + 'static {
+    fn for_pods(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Fresh handles for the same connection.
-    pub(crate) fn set_access(&mut self, access: KubeAccess) {
-        self.source.access = Some(access);
-    }
+    fn set_access(&mut self, access: KubeAccess);
 
     /// Shows the logs of `pod`, or of none. Another pod starts over: its
     /// containers are read again and nothing streams until it is wanted.
-    pub(crate) fn show_pod(
+    fn show_pod(
+        &mut self,
+        pod: Option<ResourceIdentity>,
+        access: Option<KubeAccess>,
+        cx: &mut Context<Self>,
+    );
+
+    /// The pod's containers as last read. The first read picks the default
+    /// container, and starts its log if it is wanted.
+    fn set_containers(&mut self, containers: PodContainers, cx: &mut Context<Self>);
+
+    /// The Logs tab shows: read the log from now on, while this pod stays.
+    fn want(&mut self, cx: &mut Context<Self>);
+
+    /// Hiding the page stops the stream; showing it again reads on from the
+    /// last line.
+    fn set_active(&mut self, active: bool, cx: &mut Context<Self>);
+
+    /// Opens an explicitly chosen container and instance from its Overview row.
+    fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>);
+
+    #[cfg(test)]
+    fn selected_container(&self) -> Option<&str>;
+
+    #[cfg(test)]
+    fn reads_previous(&self) -> bool;
+
+    /// Whether a stream is open or about to be, for the pane's tests.
+    #[cfg(test)]
+    fn streaming(&self) -> bool;
+
+    fn choose_container(&mut self, name: String, cx: &mut Context<Self>);
+
+    fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>);
+
+    fn set_previous(&mut self, previous: bool, cx: &mut Context<Self>);
+
+    fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>);
+
+    /// The user stops the stream; what was read stays.
+    fn stop(&mut self, cx: &mut Context<Self>);
+
+    /// Reads on from the last line, after Stop or a failure.
+    fn resume(&mut self, cx: &mut Context<Self>);
+
+    /// Applies updates from `stream`, if it is still the current one.
+    /// Returns false when it isn't, which ends its delivery.
+    fn apply_updates(
+        &mut self,
+        stream: u64,
+        updates: Vec<PodLogUpdate>,
+        cx: &mut Context<Self>,
+    ) -> bool;
+}
+
+impl PodLogPanel for PodLogView {
+    fn for_pods(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // One container at a time: its name would repeat on every row.
+        Self::with_source(PodLogs::new(runtime), window, cx).with_columns(Columns {
+            time: true,
+            source: false,
+        })
+    }
+
+    fn set_access(&mut self, access: KubeAccess) {
+        self.source_mut().access = Some(access);
+    }
+
+    fn show_pod(
         &mut self,
         pod: Option<ResourceIdentity>,
         access: Option<KubeAccess>,
         cx: &mut Context<Self>,
     ) {
         if access.is_some() {
-            self.source.access = access;
+            self.source_mut().access = access;
         }
-        if self.source.pod == pod {
+        if self.source().pod == pod {
             return;
         }
-        self.source.drop_stream();
+        self.source_mut().drop_stream();
         self.reset_lines(&pod.as_ref().map(|pod| pod.address()).unwrap_or_default());
-        let source = &mut self.source;
+        let source = self.source_mut();
         source.pod = pod;
         source.containers = PodContainers::default();
         source.known = false;
@@ -455,10 +518,8 @@ impl LogView<PodLogs> {
         cx.notify();
     }
 
-    /// The pod's containers as last read. The first read picks the default
-    /// container, and starts its log if it is wanted.
-    pub(crate) fn set_containers(&mut self, containers: PodContainers, cx: &mut Context<Self>) {
-        let source = &mut self.source;
+    fn set_containers(&mut self, containers: PodContainers, cx: &mut Context<Self>) {
+        let source = self.source_mut();
         if source.pod.is_none() || (source.known && source.containers == containers) {
             return;
         }
@@ -479,266 +540,128 @@ impl LogView<PodLogs> {
         cx.notify();
     }
 
-    /// The Logs tab shows: read the log from now on, while this pod stays.
-    pub(crate) fn want(&mut self, cx: &mut Context<Self>) {
-        if self.source.wanted || self.source.pod.is_none() {
+    fn want(&mut self, cx: &mut Context<Self>) {
+        if self.source().wanted || self.source().pod.is_none() {
             return;
         }
-        self.source.wanted = true;
-        if self.source.known && self.source.state == StreamState::Idle {
+        self.source_mut().wanted = true;
+        if self.source().known && self.source().state == StreamState::Idle {
             self.start(true, cx);
         }
     }
 
-    /// Hiding the page stops the stream; showing it again reads on from the
-    /// last line.
-    pub(crate) fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
-        if self.source.active == active {
+    fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if self.source().active == active {
             return;
         }
-        self.source.active = active;
+        self.source_mut().active = active;
         if !active {
-            if self.source.running() {
+            if self.source().running() {
                 self.flush_backlog(cx);
-                self.source.drop_stream();
-                self.source.suspended = true;
-                self.source.state = StreamState::Idle;
-                self.source.describe();
+                let source = self.source_mut();
+                source.drop_stream();
+                source.suspended = true;
+                source.state = StreamState::Idle;
+                source.describe();
             }
-        } else if std::mem::take(&mut self.source.suspended) {
+        } else if std::mem::take(&mut self.source_mut().suspended) {
             self.start(false, cx);
         }
     }
 
-    /// Opens an explicitly chosen container and instance from its Overview row.
-    pub(crate) fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>) {
+    fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>) {
         self.choose_container(name, cx);
         self.set_previous(previous, cx);
         self.want(cx);
     }
+
     #[cfg(test)]
-    pub(crate) fn selected_container(&self) -> Option<&str> {
-        self.source.container.as_deref()
+    fn selected_container(&self) -> Option<&str> {
+        self.source().container.as_deref()
     }
 
     #[cfg(test)]
-    pub(crate) fn reads_previous(&self) -> bool {
-        self.source.previous
+    fn reads_previous(&self) -> bool {
+        self.source().previous
     }
 
-    /// Whether a stream is open or about to be, for the pane's tests.
     #[cfg(test)]
-    pub(crate) fn streaming(&self) -> bool {
-        self.source.running()
+    fn streaming(&self) -> bool {
+        self.source().running()
     }
 
-    pub(super) fn choose_container(&mut self, name: String, cx: &mut Context<Self>) {
-        if self.source.container.as_ref() == Some(&name)
-            || self.source.containers.get(&name).is_none()
+    fn choose_container(&mut self, name: String, cx: &mut Context<Self>) {
+        if self.source().container.as_ref() == Some(&name)
+            || self.source().containers.get(&name).is_none()
         {
             return;
         }
-        self.source.container = Some(name);
-        self.source.previous = false;
-        self.source.derive_containers();
+        let source = self.source_mut();
+        source.container = Some(name);
+        source.previous = false;
+        source.derive_containers();
         self.restart(cx);
     }
 
-    pub(super) fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>) {
-        if self.source.tail != tail {
-            self.source.tail = tail;
+    fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>) {
+        if self.source().tail != tail {
+            self.source_mut().tail = tail;
             self.restart(cx);
         }
     }
 
-    pub(super) fn set_previous(&mut self, previous: bool, cx: &mut Context<Self>) {
-        if self.source.previous == previous || (previous && !self.source.has_previous()) {
+    fn set_previous(&mut self, previous: bool, cx: &mut Context<Self>) {
+        if self.source().previous == previous || (previous && !self.source().has_previous()) {
             return;
         }
-        self.source.previous = previous;
+        self.source_mut().previous = previous;
         self.restart(cx);
     }
 
-    pub(super) fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>) {
+    fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.set_columns(
             Columns {
                 time: shown,
-                ..self.columns
+                ..self.columns()
             },
             cx,
         );
     }
 
-    /// The user stops the stream; what was read stays.
-    pub(super) fn stop(&mut self, cx: &mut Context<Self>) {
-        if !self.source.running() {
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        if !self.source().running() {
             return;
         }
         self.flush_backlog(cx);
-        self.source.drop_stream();
-        self.source.state = StreamState::Stopped;
-        self.source.describe();
+        let source = self.source_mut();
+        source.drop_stream();
+        source.state = StreamState::Stopped;
+        source.describe();
         cx.notify();
     }
 
-    /// Reads on from the last line, after Stop or a failure.
-    pub(super) fn resume(&mut self, cx: &mut Context<Self>) {
+    fn resume(&mut self, cx: &mut Context<Self>) {
         if matches!(
-            self.source.state,
+            self.source().state,
             StreamState::Stopped | StreamState::Failed(_)
         ) {
             self.start(false, cx);
         }
     }
 
-    /// Starts a fresh view of the chosen log, once it is wanted.
-    fn restart(&mut self, cx: &mut Context<Self>) {
-        if self.source.wanted && self.source.known {
-            self.start(true, cx);
-        } else {
-            self.source.drop_stream();
-            self.reset_lines(&self.source.address());
-            self.source.position = LogPosition::default();
-            self.source.lines = 0;
-            self.source.describe();
-            cx.notify();
-        }
-    }
-
-    /// Opens the chosen log: from the tail with a fresh view, or from the
-    /// last line read.
-    fn start(&mut self, fresh: bool, cx: &mut Context<Self>) {
-        self.flush_backlog(cx);
-        self.source.drop_stream();
-        self.source.suspended = false;
-        self.source.lost_at = None;
-        if fresh {
-            self.reset_lines(&self.source.address());
-            self.source.position = LogPosition::default();
-            self.source.lines = 0;
-        }
-        if !self.source.active {
-            // Hidden: read once shown.
-            self.source.suspended = true;
-            self.source.state = StreamState::Idle;
-            self.source.describe();
-            return;
-        }
-        let (Some(pod), Some(container), Some(access)) = (
-            self.source.pod.clone(),
-            self.source.container.clone(),
-            self.source.access.clone(),
-        ) else {
-            self.source.state = StreamState::Idle;
-            self.source.describe();
-            cx.notify();
-            return;
-        };
-        self.source.state = StreamState::Connecting;
-        self.source.describe();
-        cx.notify();
-        let stream = self.source.stream;
-        let resume = self.source.position.time().map(|_| self.source.position);
-        if let KubeAccess::Example = access {
-            self.start_example(&pod, &container, resume.is_some(), cx);
-            return;
-        }
-        let request = LogRequest {
-            namespace: pod.namespace.clone(),
-            pod: pod.name.clone(),
-            container,
-            previous: self.source.previous,
-            tail: self.source.tail,
-            resume,
-        };
-        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
-        let job = self.source.runtime.spawn(async move {
-            match access.client().await {
-                Ok(client) => follow_pod_log(client, request, sender).await,
-                Err(error) => {
-                    access.forget();
-                    let failure = Failure::new(FailureKind::Other, error);
-                    let _ = sender.send(PodLogUpdate::Failed(failure)).await;
-                }
-            }
-        });
-        self.source.job = Some(OwnedJob::new(job));
-        self.source.delivery = Some(cx.spawn(async move |weak, cx| {
-            while let Some(first) = receiver.recv().await {
-                let mut batch = vec![first];
-                // At most a full queue per turn, then yield, however busy
-                // the container.
-                for _ in 1..STREAM_QUEUE_CAPACITY {
-                    let Ok(update) = receiver.try_recv() else {
-                        break;
-                    };
-                    batch.push(update);
-                }
-                let applied = weak
-                    .update(cx, |view, cx| view.apply_updates(stream, batch, cx))
-                    .unwrap_or(false);
-                if !applied {
-                    return;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
-            }
-        }));
-    }
-
-    /// Example data reads at once; a running example container writes on.
-    fn start_example(
-        &mut self,
-        pod: &ResourceIdentity,
-        container: &str,
-        reading_on: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let stream = self.source.stream;
-        let (mut updates, writes_on) =
-            example::pod_log(pod, container, self.source.previous, live::now());
-        if reading_on {
-            // Example history is dated back from the clock, so read again a
-            // second later it would pass for new lines. Reading on gets only
-            // lines written since, and an example writes none while stopped.
-            updates.retain(|update| !matches!(update, PodLogUpdate::Line(_)));
-        }
-        self.apply_updates(stream, updates, cx);
-        if !writes_on || self.source.stream != stream {
-            return;
-        }
-        self.source.delivery = Some(cx.spawn(async move |weak, cx| {
-            for sequence in 0u64.. {
-                cx.background_executor().timer(EXAMPLE_INTERVAL).await;
-                let line = example::pod_log_line(sequence, Utc::now());
-                let applied = weak
-                    .update(cx, |view, cx| {
-                        view.apply_updates(stream, vec![PodLogUpdate::Line(line)], cx)
-                    })
-                    .unwrap_or(false);
-                if !applied {
-                    return;
-                }
-            }
-        }));
-    }
-
-    /// Applies updates from `stream`, if it is still the current one.
-    /// Returns false when it isn't, which ends its delivery.
-    pub(super) fn apply_updates(
+    fn apply_updates(
         &mut self,
         stream: u64,
         updates: Vec<PodLogUpdate>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if stream != self.source.stream {
+        if stream != self.source().stream {
             return false;
         }
-        let name = self.source.container.clone().unwrap_or_default();
+        let name = self.source().container.clone().unwrap_or_default();
         let mut lines = Vec::new();
         for update in updates {
-            let source = &mut self.source;
+            let source = self.source_mut();
             match update {
                 PodLogUpdate::Line(line) => {
                     source.position.record(&line);
@@ -781,9 +704,169 @@ impl LogView<PodLogs> {
                 }
             }
         }
-        self.source.describe();
+        self.source_mut().describe();
         self.ingest(lines, cx);
         cx.notify();
         true
+    }
+}
+
+/// Opening and reopening the chosen log, used only here.
+trait Stream: Sized + 'static {
+    /// Starts a fresh view of the chosen log, once it is wanted.
+    fn restart(&mut self, cx: &mut Context<Self>);
+
+    /// Opens the chosen log: from the tail with a fresh view, or from the
+    /// last line read.
+    fn start(&mut self, fresh: bool, cx: &mut Context<Self>);
+
+    /// Example data reads at once; a running example container writes on.
+    fn start_example(
+        &mut self,
+        pod: &ResourceIdentity,
+        container: &str,
+        reading_on: bool,
+        cx: &mut Context<Self>,
+    );
+}
+
+impl Stream for PodLogView {
+    fn restart(&mut self, cx: &mut Context<Self>) {
+        if self.source().wanted && self.source().known {
+            self.start(true, cx);
+        } else {
+            self.source_mut().drop_stream();
+            self.reset_lines(&self.source().address());
+            let source = self.source_mut();
+            source.position = LogPosition::default();
+            source.lines = 0;
+            source.describe();
+            cx.notify();
+        }
+    }
+
+    fn start(&mut self, fresh: bool, cx: &mut Context<Self>) {
+        self.flush_backlog(cx);
+        let source = self.source_mut();
+        source.drop_stream();
+        source.suspended = false;
+        source.lost_at = None;
+        if fresh {
+            self.reset_lines(&self.source().address());
+            let source = self.source_mut();
+            source.position = LogPosition::default();
+            source.lines = 0;
+        }
+        if !self.source().active {
+            // Hidden: read once shown.
+            let source = self.source_mut();
+            source.suspended = true;
+            source.state = StreamState::Idle;
+            source.describe();
+            return;
+        }
+        let (Some(pod), Some(container), Some(access)) = (
+            self.source().pod.clone(),
+            self.source().container.clone(),
+            self.source().access.clone(),
+        ) else {
+            let source = self.source_mut();
+            source.state = StreamState::Idle;
+            source.describe();
+            cx.notify();
+            return;
+        };
+        let source = self.source_mut();
+        source.state = StreamState::Connecting;
+        source.describe();
+        cx.notify();
+        let stream = self.source().stream;
+        let resume = self
+            .source()
+            .position
+            .time()
+            .map(|_| self.source().position);
+        if let KubeAccess::Example = access {
+            self.start_example(&pod, &container, resume.is_some(), cx);
+            return;
+        }
+        let request = LogRequest {
+            namespace: pod.namespace.clone(),
+            pod: pod.name.clone(),
+            container,
+            previous: self.source().previous,
+            tail: self.source().tail,
+            resume,
+        };
+        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+        let job = self.source().runtime.spawn(async move {
+            match access.client().await {
+                Ok(client) => follow_pod_log(client, request, sender).await,
+                Err(error) => {
+                    access.forget();
+                    let failure = Failure::new(FailureKind::Other, error);
+                    let _ = sender.send(PodLogUpdate::Failed(failure)).await;
+                }
+            }
+        });
+        self.source_mut().job = Some(OwnedJob::new(job));
+        self.source_mut().delivery = Some(cx.spawn(async move |weak, cx| {
+            while let Some(first) = receiver.recv().await {
+                let mut batch = vec![first];
+                // At most a full queue per turn, then yield, however busy
+                // the container.
+                for _ in 1..STREAM_QUEUE_CAPACITY {
+                    let Ok(update) = receiver.try_recv() else {
+                        break;
+                    };
+                    batch.push(update);
+                }
+                let applied = weak
+                    .update(cx, |view, cx| view.apply_updates(stream, batch, cx))
+                    .unwrap_or(false);
+                if !applied {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
+            }
+        }));
+    }
+
+    fn start_example(
+        &mut self,
+        pod: &ResourceIdentity,
+        container: &str,
+        reading_on: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let stream = self.source().stream;
+        let (mut updates, writes_on) =
+            example::pod_log(pod, container, self.source().previous, live::now());
+        if reading_on {
+            // Example history is dated back from the clock, so read again a
+            // second later it would pass for new lines. Reading on gets only
+            // lines written since, and an example writes none while stopped.
+            updates.retain(|update| !matches!(update, PodLogUpdate::Line(_)));
+        }
+        self.apply_updates(stream, updates, cx);
+        if !writes_on || self.source().stream != stream {
+            return;
+        }
+        self.source_mut().delivery = Some(cx.spawn(async move |weak, cx| {
+            for sequence in 0u64.. {
+                cx.background_executor().timer(EXAMPLE_INTERVAL).await;
+                let line = example::pod_log_line(sequence, Utc::now());
+                let applied = weak
+                    .update(cx, |view, cx| {
+                        view.apply_updates(stream, vec![PodLogUpdate::Line(line)], cx)
+                    })
+                    .unwrap_or(false);
+                if !applied {
+                    return;
+                }
+            }
+        }));
     }
 }

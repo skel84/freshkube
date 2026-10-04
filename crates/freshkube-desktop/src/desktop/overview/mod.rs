@@ -1,5 +1,6 @@
 //! Cluster cards and shared attention subjects.
 use super::{PAGE_PADDING, Pilot, clock};
+use crate::logs::TalosPanel;
 use crate::palette::palette;
 use crate::presentation::{attention::Destination, overview::CardTarget};
 use crate::ui::{self, MONO_FONT, Tone, dp};

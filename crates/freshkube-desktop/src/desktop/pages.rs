@@ -2,6 +2,7 @@
 //! Kubernetes kind and context it shows, and where focus lands.
 use super::Pilot;
 use crate::desktop::{COLUMN_WIDTH, RAIL_WIDTH};
+use crate::logs::TalosPanel;
 use crate::resources::{self, navigation, shell};
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::WindowExt;
