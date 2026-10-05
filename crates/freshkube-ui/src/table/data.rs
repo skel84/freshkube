@@ -5,16 +5,16 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Div, ElementId, Role, SharedString, TestSupportExt,
-    UniformListScrollHandle, Window, div, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Role, ScrollStrategy, SharedString,
+    TestSupportExt, UniformListScrollHandle, Window, div, uniform_list,
 };
 
 use super::{COMPACT_ROW_HEIGHT, HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
 use crate::page::card;
-use crate::palette::palette;
+use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, dp};
 
 /// The order a column is sorted in.
@@ -38,18 +38,26 @@ pub struct TableRow<K, R> {
     /// Derived from what the row shows, so a press that lands after the
     /// rows moved can't complete on another object.
     pub id: ElementId,
-    pub label: String,
-    pub selected: bool,
+    pub label: SharedString,
+    /// Shown on hover, as a truncated name's full text.
+    pub tooltip: Option<SharedString>,
     pub marked: bool,
     /// Muted text, as a terminating object's.
     pub muted: bool,
     pub data: R,
 }
 
-/// The ids a table gives its parts, from the page's prefix:
-/// `<prefix>-list`, `-rows`, `-table-scroll`, `-empty` and `-sort`.
-#[derive(Clone, Debug)]
-pub struct TableIds {
+/// How the table draws a row this frame, handed to each of its cells.
+pub struct RowStyle {
+    /// The row is the page's [`selected_key`](TableSource::selected_key).
+    pub selected: bool,
+    /// The palette, with muted text brightened on a selected or marked row.
+    pub p: Palette,
+}
+
+/// The ids a table gives its parts, from the page's prefix.
+struct TableIds {
+    prefix: SharedString,
     list: SharedString,
     rows: SharedString,
     scroll: SharedString,
@@ -58,9 +66,10 @@ pub struct TableIds {
 }
 
 impl TableIds {
-    pub fn new(prefix: &str) -> Self {
+    fn new(prefix: &str) -> Self {
         let id = |part: &str| SharedString::from(format!("{prefix}-{part}"));
         Self {
+            prefix: prefix.to_owned().into(),
             list: id("list"),
             rows: id("rows"),
             scroll: id("table-scroll"),
@@ -79,6 +88,8 @@ pub struct TableState {
 }
 
 impl TableState {
+    /// The table's ids are `<prefix>-list`, `-rows`, `-table-scroll` and
+    /// `-empty`; each labelled header cell is `(<prefix>-sort, column)`.
     pub fn new(prefix: &str) -> Self {
         Self {
             scroll: UniformListScrollHandle::new(),
@@ -87,12 +98,22 @@ impl TableState {
         }
     }
 
+    /// `<prefix>-<part>`, for the parts the page draws around the table.
+    pub fn id(&self, part: &str) -> SharedString {
+        format!("{}-{part}", self.ids.prefix).into()
+    }
+
     pub fn row_height(&self) -> f32 {
         if self.compact {
             COMPACT_ROW_HEIGHT
         } else {
             ROW_HEIGHT
         }
+    }
+
+    /// Scrolls a line into view.
+    pub fn reveal(&self, line: usize, strategy: ScrollStrategy) {
+        self.scroll.scroll_to_item(line, strategy);
     }
 }
 
@@ -126,13 +147,37 @@ pub trait TableSource: Sized + 'static {
     fn cell(
         &self,
         row: &TableRow<Self::Key, Self::Row<'_>>,
+        style: &RowStyle,
         column: &Self::Column,
         cx: &mut Context<Self>,
     ) -> AnyElement;
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement>;
-    fn click(&mut self, key: &Self::Key, window: &mut Window, cx: &mut Context<Self>);
-    /// The line that replaces the rows when there are none.
-    fn empty(&self) -> Option<String>;
+    /// The selected row's key. The table marks the row with it; selection
+    /// is by key, never by position.
+    fn selected_key(&self) -> Option<&Self::Key> {
+        None
+    }
+    /// The line a key's row is on now, for [`step`] and [`reveal`].
+    fn line_of(&self, _key: &Self::Key) -> Option<usize> {
+        None
+    }
+    /// Whether a row click does anything. A table whose rows don't select
+    /// returns `false`: no pointer, no hover, no click.
+    fn clickable(&self) -> bool {
+        true
+    }
+    /// A row click, with its count, modifiers and button.
+    fn click(
+        &mut self,
+        _key: &Self::Key,
+        _event: &ClickEvent,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+    /// What replaces the rows when there are none, such as a line or a
+    /// title and a hint; the table gives it its padding and muted text.
+    fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement>;
     /// Bars above the rows: the selection, folded rows.
     fn notes(&self, _cx: &mut Context<Self>) -> Vec<AnyElement> {
         Vec::new()
@@ -143,65 +188,172 @@ pub trait TableSource: Sized + 'static {
     }
 }
 
-/// The table in its card: notes, the header, the rows or the empty line,
-/// and the footer. The caller sizes the card.
-pub fn data_table<S: TableSource>(source: &S, window: &Window, cx: &mut Context<S>) -> Div {
-    let p = palette(cx);
-    let state = source.table_state();
-    let ids = &state.ids;
-    let list = div()
-        .id(ids.list.clone())
-        .test_support()
-        .role(Role::ListBox)
-        .aria_label(source.list_label())
-        .flex_1()
-        .min_h_0()
-        .map(|this| match source.empty() {
-            Some(text) => this.child(
-                div()
-                    .id(ids.empty.clone())
-                    .test_support()
-                    .px_3()
-                    .py_3p5()
-                    .text_size(dp(12.5))
-                    .text_color(p.muted)
-                    .child(text),
-            ),
-            None => this.child(
-                uniform_list(
-                    ids.rows.clone(),
-                    source.line_count(),
-                    cx.processor(|view: &mut S, range: Range<usize>, _, cx| {
-                        range
-                            .filter_map(|line| render_line(view, line, cx))
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .track_scroll(&state.scroll)
-                .size_full(),
-            ),
-        });
-    card(cx)
-        .overflow_hidden()
-        .children(source.notes(cx))
-        .child(
-            div()
-                .id(ids.scroll.clone())
-                .test_support()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .overflow_x_scroll()
-                .child(
-                    v_flex()
-                        .h_full()
-                        .w_full()
-                        .min_w(dp(source.width()))
-                        .child(header(source, cx))
-                        .child(list),
+/// The key of the row `delta` rows from the selected one, skipping group
+/// lines and stopping at either end. With nothing selected, a step down
+/// lands on the first row and a step up on the last.
+pub fn step<S: TableSource>(source: &S, delta: isize, cx: &App) -> Option<S::Key> {
+    let from = source.selected_key().and_then(|key| source.line_of(key));
+    let is_row = |line| match source.line(line, cx) {
+        Some(Line::Row(_)) => Some(true),
+        Some(Line::Group(_)) => Some(false),
+        None => None,
+    };
+    let line = step_line(source.line_count(), from, delta, is_row)?;
+    match source.line(line, cx)? {
+        Line::Row(row) => Some(row.key),
+        Line::Group(_) => None,
+    }
+}
+
+/// Scrolls the selected row into view.
+pub fn reveal<S: TableSource>(source: &S, strategy: ScrollStrategy) {
+    if let Some(line) = source.selected_key().and_then(|key| source.line_of(key)) {
+        source.table_state().reveal(line, strategy);
+    }
+}
+
+/// The line `delta` rows from `from`, where `is_row` tells a row's line
+/// from a group's.
+fn step_line(
+    count: usize,
+    from: Option<usize>,
+    delta: isize,
+    is_row: impl Fn(usize) -> Option<bool>,
+) -> Option<usize> {
+    let row = |line: usize| is_row(line) == Some(true);
+    let down = delta >= 0;
+    let mut at = match from {
+        Some(line) if line < count => line,
+        _ => {
+            let mut lines: Box<dyn Iterator<Item = usize>> = if down {
+                Box::new(0..count)
+            } else {
+                Box::new((0..count).rev())
+            };
+            return lines.find(|line| row(*line));
+        }
+    };
+    for _ in 0..delta.unsigned_abs() {
+        let next = if down {
+            (at + 1..count).find(|line| row(*line))
+        } else {
+            (0..at).rev().find(|line| row(*line))
+        };
+        match next {
+            Some(line) => at = line,
+            None => break,
+        }
+    }
+    Some(at)
+}
+
+/// How a table sits on its page: in its card or bare, filling its parent
+/// or as tall as its rows.
+#[derive(Clone, Copy, Default)]
+pub struct DataTable {
+    bare: bool,
+    fit: Option<usize>,
+}
+
+impl DataTable {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Without its card, for a table inside a card of its own.
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
+        self
+    }
+
+    /// As tall as the header and its lines, at most `max_lines` of them,
+    /// for a table in a scrolling page rather than one that fills it.
+    pub fn fit(mut self, max_lines: usize) -> Self {
+        self.fit = Some(max_lines);
+        self
+    }
+
+    /// Notes, the header, the rows or the empty state, and the footer.
+    pub fn render<S: TableSource>(self, source: &S, window: &Window, cx: &mut Context<S>) -> Div {
+        let state = source.table_state();
+        let ids = &state.ids;
+        let empty = source.empty(cx);
+        // A fitted list is as tall as its lines; an empty one as its state.
+        let list_height = self
+            .fit
+            .filter(|_| empty.is_none())
+            .map(|max| source.line_count().min(max) as f32 * state.row_height());
+        let list = div()
+            .id(ids.list.clone())
+            .test_support()
+            .role(Role::ListBox)
+            .aria_label(source.list_label())
+            .map(|this| match list_height {
+                Some(height) => this.flex_none().h(dp(height)),
+                None if self.fit.is_some() => this.flex_none(),
+                None => this.flex_1().min_h_0(),
+            })
+            .map(|this| match empty {
+                Some(empty) => this.child(
+                    div()
+                        .id(ids.empty.clone())
+                        .test_support()
+                        .px_3()
+                        .py_3p5()
+                        .text_size(dp(12.5))
+                        .text_color(palette(cx).muted)
+                        .child(empty),
                 ),
-        )
-        .children(source.footer(window, cx))
+                None => this.child(
+                    uniform_list(
+                        ids.rows.clone(),
+                        source.line_count(),
+                        cx.processor(|view: &mut S, range: Range<usize>, _, cx| {
+                            range
+                                .filter_map(|line| render_line(view, line, cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .track_scroll(&state.scroll)
+                    .size_full(),
+                ),
+            });
+        let frame = if self.bare {
+            v_flex().min_w_0()
+        } else {
+            card(cx)
+        };
+        let fitted = self.fit.is_some();
+        frame
+            .overflow_hidden()
+            .children(source.notes(cx))
+            .child(
+                div()
+                    .id(ids.scroll.clone())
+                    .test_support()
+                    .when_else(
+                        fitted,
+                        |this| this.flex_none(),
+                        |this| this.flex_1().min_h_0(),
+                    )
+                    .w_full()
+                    .overflow_x_scroll()
+                    .child(
+                        v_flex()
+                            .when(!fitted, |this| this.h_full())
+                            .w_full()
+                            .min_w(dp(source.width()))
+                            .child(header(source, cx))
+                            .child(list),
+                    ),
+            )
+            .children(source.footer(window, cx))
+    }
+}
+
+/// The table in its card, filling the room its caller gives it.
+pub fn data_table<S: TableSource>(source: &S, window: &Window, cx: &mut Context<S>) -> Div {
+    DataTable::new().render(source, window, cx)
 }
 
 fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
@@ -215,14 +367,26 @@ fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
         .border_b_1()
         .border_color(p.line)
         .children(source.columns().iter().enumerate().map(|(ix, column)| {
+            let label = column.label();
             let Some((sort, order)) = source.sorting(column) else {
-                return cell(column).into_any_element();
+                // A column without a label, such as the glyph's, stays bare.
+                if label.is_empty() {
+                    return cell(column).into_any_element();
+                }
+                return cell(column)
+                    .id((sort_id.clone(), ix))
+                    .test_support()
+                    .role(Role::ColumnHeader)
+                    .aria_label(label.clone())
+                    .flex()
+                    .items_center()
+                    .child(ui::caption(label, cx))
+                    .into_any_element();
             };
             let order = order.map(|order| match order {
                 SortOrder::Ascending => ("ascending", IconName::ArrowUp),
                 SortOrder::Descending => ("descending", IconName::ArrowDown),
             });
-            let label = column.label();
             cell(column)
                 .id((sort_id.clone(), ix))
                 .test_support()
@@ -244,22 +408,25 @@ fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
 
 /// One line of the list: a group's header or a row.
 fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> Option<AnyElement> {
-    let mut row = match source.line(line, cx)? {
+    let row = match source.line(line, cx)? {
         Line::Group(group) => return source.group(group, cx),
         Line::Row(row) => row,
     };
+    let selected = source.selected_key() == Some(&row.key);
+    let (marked, muted) = (row.marked, row.muted);
     let mut p = palette(cx);
-    if row.selected || row.marked {
+    if selected || marked {
         p.muted = p.ink_2;
     }
-    let (selected, marked, muted) = (row.selected, row.marked, row.muted);
+    let style = RowStyle { selected, p };
+    let clickable = source.clickable();
     let mut element = h_flex()
         .group(ROW_GROUP)
         .id(row.id.clone())
         .test_support()
         .role(Role::ListBoxOption)
         .aria_selected(selected)
-        .aria_label(std::mem::take(&mut row.label))
+        .aria_label(row.label.clone())
         .w_full()
         .h(dp(source.table_state().row_height()))
         .border_1()
@@ -270,11 +437,11 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
         })
         .font_family(MONO_FONT)
         .text_size(dp(12.5))
-        .cursor_pointer()
         .when(muted, |this| this.text_color(p.muted))
         .when(marked && !selected, |this| this.bg(p.hover))
         .when(selected, |this| this.bg(p.accent_soft))
-        .when(!selected, |this| {
+        .when(clickable, |this| this.cursor_pointer())
+        .when(clickable && !selected, |this| {
             this.hover(|style| {
                 let style = style.bg(p.hover);
                 if muted {
@@ -283,14 +450,54 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
                     style
                 }
             })
+        })
+        .when_some(row.tooltip.clone(), |this, tooltip| {
+            this.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         });
     for column in source.columns() {
-        element = element.child(source.cell(&row, column, cx));
+        element = element.child(source.cell(&row, &style, column, cx));
     }
     let key = row.key;
     Some(
         element
-            .on_click(cx.listener(move |view, _, window, cx| view.click(&key, window, cx)))
+            .when(clickable, |this| {
+                this.on_click(
+                    cx.listener(move |view, event, window, cx| view.click(&key, event, window, cx)),
+                )
+            })
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_line;
+
+    /// Lines 0 and 3 are group headers; the rest are rows.
+    fn lines(line: usize) -> Option<bool> {
+        (line < 7).then_some(line != 0 && line != 3)
+    }
+
+    #[test]
+    fn steps_over_group_lines() {
+        assert_eq!(step_line(7, Some(2), 1, lines), Some(4));
+        assert_eq!(step_line(7, Some(4), -1, lines), Some(2));
+        assert_eq!(step_line(7, Some(1), 3, lines), Some(5));
+    }
+
+    #[test]
+    fn stops_at_either_end() {
+        assert_eq!(step_line(7, Some(6), 1, lines), Some(6));
+        assert_eq!(step_line(7, Some(1), -1, lines), Some(1));
+        assert_eq!(step_line(7, Some(5), 20, lines), Some(6));
+    }
+
+    #[test]
+    fn starts_at_the_first_or_last_row() {
+        assert_eq!(step_line(7, None, 1, lines), Some(1));
+        assert_eq!(step_line(7, None, -1, lines), Some(6));
+        assert_eq!(step_line(7, Some(99), 1, lines), Some(1));
+        assert_eq!(step_line(0, None, 1, lines), None);
+        assert_eq!(step_line(1, None, 1, lines), None);
+    }
 }

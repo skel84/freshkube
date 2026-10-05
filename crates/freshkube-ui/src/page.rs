@@ -65,6 +65,8 @@ pub fn meta_line(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> 
 pub struct PageHeader {
     prefix: SharedString,
     title: SharedString,
+    title_id: SharedString,
+    scope_id: SharedString,
     filter: Option<Div>,
     chips: Option<AnyElement>,
     controls: Vec<AnyElement>,
@@ -78,8 +80,11 @@ impl PageHeader {
         title: impl Into<SharedString>,
         narrow: bool,
     ) -> Self {
+        let prefix = prefix.into();
         Self {
-            prefix: prefix.into(),
+            title_id: format!("{prefix}-title").into(),
+            scope_id: format!("{prefix}-scope").into(),
+            prefix,
             title: title.into(),
             filter: None,
             chips: None,
@@ -121,8 +126,7 @@ impl PageHeader {
 
     pub fn render(self, cx: &App) -> Div {
         let narrow = self.narrow;
-        let title_id = self.id("title");
-        let scope_id = self.id("scope");
+        let (title_id, scope_id) = (self.title_id, self.scope_id);
         let leading = h_flex()
             .gap(dp(8.))
             .min_w_0()
