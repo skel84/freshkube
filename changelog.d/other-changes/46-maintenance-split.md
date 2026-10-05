@@ -1,0 +1,1 @@
+- **Maintenance mode code:** the maintenance view is split into a module directory: the view and its actions, its presentation, the configuration review and the UI tests. Nothing changes on screen.
