@@ -359,7 +359,9 @@ impl ObservabilityPage {
                     )
                     .children(line_data.levels.iter().enumerate().map(|(column, &level)| {
                         // The keyboard cursor outlines more heavily than the
-                        // selection; both are the accent.
+                        // selection; both are the accent, inside a ring of the
+                        // card's colour that keeps them clear on the lightest
+                        // cells.
                         let border = if cursor == Some((row, column)) {
                             Some(px(2.))
                         } else if cell == Some((row, column)) {
@@ -384,6 +386,15 @@ impl ObservabilityPage {
                                 p.accent
                             } else {
                                 gpui_kit::transparent_black()
+                            })
+                            .when(border.is_some(), |this| {
+                                this.child(
+                                    div()
+                                        .size_full()
+                                        .rounded(px(1.))
+                                        .border_1()
+                                        .border_color(p.surface),
+                                )
                             })
                             .cursor_pointer()
                             .tooltip(move |window, cx| {
