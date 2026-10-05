@@ -12,3 +12,6 @@ description = "Freshkube's look: theme, palette, text size and the shared compon
 gpui-kit = "=0.7.0"
 chrono.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
