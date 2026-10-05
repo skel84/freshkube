@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true

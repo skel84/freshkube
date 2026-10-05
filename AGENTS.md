@@ -48,6 +48,8 @@ cargo fmt --all -- --check
 scripts/check-style.sh            # pages use the shared components; see DESIGN.md "Checks"
 ```
 
+For the inner loop, use `cargo test -p <crate> --lib <filter>` while iterating on a library crate, then run `cargo clippy -p <crate> --all-targets -- -D warnings` once at the end. Save the full workspace test/clippy/fmt and style checks above for before submitting the PR for review; all remain required.
+
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
 
 Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|13|14|16|18|20>` starts at that text size without saving it; 13 is the default. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
