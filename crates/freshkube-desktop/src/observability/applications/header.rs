@@ -9,7 +9,7 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let header = self.source_header(self.page_header(window), cx);
+        let header = self.source_header(self.page_header(), cx);
         let segment = ButtonGroup::new("obs-view")
             .outline()
             .small()
@@ -125,17 +125,62 @@ impl ObservabilityPage {
         {
             meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
         }
+        let columns = self.application_columns_items(cx);
         self.time_controls(
             header
                 .filter(filter)
                 .chips(Some(line().flex_wrap().child(segment).child(chips)))
                 .secondary(categories)
                 .meta(meta)
-                .control(self.namespace_picker(cx))
-                .control(self.application_columns_menu(cx)),
+                .foldable(
+                    self.namespace_picker(cx),
+                    freshkube_ui::page::submenu("Namespace", self.namespace_items(cx)),
+                )
+                .foldable(
+                    self.application_columns_menu(columns.clone()),
+                    freshkube_ui::page::submenu("Columns", columns),
+                ),
             cx,
         )
-        .render_fit(window, cx)
+        .render(window, cx)
+    }
+
+    /// Applies a namespace from the picker or its folded form.
+    pub(in crate::observability) fn set_namespace(
+        &mut self,
+        namespace: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.namespace = namespace;
+        self.project_filters();
+        cx.notify();
+    }
+
+    /// The namespace picker's choices as checked items, its folded form.
+    fn namespace_items(&self, cx: &Context<Self>) -> freshkube_ui::page::MenuItems {
+        let owner = cx.entity().downgrade();
+        Rc::new(move |mut menu, window, cx| {
+            let Some(page) = owner.upgrade() else {
+                return menu;
+            };
+            let page = page.read(cx);
+            let current = page.namespace.clone();
+            for choice in namespace_entries(&page.namespaces, current.as_deref()) {
+                if choice.notice {
+                    menu = menu.label(choice.label);
+                    continue;
+                }
+                let owner = owner.clone();
+                let value = choice.value;
+                let checked = value == current;
+                menu = menu.item(PopupMenuItem::new(choice.label).checked(checked).on_click(
+                    move |_, _, cx| {
+                        _ = owner.update(cx, |page, cx| page.set_namespace(value.clone(), cx));
+                    },
+                ));
+            }
+            menu.scrollable(true).max_h(crate::ui::dp_px(360., window))
+        })
     }
     fn namespace_picker(&self, _: &Context<Self>) -> AnyElement {
         Select::new(&self.namespace_select)
@@ -173,41 +218,46 @@ impl ObservabilityPage {
         });
     }
 
-    fn application_columns_menu(&self, cx: &Context<Self>) -> AnyElement {
+    /// The table's columns as checked items: the Columns menu, and its
+    /// folded form.
+    fn application_columns_items(&self, cx: &Context<Self>) -> freshkube_ui::page::MenuItems {
         use application_columns::ColumnKind;
         let owner = cx.entity().downgrade();
         let hidden = self.hidden_application_columns.clone();
+        Rc::new(move |mut menu, _, _| {
+            for kind in std::iter::once(ColumnKind::Type).chain(Report::ALL.map(ColumnKind::Report))
+            {
+                let label = match kind {
+                    ColumnKind::Report(report) => report.label(),
+                    _ => "Type",
+                };
+                let owner = owner.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label)
+                        .checked(!hidden.contains(&kind))
+                        .on_click(move |_, _, cx| {
+                            _ = owner.update(cx, |this, cx| {
+                                if !this.hidden_application_columns.remove(&kind) {
+                                    this.hidden_application_columns.insert(kind);
+                                }
+                                this.prepare_application_columns();
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    fn application_columns_menu(&self, items: freshkube_ui::page::MenuItems) -> AnyElement {
         Button::new("obs-columns")
             .outline()
             .small()
             .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
-                for kind in
-                    std::iter::once(ColumnKind::Type).chain(Report::ALL.map(ColumnKind::Report))
-                {
-                    let label = match kind {
-                        ColumnKind::Report(report) => report.label(),
-                        _ => "Type",
-                    };
-                    let owner = owner.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(label)
-                            .checked(!hidden.contains(&kind))
-                            .on_click(move |_, _, cx| {
-                                _ = owner.update(cx, |this, cx| {
-                                    if !this.hidden_application_columns.remove(&kind) {
-                                        this.hidden_application_columns.insert(kind);
-                                    }
-                                    this.prepare_application_columns();
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
             .into_any_element()
     }
     fn more_categories(&self, cx: &Context<Self>) -> AnyElement {
@@ -285,6 +335,12 @@ impl SelectItem for NamespaceChoice {
     }
 }
 fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<NamespaceChoice> {
+    SearchableVec::new(namespace_entries(names, current))
+}
+
+/// The namespaces to pick from, All namespaces first: the picker's choices
+/// and its folded form's items.
+fn namespace_entries(names: &[String], current: Option<&str>) -> Vec<NamespaceChoice> {
     let mut choices = vec![NamespaceChoice {
         label: "All namespaces".into(),
         value: None,
@@ -308,7 +364,7 @@ fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<N
             notice: true,
         });
     }
-    SearchableVec::new(choices)
+    choices
 }
 
 #[cfg(test)]

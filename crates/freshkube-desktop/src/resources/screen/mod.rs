@@ -37,7 +37,7 @@ use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
-use crate::screens::{SCREEN_DEADLINE, inset_width, page_width};
+use crate::screens::{SCREEN_DEADLINE, page_width};
 use crate::ui::{self, clock, dp, dp_px};
 use freshkube_ui::{page, table};
 use layout::TableLayout;
@@ -154,21 +154,29 @@ impl SelectItem for NamespaceChoice {
 }
 
 fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<NamespaceChoice> {
-    let mut choices = vec![NamespaceChoice {
-        label: ALL_NAMESPACES.into(),
-        value: None,
-    }];
-    let choice = |name: &str| NamespaceChoice {
-        label: name.to_owned().into(),
-        value: Some(name.to_owned()),
-    };
-    choices.extend(names.iter().map(|name| choice(name)));
+    SearchableVec::new(
+        namespace_entries(names, current)
+            .into_iter()
+            .map(|(label, value)| NamespaceChoice { label, value })
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The namespaces to pick from, with All namespaces first: the picker's
+/// choices and its folded form's items.
+fn namespace_entries(
+    names: &[String],
+    current: Option<&str>,
+) -> Vec<(SharedString, Option<String>)> {
+    let mut entries = vec![(SharedString::from(ALL_NAMESPACES), None)];
+    let entry = |name: &str| (name.to_owned().into(), Some(name.to_owned()));
+    entries.extend(names.iter().map(|name| entry(name)));
     // The chosen namespace stays pickable when the list lacks it, say
     // because listing namespaces isn't permitted.
     if let Some(current) = current.filter(|current| !names.iter().any(|name| name == current)) {
-        choices.push(choice(current));
+        entries.push(entry(current));
     }
-    SearchableVec::new(choices)
+    entries
 }
 
 /// The element id of a row: derived from what it shows, so a press that

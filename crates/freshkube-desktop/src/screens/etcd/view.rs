@@ -2,7 +2,7 @@
 //! the selected member's details beside or below it.
 use super::*;
 use crate::palette::palette;
-use crate::screens::{Scope, content_width, failure_banner, field, gate, mono, partial_notice};
+use crate::screens::{Scope, failure_banner, field, gate, mono, partial_notice};
 use crate::ui::{MONO_FONT, dp};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::table::{self, DataTable};
@@ -76,9 +76,8 @@ impl Render for EtcdScreen {
 }
 
 impl EtcdScreen {
-    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let narrow = content_width(window) < page::HEADER_NARROW;
-        let header = PageHeader::new(PREFIX, "etcd", narrow);
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "etcd");
         let chips = (!self.derived.rows.is_empty()).then(|| {
             table::status_chips(
                 header.id("tally"),
@@ -111,7 +110,7 @@ impl EtcdScreen {
             .chips(chips)
             .control(refresh)
             .meta(self.render_meta(cx))
-            .render(cx)
+            .render(window, cx)
     }
 
     /// Context and members, the quorum, then leader, alarms and time.

@@ -43,13 +43,12 @@ impl Render for MonitoringPage {
 impl MonitoringPage {
     /// "Dashboards / title"; where the data comes from, the time picker,
     /// refresh and auto-refresh; then the meta line.
-    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title = self.board.as_ref().map_or_else(
             || SharedString::from("Monitoring"),
             |board| board.title.clone(),
         );
-        let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
-        let mut header = PageHeader::new("monitoring", title, narrow)
+        let mut header = PageHeader::new("monitoring", title)
             .parent(
                 "dashboards",
                 "Dashboards",
@@ -71,7 +70,7 @@ impl MonitoringPage {
             )
             .control(self.render_auto_refresh(cx))
             .meta(self.render_meta());
-        header.render(cx)
+        header.render(window, cx)
     }
 
     /// The context, then the board's count, state and time. Example data and

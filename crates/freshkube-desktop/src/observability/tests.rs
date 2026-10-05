@@ -929,14 +929,22 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
         settle_header(window, cx);
         let frame = window.find("obs-frame").bounds();
         let padding = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
-        for id in [
+        let ids = [
             "obs-source",
             "obs-project",
             "obs-namespace",
             "obs-columns",
             "obs-time",
             "obs-refresh",
-        ] {
+            "obs-more",
+        ];
+        // A control the row has no room for is in the "…" menu.
+        let shown: Vec<_> = ids
+            .into_iter()
+            .filter(|id| window.try_find(*id).is_some())
+            .collect();
+        assert!(shown.len() == ids.len() - 1 || shown.contains(&"obs-more"));
+        for id in shown {
             let control = window.find(id);
             let bounds = control.bounds();
             assert!(control.visible(), "{id} must remain visible");
@@ -984,6 +992,13 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 "metadata follows the header rows"
             );
             let mut previous = None;
+            let toolbar = window.find("obs-toolbar").bounds();
+            let folds = window.try_find("obs-more").is_some();
+            if width == 1920. {
+                assert!(!folds, "nothing folds with room to spare");
+            } else if width == 760. {
+                assert!(folds, "a narrow row folds its controls");
+            }
             for id in [
                 "obs-filter",
                 "obs-filter-problems",
@@ -1001,8 +1016,11 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 "obs-columns",
                 "obs-time",
                 "obs-refresh",
+                "obs-more",
             ] {
-                let element = window.find(id);
+                let Some(element) = window.try_find(id) else {
+                    continue;
+                };
                 let bounds = element.bounds();
                 assert!(
                     element.visible(),
@@ -1016,7 +1034,7 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 );
                 if matches!(
                     id,
-                    "obs-namespace" | "obs-columns" | "obs-time" | "obs-refresh"
+                    "obs-namespace" | "obs-columns" | "obs-time" | "obs-refresh" | "obs-more"
                 ) {
                     if let Some(prior) = previous {
                         let prior: gpui_kit::Bounds<gpui_kit::Pixels> = prior;
@@ -1028,29 +1046,16 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                     previous = Some(bounds);
                 }
             }
-            if width == 1920. {
-                assert!(
-                    controls.top() < title.bottom(),
-                    "controls stay on the title row when there is room"
-                );
-            } else if width < 1280. {
-                // Stacked: at 1280 and 14 px the header has room since the
-                // title became the toolbar's label.
-                assert!(
-                    controls.top() >= secondary.bottom(),
-                    "narrow controls follow the categories"
-                );
-            } else if controls.top() < title.bottom() {
-                assert!(
-                    (controls.right() - (frame.right() - padding)).abs() < px(0.5),
-                    "fitting controls align with the page's right edge"
-                );
-            } else {
-                assert!(
-                    controls.top() >= secondary.bottom() || controls.left() >= secondary.right(),
-                    "controls cannot overlap categories"
-                );
-            }
+            // The controls stay on the toolbar's row, at the page's right
+            // edge; what doesn't fit is in the "…" menu.
+            assert!(
+                controls.top() >= toolbar.top() && controls.bottom() <= toolbar.bottom(),
+                "controls stay on the toolbar's row at {width}/{text_size}"
+            );
+            assert!(
+                (controls.right() - (frame.right() - padding)).abs() < px(0.5),
+                "controls align with the page's right edge at {width}/{text_size}"
+            );
         })
         .unwrap();
     }
@@ -1455,4 +1460,50 @@ fn application_namespace_select_searches_and_applies_the_chosen_namespace(cx: &m
         assert_eq!(page.read(cx).shown_apps, 1);
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_folded_applications_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount_geometry(cx, 760., 560.);
+    cx.update_window(handle, |_, _, cx| crate::text_size::set(20., cx))
+        .unwrap();
+    cx.run_until_parked();
+    // Namespace, Columns, Time range, Refresh: each opens from "…".
+    let open = |cx: &mut TestAppContext, item: usize| {
+        cx.update_window(handle, |_, window, cx| {
+            settle_header(window, cx);
+            assert!(window.try_find("obs-time").is_none(), "not folded");
+            window.click("obs-more", cx);
+            window.render_frame(cx);
+            window.within("popup-menu").click(item, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+    };
+    let choose = |cx: &mut TestAppContext, item: usize| {
+        cx.update_window(handle, |_, window, cx| {
+            window
+                .within("submenu")
+                .within("popup-menu")
+                .click(item, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    open(cx, 2);
+    // 1 hour, 3 hours, 24 hours, 7 days.
+    choose(cx, 3);
+    cx.update(|cx| assert_eq!(page.read(cx).hours(), 168));
+    let first = cx.update(|cx| page.read(cx).namespaces[0].clone());
+    open(cx, 0);
+    // All namespaces, then each namespace.
+    choose(cx, 1);
+    cx.update(|cx| assert_eq!(page.read(cx).namespace.as_ref(), Some(&first)));
+    let hidden = cx.update(|cx| page.read(cx).hidden_application_columns.len());
+    open(cx, 1);
+    choose(cx, 0);
+    cx.update(|cx| {
+        assert_ne!(page.read(cx).hidden_application_columns.len(), hidden);
+    });
 }

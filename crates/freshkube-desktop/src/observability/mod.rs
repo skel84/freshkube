@@ -190,9 +190,7 @@ impl ObservabilityPage {
                  event: &SelectEvent<SearchableVec<applications_header::NamespaceChoice>>,
                  cx| {
                     if let SelectEvent::Confirm(Some(namespace)) = event {
-                        this.namespace = namespace.clone();
-                        this.project_filters();
-                        cx.notify();
+                        this.set_namespace(namespace.clone(), cx);
                     }
                 },
             ),

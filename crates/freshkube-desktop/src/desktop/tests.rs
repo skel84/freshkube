@@ -2734,35 +2734,43 @@ fn the_shell_scales_with_the_text_size(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_resources_toolbar_wraps_rather_than_clip_at_a_large_size(cx: &mut TestAppContext) {
+fn the_resources_toolbar_folds_rather_than_clip_at_a_large_size(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         area(window, cx, "nav-k8s-group-workloads");
-        let controls = ["resource-namespace", "resource-filter", "resource-refresh"];
         let fit = |window: &mut gpui_kit::Window| {
-            for id in controls {
-                let bounds = window.find(id).bounds();
+            let ids = ["resource-filter", "resource-namespace", "resource-refresh"];
+            let row = window.find("resource-toolbar").bounds();
+            let height = crate::ui::dp_px(38., window);
+            assert!((row.size.height - height).abs() < px(0.5), "{row:?}");
+            for id in ids.into_iter().chain(["resource-more"]) {
+                let Some(control) = window.try_find(id) else {
+                    continue;
+                };
+                let bounds = control.bounds();
                 assert!(
                     bounds.right() <= px(760.),
                     "{id} ends at {:?}",
                     bounds.right()
                 );
                 assert!(bounds.size.width > px(0.), "{id}");
+                assert!(
+                    bounds.top() >= row.top() && bounds.bottom() <= row.bottom(),
+                    "{id}"
+                );
             }
         };
-        // Fog wraps its status filters and controls as the space changes.
+        settle_header(window, cx);
         fit(window);
         for _ in 0..4 {
             window.press("secondary-=", cx);
         }
-        window.render_frame(cx);
+        settle_header(window, cx);
         fit(window);
-        let filter = window.find("resource-filter").bounds();
-        let refresh = window.find("resource-refresh").bounds();
         assert!(
-            filter.top() != refresh.top(),
-            "narrow controls should wrap: {filter:?} {refresh:?}"
+            window.try_find("resource-more").is_some(),
+            "a full row folds its controls"
         );
         assert!(
             window.find("resource-list").bounds().size.height >= crate::ui::dp_px(68., window),
@@ -3499,33 +3507,37 @@ fn search_everything_keeps_one_width_on_every_page(cx: &mut TestAppContext) {
     }
 }
 
+/// Draws until the page's header stops asking for frames: it folds its
+/// controls from what its parts measured on the frame before.
+pub(crate) fn settle_header(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    for _ in 0..4 {
+        window.render_frame(cx);
+        if window.simulate_next_frame(cx) == 0 {
+            return;
+        }
+    }
+    panic!("the header keeps moving");
+}
+
 #[gpui_kit::test]
-fn pods_toolbar_fits_one_row_from_where_the_header_stops_stacking(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 2400., 880.);
+fn at_the_default_window_pods_folds_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1320., 860.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
-        window.render_frame(cx);
-        let bounds = |id: String| window.find(id).bounds();
-        let title = bounds("resource-title".into());
-        // The example pods show the failing and healthy chips.
-        let chips = bounds("resource-tally-healthy".into());
-        let first = bounds("resource-slot-0".into());
-        let last = (1..)
-            .map_while(|ix| window.try_find(format!("resource-slot-{ix}")))
-            .last()
-            .map_or(first, |slot| slot.bounds());
-        let gap = crate::ui::dp_px(8., window);
-        let one_row = (chips.right() - title.left()) + gap + (last.right() - first.left());
-        let one_row = one_row / crate::ui::dp_px(1., window);
-        // The other two chips, not ready and waiting, take about 150 more.
-        assert!(
-            one_row + 150. <= freshkube_ui::page::HEADER_NARROW,
-            "Pods' toolbar needs {one_row} dp on one row"
-        );
-        assert!(
-            freshkube_ui::page::HEADER_NARROW - one_row <= 200.,
-            "HEADER_NARROW stacks a header that fits: Pods' needs {one_row} dp"
-        );
+        settle_header(window, cx);
+        assert!(window.try_find("resource-more").is_none());
+        let row = window.find("resource-toolbar").bounds();
+        assert_eq!(row.size.height, crate::ui::dp_px(38., window));
+        // Namespace, Columns and Refresh, all on the toolbar's row.
+        for ix in 0..3 {
+            let slot = window.find(format!("resource-slot-{ix}")).bounds();
+            assert!(
+                slot.top() >= row.top() && slot.bottom() <= row.bottom(),
+                "{ix}"
+            );
+        }
+        let chips = window.find("resource-tally-healthy").bounds();
+        assert!(chips.top() >= row.top() && chips.bottom() <= row.bottom());
     })
     .unwrap();
 }
