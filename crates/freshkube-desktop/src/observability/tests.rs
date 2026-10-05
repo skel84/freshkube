@@ -1,7 +1,10 @@
 use super::{Destination, MatrixRow, ObservabilityPage, Report, example};
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, size};
+use gpui_kit::{
+    AnyWindowHandle, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
+    TestAppContext, Window, div, px, size,
+};
 pub(super) fn mount(
     cx: &mut TestAppContext,
     fixture: bool,
@@ -22,7 +25,7 @@ pub(super) fn mount_size(
     AnyWindowHandle,
     Entity<ObservabilityPage>,
 ) {
-    mount_with(cx, fixture, width, height, None, None)
+    mount_with(cx, fixture, width, height, None, None, false)
 }
 /// A live page that remembers its connection in `preferences`' folder and
 /// keeps keys in `secrets`.
@@ -35,7 +38,15 @@ pub(super) fn mount_remembering(
     AnyWindowHandle,
     Entity<ObservabilityPage>,
 ) {
-    mount_with(cx, false, 1260., 900., Some(preferences), Some(secrets))
+    mount_with(
+        cx,
+        false,
+        1260.,
+        900.,
+        Some(preferences),
+        Some(secrets),
+        false,
+    )
 }
 fn mount_with(
     cx: &mut TestAppContext,
@@ -44,6 +55,7 @@ fn mount_with(
     height: f32,
     preferences: Option<&std::path::Path>,
     secrets: Option<crate::secrets::Secrets>,
+    with_chrome: bool,
 ) -> (
     tokio::runtime::Runtime,
     AnyWindowHandle,
@@ -55,6 +67,7 @@ fn mount_with(
         crate::text_size::install(None, cx);
         Theme::change(ThemeMode::Dark, None, cx);
         cx.set_reduce_motion(true);
+        crate::screens::set_chrome_width(crate::desktop::RAIL_WIDTH + crate::desktop::COLUMN_WIDTH);
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut page = None;
@@ -70,13 +83,59 @@ fn mount_with(
             )
         });
         page = Some(view.clone());
-        Root::new(view, window, cx)
+        if with_chrome {
+            let chrome = cx.new(|_| TestChrome { page: view });
+            Root::new(chrome, window, cx)
+        } else {
+            Root::new(view, window, cx)
+        }
     });
     cx.run_until_parked();
     let page = page.unwrap();
     cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
     (runtime, handle.into(), page)
 }
+/// Reserve the shell's actual navigation width while keeping the full window
+/// size, so content-width breakpoints and page bounds agree.
+struct TestChrome {
+    page: Entity<ObservabilityPage>,
+}
+impl Render for TestChrome {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let column = if window.viewport_size().width / crate::ui::dp_px(1., window) < 1000. {
+            52.
+        } else {
+            crate::desktop::COLUMN_WIDTH
+        };
+        let chrome = crate::desktop::RAIL_WIDTH + column;
+        crate::screens::set_chrome_width(chrome);
+        gpui_kit::component::h_flex()
+            .size_full()
+            .child(div().w(crate::ui::dp(chrome)).h_full().flex_none())
+            .child(self.page.clone())
+    }
+}
+fn mount_geometry(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<ObservabilityPage>,
+) {
+    mount_with(cx, true, width, height, None, None, true)
+}
+fn settle_header(window: &mut Window, cx: &mut gpui_kit::App) {
+    for _ in 0..4 {
+        window.render_frame(cx);
+        if window.simulate_next_frame(cx) == 0 {
+            return;
+        }
+    }
+    panic!("Applications header must settle without further input");
+}
+
 #[gpui_kit::test]
 fn applications_filter_and_cells_open_the_selected_report(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
@@ -878,7 +937,7 @@ fn unknown_tally_uses_the_same_circle_as_unknown_rows_and_filters_apps(cx: &mut 
 #[gpui_kit::test]
 fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut TestAppContext) {
     use freshkube_core::coroot as api;
-    let (_runtime, handle, page) = mount_size(cx, true, 760., 560.);
+    let (_runtime, handle, page) = mount_geometry(cx, 760., 560.);
     cx.update(|cx| {
         page.update(cx, |page, _| {
             page.fixture = false;
@@ -903,7 +962,7 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
         .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
+        settle_header(window, cx);
         let frame = window.find("obs-frame").bounds();
         let padding = crate::ui::dp_px(freshkube_ui::page::PAGE_PADDING, window);
         for id in [
@@ -927,6 +986,110 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
         }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppContext) {
+    for (width, height, text_size) in [
+        (1280., 880., 13.),
+        (1280., 880., 14.),
+        (760., 560., 20.),
+        (1920., 880., 13.),
+    ] {
+        let (_runtime, handle, _page) = mount_geometry(cx, width, height);
+        cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            settle_header(window, cx);
+            let frame = window.find("obs-frame").bounds();
+            let title = window.find("obs-title").bounds();
+            let secondary = window.find("obs-secondary").bounds();
+            let controls = window.find("obs-controls").bounds();
+            let scope = window.find("obs-scope").bounds();
+            let padding = crate::ui::dp_px(freshkube_ui::page::PAGE_PADDING, window);
+            assert!(
+                secondary.top() >= title.bottom(),
+                "categories belong below the title"
+            );
+            assert!(
+                (secondary.left() - (frame.left() + padding)).abs() < px(0.5),
+                "categories stay left-aligned"
+            );
+            assert!(
+                scope.top() >= secondary.bottom() && scope.top() >= controls.bottom(),
+                "metadata follows the header rows"
+            );
+            let mut previous = None;
+            for id in [
+                "obs-filter",
+                "obs-filter-problems",
+                "obs-filter-all",
+                "obs-tally-critical",
+                "obs-tally-warning",
+                "obs-tally-unknown",
+                "obs-tally-ok",
+                "obs-tally-logs",
+                "obs-category-application",
+                "obs-category-control-plane",
+                "obs-category-monitoring",
+                "obs-more-categories",
+                "obs-namespace",
+                "obs-density",
+                "obs-columns",
+                "obs-time",
+                "obs-refresh",
+            ] {
+                let element = window.find(id);
+                let bounds = element.bounds();
+                assert!(
+                    element.visible(),
+                    "{id} must remain visible at {width}/{text_size}"
+                );
+                assert!(bounds.size.width > px(1.), "{id} keeps its width");
+                assert!(
+                    bounds.left() >= frame.left() + padding - px(0.5)
+                        && bounds.right() <= frame.right() - padding + px(0.5),
+                    "{id} leaves the page at {width}/{text_size}: {bounds:?}; {frame:?}"
+                );
+                if matches!(
+                    id,
+                    "obs-namespace" | "obs-density" | "obs-columns" | "obs-time" | "obs-refresh"
+                ) {
+                    if let Some(prior) = previous {
+                        let prior: gpui_kit::Bounds<gpui_kit::Pixels> = prior;
+                        assert!(
+                            bounds.top() >= prior.bottom() || bounds.left() >= prior.right(),
+                            "controls overlap at {width}/{text_size}"
+                        );
+                    }
+                    previous = Some(bounds);
+                }
+            }
+            if width == 1920. {
+                assert!(
+                    controls.top() < title.bottom(),
+                    "controls stay on the title row when there is room"
+                );
+            } else if text_size > 13. {
+                assert!(
+                    controls.top() >= secondary.bottom(),
+                    "narrow controls follow the categories"
+                );
+            } else if controls.top() < title.bottom() {
+                assert!(
+                    (controls.right() - (frame.right() - padding)).abs() < px(0.5),
+                    "fitting controls align with the page's right edge"
+                );
+            } else {
+                assert!(
+                    controls.top() >= secondary.bottom() || controls.left() >= secondary.right(),
+                    "controls cannot overlap categories"
+                );
+            }
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]

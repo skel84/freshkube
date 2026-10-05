@@ -6,8 +6,8 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 impl ObservabilityPage {
     pub(in crate::observability) fn applications_header(
         &self,
-        window: &Window,
-        cx: &Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Div {
         let header = self.source_header(self.page_header(window), cx);
         let segment = ButtonGroup::new("obs-view")
@@ -125,19 +125,15 @@ impl ObservabilityPage {
         self.time_controls(
             header
                 .filter(filter)
-                .chips(Some(
-                    v_flex()
-                        .gap(dp(4.))
-                        .child(line().flex_wrap().child(segment).child(chips))
-                        .child(categories),
-                ))
+                .chips(Some(line().flex_wrap().child(segment).child(chips)))
+                .secondary(categories)
                 .meta(meta)
                 .control(self.namespace_picker(cx))
                 .control(self.application_density(cx))
                 .control(self.application_columns_menu(cx)),
             cx,
         )
-        .render(cx)
+        .render_fit(window, cx)
     }
     fn namespace_picker(&self, _: &Context<Self>) -> AnyElement {
         Select::new(&self.namespace_select)
