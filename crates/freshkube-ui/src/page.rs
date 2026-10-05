@@ -109,11 +109,14 @@ pub struct PageHeader {
     narrow: bool,
 }
 
+/// What a click on a breadcrumb's parent does.
+type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
 /// A breadcrumb's parent: the collection the page sits in.
 struct Parent {
     id: SharedString,
     label: SharedString,
-    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    on_click: OnClick,
 }
 
 /// The title, after its breadcrumb when it has one.
@@ -141,7 +144,14 @@ fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App)
                 .test_support(),
         )
         .child(div().flex_none().text_color(p.faint).child("/"))
-        .child(title.min_w(dp(120.)).truncate())
+        // The title's own box hugs its text, so it measures as the title
+        // does without a breadcrumb; the wrapper keeps 120 of it in view.
+        .child(
+            div()
+                .flex()
+                .min_w(dp(120.))
+                .child(title.min_w_0().truncate()),
+        )
         .into_any_element()
 }
 
