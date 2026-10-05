@@ -259,7 +259,7 @@ impl ObservabilityPage {
             cell.font_family(MONO_FONT)
                 .text_size(dp(12.))
                 .text_color(p.ink_2)
-                .child(value.clone())
+                .child(text(value.clone()).truncate())
         };
         match column.kind {
             ColumnKind::Glyph => cell.children(ui::status_glyph(
@@ -269,12 +269,12 @@ impl ObservabilityPage {
             ColumnKind::Name => cell
                 .font_family(MONO_FONT)
                 .text_size(dp(12.5))
-                .child(row.name.clone()),
+                .child(text(row.name.clone()).truncate()),
             ColumnKind::Service => cell
                 .font_family(MONO_FONT)
                 .text_size(dp(12.5))
                 .text_color(p.ink_2)
-                .child(row.service.clone()),
+                .child(text(row.service.clone()).truncate()),
             ColumnKind::Started => figure(cell, &row.started),
             ColumnKind::Duration => figure(cell, &row.duration),
             _ => cell,

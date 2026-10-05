@@ -285,20 +285,23 @@ impl ObservabilityPage {
             cell.font_family(MONO_FONT)
                 .text_size(dp(12.))
                 .text_color(p.ink_2)
-                .child(value.clone())
+                .child(text(value.clone()).truncate())
         };
         match column.kind {
             ColumnKind::Glyph => cell.children(ui::status_glyph(row.severity.tone(), cx)),
             ColumnKind::Key => cell
                 .font_family(MONO_FONT)
                 .text_size(dp(12.5))
-                .child(row.incident.clone()),
-            ColumnKind::Title => cell.child(row.title.clone()),
+                .child(text(row.incident.clone()).truncate()),
+            // Prose, in the interface face; ids and times stay mono.
+            ColumnKind::Title => cell
+                .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
+                .child(text(row.title.clone()).truncate()),
             ColumnKind::App => cell
                 .font_family(MONO_FONT)
                 .text_size(dp(12.5))
                 .text_color(p.ink_2)
-                .child(row.app_label.clone()),
+                .child(text(row.app_label.clone()).truncate()),
             ColumnKind::Opened => figure(cell, &row.opened),
             ColumnKind::Duration => figure(cell, &row.duration),
             ColumnKind::Impact => figure(cell, &row.impact),
