@@ -410,3 +410,232 @@ fn object_frontdoor_asks_before_navigation_and_cancel_keeps_the_shell(cx: &mut T
     })
     .unwrap();
 }
+
+/// The scrolled page's elements of `list`, top to bottom: its group headers'
+/// and rows' ids.
+fn attention_lines(window: &gpui_kit::Window, list: &str) -> Vec<gpui_kit::ElementId> {
+    use gpui_kit::base::test_support::snapshots;
+    let list = gpui_kit::ElementId::from(gpui_kit::SharedString::from(list.to_owned()));
+    let mut lines: Vec<_> = snapshots(window)
+        .into_iter()
+        .filter(|line| {
+            matches!(
+                line.role(),
+                Some(gpui_kit::Role::ListBoxOption | gpui_kit::Role::Heading)
+            ) && line.path().contains(&list)
+        })
+        .collect();
+    lines.sort_by(|a, b| f32::from(a.bounds().top()).total_cmp(&f32::from(b.bounds().top())));
+    lines
+        .into_iter()
+        .map(|line| line.path().last().unwrap().clone())
+        .collect()
+}
+
+#[gpui_kit::test]
+fn overview_uses_the_shared_frame_with_its_state_in_the_meta_line(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, PageFrame};
+    for (width, height, text) in [(1280., 880., 13.), (760., 560., 20.)] {
+        let (_runtime, handle, pilot) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("nav-overview", cx);
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            let context = pilot.read(cx).applied.context.clone().unwrap();
+            layout_check::assert_page_frame(
+                window,
+                cx,
+                &PageFrame {
+                    page: "overview-page",
+                    title: "overview-title",
+                    title_text: Box::leak(context.into_boxed_str()),
+                    content: "overview-cards",
+                },
+            );
+            for id in ["overview-connection", "roster", "overview-runs"] {
+                window.within("overview-scope").find(id);
+            }
+            assert!(
+                window.find("overview-scope").bounds().right()
+                    <= window.find("overview-cards").bounds().right() + gpui_kit::px(0.5),
+                "the meta line runs past the page at {width}/{text}"
+            );
+            assert_eq!(
+                window.find("roster").label().map(str::to_owned),
+                Some(pilot.read(cx).overview_display.roster_tip.to_string())
+            );
+            assert_actions_inside_rows(window, width, text);
+        })
+        .unwrap();
+    }
+}
+
+/// Every row's Open, Logs and Open node buttons sit inside Needs attention,
+/// however narrow the page.
+fn assert_actions_inside_rows(window: &gpui_kit::Window, width: f32, text: f32) {
+    use gpui_kit::base::test_support::snapshots;
+    let list = window.find("needs-attention-rows").bounds();
+    let actions: Vec<_> = snapshots(window)
+        .into_iter()
+        .filter(|line| {
+            line.path().last().is_some_and(|id| {
+                ["attention-open", "attention-logs", "attention-open-node"]
+                    .iter()
+                    .any(|action| *id == gpui_kit::ElementId::from(*action))
+            })
+        })
+        .collect();
+    assert!(
+        actions.iter().any(|line| *line.path().last().unwrap()
+            == gpui_kit::ElementId::from("attention-logs")),
+        "no Logs button at {width}/{text}"
+    );
+    for action in actions {
+        assert!(
+            action.bounds().right() <= list.right() + gpui_kit::px(0.5),
+            "{:?} runs past Needs attention at {width}/{text}",
+            action.path().last()
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, Density, Table};
+    use crate::presentation::attention::AttentionGroup;
+    let (_runtime, handle, pilot) = fixture(cx, 1600., 1600.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-overview", cx);
+        pilot.update(cx, |pilot, _| pilot.attention_expanded = true);
+        window.render_frame(cx);
+        let rows = pilot.read(cx).attention.rows.clone();
+        let mut expected = Vec::new();
+        for row in &rows {
+            let header = gpui_kit::ElementId::from(gpui_kit::SharedString::from(row.group.id()));
+            if !expected.contains(&header) {
+                expected.push(header);
+            }
+            expected.push(row.id.clone().into());
+        }
+        assert!(expected.len() > rows.len());
+        assert_eq!(attention_lines(window, "needs-attention-rows"), expected);
+        let failing = window.find(AttentionGroup::Failing.id());
+        let details = pilot.read(cx).attention.details.clone();
+        assert!(
+            failing
+                .label()
+                .unwrap()
+                .contains(details[AttentionGroup::Failing.index()].as_ref())
+        );
+        layout_check::assert_table(
+            window,
+            cx,
+            &Table {
+                table: None,
+                list: "needs-attention-rows",
+                density: Density::Compact,
+            },
+        );
+        window.find("needs-attention-title");
+        assert!(window.try_find("needs-attention-stale").is_none());
+        assert!(window.try_find("overview-collapsed").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn needs_attention_shows_eight_then_fifty_and_says_how_many_are_left(cx: &mut TestAppContext) {
+    use crate::presentation::attention;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 1600.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-overview", cx);
+        let template = pilot.read(cx).node_workspace.rows[0].clone();
+        let many: Vec<_> = (0..80)
+            .map(|ix| {
+                let mut row = template.clone();
+                row.name = format!("node-{ix:02}").into();
+                row.talos.as_mut().unwrap().responding = false;
+                row
+            })
+            .collect();
+        pilot.update(cx, |pilot, cx| {
+            pilot.attention = attention::build(&many, None, None, chrono::Utc::now());
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let shown = |window: &mut gpui_kit::Window| {
+            attention_lines(window, "needs-attention-rows")
+                .iter()
+                .filter(|id| id.to_string().contains("attention-node-"))
+                .count()
+        };
+        assert_eq!(shown(window), 8);
+        window
+            .within("overview-collapsed")
+            .find("attention-show-all");
+        window.click("attention-show-all", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).attention_expanded);
+        assert_eq!(shown(window), 50);
+        // Past the cap the bar stays, without an action, to explain the rest.
+        window.find("overview-collapsed");
+        assert!(window.try_find("attention-show-all").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, Density, Table};
+    use crate::presentation::attention::{self, AttentionGroup};
+    let (_runtime, handle, pilot) = fixture(cx, 1600., 1600.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let mut rows = pilot.read(cx).node_workspace.rows.as_ref().clone();
+        let node = rows
+            .iter_mut()
+            .find(|row| row.name == "talos-wk-fra1-02")
+            .unwrap();
+        let talos = node.talos.as_mut().unwrap();
+        talos.responding = false;
+        let unhealthy = talos.unhealthy_services().next().unwrap().clone();
+        for ix in 0..12 {
+            let mut service = unhealthy.clone();
+            service.id = format!("extra-{ix:02}");
+            talos.services.push(service);
+        }
+        let built = attention::build(&rows, None, None, chrono::Utc::now());
+        let mine = built.by_node["talos-wk-fra1-02"].clone();
+        assert!(mine.len() > 8);
+        window.click("node-talos-wk-fra1-02", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.attention = built;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let lines = attention_lines(window, "needs-attention-rows");
+        for row in &mine {
+            assert!(
+                lines.contains(&row.id.clone().into()),
+                "{} is missing",
+                row.id
+            );
+        }
+        for group in [AttentionGroup::Failing, AttentionGroup::Warning] {
+            window.within("node-overview").find(group.id());
+        }
+        assert!(window.try_find("overview-collapsed").is_none());
+        layout_check::assert_table(
+            window,
+            cx,
+            &Table {
+                table: None,
+                list: "needs-attention-rows",
+                density: Density::Compact,
+            },
+        );
+    })
+    .unwrap();
+}
