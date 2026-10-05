@@ -21,39 +21,7 @@ impl ObservabilityPage {
     }
 
     pub(super) fn source_header(&self, header: PageHeader, cx: &Context<Self>) -> PageHeader {
-        let p = palette(cx);
-        let host = self.live.provider.as_ref().map_or_else(
-            || {
-                if self.fixture {
-                    "Example data"
-                } else {
-                    "Not connected"
-                }
-                .to_owned()
-            },
-            |provider| {
-                let url = provider.url();
-                url.split_once("://")
-                    .map_or(url, |(_, rest)| rest)
-                    .trim_end_matches('/')
-                    .to_owned()
-            },
-        );
-        let source = line()
-            .id("obs-source")
-            .test_support()
-            .role(Role::Status)
-            .aria_label(host.clone())
-            .flex_none()
-            .text_size(dp(12.))
-            .child(
-                text(host.clone())
-                    .max_w(dp(140.))
-                    .truncate()
-                    .text_color(p.muted),
-            )
-            .tooltip(move |window, cx| Tooltip::new(host.clone()).build(window, cx));
-        let mut header = header.meta([source.into_any_element()]);
+        let mut header = header;
         if !self.fixture {
             let items = self.project_items(cx);
             let folded = if self.live.projects.is_empty() {

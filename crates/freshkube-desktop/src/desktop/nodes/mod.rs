@@ -97,7 +97,8 @@ pub(super) struct Nodes {
     query: Entity<InputState>,
     query_text: String,
     search_keys: Vec<String>,
-    meta: SharedString,
+    /// The status bar's segment while Nodes shows.
+    pub(super) status: freshkube_ui::status::Segment,
     _query_subscription: Subscription,
     table: freshkube_ui::table::TableState,
     all_columns: Vec<table::Column>,
@@ -178,7 +179,7 @@ impl Nodes {
             query,
             query_text: String::new(),
             search_keys: Vec::new(),
-            meta: "Not connected".into(),
+            status: freshkube_ui::status::Segment::new(None::<SharedString>, ["Not connected"]),
             _query_subscription: subscription,
             table: freshkube_ui::table::TableState::new("nodes"),
             all_columns: Vec::new(),

@@ -437,8 +437,13 @@ impl Pilot {
         }
     }
 
-    /// The status bar's account of the kubeconfig and the connection.
-    pub(super) fn render_kubernetes_status(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The status bar's account of the kubeconfig and the connection, and
+    /// whether it names the context.
+    pub(super) fn render_kubernetes_status(
+        &self,
+        glyph_only: bool,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, bool) {
         let p = palette(cx);
         let context = self.applied.context.clone().unwrap_or_default();
         let spinner = || {
@@ -455,6 +460,9 @@ impl Pilot {
             .as_ref()
             .map(|kube| kube.connection.clone())
             .unwrap_or(KubeConnection::Idle);
+        let names = self.config_error.is_none()
+            && !self.config_loading
+            && !matches!(connection, KubeConnection::Idle);
         let (indicator, text) = if let Some(error) = &self.config_error {
             (glyph(Tone::Crit), format!("No kubeconfig loaded: {error}"))
         } else if self.config_loading {
@@ -476,16 +484,16 @@ impl Pilot {
                 ),
             }
         };
-        h_flex()
-            .id("kubernetes-status")
-            .test_support()
-            .role(Role::Status)
-            .aria_label(text.clone())
-            .gap_2()
-            .min_w_0()
-            .children(indicator)
-            .child(div().min_w_0().truncate().child(text))
-            .into_any_element()
+        (
+            super::shell::status_text(
+                "kubernetes-status",
+                text.clone(),
+                indicator,
+                text,
+                glyph_only,
+            ),
+            names,
+        )
     }
 
     /// What a Talos page shows without a talosconfig.

@@ -227,6 +227,8 @@ pub(crate) struct ResourcesScreen {
     now: i64,
     /// When the last batch landed.
     updated: Option<SystemTime>,
+    /// The status bar's line, and what it was derived from.
+    status: (controls::StatusKey, freshkube_ui::status::Segment),
     focus: FocusHandle,
     /// The table's scrolls.
     table: table::TableState,
@@ -376,6 +378,7 @@ impl ResourcesScreen {
             restore: None,
             now: live::now(),
             updated: None,
+            status: Default::default(),
             focus: cx.focus_handle(),
             table: table::TableState::new("resource"),
             page_scroll: ScrollHandle::new(),
@@ -430,6 +433,19 @@ impl ResourcesScreen {
     #[cfg(test)]
     pub(crate) fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
         self.detail.read(cx).tab()
+    }
+
+    /// Applies a read state as if the current read delivered it.
+    #[cfg(test)]
+    pub(crate) fn deliver_read(&mut self, state: ReadState, cx: &mut Context<Self>) {
+        let epoch = self.store.epoch();
+        self.apply(
+            ResourceBatch {
+                epoch,
+                events: vec![ResourceEvent::Read(state)],
+            },
+            cx,
+        );
     }
 
     /// Called only after the shell's navigation question has been accepted.

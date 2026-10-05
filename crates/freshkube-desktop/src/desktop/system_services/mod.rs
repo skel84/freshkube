@@ -8,6 +8,7 @@ use crate::{
     presentation::{self, Health, NodeSummary},
     ui::{self, dp},
 };
+use freshkube_ui::status::Segment;
 use freshkube_ui::{page, table};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -102,8 +103,8 @@ pub(super) struct SystemServices {
     health: Option<Health>,
     node: Option<String>,
     nodes: Vec<String>,
-    /// `54 services on 6 nodes`, under the title.
-    meta: SharedString,
+    /// `54 services on 6 nodes`, in the status bar.
+    pub(super) status: Segment,
     pub(super) unhealthy: usize,
     pub(super) badge: SharedString,
     _subscription: Subscription,
@@ -132,7 +133,7 @@ impl SystemServices {
             health: None,
             node: None,
             nodes: Vec::new(),
-            meta: SharedString::default(),
+            status: Segment::default(),
             unhealthy: 0,
             badge: "0".into(),
             _subscription: subscription,
@@ -192,12 +193,14 @@ impl SystemServices {
         let plural = |count: usize, one: &str, many: &str| {
             format!("{count} {}", if count == 1 { one } else { many })
         };
-        self.meta = format!(
-            "{} on {}",
-            plural(self.rows.len(), "service", "services"),
-            plural(self.nodes.len(), "node", "nodes")
-        )
-        .into();
+        self.status = Segment::new(
+            None::<SharedString>,
+            [format!(
+                "{} on {}",
+                plural(self.rows.len(), "service", "services"),
+                plural(self.nodes.len(), "node", "nodes")
+            )],
+        );
         self.rebuild(cx);
     }
     #[cfg(test)]
@@ -293,7 +296,6 @@ impl SystemServices {
                 page::Fold::from(page::submenu_value("Node", value, nodes))
                     .changed(picked.map(|node| format!("Node {node}").into())),
             )
-            .meta([self.meta.clone().into_any_element()])
             .render(window, cx)
     }
     /// All nodes, then each node, as checked items: the node picker's menu,

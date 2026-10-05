@@ -36,6 +36,7 @@ mod projection;
 mod remember;
 mod reports;
 mod settings;
+mod status;
 mod tables;
 #[cfg(test)]
 mod tests;
@@ -88,6 +89,8 @@ pub(crate) struct ObservabilityPage {
     application_width: f32,
     counts: [usize; 7],
     app_count: String,
+    /// The status bar's segment, and what it was derived from.
+    status: (status::StatusKey, freshkube_ui::status::Segment),
     filter: Filter,
     active_categories: Rc<std::collections::BTreeSet<String>>,
     all_categories: bool,
@@ -279,6 +282,7 @@ impl ObservabilityPage {
             application_width: 0.,
             counts: [0; 7],
             app_count: "0".into(),
+            status: Default::default(),
             filter: Filter::Problems,
             active_categories: Rc::new(["application".into()].into()),
             all_categories: false,

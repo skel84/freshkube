@@ -17,7 +17,7 @@ const OPTIONAL: [ColumnKind; 3] = [
     ColumnKind::Started,
     ColumnKind::Duration,
 ];
-/// Coroot's list stops at its limit; the meta line's tooltip says so.
+/// Coroot's list stops at its limit; the status bar's tooltip says so.
 const LIMIT_NOTE: &str = "Coroot lists up to 100 spans.\nSelect a heatmap cell to narrow them.";
 
 /// The public table contract borrows the page's private row.
@@ -26,6 +26,28 @@ pub(crate) struct SpanCells<'a> {
 }
 
 impl ObservabilityPage {
+    /// What Traces puts in the status bar.
+    pub(in crate::observability) fn traces_read(&self) -> crate::observability::status::Read<'_> {
+        let traces = &self.live_traces;
+        let count = if self.selected_app.is_none() {
+            "No application"
+        } else if !self.fixture && self.live.tracing.data().is_none() {
+            if self.live.tracing.is_loading() {
+                "Loading traces"
+            } else {
+                "No observation"
+            }
+        } else {
+            &traces.count
+        };
+        crate::observability::status::Read {
+            count,
+            stale: self.live.tracing.is_stale(),
+            time: self.read_time(self.live.tracing.last_successful()),
+            note: traces.limited.then_some(LIMIT_NOTE),
+        }
+    }
+
     pub(in crate::observability) fn traces_header(
         &self,
         window: &mut Window,
@@ -42,42 +64,10 @@ impl ObservabilityPage {
                 .aria_label("Filter requests by name, service or trace id")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
-        let count: SharedString = if self.selected_app.is_none() {
-            "No application".into()
-        } else if !self.fixture && self.live.tracing.data().is_none() {
-            if self.live.tracing.is_loading() {
-                "Loading traces".into()
-            } else {
-                "No observation".into()
-            }
-        } else {
-            traces.count.clone().into()
-        };
-        let mut meta = vec![
-            " · ".into_any_element(),
-            div()
-                .id("obs-traces-count")
-                .child(count)
-                .when(traces.limited, |this| {
-                    this.tooltip(|window, cx| Tooltip::new(LIMIT_NOTE).build(window, cx))
-                })
-                .into_any_element(),
-        ];
-        if self.live.tracing.is_stale() {
-            meta.push(" · stale".into_any_element());
-        }
-        if let Some(time) = self
-            .live
-            .tracing
-            .last_successful()
-            .or_else(|| self.live.range.to.filter(|_| self.fixture).map(Into::into))
-        {
-            meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
-        }
         let errors =
             matches!(traces.selection, api::TraceSelection::Errors { .. }) && traces.cell.is_none();
         let all = traces.selection == api::TraceSelection::Recent;
-        let mut header = header.filter(filter).meta(meta);
+        let mut header = header.filter(filter);
         let source_changed = self.trace_source_changed();
         for (kind, name, selected) in &traces.sources {
             let choose = {

@@ -505,6 +505,7 @@ pub(super) use context::ContextDisplay;
 pub(super) mod fps;
 mod frame;
 use frame::settings_content;
+pub(super) use frame::status_text;
 mod header;
 mod rail;
 pub(super) use rail::RailMarks;

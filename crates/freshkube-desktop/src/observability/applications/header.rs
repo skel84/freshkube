@@ -4,6 +4,25 @@ use gpui_kit::component::button::ButtonGroup;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 impl ObservabilityPage {
+    /// What Applications puts in the status bar.
+    pub(in crate::observability) fn applications_read(&self) -> super::status::Read<'_> {
+        let count = if !self.fixture && self.live.apps.data().is_none() {
+            if self.live.apps.is_loading() {
+                "Loading applications"
+            } else {
+                "No observation"
+            }
+        } else {
+            &self.app_count
+        };
+        super::status::Read {
+            count,
+            stale: self.live.apps.is_stale(),
+            time: self.read_time(self.live.apps.last_successful()),
+            note: None,
+        }
+    }
+
     pub(in crate::observability) fn applications_header(
         &self,
         window: &mut Window,
@@ -104,34 +123,12 @@ impl ObservabilityPage {
                 .aria_label("Filter applications by name, namespace or type")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
-        let count = if !self.fixture && self.live.apps.data().is_none() {
-            if self.live.apps.is_loading() {
-                "Loading applications".into()
-            } else {
-                "No observation".into()
-            }
-        } else {
-            self.app_count.clone()
-        };
-        let mut meta = vec![" · ".into_any_element(), count.into_any_element()];
-        if self.live.apps.is_stale() {
-            meta.push(" · stale".into_any_element());
-        }
-        if let Some(time) = self
-            .live
-            .apps
-            .last_successful()
-            .or_else(|| self.live.range.to.filter(|_| self.fixture).map(Into::into))
-        {
-            meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
-        }
         let columns = self.application_columns_items(cx);
         self.time_controls(
             header
                 .filter(filter)
                 .chips(Some(line().flex_wrap().child(segment).child(chips)))
                 .secondary(categories)
-                .meta(meta)
                 .foldable(self.namespace_picker(cx), self.namespace_fold(cx))
                 .foldable(
                     self.application_columns_menu(columns.clone()),

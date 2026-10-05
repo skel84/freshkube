@@ -6,6 +6,7 @@ pub mod card;
 pub mod meters;
 pub mod page;
 pub mod palette;
+pub mod status;
 pub mod table;
 pub mod text_size;
 pub mod theme;

@@ -1298,10 +1298,18 @@ fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut Test
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         assert!(window.find("nodes-filter").visible());
-        assert!(window.find("nodes-scope").visible());
-        assert!(pilot.read(cx).node_workspace.meta.contains("Example data"));
-        assert!(pilot.read(cx).node_workspace.meta.contains("Talos"));
-        assert!(pilot.read(cx).node_workspace.meta.contains("Kubernetes"));
+        let scope = window.find("nodes-scope");
+        assert!(scope.visible());
+        assert!(
+            scope
+                .path()
+                .contains(&gpui_kit::ElementId::from("status-bar")),
+            "Nodes' line is in the status bar"
+        );
+        let status = scope.label().unwrap_or_default().to_owned();
+        for part in ["Example data", "Talos", "Kubernetes"] {
+            assert!(status.contains(part), "{part} is missing from {status}");
+        }
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
         window.focus(

@@ -675,16 +675,17 @@ fn every_observability_destination_keeps_its_shared_header(cx: &mut TestAppConte
                 refreshes, 1,
                 "each Observability destination has one page refresh"
             );
-            assert_eq!(window.find("obs-source").label(), Some("Example data"));
             assert!(
-                window
-                    .find("obs-source")
-                    .path()
-                    .contains(&gpui_kit::ElementId::from("obs-scope")),
-                "the source belongs to the shared meta line"
+                window.try_find("obs-scope").is_none(),
+                "the source is in the status bar, not under the header"
             );
         })
         .unwrap();
+        let status = cx.update(|cx| page.update(cx, |page, _| page.status().text(None).clone()));
+        assert!(
+            status.starts_with("Example data"),
+            "{destination:?} names its source in the status bar: {status}"
+        );
     }
 }
 
@@ -930,7 +931,6 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
         let frame = window.find("obs-frame").bounds();
         let padding = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
         let ids = [
-            "obs-source",
             "obs-project",
             "obs-namespace",
             "obs-columns",
@@ -977,7 +977,6 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
             let title = window.find("obs-title").bounds();
             let secondary = window.find("obs-secondary").bounds();
             let controls = window.find("obs-controls").bounds();
-            let scope = window.find("obs-scope").bounds();
             let padding = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
             assert!(
                 secondary.top() >= title.bottom(),
@@ -988,8 +987,8 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 "categories stay left-aligned"
             );
             assert!(
-                scope.top() >= secondary.bottom() && scope.top() >= controls.bottom(),
-                "metadata follows the header rows"
+                window.try_find("obs-scope").is_none(),
+                "nothing follows the header rows: the meta is in the status bar"
             );
             let mut previous = None;
             let toolbar = window.find("obs-toolbar").bounds();
