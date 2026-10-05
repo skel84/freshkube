@@ -38,6 +38,7 @@ mod projection;
 mod remember;
 mod reports;
 mod settings;
+mod tables;
 #[cfg(test)]
 mod tests;
 mod traces;
