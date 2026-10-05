@@ -17,7 +17,7 @@ use gpui_kit::{
     size, svg, transparent_black,
 };
 
-use crate::palette::palette;
+use crate::palette::{Palette, palette};
 
 /// Monospace face for resource names, hostnames, addresses, numbers and
 /// logs. The interface face, Figtree, is the theme's `font.family`.
@@ -499,7 +499,20 @@ pub fn warning_banner(
     action: Option<AnyElement>,
     cx: &App,
 ) -> Div {
+    banner(Tone::Warn, lead, body.into(), action, cx)
+}
+
+/// An inline banner with an optional action: Crit for a fault the page
+/// exists to show, such as a lost quorum, Warn for everything else.
+pub fn banner(
+    tone: Tone,
+    lead: Option<SharedString>,
+    body: impl IntoElement,
+    action: Option<AnyElement>,
+    cx: &App,
+) -> Div {
     let p = palette(cx);
+    let (icon, ink, soft, line) = banner_look(tone, &p);
     h_flex()
         .items_start()
         .gap_2p5()
@@ -507,16 +520,11 @@ pub fn warning_banner(
         .py_2p5()
         .rounded(px(8.))
         .border_1()
-        .border_color(p.warn_line)
-        .bg(p.warn_soft)
+        .border_color(line)
+        .bg(soft)
         .text_size(dp(12.5))
         .text_color(p.ink)
-        .child(
-            Icon::new(IconName::TriangleAlert)
-                .size(dp(16.))
-                .text_color(p.warn_ink)
-                .mt(dp(1.)),
-        )
+        .child(Icon::new(icon).size(dp(16.)).text_color(ink).mt(dp(1.)))
         .child(
             div()
                 .flex_1()
@@ -524,9 +532,23 @@ pub fn warning_banner(
                 .when_some(lead, |this, lead| {
                     this.child(div().font_weight(FontWeight::SEMIBOLD).child(lead))
                 })
-                .child(body.into()),
+                .child(body),
         )
         .children(action)
+}
+
+/// A banner's icon, and its ink, fill and border: critical for Crit and
+/// Died, warning for any other tone.
+fn banner_look(tone: Tone, p: &Palette) -> (IconName, Hsla, Hsla, Hsla) {
+    match tone {
+        Tone::Crit | Tone::Died => (IconName::CircleX, p.crit_ink, p.crit_soft, p.crit_line),
+        _ => (
+            IconName::TriangleAlert,
+            p.warn_ink,
+            p.warn_soft,
+            p.warn_line,
+        ),
+    }
 }
 
 /// Wall-clock time of day, as shown next to refresh results.
@@ -682,5 +704,25 @@ mod tests {
     #[gpui_kit::test]
     fn status_marks_follow_the_text_size(cx: &mut TestAppContext) {
         assert_marks(cx, 20.);
+    }
+
+    #[gpui_kit::test]
+    fn a_critical_banner_draws_in_the_critical_colours(cx: &mut TestAppContext) {
+        let p = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            palette(cx)
+        });
+        for tone in [Tone::Crit, Tone::Died] {
+            let (icon, ink, soft, line) = banner_look(tone, &p);
+            assert!(matches!(icon, IconName::CircleX), "{tone:?}");
+            assert_eq!((ink, soft, line), (p.crit_ink, p.crit_soft, p.crit_line));
+        }
+        for tone in [Tone::Warn, Tone::Unknown, Tone::Good] {
+            let (icon, ink, soft, line) = banner_look(tone, &p);
+            assert!(matches!(icon, IconName::TriangleAlert), "{tone:?}");
+            assert_eq!((ink, soft, line), (p.warn_ink, p.warn_soft, p.warn_line));
+        }
+        assert_ne!(p.crit_line, p.warn_line);
     }
 }

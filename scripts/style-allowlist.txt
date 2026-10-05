@@ -7,16 +7,12 @@ glyph crates/freshkube-desktop/src/desktop/shell/fog_column.rs
 radius crates/freshkube-desktop/src/desktop/shell/header.rs
 radius crates/freshkube-desktop/src/desktop/shell/mod.rs
 glyph crates/freshkube-desktop/src/desktop/shell/rail.rs
-glyph crates/freshkube-logs/src/view.rs
 list crates/freshkube-desktop/src/maintenance.rs
-glyph crates/freshkube-desktop/src/monitoring/page/view.rs
-title crates/freshkube-desktop/src/monitoring/page/view.rs
 radius crates/freshkube-desktop/src/monitoring/panel/cursor.rs
 radius crates/freshkube-desktop/src/monitoring/panel/legend.rs
 radius crates/freshkube-desktop/src/observability/live_profiling.rs
 radius crates/freshkube-desktop/src/observability/traces/heat.rs
 list crates/freshkube-desktop/src/observability/map.rs
 radius crates/freshkube-desktop/src/observability/profiling.rs
-glyph crates/freshkube-desktop/src/resources/pane/view.rs
 list crates/freshkube-desktop/src/screens/network/view.rs
 list crates/freshkube-desktop/src/screens/workloads/mod.rs

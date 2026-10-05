@@ -1572,3 +1572,79 @@ fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expande
         }
     }).unwrap();
 }
+
+#[gpui_kit::test]
+fn a_short_window_scrolls_the_frame_and_keeps_the_list_usable(cx: &mut TestAppContext) {
+    use freshkube_ui::page::{PANE_PADDING_Y, SHORT_LIST_HEIGHT};
+    use gpui_kit::{point, px};
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        // The table's frame, header and legend run to the end of the
+        // scrolled page; its hairlines sit outside the measured scroll.
+        let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
+        let scroll = pilot.read(cx).node_workspace.page_scroll.clone();
+        assert!(scroll.max_offset().y > px(0.), "the frame doesn't scroll");
+        let end = window.find("nodes-page").bounds().bottom() + scroll.max_offset().y;
+        let table = window.find("nodes-table-scroll").bounds();
+        assert!(
+            end - table.top() >= least,
+            "the table is squeezed to {table:?}"
+        );
+        assert!(window.find("nodes-list").bounds().size.height > px(0.));
+
+        // Opening a node and closing it again start the frame at the top.
+        scroll.set_offset(point(px(0.), -scroll.max_offset().y));
+        pilot.update(cx, |pilot, cx| {
+            let key = pilot.node_workspace.rows[0].key.clone();
+            pilot.open_node(key, window, cx);
+        });
+        window.render_frame(cx);
+        assert_eq!(scroll.offset().y, px(0.));
+        scroll.set_offset(point(px(0.), -scroll.max_offset().y));
+        pilot.update(cx, |pilot, cx| pilot.close_node(window, cx));
+        window.render_frame(cx);
+        assert_eq!(scroll.offset().y, px(0.));
+
+        // The cards and their legend keep it too, inside their inset.
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        let end = window.find("nodes-page").bounds().bottom() + scroll.max_offset().y;
+        let cards = window.find("nodes-cards").bounds();
+        let inset = crate::ui::dp_px(2. * PANE_PADDING_Y, window);
+        assert!(
+            end - cards.top() >= least - inset,
+            "the cards are squeezed to {cards:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_tall_window_keeps_the_frame_still_and_the_table_filling_it(cx: &mut TestAppContext) {
+    use gpui_kit::px;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let scroll = pilot.read(cx).node_workspace.page_scroll.clone();
+        assert_eq!(scroll.max_offset().y, px(0.));
+        // The legend sits under the rows, at the page's foot.
+        let page = window.find("nodes-page").bounds();
+        let table = window.find("nodes-table-scroll").bounds();
+        let list = window.find("nodes-list").bounds();
+        assert!(
+            list.bottom() <= table.bottom() + px(0.5),
+            "{list:?} in {table:?}"
+        );
+        assert!(
+            page.bottom() - table.bottom() < crate::ui::dp_px(60., window),
+            "{table:?} in {page:?}"
+        );
+    })
+    .unwrap();
+}

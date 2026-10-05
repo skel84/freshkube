@@ -8,8 +8,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Pixels, SharedString, Stateful, TestSupportExt, Window,
-    canvas, div, px,
+    AnyElement, App, ClickEvent, Div, ElementId, Pixels, SharedString, Stateful, TestSupportExt,
+    Window, canvas, div, px,
 };
 
 use crate::palette::palette;
@@ -26,6 +26,11 @@ pub const PAGE_GAP: f32 = 14.;
 pub const PANE_PADDING: f32 = 12.;
 /// Above and below that content.
 pub const PANE_PADDING_Y: f32 = 10.;
+/// A window shorter than this, in dp, scrolls a table page's frame: see
+/// [`is_short`].
+pub const SHORT_HEIGHT: f32 = 620.;
+/// The least height a table page's list keeps while its frame scrolls.
+pub const SHORT_LIST_HEIGHT: f32 = 180.;
 /// A toolbar row's height: the header's row, and its secondary row.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
 /// Below this width, the header's own (the page's inside its insets), the
@@ -37,9 +42,18 @@ const FILTER_WIDTH: f32 = 150.;
 
 /// A page's frame, without margins: its header, any banners and its panes
 /// stack edge to edge, and the caller puts what isn't a pane, such as the
-/// header, in an [`inset`]. The caller adds scrolling.
+/// header, in an [`inset`]. The caller adds scrolling: a table page scrolls
+/// its frame when the window [`is_short`], and its list keeps at least
+/// [`SHORT_LIST_HEIGHT`].
 pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex().id(id).test_support().size_full().min_h_0()
+}
+
+/// Whether the window is too short for a table page's header and a usable
+/// list together, so the page scrolls its frame instead: under
+/// [`SHORT_HEIGHT`].
+pub fn is_short(window: &Window) -> bool {
+    window.viewport_size().height < crate::ui::dp_px(SHORT_HEIGHT, window)
 }
 
 /// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above
@@ -128,7 +142,57 @@ pub struct PageHeader {
     controls: Vec<AnyElement>,
     secondary: Option<AnyElement>,
     meta: Vec<AnyElement>,
+    parent: Option<Parent>,
     narrow: bool,
+}
+
+/// What a click on a breadcrumb's parent does.
+type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// A breadcrumb's parent: the collection the page sits in.
+struct Parent {
+    id: SharedString,
+    label: SharedString,
+    on_click: OnClick,
+}
+
+/// The toolbar label, after its breadcrumb when it has one: the parent
+/// muted at 13, a faint "/", then the label.
+fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App) -> AnyElement {
+    let title = toolbar_label(text, cx).id(id).test_support();
+    let Some(parent) = parent else {
+        return title.into_any_element();
+    };
+    let p = palette(cx);
+    let accent = p.accent;
+    let on_click = parent.on_click;
+    h_flex()
+        .gap(dp(6.))
+        .items_center()
+        .min_w_0()
+        .text_size(dp(13.))
+        .line_height(dp(18.))
+        .child(
+            div()
+                .id(parent.id)
+                .flex_none()
+                .text_color(p.muted)
+                .cursor_pointer()
+                .hover(move |style| style.text_color(accent))
+                .on_click(move |event, window, cx| on_click(event, window, cx))
+                .child(parent.label)
+                .test_support(),
+        )
+        .child(div().flex_none().text_color(p.faint).child("/"))
+        // The label's own box hugs its text, so it measures as it does
+        // without a breadcrumb; the wrapper keeps 120 of it in view.
+        .child(
+            div()
+                .flex()
+                .min_w(dp(120.))
+                .child(title.flex_shrink(1.).min_w_0().truncate()),
+        )
+        .into_any_element()
 }
 
 /// Where a header with a secondary row puts its controls.
@@ -246,6 +310,7 @@ impl PageHeader {
             controls: Vec::new(),
             secondary: None,
             meta: Vec::new(),
+            parent: None,
             narrow,
         }
     }
@@ -282,6 +347,24 @@ impl PageHeader {
         self
     }
 
+    /// A breadcrumb before the title, for a page inside a collection (a
+    /// dashboard, an application report): the parent as a link back to it,
+    /// with the id `<prefix>-<part>`, then a faint `/`. The title keeps its
+    /// id and truncates, at least 120 wide.
+    pub fn parent(
+        mut self,
+        part: &str,
+        label: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.parent = Some(Parent {
+            id: self.id(part),
+            label: label.into(),
+            on_click: Box::new(on_click),
+        });
+        self
+    }
+
     /// The meta line's parts: source, count, state, time.
     pub fn meta(mut self, parts: impl IntoIterator<Item = AnyElement>) -> Self {
         self.meta.extend(parts);
@@ -299,7 +382,7 @@ impl PageHeader {
         let leading = h_flex()
             .gap(dp(8.))
             .min_w_0()
-            .child(toolbar_label(self.title, cx).id(title_id).test_support())
+            .child(title(self.parent, self.title, title_id, cx))
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
@@ -375,7 +458,7 @@ impl PageHeader {
         let leading = h_flex()
             .gap(gap)
             .items_center()
-            .child(toolbar_label(self.title, cx).id(title_id).test_support())
+            .child(title(self.parent, self.title, title_id, cx))
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
