@@ -37,30 +37,6 @@ impl Render for ObservabilityPage {
             .text_size(dp(13.))
             .text_color(p.ink)
             .child(
-                h_flex()
-                    .px(dp(20.))
-                    .pt(dp(12.))
-                    .gap(dp(8.))
-                    .child(status(
-                        if self.fixture {
-                            Status::Unknown
-                        } else {
-                            Status::Integration
-                        },
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .text_size(dp(11.))
-                            .text_color(p.muted)
-                            .child(if self.fixture {
-                                "EXAMPLE DATA · Fictional cluster"
-                            } else {
-                                "OBSERVABILITY"
-                            }),
-                    ),
-            )
-            .child(
                 div()
                     .id("obs-scroll")
                     .test_support()
@@ -68,13 +44,21 @@ impl Render for ObservabilityPage {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    .p(dp(20.))
                     .child(
-                        v_flex()
-                            .gap(dp(16.))
+                        freshkube_ui::page::page("obs-frame")
+                            .h_auto()
+                            .flex_none()
+                            .child(if self.destination == Destination::Applications {
+                                self.applications_header(window, cx)
+                            } else {
+                                self.source_controls(self.page_header(window), cx)
+                                    .render(cx)
+                            })
                             .when(!self.fixture && !unavailable, |this| {
-                                this.child(self.render_connection(cx))
-                                    .child(self.render_read_state(cx))
+                                this.when(self.settings_open, |this| {
+                                    this.child(self.render_connection(cx))
+                                })
+                                .child(self.render_read_state(cx))
                             })
                             .child(content),
                     ),

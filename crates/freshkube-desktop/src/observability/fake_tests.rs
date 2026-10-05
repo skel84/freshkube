@@ -77,7 +77,7 @@ impl Server {
                     } else if status==204 {
                         serde_json::json!({"applications":[]})
                     } else {
-                        serde_json::json!({"applications":[{"id":"cluster-a:prod:Deployment:api","category":"Apps","status":"warning","cpu":{"status":"ok","value":""},"memory":{"status":"unknown","value":""}}]})
+                        serde_json::json!({"applications":[{"id":"cluster-a:prod:Deployment:api","category":"application","status":"warning","cpu":{"status":"ok","value":""},"memory":{"status":"unknown","value":""}}]})
                     };
                     let body = if path.contains("api/user") {body} else {serde_json::json!({"context":{},"data":body})}.to_string();
                     let code=if status==204 {200} else {status};
@@ -226,7 +226,9 @@ async fn loaded(
 }
 
 #[gpui_kit::test]
-async fn a_connected_page_folds_its_connection_into_one_line(cx: &mut TestAppContext) {
+async fn a_connected_page_keeps_connection_settings_behind_the_sidebar_action(
+    cx: &mut TestAppContext,
+) {
     cx.executor().allow_parking();
     let (_runtime, handle, page) = mount(cx, false);
     cx.update_window(handle, |_, window, cx| {
@@ -251,7 +253,8 @@ async fn a_connected_page_folds_its_connection_into_one_line(cx: &mut TestAppCon
         assert!(window.try_find("obs-refresh").is_some());
         assert!(window.try_find("obs-disconnect").is_none());
         assert!(window.try_find("obs-unmap").is_none());
-        window.click("obs-connect-settings", cx);
+        assert!(window.try_find("obs-connect-settings").is_none());
+        page.update(cx, |page, cx| page.show_connection(cx));
         window.render_frame(cx);
         assert!(window.try_find("obs-disconnect").is_some());
         assert!(window.try_find("obs-unmap").is_some());

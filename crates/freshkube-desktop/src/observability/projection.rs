@@ -41,6 +41,22 @@ impl From<api::Status> for Status {
     }
 }
 impl Status {
+    pub(super) fn report_tone(self) -> Option<Tone> {
+        match self {
+            Self::Critical => Some(Tone::Crit),
+            Self::Warning | Self::LogError => Some(Tone::Warn),
+            _ => None,
+        }
+    }
+    pub(super) fn rank(self) -> u8 {
+        match self {
+            Self::Critical => 0,
+            Self::Warning | Self::LogError => 1,
+            Self::Unknown | Self::Integration => 2,
+            Self::Info => 3,
+            _ => 4,
+        }
+    }
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Ok => "Healthy",
@@ -59,29 +75,36 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
     let mut values: Vec<_> = raw
         .iter()
         .map(|app| {
+            let label = format!("{} · {}", view::app_label(&app.id), app.id.kind());
             let checks = Report::ALL.map(|report| {
                 let signal = app.signals.get(report.signal());
                 let state = signal.map_or(Status::Absent, |signal| signal.status.into());
-                // Only the source's own figure is drawn; the glyph says the rest.
-                let value = signal.map_or(String::new(), |s| s.value.clone());
+                let raw_value = signal.map_or("", |s| s.value.as_str());
+                let value = match state {
+                    Status::Absent => "—".into(),
+                    Status::Unknown if raw_value.is_empty() => "—".into(),
+                    _ if raw_value.chars().count() > 24 => state.label().into(),
+                    _ => raw_value.to_owned(),
+                };
                 Check {
                     status: state,
-                    tooltip: if value.is_empty() {
-                        format!("{} · {}: {}", app.id, report.label(), state.label())
-                    } else {
-                        format!(
-                            "{} · {}: {} · {value}",
-                            app.id,
-                            report.label(),
-                            state.label()
-                        )
-                    },
+                    tooltip: format!(
+                        "{label} · {}: {}{}",
+                        report.label(),
+                        state.label(),
+                        if raw_value.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {raw_value}")
+                        }
+                    ),
                     value,
                     element_id: format!("obs-check-{}-{}", app.id, report.slug()).into(),
                 }
             });
             Application {
                 id: app.id.clone(),
+                label: label.into(),
                 key: app.id.short(),
                 namespace: app.id.namespace().unwrap_or("Outside Kubernetes").into(),
                 name: app.id.name().into(),
@@ -100,18 +123,9 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
         })
         .collect();
     values.sort_by(|a, b| {
-        a.category
-            .cmp(&b.category)
-            .then_with(|| {
-                let rank = |s| match s {
-                    Status::Critical => 0,
-                    Status::Warning => 1,
-                    Status::Unknown => 2,
-                    Status::Info => 3,
-                    _ => 4,
-                };
-                rank(a.status).cmp(&rank(b.status))
-            })
+        a.namespace
+            .cmp(&b.namespace)
+            .then_with(|| a.status.rank().cmp(&b.status.rank()))
             .then(a.id.cmp(&b.id))
     });
     values
@@ -130,7 +144,11 @@ pub(super) fn map(
         .map(|(ix, node)| MapNode {
             app: node.id.clone(),
             label: node.id.name().into(),
-            tooltip: format!("{} · Open application", node.id),
+            tooltip: format!(
+                "{} · {} · Open application",
+                view::app_label(&node.id),
+                node.id.kind()
+            ),
             namespace: node.id.namespace().unwrap_or("External / unmapped").into(),
             status: node.status.into(),
             x: (ix % 4) as f32 * 0.25,
@@ -166,6 +184,7 @@ pub(super) fn map(
 impl ObservabilityPage {
     pub(super) fn apply_applications(&mut self, raw: &[api::Application]) {
         self.applications = applications(raw);
+        self.prepare_application_columns();
         self.categories = self
             .applications
             .iter()
@@ -217,20 +236,21 @@ impl ObservabilityPage {
     pub(super) fn project(&mut self) {
         self.matrix.clear();
         self.counts = [0; 7];
+        self.shown_apps = 0;
+        // The prepared application order is namespace, severity, then identity.
+        // Group only rows the current filters show; counts share the same scope.
         let mut offset = 0;
-        // The projection is already sorted by category. Visit each app once,
-        // including projects with one category per app.
-        for apps in self.applications.chunk_by(|a, b| a.category == b.category) {
+        for apps in self
+            .applications
+            .chunk_by(|a, b| a.namespace == b.namespace)
+        {
             let base = offset;
             offset += apps.len();
-            let category = &apps[0].category;
-            if self.category.as_ref().is_some_and(|cat| cat != category) {
-                continue;
-            }
             let mut shown = vec![];
-            let mut hidden = 0;
+            let mut worst = Status::Ok;
             for (index, app) in apps.iter().enumerate() {
-                if !app.search.contains(&self.query_text)
+                if !self.active_categories.contains(&app.category)
+                    || !app.search.contains(&self.query_text)
                     || self
                         .namespace
                         .as_ref()
@@ -244,21 +264,28 @@ impl ObservabilityPage {
                     }
                 }
                 if self.filter.matches(app) {
+                    if app.status.rank() < worst.rank() {
+                        worst = app.status;
+                    }
                     shown.push(MatrixRow::App(base + index));
-                } else if app.status == Status::Ok {
-                    hidden += 1;
                 }
             }
-            if !shown.is_empty() || hidden > 0 {
+            if !shown.is_empty() {
+                self.shown_apps += shown.len();
+                let label = apps[0].namespace.clone();
                 self.matrix.push(MatrixRow::Group {
-                    label: category.clone(),
-                    summary: format!("{} shown · {hidden} healthy hidden", shown.len()),
+                    id: format!("obs-group-{label}").into(),
+                    label,
+                    status: worst,
+                    summary: app_count(shown.len()),
                 });
                 self.matrix.extend(shown);
             }
         }
-        self.count_labels =
-            std::array::from_fn(|ix| format!("{} {}", Filter::ALL[ix].label(), self.counts[ix]));
-        self.app_count = self.applications.len().to_string();
+        self.app_count = app_count(self.shown_apps);
     }
+}
+
+fn app_count(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "app" } else { "apps" })
 }

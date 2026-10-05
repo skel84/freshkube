@@ -138,9 +138,9 @@ fn range(hours: u32, to: chrono::DateTime<chrono::Utc>) -> api::TimeRange {
 }
 fn range_label(range: api::TimeRange) -> String {
     format!(
-        "{} — {} UTC",
-        range.from.unwrap().format("%d %b %H:%M:%S"),
-        range.to.unwrap().format("%d %b %H:%M:%S")
+        "{} — {}",
+        ui::clock(range.from.unwrap().into()),
+        ui::clock(range.to.unwrap().into())
     )
 }
 
@@ -201,7 +201,10 @@ impl ObservabilityPage {
             self.namespaces = Default::default();
             self.cluster_ids.clear();
             self.counts = [0; 7];
-            self.category = None;
+            self.active_categories = Rc::new(["application".into()].into());
+            self.shown_apps = 0;
+            self.app_count = "0 apps".into();
+            self.prepare_application_columns();
             self.namespace = None;
         }
     }
@@ -222,7 +225,8 @@ impl ObservabilityPage {
             self.connections = Default::default();
             self.map_display = Default::default();
             self.map_page = 0;
-            self.matrix.clear();
+            self.project();
+            self.prepare_application_columns();
             self.report_snapshot = None;
         }
         self.refresh(cx);

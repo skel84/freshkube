@@ -162,6 +162,7 @@ pub(super) struct Check {
 #[derive(Clone)]
 pub(super) struct Application {
     pub id: AppId,
+    pub label: gpui_kit::SharedString,
     pub key: String,
     pub namespace: String,
     pub namespace_prefix: String,
@@ -207,7 +208,7 @@ impl Filter {
             Self::Critical => "Critical",
             Self::Warning => "Warning",
             Self::Logs => "Errors in logs",
-            Self::Integration => "Unknown",
+            Self::Integration => "Integration",
             Self::Ok => "OK",
         }
     }
@@ -242,7 +243,12 @@ impl Filter {
 }
 #[derive(Clone)]
 pub(super) enum MatrixRow {
-    Group { label: String, summary: String },
+    Group {
+        id: gpui_kit::SharedString,
+        label: String,
+        status: Status,
+        summary: String,
+    },
     App(usize),
 }
 #[derive(Clone)]

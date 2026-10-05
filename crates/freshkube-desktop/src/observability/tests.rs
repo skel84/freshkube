@@ -83,7 +83,13 @@ fn applications_filter_and_cells_open_the_selected_report(cx: &mut TestAppContex
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("obs-filter-all", cx);
-        assert_eq!(page.read(cx).counts[1], 47);
+        assert_eq!(
+            page.read(cx).counts[1],
+            example::applications()
+                .iter()
+                .filter(|app| app.category == "application")
+                .count()
+        );
         window.click("obs-filter", cx);
         window.input("worker", cx);
     })
@@ -412,6 +418,8 @@ fn bounded_projection_measurement(cx: &mut TestAppContext) {
     cx.update(|cx| {
         page.update(cx, |page, _| {
             let start = std::time::Instant::now();
+            page.active_categories =
+                std::rc::Rc::new(apps.iter().map(|app| app.category.clone()).collect());
             page.apply_applications(&apps);
             let app_time = start.elapsed();
             let raw = large_map();
@@ -539,4 +547,211 @@ pub(super) fn large_map() -> freshkube_core::coroot::ServiceMap {
         })
         .collect();
     freshkube_core::coroot::ServiceMap { nodes, edges }
+}
+
+#[gpui_kit::test]
+fn applications_categories_and_filter_count_follow_the_visible_scope(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            page.read(cx).active_categories.as_ref(),
+            &std::collections::BTreeSet::from(["application".to_owned()])
+        );
+        assert_eq!(page.read(cx).shown_apps, 7);
+        assert_eq!(page.read(cx).app_count, "7 apps");
+        window.click("obs-filter-all", cx);
+        assert!(page.read(cx).shown_apps > 7);
+        window.click("obs-category-control-plane", cx);
+        assert!(page.read(cx).active_categories.contains("control-plane"));
+        window.click("obs-filter", cx);
+        window.input("kube-apiserver", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(page.read(cx).shown_apps, 1);
+        assert_eq!(page.read(cx).app_count, "1 app");
+        assert_eq!(page.read(cx).counts[1], 1);
+        assert!(
+            matches!(&page.read(cx).matrix[0], MatrixRow::Group { label, summary, .. }
+            if label == "kube-system" && summary == "1 app")
+        );
+        window.click("obs-category-control-plane", cx);
+        assert_eq!(page.read(cx).shown_apps, 0);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn page_time_picker_preserves_every_range_and_set_range_path(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    for (ix, hours) in [1, 3, 24, 168].into_iter().enumerate() {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("obs-time", cx);
+            for _ in 0..=ix {
+                window.press("down", cx);
+            }
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(page.read(cx).hours(), hours));
+    }
+}
+
+#[gpui_kit::test]
+fn every_observability_destination_keeps_its_shared_header(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    for destination in Destination::NAVIGATION
+        .into_iter()
+        .chain([Destination::Application])
+    {
+        cx.update(|cx| page.update(cx, |page, cx| page.open(destination, cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("obs-title").visible());
+            assert!(window.find("obs-time").visible());
+            assert!(window.find("obs-refresh").visible());
+            let page_id = gpui_kit::ElementId::from("observability-page");
+            let refreshes = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .filter(|element| {
+                    element.path().contains(&page_id)
+                        && element.role() == Some(gpui_kit::Role::Button)
+                        && element
+                            .label()
+                            .is_some_and(|label| label.starts_with("Refresh"))
+                })
+                .count();
+            assert_eq!(
+                refreshes, 1,
+                "each Observability destination has one page refresh"
+            );
+            assert_eq!(window.find("obs-source").label(), Some("Example data"));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn applications_loading_failure_refusal_and_stale_keep_distinct_surfaces(cx: &mut TestAppContext) {
+    use freshkube_core::coroot as api;
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            page.fixture = false;
+            let provider =
+                api::Provider::new("http://127.0.0.1:1", api::Credentials::None).unwrap();
+            page.live.source = Some(provider.source(&api::ProjectInfo {
+                id: "p".into(),
+                name: "Project".into(),
+            }));
+            page.live.provider = Some(provider);
+            page.live.visible = false;
+            page.applications.clear();
+            page.project();
+            page.live.apps.begin(
+                page.live
+                    .identity(super::connection::Subject::Applications)
+                    .unwrap(),
+            );
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-loading").visible());
+        assert!(window.find("obs-title").visible());
+        assert!(window.try_find("obs-failed").is_none());
+    })
+    .unwrap();
+    for (error, surface) in [
+        (api::ReadError::Refused, "obs-refused"),
+        (api::ReadError::Missing, "obs-failed"),
+    ] {
+        cx.update(|cx| {
+            page.update(cx, |page, _| {
+                let request = page.live.apps.begin(
+                    page.live
+                        .identity(super::connection::Subject::Applications)
+                        .unwrap(),
+                );
+                page.live.apps.apply(&request, Err(error.to_string()));
+                page.live.capabilities[0] = api::Capability::Unavailable(error);
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find(surface).visible());
+            assert!(window.find("obs-retry").visible());
+            assert!(window.try_find("obs-loading").is_none());
+        })
+        .unwrap();
+    }
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            let identity = page
+                .live
+                .identity(super::connection::Subject::Applications)
+                .unwrap();
+            let request = page.live.apps.begin(identity.clone());
+            let apps = example::applications();
+            page.live.apps.apply(&request, Ok(apps.clone()));
+            page.apply_applications(&apps);
+            let request = page.live.apps.begin(identity);
+            page.live
+                .apps
+                .apply(&request, Err("Coroot could not be reached.".into()));
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-stale").visible());
+        assert_eq!(page.read(cx).shown_apps, 7);
+        assert!(page.read(cx).live.apps.last_successful().is_some());
+        assert!(window.try_find("obs-failed").is_none());
+        window.click("obs-retry", cx);
+        assert!(page.read(cx).live.apps.data().is_some());
+        assert!(page.read(cx).live.apps.last_successful().is_some());
+    })
+    .unwrap();
+}
+
+#[test]
+fn application_report_values_preserve_missing_and_healthy_states_without_glyphs() {
+    use super::Status;
+    let applications = super::projection::applications(&example::applications());
+    let worker = applications
+        .iter()
+        .find(|app| app.key == example::WORKER)
+        .unwrap();
+    assert_eq!(worker.label.as_ref(), "payments / worker · Deployment");
+    let missing = worker.check(Report::DiskIo);
+    assert_eq!(missing.value, "—");
+    assert_eq!(missing.status, Status::Absent);
+    assert!(missing.status.report_tone().is_none());
+    let unknown = worker.check(Report::Errors);
+    assert_eq!(unknown.value, "—");
+    assert_eq!(unknown.status, Status::Unknown);
+    assert!(unknown.status.report_tone().is_none());
+    let healthy = worker.check(Report::Cpu);
+    assert!(healthy.value.is_empty());
+    assert_eq!(healthy.status, Status::Ok);
+    assert!(healthy.status.report_tone().is_none());
+    assert!(
+        missing
+            .tooltip
+            .starts_with("payments / worker · Deployment")
+    );
+    assert!(!missing.tooltip.contains("fixture:"));
+    assert_eq!(
+        worker.check(Report::Net).status.report_tone(),
+        Some(super::Tone::Crit)
+    );
+    assert_eq!(
+        worker.check(Report::Logs).status.report_tone(),
+        Some(super::Tone::Warn)
+    );
 }

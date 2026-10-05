@@ -16,6 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{collections::BTreeMap, rc::Rc};
+mod application_columns;
 mod applications;
 mod connection;
 mod deployments;
@@ -24,6 +25,7 @@ mod example;
 mod fake_tests;
 mod format;
 mod frame;
+mod header;
 mod incidents;
 mod live_incidents;
 mod live_profiling;
@@ -77,11 +79,15 @@ pub(crate) struct ObservabilityPage {
     destination: Destination,
     applications: Vec<Application>,
     matrix: Vec<MatrixRow>,
+    application_table: freshkube_ui::table::TableState,
+    application_columns: Vec<application_columns::ApplicationColumn>,
+    hidden_application_columns: std::collections::BTreeSet<application_columns::ColumnKind>,
+    application_width: f32,
     counts: [usize; 7],
-    count_labels: [String; 7],
     app_count: String,
     filter: Filter,
-    category: Option<String>,
+    active_categories: Rc<std::collections::BTreeSet<String>>,
+    shown_apps: usize,
     namespace: Option<String>,
     query: Entity<InputState>,
     query_text: String,
@@ -223,11 +229,15 @@ impl ObservabilityPage {
             destination: Destination::Applications,
             applications: vec![],
             matrix: vec![],
+            application_table: freshkube_ui::table::TableState::new("obs-applications"),
+            application_columns: vec![],
+            hidden_application_columns: Default::default(),
+            application_width: 0.,
             counts: [0; 7],
-            count_labels: std::array::from_fn(|ix| format!("{} 0", Filter::ALL[ix].label())),
             app_count: "0".into(),
             filter: Filter::Problems,
-            category: None,
+            active_categories: Rc::new(["application".into()].into()),
+            shown_apps: 0,
             namespace: None,
             query,
             query_text: String::new(),
@@ -289,6 +299,7 @@ impl ObservabilityPage {
         }
         this.fill_from_memory(window, cx);
         this.project();
+        this.prepare_application_columns();
         this.prepare_map();
         this.prepare_report();
         this.prepare_release();
