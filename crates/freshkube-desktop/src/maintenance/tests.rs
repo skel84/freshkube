@@ -267,6 +267,7 @@ fn mount_at(
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
+        crate::text_size::install(None, cx);
         Theme::change(ThemeMode::Light, None, cx);
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -922,9 +923,10 @@ async fn the_install_disks_are_the_shared_table_and_only_a_button_chooses(cx: &m
     });
 }
 
-/// When the disk table is wider than its card, as in a 760-wide window, it
-/// scrolls sideways under the device, its flags and its button, which stay
-/// in view.
+/// When the disk table is wider than its card, as in a 760-wide window at
+/// 16 px text, it scrolls sideways under the device, its flags and its
+/// button, which stay in view. (At 20 px they would take more than the
+/// shared table's two thirds, and scroll with the rest.)
 #[gpui_kit::test]
 async fn a_disk_button_stays_in_view_when_the_table_scrolls(cx: &mut TestAppContext) {
     use freshkube_ui::table::TableSource;
@@ -936,6 +938,7 @@ async fn a_disk_button_stays_in_view_when_the_table_scrolls(cx: &mut TestAppCont
     });
     inspect(cx, handle, &view, &world).await;
     cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(16., cx);
         window.render_frame(cx);
         let before = window.find(("maint-disk-select", 0usize)).bounds();
         window.scroll(

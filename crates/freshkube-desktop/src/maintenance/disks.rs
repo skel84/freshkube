@@ -11,9 +11,9 @@ use super::*;
 const MAX_DISKS: usize = 256;
 /// One flag's room in the Flags column: the widest tag, Read-only, with its
 /// glyph. A usable disk shows only Selected, so most rows need one.
-const FLAG_WIDTH: f32 = 96.;
+const FLAG_WIDTH: f32 = 88.;
 /// The action column, as wide as its button.
-const ACTION_WIDTH: f32 = 148.;
+const ACTION_WIDTH: f32 = 108.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -247,10 +247,12 @@ impl TableSource for MaintenanceView {
             Field::Size => cell.child(row.size.clone()).into_any_element(),
             Field::Model => cell.child(row.model.clone()).into_any_element(),
             Field::Serial => cell.child(row.serial.clone()).into_any_element(),
+            // The rows are monospace; tags and buttons keep the UI's font.
             Field::Flags => cell
                 .flex()
                 .items_center()
                 .gap_1()
+                .font_family(cx.theme().font_family.clone())
                 .when(row.readonly, |this| {
                     this.child(ui::tag(Tone::Warn, None, "Read-only", cx))
                 })
@@ -268,7 +270,6 @@ impl TableSource for MaintenanceView {
                 .into_any_element(),
             Field::Action => {
                 let path = row.path.to_string();
-                // The rows are monospace; a button keeps the UI's font.
                 cell.flex()
                     .items_center()
                     .font_family(cx.theme().font_family.clone())
