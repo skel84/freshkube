@@ -25,6 +25,9 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let pane = self.node_workspace.open;
+        // A short window scrolls the list's frame, so the list keeps some
+        // rows; the pane lays out its own.
+        let short = !pane && freshkube_ui::page::is_short(window);
         // Only the table runs edge to edge; the cards, a state and the pane
         // keep the inset.
         let mut edge = false;
@@ -60,6 +63,10 @@ impl Pilot {
             self.joined_node_list(false, window, cx)
         };
         freshkube_ui::page::page("nodes-page")
+            .track_scroll(&self.node_workspace.page_scroll)
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
             .key_context("NodeWorkspace")
             .track_focus(&self.node_focus)
             .on_action(cx.listener(|view, _: &super::super::NextNode, window, cx| {
@@ -108,6 +115,9 @@ impl Pilot {
                 div()
                     .flex_1()
                     .min_h_0()
+                    .when(short, |this| {
+                        this.min_h(dp(freshkube_ui::page::SHORT_LIST_HEIGHT))
+                    })
                     .when(!edge, |this| {
                         this.px(dp(freshkube_ui::page::PANE_PADDING))
                             .py(dp(freshkube_ui::page::PANE_PADDING_Y))
@@ -181,6 +191,7 @@ impl Pilot {
             NodeTab::Overview => div()
                 .id("node-overview")
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .p(dp(16.))
                 .child(
                     v_flex()

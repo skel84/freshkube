@@ -442,7 +442,11 @@ pub(crate) fn set_chrome_width(width: f32) {
 }
 
 pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {
-    div().id(id).size_full().overflow_y_scroll()
+    div()
+        .id(id)
+        .size_full()
+        .overflow_y_scroll()
+        .restrict_scroll_to_axis()
 }
 
 pub(crate) fn page_body() -> Div {

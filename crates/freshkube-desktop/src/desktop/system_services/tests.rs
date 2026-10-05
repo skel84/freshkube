@@ -253,3 +253,35 @@ fn health_check_reaches_the_actions_when_the_table_scrolls(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_short_window_scrolls_the_frame_and_keeps_the_list_usable(cx: &mut TestAppContext) {
+    use freshkube_ui::page::SHORT_LIST_HEIGHT;
+    use gpui_kit::px;
+    for (width, height, text, short) in [(760., 560., 20., true), (1280., 880., 13., false)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            window.press("secondary-7", cx);
+            window.render_frame(cx);
+            let scroll = view.read(cx).system_services.read(cx).page_scroll.clone();
+            let page = window.find(SYSTEM_SERVICES.page).bounds();
+            let table = window.find(SYSTEM_SERVICES.table).bounds();
+            // The table runs to the end of the scrolled page, less the
+            // hairline under it.
+            let end = page.bottom() + scroll.max_offset().y;
+            assert!(end - table.bottom() <= px(1.5), "{table:?} in {page:?}");
+            if short {
+                assert!(scroll.max_offset().y > px(0.), "the frame doesn't scroll");
+                let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
+                assert!(
+                    table.size.height >= least,
+                    "the table is squeezed to {table:?}"
+                );
+            } else {
+                assert_eq!(scroll.max_offset().y, px(0.));
+            }
+        })
+        .unwrap();
+    }
+}

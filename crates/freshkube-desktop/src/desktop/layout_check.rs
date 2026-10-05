@@ -1,7 +1,8 @@
 //! Measures a page from the bounds its last frame painted, so a page that
 //! drifts from DESIGN.md fails a test instead of a review.
 //!
-//! `assert_page_frame` checks a padded page's padding and toolbar,
+//! `assert_page_frame` checks a padded page's padding and toolbar (and
+//! `assert_page_frame_from` one whose header leads with a breadcrumb),
 //! `assert_edge_frame` an edge-to-edge page's inset and toolbar,
 //! `assert_table` checks one table's header and rows (a page may hold
 //! several), and `assert_table_page` checks a table page with the edge
@@ -162,8 +163,23 @@ pub(crate) fn assert_page_frame(
     cx: &mut App,
     frame: &PageFrame,
 ) -> FrameLayout {
+    assert_page_frame_from(window, cx, frame, frame.title)
+}
+
+/// [`assert_page_frame`] for a header that leads with something before the
+/// title, such as a breadcrumb's parent: the left padding is measured from
+/// `lead`, and the toolbar checks still go by the title.
+pub(crate) fn assert_page_frame_from(
+    window: &mut Window,
+    cx: &mut App,
+    frame: &PageFrame,
+    lead: &str,
+) -> FrameLayout {
     window.render_frame(cx);
-    let layout = measure_frame(window, frame);
+    let mut layout = measure_frame(window, frame);
+    let root = window.find(frame.page).bounds();
+    let lead = window.find(SharedString::from(lead.to_owned())).bounds();
+    layout.padding_left = lead.left() - root.left();
     let dp = |n: f32| dp_px(n, window);
     close(
         window,

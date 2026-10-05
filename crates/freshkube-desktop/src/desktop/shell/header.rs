@@ -240,7 +240,7 @@ impl Pilot {
                                 div()
                                     .size(dp(26.))
                                     .flex_none()
-                                    .rounded(px(7.))
+                                    .rounded(px(8.))
                                     .bg(cx.theme().primary)
                                     .text_color(cx.theme().primary_foreground)
                                     .font_weight(ui::TITLE_WEIGHT)
@@ -290,6 +290,7 @@ impl Pilot {
                             .w(dp(360.))
                             .max_h(dp(400.))
                             .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
                             .gap_1()
                             .child(ui::caption("Change context · ⌥↑ ⌥↓", cx))
                             .children(view.contexts.iter().enumerate().map(|(ix, name)| {

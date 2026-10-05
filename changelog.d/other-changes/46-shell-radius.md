@@ -1,0 +1,1 @@
+- **Context switcher corners:** the context switcher's tile and the rows of its context list round at 8 px, the control radius, instead of 7.

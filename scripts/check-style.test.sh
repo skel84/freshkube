@@ -135,6 +135,27 @@ else
   failures=$((failures + 1))
 fi
 
+tree
+page scroll.rs <<'EOF'
+fn page() -> Div {
+    let list = div().id("list").overflow_y_scroll().restrict_scroll_to_axis();
+    let pane = div()
+        .id("pane")
+        .overflow_y_scroll()
+        .restrict_scroll_to_axis();
+    div().id("page").size_full().overflow_y_scroll().child(list).child(pane)
+}
+EOF
+expect 1 "a vertical scroll that takes sideways movement fails" "scroll crates/freshkube-desktop/src/scroll.rs:7:"
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --list)"
+if [ "$(grep -c '^scroll ' <<<"$out")" = 1 ]; then
+  echo "ok: a vertical scroll restricted to its axis passes"
+else
+  echo "FAIL: a vertical scroll restricted to its axis passes"
+  sed 's/^/    /' <<<"$out"
+  failures=$((failures + 1))
+fi
+
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
   exit 1

@@ -148,6 +148,10 @@ pub(super) struct Passing {
     scroll: ScrollHandle,
     run: f32,
     inset: Pixels,
+    /// A header's cell, whose label stays beside the run while any of the
+    /// cell shows; a row's long text shows its tail there, and a short
+    /// label would otherwise leave its column unnamed.
+    sticky: bool,
     child: AnyElement,
 }
 
@@ -162,7 +166,17 @@ impl Passing {
             scroll: scroll.clone(),
             run,
             inset,
+            sticky: false,
             child: child.into_any_element(),
+        }
+    }
+
+    /// A header cell that moves right to stay beside the run, clipped to
+    /// its own place.
+    pub(super) fn sticky(scroll: &ScrollHandle, run: f32, child: impl IntoElement) -> Self {
+        Self {
+            sticky: true,
+            ..Self::new(scroll, run, px(0.), child)
         }
     }
 }
@@ -202,23 +216,35 @@ impl Element for Passing {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
     ) -> Option<ContentMask<Pixels>> {
-        let mask = pins(&self.scroll, self.run, window).then(|| {
-            let view = self.scroll.bounds();
-            let left = (view.left() + self.inset + dp_px(self.run, window)).min(view.right());
-            ContentMask {
-                bounds: Bounds::from_corners(
-                    point(left, view.top()),
-                    point(view.right(), view.bottom()),
-                ),
-            }
+        if !pins(&self.scroll, self.run, window) {
+            self.child.prepaint(window, cx);
+            return None;
+        }
+        let view = self.scroll.bounds();
+        let left = (view.left() + self.inset + dp_px(self.run, window)).min(view.right());
+        let mut right = view.right();
+        let mut shift = px(0.);
+        if self.sticky {
+            shift = (left - bounds.left()).clamp(px(0.), bounds.size.width);
+            right = right.min(bounds.right());
+        }
+        let mask = ContentMask {
+            bounds: Bounds::from_corners(
+                point(left, view.top()),
+                point(right.max(left), view.bottom()),
+            ),
+        };
+        window.with_content_mask(Some(mask), |window| {
+            window.with_element_offset(point(shift, px(0.)), |window| {
+                self.child.prepaint(window, cx)
+            })
         });
-        window.with_content_mask(mask, |window| self.child.prepaint(window, cx));
-        mask
+        Some(mask)
     }
 
     fn paint(

@@ -144,6 +144,7 @@ impl Pilot {
             .flex_none()
             .items_center()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .py(dp(14.))
             .gap(dp(6.))
             .border_r_1()
@@ -201,6 +202,7 @@ impl Pilot {
             .test_support()
             .size_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .track_scroll(&self.obs_column_scroll)
             .gap(dp(4.));
         for item in items {

@@ -120,6 +120,7 @@ impl Render for ForwardsPanel {
             .w(dp(420.))
             .max_h(window.viewport_size().height - ui::dp_px(96., window))
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .p_1()
             .gap_2()
             .child(ui::caption("Port forwards", cx))

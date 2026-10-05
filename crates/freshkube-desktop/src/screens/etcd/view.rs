@@ -62,6 +62,7 @@ impl Render for EtcdScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .on_action(cx.listener(|view, _: &NextMember, _, cx| view.step(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousMember, _, cx| view.step(-1, cx)))
             .on_action(cx.listener(|view, _: &FirstMember, _, cx| view.step(isize::MIN, cx)))

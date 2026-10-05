@@ -8,7 +8,6 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
     menu::{DropdownMenu, PopupMenuItem},
-    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -20,81 +19,81 @@ use super::board::Board;
 use super::connection::{Connection, Missing};
 use super::layout::{NARROW, ROW_HEADER};
 use super::markers::MarkerToggle;
-use super::{MonitoringPage, Viewport};
+use super::{MonitoringEvent, MonitoringPage, Viewport};
 use crate::monitoring::panel::marker_glyph;
 use crate::monitoring::store::Choice;
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
+use freshkube_ui::page::{self, PageHeader};
 
 impl Render for MonitoringPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("monitoring-page");
-        let p = palette(cx);
         let narrow = crate::screens::content_width(window) < NARROW;
-        v_flex()
-            .id("monitoring-page")
+        page::padded("monitoring-page")
             .key_context("Monitoring")
             .track_focus(&self.focus)
-            .size_full()
-            .bg(p.surface_2)
-            .px(dp(20.))
-            .pt(dp(14.))
-            .gap(dp(10.))
-            .child(self.render_header(cx))
+            .child(self.render_header(window, cx))
             .children(self.render_variables(cx))
             .children(self.render_variable_error(cx))
             .child(div().flex_1().min_h_0().child(self.render_body(narrow, cx)))
-            .test_support()
     }
 }
 
 impl MonitoringPage {
-    /// "Dashboards / title", where the data comes from, the time picker
-    /// and auto-refresh.
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+    /// "Dashboards / title"; where the data comes from, the time picker,
+    /// refresh and auto-refresh; then the meta line.
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title = self.board.as_ref().map_or_else(
             || SharedString::from("Monitoring"),
             |board| board.title.clone(),
         );
-        h_flex()
-            .flex_none()
-            .flex_wrap()
-            .gap(dp(8.))
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(dp(12.5))
-                    .text_color(p.muted)
-                    .child("Dashboards"),
+        let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
+        let mut header = PageHeader::new("monitoring", title, narrow)
+            .parent(
+                "dashboards",
+                "Dashboards",
+                cx.listener(|_, _, _, cx| cx.emit(MonitoringEvent::Dashboards)),
             )
-            .child(div().flex_none().text_color(p.faint).child("/"))
-            .child(
-                div()
-                    .id("monitoring-title")
-                    .flex_1()
-                    .min_w(dp(120.))
-                    .truncate()
-                    .text_size(dp(20.))
-                    .font_weight(ui::TITLE_WEIGHT)
-                    .child(title)
-                    .test_support(),
+            .control(self.render_status(cx));
+        if let Some(board) = self.board.as_ref().filter(|board| board.error.is_none()) {
+            header = header.control(self.render_time(board, cx));
+        }
+        let header = header
+            .control(
+                Button::new("monitoring-refresh")
+                    .ghost()
+                    .small()
+                    .size(dp(ui::CONTROL_HEIGHT))
+                    .icon(IconName::RefreshCw)
+                    .tooltip("Refresh dashboard")
+                    .on_click(cx.listener(|page, _, _, cx| page.refresh(cx))),
             )
-            // Wraps as one, kept to the right.
-            .child(
-                h_flex()
-                    .flex_none()
-                    .ml_auto()
-                    .gap(dp(8.))
-                    .child(self.render_status(cx))
-                    .children(
-                        self.board
-                            .as_ref()
-                            .filter(|board| board.error.is_none())
-                            .map(|board| self.render_time(board, cx)),
-                    )
-                    .child(self.render_refresh(cx)),
-            )
+            .control(self.render_auto_refresh(cx))
+            .meta(self.render_meta());
+        header.render(cx)
+    }
+
+    /// The context, then the board's count, state and time. Example data and
+    /// "Not connected" are left to the source label, which already says so.
+    fn render_meta(&self) -> Vec<AnyElement> {
+        let context = match (&self.connection, &self.source) {
+            (Connection::Example, _) | (_, None) => None,
+            (_, Some(source)) => Some(SharedString::from(source.context.clone())),
+        };
+        let board = self
+            .board
+            .as_ref()
+            .filter(|board| board.error.is_none())
+            .map(|board| board.meta.clone());
+        let mut meta = Vec::new();
+        for part in context.into_iter().chain(board) {
+            if !meta.is_empty() {
+                meta.push(" · ".into_any_element());
+            }
+            meta.push(part.into_any_element());
+        }
+        meta
     }
 
     /// Where the answers come from, or what the page is waiting for.
@@ -117,6 +116,7 @@ impl MonitoringPage {
         h_flex()
             .id("monitoring-source")
             .flex_none()
+            .h(dp(ui::CONTROL_HEIGHT))
             .gap(dp(6.))
             .px(dp(4.))
             .font_family(ui::MONO_FONT)
@@ -139,6 +139,7 @@ impl MonitoringPage {
         Button::new("monitoring-range")
             .outline()
             .small()
+            .h(dp(ui::CONTROL_HEIGHT))
             .icon(IconName::Clock)
             .label(board.range_label.clone())
             .dropdown_caret(true)
@@ -159,47 +160,31 @@ impl MonitoringPage {
             .into_any_element()
     }
 
-    /// Refresh now, and the auto-refresh interval with a dot while on.
-    fn render_refresh(&self, cx: &Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+    /// The auto-refresh interval, with a good glyph while it's on.
+    fn render_auto_refresh(&self, cx: &Context<Self>) -> impl IntoElement {
         let page = cx.entity().downgrade();
         let every = self.refresh_every;
-        h_flex()
-            .flex_none()
-            .gap(dp(4.))
-            .child(
-                Button::new("monitoring-refresh")
-                    .outline()
-                    .small()
-                    .icon(IconName::RefreshCw)
-                    .tooltip("Read every panel again")
-                    .on_click(cx.listener(|page, _, _, cx| page.refresh(cx))),
-            )
-            .child(
-                Button::new("monitoring-auto-refresh")
-                    .outline()
-                    .small()
-                    .when(every.is_some(), |this| {
-                        this.child(div().size(dp(6.)).rounded_full().bg(p.good))
-                    })
-                    .label(refresh_label(every))
-                    .dropdown_caret(true)
-                    .tooltip("Auto-refresh while the page shows")
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for choice in REFRESH_CHOICES {
-                            let page = page.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(refresh_label(choice))
-                                    .checked(choice == every)
-                                    .on_click(move |_, _, cx| {
-                                        _ = page
-                                            .update(cx, |page, cx| page.set_refresh(choice, cx));
-                                    }),
-                            );
-                        }
-                        menu
-                    }),
-            )
+        Button::new("monitoring-auto-refresh")
+            .outline()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .children(every.and_then(|_| ui::status_glyph(ui::Tone::Good, cx)))
+            .label(refresh_label(every))
+            .dropdown_caret(true)
+            .tooltip("Auto-refresh while the page shows")
+            .dropdown_menu(move |mut menu, _, _| {
+                for choice in REFRESH_CHOICES {
+                    let page = page.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(refresh_label(choice))
+                            .checked(choice == every)
+                            .on_click(move |_, _, cx| {
+                                _ = page.update(cx, |page, cx| page.set_refresh(choice, cx));
+                            }),
+                    );
+                }
+                menu
+            })
     }
 
     /// One chip per shown variable: its name, then its value as a menu.
@@ -555,15 +540,26 @@ impl MonitoringPage {
             .id("monitoring-grid")
             .size_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .track_scroll(&self.scroll)
             .child(
                 div()
                     .relative()
                     .w_full()
-                    .h(dp(layout.height + 12.))
+                    .h(dp(layout.height))
                     .child(watch)
                     .children(rows)
-                    .children(panels),
+                    // One gap wider than the grid, so each place's share
+                    // carries its gutter and the last panel ends at the edge.
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right(dp(-gap))
+                            .h_full()
+                            .children(panels),
+                    ),
             )
             .test_support()
             .into_any_element()

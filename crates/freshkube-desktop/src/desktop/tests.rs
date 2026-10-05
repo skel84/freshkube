@@ -857,12 +857,14 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Nodes);
         assert_eq!(window.find("node-tab-processes").checked(), Some(true));
-        assert!(window.find("process-list").visible());
-        assert!(window.find(("process", 0usize)).visible());
+        assert!(window.find("processes-list").visible());
+        // Rows are keyed by PID. Init leads the first sample, which has no
+        // CPU deltas to sort by yet.
+        assert!(window.find(("process", 1usize)).visible());
         // Navigating focuses the list, so arrow keys work without a click.
         window.press("down", cx);
         window.render_frame(cx);
-        assert_eq!(window.find(("process", 0usize)).selected(), Some(true));
+        assert_eq!(window.find(("process", 1usize)).selected(), Some(true));
         // A node switch reaches the visible screen as a new target.
         pick_target(window, cx, 4);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
@@ -870,7 +872,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         assert!(window.find("partial-notice").visible());
         // The retained screen scrolls under the node header in a short pane.
         for _ in 0..10 {
-            if window.find("process-list").visible() {
+            if window.find("processes-list").visible() {
                 break;
             }
             window.scroll(
@@ -880,7 +882,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
             );
             window.render_frame(cx);
         }
-        assert!(window.find("process-list").visible());
+        assert!(window.find("processes-list").visible());
         for tab in [
             super::nodes::NodeTab::Storage,
             super::nodes::NodeTab::Network,
@@ -3056,6 +3058,31 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
     })
     .unwrap();
     cx.simulate_window_resize(handle, size(px(1280.), px(880.)));
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn monitoring_breadcrumb_opens_a_collapsed_dashboards_column(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Monitoring, window, cx));
+        window.render_frame(cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+        window.click("monitoring-dashboards", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+        window.render_frame(cx);
+        // An open column stays open.
+        window.click("monitoring-dashboards", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert!(!pilot.read(cx).column_collapsed(window));
     })

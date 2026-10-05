@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{
+    AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent,
+    Size, TestAppContext, TouchPhase, Window, WindowHandle, point, px, size,
+};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -62,6 +65,14 @@ fn mount(
     cx: &mut TestAppContext,
     node: &str,
 ) -> (Runtime, Entity<StorageScreen>, WindowHandle<Root>) {
+    mount_in(cx, node, size(px(1100.), px(760.)))
+}
+
+fn mount_in(
+    cx: &mut TestAppContext,
+    node: &str,
+    bounds: Size<Pixels>,
+) -> (Runtime, Entity<StorageScreen>, WindowHandle<Root>) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -73,7 +84,7 @@ fn mount(
     });
     let source = source(node);
     let mut screen = None;
-    let handle = cx.open_window(size(px(1100.), px(760.)), |window, cx| {
+    let handle = cx.open_window(bounds, |window, cx| {
         let view = cx.new(|cx| {
             let mut view = StorageScreen::new(runtime.handle().clone(), window, cx);
             view.set_source(Some(source), window, cx);
@@ -280,6 +291,59 @@ fn volumes_show_their_phase_glyph_and_disks_only_a_warning(cx: &mut TestAppConte
         window.render_frame(cx);
         window.find("volume-EPHEMERAL-state");
         window.find("volume-EFI-state");
+    })
+    .unwrap();
+}
+
+/// One wheel event at `position`, as the start of a gesture.
+fn wheel(window: &mut Window, position: Point<Pixels>, x: f32, y: f32, cx: &mut gpui_kit::App) {
+    window.dispatch_event(
+        MouseMoveEvent {
+            position,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.dispatch_event(
+        ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(x), px(y))),
+            touch_phase: TouchPhase::Started,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.render_frame(cx);
+}
+
+/// In a window too small for the page and the disks' columns, a sideways
+/// wheel over the disks scrolls their columns and leaves the page where it
+/// was: the page's vertical scroll doesn't take the sideways movement for
+/// its own. A plain wheel at the same place still scrolls the page.
+#[gpui_kit::test]
+fn a_sideways_wheel_over_the_disks_leaves_the_page_where_it_was(cx: &mut TestAppContext) {
+    let (_runtime, _screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(640.), px(480.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let table = window.find("storage-disks-table-scroll").bounds();
+        let bottom = window.viewport_size().height;
+        assert!(table.top() + px(40.) < bottom, "the disks don't show");
+        let at = point(table.center().x, table.top() + px(30.));
+        let model = ("storage-disks-sort", 6usize);
+        let left = window.find(model).bounds().left();
+
+        wheel(window, at, -120., 0., cx);
+        let moved = left - window.find(model).bounds().left();
+        assert!(moved > px(10.), "the columns didn't scroll: {moved:?}");
+        let fell = table.top() - window.find("storage-disks-table-scroll").bounds().top();
+        assert!(fell.abs() < px(0.5), "the page scrolled {fell:?}");
+
+        wheel(window, at, 0., -60., cx);
+        let fell = table.top() - window.find("storage-disks-table-scroll").bounds().top();
+        assert!(fell > px(10.), "the page didn't scroll: {fell:?}");
     })
     .unwrap();
 }

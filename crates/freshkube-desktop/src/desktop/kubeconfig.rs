@@ -347,6 +347,7 @@ pub(super) fn settings_section(
                     .aria_label("Kubeconfig contexts")
                     .max_h(dp(132.))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .children(info.contexts.iter().enumerate().map(|(ix, name)| {
                         let selected = applied_context.as_ref() == Some(name);
                         let row_pilot = pilot.downgrade();
