@@ -139,8 +139,16 @@ fn range(hours: u32, to: chrono::DateTime<chrono::Utc>) -> api::TimeRange {
 fn range_label(range: api::TimeRange) -> String {
     format!(
         "{} — {}",
-        ui::clock(range.from.unwrap().into()),
-        ui::clock(range.to.unwrap().into())
+        range
+            .from
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S"),
+        range
+            .to
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
     )
 }
 
@@ -202,6 +210,8 @@ impl ObservabilityPage {
             self.cluster_ids.clear();
             self.counts = [0; 7];
             self.active_categories = Rc::new(["application".into()].into());
+            self.all_categories = false;
+            self.category_defaults_pending = true;
             self.shown_apps = 0;
             self.app_count = "0 apps".into();
             self.prepare_application_columns();
@@ -519,6 +529,32 @@ mod tests {
     use freshkube_core::coroot::{
         AppId, Association, Credentials, ProjectInfo, Provider, TimeRange,
     };
+    #[test]
+    fn day_and_week_tooltips_include_both_local_dates() {
+        let end = chrono::DateTime::from_timestamp(1_790_000_000, 0).unwrap();
+        for hours in [24, 168] {
+            let range = super::range(hours, end);
+            let label = super::range_label(range);
+            let (from, to) = label.split_once(" — ").unwrap();
+            assert_eq!(
+                from,
+                range
+                    .from
+                    .unwrap()
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            );
+            assert_eq!(
+                to,
+                end.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            );
+            assert_ne!(&from[..10], &to[..10]);
+        }
+    }
+
     #[test]
     fn every_request_coordinate_rejects_delayed_success_and_failure() {
         let provider = Provider::new("https://coroot.example.com", Credentials::None).unwrap();

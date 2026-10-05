@@ -983,3 +983,77 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn traces_and_profiling_first_read_failures_show_retry_and_recover(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            let provider = api::Provider::new(&server.url, api::Credentials::None).unwrap();
+            page.live.source = Some(provider.source(&api::ProjectInfo {
+                id: "p1".into(),
+                name: "Test project".into(),
+            }));
+            page.live.provider = Some(provider);
+            let app = api::Application {
+                id: api::AppId::new("cluster-a:prod:Deployment:api"),
+                cluster: "Test cluster".into(),
+                category: "application".into(),
+                app_type: "Go".into(),
+                status: api::Status::Ok,
+                signals: Default::default(),
+            };
+            page.selected_app = Some(app.id.clone());
+            page.apply_applications(&[app]);
+        })
+    });
+    for destination in [Destination::Traces, Destination::Profiling] {
+        for status in [403, 500] {
+            server.status.store(status, Ordering::SeqCst);
+            cx.update(|cx| {
+                page.update(cx, |page, cx| {
+                    page.live.tracing = Default::default();
+                    page.live.profiling = Default::default();
+                    page.open(destination, cx);
+                })
+            });
+            let observed = page.clone();
+            cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+                let page = observed.read(cx);
+                match destination {
+                    Destination::Traces => page.live.tracing.error().is_some(),
+                    _ => page.live.profiling.error().is_some(),
+                }
+            })
+            .await;
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(
+                    window.find("obs-failed").visible(),
+                    "{destination:?} first {status}"
+                );
+                assert!(window.find("obs-retry").visible());
+                assert!(window.try_find("obs-stale").is_none());
+                server.status.store(200, Ordering::SeqCst);
+                window.click("obs-retry", cx);
+            })
+            .unwrap();
+            let observed = page.clone();
+            cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+                let page = observed.read(cx);
+                match destination {
+                    Destination::Traces => page.live.tracing.data().is_some(),
+                    _ => page.live.profiling.data().is_some(),
+                }
+            })
+            .await;
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.try_find("obs-failed").is_none());
+            })
+            .unwrap();
+        }
+    }
+}

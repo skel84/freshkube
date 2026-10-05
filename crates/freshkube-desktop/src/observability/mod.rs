@@ -88,6 +88,10 @@ pub(crate) struct ObservabilityPage {
     app_count: String,
     filter: Filter,
     active_categories: Rc<std::collections::BTreeSet<String>>,
+    all_categories: bool,
+    category_defaults_pending: bool,
+    namespace_select: Entity<SelectState<SearchableVec<applications_header::NamespaceChoice>>>,
+    namespace_select_source: Rc<Vec<String>>,
     shown_apps: usize,
     namespace: Option<String>,
     query: Entity<InputState>,
@@ -167,7 +171,25 @@ impl ObservabilityPage {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
                 .searchable(true)
         });
+        let namespace_select = cx.new(|cx| {
+            SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
+                .searchable(true)
+        });
         let subscriptions = vec![
+            cx.subscribe(
+                &namespace_select,
+                |this,
+                 _,
+                 event: &SelectEvent<SearchableVec<applications_header::NamespaceChoice>>,
+                 cx| {
+                    if let SelectEvent::Confirm(Some(namespace)) = event {
+                        this.namespace = namespace.clone();
+                        this.project_filters();
+                        cx.notify();
+                    }
+                },
+            ),
+            cx.observe(&namespace_select, |_, _, cx| cx.notify()),
             cx.subscribe(
                 &app_select,
                 |this, _, event: &SelectEvent<SearchableVec<view::AppChoice>>, cx| {
@@ -192,7 +214,7 @@ impl ObservabilityPage {
             cx.subscribe(&query, |this, query, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.query_text = query.read(cx).value().to_lowercase();
-                    this.project();
+                    this.project_filters();
                     cx.notify();
                 }
             }),
@@ -238,6 +260,10 @@ impl ObservabilityPage {
             app_count: "0".into(),
             filter: Filter::Problems,
             active_categories: Rc::new(["application".into()].into()),
+            all_categories: false,
+            category_defaults_pending: true,
+            namespace_select,
+            namespace_select_source: Default::default(),
             shown_apps: 0,
             namespace: None,
             query,

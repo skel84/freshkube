@@ -14,7 +14,7 @@ pub(crate) struct ApplicationCells<'a> {
 }
 
 impl ObservabilityPage {
-    pub(super) fn render_applications(
+    pub(in crate::observability) fn render_applications(
         &self,
         window: &Window,
         cx: &mut Context<Self>,
@@ -32,16 +32,11 @@ impl ObservabilityPage {
     fn clear_application_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.filter = Filter::All;
         self.namespace = None;
-        self.active_categories = Rc::new(
-            self.categories
-                .iter()
-                .map(|choice| choice.name.clone())
-                .collect(),
-        );
+        self.all_categories = true;
         self.query_text.clear();
         self.query
             .update(cx, |query, cx| query.set_value("", window, cx));
-        self.project();
+        self.project_filters();
         cx.notify();
     }
 }
@@ -85,7 +80,7 @@ impl TableSource for ObservabilityPage {
             key: app.id.clone(),
             id: app.row_id.clone().into(),
             label: app.label.clone(),
-            tooltip: Some(app.label.clone()),
+            tooltip: None,
             marked: false,
             muted: false,
             data: ApplicationCells { app },
@@ -134,11 +129,11 @@ impl TableSource for ObservabilityPage {
             ColumnKind::Report(report) => {
                 let check = app.check(report);
                 let app_id = app.id.clone();
-                let problem = check.status.report_tone();
-                let color = match problem {
-                    Some(Tone::Crit) => p.crit_ink,
-                    Some(Tone::Warn) => p.warn_ink,
-                    _ if check.value.as_ref() == "—" => p.muted,
+                let glyph = check.status.report_tone();
+                let color = match check.status {
+                    Status::Critical => p.crit_ink,
+                    Status::Warning | Status::LogError => p.warn_ink,
+                    Status::Absent | Status::Unknown => p.muted,
                     _ => p.ink_2,
                 };
                 cell.child(
@@ -154,7 +149,7 @@ impl TableSource for ObservabilityPage {
                         .font_family(MONO_FONT)
                         .text_size(dp(12.))
                         .text_color(color)
-                        .children(problem.and_then(|tone| ui::status_glyph(tone, cx)))
+                        .children(glyph.and_then(|tone| ui::status_glyph(tone, cx)))
                         .child(text(check.value.clone()).flex_1().text_size(dp(12.)))
                         .tooltip(check.tooltip.clone())
                         .accessibility_label(check.label.clone())
@@ -241,7 +236,7 @@ impl TableSource for ObservabilityPage {
                     .label("Show all")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.filter = Filter::All;
-                        this.project();
+                        this.project_filters();
                         cx.notify();
                     })),
                 cx,
@@ -250,7 +245,7 @@ impl TableSource for ObservabilityPage {
         ]
     }
     fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        const HINT: &str = "Glyphs show healthy, warning, critical, unknown or integration required. Healthy report values are plain; warning and critical reports carry a glyph. An em dash means no report.";
+        const HINT: &str = "Glyphs show healthy, warning, critical or unknown. Healthy report values are plain; healthy checks without figures read ok; unknown, warning and critical reports carry a glyph. An em dash means no report.";
         if crate::screens::content_width(window) < 600. {
             return Some(
                 table::legend_line(
@@ -268,11 +263,10 @@ impl TableSource for ObservabilityPage {
             (Tone::Warn, "Warning"),
             (Tone::Crit, "Critical"),
             (Tone::Unknown, "Unknown"),
-            (Tone::Integration, "Integration required"),
         ]
         .into_iter()
         .map(|(tone, label)| {
-            table::legend_item(ui::status_glyph(tone, cx).unwrap(), label).into_any_element()
+            table::legend_item(div().children(ui::status_glyph(tone, cx)), label).into_any_element()
         })
         .collect();
         items.push(table::legend_item(text("12%"), "Reported value").into_any_element());

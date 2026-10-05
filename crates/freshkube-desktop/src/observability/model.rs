@@ -182,7 +182,7 @@ pub(super) enum Filter {
     Critical,
     Warning,
     Logs,
-    Integration,
+    Unknown,
     Ok,
 }
 impl Filter {
@@ -192,7 +192,7 @@ impl Filter {
         Self::Critical,
         Self::Warning,
         Self::Logs,
-        Self::Integration,
+        Self::Unknown,
         Self::Ok,
     ];
     pub(super) fn label(self) -> &'static str {
@@ -202,7 +202,7 @@ impl Filter {
             Self::Critical => "Critical",
             Self::Warning => "Warning",
             Self::Logs => "Errors in logs",
-            Self::Integration => "Integration",
+            Self::Unknown => "Unknown",
             Self::Ok => "OK",
         }
     }
@@ -213,7 +213,7 @@ impl Filter {
             Self::Critical => "critical",
             Self::Warning => "warning",
             Self::Logs => "logs",
-            Self::Integration => "integration",
+            Self::Unknown => "unknown",
             Self::Ok => "ok",
         }
     }
@@ -230,7 +230,7 @@ impl Filter {
                 app.check(Report::Logs).status,
                 Status::Warning | Status::Critical | Status::LogError
             ),
-            Self::Integration => app.status == Status::Unknown,
+            Self::Unknown => app.status == Status::Unknown,
             Self::Ok => app.status == Status::Ok,
         }
     }

@@ -1,28 +1,31 @@
 //! Applications header controls; filtering derives the table projection.
 use super::*;
+use gpui_kit::component::button::ButtonGroup;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 impl ObservabilityPage {
-    pub(super) fn applications_header(&self, window: &Window, cx: &Context<Self>) -> Div {
-        let header = self.page_header(window);
-        let segment = line()
-            .gap(dp(2.))
-            .p(dp(3.))
-            .rounded(px(8.))
-            .bg(palette(cx).surface_2)
+    pub(in crate::observability) fn applications_header(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let header = self.source_header(self.page_header(window), cx);
+        let segment = ButtonGroup::new("obs-view")
+            .outline()
+            .small()
             .children([Filter::Problems, Filter::All].into_iter().map(|filter| {
-                ui::segment(
-                    Button::new(SharedString::from(format!("obs-filter-{}", filter.slug()))),
-                    self.filter == filter,
-                    cx,
-                )
-                .small()
-                .label(filter.label())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.filter = filter;
-                    this.project();
-                    cx.notify();
-                }))
+                Button::new(SharedString::from(format!("obs-filter-{}", filter.slug())))
+                    .label(filter.label())
+                    .selected(self.filter == filter)
+            }))
+            .on_click(cx.listener(|this, choices: &Vec<usize>, _, cx| {
+                this.filter = if choices.first() == Some(&0) {
+                    Filter::Problems
+                } else {
+                    Filter::All
+                };
+                this.project_filters();
+                cx.notify();
             }));
         let chips = freshkube_ui::table::status_chips(
             "obs-tallies",
@@ -36,7 +39,7 @@ impl ObservabilityPage {
                         match filter {
                             Filter::Critical => Tone::Crit,
                             Filter::Warning => Tone::Warn,
-                            Filter::Integration => Tone::Integration,
+                            Filter::Unknown => Tone::Unknown,
                             Filter::Logs => Tone::Warn,
                             _ => Tone::Good,
                         },
@@ -45,38 +48,49 @@ impl ObservabilityPage {
                         self.filter == filter,
                         cx,
                     )
+                    .when(filter == Filter::Logs, |chip| chip.child("logs"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.filter = if this.filter == filter {
                             Filter::All
                         } else {
                             filter
                         };
-                        this.project();
+                        this.project_filters();
                         cx.notify();
                     }))
                 }),
             cx,
         );
-        let categories = line()
+        let categories = ButtonGroup::new("obs-categories")
+            .outline()
+            .small()
+            .multiple(true)
+            .min_w_0()
             .flex_wrap()
             .children(self.categories.iter().take(6).map(|category| {
-                let name = category.name.clone();
                 Button::new(category.id.clone())
-                    .ghost()
-                    .small()
-                    .label(name.clone())
-                    .selected(self.active_categories.contains(&name))
+                    .label(category.name.clone())
+                    .selected(
+                        self.all_categories || self.active_categories.contains(&category.name),
+                    )
                     .accessibility_label(category.label.clone())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let active = Rc::make_mut(&mut this.active_categories);
-                        if !active.remove(&name) {
-                            active.insert(name.clone());
-                        }
-                        this.project();
-                        cx.notify();
-                    }))
+            }))
+            .on_click(cx.listener(|this, choices: &Vec<usize>, _, cx| {
+                this.choose_categories();
+                let active = Rc::make_mut(&mut this.active_categories);
+                for category in this.categories.iter().take(6) {
+                    active.remove(&category.name);
+                }
+                for ix in choices {
+                    if let Some(category) = this.categories.get(*ix) {
+                        active.insert(category.name.clone());
+                    }
+                }
+                this.project_filters();
+                cx.notify();
             }));
-        let categories = categories.when(self.categories.len() > 6, |row| {
+        let categories = line().flex_wrap().child(categories);
+        let categories = categories.when(!self.categories.is_empty(), |row| {
             row.child(self.more_categories(cx))
         });
         let filter = div().child(
@@ -96,70 +110,70 @@ impl ObservabilityPage {
         } else {
             self.app_count.clone()
         };
-        let mut meta = vec![count.into_any_element()];
+        let mut meta = vec![" · ".into_any_element(), count.into_any_element()];
         if self.live.apps.is_stale() {
             meta.push(" · stale".into_any_element());
         }
-        if let Some(time) = self.live.apps.last_successful() {
+        if let Some(time) = self
+            .live
+            .apps
+            .last_successful()
+            .or_else(|| self.fixture.then(|| self.live.time_origin.into()))
+        {
             meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
         }
         self.time_controls(
-            self.source_header(
-                header
-                    .filter(filter)
-                    .chips(Some(
-                        v_flex()
-                            .gap(dp(4.))
-                            .child(line().flex_wrap().child(segment).child(chips))
-                            .child(categories),
-                    ))
-                    .meta(meta),
-                cx,
-            )
-            .control(self.namespace_picker(cx))
-            .control(self.application_density(cx))
-            .control(self.application_columns_menu(cx)),
+            header
+                .filter(filter)
+                .chips(Some(
+                    v_flex()
+                        .gap(dp(4.))
+                        .child(line().flex_wrap().child(segment).child(chips))
+                        .child(categories),
+                ))
+                .meta(meta)
+                .control(self.namespace_picker(cx))
+                .control(self.application_density(cx))
+                .control(self.application_columns_menu(cx)),
             cx,
         )
         .render(cx)
     }
-}
+    fn namespace_picker(&self, _: &Context<Self>) -> AnyElement {
+        Select::new(&self.namespace_select)
+            .id("obs-namespace")
+            .small()
+            .w(dp(132.))
+            .menu_width(dp(260.))
+            .search_placeholder("Find a namespace")
+            .accessibility_label("Application namespace")
+            .into_any_element()
+    }
 
-impl ObservabilityPage {
-    fn namespace_picker(&self, cx: &Context<Self>) -> AnyElement {
-        let owner = cx.entity().downgrade();
-        let namespace = self.namespace.clone();
-        let choices = self.namespaces.clone();
-        action(
-            "obs-namespace",
-            namespace.clone().unwrap_or_else(|| "All namespaces".into()),
-        )
-        .dropdown_caret(true)
-        .max_w(dp(150.))
-        .overflow_hidden()
-        .accessibility_label("Application namespace")
-        .dropdown_menu(move |mut menu, _, _| {
-            for next in std::iter::once(None).chain(choices.iter().take(100).cloned().map(Some)) {
-                let owner = owner.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(next.clone().unwrap_or_else(|| "All namespaces".into()))
-                        .checked(namespace == next)
-                        .on_click(move |_, _, cx| {
-                            _ = owner.update(cx, |this, cx| {
-                                this.namespace = next.clone();
-                                this.project();
-                                cx.notify();
-                            });
-                        }),
+    pub(in crate::observability) fn sync_namespace_select(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stale = !Rc::ptr_eq(&self.namespace_select_source, &self.namespaces);
+        let selected = self.namespace_select.read(cx).selected_value();
+        if !stale && selected == Some(&self.namespace) {
+            return;
+        }
+        let current = self.namespace.clone();
+        self.namespace_select_source = self.namespaces.clone();
+        self.namespace_select.update(cx, |state, cx| {
+            if stale {
+                state.set_items(
+                    namespace_choices(&self.namespaces, current.as_deref()),
+                    window,
+                    cx,
                 );
             }
-            menu
-        })
-        .into_any_element()
+            state.set_selected_value(&current, window, cx);
+        });
     }
-}
 
-impl ObservabilityPage {
     fn application_density(&self, cx: &Context<Self>) -> Button {
         Button::new("obs-density")
             .outline()
@@ -217,13 +231,11 @@ impl ObservabilityPage {
             })
             .into_any_element()
     }
-}
-
-impl ObservabilityPage {
     fn more_categories(&self, cx: &Context<Self>) -> AnyElement {
         let owner = cx.entity().downgrade();
         let categories = self.categories.clone();
         let active = self.active_categories.clone();
+        let all = self.all_categories;
         Button::new("obs-more-categories")
             .ghost()
             .small()
@@ -231,36 +243,29 @@ impl ObservabilityPage {
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {
                 let all_owner = owner.clone();
-                let all_categories = categories.clone();
-                menu = menu.item(
-                    PopupMenuItem::new("All categories")
-                        .checked(active.len() == categories.len())
-                        .on_click(move |_, _, cx| {
-                            _ = all_owner.update(cx, |this, cx| {
-                                this.active_categories = Rc::new(
-                                    all_categories
-                                        .iter()
-                                        .map(|choice| choice.name.clone())
-                                        .collect(),
-                                );
-                                this.project();
-                                cx.notify();
-                            });
-                        }),
-                );
+                menu = menu.item(PopupMenuItem::new("All categories").checked(all).on_click(
+                    move |_, _, cx| {
+                        _ = all_owner.update(cx, |this, cx| {
+                            this.all_categories = true;
+                            this.project_filters();
+                            cx.notify();
+                        });
+                    },
+                ));
                 for category in categories.iter().skip(6).take(94) {
                     let owner = owner.clone();
                     let category = category.name.clone();
                     menu = menu.item(
                         PopupMenuItem::new(category.clone())
-                            .checked(active.contains(&category))
+                            .checked(all || active.contains(&category))
                             .on_click(move |_, _, cx| {
                                 _ = owner.update(cx, |this, cx| {
+                                    this.choose_categories();
                                     let active = Rc::make_mut(&mut this.active_categories);
                                     if !active.remove(&category) {
                                         active.insert(category.clone());
                                     }
-                                    this.project();
+                                    this.project_filters();
                                     cx.notify();
                                 });
                             }),
@@ -277,5 +282,69 @@ impl ObservabilityPage {
                 menu
             })
             .into_any_element()
+    }
+}
+
+/// A namespace choice, or a disabled notice when the menu is capped.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::observability) struct NamespaceChoice {
+    label: SharedString,
+    value: Option<String>,
+    notice: bool,
+}
+impl SelectItem for NamespaceChoice {
+    type Value = Option<String>;
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+    fn value(&self) -> &Self::Value {
+        &self.value
+    }
+    fn disabled(&self) -> bool {
+        self.notice
+    }
+}
+fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<NamespaceChoice> {
+    let mut choices = vec![NamespaceChoice {
+        label: "All namespaces".into(),
+        value: None,
+        notice: false,
+    }];
+    let choice = |name: &str| NamespaceChoice {
+        label: name.to_owned().into(),
+        value: Some(name.to_owned()),
+        notice: false,
+    };
+    choices.extend(names.iter().take(100).map(|name| choice(name)));
+    if let Some(current) =
+        current.filter(|current| !names.iter().take(100).any(|name| name == current))
+    {
+        choices.push(choice(current));
+    }
+    if names.len() > 100 {
+        choices.push(NamespaceChoice {
+            label: "First 100 choices · All namespaces includes the rest".into(),
+            value: None,
+            notice: true,
+        });
+    }
+    SearchableVec::new(choices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::component::searchable_list::SearchableListDelegate;
+
+    #[test]
+    fn capped_namespaces_explain_the_limit_and_keep_the_selected_namespace() {
+        let names: Vec<_> = (0..120).map(|ix| format!("ns-{ix:03}")).collect();
+        let choices = namespace_choices(&names, Some("ns-119"));
+        assert_eq!(choices.items_count(0), 103);
+        let selected = choices.item(IndexPath::default().row(101)).unwrap();
+        assert_eq!(selected.value().as_deref(), Some("ns-119"));
+        let note = choices.item(IndexPath::default().row(102)).unwrap();
+        assert!(note.disabled());
+        assert!(note.title().starts_with("First 100 choices"));
     }
 }

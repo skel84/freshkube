@@ -11,16 +11,17 @@ pub(super) fn status(state: Status, cx: &App) -> AnyElement {
             .bg(p.accent)
             .flex_none()
             .into_any_element(),
-        _ => ui::status_glyph(
-            match state {
-                Status::Ok => Tone::Good,
-                Status::Warning => Tone::Warn,
-                Status::Critical => Tone::Crit,
-                _ => Tone::Unknown,
-            },
-            cx,
-        )
-        .unwrap(),
+        _ => div()
+            .children(ui::status_glyph(
+                match state {
+                    Status::Ok => Tone::Good,
+                    Status::Warning => Tone::Warn,
+                    Status::Critical => Tone::Crit,
+                    _ => Tone::Unknown,
+                },
+                cx,
+            ))
+            .into_any_element(),
     }
 }
 pub(super) fn text(value: impl Into<SharedString>) -> Div {

@@ -31,8 +31,6 @@ impl Report {
 }
 impl From<api::Status> for Status {
     fn from(value: api::Status) -> Self {
-        // Coroot's five health states carry Unknown unchanged. Integration
-        // is a presentation tone on the filter, never a provider status.
         match value {
             api::Status::Ok => Self::Ok,
             api::Status::Unknown => Self::Unknown,
@@ -55,6 +53,7 @@ impl Status {
         match self {
             Self::Critical => Some(Tone::Crit),
             Self::Warning | Self::LogError => Some(Tone::Warn),
+            Self::Unknown => Some(Tone::Unknown),
             _ => None,
         }
     }
@@ -91,7 +90,8 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
                 let raw_value = signal.map_or("", |s| s.value.as_str());
                 let value: String = match state {
                     Status::Absent => "—".into(),
-                    Status::Unknown if raw_value.is_empty() => "—".into(),
+                    Status::Ok if raw_value.is_empty() => "ok".into(),
+                    Status::Info if raw_value.is_empty() => "info".into(),
                     _ if raw_value.chars().count() > 24 => state.label().into(),
                     _ => raw_value.to_owned(),
                 };
@@ -108,7 +108,16 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
                         }
                     )
                     .into(),
-                    label: format!("{}: {value}", report.label()).into(),
+                    label: format!(
+                        "{}: {}",
+                        report.label(),
+                        if raw_value.is_empty() {
+                            state.label().to_lowercase()
+                        } else {
+                            format!("{} · {raw_value}", state.label().to_lowercase())
+                        }
+                    )
+                    .into(),
                     value: value.into(),
                     element_id: format!("obs-check-{}-{}", app.id, report.slug()).into(),
                 }
@@ -190,6 +199,7 @@ pub(super) fn map(
 
 impl ObservabilityPage {
     pub(super) fn apply_applications(&mut self, raw: &[api::Application]) {
+        let first_observation = self.category_defaults_pending && !raw.is_empty();
         self.applications = applications(raw);
         self.prepare_application_columns();
         self.categories = self
@@ -205,6 +215,18 @@ impl ObservabilityPage {
             })
             .collect::<Vec<_>>()
             .into();
+        if first_observation
+            && !self.all_categories
+            && !self
+                .categories
+                .iter()
+                .any(|choice| self.active_categories.contains(&choice.name))
+        {
+            self.all_categories = true;
+        }
+        if first_observation {
+            self.category_defaults_pending = false;
+        }
         self.namespaces = self
             .applications
             .iter()
@@ -245,6 +267,27 @@ impl ObservabilityPage {
 }
 
 impl ObservabilityPage {
+    /// User filters start at the first row; observations preserve the current position.
+    pub(super) fn project_filters(&mut self) {
+        self.project();
+        self.application_table
+            .scroll
+            .scroll_to_item_strict(0, ScrollStrategy::Top);
+    }
+
+    pub(super) fn choose_categories(&mut self) {
+        self.category_defaults_pending = false;
+        if self.all_categories {
+            self.active_categories = Rc::new(
+                self.categories
+                    .iter()
+                    .map(|choice| choice.name.clone())
+                    .collect(),
+            );
+            self.all_categories = false;
+        }
+    }
+
     pub(super) fn project(&mut self) {
         self.matrix.clear();
         self.counts = [0; 7];
@@ -261,7 +304,7 @@ impl ObservabilityPage {
             let mut shown = vec![];
             let mut worst = Status::Ok;
             for (index, app) in apps.iter().enumerate() {
-                if !self.active_categories.contains(&app.category)
+                if (!self.all_categories && !self.active_categories.contains(&app.category))
                     || !app.search.contains(&self.query_text)
                     || self
                         .namespace

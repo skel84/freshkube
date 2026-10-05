@@ -12,13 +12,7 @@ impl ObservabilityPage {
         } else {
             self.destination.label()
         };
-        // Applications has source and table controls, so it stacks earlier.
-        let breakpoint = if self.destination == Destination::Applications {
-            1400.
-        } else {
-            page::HEADER_NARROW
-        };
-        let narrow = crate::screens::content_width(window) < breakpoint;
+        let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
         PageHeader::new("obs", title.to_owned(), narrow)
     }
 
@@ -52,14 +46,6 @@ impl ObservabilityPage {
             .aria_label(host.clone())
             .flex_none()
             .text_size(dp(12.))
-            .children(ui::status_glyph(
-                if self.fixture || self.live.source.is_some() {
-                    Tone::Good
-                } else {
-                    Tone::Unknown
-                },
-                cx,
-            ))
             .child(
                 text(host.clone())
                     .max_w(dp(140.))
@@ -67,7 +53,7 @@ impl ObservabilityPage {
                     .text_color(p.muted),
             )
             .tooltip(move |window, cx| Tooltip::new(host.clone()).build(window, cx));
-        let mut header = header.control(source);
+        let mut header = header.meta([source.into_any_element()]);
         if !self.fixture {
             header = header.control(self.project_picker(cx));
         }

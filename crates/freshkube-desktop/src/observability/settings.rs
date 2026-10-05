@@ -22,9 +22,28 @@ impl ObservabilityPage {
                 self.live.incidents.is_loading(),
                 self.live.incidents.error(),
             ),
+            Destination::Traces => (
+                self.live.tracing.data().is_some(),
+                self.live.tracing.is_loading(),
+                self.live.tracing.error().or_else(|| self.live.apps.error()),
+            ),
+            Destination::Profiling => (
+                self.live.profiling.data().is_some(),
+                self.live.profiling.is_loading(),
+                self.live
+                    .profiling
+                    .error()
+                    .or_else(|| self.live.apps.error()),
+            ),
             _ => return None,
         };
-        if has_data {
+        if has_data
+            || (matches!(
+                self.destination,
+                Destination::Traces | Destination::Profiling
+            ) && !loading
+                && error.is_none())
+        {
             return None;
         }
         if loading {
@@ -52,11 +71,23 @@ impl ObservabilityPage {
         } else {
             format!("Couldn't read {}", self.destination.label().to_lowercase())
         };
-        Some(ui::empty_state(if refused { IconName::Shield } else { IconName::TriangleAlert }, title,
-            "No successful observation is available. A failed read does not establish that this project is empty.",
-            error.map(str::to_owned),
-            vec![action("obs-retry", "Retry").on_click(cx.listener(|this, _, _, cx| this.refresh(cx))).into_any_element()], cx)
-            .id(if refused { "obs-refused" } else { "obs-failed" }).test_support().role(Role::Status).h_auto().into_any_element())
+        Some(
+            ui::empty_state(
+                if refused { IconName::Shield } else { IconName::TriangleAlert },
+                title,
+                "No successful observation is available. A failed read does not establish that this project is empty.",
+                error.map(str::to_owned),
+                vec![action("obs-retry", "Retry")
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
+                    .into_any_element()],
+                cx,
+            )
+            .id(if refused { "obs-refused" } else { "obs-failed" })
+            .test_support()
+            .role(Role::Status)
+            .h_auto()
+            .into_any_element(),
+        )
     }
     pub(crate) fn show_connection(&mut self, cx: &mut Context<Self>) {
         self.settings_open = true;

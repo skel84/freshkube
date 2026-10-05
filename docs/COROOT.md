@@ -43,7 +43,7 @@ Every request captures the opaque Coroot provider identity, project, optional cl
 
 Only the visible destination starts ordinary reads. Hiding, changing destination or replacing the source drops its jobs; there is no background Coroot refresh timer. A report requests REST and MCP evidence independently, so one unavailable source cannot erase the other.
 
-Refresh and reopening capture a new Last N hours interval. Destination/report navigation and **Retry this window** retain the displayed absolute UTC interval. Data from a different interval or source is cleared. A failed retry for the same interval can retain successful evidence, explicitly marked **Last known · stale**. Source failures, loading, successful empty results, application health and unsupported capabilities remain distinct.
+Refresh and reopening capture a new Last N hours interval. Destination/report navigation and **Retry** retain the captured absolute interval, shown with local dates and times. Data from a different interval or source is cleared. A failed retry for the same interval can retain successful evidence, marked **stale**, with the last successful local time and the read error. Source failures, loading, successful empty results, application health and unsupported capabilities remain distinct.
 
 ## Presentation and navigation
 

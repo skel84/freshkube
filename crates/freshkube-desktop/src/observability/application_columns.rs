@@ -3,7 +3,7 @@ use super::*;
 use freshkube_ui::table::TableColumn;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum ColumnKind {
+pub(in crate::observability) enum ColumnKind {
     Glyph,
     Name,
     Type,
@@ -12,7 +12,7 @@ pub(super) enum ColumnKind {
 
 #[derive(Clone)]
 pub(crate) struct ApplicationColumn {
-    pub(super) kind: ColumnKind,
+    pub(in crate::observability) kind: ColumnKind,
     label: SharedString,
     width: f32,
 }
@@ -30,7 +30,7 @@ impl TableColumn for ApplicationColumn {
 }
 
 impl ObservabilityPage {
-    pub(super) fn prepare_application_columns(&mut self) {
+    pub(in crate::observability) fn prepare_application_columns(&mut self) {
         self.application_columns = [ColumnKind::Glyph, ColumnKind::Name, ColumnKind::Type]
             .into_iter()
             .chain(Report::ALL.map(ColumnKind::Report))
@@ -42,7 +42,7 @@ impl ObservabilityPage {
                     ColumnKind::Type => "Type",
                     ColumnKind::Report(report) => report.label(),
                 };
-                let longest = self
+                let longest_value = self
                     .applications
                     .iter()
                     .map(|app| match kind {
@@ -52,13 +52,19 @@ impl ObservabilityPage {
                         ColumnKind::Report(report) => app.check(report).value.chars().count(),
                     })
                     .max()
-                    .unwrap_or(0)
-                    .max(label.chars().count());
+                    .unwrap_or(0);
+                let longest = longest_value.max(label.chars().count());
                 let width = match kind {
                     ColumnKind::Glyph => 34.,
-                    ColumnKind::Name => (longest as f32 * 7.5 + 24.).clamp(180., 440.),
-                    ColumnKind::Report(_) => (longest as f32 * 7.5 + 38.).clamp(64., 280.),
-                    ColumnKind::Type => (longest as f32 * 7.5 + 24.).clamp(64., 280.),
+                    ColumnKind::Name => 120.,
+                    ColumnKind::Report(_) => (longest as f32 * 7.5
+                        + if longest_value > label.chars().count() {
+                            38.
+                        } else {
+                            0.
+                        })
+                    .clamp(48., 280.),
+                    ColumnKind::Type => 64.,
                 };
                 ApplicationColumn {
                     kind,
