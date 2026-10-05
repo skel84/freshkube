@@ -1447,6 +1447,55 @@ fn applications_sideways_scroll_reaches_the_last_report_and_opens_it(cx: &mut Te
     .unwrap();
 }
 
+/// Scrolled sideways, an application's glyph and name stay at the table's
+/// left edge while its reports pass under them; the name is moved, never
+/// copied, so its id still finds one element and still opens the report.
+#[gpui_kit::test]
+fn applications_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
+    let width = 1280. - crate::desktop::RAIL_WIDTH - crate::desktop::COLUMN_WIDTH;
+    let (_runtime, handle, page) = mount_size(cx, true, width, 880.);
+    let name = "obs-name-fixture:payments:Deployment:worker";
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.find(name).bounds().left();
+        let header = window
+            .find(("obs-applications-sort", 1usize))
+            .bounds()
+            .left();
+        let kind = window
+            .find(("obs-applications-sort", 2usize))
+            .bounds()
+            .left();
+        window.scroll(
+            "obs-applications-table-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-120.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let moved = kind
+            - window
+                .find(("obs-applications-sort", 2usize))
+                .bounds()
+                .left();
+        assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
+        // `find` fails on an id that resolves twice.
+        assert!(
+            (window
+                .find(("obs-applications-sort", 1usize))
+                .bounds()
+                .left()
+                - header)
+                .abs()
+                <= px(1.5)
+        );
+        assert!((window.find(name).bounds().left() - before).abs() <= px(1.5));
+        window.click(name, cx);
+        assert_eq!(page.read(cx).destination, Destination::Application);
+        assert_eq!(page.read(cx).report, Report::Errors);
+    })
+    .unwrap();
+}
+
 #[test]
 fn upstream_count_preserves_failing_names_and_state_in_its_details() {
     use freshkube_core::coroot as api;

@@ -83,6 +83,11 @@ impl TableColumn for ApplicationColumn {
     fn flexible(&self) -> bool {
         self.kind == ColumnKind::Name
     }
+
+    /// The glyph and the name stay in view when the table scrolls sideways.
+    fn pinned(&self) -> bool {
+        matches!(self.kind, ColumnKind::Glyph | ColumnKind::Name)
+    }
 }
 
 impl ObservabilityPage {
