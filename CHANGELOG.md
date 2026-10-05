@@ -14,6 +14,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ### Other changes
 
+- **System services looks like Pods:** the same header, table and row heights, with comfortable and compact rows. Services group by health while any is unwell; the counts beside the filter (unhealthy, not reported, healthy) filter the list, and a refresh keeps your filter and place.
 - Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.
 
 ## 0.5.0 (2026-10-04)

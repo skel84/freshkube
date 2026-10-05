@@ -2961,6 +2961,9 @@ fn long_context_names_keep_both_ends_and_wrap_in_the_popover(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppContext) {
+    // Logs starts the synthetic producer, which wakes GPUI from a Tokio
+    // thread; let the scheduler park for those external wakes.
+    cx.executor().allow_parking();
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let row = "system-service-talos-wk-fra1-02-kubelet";
     cx.update_window(handle, |_, window, cx| {

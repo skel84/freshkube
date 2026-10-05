@@ -4,6 +4,8 @@ This backlog holds the broader Kubernetes IDE direction. The tasks are proposals
 
 The long-term product should help answer three related questions: why an application is unhealthy, who controls its durable configuration, and what changed before the problem appeared. Rubick provides useful behavioral references, mapped in [the source guide](REFERENCES.md#rubick-concepts-to-revisit-later). Implement the concepts independently under the current source-reuse policy.
 
+[PLATFORM.md](PLATFORM.md) proposes a front door built on F04, F06 and F10: applications and changes followed from commit to pod across a workspace of clusters, through Tekton, Harbor, Kargo, Argo CD and Argo Rollouts.
+
 Keep proposed behavior, priorities, acceptance criteria, and the design constraints needed to make them reliable here. Preserve source observations and their architectural rationale in [the Rubick architecture notes](REFERENCES.md#rubick-architecture-lessons). Decide concrete Rust APIs, module layouts, and state ownership in the relevant feature's design document when implementation starts, following the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md).
 
 ## Dependencies and recommended sequence
