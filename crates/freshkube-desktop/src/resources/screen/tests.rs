@@ -1448,14 +1448,18 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
         };
         let names: Vec<_> = rows.iter().map(|row| left(window, row)).collect();
         let header = window.find(("resource-sort", 1usize)).bounds().left();
-        let owner = window.find(("resource-sort", 2usize)).bounds().left();
+        // Column 2 starts at the pinned run's edge, where its label stays
+        // once scrolled; column 3 starts clear of the scroll's 120.
+        let edge = window.find(("resource-sort", 2usize)).bounds().left();
+        let owner = window.find(("resource-sort", 3usize)).bounds().left();
+        assert!(owner - edge > px(120.), "{:?}", owner - edge);
         window.scroll(
             "resource-table-scroll",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-120.), px(0.))),
             cx,
         );
         window.render_frame(cx);
-        let moved = owner - window.find(("resource-sort", 2usize)).bounds().left();
+        let moved = owner - window.find(("resource-sort", 3usize)).bounds().left();
         assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
         // `find` fails on an id that resolves twice.
         assert!((window.find(("resource-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
