@@ -1061,6 +1061,61 @@ fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppCont
     .unwrap();
 }
 
+/// Scrolled sideways, a node's glyph and name stay at the table's left edge
+/// while the other columns pass under them, and each id still finds one
+/// element: the name is moved, never copied. A pinned name still opens its
+/// node, and the selection keeps its key.
+#[gpui_kit::test]
+fn a_sideways_scroll_keeps_each_node_name_in_view_once(cx: &mut TestAppContext) {
+    use gpui_kit::{ElementId, ScrollDelta, point, px};
+    // Narrow enough to scroll sideways, tall enough for several rows.
+    let (_runtime, handle, pilot) = fixture(cx, 760., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        // At text size 20 the healthy group's toggle is below the fold.
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let rows: Vec<(ElementId, String)> = (pilot.read(cx).node_workspace.rows.iter())
+            .map(|row| (row.id.clone().into(), row.name.to_string()))
+            .collect();
+        let shown: Vec<_> = (rows.into_iter())
+            .filter(|(id, _)| window.try_find(id.clone()).is_some())
+            .collect();
+        assert!(shown.len() >= 2, "{shown:?}");
+        let left = |window: &mut gpui_kit::Window, row: &ElementId| {
+            window
+                .within(row.clone())
+                .find("node-row-name")
+                .bounds()
+                .left()
+        };
+        let names: Vec<_> = shown.iter().map(|(row, _)| left(window, row)).collect();
+        let header = window.find(("nodes-sort", 1usize)).bounds().left();
+        let role = window.find(("nodes-sort", 2usize)).bounds().left();
+        window.scroll(
+            "nodes-table-scroll",
+            ScrollDelta::Pixels(point(px(-120.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let moved = role - window.find(("nodes-sort", 2usize)).bounds().left();
+        assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
+        // `find` fails on an id that resolves twice.
+        assert!((window.find(("nodes-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
+        for ((row, _), name) in shown.iter().zip(names) {
+            assert!((left(window, row) - name).abs() <= px(1.5));
+        }
+        let (row, name) = shown[0].clone();
+        window.within(row).click("node-row-name", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        assert_eq!(pilot.read(cx).selected_node.as_deref(), Some(name.as_str()));
+    })
+    .unwrap();
+}
+
 #[test]
 fn incomplete_assessments_are_unknown_and_ready_service_or_memory_problems_warn() {
     let (mut talos, mut kube) = projection_sources();
