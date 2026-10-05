@@ -99,6 +99,7 @@ capture-embed = ["dep:rust-embed"]
 
 [dependencies]
 freshkube-desktop.workspace = true
+freshkube-probe.workspace = true
 clap.workspace = true
 tokio.workspace = true
 color-eyre.workspace = true
