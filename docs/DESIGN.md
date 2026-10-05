@@ -78,7 +78,16 @@ Each PR updates the rows of [Components](#components) it changes, since that sec
 10. **Actions on the selection, not the row.** A shared row context menu is built from the same actions as the toolbar, each shown with its key in the platform's label. `GroupRow`'s Select all, Expand and Open node move to it and to keys; a group row keeps its chevron, glyph, label and count. *Resources (Pods grouped by cause), Nodes (Expand and Collapse on Healthy).*
 11. **System services without an actions column.** Its row actions, such as Health check, act on the selected row from the toolbar, the context menu and keys, and the column goes. *System services.*
 
-Three questions in [Open](#open) hold changes back. Page titles decide whether a 12th change folds the title into the toolbar. The interface face, Figtree or Inter, is one change to the embedded fonts and the type sizes. Replacing today's status glyphs with G6 and the K1 skull is one change inside `ui::status_glyph`, `status_mark` and `health_mark`, which the style check already makes the only places glyphs are drawn. The terminal's Ctrl-Shift shortcuts belong to [#81](https://github.com/skel84/freshkube/issues/81), not to this list.
+12. **The page title in the toolbar.** `PageHeader`'s 20 px black title becomes the toolbar's leading label, 13 semibold in `ink`, before the filter in change 6's 38 row. A `Breadcrumb` folds the same way: its parent muted, a faint `/`, then the label. The id `<page>-title` stays, and `layout_check` measures the label instead of the 20 title on its 28 line. *Resources, System services, Applications, Nodes.*
+13. **G6 glyphs and the skull.** `ui::status_glyph`, `status_mark` and `health_mark` draw the round G6 set in [Status and links](#status-and-links) instead of the dot, triangle and diamond. A new `Tone::Died` draws the K1 skull in the critical colour and counts with critical in `StatusChips`. Pods map a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`) to it; a pod that can't start (`ImagePullBackOff`, an unschedulable pod) stays critical, the disc with a bar. The style check already keeps these three functions the only places glyphs are drawn, so no page changes its own code apart from Pods' mapping. *Every page that shows a status: Resources (rows, group rows, chips and the pod's cause card), System services, Applications, Nodes, Overview, etcd, Monitoring, Observability, Kubernetes-only, the shell's header and status bar, and every `ui::tag`.*
+
+The user settled three of the open questions on 5 October 2026:
+
+- **Page titles:** a label in the toolbar, change 12.
+- **The interface face:** Figtree stays, at desktop density. No font change.
+- **Status glyphs:** G6 Round, with the K1 skull for a container that died, change 13.
+
+The terminal's Ctrl-Shift shortcuts stay open and belong to [#81](https://github.com/skel84/freshkube/issues/81), not to this list.
 
 ## Frame
 
@@ -89,15 +98,18 @@ Three questions in [Open](#open) hold changes back. Page titles decide whether a
 
 ## Status and links
 
+Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette for every state, drawn 10 dp, whose inside carries the meaning. The app draws the dot, triangle and diamond until [change 13](#from-todays-app-to-desktop-grade) lands.
+
 | State | Glyph |
 | --- | --- |
-| OK | Filled mint dot |
-| Warning / at risk | Amber outlined triangle |
-| Critical / failing | Filled coral diamond |
-| Pending / unknown | Hollow grey circle |
-| Completed | Grey tick |
-| Integration required | Lavender outlined square |
-| Log errors | Blue dot |
+| OK | Mint dot in a soft mint halo |
+| Warning / at risk | Amber ring, half filled |
+| Died | Coral K1 skull: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`) |
+| Critical / can't run | Coral disc with a bar cut out: an image that won't pull, a node down, an etcd alarm |
+| Pending / unknown | Dashed grey ring |
+| Completed | Grey tick in a faint ring |
+| Integration required | Lavender ring with a plus |
+| Log errors | Small blue dot |
 
 Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. Prose links, breadcrumbs, selection and focus are blue. A chosen chip or outline toggle takes the primary outline (`ui::choice`); a chosen segment of a ghost segmented control on a `surface_2` track takes the accent tint (`ui::segment`), since Kit's own selected ghost colour matches that track. Dense cross-references use secondary text with dotted underlines and become blue on hover.
 
@@ -236,15 +248,9 @@ Two checks keep pages on these components ([#48](https://github.com/skel84/fresh
 
 ## Open
 
-For the user, before the matching changes in [From today's app to desktop grade](#from-todays-app-to-desktop-grade):
+Page titles, the interface face and status glyphs were [decided on 5 October 2026](#from-todays-app-to-desktop-grade). Still open:
 
-- **Page titles.** The 20 px black heading `PageHeader` draws today, or a label in the toolbar, as P1d and P4d draw it.
-- **The interface face.** Whether Figtree stays at desktop density, or Inter replaces it. The Native pass boards were drawn in the system face.
-- **Terminal shortcuts.** Whether the terminal's own shortcuts on Windows and Linux use Ctrl-Shift, as the [platform table](#platforms-desktop-grade-adapted-at-the-edges) proposes.
-- **Status glyphs.** Whether the round G6 glyphs and the K1 skull for a container that died, drawn on the platform and desktop-grade boards, replace the glyphs in [Status and links](#status-and-links).
-
-Also open:
-
+- **Terminal shortcuts.** Whether the terminal's own shortcuts on Windows and Linux use Ctrl-Shift, as the [platform table](#platforms-desktop-grade-adapted-at-the-edges) proposes ([#81](https://github.com/skel84/freshkube/issues/81)).
 - Whether integration-required lavender should become soft teal, to separate it from memory.
 - Default row density; comfortable remains the initial value. Once rows are 28 and 26, whether the Density control still earns its place.
 - More causal grouping beyond pod state and NotReady nodes.
