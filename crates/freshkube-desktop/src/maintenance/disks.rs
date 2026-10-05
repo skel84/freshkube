@@ -9,10 +9,11 @@ use super::*;
 
 /// At most this many disks are listed.
 const MAX_DISKS: usize = 256;
-/// The Flags column: Read-only or Optical, and Selected, with their glyphs.
-const FLAGS_WIDTH: f32 = 196.;
+/// One flag's room in the Flags column: the widest tag, Read-only, with its
+/// glyph. A usable disk shows only Selected, so most rows need one.
+const FLAG_WIDTH: f32 = 96.;
 /// The action column, as wide as its button.
-const ACTION_WIDTH: f32 = 152.;
+const ACTION_WIDTH: f32 = 148.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -44,9 +45,10 @@ impl TableColumn for Column {
         self.field == Field::Device
     }
 
-    /// The device stays in view when the table scrolls sideways.
+    /// The device, its flags and its button stay in view when the table
+    /// scrolls sideways, so the choice never needs a scroll to reach.
     fn pinned(&self) -> bool {
-        self.field == Field::Device
+        matches!(self.field, Field::Device | Field::Flags | Field::Action)
     }
 }
 
@@ -139,14 +141,22 @@ fn columns(rows: &[DiskRow]) -> Vec<Column> {
     let fit = |label: &str, text: fn(&DiskRow) -> &SharedString| {
         table::fit(label, rows.iter().map(text), 280.)
     };
+    // A disk both read-only and optical shows two flags.
+    let flags = rows
+        .iter()
+        .map(|row| usize::from(row.readonly) + usize::from(row.cdrom))
+        .max()
+        .unwrap_or_default()
+        .max(1) as f32;
+    let flags_width = flags * FLAG_WIDTH + (flags - 1.) * 4. + 2. * table::CELL_PAD;
     vec![
         column(Field::Device, "Device", fit("Device", |row| &row.path)),
-        column(Field::Id, "ID", fit("ID", |row| &row.id)),
+        column(Field::Flags, "", flags_width),
+        column(Field::Action, "", ACTION_WIDTH),
         column(Field::Size, "Size", fit("Size", |row| &row.size)),
         column(Field::Model, "Model", fit("Model", |row| &row.model)),
         column(Field::Serial, "Serial", fit("Serial", |row| &row.serial)),
-        column(Field::Flags, "", FLAGS_WIDTH),
-        column(Field::Action, "", ACTION_WIDTH),
+        column(Field::Id, "ID", fit("ID", |row| &row.id)),
     ]
 }
 
@@ -258,8 +268,10 @@ impl TableSource for MaintenanceView {
                 .into_any_element(),
             Field::Action => {
                 let path = row.path.to_string();
+                // The rows are monospace; a button keeps the UI's font.
                 cell.flex()
                     .items_center()
+                    .font_family(cx.theme().font_family.clone())
                     .child(
                         Button::new(("maint-disk-select", ix))
                             .outline()
