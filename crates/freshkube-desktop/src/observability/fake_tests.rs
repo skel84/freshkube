@@ -1166,7 +1166,7 @@ async fn heatmap_arrows_read_nothing_until_enter(cx: &mut TestAppContext) {
             assert!(label.starts_with("Failed requests · "), "{label}");
             assert!(label.ends_with(" · no failures"), "{label}");
             assert_eq!(
-                window.find("obs-live-bucket-0-2").label().as_deref(),
+                window.find("obs-live-bucket-0-2").label(),
                 Some(label.as_str())
             );
             server.requests.load(Ordering::SeqCst)
@@ -1190,7 +1190,7 @@ async fn heatmap_arrows_read_nothing_until_enter(cx: &mut TestAppContext) {
         let label = cursor(window).unwrap();
         assert!(label.starts_with("Up to 5ms · "), "{label}");
         assert_eq!(
-            window.find("obs-live-bucket-2-1").label().as_deref(),
+            window.find("obs-live-bucket-2-1").label(),
             Some(label.as_str())
         );
     })
