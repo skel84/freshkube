@@ -13,7 +13,7 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 use gpui_kit::{Hsla, Rgba, SharedString};
 
 use super::listener::Listener;
-use crate::palette::TerminalColors;
+use freshkube_ui::palette::TerminalColors;
 
 /// A stretch of one row's cells in one style.
 #[derive(Clone, Debug, PartialEq)]

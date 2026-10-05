@@ -8,19 +8,23 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
-└── freshkube-desktop/   the GPUI Kit application (shell, screens, logs, theme)
+├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
+├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
+├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
+├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame and table
+└── freshkube-desktop/   the GPUI Kit application (shell, screens, the log sources)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
 
-Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary.
+Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
 
 ### Module layout
 
 Split code by concern, not by line count. A long file with one tight concern is fine; a file whose parts share private state only because they sit together is not.
 
 - **Turn a module into a directory when it mixes concerns,** or when its code, not counting tests, passes about 1,500 lines. Use `foo/mod.rs` with child modules, as `desktop/`, `resources/` and `logs/` do; don't mix in the `foo.rs` + `foo/` style.
-- **Keep the shared type in `mod.rs` and spread its `impl` blocks over the children.** A child module sees its ancestors' private items, so `logs/view.rs` and `logs/measure.rs` use `LogView`'s fields without widening them. A method one child calls from another needs `pub(super)`; sibling modules don't see each other's private items.
-- **Every log view is `LogView<S: LogSource>`** in `logs/`. It owns retention, search, selection, copy, the level filter, follow, wrap and row measurement; a source (`TalosLogs` in `logs/talos.rs`, `PodLogs` in `logs/pod/`) supplies its controls, empty message and per-stream errors, and feeds lines through `ingest`. A new kind of log adds a source; it never copies the view.
+- **Keep the shared type in `mod.rs` and spread its `impl` blocks over the children.** A child module sees its ancestors' private items, so `freshkube-logs`'s `view.rs` and `measure.rs` use `LogView`'s fields without widening them. A method one child calls from another needs `pub(super)`; sibling modules don't see each other's private items.
+- **Every log view is `LogView<S: LogSource>`** from `freshkube-logs`. It owns retention, search, selection, copy, the level filter, follow, wrap and row measurement; a source (`TalosLogs` in desktop's `logs/talos.rs`, `PodLogs` in `logs/pod/`) supplies its controls, empty message and per-stream errors, and feeds lines through `ingest`. A source reaches the view only through the crate's `source_api.rs`; the view's other fields stay private to it, so a source's own methods live in an extension trait (`TalosPanel`, `PodLogPanel`) that callers import, and its stream methods on a trait private to `logs/`. Desktop's tests read the view through the crate's `testing` feature, turned on only from dev-dependencies. A new kind of log adds a source; it never copies the view.
 - **Keep small unit tests inline** in `#[cfg(test)] mod tests { … }`. When a module's tests are large, as UI tests usually are, put them in a sibling `tests.rs` (`#[cfg(test)] mod tests;`). It stays a child module, so the tests keep their access to private fields.
 - **Keep functions short.** A `render` that runs to hundreds of lines is harder to follow than a long file; split it into `render_*` helpers.
 - **Split a file when a step works on it,** not in a sweeping pass. Make the split its own commit with no logic changes, so the unchanged tests prove it.
@@ -31,6 +35,8 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
 
+Each worktree builds into its own `target/`; leave `CARGO_TARGET_DIR` unset. Don't share one build directory between worktrees: Cargo fingerprints workspace crates by paths relative to the crate and judges freshness by modification time, so a worktree whose sources are older than another worktree's build links that other branch's code without rebuilding it. The first build in a new worktree compiles the dependencies.
+
 ```sh
 cargo build
 cargo run -- --fixture            # synthetic example data, no credentials or cluster
@@ -39,11 +45,12 @@ cargo run -- --kubernetes-only --kubeconfig <file> --kube-context <name>   # no 
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
+scripts/check-style.sh            # pages use the shared components; see DESIGN.md "Checks"
 ```
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them for screenshots instead of driving the window from outside (see [Visual checks](#visual-checks)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|13|14|16|18|20>` starts at that text size without saving it; 13 is the default. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
 
 ## Cluster safety
 
@@ -88,14 +95,14 @@ Documentation is thin. Before using an API, read the source of the pinned versio
 - When the focused element isn't drawn, key dispatch starts from the window root and the page's bindings stop working. Give a page's key context to a wrapper that is drawn in every state, not to a list that a placeholder replaces.
 - macOS reports Command-Shift-] as `}` with Command alone, so bind `secondary-}`, not `secondary-shift-]`. Command-Shift with a letter keeps Shift: `secondary-shift-g`.
 - A deeper context's binding wins. A handler that calls `cx.propagate()` lets the key reach raw listeners, which is how Enter still presses a focused button.
-- A focused terminal (`terminal/`) takes every key without Command before any binding runs, through a keystroke interceptor, so a shell gets Escape, Tab and Control-Tab. Give terminal-wide shortcuts Command, as the pane's tab keys have.
+- A focused terminal (`freshkube-terminal`) takes every key without Command before any binding runs, through a keystroke interceptor, so a shell gets Escape, Tab and Control-Tab. Give terminal-wide shortcuts Command, as the pane's tab keys have.
 - `FocusHandle::dispatch_action` runs at once on that node; `window.dispatch_action` is deferred. A Kit dialog remembers what had focus when it opens, so focus its content after `open_dialog`.
 
 ### Sizes
 
-The user chooses the text size (`text_size.rs`), which becomes the window's rem size, and the whole layout scales with it.
+The user chooses the text size (`freshkube-ui`'s `text_size.rs`), which becomes the window's rem size, and the whole layout scales with it.
 
-- Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 14 px, as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
+- Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 13 px (`ui::BASE_TEXT`), as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
 - Keep borders, hairlines, corner radii and shadows in `px`, as Kit does.
 - Compare breakpoints in `dp`: `screens::content_width` and `table_width` return them, so a larger text size picks the narrower layout, as a narrower window would.
 
@@ -104,17 +111,41 @@ The user chooses the text size (`text_size.rs`), which becomes the window's rem 
 Headless UI tests render the real app, find elements by id and click or type into them; the suite runs in seconds. Prefer them over manual checks, and give every interactive element a stable, domain-based id.
 
 - Dialogs animate on the real clock, and advancing the test clock does not finish them. The shared test setup in `desktop/tests.rs` turns on reduced motion (`cx.set_reduce_motion(true)`); two confirmation-dialog tests failed every run without it. Do the same in any new test harness.
-- `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`).
+- `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`) from `freshkube-probe`. They count only with its `counting` feature, which a crate turns on from its dev-dependencies, as `freshkube-desktop` does.
 - Element snapshots can't tell whether a button is disabled. Assert the outcome instead: click it and check that nothing changed.
 - Setting an input's value from code does not emit its change event. Type into it with real input events (`window.input`) when the change handler matters.
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
 - Time anything a test depends on with the executor's clock (`cx.background_executor().now()`), not `Instant::now()`, so tests step it with `advance_clock` instead of sleeping. Example data dated from the wall clock must not be generated again for a stream already read: a second later it passes for new lines. Both made tests fail on a loaded machine.
 
-### Visual checks
+### Smoke tests
 
-macOS ignores synthetic keystrokes once the window loses focus, so driving the running app from outside is unreliable. Open the page you need with `FRESHKUBE_PAGE`, capture it, and keep interaction checks in UI tests.
+**Every change a person would notice in the app — a page, a control, a flow, a layout — gets a smoke test in the running app before it is called done.** UI tests prove the logic; a smoke test proves it looks and works right on screen. Use the helper, don't improvise one:
 
-GPUI stops drawing a window that is covered or on a locked screen. Such a capture shows the first frames only, before any read finishes. Fixture pages still look right because their data is there at once. Live pages don't, so check that the screen is unlocked before trusting a capture of one.
+```sh
+scripts/smoke.sh start --page observability-traces          # builds, launches with --fixture, waits for the window
+scripts/smoke.sh shot traces                                # → target/smoke/<worktree>/traces.png; open it and look
+scripts/smoke.sh key 'keystroke "k" using command down'     # any System Events key clause
+scripts/smoke.sh click 640 220                              # points from the window's top-left
+scripts/smoke.sh scroll 900 500 600                         # wheel at a point, 600 points down
+scripts/smoke.sh full traces                                # traces-0.png, traces-1.png, … the whole scrolling page
+scripts/smoke.sh stop
+scripts/smoke.sh pages                                      # every page, one capture each
+scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name> --kubeconfig <file>
+```
+
+- Smoke the pages and flows the change touches, in fixture mode and, when the change reads a cluster or Coroot, against the context the user chose. Run `scripts/smoke.sh pages` when a change reaches the frame, the theme or shared components.
+- A page moved onto the shared components is compared with Pods side by side: capture both at the same size, theme and text size (`FRESHKUBE_KIND=pods scripts/smoke.sh start --page resources`, then the page) and check that title, padding, header, rows, group rows, glyphs and states line up.
+- Look at every capture yourself, then report what you checked and what you saw: the captures that show the change, anything wrong, and anything you could not check.
+- Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
+- `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
+- `FRESHKUBE_SMOKE_BINARY=/absolute/path/to/saved/freshkube` makes `start` use that executable without building; `FRESHKUBE_STRESS_BINARY` selects a saved stress executable the same way.
+- Live checks only look and navigate. Never press Operations or maintenance actions, and keep credentials out of captures you share.
+- One worktree uses the screen at a time. `start`, `browser.sh open` and `stress.sh` wait for a lock (`scripts/smoke/lock.sh`, in `~/.cache/freshkube/screen.lock`) that `stop` and `close` release; a dead owner's lock, or a smoke test idle for ten minutes, is taken over. Build before you start, keep the session short, and always `stop`. "screen: waiting for …" means another worktree is checking; let it finish. A locked screen spoils captures and keys too, so every command waits for it to be unlocked ("screen: locked; waiting …"); keep the Mac awake for long unattended runs (`caffeinate -d -i`).
+- A live `start` after a new build plays a sound: the app may ask Keychain for the remembered Coroot key, and only the user answers it.
+
+To compare a page with the tool it reads from (Coroot, Grafana), `scripts/browser.sh` drives a Chrome window with the same commands: `open URL`, `go URL`, `shot`, `full`, `scroll`, `click`, `key`, `url` and `close`, with captures in `target/smoke/browser/`. Sign-ins are the user's: when a page asks for one, stop and ask them to sign in in that window.
+
+The terminal needs Screen Recording and Accessibility in System Settings → Privacy & Security, and the screen must be unlocked. GPUI stops drawing a covered window, so a capture of a covered window or a locked screen shows only the first frames, before any read finishes. macOS drops keys sent to a window that isn't frontmost, so every helper command brings the app forward first. Keep interaction logic in UI tests too; a smoke test adds to them, it doesn't replace them.
 
 ## Talos Linux Reference
 
@@ -293,10 +324,11 @@ The keyboard follows one path through the page, and each level owns a key contex
 
 ## Adding a screen
 
-1. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
-2. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
-3. Put cluster logic in `freshkube-core` and keep the screen to presentation.
-4. Add UI tests for loading, empty, failure and the main interactions.
+1. Pick the page's type from [DESIGN.md](docs/DESIGN.md#page-types) (table page, dashboard, canvas or detail pane) and build it from that type's shared components: the page header, the table, group rows, status glyphs and states. Don't draw your own title, table, glyphs or radii; `scripts/check-style.sh` fails on them, and its allowlist only shrinks.
+2. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
+3. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
+4. Put cluster logic in `freshkube-core` and keep the screen to presentation.
+5. Add UI tests for loading, empty, failure and the main interactions. A table page also calls `desktop::layout_check::assert_table_page`, which measures its header, rows, group rows, padding and title against Pods' sizes; a dashboard or a page with several lists calls its halves, `assert_page_frame` and `assert_table`.
 
 Diagnostic checks follow the reliability rules below: find the source of truth first, use the `DiagnosticCheck` constructors, provide an actionable fix where possible, and return `unknown` rather than failing when data is unavailable.
 

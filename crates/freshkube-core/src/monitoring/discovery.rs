@@ -1,9 +1,10 @@
-//! Finding an in-cluster Prometheus: list Services, rank them by how
-//! Prometheus is usually installed, and confirm candidates in that order
-//! through `/api/v1/status/buildinfo`. Only GET and list are used.
+//! Finding an in-cluster Prometheus API: list Services, rank them by how
+//! Prometheus, VictoriaMetrics, Thanos and Mimir are usually installed, and
+//! confirm candidates in that order with a query for `1`. Only GET and list
+//! are used.
 use std::time::Duration;
 
-use k8s_openapi::api::core::v1::Service;
+use k8s_openapi::api::core::v1::{Service, ServicePort};
 use kube::api::{Api, ListParams};
 
 use super::{BuildInfo, ErrorKind, Prometheus, PrometheusService, QueryError};
@@ -11,7 +12,8 @@ use crate::resources::{Failure, FailureKind};
 
 /// What discovery looks for, for the page's "no Prometheus" state.
 pub const LOOKED_FOR: &str = "a Service named prometheus-operated, labelled \
-app.kubernetes.io/name=prometheus or app=prometheus, or named like Prometheus with a \
+app.kubernetes.io/name=prometheus or app=prometheus, a VictoriaMetrics vmsingle or \
+vmselect, a Thanos query or a Mimir query frontend, or one named like Prometheus with a \
 web or 9090 port";
 
 /// Namespaces read one by one when listing Services cluster-wide is refused.
@@ -38,6 +40,9 @@ pub enum Rank {
     Operated,
     /// Labelled as Prometheus itself.
     Labelled,
+    /// Another server that answers the Prometheus API, by its usual name
+    /// or label: VictoriaMetrics, Thanos or Mimir.
+    Compatible,
     /// Named like Prometheus, not like one of its companions.
     Named,
     /// Only a port that Prometheus usually listens on.
@@ -88,6 +93,21 @@ pub fn rank(service: &Service) -> Option<Candidate> {
             .and_then(|labels| labels.get(key))
             .map(String::as_str)
     };
+    let named = |wanted: &str| {
+        ports
+            .iter()
+            .find(|port| port.name.as_deref() == Some(wanted))
+    };
+    if let Some((port, path)) = compatible(name, label("app.kubernetes.io/name"), ports) {
+        let number = u16::try_from(port.port).ok()?;
+        return Some(Candidate {
+            service: PrometheusService {
+                https: speaks_tls(port),
+                ..PrometheusService::new(namespace, name, number).with_path(path)
+            },
+            rank: Rank::Compatible,
+        });
+    }
     let rank = if name == "prometheus-operated" {
         Rank::Operated
     } else if label("app.kubernetes.io/name") == Some("prometheus")
@@ -99,11 +119,6 @@ pub fn rank(service: &Service) -> Option<Candidate> {
     } else {
         Rank::Port
     };
-    let named = |wanted: &str| {
-        ports
-            .iter()
-            .find(|port| port.name.as_deref() == Some(wanted))
-    };
     let port = named("web")
         .or_else(|| named("http-web"))
         .or_else(|| ports.iter().find(|port| port.port == 9090))
@@ -114,19 +129,69 @@ pub fn rank(service: &Service) -> Option<Candidate> {
                 .flatten()
         })?;
     let number = u16::try_from(port.port).ok()?;
-    let https = port.port == 443
-        || port
-            .name
-            .as_deref()
-            .is_some_and(|name| name.contains("https"))
-        || port.app_protocol.as_deref() == Some("https");
     Some(Candidate {
         service: PrometheusService {
-            https,
+            https: speaks_tls(port),
             ..PrometheusService::new(namespace, name, number)
         },
         rank,
     })
+}
+
+fn speaks_tls(port: &ServicePort) -> bool {
+    port.port == 443
+        || port
+            .name
+            .as_deref()
+            .is_some_and(|name| name.contains("https"))
+        || port.app_protocol.as_deref() == Some("https")
+}
+
+/// A VictoriaMetrics, Thanos or Mimir Service that serves queries, with
+/// the port and path prefix its API uses. Their writers, agents and
+/// alerting companions don't match.
+fn compatible<'a>(
+    name: &str,
+    app: Option<&str>,
+    ports: &'a [ServicePort],
+) -> Option<(&'a ServicePort, &'static str)> {
+    let port = |numbers: &[i32]| {
+        ports
+            .iter()
+            .find(|port| numbers.contains(&port.port))
+            .or_else(|| {
+                ports.iter().find(|port| {
+                    port.name
+                        .as_deref()
+                        .is_some_and(|name| name.starts_with("http"))
+                })
+            })
+    };
+    let is = |prefix: &str, labels: &[&str]| {
+        name.starts_with(prefix) || app.is_some_and(|app| labels.contains(&app))
+    };
+    if is("vmsingle", &["vmsingle", "victoria-metrics-single"])
+        || name.contains("victoria-metrics-single")
+    {
+        return Some((port(&[8428, 8429])?, ""));
+    }
+    if is("vmselect", &["vmselect"]) || name.contains("-vmselect") {
+        return Some((port(&[8481])?, "select/0/prometheus"));
+    }
+    if name.contains("thanos-query")
+        || name.contains("thanos-querier")
+        || app.is_some_and(|app| app == "thanos-query" || app == "thanos-querier")
+    {
+        return Some((port(&[9090, 10902])?, ""));
+    }
+    if (name.contains("mimir") || name.contains("cortex"))
+        && (name.contains("query-frontend")
+            || name.ends_with("-gateway")
+            || name.ends_with("-nginx"))
+    {
+        return Some((port(&[8080, 80])?, "prometheus"));
+    }
+    None
 }
 
 fn named_like_prometheus(name: &str) -> bool {
@@ -208,8 +273,8 @@ fn listing_error(failure: Failure) -> QueryError {
     QueryError::new(kind, format!("Couldn't list Services: {}", failure.message))
 }
 
-/// Confirms one Service answers as Prometheus, and reads its scrape
-/// interval. A failed interval read leaves the default.
+/// Confirms one Service answers the Prometheus API, and reads its version
+/// and scrape interval. Either may be missing on other servers.
 pub async fn confirm(
     client: &kube::Client,
     service: PrometheusService,
@@ -222,8 +287,23 @@ async fn confirm_within(
     service: PrometheusService,
     timeout: Duration,
 ) -> Result<(Prometheus, BuildInfo), QueryError> {
-    let prometheus = Prometheus::new(client.clone(), service).with_timeout(timeout);
-    let build = prometheus.build_info().await?;
+    finish(Prometheus::new(client.clone(), service).with_timeout(timeout)).await
+}
+
+/// Confirms a URL answers the Prometheus API, with the token if any.
+pub async fn confirm_url(
+    url: String,
+    token: Option<String>,
+) -> Result<(Prometheus, BuildInfo), QueryError> {
+    finish(Prometheus::direct(url, token)?.with_timeout(super::REQUEST_TIMEOUT)).await
+}
+
+async fn finish(prometheus: Prometheus) -> Result<(Prometheus, BuildInfo), QueryError> {
+    prometheus.probe().await?;
+    let build = prometheus
+        .build_info()
+        .await
+        .unwrap_or(BuildInfo { version: None });
     let interval = prometheus.read_scrape_interval().await.ok().flatten();
     let prometheus = match interval {
         Some(seconds) => prometheus.with_scrape_interval(seconds),

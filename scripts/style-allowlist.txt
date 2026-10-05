@@ -1,0 +1,40 @@
+# Files that broke a rule of scripts/check-style.sh when it arrived (#48).
+# One "rule file" per line. This list only shrinks: when a page moves onto the
+# shared components, remove its entries in the same change. The check fails
+# when an entry is no longer needed, and when a file not listed breaks a rule.
+list crates/freshkube-desktop/src/desktop/nodes/view.rs
+title crates/freshkube-desktop/src/desktop/nodes/view.rs
+radius crates/freshkube-desktop/src/desktop/overview/mod.rs
+title crates/freshkube-desktop/src/desktop/overview/mod.rs
+radius crates/freshkube-desktop/src/desktop/services.rs
+glyph crates/freshkube-desktop/src/desktop/shell/fog_column.rs
+radius crates/freshkube-desktop/src/desktop/shell/header.rs
+radius crates/freshkube-desktop/src/desktop/shell/mod.rs
+glyph crates/freshkube-desktop/src/desktop/shell/rail.rs
+radius crates/freshkube-desktop/src/forwards/indicator.rs
+glyph crates/freshkube-logs/src/view.rs
+list crates/freshkube-desktop/src/maintenance.rs
+glyph crates/freshkube-desktop/src/monitoring/page/view.rs
+title crates/freshkube-desktop/src/monitoring/page/view.rs
+radius crates/freshkube-desktop/src/monitoring/panel/cursor.rs
+radius crates/freshkube-desktop/src/monitoring/panel/legend.rs
+glyph crates/freshkube-desktop/src/observability/applications.rs
+list crates/freshkube-desktop/src/observability/applications.rs
+radius crates/freshkube-desktop/src/observability/live_profiling.rs
+radius crates/freshkube-desktop/src/observability/live_traces.rs
+list crates/freshkube-desktop/src/observability/map.rs
+radius crates/freshkube-desktop/src/observability/profiling.rs
+radius crates/freshkube-desktop/src/observability/traces.rs
+glyph crates/freshkube-desktop/src/observability/view.rs
+radius crates/freshkube-desktop/src/observability/view.rs
+radius crates/freshkube-desktop/src/resources/pane/cross_links/cause.rs
+radius crates/freshkube-desktop/src/resources/pane/overview/view.rs
+glyph crates/freshkube-desktop/src/resources/pane/view.rs
+radius crates/freshkube-desktop/src/screens/diagnostics/view.rs
+glyph crates/freshkube-desktop/src/screens/lifecycle/mod.rs
+list crates/freshkube-desktop/src/screens/network/view.rs
+glyph crates/freshkube-desktop/src/screens/operations/view.rs
+radius crates/freshkube-desktop/src/screens/operations/view.rs
+list crates/freshkube-desktop/src/screens/processes/mod.rs
+list crates/freshkube-desktop/src/screens/storage/mod.rs
+list crates/freshkube-desktop/src/screens/workloads/mod.rs

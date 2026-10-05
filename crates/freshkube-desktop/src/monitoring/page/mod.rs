@@ -1,6 +1,7 @@
 //! The Monitoring page: one dashboard at a time, from the built-ins or the
-//! user's folder, answered by the cluster's own Prometheus through the
-//! service proxy, or by example data with `--fixture`.
+//! user's folder, answered by the cluster's own Prometheus API (found or
+//! chosen in Settings) through the service proxy, by a URL the user
+//! entered, or by example data with `--fixture`.
 //!
 //! The shell owns the page and tells it when it shows. Only a visible page
 //! reads: it finds Prometheus, resolves the variables, and asks the panels
@@ -13,6 +14,7 @@ mod connection;
 mod layout;
 mod markers;
 mod settings;
+mod source;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -36,6 +38,7 @@ use connection::Connection;
 use markers::MarkerState;
 pub(crate) use markers::TalosNodes;
 pub(crate) use settings::settings_section;
+pub(crate) use source::source_section;
 
 /// How long one request through the proxy may take, past the transport's
 /// own timeout, before the page gives up on it.
@@ -100,6 +103,15 @@ pub(crate) struct MonitoringPage {
     talos: Option<TalosNodes>,
     /// Why the last save failed, for Settings.
     save_error: Option<gpui_kit::SharedString>,
+    /// Where URL tokens are kept; none in example mode and tests.
+    secrets: Option<crate::secrets::Secrets>,
+    /// Tokens typed this session, by URL, so a connection never waits
+    /// for the store to finish writing one.
+    tokens: std::collections::BTreeMap<String, String>,
+    /// The last credential store step; the next one waits for it.
+    secret_queue: Option<futures::channel::oneshot::Receiver<()>>,
+    /// Settings' Metrics source form, made when Settings first draws it.
+    form: Option<source::SourceForm>,
     /// Unix seconds now. Tests fix it, so example data is the same each run.
     now: fn() -> i64,
 }
@@ -110,6 +122,7 @@ impl MonitoringPage {
     pub(crate) fn new(
         runtime: Handle,
         preferences: Option<&std::path::Path>,
+        secrets: Option<crate::secrets::Secrets>,
         cx: &mut Context<Self>,
     ) -> Self {
         let saved = preferences.map(super::store::load).unwrap_or_default();
@@ -133,6 +146,10 @@ impl MonitoringPage {
             markers: MarkerState::default(),
             talos: None,
             save_error: None,
+            secrets,
+            tokens: Default::default(),
+            secret_queue: None,
+            form: None,
             now: || chrono::Utc::now().timestamp(),
         };
         page.read_folder(cx);
@@ -184,6 +201,7 @@ impl MonitoringPage {
         if same {
             return;
         }
+        self.reset_form();
         self.connection = Connection::None;
         cx.emit(MonitoringEvent::History);
         // Another cluster's answers never show as this one's.
@@ -220,6 +238,11 @@ impl MonitoringPage {
 
     fn context(&self) -> Option<String> {
         self.source.as_ref().map(|source| source.context.clone())
+    }
+
+    /// The source chosen in Settings for this context; none is automatic.
+    fn chosen_source(&self) -> Option<&super::store::Choice> {
+        self.saved.choices.get(&self.source.as_ref()?.context)
     }
 
     fn save(&self, change: impl FnOnce(&mut Saved), cx: &mut Context<Self>) {

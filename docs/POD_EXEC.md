@@ -49,7 +49,7 @@ Taken with the user on 2 October 2026.
 
 ### Desktop: a terminal view and a shell source
 
-- **`terminal/`** holds a reusable `TerminalView`. It knows nothing about Kubernetes.
+- **`freshkube-terminal`** (desktop reaches it as `crate::terminal`) holds a reusable `TerminalView`. It knows nothing about Kubernetes.
   - **State.** It owns `Term` and the `vte` processor, with 10,000 lines of scrollback.
   - **Snapshot.** When bytes arrive, it feeds them and rebuilds the visible rows' runs, so `render` only paints. It redraws at most once a frame.
   - **Size.** The grid follows the element's bounds: rows and columns from the cell size, the cell from the theme's monospace font, so the text size scales the terminal too. A size change resizes `Term` and emits the new size, at most every 100 ms during a drag.

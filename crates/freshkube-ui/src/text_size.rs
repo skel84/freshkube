@@ -14,7 +14,7 @@ use gpui_kit::{App, Global, KeyBinding};
 use crate::ui::BASE_TEXT;
 
 /// The sizes offered, in pixels of the theme's base text.
-pub(crate) const STEPS: [f32; 6] = [12., 13., 14., 16., 18., 20.];
+pub const STEPS: [f32; 6] = [12., 13., 14., 16., 18., 20.];
 /// Monospace text keeps its proportion to the base text, as the theme sets
 /// them at the default size.
 const MONO_RATIO: f32 = 12.5 / BASE_TEXT;
@@ -31,7 +31,7 @@ impl Global for TextSize {}
 
 /// Applies the size saved in `preferences`, or the default, and binds the
 /// shortcuts. Call it once, after `theme::install`.
-pub(crate) fn install(preferences: Option<PathBuf>, cx: &mut App) {
+pub fn install(preferences: Option<PathBuf>, cx: &mut App) {
     let size = preferences.as_deref().and_then(saved).unwrap_or(BASE_TEXT);
     // Debug builds can start at a size, for visual checks, without
     // saving it.
@@ -56,13 +56,13 @@ pub(crate) fn install(preferences: Option<PathBuf>, cx: &mut App) {
 }
 
 /// The chosen size, in pixels of base text.
-pub(crate) fn current(cx: &App) -> f32 {
+pub fn current(cx: &App) -> f32 {
     cx.try_global::<TextSize>()
         .map_or(BASE_TEXT, |text| text.size)
 }
 
 /// Chooses one of `STEPS`, applies it to every window and saves it.
-pub(crate) fn set(size: f32, cx: &mut App) {
+pub fn set(size: f32, cx: &mut App) {
     if !STEPS.contains(&size) || size == current(cx) {
         return;
     }

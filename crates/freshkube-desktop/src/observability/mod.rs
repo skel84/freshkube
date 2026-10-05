@@ -6,15 +6,16 @@ use crate::{
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
+    ActiveTheme, Disableable, Icon, IndexPath, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState},
     tooltip::Tooltip,
     v_flex,
 };
 use gpui_kit::{prelude::*, *};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 mod applications;
 mod connection;
 mod deployments;
@@ -24,11 +25,14 @@ mod fake_tests;
 mod format;
 mod incidents;
 mod live_incidents;
+mod live_profiling;
+mod live_traces;
 mod map;
 mod model;
 mod plots;
 mod profiling;
 mod projection;
+mod remember;
 mod reports;
 mod settings;
 #[cfg(test)]
@@ -63,6 +67,9 @@ pub(crate) struct ObservabilityPage {
     secret: Entity<InputState>,
     auth: usize,
     settings_open: bool,
+    /// What the connection remembers between launches; none in fixture
+    /// mode or without a preferences folder.
+    memory: Option<remember::Memory>,
     categories: std::rc::Rc<Vec<String>>,
     namespaces: std::rc::Rc<Vec<String>>,
     cluster_ids: Vec<String>,
@@ -92,6 +99,13 @@ pub(crate) struct ObservabilityPage {
     incident: usize,
     incident_muted: bool,
     incident_observations: live_incidents::Incidents,
+    live_traces: live_traces::Traces,
+    live_profiles: live_profiling::Profiles,
+    /// The applications' picker entries, by label.
+    app_choices: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
+    /// The Traces and Profiling picker, and the choices it was last given.
+    app_select: Entity<SelectState<SearchableVec<view::AppChoice>>>,
+    app_select_source: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
     release: usize,
     comparison: usize,
     full_yaml: bool,
@@ -124,6 +138,8 @@ impl ObservabilityPage {
     pub(crate) fn new(
         fixture: bool,
         runtime: tokio::runtime::Handle,
+        preferences: Option<&std::path::Path>,
+        secrets: Option<crate::secrets::Secrets>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -139,7 +155,20 @@ impl ObservabilityPage {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter applications…"));
         let flame_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a function…"));
         let threshold = cx.new(|cx| InputState::new(window, cx).placeholder("Threshold"));
+        let app_select = cx.new(|cx| {
+            SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
+                .searchable(true)
+        });
         let subscriptions = vec![
+            cx.subscribe(
+                &app_select,
+                |this, _, event: &SelectEvent<SearchableVec<view::AppChoice>>, cx| {
+                    if let SelectEvent::Confirm(Some(app)) = event {
+                        this.choose_app(app.clone(), cx);
+                    }
+                },
+            ),
+            cx.observe(&app_select, |_, _, cx| cx.notify()),
             cx.subscribe(&url, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.invalidate_connection();
@@ -167,6 +196,7 @@ impl ObservabilityPage {
                         .iter()
                         .map(|frame| frame.name.to_lowercase().contains(&this.flame_query_text))
                         .collect();
+                    this.live_profiles.set_search(&this.flame_query_text);
                     cx.notify();
                 }
             }),
@@ -183,6 +213,9 @@ impl ObservabilityPage {
             secret,
             auth: 0,
             settings_open: false,
+            memory: preferences
+                .filter(|_| !fixture)
+                .map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
             cluster_ids: vec![],
@@ -212,6 +245,11 @@ impl ObservabilityPage {
             incident: 0,
             incident_muted: false,
             incident_observations: Default::default(),
+            live_traces: Default::default(),
+            live_profiles: Default::default(),
+            app_choices: Rc::new([]),
+            app_select,
+            app_select_source: Rc::new([]),
             release: 0,
             comparison: 1,
             full_yaml: false,
@@ -248,6 +286,7 @@ impl ObservabilityPage {
         if fixture {
             this.apply_applications(&example::applications());
         }
+        this.fill_from_memory(window, cx);
         this.project();
         this.prepare_map();
         this.prepare_report();
@@ -448,6 +487,7 @@ impl Focusable for ObservabilityPage {
 }
 impl Render for ObservabilityPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_app_select(window, cx);
         let p = palette(cx);
         let unavailable =
             !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());
@@ -461,6 +501,8 @@ impl Render for ObservabilityPage {
                 Destination::ServiceMap => self.render_map(window, cx),
                 Destination::Application => self.render_report(window, cx),
                 Destination::Incidents if !self.fixture => self.render_live_incidents(window, cx),
+                Destination::Traces if !self.fixture => self.render_live_traces(window, cx),
+                Destination::Profiling if !self.fixture => self.render_live_profiling(cx),
                 _ if !self.fixture => self.render_limited(cx),
                 Destination::Incidents => self.render_incident(window, cx),
                 Destination::Deployments => self.render_deployments(window, cx),

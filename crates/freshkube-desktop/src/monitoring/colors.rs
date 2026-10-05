@@ -6,9 +6,7 @@
 //! its meaning: of several steps the highest is critical and the rest are
 //! warnings, and a single step is a warning.
 use freshkube_core::monitoring::model::{color::Rgba, spec::Step};
-use gpui_kit::{App, Hsla, rgb};
-
-use crate::palette::palette;
+use gpui_kit::{Hsla, rgb};
 
 /// The two series slots, in their fixed order.
 pub(crate) const SLOTS: [u32; 2] = [0x5E93E6, 0xCC7C4A];
@@ -139,17 +137,6 @@ pub(crate) fn level(name: &str, labels: &[(String, String)]) -> Option<f64> {
 pub(crate) enum Tier {
     Warn,
     Crit,
-}
-
-impl Tier {
-    /// The dashed line and the value that crossed it.
-    pub(crate) fn color(self, cx: &App) -> Hsla {
-        let p = palette(cx);
-        match self {
-            Tier::Warn => p.warn,
-            Tier::Crit => p.crit,
-        }
-    }
 }
 
 /// Tiers for `count` ascending thresholds, whatever colours they name: the

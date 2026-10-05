@@ -1,0 +1,15 @@
+[package]
+name = "freshkube-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+chrono = { workspace = true, optional = true }
+
+[features]
+# Render counts for UI tests; turned on from dev-dependencies.
+counting = []
+# Timing spans for the `stress` binary.
+stress = ["dep:chrono"]

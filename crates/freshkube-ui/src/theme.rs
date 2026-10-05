@@ -5,8 +5,8 @@ use std::borrow::Cow;
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, AssetSource, SharedString};
 
-pub(crate) const LIGHT_THEME: &str = "Freshkube Light";
-pub(crate) const DARK_THEME: &str = "Freshkube Dark";
+pub const LIGHT_THEME: &str = "Freshkube Light";
+pub const DARK_THEME: &str = "Freshkube Dark";
 
 gpui_kit::assets::icon_assets!(
     ExtraIcons,
@@ -99,7 +99,7 @@ gpui_kit::assets::icon_assets!(
 );
 
 /// gpui-kit's default icons plus [`ExtraIcons`].
-pub(crate) struct AppAssets;
+pub struct AppAssets;
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
@@ -120,7 +120,7 @@ impl AssetSource for AppAssets {
 
 /// Registers fonts and themes, then applies the mode matching the system.
 /// Call once after `gpui_kit::init`.
-pub(crate) fn install(cx: &mut App) {
+pub fn install(cx: &mut App) {
     let fonts = vec![
         // GPUI loads one face per embedded file. Static faces preserve the
         // requested weights; a variable font is loaded at its default weight.

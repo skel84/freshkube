@@ -8,7 +8,9 @@
 #   FRESHKUBE_STRESS_SECONDS=60 scripts/stress.sh logs-20k pod-logs 20000
 #
 # GPUI stops drawing a covered window or one on a locked screen, so run it
-# with the screen unlocked and leave the window in front.
+# with the screen unlocked and leave the window in front. It takes the shared
+# screen lock (scripts/smoke/lock.sh) after building, so builds and other
+# worktrees' smoke tests don't run during the measurement.
 # FRESHKUBE_STRESS_BINARY can select a saved release binary for comparisons.
 set -eu
 label=$1; shift
@@ -27,5 +29,10 @@ else
     build_target=${CARGO_TARGET_DIR:-$root/target}
     stress_binary=$build_target/release/stress
 fi
+# Wait for any other worktree's smoke test, browser check or stress run.
+ROOT=$root
+. $root/scripts/smoke/lock.sh
+screen_acquire stress $$
+trap screen_release EXIT
 "$stress_binary" "$@" 2> $out/$label.log
 /usr/bin/grep -E '^(summary|stress server)' $out/$label.log || true

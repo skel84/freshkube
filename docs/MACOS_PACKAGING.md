@@ -66,8 +66,12 @@ to `main` and by hand:
 The checks are formatting, Clippy with warnings denied and the workspace tests,
 including headless UI tests. A change that touches only `spikes/`, `docs/` or
 Markdown files skips them; the skipped job counts as passed, so it never blocks
-a merge. A spike has its own workspace and tests that CI doesn't run. A new push
-to a pull request cancels its previous run.
+a merge. A draft pull request skips them as well, and they run when it is marked
+ready for review, so work in progress doesn't hold the macOS runners. A spike has
+its own workspace and tests that CI doesn't run. A new push to a pull request
+cancels its previous run. The checks build the workspace crates with line tables
+only, rather than full debug info, which keeps backtraces readable and the test
+binaries quicker to link.
 
 Both the checks and bundle jobs install protobuf before building. They generate
 the Talos client in their own Cargo output directory; no checked-in generated
@@ -219,6 +223,15 @@ selection or explicit startup options, the app reads `~/.talos/config`.
 Kubernetes-only, fixture and maintenance launches do not restore a Talos
 selection over their requested mode. Preferences for text size remain in the
 separate `preferences.json` file.
+
+A Coroot API key or session value is saved only when **Remember key in
+Keychain** is checked, as a login-keychain item named `Freshkube` whose
+account is `Coroot <server URL>`; `coroot.json` holds the rest of the
+connection and no key. The keychain trusts the app by its signature, and an
+ad-hoc signature changes with every build, so after an update macOS may ask
+whether Freshkube may use the item; **Always Allow** answers for that build.
+Disconnect deletes the item; `brew uninstall --zap` does not, so remove it in
+Keychain Access if you uninstall without disconnecting.
 
 Most browsing uses the built-in Talos and Kubernetes clients;
 `talosctl` is used by particular COSI queries and maintenance features, and a

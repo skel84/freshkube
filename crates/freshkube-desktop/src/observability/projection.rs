@@ -182,6 +182,13 @@ impl ObservabilityPage {
             .into_iter()
             .collect::<Vec<_>>()
             .into();
+        let mut choices: Vec<_> = self
+            .applications
+            .iter()
+            .map(|a| (a.id.clone(), SharedString::from(view::app_label(&a.id))))
+            .collect();
+        choices.sort_by(|a, b| a.1.cmp(&b.1));
+        self.app_choices = choices.into();
         self.cluster_ids = raw
             .iter()
             .filter(|a| !a.id.is_external())

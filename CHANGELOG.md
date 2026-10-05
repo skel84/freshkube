@@ -2,6 +2,38 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
+## Unreleased
+
+### Coroot
+
+- **Live Traces:** an application's latency and error heatmap, its latest requests, and the selected trace as a waterfall with each span's status, attributes and events. Click a cell to list that bucket's requests, or list the failed ones; choose OpenTelemetry or eBPF when Coroot has both.
+- **Live Profiling:** an application's profile types, instances and flame graph, with zoom, search and a comparison with the window before that colours each frame by its change and lists the biggest increases.
+- **A tidier Observability page:** a connected page shows one line (server, project, window, Refresh and Connection…), with Disconnect and the Kubernetes link behind Connection…. The column uses the shell's usual rows, so only the open destination is highlighted, and Deployments shows only with example data. Application names take the table's spare width. Traces and Profiling pick an application by typing part of its name. The flame graph names only frames wide enough to read, outlines the selected one and shows its details above the graph.
+- **Coroot's markup no longer shows:** report titles and messages lose HTML tags such as `<var>` and decode entities, keeping a plain `<` or `>` in text such as "latency < 500ms".
+
+### Other changes
+
+- **System services looks like Pods:** the same header, table and row heights, with comfortable and compact rows. Services group by health while any is unwell; the counts beside the filter (unhealthy, not reported, healthy) filter the list, and a refresh keeps your filter and place.
+- Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.
+
+## 0.5.0 (2026-10-04)
+
+### Metrics sources
+
+- **Monitoring reads any Prometheus API:** besides Prometheus, discovery finds VictoriaMetrics (single-node and vmselect), Thanos Query and Mimir query frontends, with their ports and path prefixes. Each is confirmed with a query before use, so a missing prefix or refused token shows at once.
+- **Settings → Metrics source**, per context: Automatic, one Service through the Kubernetes API (namespace, name, port, path prefix, HTTPS), or a URL read directly from your Mac with an optional bearer token. **Test** checks the form before you save it. The token is kept in the Keychain; `monitoring.json` only notes that one exists.
+
+### Coroot
+
+- **Read-only Incidents:** the project's latest incidents, each with its SLO objective, compliance and burn rates, root-cause analysis and suggested fixes as Coroot reports them, and links from propagated applications to their reports. Missing evidence is marked not reported, never invented. See [COROOT.md](docs/COROOT.md#read-only-incidents-slice).
+- **Freshkube remembers the Coroot connection:** server, sign-in choice and last project, in `coroot.json` beside the preferences. **Remember key in Keychain** keeps the key in the system's credential store, sent only to its own server. The page reconnects when it first shows, and Disconnect forgets the key.
+- **A visual pass:** Observability gets its own rail icon; chosen chips, toggles and segments are blue everywhere, Settings included; reports merge REST and MCP evidence with formatted units; the service map is layered with weighted, arrowed links; and an unconnected page shows one Connect Coroot state.
+
+### Other changes
+
+- On Linux and Windows, preferences move to the platform's folder: `~/.config/freshkube` and `%APPDATA%\Freshkube`. macOS keeps `~/Library/Application Support/Freshkube`.
+- Lifecycle's Kubernetes version rules move into core, with no change in behaviour.
+
 ## 0.4.0 (2026-10-04)
 
 ### Live Coroot

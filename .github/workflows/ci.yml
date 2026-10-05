@@ -4,9 +4,11 @@ name: CI
 # which a release later promotes as they are (release.yml). Run it by hand on a
 # branch to get bundles before merging. Changes only to spikes/, docs/ or
 # Markdown files skip the checks; a skipped required check counts as passed.
+# Draft pull requests skip them too, until they are marked ready for review.
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -21,7 +23,10 @@ permissions:
 
 concurrency:
   # A new push to a pull request replaces its run; every other run finishes.
-  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  # Draft runs, which skip, keep their own group: pushing and marking a pull
+  # request ready at once sends both events, and the draft one must not
+  # cancel the real run.
+  group: ci-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.head_ref, github.event.pull_request.draft) || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -33,6 +38,7 @@ env:
 jobs:
   changes:
     name: Changes
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     outputs:
       app: ${{ steps.filter.outputs.app }}
@@ -66,6 +72,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.app == 'true'
     runs-on: macos-15
+    env:
+      # Line tables keep backtraces readable; full debug info for the
+      # workspace crates only slows compiling and linking the test binaries.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,6 +91,12 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Style check
+        # Pages use the shared components (docs/DESIGN.md, Checks); the
+        # allowlist only shrinks. The script's own test runs first.
+        run: |
+          scripts/check-style.test.sh
+          scripts/check-style.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)

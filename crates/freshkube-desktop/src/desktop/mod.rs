@@ -3,6 +3,8 @@ mod connection;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
+#[cfg(test)]
+pub(crate) mod layout_check;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -24,7 +26,7 @@ use crate::{
     connection_preferences::ConnectionStore,
     fixture,
     forwards::ForwardsIndicator,
-    logs::LogPanel,
+    logs::{LogPanel, TalosPanel},
     maintenance::MaintenanceView,
     monitoring::history::HistoryView,
     monitoring::page::{MonitoringEvent, MonitoringPage, TalosNodes},
@@ -58,30 +60,7 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::runtime::Handle;
 
-/// Render counters for tests that prove a view was (not) redrawn.
-pub(crate) mod probe {
-    #[cfg(test)]
-    thread_local! {
-        static HITS: std::cell::RefCell<std::collections::BTreeMap<&'static str, usize>> =
-            const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
-    }
-
-    /// Records one render of the named view.
-    #[cfg(test)]
-    pub(crate) fn hit(name: &'static str) {
-        HITS.with(|hits| *hits.borrow_mut().entry(name).or_default() += 1);
-    }
-
-    #[cfg(not(test))]
-    #[inline(always)]
-    pub(crate) fn hit(_: &'static str) {}
-
-    /// Renders of the named view so far on this thread.
-    #[cfg(test)]
-    pub(crate) fn count(name: &'static str) -> usize {
-        HITS.with(|hits| hits.borrow().get(name).copied().unwrap_or(0))
-    }
-}
+pub(crate) use freshkube_probe::probe;
 
 pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, ScreenKind};
@@ -90,7 +69,7 @@ pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 /// The icon rail's width, and the navigation column's beside it, in dp.
 pub(crate) const RAIL_WIDTH: f32 = 64.;
 pub(crate) const COLUMN_WIDTH: f32 = 208.;
-pub(crate) const PAGE_PADDING: f32 = 26.;
+pub(crate) use freshkube_ui::page::PAGE_PADDING;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NodeView {
@@ -563,12 +542,23 @@ impl Pilot {
             },
         ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
-        let monitoring =
-            cx.new(|cx| MonitoringPage::new(runtime.clone(), options.preferences.as_deref(), cx));
+        let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
+            std::sync::Arc::new(crate::secrets::SystemStore)
+        });
+        let monitoring = cx.new(|cx| {
+            MonitoringPage::new(
+                runtime.clone(),
+                options.preferences.as_deref(),
+                secrets.clone(),
+                cx,
+            )
+        });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
                 options.fixture,
                 runtime.clone(),
+                options.preferences.as_deref(),
+                secrets,
                 window,
                 cx,
             )
@@ -1297,6 +1287,7 @@ impl Pilot {
             &request,
             Err("Example: the Talos API didn't answer within 10 s".into()),
         );
+        self.rebuild_joined_nodes();
         cx.notify();
     }
 

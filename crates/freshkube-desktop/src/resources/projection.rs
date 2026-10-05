@@ -276,6 +276,16 @@ impl ResourceProjection {
         self.selected.as_ref()
     }
 
+    /// Where `identity` sits among the visible rows, if it does.
+    pub(crate) fn index_of(
+        &self,
+        store: &ResourceStore,
+        identity: &ResourceIdentity,
+    ) -> Option<usize> {
+        let slot = store.slot(identity)?;
+        self.visible.iter().position(|visible| *visible == slot)
+    }
+
     pub(crate) fn selected_index(&self) -> Option<usize> {
         self.selected_ix
     }
@@ -299,9 +309,7 @@ impl ResourceProjection {
         if !self.is_current(store) {
             return;
         }
-        self.selected_ix = store
-            .slot(identity)
-            .and_then(|slot| self.visible.iter().position(|visible| *visible == slot));
+        self.selected_ix = self.index_of(store, identity);
         self.selected = self.selected_ix.map(|_| identity.clone());
     }
 

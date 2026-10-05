@@ -37,7 +37,7 @@ scripts/stress.sh terminal-50k terminal 50000
 
 A run lasts `FRESHKUBE_STRESS_SECONDS` (30) and leaves the first `FRESHKUBE_STRESS_WARMUP` (5) seconds out of its summary. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
 
-The `stress` feature turns on spans around the work that matters (`crate::perf`); without it they compile to nothing. Each second the run prints, for every span, its count, median, 99th percentile, maximum and total in milliseconds, then the process's CPU share and resident memory:
+The `stress` feature turns on spans around the work that matters (`freshkube_probe::perf`, which desktop reaches as `crate::perf`); without it they compile to nothing. Each second the run prints, for every span, its count, median, 99th percentile, maximum and total in milliseconds, then the process's CPU share and resident memory:
 
 | Name | What it times |
 | --- | --- |

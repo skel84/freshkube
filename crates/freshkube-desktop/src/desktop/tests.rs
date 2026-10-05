@@ -1,4 +1,5 @@
 use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot};
+use crate::logs::TalosPanel;
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
@@ -1410,6 +1411,21 @@ async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext
         assert!(pilot.config_error.is_none());
     });
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[gpui_kit::test]
+fn settings_shows_the_metrics_source_read_only_for_example_data(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("monitoring-source-settings").is_some());
+        // Example data has nothing to choose.
+        assert!(window.try_find("monitoring-source-mode").is_none());
+        assert!(window.try_find("monitoring-source-test").is_none());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -2945,6 +2961,9 @@ fn long_context_names_keep_both_ends_and_wrap_in_the_popover(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppContext) {
+    // Logs starts the synthetic producer, which wakes GPUI from a Tokio
+    // thread; let the scheduler park for those external wakes.
+    cx.executor().allow_parking();
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let row = "system-service-talos-wk-fra1-02-kubelet";
     cx.update_window(handle, |_, window, cx| {
@@ -3295,4 +3314,90 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
         )
     });
     server.abort();
+}
+
+/// The table page every other table page is measured against.
+const PODS: super::layout_check::TablePage = super::layout_check::TablePage {
+    page: "resources-page",
+    title: "resource-title",
+    title_text: "Pods",
+    table: "resource-table-scroll",
+    list: "resource-list",
+    density: "resource-density",
+};
+
+#[gpui_kit::test]
+fn pods_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    for size in [None, Some(20.)] {
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(size) = size {
+                crate::text_size::set(size, cx);
+            }
+            view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            // Example pods include a failing one, so Problems shows groups.
+            let layout = super::layout_check::assert_table_page(window, cx, &PODS);
+            assert!(layout.group.is_some(), "{layout:#?}");
+        })
+        .unwrap();
+    }
+}
+
+/// A page whose table isn't the whole page (a dashboard's table panel, a list
+/// with no density switch) checks its frame and its table apart.
+#[gpui_kit::test]
+fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
+    use super::layout_check::{Density, PageFrame, Table, assert_page_frame, assert_table};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let frame = PageFrame {
+            page: PODS.page,
+            title: PODS.title,
+            title_text: PODS.title_text,
+            content: PODS.table,
+        };
+        assert_page_frame(window, cx, &frame);
+        // Each fixed density measures once, at that density's sizes.
+        for density in [Density::Comfortable, Density::Compact] {
+            let rows = assert_table(
+                window,
+                cx,
+                &Table {
+                    table: Some(PODS.table),
+                    list: PODS.list,
+                    density,
+                },
+            );
+            assert!(rows.header.is_some(), "{rows:#?}");
+            assert!(
+                rows.comfortable.is_some() != rows.compact.is_some(),
+                "{rows:#?}"
+            );
+            window.click(PODS.density, cx);
+        }
+        // A list without column captions skips the header.
+        let rows = assert_table(
+            window,
+            cx,
+            &Table {
+                table: None,
+                list: PODS.list,
+                density: Density::Toggle(PODS.density),
+            },
+        );
+        assert!(rows.header.is_none(), "{rows:#?}");
+        assert!(rows.comfortable.zip(rows.compact).is_some(), "{rows:#?}");
+    })
+    .unwrap();
 }

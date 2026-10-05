@@ -24,7 +24,7 @@ mod mouse;
 mod paint;
 mod snapshot;
 #[cfg(any(test, feature = "stress"))]
-pub(crate) mod streams;
+pub mod streams;
 #[cfg(test)]
 mod tests;
 
@@ -41,9 +41,9 @@ use gpui_kit::{
     SharedString, Size, Subscription, Task, TestSupportExt, Window, div, rgb,
 };
 
-use crate::palette::terminal_colors;
-use crate::perf;
-use crate::ui::dp;
+use freshkube_probe::perf;
+use freshkube_ui::palette::terminal_colors;
+use freshkube_ui::ui::dp;
 use listener::Listener;
 use snapshot::Snapshot;
 
@@ -60,9 +60,9 @@ const PADDING: f32 = 8.;
 
 /// A grid size in cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct TerminalSize {
-    pub(crate) columns: u16,
-    pub(crate) rows: u16,
+pub struct TerminalSize {
+    pub columns: u16,
+    pub rows: u16,
 }
 
 impl Default for TerminalSize {
@@ -89,7 +89,7 @@ impl Dimensions for TerminalSize {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TerminalEvent {
+pub enum TerminalEvent {
     /// Bytes for the program: keys, pastes and the emulator's replies.
     Output(Vec<u8>),
     /// The grid's new size, at most every `RESIZE_INTERVAL`.
@@ -115,7 +115,7 @@ struct Resizing {
     timer: Option<Task<()>>,
 }
 
-pub(crate) struct TerminalView {
+pub struct TerminalView {
     term: Term<Listener>,
     parser: Processor,
     listener: Listener,
@@ -147,7 +147,7 @@ impl Focusable for TerminalView {
 }
 
 impl TerminalView {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         input::register(cx.entity().downgrade(), cx);
         let focus = cx.focus_handle();
         let listener = Listener::default();
@@ -183,7 +183,7 @@ impl TerminalView {
 
     /// Parses bytes from the program into the grid. The visible rows are
     /// rebuilt once, after every `feed` of this effect cycle.
-    pub(crate) fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+    pub fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         let parsing = perf::span("terminal.feed");
         perf::value("terminal.bytes", bytes.len() as f64);
         self.parser.advance(&mut self.term, bytes);
@@ -203,7 +203,7 @@ impl TerminalView {
 
     /// Starts over with an empty screen and history, as a new terminal
     /// would, but at the size the element already gave it.
-    pub(crate) fn reset(&mut self, cx: &mut Context<Self>) {
+    pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.listener = Listener::default();
         self.term = Term::new(config(), &self.size, self.listener.clone());
         self.parser = Processor::new();
@@ -219,19 +219,19 @@ impl TerminalView {
 
     /// The program ended, so the screen no longer takes input: it stops
     /// drawing the cursor until `reset`.
-    pub(crate) fn end(&mut self, cx: &mut Context<Self>) {
+    pub fn end(&mut self, cx: &mut Context<Self>) {
         if !std::mem::replace(&mut self.ended, true) {
             cx.notify();
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn ended(&self) -> bool {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn ended(&self) -> bool {
         self.ended
     }
 
     /// The grid's size, which the program should be told about.
-    pub(crate) fn size(&self) -> TerminalSize {
+    pub fn size(&self) -> TerminalSize {
         self.size
     }
 
@@ -244,7 +244,7 @@ impl TerminalView {
     /// Rebuilds what the next frame paints and redraws.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let _span = perf::span("terminal.snapshot");
-        crate::desktop::probe::hit("terminal.snapshot");
+        freshkube_probe::probe::hit("terminal.snapshot");
         self.snapshot = Rc::new(Snapshot::build(&self.term, terminal_colors(cx)));
         cx.notify();
     }
@@ -308,8 +308,8 @@ impl TerminalView {
     }
 
     /// The screen's text, one string per row with trailing blanks trimmed.
-    #[cfg(test)]
-    pub(crate) fn screen_text(&self) -> Vec<String> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn screen_text(&self) -> Vec<String> {
         use alacritty_terminal::index::{Column, Line};
         let grid = self.term.grid();
         let offset = grid.display_offset() as i32;
@@ -343,7 +343,7 @@ fn config() -> Config {
 
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::desktop::probe::hit("terminal");
+        freshkube_probe::probe::hit("terminal");
         let _span = perf::span("terminal.render");
         let colors = terminal_colors(cx);
         let theme = cx.theme();

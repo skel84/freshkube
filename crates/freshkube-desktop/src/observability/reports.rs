@@ -384,10 +384,25 @@ impl ObservabilityPage {
                         cx.listener(|this, _, window, cx| this.preview("Roll back", window, cx)),
                     ));
         }
+        actions = actions
+            .child(
+                action("obs-app-traces", "Traces")
+                    .on_click(cx.listener(|this, _, _, cx| this.open(Destination::Traces, cx))),
+            )
+            .child(
+                action("obs-app-profiling", "Profiling")
+                    .on_click(cx.listener(|this, _, _, cx| this.open(Destination::Profiling, cx))),
+            );
         let mut content = v_flex().gap(dp(14.));
         let Some(snapshot) = &self.report_snapshot else {
             return content
-                .child(self.breadcrumbs("Applications", Destination::Applications, cx))
+                .child(
+                    line()
+                        .flex_wrap()
+                        .justify_between()
+                        .child(self.breadcrumbs("Applications", Destination::Applications, cx))
+                        .child(actions),
+                )
                 .child(muted("Reading application reports…", cx))
                 .into_any_element();
         };
@@ -474,7 +489,7 @@ impl ObservabilityPage {
                         .border_t_1()
                         .border_color(p.line)
                         .bg(p.surface_2)
-                        .child(ui::caption("Also from Coroot MCP", cx)),
+                        .child(ui::caption("More checks from Coroot", cx)),
                 )
                 .child(self.evidence_rows(evidence, true, cx));
         }

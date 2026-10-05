@@ -16,6 +16,11 @@ pub(super) enum Subject {
     Report(api::AppId, bool),
     Incidents,
     Incident(String, api::AppId),
+    /// An application, its trace source and the spans listed.
+    Tracing(api::AppId, String, api::TraceSelection),
+    /// One trace of an application, by id.
+    Trace(api::AppId, String, String),
+    Profiling(api::AppId, api::ProfileQuery),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReadIdentity {
@@ -40,6 +45,9 @@ pub(super) struct Live {
     pub generation: u64,
     pub jobs: Vec<ReadJob>,
     pub incident_job: Option<ReadJob>,
+    pub traces_job: Option<ReadJob>,
+    pub trace_job: Option<ReadJob>,
+    pub profile_job: Option<ReadJob>,
     pub range: api::TimeRange,
     clock_origin: std::time::Instant,
     time_origin: chrono::DateTime<chrono::Utc>,
@@ -52,6 +60,9 @@ pub(super) struct Live {
     pub extended: Snapshot<api::AppHealth, ReadIdentity>,
     pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity>,
     pub incident: Snapshot<api::IncidentView, ReadIdentity>,
+    pub tracing: Snapshot<api::Tracing, ReadIdentity>,
+    pub trace: Snapshot<api::Tracing, ReadIdentity>,
+    pub profiling: Snapshot<api::Profiling, ReadIdentity>,
     pub capabilities: [api::Capability; 4],
 }
 impl Live {
@@ -78,6 +89,9 @@ impl Live {
             generation: 0,
             jobs: vec![],
             incident_job: None,
+            traces_job: None,
+            trace_job: None,
+            profile_job: None,
             range,
             clock_origin: now,
             time_origin,
@@ -90,6 +104,9 @@ impl Live {
             extended: Snapshot::default(),
             incidents: Snapshot::default(),
             incident: Snapshot::default(),
+            tracing: Snapshot::default(),
+            trace: Snapshot::default(),
+            profiling: Snapshot::default(),
             capabilities: [api::Capability::Unchecked; 4],
         }
     }
@@ -97,6 +114,9 @@ impl Live {
         self.generation += 1;
         self.jobs.clear();
         self.incident_job = None;
+        self.traces_job = None;
+        self.trace_job = None;
+        self.profile_job = None;
         self.connecting = false;
     }
     fn clear(&mut self) {
@@ -107,6 +127,9 @@ impl Live {
         self.extended = Snapshot::default();
         self.incidents = Snapshot::default();
         self.incident = Snapshot::default();
+        self.tracing = Snapshot::default();
+        self.trace = Snapshot::default();
+        self.profiling = Snapshot::default();
         self.capabilities = [api::Capability::Unchecked; 4];
     }
 }
@@ -154,6 +177,7 @@ impl ObservabilityPage {
         self.live.visible = visible;
         if visible {
             self.refresh_current(cx);
+            self.restore(cx);
         } else {
             self.live.cancel();
         }
@@ -161,6 +185,8 @@ impl ObservabilityPage {
     pub(super) fn clear_observations(&mut self) {
         self.live.clear();
         self.incident_observations = Default::default();
+        self.live_traces = Default::default();
+        self.live_profiles = Default::default();
         if !self.fixture {
             self.applications.clear();
             self.nodes = Default::default();
@@ -189,6 +215,7 @@ impl ObservabilityPage {
         self.live.range_label = range_label(self.live.range);
         self.live.clear();
         self.incident_observations.clear_evidence();
+        self.live_traces.reset();
         if !self.fixture {
             self.applications.clear();
             self.nodes = Default::default();
@@ -216,6 +243,7 @@ impl ObservabilityPage {
         }
         self.live.source = Some(provider.source(project));
         self.live.project_label = format!("{} · {}", project.name, project.id);
+        self.remember_project(&project.id, cx);
         self.clear_observations();
         self.refresh_current(cx);
     }
@@ -228,6 +256,7 @@ impl ObservabilityPage {
         ));
         self.live.clear();
         self.incident_observations.clear_evidence();
+        self.live_traces.reset();
         self.report_snapshot = None;
         self.refresh(cx);
     }
@@ -242,6 +271,7 @@ impl ObservabilityPage {
     }
     pub(super) fn disconnect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.invalidate_connection();
+        self.forget_connection(cx);
         self.secret
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_open = true;
@@ -251,8 +281,11 @@ impl ObservabilityPage {
         if self.fixture || !self.live.visible {
             return;
         }
-        let url = self.url.read(cx).value().to_string();
-        let value = self.secret.read(cx).value().to_string();
+        // A pasted URL or key often brings a space or line break with it.
+        let url = self.url.read(cx).value().trim().to_owned();
+        let typed = self.secret.read(cx).value().trim().to_owned();
+        let value = self.credential_value(&url, typed);
+        let (auth, saved_url, saved_value) = (self.auth, url.clone(), value.clone());
         let credentials = match self.auth {
             0 => api::Credentials::ApiKey(value),
             1 => api::Credentials::Session(value),
@@ -268,7 +301,7 @@ impl ObservabilityPage {
                 let projects = provider.projects().await?;
                 Ok((provider, projects))
             },
-            |this, result, cx| {
+            move |this, result, cx| {
                 this.live.connecting = false;
                 match result {
                     Ok((provider, projects)) => {
@@ -279,8 +312,9 @@ impl ObservabilityPage {
                             .collect();
                         this.live.projects = projects;
                         this.settings_open = false;
+                        this.remember_connection(saved_url, auth, saved_value, cx);
                     }
-                    Err(error) => this.live.error = Some(error.to_string()),
+                    Err(error) => this.live.error = Some(connect_error(error, auth)),
                 }
                 cx.notify();
             },
@@ -327,6 +361,33 @@ impl ObservabilityPage {
             _task: task,
         }
     }
+    fn read_applications(
+        &mut self,
+        provider: api::Provider,
+        source: api::Source,
+        identity: ReadIdentity,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.live.range;
+        let request = self.live.apps.begin(identity);
+        self.spawn_read(
+            async move { provider.applications(&source, range).await },
+            move |this, result, cx| {
+                this.live.capabilities[0] = api::Capability::from_result(&result);
+                if this
+                    .live
+                    .apps
+                    .apply(&request, result.map_err(|e| e.to_string()))
+                {
+                    if let Some(raw) = this.live.apps.data().cloned() {
+                        this.apply_applications(&raw);
+                    }
+                    cx.notify();
+                }
+            },
+            cx,
+        );
+    }
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.live.cancel();
         if self.fixture {
@@ -351,25 +412,16 @@ impl ObservabilityPage {
         let range = self.live.range;
         match self.destination {
             Destination::Incidents => self.read_incidents(provider, source, range, cx),
-            Destination::Applications => {
-                let request = self.live.apps.begin(identity);
-                self.spawn_read(
-                    async move { provider.applications(&source, range).await },
-                    move |this, result, cx| {
-                        this.live.capabilities[0] = api::Capability::from_result(&result);
-                        if this
-                            .live
-                            .apps
-                            .apply(&request, result.map_err(|e| e.to_string()))
-                        {
-                            if let Some(raw) = this.live.apps.data().cloned() {
-                                this.apply_applications(&raw);
-                            }
-                            cx.notify();
-                        }
-                    },
-                    cx,
-                );
+            Destination::Applications => self.read_applications(provider, source, identity, cx),
+            Destination::Traces | Destination::Profiling => {
+                if self.applications.is_empty() {
+                    self.read_applications(provider, source, identity, cx);
+                }
+                if self.destination == Destination::Traces {
+                    self.read_traces(cx);
+                } else {
+                    self.read_profiling(cx);
+                }
             }
             Destination::ServiceMap => {
                 let request = self.live.map.begin(ReadIdentity {
@@ -442,6 +494,17 @@ impl ObservabilityPage {
             _ => {}
         }
         cx.notify();
+    }
+}
+
+/// Coroot has two kinds of API key, and only a user's reads its API.
+fn connect_error(error: api::ReadError, auth: usize) -> String {
+    if error == api::ReadError::Authentication && auth == 0 {
+        format!(
+            "{error} Coroot reads need a user API key (crt_…), made under the user menu → API keys; a project's API keys only send data."
+        )
+    } else {
+        error.to_string()
     }
 }
 

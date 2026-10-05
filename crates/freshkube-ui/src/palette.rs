@@ -5,37 +5,37 @@ use gpui_kit::component::ActiveTheme;
 use gpui_kit::{App, Hsla, rgb, rgba};
 
 #[derive(Clone, Copy)]
-pub(crate) struct Palette {
-    pub(crate) surface: Hsla,
-    pub(crate) surface_2: Hsla,
-    pub(crate) hover: Hsla,
-    pub(crate) ink: Hsla,
-    pub(crate) ink_2: Hsla,
-    pub(crate) muted: Hsla,
-    pub(crate) faint: Hsla,
-    pub(crate) line: Hsla,
-    pub(crate) line_strong: Hsla,
-    pub(crate) track: Hsla,
-    pub(crate) accent: Hsla,
-    pub(crate) accent_soft: Hsla,
-    pub(crate) accent_line: Hsla,
-    pub(crate) good: Hsla,
-    pub(crate) good_ink: Hsla,
-    pub(crate) good_soft: Hsla,
-    pub(crate) warn: Hsla,
-    pub(crate) warn_ink: Hsla,
-    pub(crate) warn_soft: Hsla,
-    pub(crate) warn_line: Hsla,
-    pub(crate) crit: Hsla,
-    pub(crate) crit_ink: Hsla,
-    pub(crate) crit_soft: Hsla,
-    pub(crate) unk: Hsla,
-    pub(crate) unk_ink: Hsla,
-    pub(crate) unk_soft: Hsla,
-    pub(crate) mark: Hsla,
-    pub(crate) memory: Hsla,
-    pub(crate) integration: Hsla,
-    pub(crate) on_fill: Hsla,
+pub struct Palette {
+    pub surface: Hsla,
+    pub surface_2: Hsla,
+    pub hover: Hsla,
+    pub ink: Hsla,
+    pub ink_2: Hsla,
+    pub muted: Hsla,
+    pub faint: Hsla,
+    pub line: Hsla,
+    pub line_strong: Hsla,
+    pub track: Hsla,
+    pub accent: Hsla,
+    pub accent_soft: Hsla,
+    pub accent_line: Hsla,
+    pub good: Hsla,
+    pub good_ink: Hsla,
+    pub good_soft: Hsla,
+    pub warn: Hsla,
+    pub warn_ink: Hsla,
+    pub warn_soft: Hsla,
+    pub warn_line: Hsla,
+    pub crit: Hsla,
+    pub crit_ink: Hsla,
+    pub crit_soft: Hsla,
+    pub unk: Hsla,
+    pub unk_ink: Hsla,
+    pub unk_soft: Hsla,
+    pub mark: Hsla,
+    pub memory: Hsla,
+    pub integration: Hsla,
+    pub on_fill: Hsla,
 }
 
 fn hex(value: u32) -> Hsla {
@@ -117,7 +117,7 @@ fn dark() -> Palette {
     }
 }
 
-pub(crate) fn palette(cx: &App) -> Palette {
+pub fn palette(cx: &App) -> Palette {
     if cx.theme().mode.is_dark() {
         dark()
     } else {
@@ -128,10 +128,10 @@ pub(crate) fn palette(cx: &App) -> Palette {
 /// The terminal's colours: the 16 ANSI colours, then its own foreground
 /// and background, as `0xRRGGBB`. Tuned for contrast on the terminal's
 /// background, so yellow and white stay readable on a white terminal.
-pub(crate) struct TerminalColors {
-    pub(crate) ansi: [u32; 16],
-    pub(crate) foreground: u32,
-    pub(crate) background: u32,
+pub struct TerminalColors {
+    pub ansi: [u32; 16],
+    pub foreground: u32,
+    pub background: u32,
 }
 
 const TERMINAL_LIGHT: TerminalColors = TerminalColors {
@@ -152,7 +152,7 @@ const TERMINAL_DARK: TerminalColors = TerminalColors {
     background: 0x2C3037,
 };
 
-pub(crate) fn terminal_colors(cx: &App) -> &'static TerminalColors {
+pub fn terminal_colors(cx: &App) -> &'static TerminalColors {
     if cx.theme().mode.is_dark() {
         &TERMINAL_DARK
     } else {
@@ -161,7 +161,7 @@ pub(crate) fn terminal_colors(cx: &App) -> &'static TerminalColors {
 }
 
 /// Semantic diff inks, with white labels above 5:1.
-pub(crate) fn flame_color(delta: i8) -> Hsla {
+pub fn flame_color(delta: i8) -> Hsla {
     hex(match delta {
         d if d < -10 => 0x3F65A0,
         d if d < 0 => 0x3F5A80,
@@ -171,7 +171,7 @@ pub(crate) fn flame_color(delta: i8) -> Hsla {
     })
 }
 /// Ordered latency buckets and their separate semantic error row.
-pub(crate) fn heat_color(level: usize, error: bool) -> Hsla {
+pub fn heat_color(level: usize, error: bool) -> Hsla {
     const BLUE: [u32; 6] = [0x323845, 0x33466A, 0x3D5C92, 0x5379BB, 0x7AA0E6, 0xB3CEFA];
     const ERROR: [u32; 6] = [0x3A3036, 0x604044, 0x885553, 0xB36962, 0xD97B72, 0xF28B82];
     hex(if error { ERROR } else { BLUE }[level.min(5)])

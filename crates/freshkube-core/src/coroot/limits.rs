@@ -30,9 +30,11 @@ pub(super) fn applications(values: &[Application]) -> Result<(), ReadError> {
     }
     Ok(())
 }
+/// As many applications as the Applications list takes; the map view pages
+/// them and draws only the connections in view.
 pub(super) fn map(value: &ServiceMap) -> Result<(), ReadError> {
-    count(value.nodes.len(), 120)?;
-    count(value.edges.len(), 300)?;
+    count(value.nodes.len(), 2_000)?;
+    count(value.edges.len(), 20_000)?;
     let mut nodes = HashSet::new();
     for node in &value.nodes {
         text(node.id.as_str(), 1024)?;
@@ -108,6 +110,63 @@ fn summary(series: &SeriesSummary) -> Result<(), ReadError> {
     for (key, value) in &series.labels {
         text(key, 256)?;
         text(value, 1024)?;
+    }
+    Ok(())
+}
+
+pub(super) fn tracing(value: &Tracing) -> Result<(), ReadError> {
+    text(&value.message, 4096)?;
+    count(value.sources.len(), 8)?;
+    for source in &value.sources {
+        text(&source.kind, 64)?;
+        text(&source.name, 256)?;
+    }
+    if let Some(heatmap) = &value.heatmap {
+        count(heatmap.rows.len(), 32)?;
+        for row in &heatmap.rows {
+            text(&row.name, 64)?;
+            text(&row.value, 64)?;
+            count(row.points.len(), 4_096)?;
+        }
+    }
+    // One trace can have many more spans than Coroot's list of 100.
+    count(value.spans.len(), 5_000)?;
+    for span in &value.spans {
+        text(&span.service, 1024)?;
+        text(&span.trace_id, 256)?;
+        text(&span.id, 256)?;
+        text(&span.parent_id, 256)?;
+        text(&span.name, 4096)?;
+        text(&span.status.message, 16_384)?;
+        text(&span.details.text, 65_536)?;
+        count(span.attributes.len(), 256)?;
+        for (key, value) in &span.attributes {
+            text(key, 1024)?;
+            text(value, 65_536)?;
+        }
+        count(span.events.len(), 128)?;
+        for event in &span.events {
+            text(&event.name, 1024)?;
+            count(event.attributes.len(), 64)?;
+            for (key, value) in &event.attributes {
+                text(key, 1024)?;
+                text(value, 65_536)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn profiling(value: &Profiling) -> Result<(), ReadError> {
+    text(&value.message, 4096)?;
+    count(value.kinds.len(), 64)?;
+    for kind in &value.kinds {
+        text(&kind.id, 128)?;
+        text(&kind.name, 256)?;
+    }
+    count(value.instances.len(), 2_000)?;
+    for instance in &value.instances {
+        text(instance, 512)?;
     }
     Ok(())
 }

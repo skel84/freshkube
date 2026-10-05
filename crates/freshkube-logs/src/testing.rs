@@ -1,0 +1,45 @@
+//! Read-outs for tests in crates that embed the view. The module builds
+//! only with the `testing` feature, which those crates turn on from their
+//! dev-dependencies, so no app code can call them.
+
+use freshkube_core::logs::LogEntry;
+use gpui_kit::{Pixels, Point};
+
+use super::{LogSource, LogView};
+
+impl<S: LogSource> LogView<S> {
+    /// Lines applied to the review, and lines held back while hidden.
+    pub fn applied_and_held(&self) -> (usize, usize) {
+        (
+            self.review.logs.buffer().entries().len(),
+            self.backlog.len(),
+        )
+    }
+
+    /// Every retained line, oldest first, whatever the filters.
+    pub fn retained(&self) -> &[LogEntry] {
+        self.review.logs.buffer().entries()
+    }
+
+    /// The rows the filters show, as indices into [`Self::retained`].
+    pub fn visible_rows(&self) -> &[usize] {
+        &self.review.visible
+    }
+
+    /// The line identity of visible row `ix`.
+    pub fn row_id(&self, ix: usize) -> u64 {
+        self.review.id(ix)
+    }
+
+    pub fn following(&self) -> bool {
+        self.following
+    }
+
+    pub fn anchor_evicted(&self) -> bool {
+        self.anchor_evicted
+    }
+
+    pub fn scroll_offset(&self) -> Point<Pixels> {
+        self.scroll.offset()
+    }
+}

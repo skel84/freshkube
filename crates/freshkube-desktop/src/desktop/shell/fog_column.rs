@@ -169,95 +169,92 @@ impl Pilot {
     ) -> AnyElement {
         let p = palette(cx);
         let destination = self.observability.read(cx).destination();
-        let mut rows = v_flex()
-            .gap(dp(4.))
-            .children(Destination::NAVIGATION.into_iter().map(|item| {
-                let active = item == destination
-                    || (item == Destination::Applications
-                        && destination == Destination::Application);
-                let button = Button::new(SharedString::from(format!("nav-obs-{}", item.slug())))
-                    .ghost()
-                    .small()
-                    .selected(active)
-                    .toggled(active)
-                    .icon(item.icon())
-                    .tooltip(item.label())
-                    .tooltip_placement(Placement::Right)
-                    .when_else(
-                        collapsed,
-                        |b| b.size(dp(36.)),
-                        |b| {
-                            b.w_full()
-                                .h(dp(32.))
-                                .accessibility_label(item.label())
-                                .child(div().flex_1().text_left().child(item.label()))
-                        },
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.observability
-                            .update(cx, |page, cx| page.open(item, cx));
-                        this.navigate_from_keyboard(Page::Observability, window, cx);
-                    }));
-                if item == Destination::Incidents
-                    && let Some(count) = self.observability.read(cx).incident_count()
-                {
+        // Deployments has no live source yet; only example data shows it.
+        let items = Destination::NAVIGATION
+            .into_iter()
+            .filter(|item| self.fixture || *item != Destination::Deployments);
+        let incidents = self.observability.read(cx).incident_count();
+        let mut rows = v_flex().gap(dp(4.));
+        for item in items {
+            let active = item == destination
+                || (item == Destination::Applications && destination == Destination::Application);
+            let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.observability
+                    .update(cx, |page, cx| page.open(item, cx));
+                this.navigate_from_keyboard(Page::Observability, window, cx);
+            });
+            let count = incidents.filter(|_| item == Destination::Incidents);
+            if !collapsed {
+                let suffix = count.map(|count| {
                     div()
-                        .relative()
-                        .child(button)
-                        .when_else(
-                            collapsed,
-                            |this| {
-                                this.child(
-                                    div()
-                                        .absolute()
-                                        .top(dp(3.))
-                                        .right(dp(3.))
-                                        .size(dp(7.))
-                                        .rounded_full()
-                                        .bg(if self.fixture { p.crit } else { p.muted }),
-                                )
-                            },
-                            |this| {
-                                this.child(
-                                    div()
-                                        .absolute()
-                                        .right(dp(8.))
-                                        .top(dp(5.))
-                                        .px(dp(5.))
-                                        .rounded_full()
-                                        .bg(if self.fixture { p.crit } else { p.surface })
-                                        .text_color(if self.fixture { p.on_fill } else { p.ink_2 })
-                                        .text_size(dp(11.))
-                                        .child(count.to_string()),
-                                )
-                            },
-                        )
+                        .px(dp(5.))
+                        .rounded_full()
+                        .bg(if self.fixture { p.crit } else { p.surface })
+                        .text_color(if self.fixture { p.on_fill } else { p.ink_2 })
+                        .text_size(dp(11.))
+                        .font_weight(FontWeight::NORMAL)
+                        .child(count.to_string())
                         .into_any_element()
-                } else {
-                    button.into_any_element()
-                }
-            }));
-        rows = rows.child(
+                });
+                let mut row =
+                    NavRow::new(format!("nav-obs-{}", item.slug()), item.label(), dp(10.))
+                        .suffix(suffix);
+                row.icon = item.icon();
+                rows = rows.child(self.column_item(row, active, open, cx));
+                continue;
+            }
+            let button = Button::new(SharedString::from(format!("nav-obs-{}", item.slug())))
+                .ghost()
+                .small()
+                .selected(active)
+                .toggled(active)
+                .icon(item.icon())
+                .tooltip(item.label())
+                .tooltip_placement(Placement::Right)
+                .size(dp(36.))
+                .on_click(open);
+            rows = rows.child(match count {
+                Some(_) => div()
+                    .relative()
+                    .child(button)
+                    .child(
+                        div()
+                            .absolute()
+                            .top(dp(3.))
+                            .right(dp(3.))
+                            .size(dp(7.))
+                            .rounded_full()
+                            .bg(if self.fixture { p.crit } else { p.muted }),
+                    )
+                    .into_any_element(),
+                None => button.into_any_element(),
+            });
+        }
+        let dashboards = cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.navigate_from_keyboard(Page::Monitoring, window, cx)
+        });
+        rows = rows.child(if collapsed {
             Button::new("nav-obs-dashboards")
                 .ghost()
                 .small()
                 .icon(IconName::ChartLine)
-                .tooltip("Prometheus dashboards")
+                .tooltip("Prometheus dashboards, in Monitoring")
                 .tooltip_placement(Placement::Right)
-                .when_else(
-                    collapsed,
-                    |b| b.size(dp(36.)),
-                    |b| {
-                        b.w_full()
-                            .h(dp(32.))
-                            .accessibility_label("Dashboards")
-                            .child(div().flex_1().text_left().child("Dashboards"))
-                    },
-                )
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.navigate_from_keyboard(Page::Monitoring, window, cx)
-                })),
-        );
+                .size(dp(36.))
+                .on_click(dashboards)
+                .into_any_element()
+        } else {
+            let mut row = NavRow::new("nav-obs-dashboards", "Dashboards", dp(10.))
+                .tooltip("Prometheus dashboards, in Monitoring")
+                .suffix(Some(
+                    Icon::new(IconName::ChevronRight)
+                        .size(dp(13.))
+                        .text_color(p.muted)
+                        .into_any_element(),
+                ));
+            row.icon = IconName::ChartLine;
+            self.column_item(row, false, dashboards, cx)
+        });
         let sources = Button::new("obs-data-sources")
             .ghost().small().icon(IconName::Database)
             .tooltip(if self.fixture { "Sanitized example observations" } else { "Coroot connection and project" })

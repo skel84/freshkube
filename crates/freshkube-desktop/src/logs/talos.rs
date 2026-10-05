@@ -24,7 +24,7 @@ use tokio::{runtime::Handle, sync::mpsc};
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
-use super::{LogPanel, LogSource, LogView, review::MAX_SELECTED_LINES};
+use super::{LogPanel, LogSource};
 use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
 use crate::palette::palette;
 use crate::ui;
@@ -106,7 +106,8 @@ impl LogSource for TalosLogs {
             window,
             cx,
         );
-        view.source.catalog_height = catalog_size.height.min(ui::dp_px(26. * 2. + 6., window));
+        view.source_mut().catalog_height =
+            catalog_size.height.min(ui::dp_px(26. * 2. + 6., window));
     }
 
     fn controls(view: &LogPanel, cx: &mut Context<LogPanel>) -> Vec<AnyElement> {
@@ -117,11 +118,11 @@ impl LogSource for TalosLogs {
     }
 
     fn empty_message(view: &LogPanel) -> SharedString {
-        if view.source.active_target().is_none() {
+        if view.source().active_target().is_none() {
             "Select a connected node to view its logs."
-        } else if view.source.services.is_empty() {
+        } else if view.source().services.is_empty() {
             "This node didn't report a service catalog."
-        } else if view.review.logs.buffer().entries().is_empty() {
+        } else if !view.has_lines() {
             "Choose services above, then start collecting."
         } else {
             "No retained lines pass the service and level filters."
@@ -134,17 +135,56 @@ impl LogSource for TalosLogs {
     }
 }
 
-impl LogView<TalosLogs> {
-    pub(crate) fn new(
-        runtime: Handle,
-        tail: i32,
+/// What the shell and its tests ask of the Talos Logs page.
+pub(crate) trait TalosPanel: Sized + 'static {
+    fn new(runtime: Handle, tail: i32, window: &mut Window, cx: &mut Context<Self>) -> Self;
+
+    fn set_target(
+        &mut self,
+        target: Option<(Target, TalosClient)>,
+        services: Vec<ServiceInfo>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Self {
+    );
+
+    fn open_service(&mut self, service: String, _: &mut Window, cx: &mut Context<Self>);
+
+    fn set_fixture(&mut self, events: Vec<LogEvent>, window: &mut Window, cx: &mut Context<Self>);
+
+    /// Delivers one stream batch to the fixture target like a collection
+    /// job would, from the first service being collected.
+    #[cfg(test)]
+    fn push_fixture_batch(&mut self, lines: Vec<String>, cx: &mut Context<Self>) -> bool;
+
+    #[cfg(test)]
+    fn set_fixture_failures(&mut self, failures: Vec<(ServiceId, String)>, cx: &mut Context<Self>);
+
+    /// Replaces the synthetic backlog with the given node's full catalog.
+    fn set_fixture_catalog(
+        &mut self,
+        events: Vec<LogEvent>,
+        catalog: &[ServiceInfo],
+        node: &str,
+        address: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    );
+
+    /// Services currently streaming; zero while collection is stopped.
+    fn collecting_count(&self) -> usize;
+
+    fn is_collecting(&self) -> bool;
+
+    /// One-line summary for the window status bar.
+    fn status_line(&self) -> String;
+}
+
+impl TalosPanel for LogPanel {
+    fn new(runtime: Handle, tail: i32, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::with_source(TalosLogs::new(runtime, tail), window, cx)
     }
 
-    pub(crate) fn set_target(
+    fn set_target(
         &mut self,
         target: Option<(Target, TalosClient)>,
         services: Vec<ServiceInfo>,
@@ -152,12 +192,12 @@ impl LogView<TalosLogs> {
         cx: &mut Context<Self>,
     ) {
         self.capture_anchor();
-        let changed = self.source.target.as_ref().map(|(target, _)| target)
+        let changed = self.source().target.as_ref().map(|(target, _)| target)
             != target.as_ref().map(|(target, _)| target)
-            || self.source.fixture_target.is_some();
+            || self.source().fixture_target.is_some();
         if changed {
             self.stop(cx);
-            self.source.fixture_target = None;
+            self.source_mut().fixture_target = None;
             self.reset(
                 target
                     .as_ref()
@@ -165,110 +205,91 @@ impl LogView<TalosLogs> {
                 window,
                 cx,
             );
-            self.source.collecting.clear();
-            self.source.defaults_applied = false;
-            self.source.errors.clear();
+            let source = self.source_mut();
+            source.collecting.clear();
+            source.defaults_applied = false;
+            source.errors.clear();
         }
-        self.source.target = target;
+        self.source_mut().target = target;
         let mut catalog: Vec<_> = services
             .into_iter()
             .map(|service| ServiceId::new(service.id))
             .collect();
         catalog.sort();
         catalog.dedup();
-        if changed {
-            self.showing = catalog.iter().cloned().collect();
+        let shown = if changed {
+            catalog.iter().cloned().collect()
         } else {
-            self.showing.extend(
+            let mut shown = self.shown().clone();
+            shown.extend(
                 catalog
                     .iter()
-                    .filter(|id| !self.source.services.contains(id))
+                    .filter(|id| !self.source().services.contains(id))
                     .cloned(),
             );
+            shown
+        };
+        let source = self.source_mut();
+        source.services = catalog;
+        if source.collecting.is_empty() && !source.collection_active && !source.defaults_applied {
+            source.collecting = TalosLogs::default_collection(&source.services);
+            source.defaults_applied = !source.services.is_empty();
         }
-        self.source.services = catalog;
-        if self.source.collecting.is_empty()
-            && !self.source.collection_active
-            && !self.source.defaults_applied
-        {
-            self.source.collecting = TalosLogs::default_collection(&self.source.services);
-            self.source.defaults_applied = !self.source.services.is_empty();
-        }
-        self.review.set_service_filter(self.showing.clone());
+        self.set_shown(shown);
         cx.notify();
     }
 
-    pub(crate) fn open_service(&mut self, service: String, _: &mut Window, cx: &mut Context<Self>) {
+    fn open_service(&mut self, service: String, _: &mut Window, cx: &mut Context<Self>) {
         let service = ServiceId::new(service);
         self.flush_backlog(cx);
-        if !self.source.services.contains(&service) {
-            self.feedback = Some("Service is not in the selected node's catalog".into());
+        if !self.source().services.contains(&service) {
+            self.set_feedback(Some("Service is not in the selected node's catalog".into()));
             cx.notify();
             return;
         }
-        self.source.collecting.clear();
-        self.source.collecting.insert(service.clone());
-        self.showing.insert(service);
-        self.review.set_service_filter(self.showing.clone());
-        if self.source.collection_active {
+        let source = self.source_mut();
+        source.collecting.clear();
+        source.collecting.insert(service.clone());
+        let mut shown = self.shown().clone();
+        shown.insert(service);
+        self.set_shown(shown);
+        if self.source().collection_active {
             self.start_from_now(cx);
         } else {
             self.start(cx);
         }
     }
 
-    pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
-        // Lines received before stopping still belong to the review.
-        self.flush_backlog(cx);
-        self.source.stream_revision += 1;
-        self.source.job = None;
-        self.source.delivery = None;
-        self.source.collection_active = false;
-        cx.notify();
-    }
-
-    pub(crate) fn set_fixture(
-        &mut self,
-        events: Vec<LogEvent>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_fixture(&mut self, events: Vec<LogEvent>, window: &mut Window, cx: &mut Context<Self>) {
         self.stop(cx);
-        self.source.target = None;
+        self.source_mut().target = None;
         self.reset("fixture.invalid", window, cx);
-        self.source.fixture_target = Some(Target {
-            epoch: self.generation,
+        self.source_mut().fixture_target = Some(Target {
+            epoch: self.generation(),
             context: "Synthetic fixture".into(),
             node: "fixture-node".into(),
             address: "fixture.invalid".into(),
         });
-        self.source.services = events
+        self.source_mut().services = events
             .iter()
             .map(|event| event.service.clone())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        self.source.collecting = TalosLogs::default_collection(&self.source.services);
-        self.source.errors.clear();
-        self.showing = self.source.services.iter().cloned().collect();
-        self.review.append(events);
-        self.last_applied = cx.background_executor().now();
-        self.review.set_service_filter(self.showing.clone());
-        self.pending_reveal = self.last_row_id();
+        let source = self.source_mut();
+        source.collecting = TalosLogs::default_collection(&source.services);
+        source.errors.clear();
+        self.preload(events, cx);
+        self.set_shown(self.source().services.iter().cloned().collect());
+        self.reveal_last();
         cx.notify();
     }
 
-    /// Delivers one stream batch to the fixture target like a collection
-    /// job would, from the first service being collected.
     #[cfg(test)]
-    pub(crate) fn push_fixture_batch(
-        &mut self,
-        lines: Vec<String>,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn push_fixture_batch(&mut self, lines: Vec<String>, cx: &mut Context<Self>) -> bool {
         let (Some(target), Some(service)) = (
-            self.source.fixture_target.clone(),
-            self.source.collecting.iter().next().cloned(),
+            self.source().fixture_target.clone(),
+            self.source().collecting.iter().next().cloned(),
         ) else {
             return false;
         };
@@ -280,64 +301,189 @@ impl LogView<TalosLogs> {
                 result: Ok(line),
             })
             .collect();
-        let revision = self.source.stream_revision;
+        let revision = self.source().stream_revision;
         self.apply_batch(&target, revision, batch, cx)
     }
 
-    /// Lines applied to the review, and lines held back while hidden.
     #[cfg(test)]
-    pub(crate) fn applied_and_held(&self) -> (usize, usize) {
-        (
-            self.review.logs.buffer().entries().len(),
-            self.backlog.len(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_fixture_failures(
-        &mut self,
-        failures: Vec<(ServiceId, String)>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.source.fixture_target.is_some() {
-            self.source.errors = failures.into_iter().take(16).collect();
+    fn set_fixture_failures(&mut self, failures: Vec<(ServiceId, String)>, cx: &mut Context<Self>) {
+        if self.source().fixture_target.is_some() {
+            self.source_mut().errors = failures.into_iter().take(16).collect();
             cx.notify();
         }
     }
 
+    fn set_fixture_catalog(
+        &mut self,
+        events: Vec<LogEvent>,
+        catalog: &[ServiceInfo],
+        node: &str,
+        address: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_fixture(events, window, cx);
+        if let Some(target) = &mut self.source_mut().fixture_target {
+            target.node = node.into();
+            target.address = address.into();
+        }
+        let mut services: BTreeSet<ServiceId> = self.source().services.iter().cloned().collect();
+        services.extend(
+            catalog
+                .iter()
+                .map(|service| ServiceId::new(service.id.clone())),
+        );
+        let source = self.source_mut();
+        source.services = services.into_iter().collect();
+        source.collecting = TalosLogs::default_collection(&source.services);
+        self.set_shown(self.source().services.iter().cloned().collect());
+        // A stress run floods at once, without a click.
+        #[cfg(feature = "stress")]
+        if crate::stress::talos_rate().is_some() && !self.source().collection_active {
+            self.start(cx);
+        }
+        cx.notify();
+    }
+
+    fn collecting_count(&self) -> usize {
+        if self.source().collection_active {
+            self.source().collecting.len()
+        } else {
+            0
+        }
+    }
+
+    fn is_collecting(&self) -> bool {
+        self.source().collection_active
+    }
+
+    fn status_line(&self) -> String {
+        let mut parts = vec![if self.source().collection_active {
+            if self.source().collecting.len() == 1 {
+                "Collecting 1 service".to_owned()
+            } else {
+                format!("Collecting {} services", self.source().collecting.len())
+            }
+        } else {
+            "Collection stopped".to_owned()
+        }];
+        parts.extend(self.review_status(self.source().collection_active));
+        parts.join(" · ")
+    }
+}
+
+/// The page's stream, its collection and its controls: used only in
+/// `logs/`, whose tests deliver batches as a collection job would.
+pub(super) trait Collection: Sized + 'static {
+    fn stop(&mut self, cx: &mut Context<Self>);
+
+    /// Hands a batch from the current stream to the view: its lines from
+    /// services still collected, and its failures. A batch from an earlier
+    /// stream or another node is dropped, and `false` ends its delivery.
+    fn apply_batch(
+        &mut self,
+        target: &Target,
+        revision: u64,
+        batch: Vec<StreamEvent>,
+        cx: &mut Context<Self>,
+    ) -> bool;
+
+    fn start(&mut self, cx: &mut Context<Self>);
+
+    fn start_from_now(&mut self, cx: &mut Context<Self>);
+
+    fn start_with_tail(&mut self, tail: i32, cx: &mut Context<Self>);
+
+    fn receive(
+        &mut self,
+        target: Target,
+        receiver: mpsc::Receiver<StreamEvent>,
+        cx: &mut Context<Self>,
+    );
+
+    fn toggle_collection(&mut self, service: ServiceId, checked: bool, cx: &mut Context<Self>);
+
+    /// The title, the node and the Start or Stop button.
+    fn render_header(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
+
+    /// The service catalog: what to collect, and what to show.
+    fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
+
+    fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
+}
+
+impl Collection for LogPanel {
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        // Lines received before stopping still belong to the review.
+        self.flush_backlog(cx);
+        let source = self.source_mut();
+        source.stream_revision += 1;
+        source.job = None;
+        source.delivery = None;
+        source.collection_active = false;
+        cx.notify();
+    }
+
+    fn apply_batch(
+        &mut self,
+        target: &Target,
+        revision: u64,
+        batch: Vec<StreamEvent>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.source().stream_revision != revision
+            || self.source().active_target() != Some(target)
+        {
+            return false;
+        }
+        let mut lines = Vec::new();
+        for event in batch {
+            if &event.target != target || !self.source().collecting.contains(&event.service) {
+                continue;
+            }
+            match event.result {
+                Ok(line) => lines.push(LogEvent::new(event.service, line)),
+                Err(error) => {
+                    self.source_mut().errors.insert(event.service, error);
+                }
+            }
+        }
+        self.ingest(lines, cx);
+        true
+    }
+
     fn start(&mut self, cx: &mut Context<Self>) {
-        let may_replay =
-            self.source.fixture_target.is_none() && !self.review.logs.buffer().entries().is_empty();
-        self.start_with_tail(self.source.tail, cx);
-        if may_replay && self.source.collection_active {
-            self.feedback = Some("Collection restarted with the configured tail; previously retained lines may appear again".into());
+        let may_replay = self.source().fixture_target.is_none() && self.has_lines();
+        self.start_with_tail(self.source().tail, cx);
+        if may_replay && self.source().collection_active {
+            self.set_feedback(Some("Collection restarted with the configured tail; previously retained lines may appear again".into()));
             cx.notify();
         }
     }
 
     fn start_from_now(&mut self, cx: &mut Context<Self>) {
         self.start_with_tail(0, cx);
-        if self.source.collection_active {
-            self.feedback = Some("Service selection changed; collecting new lines only, without replaying retained tails".into());
+        if self.source().collection_active {
+            self.set_feedback(Some("Service selection changed; collecting new lines only, without replaying retained tails".into()));
             cx.notify();
         }
     }
 
     fn start_with_tail(&mut self, tail: i32, cx: &mut Context<Self>) {
         self.stop(cx);
-        if self.source.collecting.is_empty() {
-            self.feedback = Some("Choose up to 16 services to collect".into());
+        if self.source().collecting.is_empty() {
+            self.set_feedback(Some("Choose up to 16 services to collect".into()));
             cx.notify();
             return;
         }
-        let (target, job, receiver) = if let Some(target) = self.source.fixture_target.clone() {
+        let (target, job, receiver) = if let Some(target) = self.source().fixture_target.clone() {
             let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
-            let services: Vec<_> = self.source.collecting.iter().cloned().collect();
+            let services: Vec<_> = self.source().collecting.iter().cloned().collect();
             let event_target = target.clone();
-            let initial_sequence = self.review.next_id;
-            let flood = stress_flood(&self.source.runtime, &sender, &event_target, &services);
+            let initial_sequence = self.next_line_id();
+            let flood = stress_flood(&self.source().runtime, &sender, &event_target, &services);
             let job = flood.unwrap_or_else(|| {
-                self.source.runtime.spawn(async move {
+                self.source().runtime.spawn(async move {
                     let mut tick = tokio::time::interval(Duration::from_millis(250));
                     let mut sequence = initial_sequence;
                     loop {
@@ -360,24 +506,25 @@ impl LogView<TalosLogs> {
                 })
             });
             (target, OwnedJob::new(job), receiver)
-        } else if let Some((target, client)) = &self.source.target {
+        } else if let Some((target, client)) = &self.source().target {
             let (job, receiver) = backend::stream(
-                self.source.runtime.clone(),
+                self.source().runtime.clone(),
                 client.clone(),
                 target.clone(),
-                self.source.collecting.iter().cloned().collect(),
+                self.source().collecting.iter().cloned().collect(),
                 tail,
             );
             (target.clone(), job, receiver)
         } else {
-            self.feedback = Some("Select a connected node first".into());
+            self.set_feedback(Some("Select a connected node first".into()));
             cx.notify();
             return;
         };
-        self.feedback = None;
-        self.source.errors.clear();
-        self.source.collection_active = true;
-        self.source.job = Some(job);
+        self.set_feedback(None);
+        let source = self.source_mut();
+        source.errors.clear();
+        source.collection_active = true;
+        source.job = Some(job);
         self.receive(target, receiver, cx);
         cx.notify();
     }
@@ -388,8 +535,8 @@ impl LogView<TalosLogs> {
         mut receiver: mpsc::Receiver<StreamEvent>,
         cx: &mut Context<Self>,
     ) {
-        let revision = self.source.stream_revision;
-        self.source.delivery = Some(cx.spawn(async move |weak, cx| {
+        let revision = self.source().stream_revision;
+        self.source_mut().delivery = Some(cx.spawn(async move |weak, cx| {
             while let Some(first) = receiver.recv().await {
                 let mut batch = vec![first];
                 // At most a full queue per turn; yield between turns even
@@ -413,164 +560,40 @@ impl LogView<TalosLogs> {
                     .await;
             }
             let _ = weak.update(cx, |this, cx| {
-                if this.source.stream_revision == revision
-                    && this.source.active_target() == Some(&target)
+                if this.source().stream_revision == revision
+                    && this.source().active_target() == Some(&target)
                 {
                     this.flush_backlog(cx);
-                    this.source.collection_active = false;
-                    this.source.job = None;
+                    let source = this.source_mut();
+                    source.collection_active = false;
+                    source.job = None;
                     cx.notify();
                 }
             });
         }));
     }
 
-    /// Hands a batch from the current stream to the view: its lines from
-    /// services still collected, and its failures. A batch from an earlier
-    /// stream or another node is dropped, and `false` ends its delivery.
-    pub(super) fn apply_batch(
-        &mut self,
-        target: &Target,
-        revision: u64,
-        batch: Vec<StreamEvent>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.source.stream_revision != revision || self.source.active_target() != Some(target) {
-            return false;
-        }
-        let mut lines = Vec::new();
-        for event in batch {
-            if &event.target != target || !self.source.collecting.contains(&event.service) {
-                continue;
-            }
-            match event.result {
-                Ok(line) => lines.push(LogEvent::new(event.service, line)),
-                Err(error) => {
-                    self.source.errors.insert(event.service, error);
-                }
-            }
-        }
-        self.ingest(lines, cx);
-        true
-    }
-
     fn toggle_collection(&mut self, service: ServiceId, checked: bool, cx: &mut Context<Self>) {
         self.flush_backlog(cx);
-        if checked && self.source.collecting.len() >= 16 {
-            self.feedback = Some("Collect at most 16 services concurrently".into());
+        if checked && self.source().collecting.len() >= 16 {
+            self.set_feedback(Some("Collect at most 16 services concurrently".into()));
         } else {
             if checked {
-                self.source.collecting.insert(service);
+                self.source_mut().collecting.insert(service);
             } else {
-                self.source.collecting.remove(&service);
+                self.source_mut().collecting.remove(&service);
             }
-            if self.source.collection_active {
+            if self.source().collection_active {
                 self.start_from_now(cx);
             }
         }
         cx.notify();
     }
 
-    /// Replaces the synthetic backlog with the given node's full catalog.
-    pub(crate) fn set_fixture_catalog(
-        &mut self,
-        events: Vec<LogEvent>,
-        catalog: &[ServiceInfo],
-        node: &str,
-        address: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_fixture(events, window, cx);
-        if let Some(target) = &mut self.source.fixture_target {
-            target.node = node.into();
-            target.address = address.into();
-        }
-        let mut services: BTreeSet<ServiceId> = self.source.services.iter().cloned().collect();
-        services.extend(
-            catalog
-                .iter()
-                .map(|service| ServiceId::new(service.id.clone())),
-        );
-        self.source.services = services.into_iter().collect();
-        self.source.collecting = TalosLogs::default_collection(&self.source.services);
-        self.showing = self.source.services.iter().cloned().collect();
-        self.review.set_service_filter(self.showing.clone());
-        // A stress run floods at once, without a click.
-        #[cfg(feature = "stress")]
-        if crate::stress::talos_rate().is_some() && !self.source.collection_active {
-            self.start(cx);
-        }
-        cx.notify();
-    }
-
-    /// Services currently streaming; zero while collection is stopped.
-    pub(crate) fn collecting_count(&self) -> usize {
-        if self.source.collection_active {
-            self.source.collecting.len()
-        } else {
-            0
-        }
-    }
-
-    pub(crate) fn is_collecting(&self) -> bool {
-        self.source.collection_active
-    }
-
-    /// One-line summary for the window status bar.
-    pub(crate) fn status_line(&self) -> String {
-        let mut parts = vec![
-            if self.source.collection_active {
-                if self.source.collecting.len() == 1 {
-                    "Collecting 1 service".to_owned()
-                } else {
-                    format!("Collecting {} services", self.source.collecting.len())
-                }
-            } else {
-                "Collection stopped".to_owned()
-            },
-            format!(
-                "{} visible / {} retained",
-                self.review.visible.len(),
-                self.review.logs.buffer().entries().len()
-            ),
-        ];
-        if !self.review.query.is_empty() {
-            let count = self.review.match_count();
-            parts.push(if count == 1 {
-                "1 match".into()
-            } else {
-                format!("{count} matches")
-            });
-        }
-        parts.push(format!("{} selected", self.review.selected.len()));
-        parts.push(if self.following {
-            "Following".into()
-        } else if self.source.collection_active {
-            "Paused, collection continues".into()
-        } else {
-            "Paused".into()
-        });
-        if self.review.evicted > 0 || self.review.omitted > 0 {
-            parts.push(format!(
-                "{} oldest lines evicted, {} over 64 KiB omitted",
-                self.review.evicted, self.review.omitted
-            ));
-        }
-        if self.anchor_evicted {
-            parts.push("Review position was evicted; showing the earliest line".into());
-        }
-        if self.review.selection_limited {
-            parts.push(format!("Selection limited to {MAX_SELECTED_LINES} lines"));
-        }
-        parts.join(" · ")
-    }
-
-    /// The title, the node and the Start or Stop button.
     fn render_header(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let p = palette(cx);
         let (node, address) = self
-            .source
+            .source()
             .active_target()
             .map(|target| (target.node.clone(), target.address.clone()))
             .unwrap_or_else(|| ("no node".into(), String::new()));
@@ -582,7 +605,7 @@ impl LogView<TalosLogs> {
                 v_flex()
                     .gap(ui::dp(7.))
                     .child(h_flex().gap_2p5().child(ui::page_title("Logs")).child(
-                        if self.source.collection_active {
+                        if self.source().collection_active {
                             ui::tag(ui::Tone::Good, None, "Collecting", cx)
                         } else {
                             ui::tag(ui::Tone::Unknown, None, "Stopped", cx)
@@ -615,29 +638,29 @@ impl LogView<TalosLogs> {
                 Button::new("logs-collection")
                     .small()
                     .map(|button| {
-                        if self.source.collection_active {
+                        if self.source().collection_active {
                             button.outline()
                         } else {
                             button.primary()
                         }
                     })
-                    .icon(if self.source.collection_active {
+                    .icon(if self.source().collection_active {
                         IconName::Square
                     } else {
                         IconName::Play
                     })
-                    .label(if self.source.collection_active {
+                    .label(if self.source().collection_active {
                         "Stop collecting"
                     } else {
                         "Start collecting"
                     })
                     .disabled(
-                        self.source.active_target().is_none()
-                            || (!self.source.collection_active
-                                && self.source.collecting.is_empty()),
+                        self.source().active_target().is_none()
+                            || (!self.source().collection_active
+                                && self.source().collecting.is_empty()),
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if this.source.collection_active {
+                        if this.source().collection_active {
                             this.stop(cx);
                         } else {
                             this.start(cx);
@@ -646,9 +669,8 @@ impl LogView<TalosLogs> {
             )
     }
 
-    /// The service catalog: what to collect, and what to show.
     fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let catalog_height = self.source.catalog_height;
+        let catalog_height = self.source().catalog_height;
         h_flex()
             .items_start()
             .gap_2()
@@ -686,13 +708,13 @@ impl LogView<TalosLogs> {
         h_flex()
             .flex_wrap()
             .gap(ui::dp(6.))
-            .children(self.source.services.iter().map(|service| {
+            .children(self.source().services.iter().map(|service| {
                 let collect_service = service.clone();
                 let show_service = service.clone();
-                let collecting = self.source.collecting.contains(service);
-                let showing = self.showing.contains(service);
-                let count = self.review.service_count(service);
-                let full = !collecting && self.source.collecting.len() >= 16;
+                let collecting = self.source().collecting.contains(service);
+                let showing = self.shown().contains(service);
+                let count = self.service_count(service);
+                let full = !collecting && self.source().collecting.len() >= 16;
                 h_flex()
                     .h(ui::dp(26.))
                     .rounded_full()
@@ -748,7 +770,7 @@ impl LogView<TalosLogs> {
                             .when(!full, |this| {
                                 this.on_click(cx.listener(move |this, _, _, cx| {
                                     let checked =
-                                        !this.source.collecting.contains(&collect_service);
+                                        !this.source().collecting.contains(&collect_service);
                                     this.toggle_collection(collect_service.clone(), checked, cx)
                                 }))
                             }),

@@ -17,7 +17,7 @@ use gpui_kit::{
     px,
 };
 
-use super::{PodLogView, StreamState, TAILS, role_heading};
+use super::{PodLogView, Stream, StreamState, TAILS, role_heading};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 
@@ -37,8 +37,26 @@ fn tail_label(tail: Option<i64>) -> String {
     format!("Last {grouped}")
 }
 
-impl PodLogView {
-    pub(super) fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+/// The Logs tab's toolbar rows.
+pub(super) trait Controls: Sized + 'static {
+    fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
+
+    /// The container and tail pickers, and Stop or Resume.
+    fn render_pickers(&self, cx: &mut Context<Self>) -> Div;
+
+    /// The previous instance and the timestamps column.
+    fn render_options(&self, cx: &mut Context<Self>) -> Div;
+
+    /// Where the stream stands: a tag, and a sentence when there is more
+    /// to say. A failure says it in the banner below instead.
+    fn render_status(&self, cx: &mut Context<Self>) -> AnyElement;
+
+    /// A failure with Retry, or the hint that the container keeps crashing.
+    fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement>;
+}
+
+impl Controls for PodLogView {
+    fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut rows = vec![
             self.render_pickers(cx).into_any_element(),
             self.render_options(cx).into_any_element(),
@@ -48,9 +66,8 @@ impl PodLogView {
         rows
     }
 
-    /// The container and tail pickers, and Stop or Resume.
     fn render_pickers(&self, cx: &mut Context<Self>) -> Div {
-        let source = &self.source;
+        let source = self.source();
         let view = cx.entity().downgrade();
         let choices = source.choices.clone();
         let current = source.container.clone().unwrap_or_default();
@@ -131,7 +148,7 @@ impl PodLogView {
             })
             .disabled(source.previous || !(running || source.state == StreamState::Stopped))
             .on_click(cx.listener(|view, _, _, cx| {
-                if view.source.running() {
+                if view.source().running() {
                     view.stop(cx);
                 } else {
                     view.resume(cx);
@@ -145,16 +162,15 @@ impl PodLogView {
             .child(stream)
     }
 
-    /// The previous instance and the timestamps column.
     fn render_options(&self, cx: &mut Context<Self>) -> Div {
-        let has_previous = self.source.has_previous();
+        let has_previous = self.source().has_previous();
         h_flex()
             .gap_4()
             .child(
                 Checkbox::new("pod-logs-previous")
                     .small()
                     .label("Previous instance")
-                    .checked(self.source.previous)
+                    .checked(self.source().previous)
                     .disabled(!has_previous)
                     .tooltip(if has_previous {
                         "The log of the instance before this one, read to its end"
@@ -169,7 +185,7 @@ impl PodLogView {
                 Checkbox::new("pod-logs-timestamps")
                     .small()
                     .label("Timestamps")
-                    .checked(self.columns.time)
+                    .checked(self.columns().time)
                     .tooltip("Show each line's time. Copy copies what shows.")
                     .on_click(
                         cx.listener(|view, checked: &bool, _, cx| {
@@ -179,11 +195,9 @@ impl PodLogView {
             )
     }
 
-    /// Where the stream stands: a tag, and a sentence when there is more
-    /// to say. A failure says it in the banner below instead.
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
-        let status = &self.source.status;
-        let failed = matches!(self.source.state, StreamState::Failed(_));
+        let status = &self.source().status;
+        let failed = matches!(self.source().state, StreamState::Failed(_));
         h_flex()
             .id("pod-logs-status")
             .test_support()
@@ -202,16 +216,15 @@ impl PodLogView {
             .into_any_element()
     }
 
-    /// A failure with Retry, or the hint that the container keeps crashing.
     fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if let StreamState::Failed(_) = &self.source.state {
+        if let StreamState::Failed(_) = &self.source().state {
             let p = palette(cx);
             return Some(
                 h_flex()
                     .id("pod-logs-failed")
                     .test_support()
                     .role(Role::Alert)
-                    .aria_label(self.source.status.text.clone())
+                    .aria_label(self.source().status.text.clone())
                     .items_start()
                     .gap_2p5()
                     .px_3()
@@ -232,7 +245,7 @@ impl PodLogView {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .child(self.source.status.text.clone()),
+                            .child(self.source().status.text.clone()),
                     )
                     .child(
                         Button::new("pod-logs-retry")
@@ -245,7 +258,11 @@ impl PodLogView {
                     .into_any_element(),
             );
         }
-        let hint = self.source.hint.clone().filter(|_| !self.source.previous)?;
+        let hint = self
+            .source()
+            .hint
+            .clone()
+            .filter(|_| !self.source().previous)?;
         Some(
             div()
                 .id("pod-logs-hint")
