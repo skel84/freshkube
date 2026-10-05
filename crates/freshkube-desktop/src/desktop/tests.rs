@@ -89,6 +89,13 @@ fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize)
     window.render_frame(cx);
 }
 
+/// Opens a built-in kind on the Resources page by its kubectl key, as the
+/// rail's column does.
+pub(crate) fn open_kind(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, key: &str) {
+    let view = root_pilot(window, cx);
+    view.update(cx, |view, cx| view.open_builtin(key, window, cx));
+}
+
 /// Old page coverage now follows the actual node-pane tab controls.
 pub(crate) fn open_node_tab(
     window: &mut gpui_kit::Window,

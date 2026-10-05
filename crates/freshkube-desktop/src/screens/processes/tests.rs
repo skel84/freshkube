@@ -526,12 +526,12 @@ fn the_folded_controls_act_as_their_controls(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_filter_keeps_pods_width_at_1280_and_text_size_14(cx: &mut TestAppContext) {
-    use crate::desktop::tests::settle_header;
-    let (_runtime, handle, view) = app(cx, 1280., 880.);
+    use crate::desktop::tests::{open_kind, settle_header};
+    let (_runtime, handle, _view) = app(cx, 1280., 880.);
     let pods = cx
         .update_window(handle, |_, window, cx| {
             crate::text_size::set(14., cx);
-            view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+            open_kind(window, cx, "pods");
             settle_header(window, cx);
             window.find("resource-filter").bounds().size.width
         })

@@ -164,9 +164,7 @@ impl ScreenPanel for ProcessesScreen {
             KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
         ]);
-        let query = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Filter  /")
-        });
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
         let subscription = cx.subscribe_in(&query, window, |this, _, event, window, cx| {
             match event {
                 InputEvent::Change => cx.notify(),
