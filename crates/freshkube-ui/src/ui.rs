@@ -225,6 +225,28 @@ pub fn status_mark(
         .into_any_element()
 }
 
+/// A small dot on an icon's corner that says something there needs a look:
+/// a rail area with problems, a destination with incidents. It isn't a
+/// status glyph, which names a state beside its text; the caller places it
+/// (absolute, at the corner) and the icon's tooltip says why. With `ring`,
+/// it's drawn larger with a 2 px ring in that colour, the background it sits
+/// on, which cuts it out of the icon beneath.
+pub fn badge_dot(tone: Tone, ring: Option<Hsla>, cx: &App) -> Div {
+    let p = palette(cx);
+    let color = match tone {
+        Tone::Crit | Tone::Died => p.crit,
+        Tone::Warn => p.warn,
+        Tone::Good => p.good,
+        Tone::Info | Tone::Accent => p.accent,
+        Tone::Unknown | Tone::Integration | Tone::Outline => p.muted,
+    };
+    let dot = div().flex_none().rounded_full().bg(color);
+    match ring {
+        Some(ring) => dot.size(dp(9.)).border_2().border_color(ring),
+        None => dot.size(dp(7.)),
+    }
+}
+
 /// A tone's drawing and its colour.
 fn glyph(tone: Tone, cx: &App) -> Option<(&'static [u8], Hsla)> {
     let p = palette(cx);

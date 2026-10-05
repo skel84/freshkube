@@ -247,13 +247,18 @@ impl Pilot {
                     .relative()
                     .child(button)
                     .child(
-                        div()
-                            .absolute()
-                            .top(dp(3.))
-                            .right(dp(3.))
-                            .size(dp(7.))
-                            .rounded_full()
-                            .bg(if self.fixture { p.crit } else { p.muted }),
+                        ui::badge_dot(
+                            if self.fixture {
+                                Tone::Crit
+                            } else {
+                                Tone::Unknown
+                            },
+                            None,
+                            cx,
+                        )
+                        .absolute()
+                        .top(dp(3.))
+                        .right(dp(3.)),
                     )
                     .into_any_element(),
                 None => button.into_any_element(),
