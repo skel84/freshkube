@@ -604,7 +604,7 @@ fn take_unit(
     for row in &mut legend.rows {
         let field = &shown[row.series].field;
         for (value, raw) in row.values.iter_mut().zip(&row.raw) {
-            if let Some(number) = strip(value).or_else(|| in_unit(field, *raw, &strip)) {
+            if let Some(number) = strip(value).or_else(|| in_unit(field, *raw, strip)) {
                 *value = number.into();
             }
         }
