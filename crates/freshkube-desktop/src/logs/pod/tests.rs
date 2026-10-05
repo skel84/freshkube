@@ -87,12 +87,12 @@ fn show(view: &Entity<PodLogView>, identity: &ResourceIdentity, cx: &mut App) {
 
 /// Log lines held, not counting markers.
 fn lines(view: &Entity<PodLogView>, cx: &App) -> usize {
-    let entries = view.read(cx).review.logs.buffer().entries();
+    let entries = view.read(cx).retained();
     entries.iter().filter(|entry| !entry.is_marker()).count()
 }
 
 fn markers(view: &Entity<PodLogView>, cx: &App) -> Vec<String> {
-    let entries = view.read(cx).review.logs.buffer().entries();
+    let entries = view.read(cx).retained();
     entries
         .iter()
         .filter(|entry| entry.is_marker())
@@ -101,14 +101,14 @@ fn markers(view: &Entity<PodLogView>, cx: &App) -> Vec<String> {
 }
 
 fn state(view: &Entity<PodLogView>, cx: &App) -> StreamState {
-    view.read(cx).source.state.clone()
+    view.read(cx).source().state.clone()
 }
 
 /// The id of the newest row, which a following view shows.
 fn last_row(view: &Entity<PodLogView>, cx: &App) -> String {
     let view = view.read(cx);
-    let id = view.review.id(view.review.visible.len() - 1);
-    format!("log-line-{}-{id}", view.generation)
+    let id = view.row_id(view.visible_rows().len() - 1);
+    format!("log-line-{}-{id}", view.generation())
 }
 
 #[gpui_kit::test]
@@ -133,7 +133,7 @@ fn the_log_waits_for_the_pod_then_reads_its_tail_and_follows_it(cx: &mut TestApp
         assert_eq!(state(&view, cx), StreamState::Streaming);
         assert_eq!(window.find("pod-logs-status").label(), Some("Streaming"));
         assert_eq!(
-            view.read(cx).source.container.as_deref(),
+            view.read(cx).source().container.as_deref(),
             Some(app.as_str())
         );
         assert_eq!(lines(&view, cx), 40);
@@ -163,7 +163,7 @@ fn a_container_that_has_not_started_says_so_with_nothing_to_show(cx: &mut TestAp
         show(&view, &identity, cx);
         window.render_frame(cx);
         assert_eq!(state(&view, cx), StreamState::Waiting("Not started".into()));
-        let app = view.read(cx).source.container.clone().unwrap();
+        let app = view.read(cx).source().container.clone().unwrap();
         assert_eq!(
             window.find("logs-empty").label(),
             Some(format!("{app} hasn't started yet.").as_str())
@@ -195,15 +195,15 @@ fn a_refused_log_fails_with_retry_and_no_lines(cx: &mut TestAppContext) {
         assert_eq!(window.find("logs-empty").label(), Some("Nothing was read."));
 
         // Retry reads again, and is refused again.
-        let stream = view.read(cx).source.stream;
+        let stream = view.read(cx).source().stream;
         window.click("pod-logs-retry", cx);
-        assert!(view.read(cx).source.stream > stream);
+        assert!(view.read(cx).source().stream > stream);
         assert!(matches!(state(&view, cx), StreamState::Failed(_)));
 
         // Stop and Resume have nothing to do; Retry is the way on.
-        let stream = view.read(cx).source.stream;
+        let stream = view.read(cx).source().stream;
         window.click("pod-logs-stream", cx);
-        assert_eq!(view.read(cx).source.stream, stream);
+        assert_eq!(view.read(cx).source().stream, stream);
         assert_eq!(lines(&view, cx), 0);
     })
     .unwrap();
@@ -216,7 +216,7 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
     cx.update_window(handle, |_, window, cx| {
         show(&view, &identity, cx);
         window.render_frame(cx);
-        let app = view.read(cx).source.container.clone().unwrap();
+        let app = view.read(cx).source().container.clone().unwrap();
         // The instance that just ended, a marker, then the wait to start
         // again.
         assert_eq!(lines(&view, cx), 12);
@@ -238,8 +238,8 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
             "{hint}"
         );
         // The marker row isn't a log line: copy and search pass over it.
-        let marker = view.read(cx).review.id(12);
-        let generation = view.read(cx).generation;
+        let marker = view.read(cx).row_id(12);
+        let generation = view.read(cx).generation();
         assert!(
             window
                 .find(format!("log-marker-{generation}-{marker}"))
@@ -247,10 +247,10 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         );
 
         // The app never switches by itself; the hint asks first.
-        assert!(!view.read(cx).source.previous);
+        assert!(!view.read(cx).source().previous);
         window.click("pod-logs-show-previous", cx);
         window.render_frame(cx);
-        assert!(view.read(cx).source.previous);
+        assert!(view.read(cx).source().previous);
         assert_eq!(lines(&view, cx), 24);
         assert!(markers(&view, cx).is_empty());
         assert_eq!(state(&view, cx), StreamState::Ended(None));
@@ -263,13 +263,13 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         assert!(window.try_find("pod-logs-hint").is_none());
 
         // A log read to its end has nothing to stop or resume.
-        let stream = view.read(cx).source.stream;
+        let stream = view.read(cx).source().stream;
         window.click("pod-logs-stream", cx);
-        assert_eq!(view.read(cx).source.stream, stream);
+        assert_eq!(view.read(cx).source().stream, stream);
 
         // Unchecking goes back to the current instance, read afresh.
         window.click("pod-logs-previous", cx);
-        assert!(!view.read(cx).source.previous);
+        assert!(!view.read(cx).source().previous);
         assert_eq!(lines(&view, cx), 12);
         assert_eq!(markers(&view, cx).len(), 1);
     })
@@ -282,10 +282,10 @@ fn without_a_restart_there_is_no_previous_instance(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         show(&view, &running_pod(), cx);
         window.render_frame(cx);
-        let stream = view.read(cx).source.stream;
+        let stream = view.read(cx).source().stream;
         window.click("pod-logs-previous", cx);
-        assert!(!view.read(cx).source.previous);
-        assert_eq!(view.read(cx).source.stream, stream);
+        assert!(!view.read(cx).source().previous);
+        assert_eq!(view.read(cx).source().stream, stream);
     })
     .unwrap();
 }
@@ -313,11 +313,11 @@ fn stop_keeps_what_was_read_and_resume_reads_on_without_repeating(cx: &mut TestA
     std::thread::sleep(std::time::Duration::from_millis(1100));
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(lines(&view, cx), 40);
-        let generation = view.read(cx).generation;
+        let generation = view.read(cx).generation();
         window.click("pod-logs-stream", cx);
         assert_eq!(state(&view, cx), StreamState::Streaming);
         // The same review, with nothing read twice.
-        assert_eq!(view.read(cx).generation, generation);
+        assert_eq!(view.read(cx).generation(), generation);
         assert_eq!(lines(&view, cx), 40);
     })
     .unwrap();
@@ -343,7 +343,7 @@ fn the_time_column_hides_and_copy_copies_what_shows(cx: &mut TestAppContext) {
         assert!(chrono::DateTime::parse_from_rfc3339(time).is_ok(), "{time}");
 
         window.click("pod-logs-timestamps", cx);
-        assert!(!view.read(cx).columns.time);
+        assert!(!view.read(cx).columns().time);
         window.render_frame(cx);
         // The selection stays; the copy leaves the time out.
         window.press("secondary-c", cx);
@@ -367,23 +367,23 @@ fn an_init_container_reads_to_its_end_and_a_new_tail_starts_over(cx: &mut TestAp
     cx.update_window(handle, |_, window, cx| {
         show(&view, &identity, cx);
         window.render_frame(cx);
-        let choices = view.read(cx).source.choices.clone();
+        let choices = view.read(cx).source().choices.clone();
         assert_eq!(choices[0].role, ContainerRole::Init);
         assert_eq!(choices[0].label.as_ref(), "init-config · Completed");
         assert!(choices[0].enabled);
         assert_eq!(choices[1].role, ContainerRole::App);
         // The app container is the default.
         assert_eq!(
-            view.read(cx).source.container.as_deref(),
+            view.read(cx).source().container.as_deref(),
             Some(choices[1].name.as_str())
         );
 
-        let generation = view.read(cx).generation;
+        let generation = view.read(cx).generation();
         view.update(cx, |view, cx| {
             view.choose_container("init-config".into(), cx)
         });
         window.render_frame(cx);
-        assert!(view.read(cx).generation > generation);
+        assert!(view.read(cx).generation() > generation);
         assert_eq!(lines(&view, cx), 3);
         assert!(matches!(state(&view, cx), StreamState::Ended(Some(_))));
         let status = window.find("pod-logs-status").label().unwrap().to_owned();
@@ -393,10 +393,10 @@ fn an_init_container_reads_to_its_end_and_a_new_tail_starts_over(cx: &mut TestAp
         );
 
         // Another tail reads the log again into a fresh review.
-        let generation = view.read(cx).generation;
+        let generation = view.read(cx).generation();
         view.update(cx, |view, cx| view.set_tail(Some(100), cx));
-        assert!(view.read(cx).generation > generation);
-        assert_eq!(view.read(cx).source.tail, Some(100));
+        assert!(view.read(cx).generation() > generation);
+        assert_eq!(view.read(cx).source().tail, Some(100));
         assert_eq!(lines(&view, cx), 3);
     })
     .unwrap();
@@ -408,7 +408,7 @@ fn hiding_the_page_stops_the_stream_and_showing_it_reads_on(cx: &mut TestAppCont
     cx.update_window(handle, |_, _, cx| {
         show(&view, &running_pod(), cx);
         view.update(cx, |view, cx| view.set_active(false, cx));
-        let source = &view.read(cx).source;
+        let source = &view.read(cx).source();
         assert!(source.job.is_none() && source.delivery.is_none());
         assert!(source.suspended && !source.running());
     })
@@ -417,11 +417,11 @@ fn hiding_the_page_stops_the_stream_and_showing_it_reads_on(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.update_window(handle, |_, _, cx| {
         assert_eq!(lines(&view, cx), 40);
-        let generation = view.read(cx).generation;
+        let generation = view.read(cx).generation();
         view.update(cx, |view, cx| view.set_active(true, cx));
         assert_eq!(state(&view, cx), StreamState::Streaming);
-        assert_eq!(view.read(cx).generation, generation);
-        assert!(view.read(cx).source.delivery.is_some());
+        assert_eq!(view.read(cx).generation(), generation);
+        assert!(view.read(cx).source().delivery.is_some());
     })
     .unwrap();
 }
@@ -437,12 +437,12 @@ fn another_pod_or_none_cancels_the_stream_and_starts_over(cx: &mut TestAppContex
             view.set_tail(Some(1_000), cx);
             view.set_timestamps(false, cx);
         });
-        let stream = view.read(cx).source.stream;
+        let stream = view.read(cx).source().stream;
 
         view.update(cx, |view, cx| {
             view.show_pod(Some(crashing.clone()), None, cx)
         });
-        let source = &view.read(cx).source;
+        let source = &view.read(cx).source();
         assert!(source.stream > stream);
         assert!(source.delivery.is_none());
         assert_eq!(source.state, StreamState::Idle);
@@ -450,11 +450,11 @@ fn another_pod_or_none_cancels_the_stream_and_starts_over(cx: &mut TestAppContex
         // tail and time column carry over.
         assert!(!source.wanted);
         assert_eq!(source.tail, Some(1_000));
-        assert!(!view.read(cx).columns.time);
+        assert!(!view.read(cx).columns().time);
         assert_eq!(lines(&view, cx), 0);
 
         view.update(cx, |view, cx| view.show_pod(None, None, cx));
-        assert!(view.read(cx).source.pod.is_none());
+        assert!(view.read(cx).source().pod.is_none());
     })
     .unwrap();
     cx.executor().advance_clock(EXAMPLE_INTERVAL * 3);

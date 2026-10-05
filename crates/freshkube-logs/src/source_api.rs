@@ -186,15 +186,6 @@ impl<S: LogSource> LogView<S> {
         self.review.next_id
     }
 
-    /// Lines applied to the review, and lines held back while hidden.
-    #[cfg(test)]
-    pub(crate) fn applied_and_held(&self) -> (usize, usize) {
-        (
-            self.review.logs.buffer().entries().len(),
-            self.backlog.len(),
-        )
-    }
-
     /// The review's part of a status line: counts, matches, selection,
     /// follow, and what retention dropped. `streaming` says whether lines
     /// still arrive while paused.

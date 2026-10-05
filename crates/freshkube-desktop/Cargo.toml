@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-logs.workspace = true
 freshkube-probe.workspace = true
 freshkube-terminal.workspace = true
 freshkube-ui.workspace = true
@@ -57,3 +58,5 @@ tempfile = "3"
 freshkube-probe = { workspace = true, features = ["counting"] }
 # The shell tests read the terminal's screen (`screen_text`, `ended`).
 freshkube-terminal = { workspace = true, features = ["testing"] }
+# The log tests read the view's state (`applied_and_held`, `retained`, …).
+freshkube-logs = { workspace = true, features = ["testing"] }
