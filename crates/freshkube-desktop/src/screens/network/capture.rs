@@ -31,7 +31,7 @@ use gpui_kit::*;
 use talos_rs::TalosClient;
 use talos_rs::proto::machine::BpfInstruction;
 
-use super::{NetworkScreen, effective};
+use super::NetworkScreen;
 use crate::backend::{OwnedJob, Target};
 use crate::palette::palette;
 use crate::screens::{ScreenSource, mono, panel};
@@ -283,9 +283,7 @@ impl NetworkScreen {
     /// The interface the table has selected, which the next capture uses.
     fn capture_choice(&self) -> Option<String> {
         self.snapshot()?;
-        let (_, keys) = self.interfaces();
-        let ix = effective(self.selected_iface.as_ref(), &keys)?;
-        keys.get(ix).cloned()
+        self.selected_interface_name().map(ToString::to_string)
     }
 
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {

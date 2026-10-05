@@ -8,8 +8,6 @@
 //! the snapshot's `next_sample` like the Processes screen does for CPU.
 mod capture;
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -39,19 +37,18 @@ use talos_rs::{
 use tokio::runtime::Handle;
 
 use super::{
-    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page_mode, mono, panel, partial_notice,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
+    gated_page_mode, mono, panel, partial_notice,
 };
 use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::table::{self, DataTable, TableState};
+use source::Derived;
 
 const CONTEXT: &str = "TalosNetwork";
-const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Below this content width the details pane moves under the list.
 const SIDE_DETAILS: f32 = 900.;
-/// Below this content width tables drop their least important columns.
-const COMPACT: f32 = 760.;
 const LIST_MIN_HEIGHT: f32 = 200.;
 const DETAILS_HEIGHT: f32 = 240.;
 /// The TUI warns about TIME_WAIT only above this many sockets.
@@ -103,6 +100,16 @@ impl View {
         Self::ALL.get(index).copied().unwrap_or(View::Interfaces)
     }
 
+    /// The prefix of its table's ids: `interface-list`, `connection-rows`.
+    fn prefix(self) -> &'static str {
+        match self {
+            View::Interfaces => "interface",
+            View::Connections => "connection",
+            View::Listeners => "listener",
+            View::KubeSpan => "peer",
+        }
+    }
+
     fn shifted(self, delta: isize) -> Self {
         let len = Self::ALL.len() as isize;
         Self::from_index((self.index() as isize + delta).rem_euclid(len) as usize)
@@ -111,7 +118,7 @@ impl View {
 
 /// Column sort orders; interfaces use the first two, connections the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Sort {
+pub(crate) enum Sort {
     /// Interface rate (cumulative traffic until a rate exists).
     Traffic,
     /// Interface errors plus drops.
@@ -173,7 +180,8 @@ impl StateFilter {
 #[derive(Clone, Debug)]
 enum KubeSpanState {
     Disabled,
-    Enabled(Vec<KubeSpanPeerStatus>),
+    /// Shared, so the rows derived from it are kept until a new answer.
+    Enabled(Arc<Vec<KubeSpanPeerStatus>>),
     Unavailable(String),
 }
 
@@ -215,23 +223,6 @@ struct RowsKey {
     sort: Sort,
 }
 
-/// The connection rows for one [`RowsKey`], shared by rendering, the list
-/// processor and keyboard navigation.
-struct VisibleRows {
-    key: RowsKey,
-    indexes: Rc<Vec<usize>>,
-    /// Where the selected key landed, resolved once per selection.
-    selection: Option<(Option<String>, Option<usize>)>,
-}
-
-/// Interface order and names for one sample and sort.
-struct InterfaceRows {
-    revision: u64,
-    sort: Sort,
-    order: Rc<Vec<usize>>,
-    keys: Rc<Vec<String>>,
-}
-
 pub(crate) struct NetworkScreen {
     embedded: bool,
     runtime: Handle,
@@ -251,13 +242,13 @@ pub(crate) struct NetworkScreen {
     selected_conn: Option<String>,
     selected_peer: Option<String>,
     copied: Option<String>,
-    compact: bool,
     capture: capture::Capture,
     query: Entity<InputState>,
     focus: FocusHandle,
-    scrolls: [UniformListScrollHandle; 4],
-    visible_rows: RefCell<Option<VisibleRows>>,
-    interface_rows: RefCell<Option<InterfaceRows>>,
+    /// One table per view, by [`View::index`], so each keeps its scroll.
+    tables: [TableState; 4],
+    /// The rows, derived when what they show changes.
+    derived: Derived,
     _subscription: Subscription,
     /// Caret and selection changes redraw the filter; this view is cached, so
     /// it has to hear about them.
@@ -315,14 +306,12 @@ impl ScreenPanel for NetworkScreen {
             selected_conn: None,
             selected_peer: None,
             copied: None,
-            compact: false,
             capture: capture::Capture::default(),
             _query_observer: cx.observe(&query, |_, _, cx| cx.notify()),
             query,
             focus: cx.focus_handle(),
-            scrolls: std::array::from_fn(|_| UniformListScrollHandle::new()),
-            visible_rows: RefCell::new(None),
-            interface_rows: RefCell::new(None),
+            tables: View::ALL.map(|view| TableState::new(view.prefix())),
+            derived: Derived::default(),
             _subscription: subscription,
         }
     }
@@ -465,7 +454,7 @@ async fn collect(
 /// Maps core's KubeSpan snapshot; anything not queried stays unknown.
 fn kubespan_state(snapshot: &KubeSpanSnapshot) -> KubeSpanState {
     match snapshot {
-        KubeSpanSnapshot::Enabled { peers } => KubeSpanState::Enabled(peers.clone()),
+        KubeSpanSnapshot::Enabled { peers } => KubeSpanState::Enabled(Arc::new(peers.clone())),
         KubeSpanSnapshot::Disabled => KubeSpanState::Disabled,
         KubeSpanSnapshot::Unavailable { message } => KubeSpanState::Unavailable(message.clone()),
         KubeSpanSnapshot::NotRequested => {
@@ -681,19 +670,6 @@ fn peer_tone(state: &str) -> Tone {
     }
 }
 
-/// `index` of the selected key within `keys`, or the first row when nothing
-/// (or something that is gone) is selected.
-fn effective(selected: Option<&String>, keys: &[String]) -> Option<usize> {
-    if keys.is_empty() {
-        return None;
-    }
-    Some(
-        selected
-            .and_then(|key| keys.iter().position(|candidate| candidate == key))
-            .unwrap_or(0),
-    )
-}
-
 // -----------------------------------------------------------------------------
 // State and selection
 // -----------------------------------------------------------------------------
@@ -707,186 +683,13 @@ impl NetworkScreen {
         self.snapshot()?.connections.as_ref()
     }
 
-    fn peers(&self) -> &[KubeSpanPeerStatus] {
-        match self.kubespan.data() {
-            Some(KubeSpanState::Enabled(peers)) => peers,
-            _ => &[],
-        }
-    }
-
     fn text_filter(&self, cx: &App) -> String {
         self.query.read(cx).value().trim().to_lowercase()
     }
 
-    /// Interface order and names for the current sample and sort, computed
-    /// once per sample rather than per frame.
-    fn interfaces(&self) -> (Rc<Vec<usize>>, Rc<Vec<String>>) {
-        let (Some(data), sort) = (self.loader.data(), self.iface_sort) else {
-            return Default::default();
-        };
-        let mut cache = self.interface_rows.borrow_mut();
-        if let Some(rows) = cache
-            .as_ref()
-            .filter(|rows| rows.revision == data.revision && rows.sort == sort)
-        {
-            return (rows.order.clone(), rows.keys.clone());
-        }
-        let interfaces = &data.snapshot.interfaces;
-        let mut order: Vec<usize> = (0..interfaces.len()).collect();
-        let traffic = |ix: usize| {
-            (
-                rate_total(&interfaces[ix]),
-                interfaces[ix].stats.total_traffic(),
-            )
-        };
-        match sort {
-            Sort::Errors => order.sort_by(|a, b| {
-                let weight = |ix: usize| {
-                    interfaces[ix].stats.total_errors() + interfaces[ix].stats.total_dropped()
-                };
-                weight(*b)
-                    .cmp(&weight(*a))
-                    .then(traffic(*b).cmp(&traffic(*a)))
-            }),
-            _ => order.sort_by_key(|ix| std::cmp::Reverse(traffic(*ix))),
-        }
-        let keys = order
-            .iter()
-            .map(|ix| interfaces[*ix].stats.name.clone())
-            .collect();
-        let rows = InterfaceRows {
-            revision: data.revision,
-            sort,
-            order: Rc::new(order),
-            keys: Rc::new(keys),
-        };
-        let result = (rows.order.clone(), rows.keys.clone());
-        *cache = Some(rows);
-        result
-    }
-
-    /// Indexes into the connection list that the current view and filters keep,
-    /// reused until the sample, the filters or the sort change.
-    fn visible_connections(&self, cx: &App) -> Rc<Vec<usize>> {
-        let (Some(data), Some(connections)) = (self.loader.data(), self.connections()) else {
-            return Rc::default();
-        };
-        let key = RowsKey {
-            revision: data.revision,
-            text: self.text_filter(cx),
-            listeners: self.view == View::Listeners,
-            state_filter: self.state_filter,
-            iface_filter: self.iface_filter.clone(),
-            sort: self.conn_sort,
-        };
-        let mut cache = self.visible_rows.borrow_mut();
-        if let Some(rows) = cache.as_ref().filter(|rows| rows.key == key) {
-            return rows.indexes.clone();
-        }
-        crate::desktop::probe::hit("network.rows");
-        let mut visible: Vec<usize> = connections
-            .connections
-            .iter()
-            .enumerate()
-            .filter(|(_, conn)| {
-                let info = &conn.connection;
-                if key.listeners {
-                    return info.state == ConnectionState::Listen;
-                }
-                key.state_filter.keeps(info.state)
-            })
-            .filter(|(_, conn)| {
-                key.iface_filter
-                    .as_deref()
-                    .is_none_or(|iface| uses_interface(&conn.connection, iface))
-            })
-            .filter(|(_, conn)| key.text.is_empty() || matches_text(conn, &key.text))
-            .map(|(ix, _)| ix)
-            .collect();
-        let list = &connections.connections;
-        match key.sort {
-            Sort::Port => visible.sort_by_key(|ix| list[*ix].connection.local_port),
-            _ => visible.sort_by_key(|ix| {
-                let info = &list[*ix].connection;
-                (state_priority(info.state), info.local_port)
-            }),
-        }
-        let indexes = Rc::new(visible);
-        *cache = Some(VisibleRows {
-            key,
-            indexes: indexes.clone(),
-            selection: None,
-        });
-        indexes
-    }
-
-    /// Row of the selected connection among the visible ones (the first row
-    /// when nothing, or something gone, is selected). Only the selected
-    /// socket's key is compared, and the answer is kept until the rows or
-    /// the selection change.
-    fn selected_connection_row(&self, cx: &App) -> Option<usize> {
-        let visible = self.visible_connections(cx);
-        if visible.is_empty() {
-            return None;
-        }
-        let connections = self.connections()?;
-        let mut cache = self.visible_rows.borrow_mut();
-        let rows = cache.as_mut()?;
-        if let Some((selected, row)) = &rows.selection
-            && selected == &self.selected_conn
-        {
-            return *row;
-        }
-        let row = self
-            .selected_conn
-            .as_ref()
-            .and_then(|key| {
-                visible
-                    .iter()
-                    .position(|ix| conn_key(&connections.connections[*ix].connection) == *key)
-            })
-            .unwrap_or(0);
-        rows.selection = Some((self.selected_conn.clone(), Some(row)));
-        Some(row)
-    }
-
-    /// Rows in the current view and the selected one (the first when nothing,
-    /// or something that is gone, is selected).
-    fn rows(&self, cx: &App) -> (usize, Option<usize>) {
-        match self.view {
-            View::Interfaces => {
-                let (_, keys) = self.interfaces();
-                (keys.len(), effective(self.selected_iface.as_ref(), &keys))
-            }
-            View::Connections | View::Listeners => (
-                self.visible_connections(cx).len(),
-                self.selected_connection_row(cx),
-            ),
-            View::KubeSpan => {
-                let keys: Vec<String> = self.peers().iter().map(|peer| peer.id.clone()).collect();
-                (keys.len(), effective(self.selected_peer.as_ref(), &keys))
-            }
-        }
-    }
-
-    /// Selection key of row `ix` in the current view.
-    fn key_at(&self, ix: usize, cx: &App) -> Option<String> {
-        match self.view {
-            View::Interfaces => self.interfaces().1.get(ix).cloned(),
-            View::Connections | View::Listeners => {
-                let visible = self.visible_connections(cx);
-                let conn = self.connections()?.connections.get(*visible.get(ix)?)?;
-                Some(conn_key(&conn.connection))
-            }
-            View::KubeSpan => self.peers().get(ix).map(|peer| peer.id.clone()),
-        }
-    }
-
-    #[cfg(test)]
-    fn keys(&self, cx: &App) -> Vec<String> {
-        (0..self.rows(cx).0)
-            .filter_map(|ix| self.key_at(ix, cx))
-            .collect()
+    /// The showing view's table.
+    fn table(&self) -> &TableState {
+        &self.tables[self.view.index()]
     }
 
     fn select(&mut self, key: String) {
@@ -897,21 +700,14 @@ impl NetworkScreen {
         }
     }
 
-    fn scroll(&self) -> &UniformListScrollHandle {
-        &self.scrolls[self.view.index()]
-    }
-
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let (len, selected) = self.rows(cx);
-        let Some(current) = selected else {
+        self.sync_rows(cx);
+        let Some(key) = table::step(&*self, delta, cx) else {
             return;
         };
-        let next = current.saturating_add_signed(delta).min(len - 1);
-        let Some(key) = self.key_at(next, cx) else {
-            return;
-        };
-        self.select(key);
-        self.scroll().scroll_to_item(next, ScrollStrategy::Nearest);
+        self.select(key.to_string());
+        self.sync_rows(cx);
+        table::reveal(&*self, ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -938,7 +734,7 @@ impl NetworkScreen {
             Sort::Traffic | Sort::Errors => self.iface_sort = sort,
             Sort::State | Sort::Port => self.conn_sort = sort,
         }
-        self.scroll().scroll_to_item(0, ScrollStrategy::Top);
+        self.table().reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -951,7 +747,7 @@ impl NetworkScreen {
 
     fn set_state_filter(&mut self, filter: StateFilter, cx: &mut Context<Self>) {
         self.state_filter = filter;
-        self.scrolls[View::Connections.index()].scroll_to_item(0, ScrollStrategy::Top);
+        self.tables[View::Connections.index()].reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -960,12 +756,13 @@ impl NetworkScreen {
         if self.view != View::Interfaces {
             return;
         }
-        let Some(key) = self.rows(cx).1.and_then(|ix| self.key_at(ix, cx)) else {
+        self.sync_rows(cx);
+        let Some(key) = self.selected_interface_name() else {
             return;
         };
-        self.iface_filter = Some(key);
+        self.iface_filter = Some(key.to_string());
         self.view = View::Connections;
-        self.scrolls[View::Connections.index()].scroll_to_item(0, ScrollStrategy::Top);
+        self.tables[View::Connections.index()].reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -985,18 +782,18 @@ impl NetworkScreen {
         cx.notify();
     }
 
-    fn selected_connection(&self, cx: &App) -> Option<&NetworkConnectionSnapshot> {
-        let connections = self.connections()?;
-        let visible = self.visible_connections(cx);
-        let row = self.selected_connection_row(cx)?;
-        connections.connections.get(*visible.get(row)?)
+    /// The selected socket, as the rows were last derived.
+    fn selected_connection(&self) -> Option<&NetworkConnectionSnapshot> {
+        let row = self.selected_connection_row()?;
+        self.connections()?.connections.get(row.index)
     }
 
     fn copy_connection(&mut self, cx: &mut Context<Self>) {
         if !matches!(self.view, View::Connections | View::Listeners) {
             return;
         }
-        let Some(conn) = self.selected_connection(cx) else {
+        self.sync_rows(cx);
+        let Some(conn) = self.selected_connection() else {
             return;
         };
         let (text, key) = (
@@ -1042,6 +839,7 @@ fn matches_text(conn: &NetworkConnectionSnapshot, text: &str) -> bool {
 // -----------------------------------------------------------------------------
 
 mod example;
+mod source;
 mod view;
 use example::{example, example_kubespan};
 

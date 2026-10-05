@@ -256,145 +256,80 @@ impl NetworkScreen {
             })
     }
 
-    /// Column headers; sortable ones carry their sort.
-    fn head(
-        &self,
-        columns: &[(Column, Option<(&'static str, Sort)>)],
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = palette(cx);
-        h_flex()
-            .py(dp(7.))
-            .border_b_1()
-            .border_color(p.line)
-            .children(columns.iter().enumerate().map(|(ix, (column, sort))| {
-                let label = ui::caption(column.label, cx);
-                let right = ix > 0
-                    && sort.is_some()
-                    && !matches!(sort, Some((_, Sort::State | Sort::Port)));
-                match *sort {
-                    None => cell(*column).child(label).into_any_element(),
-                    Some((id, sort)) => {
-                        let active = self.sort_is(sort);
-                        cell(*column)
-                            .child(
-                                h_flex()
-                                    .id(id)
-                                    .test_support()
-                                    .role(Role::ColumnHeader)
-                                    .aria_selected(active)
-                                    .aria_label(format!("Sort by {}", column.label))
-                                    .when(right, |this| this.justify_end())
-                                    .gap_1()
-                                    .cursor_pointer()
-                                    .when(active, |this| this.text_color(p.accent))
-                                    .child(label)
-                                    .when(active, |this| {
-                                        this.child(
-                                            Icon::new(IconName::ArrowDown)
-                                                .size(dp(11.))
-                                                .text_color(p.accent),
-                                        )
-                                    })
-                                    .on_click(
-                                        cx.listener(move |view, _, _, cx| view.set_sort(sort, cx)),
-                                    ),
-                            )
-                            .into_any_element()
-                    }
+    /// The showing view's table, inside a wrapper that holds the page's keys.
+    /// The wrapper is drawn in every state, so a view without rows keeps
+    /// Tab, the arrows and the filter keys.
+    fn list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        div()
+            .id("network-table")
+            .test_support()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|view, _: &NextRow, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousRow, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstRow, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastRow, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &NextView, window, cx| {
+                view.switch(view.view.shifted(1), window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &PreviousView, window, cx| {
+                view.switch(view.view.shifted(-1), window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &OpenConnections, _, cx| view.open_connections(cx)))
+            .on_action(cx.listener(|view, _: &SortPrimary, _, cx| {
+                let sort = match view.view {
+                    View::Interfaces => Sort::Traffic,
+                    _ => Sort::State,
+                };
+                view.set_sort(sort, cx);
+            }))
+            .on_action(cx.listener(|view, _: &SortSecondary, _, cx| {
+                let sort = match view.view {
+                    View::Interfaces => Sort::Errors,
+                    _ => Sort::Port,
+                };
+                view.set_sort(sort, cx);
+            }))
+            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+                if matches!(view.view, View::Connections | View::Listeners) {
+                    let focus = view.query.read(cx).focus_handle(cx);
+                    window.focus(&focus, cx);
                 }
             }))
-    }
-
-    /// The bordered list with its key bindings; `body` is the rows or a message.
-    fn list_shell(
-        &self,
-        id: &'static str,
-        label: &'static str,
-        head: Div,
-        body: AnyElement,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        panel(cx)
-            .flex_1()
-            .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .child(head)
-            .child(
-                div()
-                    .id(id)
-                    .test_support()
-                    .role(Role::ListBox)
-                    .aria_label(label)
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|view, _: &NextRow, _, cx| view.step(1, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousRow, _, cx| view.step(-1, cx)))
-                    .on_action(cx.listener(|view, _: &FirstRow, _, cx| view.step(isize::MIN, cx)))
-                    .on_action(cx.listener(|view, _: &LastRow, _, cx| view.step(isize::MAX, cx)))
-                    .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-                    .on_action(
-                        cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)),
-                    )
-                    .on_action(cx.listener(|view, _: &NextView, window, cx| {
-                        view.switch(view.view.shifted(1), window, cx)
-                    }))
-                    .on_action(cx.listener(|view, _: &PreviousView, window, cx| {
-                        view.switch(view.view.shifted(-1), window, cx)
-                    }))
-                    .on_action(
-                        cx.listener(|view, _: &OpenConnections, _, cx| view.open_connections(cx)),
-                    )
-                    .on_action(cx.listener(|view, _: &SortPrimary, _, cx| {
-                        let sort = match view.view {
-                            View::Interfaces => Sort::Traffic,
-                            _ => Sort::State,
-                        };
-                        view.set_sort(sort, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &SortSecondary, _, cx| {
-                        let sort = match view.view {
-                            View::Interfaces => Sort::Errors,
-                            _ => Sort::Port,
-                        };
-                        view.set_sort(sort, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
-                        if matches!(view.view, View::Connections | View::Listeners) {
-                            let focus = view.query.read(cx).focus_handle(cx);
-                            window.focus(&focus, cx);
-                        }
-                    }))
-                    .on_action(cx.listener(|view, _: &ClearFilter, window, cx| {
-                        view.clear_filter(window, cx)
-                    }))
-                    .on_action(
-                        cx.listener(|view, _: &CopyConnection, _, cx| view.copy_connection(cx)),
-                    )
-                    .flex_1()
-                    .min_h_0()
-                    .child(body),
+            .on_action(
+                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
             )
-    }
-
-    fn message(&self, text: impl Into<SharedString>, cx: &App) -> AnyElement {
-        let p = palette(cx);
-        div()
-            .px_3()
-            .py_3p5()
-            .text_size(dp(12.5))
-            .text_color(p.muted)
-            .child(text.into())
-            .into_any_element()
+            .on_action(cx.listener(|view, _: &CopyConnection, _, cx| view.copy_connection(cx)))
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(dp(list_min(window)))
+            .child(
+                DataTable::new()
+                    .carded()
+                    .render(self, window, cx)
+                    .flex_1()
+                    .min_h_0(),
+            )
     }
 
     /// List and details, side by side when wide. Short windows scroll the
     /// page rather than squeezing the list.
-    fn split(&self, details_id: &'static str, list: Div, details: Div, wide: bool) -> Div {
+    fn split(
+        &self,
+        details_id: &'static str,
+        list: impl IntoElement,
+        details: Div,
+        wide: bool,
+        window: &Window,
+    ) -> Div {
+        let least = list_min(window);
         if wide {
             h_flex()
                 .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT))
+                .min_h(dp(least))
                 .items_stretch()
                 .gap(dp(14.))
                 .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
@@ -412,7 +347,7 @@ impl NetworkScreen {
         } else {
             h_flex()
                 .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
+                .min_h(dp(least + 14. + DETAILS_HEIGHT))
                 .child(
                     v_flex().size_full().gap(dp(14.)).child(list).child(
                         div()
@@ -429,167 +364,29 @@ impl NetworkScreen {
         }
     }
 
-    fn row_base(
-        &self,
-        id: (&'static str, usize),
-        selected: bool,
-        label: String,
-        p: &Palette,
-    ) -> impl ParentElement + Styled + StatefulInteractiveElement + IntoElement + use<> {
-        h_flex()
-            .id(id)
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(label)
-            .h(dp(ROW_HEIGHT))
-            .font_family(MONO_FONT)
-            .text_size(dp(12.))
-            .cursor_pointer()
-            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-    }
-
     // ---- Interfaces ----
 
-    fn interface_columns(compact: bool) -> Vec<(Column, Option<(&'static str, Sort)>)> {
-        let col = |label, width| Column { label, width };
-        let mut columns = vec![
-            (
-                col("Interface", if compact { Some(120.) } else { None }),
-                None,
-            ),
-            (col("RX/s", Some(104.)), Some(("sort-rx", Sort::Traffic))),
-            (col("TX/s", Some(104.)), Some(("sort-tx", Sort::Traffic))),
-            (
-                col("Errors", Some(72.)),
-                Some(("sort-errors", Sort::Errors)),
-            ),
-            (
-                col("Dropped", Some(72.)),
-                Some(("sort-dropped", Sort::Errors)),
-            ),
-        ];
-        if !compact {
-            columns.push((col("RX total", Some(88.)), None));
-            columns.push((col("TX total", Some(88.)), None));
-        }
-        columns
-    }
-
-    fn interface_row(
-        &self,
-        ix: usize,
-        interface: &NetworkInterfaceSnapshot,
-        selected: bool,
+    fn interfaces_tab(
+        &mut self,
+        data: &NetworkData,
+        wide: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let stats = &interface.stats;
-        let name = stats.name.clone();
-        let rx = interface.receive_rate_display();
-        let tx = interface.transmit_rate_display();
-        let columns = Self::interface_columns(self.compact);
-        let measuring = |value: Option<String>| match value {
-            Some(value) => div().child(value),
-            None => div().text_color(p.muted).child("measuring…"),
-        };
-        let counter = |value: u64, color: Hsla| {
-            div()
-                .text_color(if value > 0 { color } else { p.muted })
-                .child(value.to_string())
-        };
-        let mut row = self
-            .row_base(
-                ("interface", ix),
-                selected,
-                format!(
-                    "{name} · RX {} · TX {} · {} errors · {} dropped",
-                    rx.as_deref().unwrap_or("measuring"),
-                    tx.as_deref().unwrap_or("measuring"),
-                    stats.total_errors(),
-                    stats.total_dropped()
-                ),
-                &p,
-            )
-            .child(cell(columns[0].0).child(div().truncate().child(name.clone())))
-            .child(cell(columns[1].0).text_right().child(measuring(rx)))
-            .child(cell(columns[2].0).text_right().child(measuring(tx)))
-            .child(
-                cell(columns[3].0)
-                    .text_right()
-                    .child(counter(stats.total_errors(), p.crit_ink)),
-            )
-            .child(
-                cell(columns[4].0)
-                    .text_right()
-                    .child(counter(stats.total_dropped(), p.warn_ink)),
-            );
-        if !self.compact {
-            row = row
-                .child(
-                    cell(columns[5].0)
-                        .text_right()
-                        .child(interface.received_display()),
-                )
-                .child(
-                    cell(columns[6].0)
-                        .text_right()
-                        .child(interface.transmitted_display()),
-                );
-        }
-        row.on_click(cx.listener(move |view, _, window, cx| {
-            view.selected_iface = Some(name.clone());
-            window.focus(&view.focus, cx);
-            cx.notify();
-        }))
-    }
-
-    fn interfaces_tab(&self, data: &NetworkData, wide: bool, cx: &mut Context<Self>) -> Div {
-        let head = self.head(&Self::interface_columns(self.compact), cx);
-        let count = data.snapshot.interfaces.len();
-        let body = if count == 0 {
-            self.message("This node didn't report any network interfaces.", cx)
-        } else {
-            uniform_list(
-                "interface-rows",
-                count,
-                cx.processor(|view, range: std::ops::Range<usize>, _, cx| {
-                    let Some(snapshot) = view.snapshot() else {
-                        return Vec::new();
-                    };
-                    let (order, keys) = view.interfaces();
-                    let selected = effective(view.selected_iface.as_ref(), &keys);
-                    range
-                        .filter_map(|ix| {
-                            let interface = snapshot.interfaces.get(*order.get(ix)?)?;
-                            Some(view.interface_row(ix, interface, selected == Some(ix), cx))
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .track_scroll(&self.scrolls[View::Interfaces.index()])
-            .size_full()
-            .into_any_element()
-        };
-        let list = self.list_shell(
-            "interface-list",
-            "Network interfaces on the target node; arrows select, Enter shows its connections",
-            head,
-            body,
-            cx,
-        );
+    ) -> Div {
+        let list = self.list(window, cx);
         let details = self.interface_details(data, cx);
-        self.split("interface-details", list, details, wide)
+        self.split("interface-details", list, details, wide, window)
     }
 
     fn interface_details(&self, data: &NetworkData, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let snapshot = &data.snapshot;
-        let (order, keys) = self.interfaces();
-        let Some(interface) = effective(self.selected_iface.as_ref(), &keys)
-            .and_then(|ix| snapshot.interfaces.get(order[ix]))
-        else {
+        let Some(interface) = self.selected_interface_name().and_then(|name| {
+            snapshot
+                .interfaces
+                .iter()
+                .find(|interface| interface.stats.name == name.as_ref())
+        }) else {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
@@ -702,219 +499,31 @@ impl NetworkScreen {
 
     // ---- Connections and listeners ----
 
-    fn connection_columns(&self) -> Vec<(Column, Option<(&'static str, Sort)>)> {
-        let col = |label, width| Column { label, width };
-        match (self.view, self.compact) {
-            (View::Listeners, false) => vec![
-                (col("Proto", Some(64.)), None),
-                (col("Local", Some(190.)), Some(("sort-local", Sort::Port))),
-                (col("Service", Some(150.)), None),
-                (col("Process", None), None),
-            ],
-            (View::Listeners, true) => vec![
-                (col("Local", Some(140.)), Some(("sort-local", Sort::Port))),
-                (col("Service", Some(120.)), None),
-                (col("Process", None), None),
-            ],
-            (_, false) => vec![
-                (col("Proto", Some(64.)), None),
-                (col("Local", Some(176.)), Some(("sort-local", Sort::Port))),
-                (col("Remote", Some(176.)), None),
-                (col("State", Some(112.)), Some(("sort-state", Sort::State))),
-                (col("Dir", Some(56.)), None),
-                (col("Service / process", None), None),
-            ],
-            (_, true) => vec![
-                (col("Local", Some(140.)), Some(("sort-local", Sort::Port))),
-                (col("Remote", Some(140.)), None),
-                (col("State", Some(96.)), Some(("sort-state", Sort::State))),
-                (col("Service", Some(96.)), None),
-            ],
-        }
-    }
-
-    fn connection_row(
-        &self,
-        ix: usize,
-        conn: &NetworkConnectionSnapshot,
-        selected: bool,
-        many_time_wait: bool,
+    fn connections_tab(
+        &mut self,
+        data: &NetworkData,
+        wide: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let info = &conn.connection;
-        let key = conn_key(info);
-        let columns = self.connection_columns();
-        let listeners = self.view == View::Listeners;
-        let id_prefix = if listeners { "listener" } else { "connection" };
-        let service = service_of(conn);
-        let service_text = service.map_or_else(String::new, |(name, local)| {
-            if local {
-                name.to_owned()
-            } else {
-                format!("→ {name}")
-            }
-        });
-        let owner = {
-            let process = process_text(info);
-            match (service_text.is_empty(), process.as_str()) {
-                (true, process) => process.to_owned(),
-                (false, "-") => service_text.clone(),
-                (false, process) => format!("{service_text} · {process}"),
-            }
-        };
-        let direction = match conn.direction {
-            ConnectionDirection::Inbound => "in",
-            ConnectionDirection::Outbound => "out",
-            ConnectionDirection::Unknown => "—",
-        };
-        let state_color = state_color(info.state, many_time_wait, &p);
-        let text = |value: String| cell_text(value);
-        let mut row = self.row_base(
-            (id_prefix, ix),
-            selected,
-            format!(
-                "{} {} to {} · {} · {}",
-                info.protocol,
-                local_text(info),
-                remote_text(info),
-                state_label(info.state),
-                if owner.is_empty() { "-" } else { &owner }
-            ),
-            &p,
-        );
-        let mut cells = columns.iter().map(|(column, _)| *column);
-        let mut next = || cells.next().expect("column count matches the row");
-        if !self.compact {
-            row = row.child(
-                cell(next())
-                    .text_color(p.muted)
-                    .child(text(info.protocol.clone())),
-            );
-        }
-        row = row.child(cell(next()).child(text(local_text(info))));
-        if listeners {
-            row = row.child(
-                cell(next())
-                    .text_color(if service.is_some() { p.accent } else { p.muted })
-                    .child(text(if service_text.is_empty() {
-                        "—".into()
-                    } else {
-                        service_text.clone()
-                    })),
-            );
-            row = row.child(cell(next()).child(text(process_text(info))));
+    ) -> Div {
+        let details_id = if self.view == View::Listeners {
+            "listener-details"
         } else {
-            row = row.child(cell(next()).child(text(remote_text(info))));
-            row = row.child(
-                cell(next())
-                    .when(!selected, |this| this.text_color(state_color))
-                    .child(text(state_label(info.state).to_owned())),
-            );
-            if !self.compact {
-                row = row.child(
-                    cell(next())
-                        .text_color(p.muted)
-                        .child(text(direction.into())),
-                );
-            }
-            row = row.child(
-                cell(next())
-                    .when(service.is_some() && !selected, |this| {
-                        this.text_color(p.accent)
-                    })
-                    .child(text(if self.compact && !service_text.is_empty() {
-                        service_text.clone()
-                    } else if owner.is_empty() {
-                        "-".into()
-                    } else {
-                        owner.clone()
-                    })),
-            );
-        }
-        row.on_click(cx.listener(move |view, _, window, cx| {
-            view.selected_conn = Some(key.clone());
-            window.focus(&view.focus, cx);
-            cx.notify();
-        }))
-    }
-
-    fn connections_tab(&self, data: &NetworkData, wide: bool, cx: &mut Context<Self>) -> Div {
-        let listeners = self.view == View::Listeners;
+            "connection-details"
+        };
         let toolbar = self.connection_toolbar(data, cx);
-        let (list_id, rows_id, label, details_id) = if listeners {
-            (
-                "listener-list",
-                "listener-rows",
-                "Listening sockets on the target node; arrows select, Command or Control C copies the line",
-                "listener-details",
-            )
-        } else {
-            (
-                "connection-list",
-                "connection-rows",
-                "Network connections on the target node; arrows select, Command or Control C copies the line",
-                "connection-details",
-            )
-        };
-        let head = self.head(&self.connection_columns(), cx);
-        let visible = self.visible_connections(cx);
-        let total = data
-            .snapshot
-            .connections
-            .as_ref()
-            .map_or(0, |c| c.connections.len());
-        let body = if data.snapshot.connections.is_none() {
-            self.message(
-                "Connections are unknown: the node's netstat didn't answer. Refresh to retry.",
-                cx,
-            )
-        } else if visible.is_empty() {
-            self.message(
-                if total == 0 {
-                    "This node didn't report any connections."
-                } else if listeners {
-                    "No listeners match this filter."
-                } else {
-                    "No connections match these filters."
-                },
-                cx,
-            )
-        } else {
-            uniform_list(
-                rows_id,
-                visible.len(),
-                cx.processor(|view, range: std::ops::Range<usize>, _, cx| {
-                    let Some(connections) = view.connections() else {
-                        return Vec::new();
-                    };
-                    let visible = view.visible_connections(cx);
-                    let selected = view.selected_connection_row(cx);
-                    let many = connections.counts.time_wait > TIME_WAIT_WARNING;
-                    range
-                        .filter_map(|ix| {
-                            let conn = connections.connections.get(*visible.get(ix)?)?;
-                            Some(view.connection_row(ix, conn, selected == Some(ix), many, cx))
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .track_scroll(&self.scrolls[self.view.index()])
-            .size_full()
-            .into_any_element()
-        };
-        let list = self.list_shell(list_id, label, head, body, cx);
+        let list = self.list(window, cx);
         let details = self.connection_details(cx);
         v_flex()
             .flex_1()
             .gap(dp(14.))
             .child(toolbar)
-            .child(self.split(details_id, list, details, wide))
+            .child(self.split(details_id, list, details, wide, window))
     }
 
     fn connection_details(&self, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
-        let Some(conn) = self.selected_connection(cx) else {
+        let Some(conn) = self.selected_connection() else {
             return panel(cx)
                 .p_4()
                 .text_color(p.muted)
@@ -1045,26 +654,7 @@ impl NetworkScreen {
 
     // ---- KubeSpan ----
 
-    fn peer_columns(compact: bool) -> Vec<Column> {
-        let col = |label, width| Column { label, width };
-        if compact {
-            vec![
-                col("Hostname", None),
-                col("Endpoint", Some(150.)),
-                col("State", Some(72.)),
-            ]
-        } else {
-            vec![
-                col("Hostname", None),
-                col("Endpoint", Some(170.)),
-                col("State", Some(72.)),
-                col("RX", Some(84.)),
-                col("TX", Some(84.)),
-            ]
-        }
-    }
-
-    fn kubespan_tab(&self, wide: bool, cx: &mut Context<Self>) -> Div {
+    fn kubespan_tab(&mut self, wide: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let status = |id: &'static str, icon: IconName, title: String, detail: String, cx: &App| {
             panel(cx)
@@ -1133,41 +723,12 @@ impl NetworkScreen {
             }
             KubeSpanState::Enabled(peers) => peers,
         };
+        let peers = peers.clone();
         let up = peers.iter().filter(|peer| peer.state == "up").count();
-        let columns: Vec<(Column, Option<(&'static str, Sort)>)> = Self::peer_columns(self.compact)
-            .into_iter()
-            .map(|column| (column, None))
-            .collect();
-        let head = self.head(&columns, cx);
-        let body = uniform_list(
-            "peer-rows",
-            peers.len(),
-            cx.processor(|view, range: std::ops::Range<usize>, _, cx| {
-                let keys: Vec<String> = view.peers().iter().map(|peer| peer.id.clone()).collect();
-                let selected = effective(view.selected_peer.as_ref(), &keys);
-                range
-                    .filter_map(|ix| {
-                        let peer = view.peers().get(ix)?.clone();
-                        Some(view.peer_row(ix, &peer, selected == Some(ix), cx))
-                    })
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(&self.scrolls[View::KubeSpan.index()])
-        .size_full()
-        .into_any_element();
-        let list = self.list_shell(
-            "peer-list",
-            "KubeSpan peers of the target node; arrows select",
-            head,
-            body,
-            cx,
-        );
-        let selected = effective(
-            self.selected_peer.as_ref(),
-            &peers.iter().map(|peer| peer.id.clone()).collect::<Vec<_>>(),
-        )
-        .and_then(|ix| peers.get(ix));
+        let list = self.list(window, cx);
+        let selected = self
+            .selected_peer_key()
+            .and_then(|id| peers.iter().find(|peer| peer.id == id.as_ref()));
         let details = self.peer_details(selected, cx);
         v_flex()
             .flex_1()
@@ -1185,60 +746,7 @@ impl NetworkScreen {
                     })
                     .child(format!("{up}/{} peers up", peers.len())),
             )
-            .child(self.split("peer-details", list, details, wide))
-    }
-
-    fn peer_row(
-        &self,
-        ix: usize,
-        peer: &KubeSpanPeerStatus,
-        selected: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let columns = Self::peer_columns(self.compact);
-        let id = peer.id.clone();
-        let mut row = self
-            .row_base(
-                ("peer", ix),
-                selected,
-                format!("{} · {}", peer.label, peer.state),
-                &p,
-            )
-            .child(cell(columns[0]).child(cell_text(peer.label.clone())))
-            .child(cell(columns[1]).child(cell_text(
-                peer.endpoint.clone().unwrap_or_else(|| "--".into()),
-            )))
-            .child(
-                cell(columns[2])
-                    .when(!selected, |this| {
-                        this.text_color(match peer_tone(&peer.state) {
-                            Tone::Good => p.good_ink,
-                            Tone::Crit => p.crit_ink,
-                            Tone::Unknown => p.unk_ink,
-                            _ => p.warn_ink,
-                        })
-                    })
-                    .child(cell_text(peer.state.clone())),
-            );
-        if !self.compact {
-            row = row
-                .child(
-                    cell(columns[3])
-                        .text_right()
-                        .child(format_bytes(peer.rx_bytes)),
-                )
-                .child(
-                    cell(columns[4])
-                        .text_right()
-                        .child(format_bytes(peer.tx_bytes)),
-                );
-        }
-        row.on_click(cx.listener(move |view, _, window, cx| {
-            view.selected_peer = Some(id.clone());
-            window.focus(&view.focus, cx);
-            cx.notify();
-        }))
+            .child(self.split("peer-details", list, details, wide, window))
     }
 
     fn peer_details(&self, peer: Option<&KubeSpanPeerStatus>, cx: &mut Context<Self>) -> Div {
@@ -1298,8 +806,14 @@ impl NetworkScreen {
     }
 }
 
-fn cell_text(value: String) -> Div {
-    div().truncate().child(value)
+/// The list's least height: shorter in a short window, which scrolls the
+/// page to the details instead.
+fn list_min(window: &Window) -> f32 {
+    if freshkube_ui::page::is_short(window) {
+        freshkube_ui::page::SHORT_LIST_HEIGHT
+    } else {
+        LIST_MIN_HEIGHT
+    }
 }
 
 fn health_text(health: &ServiceHealth) -> &'static str {
@@ -1330,9 +844,8 @@ impl Render for NetworkScreen {
         let (Some(source), Some(data)) = (self.source.clone(), self.loader.data().cloned()) else {
             return div().into_any_element();
         };
-        let width = content_width(window);
-        self.compact = width < COMPACT;
-        let wide = width >= SIDE_DETAILS;
+        let wide = content_width(window) >= SIDE_DETAILS;
+        self.sync_rows(cx);
         let mut missing: Vec<String> = data
             .snapshot
             .unavailable
@@ -1345,9 +858,9 @@ impl Render for NetworkScreen {
             missing.push(format!("{}: {message}", InspectionSource::KubeSpan.label()));
         }
         let tab = match self.view {
-            View::Interfaces => self.interfaces_tab(&data, wide, cx),
-            View::Connections | View::Listeners => self.connections_tab(&data, wide, cx),
-            View::KubeSpan => self.kubespan_tab(wide, cx),
+            View::Interfaces => self.interfaces_tab(&data, wide, window, cx),
+            View::Connections | View::Listeners => self.connections_tab(&data, wide, window, cx),
+            View::KubeSpan => self.kubespan_tab(wide, window, cx),
         };
         let capture = (self.view == View::Interfaces).then(|| self.capture_panel(&source, cx));
         v_flex()
