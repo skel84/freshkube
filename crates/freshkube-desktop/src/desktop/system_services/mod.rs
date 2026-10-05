@@ -99,6 +99,8 @@ pub(super) struct SystemServices {
     health: Option<Health>,
     node: Option<String>,
     nodes: Vec<String>,
+    /// `54 services on 6 nodes`, under the title.
+    meta: SharedString,
     pub(super) unhealthy: usize,
     pub(super) badge: SharedString,
     _subscription: Subscription,
@@ -126,6 +128,7 @@ impl SystemServices {
             health: None,
             node: None,
             nodes: Vec::new(),
+            meta: SharedString::default(),
             unhealthy: 0,
             badge: "0".into(),
             _subscription: subscription,
@@ -133,6 +136,14 @@ impl SystemServices {
     }
     pub(super) fn set_nodes(&mut self, nodes: &[NodeSummary], cx: &mut Context<Self>) {
         self.nodes = nodes.iter().map(|node| node.name.clone()).collect();
+        // A node that left the cluster can't be chosen any more.
+        if self
+            .node
+            .as_ref()
+            .is_some_and(|node| !self.nodes.contains(node))
+        {
+            self.node = None;
+        }
         self.rows = nodes
             .iter()
             .flat_map(|node| {
@@ -177,6 +188,15 @@ impl SystemServices {
             .count();
         self.badge = self.unhealthy.to_string().into();
         (self.columns, self.width) = source::columns(&self.rows);
+        let plural = |count: usize, one: &str, many: &str| {
+            format!("{count} {}", if count == 1 { one } else { many })
+        };
+        self.meta = format!(
+            "{} on {}",
+            plural(self.rows.len(), "service", "services"),
+            plural(self.nodes.len(), "node", "nodes")
+        )
+        .into();
         self.rebuild(cx);
     }
     #[cfg(test)]
@@ -279,23 +299,12 @@ impl SystemServices {
                 "Comfortable · 34px rows. Switch to compact"
             })
             .on_click(cx.listener(|this, _, _, cx| this.toggle_density(cx)));
-        let total = self.rows.len();
-        let meta = format!(
-            "{total} {} on {} {}",
-            if total == 1 { "service" } else { "services" },
-            self.nodes.len(),
-            if self.nodes.len() == 1 {
-                "node"
-            } else {
-                "nodes"
-            },
-        );
         header
             .filter(filter)
             .chips(Some(chips))
             .control(self.render_node_picker(cx))
             .control(density)
-            .meta([meta.into_any_element()])
+            .meta([self.meta.clone().into_any_element()])
             .render(cx)
     }
     fn render_node_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {

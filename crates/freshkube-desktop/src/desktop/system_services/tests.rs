@@ -151,3 +151,39 @@ fn a_refresh_keeps_the_filter_and_the_chosen_status(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        let services = view.read(cx).system_services.clone();
+        services.update(cx, |services, cx| {
+            services.node = Some("talos-wk-fra1-02".into());
+            services.rebuild(cx);
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("system-service-node").label(),
+            Some("talos-wk-fra1-02")
+        );
+        assert!(window.try_find(HEALTHY).is_none());
+
+        let nodes: Vec<_> = view
+            .read(cx)
+            .nodes
+            .iter()
+            .filter(|node| node.name != "talos-wk-fra1-02")
+            .cloned()
+            .collect();
+        services.update(cx, |services, cx| services.set_nodes(&nodes, cx));
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("system-service-node").label(),
+            Some("All nodes")
+        );
+        assert!(window.find(HEALTHY).visible());
+    })
+    .unwrap();
+}
