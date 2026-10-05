@@ -819,7 +819,11 @@ fn groups_tallies_and_glyphs_agree_and_arrows_skip_folded_healthy_rows(cx: &mut 
         );
         assert_eq!(
             window.find("nodes-group-warning").label(),
-            Some("Warning · 1 nodes")
+            Some("Warning · 1 node")
+        );
+        assert_eq!(
+            window.find("nodes-group-failing").label(),
+            Some("Failing · 2 nodes")
         );
         assert!(window.try_find("node-talos-cp-fra1-01").is_none());
         pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
@@ -968,7 +972,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
                     .node_workspace
                     .columns
                     .iter()
-                    .any(|column| column.label() == "System services")
+                    .any(|column| column.label() == "Services")
             );
         });
     })
@@ -1008,7 +1012,7 @@ fn leaving_kubernetes_only_restores_talos_columns_without_waiting_for_a_summary(
                     "Load",
                     "Memory",
                     "Pods",
-                    "System services"
+                    "Services"
                 ]
             );
         });
@@ -1090,4 +1094,111 @@ fn node_logs_startup_opens_a_folded_node_without_a_table_click(cx: &mut TestAppC
         assert!(window.find("node-talos-cp-fra1-01").visible());
     })
     .unwrap();
+}
+
+#[test]
+fn service_status_uses_health_facts_and_keeps_unknown_and_stale_honest() {
+    let (mut talos, kube) = projection_sources();
+    let row = join::join(&[talos.clone()], std::slice::from_ref(&kube), true, true).remove(0);
+    // Kubernetes NotReady makes the node failing; a service problem is a warning.
+    assert_eq!(row.tone, Tone::Crit);
+    assert_eq!(row.service_status.tone, Tone::Warn);
+    assert_eq!(row.service_status.count, "1");
+    assert_eq!(
+        row.service_status.label,
+        "System services: 0 healthy, 1 unhealthy, 0 unknown"
+    );
+    talos.services[0].health.as_mut().unwrap().healthy = true;
+    let mut row = join::join(&[talos.clone()], &[kube], true, true).remove(0);
+    // Display text is not a health source.
+    row.services = "99 unhealthy".into();
+    assert_eq!(row.service_status.tone, Tone::Good);
+    assert_eq!(row.service_status.count, "1");
+    assert_eq!(
+        row.service_status.label,
+        "System services: 1 healthy, 0 unhealthy, 0 unknown"
+    );
+    let stale = join::ServiceStatus::new(Some(&talos), false);
+    assert_eq!(stale.tone, Tone::Unknown);
+    assert_eq!(stale.count, "—");
+    assert_eq!(
+        stale.label,
+        "System services: 1 healthy, 0 unhealthy, 0 unknown · last known"
+    );
+    talos.services[0].health = None;
+    let unknown = join::ServiceStatus::new(Some(&talos), true);
+    assert_eq!(unknown.tone, Tone::Unknown);
+    assert_eq!(unknown.count, "1");
+    assert_eq!(
+        unknown.label,
+        "System services: 0 healthy, 0 unhealthy, 1 unknown"
+    );
+    talos.services.clear();
+    let empty = join::ServiceStatus::new(Some(&talos), true);
+    assert_eq!(empty.tone, Tone::Unknown);
+    assert_eq!(empty.count, "—");
+    talos.responding = false;
+    for source in [Some(&talos), None] {
+        let absent = join::ServiceStatus::new(source, true);
+        assert_eq!(absent.tone, Tone::Unknown);
+        assert_eq!(absent.count, "—");
+        assert_eq!(absent.label, "System services unavailable");
+    }
+}
+
+#[gpui_kit::test]
+fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expanded(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::table::TableColumn;
+    use gpui_kit::{SharedString, TextRun, font, px};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
+        for text in [13., 14.] {
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            for expanded in [false, true] {
+                if pilot.read(cx).node_workspace.healthy_collapsed() == expanded {
+                    window.click("nodes-healthy-toggle", cx);
+                    window.render_frame(cx);
+                }
+                for compact in [false, true] {
+                    if pilot.read(cx).node_workspace.table.compact != compact {
+                        window.click("nodes-density", cx);
+                        window.render_frame(cx);
+                    }
+                    let viewport = window.find("nodes-table-scroll").bounds();
+                    let last = window.find(("nodes-sort", 8usize)).bounds();
+                    assert!(last.right() <= viewport.right() + px(1.),
+                        "Services overflows at text {text}, expanded={expanded}, compact={compact}: {last:?} in {viewport:?}");
+                    let nodes = &pilot.read(cx).node_workspace;
+                    assert!(crate::ui::dp_px(nodes.table_width, window) <= viewport.size.width,
+                        "column width {} exceeds viewport {:?}", nodes.table_width, viewport);
+                    let name = window.find(("nodes-sort", 1usize)).bounds();
+                    for row in nodes.rows.iter() {
+                        for (label, value) in [("Load", row.table_load.as_ref()), ("Memory", row.memory.as_ref())] {
+                            let column = nodes.columns.iter().find(|column| column.label() == label).unwrap();
+                            let run = TextRun {len: value.len(), font: font(crate::ui::MONO_FONT),
+                                color: Default::default(), background_color: None, underline: None, strikethrough: None};
+                            let shaped = window.text_system().shape_line(SharedString::from(value.to_owned()),
+                                crate::ui::dp_px(12.5, window), &[run], None).width;
+                            assert!(shaped <= crate::ui::dp_px(column.width() - 24., window),
+                                "{label} truncates {value} at text {text}");
+                        }
+                        if row.name.len() <= 16 {
+                            assert!(crate::ui::dp_px(row.name.len() as f32 * 7.5 + 24., window) <= name.size.width);
+                        }
+                    }
+                    let row = nodes.rows.iter().find(|row| row.name == "talos-wk-fra1-02").unwrap();
+                    let status = window.find((row.id.clone(), super::table::Field::Services as usize));
+                    assert!(status.visible());
+                    assert_eq!(status.role(), Some(gpui_kit::Role::Status));
+                    assert_eq!(status.label(), Some(row.service_status.label.as_ref()));
+                    assert!(status.bounds().right() <= viewport.right() + px(1.));
+                    assert_eq!(row.table_load.split('·').count(), 3);
+                }
+            }
+        }
+    }).unwrap();
 }

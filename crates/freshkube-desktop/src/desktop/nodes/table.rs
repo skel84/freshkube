@@ -48,22 +48,27 @@ impl Column {
             Field::Load => "Load",
             Field::Memory => "Memory",
             Field::Pods => "Pods",
-            Field::Services => "System services",
+            Field::Services => "Services",
         };
-        let width = if field == Field::Glyph {
-            34.
-        } else if field == Field::Load {
-            192.
-        } else if field == Field::Memory {
-            152.
-        } else {
-            let chars = rows
-                .iter()
-                .map(|row| field.value(row).chars().count())
-                .max()
-                .unwrap_or(0)
-                .max(label.len());
-            (chars as f32 * 7.5 + 24.).clamp(64., if field == Field::Name { 440. } else { 280. })
+        // IBM Plex Mono has a 0.6 em advance: 12.5 dp rows need 7.5 dp per
+        // character. Name is the flexible column; long names have a row tooltip.
+        let width = match field {
+            Field::Glyph => 34.,
+            Field::Name => 160.,
+            Field::Load => 160.,
+            Field::Memory => 140.,
+            _ => {
+                let chars = rows
+                    .iter()
+                    .map(|row| field.value(row).chars().count())
+                    .max()
+                    .unwrap_or(0);
+                let value_width =
+                    chars as f32 * 7.5 + 24. + if field == Field::Services { 20. } else { 0. };
+                value_width
+                    .max(label.len() as f32 * 7.5 + 24.)
+                    .clamp(if field == Field::Pods { 60. } else { 64. }, 280.)
+            }
         };
         Self {
             field,
@@ -81,10 +86,10 @@ impl Field {
             Self::Role => row.role.label(),
             Self::Kubernetes => row.ready,
             Self::Talos => &row.talos_state,
-            Self::Load => &row.load,
+            Self::Load => &row.table_load,
             Self::Memory => &row.memory,
             Self::Pods => &row.pods,
-            Self::Services => &row.services,
+            Self::Services => &row.service_status.count,
         }
     }
 }
@@ -255,15 +260,29 @@ impl TableSource for Pilot {
                 .child(row.name.clone())
                 .into_any_element(),
             Field::Kubernetes => table::cell(column).child(row.ready).into_any_element(),
-            Field::Services => table::cell(column)
-                .text_color(style.p.muted)
-                .child(row.services.clone())
-                .into_any_element(),
+            Field::Services => {
+                let label = row.service_status.label.clone();
+                table::cell(column)
+                    .id((row.id.clone(), Field::Services as usize))
+                    .test_support()
+                    .role(gpui_kit::Role::Status)
+                    .aria_label(label.clone())
+                    .flex()
+                    .items_center()
+                    .gap(ui::dp(6.))
+                    .text_color(style.p.muted)
+                    .children(ui::status_glyph(row.service_status.tone, cx))
+                    .child(row.service_status.count.clone())
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
+                    })
+                    .into_any_element()
+            }
             field => {
                 let value: SharedString = match field {
                     Field::Role => row.role.label().into(),
                     Field::Talos => row.talos_state.clone(),
-                    Field::Load => row.load.clone(),
+                    Field::Load => row.table_load.clone(),
                     Field::Memory => row.memory.clone(),
                     Field::Pods => row.pods.clone(),
                     _ => unreachable!("the other columns have dedicated cells"),
@@ -280,7 +299,10 @@ impl TableSource for Pilot {
         let count = self.node_workspace.group_counts[status.index()];
         let collapsed =
             status == projection::Status::Healthy && self.node_workspace.healthy_collapsed();
-        let mut detail = vec![format!("{count} nodes")];
+        let mut detail = vec![format!(
+            "{count} {}",
+            if count == 1 { "node" } else { "nodes" }
+        )];
         if collapsed {
             detail.push("collapsed".into());
         }

@@ -81,6 +81,7 @@ impl Nodes {
     pub(super) fn set_rows(&mut self, mut rows: Vec<NodeRow>, talos_current: bool) {
         for row in &mut rows {
             row.tone = assessed_tone(row, talos_current);
+            row.service_status = join::ServiceStatus::new(row.talos.as_ref(), talos_current);
         }
         self.search_keys = rows
             .iter()
