@@ -16,9 +16,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{collections::BTreeMap, rc::Rc};
-mod application_columns;
 mod applications;
-mod applications_header;
+use applications::{columns as application_columns, header as applications_header};
 mod connection;
 mod deployments;
 mod example;

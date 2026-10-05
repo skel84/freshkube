@@ -1,5 +1,7 @@
 //! Applications' shared table; its projection is prepared when observations or filters change.
 use super::*;
+pub(super) mod columns;
+pub(super) mod header;
 use application_columns::{ApplicationColumn, ColumnKind};
 use freshkube_ui::table::{
     self, DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState,
