@@ -79,21 +79,38 @@ Markdown-only changes and draft PRs. It runs `scripts/changelog.test.sh` and
 
 The separate [Platform checks workflow](../.github/workflows/platforms.yml)
 runs on native `ubuntu-latest` and `windows-latest` runners. It uses the same
-application/docs filter and ready-PR, `main` push and manual triggers. Each job
-runs `cargo check --workspace --all-targets --locked`, strict workspace Clippy,
+application/docs filter and ready-PR, `main` push and manual triggers, plus a
+weekly main run on Monday at 04:23 UTC. Scheduled and manual runs always check,
+even without an application change. Each job runs
+`cargo check --workspace --all-targets --locked`, strict workspace Clippy,
 and `cargo test -p freshkube-terminal --lib keyboard --locked`. The keyboard
 tests drive the real terminal view: Ctrl-C and Ctrl-V reach shell output, while
 Ctrl-Shift-C/V copy and paste and Ctrl-Shift-Q returns focus on Linux and
 Windows. The macOS workspace tests exercise the unchanged Command shortcuts.
 
 These checks are **advisory**, separate from the macOS workflow used to promote
-release bundles. They start without a Cargo cache to avoid evicting the macOS
-caches. Both install protoc; Linux also installs the pinned GPUI Kit version's
-X11, Wayland, font, WebKit and Vulkan prerequisites. A green run establishes
+release bundles. A red native run blocks the lead's approval, but it is not a
+required merge-button check; branch protection remains unchanged. Both install
+protoc; Linux also installs the pinned GPUI Kit version's X11, Wayland, font,
+WebKit and Vulkan prerequisites. A green run establishes
 compilation, linting and the focused headless keyboard tests only: the full
 Linux/Windows test suites, running-app checks, credential stores and packaging
-remain separate work. Making these checks required needs a reviewed green
-baseline on `main`.
+remain separate work. The first uncached main run was green (Linux 16m23s,
+Windows 32m42s); Linux becoming required will be reconsidered if its warm
+runtime approaches macOS's.
+
+Linux uses `Swatinem/rust-cache` with the `platform-check-Linux` key. Windows
+remains uncached until an audit shows that adding it would preserve the macOS
+entries. Only successful `main` push, scheduled or manual runs save; PRs and
+dispatches on other branches restore without saving. The
+action caches dependencies, excluding workspace crates and installed Cargo
+tools, so each PR does not add its own copy. Check the Linux entry size and
+the current macOS check, bundle and capture entries in **Actions → Caches**
+after seeding or changing dependencies: all workflows share the 10 GB budget.
+Let GitHub evict older unused entries; do not widen the cache policy if the
+active set would evict the macOS caches. To measure a warm run after main has
+saved the Linux entry, dispatch `gh workflow run platforms.yml --ref main` and
+record restore, check, Clippy and keyboard test times.
 
 Both the checks and bundle jobs install protobuf before building. They generate
 the Talos client in their own Cargo output directory; no checked-in generated
