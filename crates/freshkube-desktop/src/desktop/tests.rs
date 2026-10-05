@@ -90,7 +90,7 @@ fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize)
 }
 
 /// Old page coverage now follows the actual node-pane tab controls.
-fn open_node_tab(
+pub(crate) fn open_node_tab(
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::App,
     tab: super::nodes::NodeTab,

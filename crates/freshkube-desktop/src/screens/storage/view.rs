@@ -1,70 +1,122 @@
-//! How Storage draws: the summary, the Disks / Volumes toolbar, the rows
+//! How Storage draws: the header with its Disks / Volumes segment, the rows
 //! and the selection's details.
+use std::rc::Rc;
+
 use super::*;
+use freshkube_ui::page::{self, PageHeader};
 use table::DataTable;
 
 impl StorageScreen {
-    /// One line above the tabs: counts and anything that needs a look.
-    fn summary(&self, data: &StorageData, cx: &App) -> impl IntoElement {
-        let disks = match &data.disks {
-            Ok(disks) => format!(
-                "{} · {}",
-                disks.rows.len(),
-                format_bytes(disks.rows.iter().map(|disk| disk.info.size).sum())
-            ),
-            Err(_) => "unknown".into(),
+    /// The toolbar: the title, the Disks / Volumes segment, which folds into
+    /// checked items, and Refresh; the counts go in the meta line.
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "Storage");
+        let data = self.loader.data();
+        let header = match data {
+            Some(data) => {
+                header.foldable(self.render_segment(data, cx), self.segment_items(data, cx))
+            }
+            None => header,
         };
-        let volumes = match &data.volumes {
-            Ok(volumes) => volumes.rows.len().to_string(),
-            Err(_) => "unknown".into(),
-        };
-        let not_ready = match &data.volumes {
-            Ok(volumes) => volumes
-                .rows
-                .iter()
-                .filter(|volume| volume.info.phase != "ready")
-                .count()
-                .to_string(),
-            Err(_) => "unknown".into(),
-        };
-        h_flex()
-            .id("storage-summary")
-            .gap_3()
-            .flex_wrap()
-            .child(stat("Disks", disks, cx))
-            .child(stat("Volumes", volumes, cx))
-            .child(stat("Not ready", not_ready, cx))
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh storage",
+            self.source.as_ref(),
+            &self.loader,
+            cx,
+        );
+        let parts = data.map(|data| data.summary.clone()).unwrap_or_default();
+        header
+            .control(refresh)
+            .meta(meta(
+                self.source.as_ref(),
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                parts,
+            ))
+            .render(window, cx)
     }
 
-    fn toolbar(&self, data: &StorageData, cx: &mut Context<Self>) -> Div {
+    fn render_segment(&self, data: &StorageData, cx: &mut Context<Self>) -> ButtonGroup {
         let mode = self.mode;
-        let count = |len: Option<usize>| len.map_or("?".to_owned(), |len| len.to_string());
-        let disks = count(data.disks.as_ref().ok().map(|disks| disks.rows.len()));
-        let volumes = count(data.volumes.as_ref().ok().map(|volumes| volumes.rows.len()));
-        h_flex().gap_2p5().flex_wrap().child(
-            ButtonGroup::new("storage-view")
-                .outline()
-                .small()
-                .child(
-                    Button::new("storage-view-disks")
-                        .icon(IconName::HardDrive)
-                        .label(format!("Disks {disks}"))
-                        .selected(mode == ViewMode::Disks),
-                )
-                .child(
-                    Button::new("storage-view-volumes")
-                        .icon(IconName::Database)
-                        .label(format!("Volumes {volumes}"))
-                        .selected(mode == ViewMode::Volumes),
-                )
-                .on_click(cx.listener(|view, selected: &Vec<usize>, _, cx| {
-                    let mode = match selected.first() {
-                        Some(1) => ViewMode::Volumes,
-                        _ => ViewMode::Disks,
-                    };
-                    view.switch(mode, cx);
-                })),
-        )
+        ButtonGroup::new("storage-view")
+            .outline()
+            .small()
+            .child(
+                Button::new("storage-view-disks")
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .icon(IconName::HardDrive)
+                    .label(data.disks_label.clone())
+                    .selected(mode == ViewMode::Disks),
+            )
+            .child(
+                Button::new("storage-view-volumes")
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .icon(IconName::Database)
+                    .label(data.volumes_label.clone())
+                    .selected(mode == ViewMode::Volumes),
+            )
+            .on_click(cx.listener(|view, selected: &Vec<usize>, _, cx| {
+                let mode = match selected.first() {
+                    Some(1) => ViewMode::Volumes,
+                    _ => ViewMode::Disks,
+                };
+                view.switch(mode, cx);
+            }))
+    }
+
+    /// The segment folded: a checked item for each side.
+    fn segment_items(&self, data: &StorageData, cx: &mut Context<Self>) -> page::MenuItems {
+        let disks = page::checked_item(
+            data.disks_label.clone(),
+            self.mode == ViewMode::Disks,
+            page::handler(cx, |view: &mut Self, _, cx| {
+                view.switch(ViewMode::Disks, cx)
+            }),
+        );
+        let volumes = page::checked_item(
+            data.volumes_label.clone(),
+            self.mode == ViewMode::Volumes,
+            page::handler(cx, |view: &mut Self, _, cx| {
+                view.switch(ViewMode::Volumes, cx)
+            }),
+        );
+        Rc::new(move |menu, window, cx| {
+            let menu = disks(menu, window, cx);
+            volumes(menu, window, cx)
+        })
+    }
+
+    /// The showing side's table, with the selection's details beside it on
+    /// a wide page and below it on a narrow one.
+    fn render_split(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let beside = crate::screens::beside(window);
+        let table = div()
+            .id("storage-table")
+            .w_full()
+            .child(
+                DataTable::new()
+                    .fit(table::TableSource::line_count(self).max(1))
+                    .render(self, window, cx)
+                    .w_full()
+                    .flex_none(),
+            )
+            .into_any_element();
+        let details = match self.mode {
+            ViewMode::Disks => self.disk_details(cx),
+            ViewMode::Volumes => self.volume_details(cx),
+        };
+        let details = div()
+            .id("storage-details")
+            .when_else(
+                beside,
+                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
+                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
+            )
+            .child(details)
+            .into_any_element();
+        crate::screens::split("storage-split", beside, table, Some(details))
     }
 
     fn disk_details(&self, cx: &App) -> AnyElement {
@@ -191,35 +243,63 @@ impl StorageScreen {
 
 impl Render for StorageScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(page) = gated_page_mode(
-            "storage-page",
-            "Storage",
-            Scope::Node,
+        let header = self.render_header(window, cx);
+        let state = gate(
             self.source.as_ref(),
             &self.loader,
+            Scope::Node,
             "disks and volumes",
-            self.embedded,
             cx,
-        ) {
-            return page;
-        }
-        let (Some(source), Some(data)) = (self.source.clone(), self.loader.data()) else {
-            return div().into_any_element();
+        );
+        // The table runs edge to edge under the toolbar; the banners and a
+        // state in the table's place sit in an inset between them.
+        let page = page::page("storage-page")
+            .h_auto()
+            .flex_none()
+            .child(page::toolbar(cx).child(header));
+        let page = match (state, self.loader.data()) {
+            (Some(state), _) => page.child(
+                page::inset()
+                    .id("storage-state")
+                    .test_support()
+                    .child(state),
+            ),
+            (None, Some(data)) => {
+                let mut missing = Vec::new();
+                if let Err(error) = &data.disks {
+                    missing.push(format!("Disks: {error}"));
+                }
+                if let Err(error) = &data.volumes {
+                    missing.push(format!("Volumes: {error}"));
+                }
+                let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
+                    .map(IntoElement::into_any_element)
+                    .into_iter()
+                    .chain(partial_notice(missing, cx))
+                    .collect();
+                page.when(!banners.is_empty(), |page| {
+                    page.child(
+                        page::inset()
+                            .flex()
+                            .flex_col()
+                            .gap(dp(page::PANE_PADDING_Y))
+                            .children(banners),
+                    )
+                })
+                .child(self.render_split(window, cx))
+            }
+            (None, None) => page,
         };
-        let mode = self.mode;
-        let mut missing = Vec::new();
-        if let Err(error) = &data.disks {
-            missing.push(format!("Disks: {error}"));
-        }
-        if let Err(error) = &data.volumes {
-            missing.push(format!("Volumes: {error}"));
-        }
         // The keys live on a wrapper drawn in every state, so the page keeps
-        // Tab and the arrows while a side shows no rows.
-        let list = div()
-            .id("storage-table")
+        // Tab and the arrows while a side shows no rows or a state shows.
+        div()
+            .id("storage-scroll")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
+            .size_full()
+            .min_h_0()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .on_action(cx.listener(|view, _: &NextRow, _, cx| view.step(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousRow, _, cx| view.step(-1, cx)))
             .on_action(cx.listener(|view, _: &FirstRow, _, cx| view.step(isize::MIN, cx)))
@@ -233,78 +313,6 @@ impl Render for StorageScreen {
                 };
                 view.switch(next, cx);
             }))
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(dp(LIST_MIN_HEIGHT))
-            .child(
-                DataTable::new()
-                    .carded()
-                    .render(self, window, cx)
-                    .flex_1()
-                    .min_h_0(),
-            );
-        let details = match mode {
-            ViewMode::Disks => self.disk_details(cx),
-            ViewMode::Volumes => self.volume_details(cx),
-        };
-        let wide = content_width(window) >= SIDE_DETAILS;
-        // Short windows scroll the page rather than squeezing the list.
-        let split = if wide {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT))
-                .items_stretch()
-                .gap(dp(14.))
-                .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
-                .child(
-                    div()
-                        .id("storage-details")
-                        .w(dp(340.))
-                        .flex_none()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .child(details),
-                )
-        } else {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
-                .child(
-                    v_flex().size_full().gap(dp(14.)).child(list).child(
-                        div()
-                            .id("storage-details")
-                            .h(dp(DETAILS_HEIGHT))
-                            .flex_none()
-                            .overflow_y_scroll()
-                            .restrict_scroll_to_axis()
-                            .child(details),
-                    ),
-                )
-        };
-        v_flex()
-            .id("storage-page")
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
-            .child(header_mode(
-                "Storage",
-                &source,
-                Scope::Node,
-                &self.loader,
-                self.embedded,
-                cx,
-            ))
-            .children(failure_banner(&self.loader, cx))
-            .children(partial_notice(missing, cx))
-            .child(self.summary(data, cx))
-            .child(self.toolbar(data, cx))
-            .child(split)
-            .into_any_element()
+            .child(page)
     }
 }

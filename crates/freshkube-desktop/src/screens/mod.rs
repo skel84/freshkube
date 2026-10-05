@@ -524,6 +524,62 @@ pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
         )
 }
 
+/// A screen's meta line under its `PageHeader`: where it reads, unless the
+/// node pane around it already names the node, then the screen's own
+/// `parts`, when it last updated and whether the data is an example, with a
+/// " · " between them.
+pub(crate) fn meta<T: Send + 'static>(
+    source: Option<&ScreenSource>,
+    scope: Scope,
+    loader: &Loader<T>,
+    embedded: bool,
+    parts: impl IntoIterator<Item = SharedString>,
+) -> Vec<AnyElement> {
+    let place = source.filter(|_| !embedded).map(|source| {
+        let target = &source.target;
+        SharedString::from(match scope {
+            Scope::Node => format!("on {} · {}", target.node, target.address),
+            Scope::Cluster => target.context.clone(),
+        })
+    });
+    let updated = loader
+        .last_successful()
+        .map(|time| SharedString::from(format!("updated {}", clock(time))));
+    let example = source
+        .filter(|source| source.is_example())
+        .map(|_| SharedString::from("example data"));
+    let mut meta = Vec::new();
+    for part in place.into_iter().chain(parts).chain(updated).chain(example) {
+        if !meta.is_empty() {
+            meta.push(" · ".into_any_element());
+        }
+        meta.push(part.into_any_element());
+    }
+    meta
+}
+
+/// A screen's Refresh in its `PageHeader`: a ghost icon with a tooltip,
+/// busy while a read runs.
+pub(crate) fn refresh_control<V: ScreenPanel, T: Send + 'static>(
+    id: SharedString,
+    label: &'static str,
+    source: Option<&ScreenSource>,
+    loader: &Loader<T>,
+    cx: &mut Context<V>,
+) -> Button {
+    let loading = loader.is_loading();
+    Button::new(id)
+        .ghost()
+        .small()
+        .size(dp(ui::CONTROL_HEIGHT))
+        .icon(IconName::RefreshCw)
+        .accessibility_label(label)
+        .tooltip(label)
+        .loading(loading)
+        .disabled(loading || source.is_none())
+        .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx)))
+}
+
 pub(crate) fn retry_button<V: ScreenPanel>(id: &'static str, cx: &mut Context<V>) -> AnyElement {
     Button::new(id)
         .primary()
