@@ -688,8 +688,8 @@ impl PageHeader {
                     .id(dot_id)
                     .test_support()
                     .absolute()
-                    .top(dp(-2.))
-                    .right(dp(-2.))
+                    .top_0()
+                    .right_0()
             });
             // What the folded controls are set to, when any isn't at its
             // default: "More · Namespace payments · 2 columns hidden".
