@@ -1403,6 +1403,42 @@ fn density_switches_between_comfortable_and_compact_rows(cx: &mut TestAppContext
     .unwrap();
 }
 
+/// Scrolled sideways, a pod's glyph and name stay at the table's left edge
+/// while the other columns pass under them, and each id still finds one
+/// element: the name is moved, never copied.
+#[gpui_kit::test]
+fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 640.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // GPUI's list also takes a sideways wheel as a little downward
+        // scroll, so the rows checked sit below the first few.
+        let rows: Vec<_> = (6..9)
+            .map(|ix| row_id(&identity_at(&screen, ix, cx)))
+            .collect();
+        let left = |window: &mut gpui_kit::Window, row: &gpui_kit::ElementId| {
+            window.within(row.clone()).find("name").bounds().left()
+        };
+        let names: Vec<_> = rows.iter().map(|row| left(window, row)).collect();
+        let header = window.find(("resource-sort", 1usize)).bounds().left();
+        let owner = window.find(("resource-sort", 2usize)).bounds().left();
+        window.scroll(
+            "resource-table-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-120.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let moved = owner - window.find(("resource-sort", 2usize)).bounds().left();
+        assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
+        // `find` fails on an id that resolves twice.
+        assert!((window.find(("resource-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
+        for (row, name) in rows.iter().zip(names) {
+            assert!((left(window, row) - name).abs() <= px(1.5));
+        }
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn pod_rows_show_owner_readiness_use_and_node(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));

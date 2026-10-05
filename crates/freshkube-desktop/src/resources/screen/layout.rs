@@ -96,6 +96,11 @@ impl freshkube_ui::table::TableColumn for DisplayColumn {
     fn flexible(&self) -> bool {
         self.flexible
     }
+
+    /// The glyph and the name stay in view when the table scrolls sideways.
+    fn pinned(&self) -> bool {
+        matches!(self.source, ColumnSource::Glyph | ColumnSource::Name(_))
+    }
 }
 
 /// Where a row's glyph comes from.
