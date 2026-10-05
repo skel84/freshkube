@@ -454,7 +454,7 @@ impl Overview {
                 id: "tile-memory",
                 label: "Peak memory",
                 figure: peak
-                    .map(|(_, percent)| format!("{percent:.0} %"))
+                    .map(|(_, percent)| format!("{} %", super::whole_percent(*percent)))
                     .unwrap_or("—".into())
                     .into(),
                 detail: peak
