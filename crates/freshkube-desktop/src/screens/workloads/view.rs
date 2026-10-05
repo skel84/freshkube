@@ -1,6 +1,7 @@
 //! The page: its summary and toolbar, the list, the details pane and the
 //! screen's keys.
 use super::*;
+use freshkube_ui::table::DataTable;
 
 impl WorkloadsScreen {
     fn summary(&self, data: &WorkloadData, cx: &App) -> impl IntoElement + use<> {
@@ -98,102 +99,6 @@ impl WorkloadsScreen {
                         view.set_only_unhealthy(!view.only_unhealthy, cx)
                     })),
             )
-    }
-
-    fn render_row(
-        &self,
-        ix: usize,
-        row: RowRef,
-        data: &WorkloadData,
-        show_issue: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let key = row.key(&data.snapshot);
-        let selected = self.selected.as_ref() == Some(&key);
-        let view = self.describe(row, data);
-        let is_namespace = matches!(row, RowRef::Namespace(_));
-        let tone = view.tone;
-        let label = health_label(view.health);
-        let aria = format!(
-            "{} {} · {label} · {} · {}",
-            view.kind, view.name, view.ready, view.issue
-        );
-        h_flex()
-            .id(("workload-row", ix))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(aria)
-            .w_full()
-            .h(dp(ROW_HEIGHT))
-            .font_family(MONO_FONT)
-            .text_size(dp(12.))
-            .cursor_pointer()
-            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-            .child(
-                cell(STATUS)
-                    .flex()
-                    .items_center()
-                    .child(ui::tag(tone, None, label, cx)),
-            )
-            .child(
-                cell(NAME)
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .when(view.nested, |this| this.pl(dp(28.)))
-                    .when(is_namespace, |this| this.font_weight(FontWeight::SEMIBOLD))
-                    .children(view.chevron.map(|chevron| Icon::new(chevron).size(dp(13.))))
-                    // Without `min_w_0` a long pod name widens the column
-                    // and shifts every later cell in its row.
-                    .child(div().flex_1().min_w_0().truncate().child(view.name)),
-            )
-            .child(cell(KIND).text_color(p.muted).child(view.kind))
-            .child(cell(READY).child(view.ready))
-            .when(show_issue, |this| {
-                this.child(
-                    cell(ISSUE)
-                        .when(!selected, |this| this.text_color(p.muted))
-                        .child(view.issue),
-                )
-            })
-            .on_click(cx.listener(move |view, _, window, cx| {
-                let was_selected = view.selected.as_ref() == Some(&key);
-                view.select(key.clone(), cx);
-                if is_namespace && was_selected {
-                    view.toggle_expanded(cx);
-                }
-                window.focus(&view.focus, cx);
-            }))
-    }
-
-    /// Width the list needs, with room for whole pod names, before the
-    /// details pane may sit beside it.
-    fn width_beside_details(show_issue: bool) -> f32 {
-        let name = Column {
-            width: Some(NAME_BESIDE_DETAILS),
-            ..NAME
-        };
-        let mut columns = vec![STATUS, name, KIND, READY];
-        if show_issue {
-            columns.push(ISSUE);
-        }
-        table_width(&columns)
-    }
-
-    fn head(&self, show_issue: bool, cx: &App) -> Div {
-        let p = palette(cx);
-        let mut head = h_flex().py(dp(7.)).border_b_1().border_color(p.line);
-        let mut columns = vec![STATUS, NAME, KIND, READY];
-        if show_issue {
-            columns.push(ISSUE);
-        }
-        for column in columns {
-            head = head.child(cell(column).child(ui::caption(column.label, cx)));
-        }
-        head
     }
 
     fn details(&self, cx: &mut Context<Self>) -> Div {
@@ -436,78 +341,27 @@ impl WorkloadsScreen {
         ) {
             return page;
         }
+        self.refresh_rows(cx);
         let (Some(source), Some(data)) = (self.source.clone(), self.loader.data()) else {
             return div().into_any_element();
         };
-        let p = palette(cx);
-        let rows = self
-            .rows
-            .borrow()
-            .as_ref()
-            .map(|cache| cache.rows.clone())
-            .unwrap_or_default();
-        let row_count = rows.len();
         let width = content_width(window);
-        let show_issue = width >= ISSUE_COLUMN;
-        let wide = width >= Self::width_beside_details(show_issue) + DETAILS_WIDTH + GAP;
+        let wide = width >= self.display.width + DETAILS_WIDTH + GAP;
         let missing = data.missing_notice.clone();
-        let empty = if data.snapshot.namespaces.is_empty() {
-            "No workloads found in this cluster."
-        } else {
-            "No workloads match these filters."
-        };
         let summary = self.summary(data, cx);
-        let list = panel(cx)
+        // The table scrolls sideways inside its card when the view is
+        // narrower than its columns, with the glyph and name kept in view.
+        let list = div()
+            .flex()
+            .flex_col()
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .child(self.head(show_issue, cx))
             .child(
-                div()
-                    .id("workload-list")
-                    .test_support()
-                    .role(Role::ListBox)
-                    .aria_label(
-                        "Namespaces, workloads and pods needing attention; arrows select, Enter opens or closes a namespace, U shows only unhealthy",
-                    )
+                DataTable::new()
+                    .carded()
+                    .render(self, window, cx)
                     .flex_1()
-                    .min_h_0()
-                    .map(|this| {
-                        if row_count == 0 {
-                            this.child(
-                                div()
-                                    .px_3()
-                                    .py_3p5()
-                                    .text_size(dp(12.5))
-                                    .text_color(p.muted)
-                                    .child(empty),
-                            )
-                            .into_any_element()
-                        } else {
-                            this.child(
-                                uniform_list(
-                                    "workload-rows",
-                                    row_count,
-                                    cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
-                                        let rows = view.rows(cx);
-                                        let Some(data) = view.loader.data() else {
-                                            return Vec::new();
-                                        };
-                                        range
-                                            .filter_map(|ix| {
-                                                rows.get(ix).map(|row| {
-                                                    view.render_row(ix, *row, data, show_issue, cx)
-                                                })
-                                            })
-                                            .collect::<Vec<_>>()
-                                    }),
-                                )
-                                .track_scroll(&self.scroll)
-                                .size_full(),
-                            )
-                            .into_any_element()
-                        }
-                    }),
+                    .min_h_0(),
             );
         let details = self.details(cx);
         // Short windows scroll the page rather than squeezing the list.

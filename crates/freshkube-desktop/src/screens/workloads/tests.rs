@@ -64,6 +64,11 @@ fn mount_sized(
     (runtime, screen.unwrap(), handle)
 }
 
+/// A row's id, from the row's key, as the table gives it.
+fn row_id(screen: &WorkloadsScreen, ix: usize) -> gpui_kit::SharedString {
+    screen.display.lines[ix].element_id.clone()
+}
+
 fn row_key(screen: &WorkloadsScreen, ix: usize, cx: &gpui_kit::App) -> ItemKey {
     let rows = screen.rows(cx);
     rows[ix].key(&screen.loader.data().unwrap().snapshot)
@@ -93,14 +98,17 @@ fn keyboard_selects_rows_and_updates_details(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_some());
-        window.click(("workload-row", 0usize), cx);
+        window.click(row_id(screen.read(cx), 0), cx);
         assert_eq!(
             screen.read(cx).selected,
             Some(row_key(screen.read(cx), 0, cx))
         );
         window.press("down", cx);
         window.render_frame(cx);
-        assert_eq!(window.find(("workload-row", 1usize)).selected(), Some(true));
+        assert_eq!(
+            window.find(row_id(screen.read(cx), 1)).selected(),
+            Some(true)
+        );
         assert_eq!(
             screen.read(cx).selected,
             Some(row_key(screen.read(cx), 1, cx))
@@ -109,7 +117,10 @@ fn keyboard_selects_rows_and_updates_details(cx: &mut TestAppContext) {
         window.press("end", cx);
         window.render_frame(cx);
         let last = screen.read(cx).rows(cx).len() - 1;
-        assert_eq!(window.find(("workload-row", last)).selected(), Some(true));
+        assert_eq!(
+            window.find(row_id(screen.read(cx), last)).selected(),
+            Some(true)
+        );
         window.press("home", cx);
         assert_eq!(
             screen.read(cx).selected,
@@ -160,7 +171,7 @@ fn enter_collapses_a_namespace(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let before = screen.read(cx).rows(cx).len();
-        window.click(("workload-row", 0usize), cx);
+        window.click(row_id(screen.read(cx), 0), cx);
         window.press("enter", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).rows(cx).len() < before);
@@ -334,6 +345,102 @@ fn rows_are_cached_until_the_data_or_the_filters_change(cx: &mut TestAppContext)
         screen.update(cx, |screen, cx| screen.refresh(window, cx));
         screen.read(cx).rows(cx);
         assert_eq!(computed(), settled + 1);
+    })
+    .unwrap();
+}
+
+/// DESIGN.md's table at both text sizes, and no clipped column: the list
+/// scrolls sideways inside its card, its glyph and name stay at the left edge,
+/// and the last column can be brought fully into view, at the size where the
+/// old list cut its Kind column off.
+#[gpui_kit::test]
+fn the_list_is_the_shared_table_and_its_last_column_is_reachable(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{Table, assert_table};
+    use gpui_kit::{ScrollDelta, point};
+    let table = Table {
+        table: Some("workload-table-scroll"),
+        list: "workload-list",
+    };
+    for (width, text_size) in [(1280., 14.), (760., 20.)] {
+        let (_runtime, _screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
+        cx.update_window(handle.into(), |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            window.render_frame(cx);
+            let rows = assert_table(window, cx, &table);
+            assert!(rows.header.is_some(), "{width}/{text_size}: {rows:#?}");
+            let view = window.find("workload-table-scroll").bounds();
+            let name = window.find(("workload-sort", 1usize)).bounds().left();
+            window.scroll(
+                "workload-table-scroll",
+                ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let last = window.find(("workload-sort", 4usize)).bounds();
+            assert!(
+                last.right() <= view.right() + px(1.5) && last.left() >= view.left(),
+                "{width}/{text_size}: the last column {last:?} is outside its table {view:?}"
+            );
+            let kept = window.find(("workload-sort", 1usize)).bounds().left();
+            assert!(
+                (kept - name).abs() <= px(1.5),
+                "{width}/{text_size}: the name moved from {name:?} to {kept:?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// The glyph column says what the collector classified, in words: a pod
+/// that ran and stopped is Failing (its skull is checked above), a partial
+/// rollout Degraded, a missing one Failing, a settled one Healthy.
+#[gpui_kit::test]
+fn glyphs_say_what_the_collector_classified(cx: &mut TestAppContext) {
+    let (_runtime, _screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        for (id, label) in [
+            ("workload-row-namespace-shop-health", "Failing"),
+            ("workload-row-Deploy-shop-api-health", "Degraded"),
+            ("workload-row-Deploy-shop-worker-health", "Failing"),
+            ("workload-row-Deploy-shop-web-health", "Healthy"),
+            (
+                "workload-row-pod-kube-system-kube-proxy-9tn2m-health",
+                "Degraded",
+            ),
+            (
+                "workload-row-pod-kube-system-kube-flannel-q7x4d-health",
+                "Failing",
+            ),
+        ] {
+            assert_eq!(window.find(id).label().as_deref(), Some(label), "{id}");
+        }
+    })
+    .unwrap();
+}
+
+/// Selection follows the row's key: a filter that drops other rows and moves
+/// this one up leaves it selected, with its details.
+#[gpui_kit::test]
+fn selection_follows_the_row_when_a_filter_moves_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let id = "workload-row-pod-kube-system-kube-proxy-9tn2m";
+        let before = screen.read(cx).display.lines.len();
+        window.click(id, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(id).selected(), Some(true));
+        window.click("only-unhealthy", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).display.lines.len() < before);
+        assert_eq!(window.find(id).selected(), Some(true));
+        let details = window
+            .find("workload-detail-title")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(details.contains("kube-proxy-9tn2m"), "{details}");
     })
     .unwrap();
 }

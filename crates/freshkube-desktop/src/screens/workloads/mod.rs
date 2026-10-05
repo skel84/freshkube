@@ -26,46 +26,18 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page, header, mono, page_body, page_scroll, panel, partial_notice,
-    retry_button, table_width,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
+    gated_page, header, mono, page_body, page_scroll, panel, partial_notice, retry_button,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosWorkloads";
-const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
-/// The details pane sits beside the list only when the list still has this
-/// much for names: enough to tell pods of one workload apart.
-const NAME_BESIDE_DETAILS: f32 = 320.;
 const DETAILS_WIDTH: f32 = 340.;
 const GAP: f32 = 14.;
-/// Below this content width the issue column is left to the details pane.
-const ISSUE_COLUMN: f32 = 700.;
 const LIST_MIN_HEIGHT: f32 = 200.;
 const DETAILS_HEIGHT: f32 = 240.;
-
-const STATUS: Column = Column {
-    label: "Status",
-    width: Some(100.),
-};
-const NAME: Column = Column {
-    label: "Name",
-    width: None,
-};
-const KIND: Column = Column {
-    label: "Kind",
-    width: Some(108.),
-};
-const READY: Column = Column {
-    label: "Ready / restarts",
-    width: Some(120.),
-};
-const ISSUE: Column = Column {
-    label: "Issue",
-    width: Some(200.),
-};
 
 actions!(
     talos_workloads,
@@ -98,8 +70,8 @@ impl WorkloadData {
 }
 
 /// Identifies a row across refreshes and filter changes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ItemKey {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ItemKey {
     Namespace(String),
     Workload {
         namespace: String,
@@ -144,6 +116,7 @@ impl RowRef {
 }
 
 /// Text for one row, whatever its kind.
+#[derive(Clone, Debug)]
 struct RowView {
     health: HealthState,
     tone: Tone,
@@ -229,6 +202,8 @@ struct CachedRows {
     data: Arc<WorkloadData>,
     settings: RowSettings,
     rows: Rc<Vec<RowRef>>,
+    /// What the table draws for those rows.
+    display: Rc<Display>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,8 +223,11 @@ pub(crate) struct WorkloadsScreen {
     only_unhealthy: bool,
     query: Entity<InputState>,
     focus: FocusHandle,
-    scroll: UniformListScrollHandle,
+    table: TableState,
     rows: RefCell<Option<CachedRows>>,
+    /// The cache's display rows, which the table reads; `refresh_rows` copies
+    /// them over whenever the data or a filter changed.
+    display: Rc<Display>,
     _subscription: Subscription,
     /// Caret and selection changes redraw the filter; this view is cached, so
     /// it has to hear about them.
@@ -301,7 +279,7 @@ impl ScreenPanel for WorkloadsScreen {
         let subscription = cx.subscribe_in(&query, window, |this, _, event, window, cx| {
             match event {
                 InputEvent::Change => {
-                    this.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                    this.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
                     cx.notify();
                 }
                 // Enter hands the keyboard back to the list.
@@ -318,13 +296,14 @@ impl ScreenPanel for WorkloadsScreen {
             collapsed: HashSet::new(),
             only_unhealthy: false,
             _query_observer: cx.observe(&query, |this, _, cx| {
-                this.rows(cx);
+                this.refresh_rows(cx);
                 cx.notify();
             }),
             query,
             focus: cx.focus_handle(),
-            scroll: UniformListScrollHandle::new(),
+            table: TableState::new("workload"),
             rows: RefCell::new(None),
+            display: Rc::default(),
             _subscription: subscription,
         }
     }
@@ -338,6 +317,7 @@ impl ScreenPanel for WorkloadsScreen {
             self.loader.reset();
             self.selected = None;
             self.collapsed.clear();
+            self.display = Rc::default();
         }
         self.source = source;
         cx.notify();
@@ -369,7 +349,7 @@ impl ScreenPanel for WorkloadsScreen {
         }
         self.loader
             .resolve(source.target.clone(), Ok(Arc::new(example(&source))));
-        self.rows(cx);
+        self.refresh_rows(cx);
         cx.notify();
     }
 }
@@ -397,7 +377,7 @@ impl WorkloadsScreen {
         }
         let source = self.source.as_ref().unwrap();
         self.loader.resolve(source.target.clone(), data);
-        self.rows(cx);
+        self.refresh_rows(cx);
         cx.notify();
     }
 
@@ -425,12 +405,30 @@ impl WorkloadsScreen {
         }
         crate::desktop::probe::hit("workloads.rows");
         let rows = Rc::new(self.compute_rows(data, &settings.query));
+        let display = Rc::new(self.derive_display(&rows, data));
         *cache = Some(CachedRows {
             data: data.clone(),
             settings,
             rows: rows.clone(),
+            display,
         });
         rows
+    }
+
+    /// Brings the rows up to date and hands the table their display text.
+    /// Without data there is nothing to show.
+    fn refresh_rows(&mut self, cx: &App) {
+        if self.loader.data().is_none() {
+            self.display = Rc::default();
+            return;
+        }
+        self.rows(cx);
+        self.display = self
+            .rows
+            .borrow()
+            .as_ref()
+            .map(|cache| cache.display.clone())
+            .unwrap_or_default();
     }
 
     fn compute_rows(&self, data: &WorkloadData, query: &str) -> Vec<RowRef> {
@@ -540,7 +538,7 @@ impl WorkloadsScreen {
             None => 0,
         };
         self.selected = Some(rows[next].key(&data.snapshot));
-        self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        self.table.reveal(next, ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -558,14 +556,14 @@ impl WorkloadsScreen {
         if !self.collapsed.remove(&namespace) {
             self.collapsed.insert(namespace);
         }
-        self.rows(cx);
+        self.refresh_rows(cx);
         cx.notify();
     }
 
     pub(crate) fn set_only_unhealthy(&mut self, on: bool, cx: &mut Context<Self>) {
         self.only_unhealthy = on;
-        self.rows(cx);
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.refresh_rows(cx);
+        self.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -573,7 +571,7 @@ impl WorkloadsScreen {
         self.query
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.only_unhealthy = false;
-        self.rows(cx);
+        self.refresh_rows(cx);
         cx.notify();
     }
 }
@@ -604,8 +602,11 @@ fn pod_matches(pod: &PodInfo, query: &str) -> bool {
 }
 
 mod example;
+mod table;
 mod view;
 use example::example;
+use freshkube_ui::table::TableState;
+use table::Display;
 
 #[cfg(test)]
 mod tests;
