@@ -98,7 +98,7 @@ impl ObservabilityPage {
                 // Includes both cell insets, with room for fractional shaping.
                 let measured = (caption.max(value) + 24.).ceil();
                 let width = match kind {
-                    ColumnKind::Glyph => 34.,
+                    ColumnKind::Glyph => table::GLYPH_WIDTH,
                     ColumnKind::Name => measured.max(120.),
                     ColumnKind::Report(_) => measured.max(48.),
                     ColumnKind::Type => measured.max(64.),

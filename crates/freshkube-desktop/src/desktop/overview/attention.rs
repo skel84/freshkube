@@ -4,7 +4,7 @@ use super::Pilot;
 use crate::logs::TalosPanel;
 use crate::palette::palette;
 use crate::presentation::attention::{AttentionRow, Destination};
-use crate::ui::{self, MONO_FONT, dp};
+use crate::ui::{MONO_FONT, dp};
 use freshkube_ui::card::{CardHeader, ChartCard};
 use freshkube_ui::table::{self, GroupRow};
 use gpui_kit::component::{
@@ -169,13 +169,14 @@ impl Pilot {
             .aria_label(row.name.clone())
             .w_full()
             .h(dp(table::ROW_HEIGHT))
-            .px_3()
-            .gap(dp(10.))
+            // Its glyph and text line up with its group row's.
+            .pr_3()
+            .gap(dp(table::CELL_PAD))
             .border_b_1()
             .border_color(p.line)
             .text_size(dp(12.5))
             .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .children(ui::status_glyph(row.tone, cx))
+            .child(table::glyph_slot(row.tone, cx))
             .child(
                 div()
                     .flex_none()

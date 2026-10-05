@@ -72,12 +72,7 @@ pub(super) fn glyph(
     cx: &App,
 ) -> AnyElement {
     let p = palette(cx);
-    let cell = cell(column)
-        .id("glyph")
-        .flex()
-        .items_center()
-        .justify_center()
-        .px_0();
+    let cell = freshkube_ui::table::glyph_cell(column).id("glyph");
     if marked {
         return cell
             .child(

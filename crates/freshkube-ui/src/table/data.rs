@@ -653,7 +653,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::table::GroupRow;
+    use crate::table::{CELL_PAD, GLYPH_WIDTH, GroupRow, glyph_cell};
     use crate::ui::Tone;
 
     /// Lines 0 and 3 are group headers; the rest are rows.
@@ -693,7 +693,7 @@ mod tests {
         }
 
         fn width(&self) -> f32 {
-            200.
+            if self.0 == "Glyph" { GLYPH_WIDTH } else { 200. }
         }
 
         fn flexible(&self) -> bool {
@@ -720,6 +720,8 @@ mod tests {
         hovered: Vec<SharedString>,
         sorts: Vec<SharedString>,
         carded: bool,
+        /// The first column holds each row's glyph, as a page's does.
+        glyphs: bool,
     }
 
     impl Wide {
@@ -737,6 +739,16 @@ mod tests {
                 hovered: Vec::new(),
                 sorts: Vec::new(),
                 carded: false,
+                glyphs: false,
+            }
+        }
+
+        /// The first column becomes a glyph column, as a page's is.
+        fn glyphs(mut self) -> Self {
+            self.columns[0].0 = "Glyph".into();
+            Self {
+                glyphs: true,
+                ..self
             }
         }
 
@@ -774,7 +786,7 @@ mod tests {
         }
 
         fn width(&self) -> f32 {
-            self.columns.len() as f32 * 200.
+            self.columns.iter().map(TableColumn::width).sum()
         }
 
         fn list_label(&self) -> String {
@@ -818,6 +830,13 @@ mod tests {
             cx: &mut Context<Self>,
         ) -> AnyElement {
             let label = SharedString::from(format!("{} {}", column.0, row.key));
+            if self.glyphs && column.0 == "Glyph" {
+                return glyph_cell(column)
+                    .id(("wide-glyph", row.key))
+                    .test_support()
+                    .children(ui::status_glyph(Tone::Good, cx))
+                    .into_any_element();
+            }
             let (click, hover) = (label.clone(), label.clone());
             cell(column)
                 .id(label.clone())
@@ -1404,5 +1423,34 @@ mod tests {
             assert!(inset(window, "wide-group").abs() <= 1.5);
         })
         .unwrap();
+    }
+
+    /// A group's glyph sits on its rows' glyphs, and its label starts where
+    /// the next column's text does, at any text size (#129).
+    #[gpui_kit::test]
+    fn group_glyphs_and_labels_line_up_with_the_rows(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, Wide::new(0, 2, true).glyphs(), 1400.);
+        for text in [13., 20.] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(text, cx);
+                window.render_frame(cx);
+                let group = ElementId::from("wide-group");
+                let slot = window.find((group.clone(), "glyph")).bounds();
+                let glyph = window.find(("wide-glyph", 1usize)).bounds();
+                assert!(
+                    (slot.center().x - glyph.center().x).abs() < px(0.25),
+                    "text {text}: group glyph at {:?}, row glyph at {:?}",
+                    slot.center().x,
+                    glyph.center().x
+                );
+                let label = window.find((group, "label")).bounds().left();
+                let name = window.find("Column 1 1").bounds().left() + ui::dp_px(CELL_PAD, window);
+                assert!(
+                    (label - name).abs() < px(0.25),
+                    "text {text}: group label at {label:?}, row text at {name:?}"
+                );
+            })
+            .unwrap();
+        }
     }
 }

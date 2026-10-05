@@ -14,7 +14,7 @@ const MIN_COLUMN: f32 = 64.;
 const MAX_COLUMN: f32 = 280.;
 const MAX_FLEXIBLE: f32 = 440.;
 /// The status glyph's column: 16 for the glyph and its padding.
-pub(super) const GLYPH_WIDTH: f32 = 34.;
+pub(super) use freshkube_ui::table::GLYPH_WIDTH;
 /// A pod's `0/1 ↻14`.
 const READY_WIDTH: f32 = 88.;
 /// A use figure and its 44-wide bullet.
