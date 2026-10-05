@@ -142,6 +142,16 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 
 Each state's element has role status and an id `<page>-<state>`.
 
+### Tooltips
+
+Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, `tooltip_with_action` on a button with a shortcut. A tooltip says what the element can't show; it never repeats a label shown whole. One is required on:
+
+- **Truncated text:** the full value, such as a name cut at its column or shown without its common node prefix.
+- **Compact values:** the full text behind `2.8%`, `1.9k` or `refused`: the exact figure with its unit, or what was refused and why.
+- **Icon-only controls:** the action's name and its shortcut, if it has one: `Refresh pods`.
+- **Resource meters:** used, requested and the limit (allocatable on a node), how fresh the reading is, and any source that is missing.
+- **Status glyphs:** the state in words and its reason, unless the group header already gives them.
+
 ### In code
 
 [#47](https://github.com/skel84/freshkube/issues/47) moved what Pods draws into `freshkube-ui`, with ui.rs, the palette, theme, text size and meters; the app still reaches those by their old `crate::` paths.
