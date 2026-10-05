@@ -933,7 +933,6 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
             "obs-source",
             "obs-project",
             "obs-namespace",
-            "obs-density",
             "obs-columns",
             "obs-time",
             "obs-refresh",
@@ -999,7 +998,6 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 "obs-category-monitoring",
                 "obs-more-categories",
                 "obs-namespace",
-                "obs-density",
                 "obs-columns",
                 "obs-time",
                 "obs-refresh",
@@ -1018,7 +1016,7 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 );
                 if matches!(
                     id,
-                    "obs-namespace" | "obs-density" | "obs-columns" | "obs-time" | "obs-refresh"
+                    "obs-namespace" | "obs-columns" | "obs-time" | "obs-refresh"
                 ) {
                     if let Some(prior) = previous {
                         let prior: gpui_kit::Bounds<gpui_kit::Pixels> = prior;
@@ -1066,7 +1064,6 @@ fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAp
         title_text: "Applications",
         table: "obs-applications-table-scroll",
         list: "obs-applications-list",
-        density: "obs-density",
     };
     for text_size in [crate::ui::BASE_TEXT, 20.] {
         cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
@@ -1076,7 +1073,7 @@ fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAp
             let layout = assert_table_page(window, cx, &table);
             assert!(
                 layout.group.is_some(),
-                "namespace groups use the selected row density: {layout:#?}"
+                "namespace groups take the row height: {layout:#?}"
             );
         })
         .unwrap();
@@ -1165,17 +1162,11 @@ fn applications_table_fits_short_results_and_caps_long_results(cx: &mut TestAppC
         assert!(short < 16);
         assert_eq!(
             window.find("obs-applications-list").bounds().size.height,
-            crate::ui::dp_px(short as f32 * 34., window)
+            crate::ui::dp_px(short as f32 * 26., window)
         );
         window.click("obs-show-all", cx);
         window.render_frame(cx);
         assert!(page.read(cx).matrix.len() > 16);
-        assert_eq!(
-            window.find("obs-applications-list").bounds().size.height,
-            crate::ui::dp_px(16. * 34., window)
-        );
-        window.click("obs-density", cx);
-        window.render_frame(cx);
         assert_eq!(
             window.find("obs-applications-list").bounds().size.height,
             crate::ui::dp_px(16. * 26., window)

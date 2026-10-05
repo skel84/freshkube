@@ -205,7 +205,7 @@ impl TableSource for SystemServices {
                     .id(&format!("group-{}", label.to_lowercase().replace(' ', "-"))),
                 ui::health_tone(health),
                 label,
-                self.table.row_height(),
+                table::ROW_HEIGHT,
             )
             .detail(vec![format!(
                 "{count} {}",

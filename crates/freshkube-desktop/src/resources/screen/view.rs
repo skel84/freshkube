@@ -101,22 +101,6 @@ impl ResourcesScreen {
                             .cleanable(true)
                             .prefix(Icon::new(IconName::Search).size(dp(14.))),
                     );
-        let density = div().flex_none().child(
-            Button::new("resource-density")
-                .outline()
-                .small()
-                .icon(if self.table.compact {
-                    IconName::Rows4
-                } else {
-                    IconName::Rows2
-                })
-                .tooltip(if self.table.compact {
-                    "Compact rows; switch to comfortable"
-                } else {
-                    "Comfortable rows; switch to compact"
-                })
-                .on_click(cx.listener(|view, _, _, cx| view.toggle_density(cx))),
-        );
         let refresh = div().flex_none().child(
             Button::new("resource-refresh")
                 .outline()
@@ -169,8 +153,7 @@ impl ResourcesScreen {
                 h_flex()
                     .flex_none()
                     .gap(dp(14.))
-                    .children(self.pod_switch(cx))
-                    .child(density),
+                    .children(self.pod_switch(cx)),
             )
             .child(controls)
     }
@@ -286,7 +269,7 @@ impl ResourcesScreen {
             SharedString::from(key.clone()),
             tone,
             label,
-            self.row_height(),
+            table::ROW_HEIGHT,
         )
         .subject(node.clone())
         .detail(detail);

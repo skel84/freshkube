@@ -16,8 +16,7 @@ use crate::ui::dp_px;
 
 /// DESIGN.md's table page, in dp.
 pub(crate) const HEADER_HEIGHT: f32 = 26.;
-pub(crate) const ROW_HEIGHT: f32 = 34.;
-pub(crate) const COMPACT_ROW_HEIGHT: f32 = 26.;
+pub(crate) const ROW_HEIGHT: f32 = 26.;
 pub(crate) const TITLE_TEXT: f32 = 20.;
 pub(crate) const TITLE_LINE: f32 = 28.;
 
@@ -33,15 +32,6 @@ pub(crate) struct PageFrame {
     pub content: &'static str,
 }
 
-/// How a table chooses its row height.
-pub(crate) enum Density {
-    /// The control that switches between comfortable and compact rows.
-    Toggle(&'static str),
-    /// The table has no switch and always draws this density.
-    Comfortable,
-    Compact,
-}
-
 /// The elements a table names for the row check. A page may hold several,
 /// such as a dashboard's table panels or a list beside a detail.
 pub(crate) struct Table {
@@ -51,7 +41,6 @@ pub(crate) struct Table {
     /// The list under the column header, holding rows (`Role::ListBoxOption`)
     /// and group headers (`Role::Heading`).
     pub list: &'static str,
-    pub density: Density,
 }
 
 /// The elements a table page names for the check: its frame and its table.
@@ -61,7 +50,6 @@ pub(crate) struct TablePage {
     pub title_text: &'static str,
     pub table: &'static str,
     pub list: &'static str,
-    pub density: &'static str,
 }
 
 /// What a page's frame drew, in pixels.
@@ -73,17 +61,11 @@ pub(crate) struct FrameLayout {
     pub title_text: Pixels,
 }
 
-/// What a table drew, in pixels. A density the table doesn't offer is `None`.
+/// What a table drew, in pixels: its header, if it has one, a row and,
+/// when the list showed one, a group header.
 #[derive(Debug)]
 pub(crate) struct TableRows {
     pub header: Option<Pixels>,
-    pub comfortable: Option<Lines>,
-    pub compact: Option<Lines>,
-}
-
-/// One density's row and, when the list showed one, group header.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Lines {
     pub row: Pixels,
     pub group: Option<Pixels>,
 }
@@ -95,10 +77,8 @@ pub(crate) struct Lines {
 pub(crate) struct TableLayout {
     pub header: Pixels,
     pub row: Pixels,
-    pub compact_row: Pixels,
-    /// Group headers at comfortable and compact density, when the list
-    /// showed a group.
-    pub group: Option<(Pixels, Pixels)>,
+    /// The group header, when the list showed a group.
+    pub group: Option<Pixels>,
     pub padding_left: Pixels,
     pub padding_right: Pixels,
     pub title_line: Pixels,
@@ -106,7 +86,7 @@ pub(crate) struct TableLayout {
 }
 
 /// Asserts DESIGN.md's table page: `assert_page_frame` on its frame, then
-/// `assert_table` on its table at both densities, leaving the density it had.
+/// `assert_table` on its table.
 pub(crate) fn assert_table_page(
     window: &mut Window,
     cx: &mut App,
@@ -128,19 +108,15 @@ pub(crate) fn assert_table_page(
         &Table {
             table: Some(page.table),
             list: page.list,
-            density: Density::Toggle(page.density),
         },
     );
-    let (Some(header), Some(comfortable), Some(compact)) =
-        (rows.header, rows.comfortable, rows.compact)
-    else {
-        unreachable!("a toggled table with a header measures both densities");
+    let Some(header) = rows.header else {
+        unreachable!("a table page's table has a header");
     };
     TableLayout {
         header,
-        row: comfortable.row,
-        compact_row: compact.row,
-        group: comfortable.group.zip(compact.group),
+        row: rows.row,
+        group: rows.group,
         padding_left: frame.padding_left,
         padding_right: frame.padding_right,
         title_line: frame.title_line,
@@ -188,38 +164,14 @@ pub(crate) fn assert_page_frame(
     layout
 }
 
-/// Asserts DESIGN.md's table: a 30 dp column header, and 34 and 26 dp rows
-/// with group headers at the row height (a `uniform_list` needs uniform
-/// lines). A toggled table is measured at both densities and left at the one
-/// it had.
+/// Asserts DESIGN.md's table: a 26 dp column header, and 26 dp rows with
+/// group headers at the row height (a `uniform_list` needs uniform lines).
 pub(crate) fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> TableRows {
     window.render_frame(cx);
     let header = table
         .table
         .map(|frame| window.find(table.list).bounds().top() - window.find(frame).bounds().top());
-    let first = measure(window, table.list);
-    let (comfortable, compact) = match table.density {
-        Density::Toggle(control) => {
-            window.click(control, cx);
-            window.render_frame(cx);
-            let second = measure(window, table.list);
-            window.click(control, cx);
-            window.render_frame(cx);
-            // Whichever density the table showed first, order them.
-            if first.row >= second.row {
-                (Some(first), Some(second))
-            } else {
-                (Some(second), Some(first))
-            }
-        }
-        Density::Comfortable => (Some(first), None),
-        Density::Compact => (None, Some(first)),
-    };
-    let rows = TableRows {
-        header,
-        comfortable,
-        compact,
-    };
+    let rows = measure(window, table.list, header);
     let dp = |n: f32| dp_px(n, window);
     let close = |what: &str, actual: Pixels, expected: f32| {
         assert!(
@@ -232,20 +184,14 @@ pub(crate) fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> 
     if let Some(header) = rows.header {
         close("column header", header, HEADER_HEIGHT);
     }
-    for (name, lines, height) in [
-        ("comfortable", rows.comfortable, ROW_HEIGHT),
-        ("compact", rows.compact, COMPACT_ROW_HEIGHT),
-    ] {
-        let Some(lines) = lines else { continue };
-        close(&format!("{name} row"), lines.row, height);
-        if let Some(group) = lines.group {
-            close(&format!("{name} group header"), group, height);
-        }
+    close("row", rows.row, ROW_HEIGHT);
+    if let Some(group) = rows.group {
+        close("group header", group, ROW_HEIGHT);
     }
     rows
 }
 
-fn measure(window: &Window, list: &'static str) -> Lines {
+fn measure(window: &Window, list: &'static str, header: Option<Pixels>) -> TableRows {
     let lines = lines(window, list);
     let row = lines
         .iter()
@@ -255,7 +201,8 @@ fn measure(window: &Window, list: &'static str) -> Lines {
         .iter()
         .find(|line| line.role() == Some(Role::Heading))
         .map(|group| group.bounds().size.height);
-    Lines {
+    TableRows {
+        header,
         row: row.bounds().size.height,
         group,
     }

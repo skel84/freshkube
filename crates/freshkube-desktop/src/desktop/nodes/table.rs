@@ -36,6 +36,11 @@ impl TableColumn for Column {
     fn flexible(&self) -> bool {
         self.field == Field::Name
     }
+
+    /// The glyph and the name stay in view when the table scrolls sideways.
+    fn pinned(&self) -> bool {
+        matches!(self.field, Field::Glyph | Field::Name)
+    }
 }
 
 impl Column {
@@ -321,7 +326,7 @@ impl TableSource for Pilot {
             status.group_id(),
             status.tone(),
             status.label(),
-            self.node_workspace.table.row_height(),
+            table::ROW_HEIGHT,
         )
         .detail(detail);
         let row = if status == projection::Status::Healthy

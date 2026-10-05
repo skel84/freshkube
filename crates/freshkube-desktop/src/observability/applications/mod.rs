@@ -158,15 +158,10 @@ impl ObservabilityPage {
             return None;
         };
         Some(
-            table::GroupRow::new(
-                id.clone(),
-                status.tone(),
-                label.clone(),
-                self.application_table.row_height(),
-            )
-            .detail(vec![summary.clone()])
-            .render(cx)
-            .into_any_element(),
+            table::GroupRow::new(id.clone(), status.tone(), label.clone(), table::ROW_HEIGHT)
+                .detail(vec![summary.clone()])
+                .render(cx)
+                .into_any_element(),
         )
     }
     pub(in crate::observability) fn application_empty(

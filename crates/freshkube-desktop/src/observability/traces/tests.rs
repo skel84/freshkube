@@ -110,9 +110,7 @@ mod ui_tests {
 
     #[gpui_kit::test]
     fn traces_use_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
-        use crate::desktop::layout_check::{
-            Density, PageFrame, Table, assert_page_frame, assert_table,
-        };
+        use crate::desktop::layout_check::{PageFrame, Table, assert_page_frame, assert_table};
         let (_runtime, handle, _page) = open_example(cx, 1260.);
         let frame = PageFrame {
             page: "obs-frame",
@@ -123,7 +121,6 @@ mod ui_tests {
         let table = Table {
             table: Some("obs-traces-table-scroll"),
             list: "obs-traces-list",
-            density: Density::Comfortable,
         };
         for text_size in [crate::ui::BASE_TEXT, 20.] {
             cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))

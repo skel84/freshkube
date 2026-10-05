@@ -253,10 +253,6 @@ impl SystemServices {
         self.health = (self.health != Some(health)).then_some(health);
         self.refilter(cx);
     }
-    fn toggle_density(&mut self, cx: &mut Context<Self>) {
-        self.table.compact = !self.table.compact;
-        cx.notify();
-    }
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let narrow = content_width(window) < page::HEADER_NARROW;
         let header = page::PageHeader::new(PREFIX, "System services", narrow);
@@ -284,25 +280,10 @@ impl SystemServices {
             }),
             cx,
         );
-        let density = Button::new(header.id("density"))
-            .outline()
-            .small()
-            .icon(if self.table.compact {
-                IconName::Rows4
-            } else {
-                IconName::Rows2
-            })
-            .tooltip(if self.table.compact {
-                "Compact · 26px rows. Switch to comfortable"
-            } else {
-                "Comfortable · 34px rows. Switch to compact"
-            })
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_density(cx)));
         header
             .filter(filter)
             .chips(Some(chips))
             .control(self.render_node_picker(cx))
-            .control(density)
             .meta([self.meta.clone().into_any_element()])
             .render(cx)
     }
