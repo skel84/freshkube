@@ -1,65 +1,209 @@
 use super::*;
 
 impl NetworkScreen {
-    fn summary(&self, data: &NetworkData, cx: &App) -> AnyElement {
-        let p = palette(cx);
-        let snapshot = &data.snapshot;
-        let totals: NetworkTotals = snapshot.totals;
-        let measured = snapshot
-            .interfaces
-            .iter()
-            .any(|interface| interface.rate.is_some());
-        let throughput = if measured {
-            format!(
-                "RX {}  TX {}",
-                rate_text(Some(totals.rx_bytes_per_sec)),
-                rate_text(Some(totals.tx_bytes_per_sec))
-            )
-        } else {
-            "measuring…".into()
+    fn render_header(
+        &self,
+        data: Option<&NetworkData>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let header = PageHeader::new(PREFIX, "Network");
+        let header = match data {
+            Some(data) => {
+                let sockets = matches!(self.view, View::Connections | View::Listeners);
+                let header = if sockets {
+                    header.filter(
+                        div().child(
+                            Input::new(&self.query)
+                                .id("network-filter")
+                                .aria_label(
+                                    "Filter connections by address, service, process or state",
+                                )
+                                .small()
+                                .h(dp(ui::CONTROL_HEIGHT))
+                                .cleanable(true)
+                                .prefix(Icon::new(IconName::Search).size(dp(14.))),
+                        ),
+                    )
+                } else {
+                    header
+                };
+                // The rightmost folds first: the states, then the interface,
+                // then the views.
+                let views = self.view_labels(data);
+                let header =
+                    header.foldable(self.render_views(&views, cx), self.views_fold(&views, cx));
+                let header = match self.iface_filter.clone().filter(|_| sockets) {
+                    Some(iface) => header.foldable(
+                        self.render_interface(&iface, cx),
+                        self.interface_fold(&iface, cx),
+                    ),
+                    None => header,
+                };
+                if self.view == View::Connections {
+                    let states = state_labels(data);
+                    header.foldable(
+                        self.render_states(&states, cx),
+                        self.states_fold(&states, cx),
+                    )
+                } else {
+                    header
+                }
+            }
+            None => header,
         };
-        let connections = snapshot.connections.as_ref().map_or_else(
-            || "unknown".to_owned(),
-            |connections| {
-                let counts = &connections.counts;
-                format!(
-                    "{} · {} established · {} listening",
-                    counts.total(),
-                    counts.established,
-                    counts.listen
-                )
-            },
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh network",
+            self.source.as_ref(),
+            &self.loader,
+            cx,
         );
-        let item = |label: &'static str, value: String, color: Option<Hsla>| {
-            h_flex()
-                .gap_1p5()
-                .child(div().text_color(p.muted).child(label))
-                .child(mono(value).when_some(color, |this, color| this.text_color(color)))
+        let parts = self
+            .derived
+            .summary
+            .as_ref()
+            .map(|(_, parts)| parts.clone())
+            .unwrap_or_default();
+        header
+            .control(refresh)
+            .meta(meta(
+                self.source.as_ref(),
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                parts,
+            ))
+            .render(window, cx)
+    }
+
+    /// Each view's label with its count, by [`View::index`].
+    fn view_labels(&self, data: &NetworkData) -> [SharedString; 4] {
+        let snapshot = &data.snapshot;
+        let connections = snapshot
+            .connections
+            .as_ref()
+            .map_or("?".to_owned(), |c| c.connections.len().to_string());
+        let listeners = snapshot
+            .connections
+            .as_ref()
+            .map_or("?".to_owned(), |c| c.listeners.len().to_string());
+        let peers = match self.kubespan.data() {
+            Some(KubeSpanState::Enabled(peers)) => peers.len().to_string(),
+            Some(KubeSpanState::Disabled) => "off".into(),
+            Some(KubeSpanState::Unavailable(_)) => "?".into(),
+            // Not asked for yet, or on its way: unknown, never "off".
+            None if self.kubespan.is_loading() => "…".into(),
+            None => "?".into(),
         };
-        h_flex()
-            .id("network-summary")
-            .test_support()
-            .aria_label(format!(
-                "Throughput {throughput}; errors {}; dropped {}; connections {connections}",
-                totals.errors, totals.dropped
-            ))
-            .gap_x_5()
-            .gap_y_1()
-            .flex_wrap()
-            .text_size(dp(12.5))
-            .child(item("Throughput", throughput, None))
-            .child(item(
-                "Errors",
-                totals.errors.to_string(),
-                (totals.errors > 0).then_some(p.crit_ink),
-            ))
-            .child(item(
-                "Dropped",
-                totals.dropped.to_string(),
-                (totals.dropped > 0).then_some(p.warn_ink),
-            ))
-            .child(item("Connections", connections, None))
-            .into_any_element()
+        [
+            format!("Interfaces {}", snapshot.interfaces.len()).into(),
+            format!("Connections {connections}").into(),
+            format!("Listeners {listeners}").into(),
+            format!("KubeSpan {peers}").into(),
+        ]
+    }
+
+    fn render_views(&self, labels: &[SharedString; 4], cx: &mut Context<Self>) -> ButtonGroup {
+        let current = self.view;
+        ButtonGroup::new("network-view")
+            .outline()
+            .small()
+            .children(View::ALL.iter().map(|&view| {
+                Button::new(view.id())
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .icon(view.icon())
+                    .label(labels[view.index()].clone())
+                    .selected(view == current)
+            }))
+            .on_click(cx.listener(|screen, selected: &Vec<usize>, window, cx| {
+                let view = View::from_index(selected.first().copied().unwrap_or(0));
+                screen.switch(view, window, cx);
+            }))
+    }
+
+    /// The views folded: `View · Interfaces 4` over a checked item for each.
+    fn views_fold(&self, labels: &[SharedString; 4], cx: &mut Context<Self>) -> page::Fold {
+        let current = self.view;
+        let items = View::ALL.map(|view| {
+            page::checked_item(
+                labels[view.index()].clone(),
+                view == current,
+                page::handler(cx, move |screen: &mut Self, window, cx| {
+                    screen.switch(view, window, cx)
+                }),
+            )
+        });
+        page::Fold::from(page::submenu_value(
+            "View",
+            labels[current.index()].clone(),
+            all_of(items.into()),
+        ))
+    }
+
+    fn render_interface(&self, iface: &str, cx: &mut Context<Self>) -> Button {
+        Button::new("network-clear-interface")
+            .small()
+            .primary()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .icon(IconName::X)
+            .label(format!("Interface {iface}"))
+            .on_click(cx.listener(|screen, _, _, cx| screen.clear_interface(cx)))
+    }
+
+    /// The interface's clear button folded: an item that shows every
+    /// connection again.
+    fn interface_fold(&self, iface: &str, cx: &mut Context<Self>) -> page::Fold {
+        page::Fold::from(page::item(
+            "All interfaces",
+            page::handler(cx, |screen: &mut Self, _, cx| screen.clear_interface(cx)),
+        ))
+        .changed(Some(format!("Interface {iface}").into()))
+    }
+
+    fn render_states(&self, labels: &[SharedString; 7], cx: &mut Context<Self>) -> ButtonGroup {
+        let current = self.state_filter;
+        ButtonGroup::new("network-state")
+            .outline()
+            .small()
+            .children(StateFilter::ALL.iter().enumerate().map(|(ix, &filter)| {
+                Button::new(filter.id())
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .label(labels[ix].clone())
+                    .selected(filter == current)
+            }))
+            .on_click(cx.listener(|screen, selected: &Vec<usize>, _, cx| {
+                let index = selected.first().copied().unwrap_or(0);
+                screen.set_state_filter(StateFilter::from_index(index), cx);
+            }))
+    }
+
+    /// The states folded: `State · All 42` over a checked item for each.
+    fn states_fold(&self, labels: &[SharedString; 7], cx: &mut Context<Self>) -> page::Fold {
+        let current = self.state_filter;
+        let items: Vec<page::MenuItems> = StateFilter::ALL
+            .iter()
+            .zip(labels)
+            .map(|(&filter, label)| {
+                page::checked_item(
+                    label.clone(),
+                    filter == current,
+                    page::handler(cx, move |screen: &mut Self, _, cx| {
+                        screen.set_state_filter(filter, cx)
+                    }),
+                )
+            })
+            .collect();
+        let ix = StateFilter::ALL
+            .iter()
+            .position(|&filter| filter == current)
+            .unwrap_or(0);
+        page::Fold::from(page::submenu_value(
+            "State",
+            labels[ix].clone(),
+            all_of(items),
+        ))
+        .changed((current != StateFilter::All).then(|| format!("State {}", current.name()).into()))
     }
 
     /// The TUI's warning line plus the key ports that are listening. Optional
@@ -124,244 +268,43 @@ impl NetworkScreen {
         )
     }
 
-    fn tabs(&self, data: &NetworkData, cx: &mut Context<Self>) -> Div {
-        let view = self.view;
-        let snapshot = &data.snapshot;
-        let connections = snapshot
-            .connections
-            .as_ref()
-            .map_or("?".to_owned(), |c| c.connections.len().to_string());
-        let listeners = snapshot
-            .connections
-            .as_ref()
-            .map_or("?".to_owned(), |c| c.listeners.len().to_string());
-        let peers = match self.kubespan.data() {
-            Some(KubeSpanState::Enabled(peers)) => peers.len().to_string(),
-            Some(KubeSpanState::Disabled) => "off".into(),
-            Some(KubeSpanState::Unavailable(_)) => "?".into(),
-            // Not asked for yet, or on its way: unknown, never "off".
-            None if self.kubespan.is_loading() => "…".into(),
-            None => "?".into(),
-        };
-        h_flex().gap_2p5().flex_wrap().child(
-            ButtonGroup::new("network-view")
-                .outline()
-                .small()
-                .child(
-                    Button::new("network-view-interfaces")
-                        .icon(IconName::EthernetPort)
-                        .label(format!("Interfaces {}", snapshot.interfaces.len()))
-                        .selected(view == View::Interfaces),
-                )
-                .child(
-                    Button::new("network-view-connections")
-                        .icon(IconName::ArrowUpDown)
-                        .label(format!("Connections {connections}"))
-                        .selected(view == View::Connections),
-                )
-                .child(
-                    Button::new("network-view-listeners")
-                        .icon(IconName::RadioTower)
-                        .label(format!("Listeners {listeners}"))
-                        .selected(view == View::Listeners),
-                )
-                .child(
-                    Button::new("network-view-kubespan")
-                        .icon(IconName::Waypoints)
-                        .label(format!("KubeSpan {peers}"))
-                        .selected(view == View::KubeSpan),
-                )
-                .on_click(cx.listener(|screen, selected: &Vec<usize>, window, cx| {
-                    let view = View::from_index(selected.first().copied().unwrap_or(0));
-                    screen.switch(view, window, cx);
-                })),
-        )
-    }
-
-    fn connection_toolbar(&self, data: &NetworkData, cx: &mut Context<Self>) -> Div {
-        let filter = self.state_filter;
-        let counts = data.snapshot.connections.as_ref().map(|c| c.counts.clone());
-        let count = |value: Option<usize>| value.map_or("?".to_owned(), |v| v.to_string());
-        let counts_for = |f: StateFilter| {
-            count(counts.as_ref().map(|c| match f {
-                StateFilter::All => c.total(),
-                StateFilter::Established => c.established,
-                StateFilter::Listen => c.listen,
-                StateFilter::TimeWait => c.time_wait,
-                StateFilter::CloseWait => c.close_wait,
-                StateFilter::SynSent => c.syn_sent,
-                StateFilter::Other => c.other,
-            }))
-        };
-        let labelled = |id: &'static str, text: &str, f: StateFilter| {
-            Button::new(id)
-                .label(format!("{text} {}", counts_for(f)))
-                .selected(filter == f)
-        };
-        h_flex()
-            .gap_2p5()
-            .flex_wrap()
-            .child(
-                div().flex_1().min_w(dp(180.)).max_w(dp(320.)).child(
-                    Input::new(&self.query)
-                        .id("network-filter")
-                        .aria_label("Filter connections by address, service, process or state")
-                        .small()
-                        .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                ),
-            )
-            .when_some(self.iface_filter.clone(), |this, iface| {
-                this.child(
-                    Button::new("network-clear-interface")
-                        .small()
-                        .primary()
-                        .icon(IconName::X)
-                        .label(format!("Interface {iface}"))
-                        .on_click(cx.listener(|screen, _, _, cx| {
-                            screen.iface_filter = None;
-                            cx.notify();
-                        })),
-                )
-            })
-            .when(self.view == View::Connections, |this| {
-                this.child(
-                    ButtonGroup::new("network-state")
-                        .outline()
-                        .small()
-                        .child(labelled("state-all", "All", StateFilter::All))
-                        .child(labelled(
-                            "state-established",
-                            "Est.",
-                            StateFilter::Established,
-                        ))
-                        .child(labelled("state-listen", "Listen", StateFilter::Listen))
-                        .child(labelled(
-                            "state-time-wait",
-                            "TIME_WAIT",
-                            StateFilter::TimeWait,
-                        ))
-                        .child(labelled(
-                            "state-close-wait",
-                            "CLOSE_WAIT",
-                            StateFilter::CloseWait,
-                        ))
-                        .child(labelled("state-syn-sent", "SYN_SENT", StateFilter::SynSent))
-                        .child(labelled("state-other", "Other", StateFilter::Other))
-                        .on_click(cx.listener(|screen, selected: &Vec<usize>, _, cx| {
-                            let index = selected.first().copied().unwrap_or(0);
-                            screen.set_state_filter(StateFilter::from_index(index), cx);
-                        })),
-                )
-            })
-    }
-
-    /// The showing view's table, inside a wrapper that holds the page's keys.
-    /// The wrapper is drawn in every state, so a view without rows keeps
-    /// Tab, the arrows and the filter keys.
-    fn list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The showing view's table, edge to edge.
+    fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         div()
             .id("network-table")
             .test_support()
-            .key_context(CONTEXT)
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|view, _: &NextRow, _, cx| view.step(1, cx)))
-            .on_action(cx.listener(|view, _: &PreviousRow, _, cx| view.step(-1, cx)))
-            .on_action(cx.listener(|view, _: &FirstRow, _, cx| view.step(isize::MIN, cx)))
-            .on_action(cx.listener(|view, _: &LastRow, _, cx| view.step(isize::MAX, cx)))
-            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &NextView, window, cx| {
-                view.switch(view.view.shifted(1), window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &PreviousView, window, cx| {
-                view.switch(view.view.shifted(-1), window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &OpenConnections, _, cx| view.open_connections(cx)))
-            .on_action(cx.listener(|view, _: &SortPrimary, _, cx| {
-                let sort = match view.view {
-                    View::Interfaces => Sort::Traffic,
-                    _ => Sort::State,
-                };
-                view.set_sort(sort, cx);
-            }))
-            .on_action(cx.listener(|view, _: &SortSecondary, _, cx| {
-                let sort = match view.view {
-                    View::Interfaces => Sort::Errors,
-                    _ => Sort::Port,
-                };
-                view.set_sort(sort, cx);
-            }))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
-                if matches!(view.view, View::Connections | View::Listeners) {
-                    let focus = view.query.read(cx).focus_handle(cx);
-                    window.focus(&focus, cx);
-                }
-            }))
-            .on_action(
-                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &CopyConnection, _, cx| view.copy_connection(cx)))
             .flex()
             .flex_col()
             .flex_1()
-            .min_h(dp(list_min(window)))
-            .child(
-                DataTable::new()
-                    .carded()
-                    .render(self, window, cx)
-                    .flex_1()
-                    .min_h_0(),
-            )
+            .min_h_0()
+            .child(DataTable::new().render(self, window, cx).flex_1().min_h_0())
+            .into_any_element()
     }
 
-    /// List and details, side by side when wide. Short windows scroll the
-    /// page rather than squeezing the list.
+    /// The table with the selection's details beside it on a wide page and
+    /// below it on a narrow one.
     fn split(
         &self,
         details_id: &'static str,
-        list: impl IntoElement,
+        table: AnyElement,
         details: Div,
-        wide: bool,
-        window: &Window,
-    ) -> Div {
-        let least = list_min(window);
-        if wide {
-            h_flex()
-                .flex_1()
-                .min_h(dp(least))
-                .items_stretch()
-                .gap(dp(14.))
-                .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
-                .child(
-                    div()
-                        .id(details_id)
-                        .test_support()
-                        .aria_label("Details of the selected row")
-                        .w(dp(340.))
-                        .flex_none()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .child(details),
-                )
-        } else {
-            h_flex()
-                .flex_1()
-                .min_h(dp(least + 14. + DETAILS_HEIGHT))
-                .child(
-                    v_flex().size_full().gap(dp(14.)).child(list).child(
-                        div()
-                            .id(details_id)
-                            .test_support()
-                            .aria_label("Details of the selected row")
-                            .h(dp(DETAILS_HEIGHT))
-                            .flex_none()
-                            .overflow_y_scroll()
-                            .restrict_scroll_to_axis()
-                            .child(details),
-                    ),
-                )
-        }
+        beside: bool,
+    ) -> AnyElement {
+        let details = div()
+            .id(details_id)
+            .test_support()
+            .aria_label("Details of the selected row")
+            .size_full()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .when_else(
+                beside,
+                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
+                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
+            )
+            .child(details)
+            .into_any_element();
+        crate::screens::split_fill("network-split", beside, DETAILS_HEIGHT, table, details)
     }
 
     // ---- Interfaces ----
@@ -369,13 +312,13 @@ impl NetworkScreen {
     fn interfaces_tab(
         &mut self,
         data: &NetworkData,
-        wide: bool,
+        beside: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let list = self.list(window, cx);
+    ) -> AnyElement {
+        let table = self.render_table(window, cx);
         let details = self.interface_details(data, cx);
-        self.split("interface-details", list, details, wide, window)
+        self.split("interface-details", table, details, beside)
     }
 
     fn interface_details(&self, data: &NetworkData, cx: &mut Context<Self>) -> Div {
@@ -501,24 +444,18 @@ impl NetworkScreen {
 
     fn connections_tab(
         &mut self,
-        data: &NetworkData,
-        wide: bool,
+        beside: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let details_id = if self.view == View::Listeners {
             "listener-details"
         } else {
             "connection-details"
         };
-        let toolbar = self.connection_toolbar(data, cx);
-        let list = self.list(window, cx);
+        let table = self.render_table(window, cx);
         let details = self.connection_details(cx);
-        v_flex()
-            .flex_1()
-            .gap(dp(14.))
-            .child(toolbar)
-            .child(self.split(details_id, list, details, wide, window))
+        self.split(details_id, table, details, beside)
     }
 
     fn connection_details(&self, cx: &mut Context<Self>) -> Div {
@@ -654,7 +591,14 @@ impl NetworkScreen {
 
     // ---- KubeSpan ----
 
-    fn kubespan_tab(&mut self, wide: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    /// KubeSpan's status or its peers' count, for the inset under the
+    /// toolbar, and its peers' table when it has any.
+    fn kubespan_tab(
+        &mut self,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, Option<AnyElement>) {
         let p = palette(cx);
         let status = |id: &'static str, icon: IconName, title: String, detail: String, cx: &App| {
             panel(cx)
@@ -685,68 +629,79 @@ impl NetworkScreen {
                     "Asking the node for its KubeSpan configuration and peers.".into(),
                 ),
             };
-            return v_flex().flex_1().child(status(
-                "kubespan-status",
-                IconName::CircleDashed,
-                title.into(),
-                detail,
-                cx,
-            ));
+            return (
+                status(
+                    "kubespan-status",
+                    IconName::CircleDashed,
+                    title.into(),
+                    detail,
+                    cx,
+                ),
+                None,
+            );
         };
         let peers = match state {
             KubeSpanState::Unavailable(message) => {
-                return v_flex().flex_1().child(status(
-                    "kubespan-status",
-                    IconName::CircleDashed,
-                    "KubeSpan status is unknown".into(),
-                    format!("It couldn't be read, so nothing is shown as failed. {message}."),
-                    cx,
-                ));
+                return (
+                    status(
+                        "kubespan-status",
+                        IconName::CircleDashed,
+                        "KubeSpan status is unknown".into(),
+                        format!("It couldn't be read, so nothing is shown as failed. {message}."),
+                        cx,
+                    ),
+                    None,
+                );
             }
             KubeSpanState::Disabled => {
-                return v_flex().flex_1().child(status(
-                    "kubespan-status",
-                    IconName::Waypoints,
-                    "KubeSpan isn't enabled on this node".into(),
-                    "KubeSpan builds encrypted WireGuard tunnels between cluster nodes. Enable it with machine.network.kubespan.enabled: true in the machine configuration.".into(),
-                    cx,
-                ));
+                return (
+                    status(
+                        "kubespan-status",
+                        IconName::Waypoints,
+                        "KubeSpan isn't enabled on this node".into(),
+                        "KubeSpan builds encrypted WireGuard tunnels between cluster nodes. Enable it with machine.network.kubespan.enabled: true in the machine configuration.".into(),
+                        cx,
+                    ),
+                    None,
+                );
             }
             KubeSpanState::Enabled(peers) if peers.is_empty() => {
-                return v_flex().flex_1().child(status(
-                    "kubespan-status",
-                    IconName::Waypoints,
-                    "KubeSpan is enabled, with no peers yet".into(),
-                    "Waiting for other nodes to establish KubeSpan connections.".into(),
-                    cx,
-                ));
+                return (
+                    status(
+                        "kubespan-status",
+                        IconName::Waypoints,
+                        "KubeSpan is enabled, with no peers yet".into(),
+                        "Waiting for other nodes to establish KubeSpan connections.".into(),
+                        cx,
+                    ),
+                    None,
+                );
             }
             KubeSpanState::Enabled(peers) => peers,
         };
         let peers = peers.clone();
         let up = peers.iter().filter(|peer| peer.state == "up").count();
-        let list = self.list(window, cx);
+        let table = self.render_table(window, cx);
         let selected = self
             .selected_peer_key()
             .and_then(|id| peers.iter().find(|peer| peer.id == id.as_ref()));
         let details = self.peer_details(selected, cx);
-        v_flex()
-            .flex_1()
-            .gap(dp(14.))
-            .child(
-                div()
-                    .id("kubespan-summary")
-                    .test_support()
-                    .aria_label(format!("{up} of {} peers up", peers.len()))
-                    .text_size(dp(12.5))
-                    .text_color(if up == peers.len() {
-                        p.good_ink
-                    } else {
-                        p.warn_ink
-                    })
-                    .child(format!("{up}/{} peers up", peers.len())),
-            )
-            .child(self.split("peer-details", list, details, wide, window))
+        let summary = div()
+            .id("kubespan-summary")
+            .test_support()
+            .aria_label(format!("{up} of {} peers up", peers.len()))
+            .text_size(dp(12.5))
+            .text_color(if up == peers.len() {
+                p.good_ink
+            } else {
+                p.warn_ink
+            })
+            .child(format!("{up}/{} peers up", peers.len()))
+            .into_any_element();
+        (
+            summary,
+            Some(self.split("peer-details", table, details, beside)),
+        )
     }
 
     fn peer_details(&self, peer: Option<&KubeSpanPeerStatus>, cx: &mut Context<Self>) -> Div {
@@ -806,16 +761,6 @@ impl NetworkScreen {
     }
 }
 
-/// The list's least height: shorter in a short window, which scrolls the
-/// page to the details instead.
-fn list_min(window: &Window) -> f32 {
-    if freshkube_ui::page::is_short(window) {
-        freshkube_ui::page::SHORT_LIST_HEIGHT
-    } else {
-        LIST_MIN_HEIGHT
-    }
-}
-
 fn health_text(health: &ServiceHealth) -> &'static str {
     if health.unknown {
         "health unknown"
@@ -826,26 +771,123 @@ fn health_text(health: &ServiceHealth) -> &'static str {
     }
 }
 
+/// The menu items of several controls, one after another.
+fn all_of(items: Vec<page::MenuItems>) -> page::MenuItems {
+    Rc::new(move |menu, window, cx| items.iter().fold(menu, |menu, item| item(menu, window, cx)))
+}
+
+/// Each state's label with its count, by [`StateFilter::ALL`].
+fn state_labels(data: &NetworkData) -> [SharedString; 7] {
+    let counts = data.snapshot.connections.as_ref().map(|c| &c.counts);
+    StateFilter::ALL.map(|filter| {
+        let count = counts.map_or("?".to_owned(), |c| {
+            match filter {
+                StateFilter::All => c.total(),
+                StateFilter::Established => c.established,
+                StateFilter::Listen => c.listen,
+                StateFilter::TimeWait => c.time_wait,
+                StateFilter::CloseWait => c.close_wait,
+                StateFilter::SynSent => c.syn_sent,
+                StateFilter::Other => c.other,
+            }
+            .to_string()
+        });
+        format!("{} {count}", filter.name()).into()
+    })
+}
+
 impl Render for NetworkScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("network");
-        if let Some(page) = gated_page_mode(
-            "network-page",
-            "Network",
-            Scope::Node,
+        self.sync_rows(cx);
+        let data = self.loader.data().cloned();
+        let header = self.render_header(data.as_deref(), window, cx);
+        let state = gate(
             self.source.as_ref(),
             &self.loader,
+            Scope::Node,
             "network statistics",
-            self.embedded,
             cx,
-        ) {
-            return page;
-        }
-        let (Some(source), Some(data)) = (self.source.clone(), self.loader.data().cloned()) else {
-            return div().into_any_element();
+        );
+        // The table runs edge to edge under the toolbar; the banners, the
+        // notices and KubeSpan's status sit in an inset between them, and
+        // packet capture in one after it. A short page scrolls its frame,
+        // so the list keeps some rows.
+        let page = page::page("network-page")
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(page::toolbar(cx).child(header));
+        let page = match (state, data, self.source.clone()) {
+            (Some(state), _, _) => page.child(
+                page::inset()
+                    .id("network-state")
+                    .test_support()
+                    .child(state),
+            ),
+            (None, Some(data), Some(source)) => self.render_body(page, &data, &source, window, cx),
+            _ => page,
         };
-        let wide = content_width(window) >= SIDE_DETAILS;
-        self.sync_rows(cx);
+        // The keys live on a wrapper drawn in every state, so Tab, the
+        // arrows and the filter keys work while a view shows no rows.
+        div()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .on_action(cx.listener(|view, _: &NextRow, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousRow, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstRow, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastRow, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &NextView, window, cx| {
+                view.switch(view.view.shifted(1), window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &PreviousView, window, cx| {
+                view.switch(view.view.shifted(-1), window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &OpenConnections, _, cx| view.open_connections(cx)))
+            .on_action(cx.listener(|view, _: &SortPrimary, _, cx| {
+                let sort = match view.view {
+                    View::Interfaces => Sort::Traffic,
+                    _ => Sort::State,
+                };
+                view.set_sort(sort, cx);
+            }))
+            .on_action(cx.listener(|view, _: &SortSecondary, _, cx| {
+                let sort = match view.view {
+                    View::Interfaces => Sort::Errors,
+                    _ => Sort::Port,
+                };
+                view.set_sort(sort, cx);
+            }))
+            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+                if matches!(view.view, View::Connections | View::Listeners) {
+                    let focus = view.query.read(cx).focus_handle(cx);
+                    window.focus(&focus, cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
+            )
+            .on_action(cx.listener(|view, _: &CopyConnection, _, cx| view.copy_connection(cx)))
+            .child(page)
+    }
+}
+
+impl NetworkScreen {
+    /// The page under the toolbar once a sample is in: the insets, the
+    /// showing view's table and details, and capture on Interfaces.
+    fn render_body(
+        &mut self,
+        page: Observed<Stateful<Div>>,
+        data: &NetworkData,
+        source: &ScreenSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Observed<Stateful<Div>> {
         let mut missing: Vec<String> = data
             .snapshot
             .unavailable
@@ -857,37 +899,33 @@ impl Render for NetworkScreen {
         if let Some(KubeSpanState::Unavailable(message)) = self.kubespan.data() {
             missing.push(format!("{}: {message}", InspectionSource::KubeSpan.label()));
         }
-        let tab = match self.view {
-            View::Interfaces => self.interfaces_tab(&data, wide, window, cx),
-            View::Connections | View::Listeners => self.connections_tab(&data, wide, window, cx),
-            View::KubeSpan => self.kubespan_tab(wide, window, cx),
+        let mut insets: Vec<AnyElement> = failure_banner(&self.loader, cx)
+            .map(IntoElement::into_any_element)
+            .into_iter()
+            .chain(partial_notice(missing, cx))
+            .chain(self.notices(data, cx))
+            .collect();
+        let beside = crate::screens::beside(window);
+        let split = match self.view {
+            View::Interfaces => Some(self.interfaces_tab(data, beside, window, cx)),
+            View::Connections | View::Listeners => Some(self.connections_tab(beside, window, cx)),
+            View::KubeSpan => {
+                let (status, split) = self.kubespan_tab(beside, window, cx);
+                insets.push(status);
+                split
+            }
         };
-        let capture = (self.view == View::Interfaces).then(|| self.capture_panel(&source, cx));
-        v_flex()
-            .id("network-page")
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
-            .child(crate::screens::header_mode(
-                "Network",
-                &source,
-                Scope::Node,
-                &self.loader,
-                self.embedded,
-                cx,
-            ))
-            .children(failure_banner(&self.loader, cx))
-            .children(partial_notice(missing, cx))
-            .child(self.summary(&data, cx))
-            .children(self.notices(&data, cx))
-            .child(self.tabs(&data, cx))
-            .child(tab)
-            .children(capture)
-            .into_any_element()
+        let capture = (self.view == View::Interfaces).then(|| self.capture_panel(source, cx));
+        page.when(!insets.is_empty(), |page| {
+            page.child(
+                page::inset()
+                    .flex()
+                    .flex_col()
+                    .gap(dp(page::PANE_PADDING_Y))
+                    .children(insets),
+            )
+        })
+        .children(split)
+        .children(capture.map(|capture| page::inset().child(capture)))
     }
 }

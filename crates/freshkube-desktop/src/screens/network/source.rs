@@ -437,6 +437,45 @@ pub(super) struct Derived {
     pub(super) interfaces: Option<Listing<InterfaceRow, InterfacesKey>>,
     pub(super) connections: Option<Listing<ConnectionRow, RowsKey>>,
     pub(super) peers: Option<Listing<PeerRow, Arc<Vec<KubeSpanPeerStatus>>>>,
+    /// The meta line's parts for a sample, by its revision.
+    pub(super) summary: Option<(u64, Vec<SharedString>)>,
+}
+
+/// Like the TUI header: throughput, errors, drops and connection counts.
+/// Rates show once a second sample measured them.
+fn summary(snapshot: &NetworkInspectionSnapshot) -> Vec<SharedString> {
+    let totals = snapshot.totals;
+    let measured = snapshot
+        .interfaces
+        .iter()
+        .any(|interface| interface.rate.is_some());
+    let throughput = if measured {
+        format!(
+            "RX {} TX {}",
+            rate_text(Some(totals.rx_bytes_per_sec)),
+            rate_text(Some(totals.tx_bytes_per_sec))
+        )
+    } else {
+        "throughput measuring…".into()
+    };
+    let connections = snapshot.connections.as_ref().map_or_else(
+        || "connections unknown".to_owned(),
+        |connections| {
+            let counts = &connections.counts;
+            format!(
+                "{} connections, {} established, {} listening",
+                counts.total(),
+                counts.established,
+                counts.listen
+            )
+        },
+    );
+    vec![
+        throughput.into(),
+        format!("{} errors", totals.errors).into(),
+        format!("{} dropped", totals.dropped).into(),
+        connections.into(),
+    ]
 }
 
 /// A row of whichever table is showing.
@@ -455,6 +494,14 @@ impl NetworkScreen {
             self.derived = Derived::default();
             return;
         };
+        if self
+            .derived
+            .summary
+            .as_ref()
+            .is_none_or(|(revision, _)| *revision != data.revision)
+        {
+            self.derived.summary = Some((data.revision, summary(&data.snapshot)));
+        }
         match self.view {
             View::Interfaces => self.sync_interfaces(&data),
             View::Connections | View::Listeners => self.sync_connections(&data, cx),

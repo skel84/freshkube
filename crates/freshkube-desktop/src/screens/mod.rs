@@ -542,17 +542,6 @@ pub(crate) fn header<V: ScreenPanel, T: Send + 'static>(
     loader: &Loader<T>,
     cx: &mut Context<V>,
 ) -> Div {
-    header_mode(title, source, scope, loader, false, cx)
-}
-
-pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
-    title: &'static str,
-    source: &ScreenSource,
-    scope: Scope,
-    loader: &Loader<T>,
-    embedded: bool,
-    cx: &mut Context<V>,
-) -> Div {
     let p = palette(cx);
     let target = &source.target;
     let scope_line = match scope {
@@ -579,7 +568,7 @@ pub(crate) fn header_mode<V: ScreenPanel, T: Send + 'static>(
             v_flex()
                 .gap(dp(7.))
                 .child(ui::page_title(title))
-                .when(!embedded, |this| this.child(scope_line)),
+                .child(scope_line),
         )
         .child(div().flex_1())
         .child(
@@ -742,22 +731,8 @@ pub(crate) fn gated_page<V: ScreenPanel, T: Send + 'static>(
     what: &str,
     cx: &mut Context<V>,
 ) -> Option<AnyElement> {
-    gated_page_mode(id, title, scope, source, loader, what, false, cx)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn gated_page_mode<V: ScreenPanel, T: Send + 'static>(
-    id: &'static str,
-    title: &'static str,
-    scope: Scope,
-    source: Option<&ScreenSource>,
-    loader: &Loader<T>,
-    what: &str,
-    embedded: bool,
-    cx: &mut Context<V>,
-) -> Option<AnyElement> {
     let content = gate(source, loader, scope, what, cx)?;
-    let header = source.map(|source| header_mode(title, source, scope, loader, embedded, cx));
+    let header = source.map(|source| header(title, source, scope, loader, cx));
     Some(
         page_scroll(id)
             .child(page_body().children(header).child(content))
