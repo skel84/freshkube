@@ -10,11 +10,6 @@ use super::tables::{ColumnKind, PageColumn, TableKey};
 use detail::{Detail, detail};
 pub(super) use table::IncidentCells;
 const PAGE_SIZE: usize = 10;
-/// From this content width the detail sits beside the table.
-const SPLIT_WIDTH: f32 = 900.;
-const PANE_WIDTH: f32 = 460.;
-const PANE_MIN_WIDTH: f32 = 320.;
-const SPLIT_GAP: f32 = 14.;
 /// Columns hidden until Columns shows them; the detail's summary has both.
 pub(super) const HIDDEN_BY_DEFAULT: [ColumnKind; 2] = [ColumnKind::Duration, ColumnKind::Impact];
 
@@ -322,33 +317,11 @@ impl ObservabilityPage {
         self.open_app(app, Report::Errors, cx);
     }
     /// The table, with the selected incident beside it on a wide page and
-    /// below it on a narrow one, at DESIGN.md's detail pane sizes.
+    /// below it on a narrow one.
     pub(super) fn render_incidents(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::content_width(window) >= SPLIT_WIDTH;
+        let beside = view::beside(window);
         let table = self.render_incident_table(beside, window, cx);
         let detail = self.render_incident_detail(cx);
-        div()
-            .id("obs-incidents-split")
-            .test_support()
-            .flex()
-            .items_start()
-            .gap(dp(SPLIT_GAP))
-            .when_else(beside, |this| this.flex_row(), |this| this.flex_col())
-            .child(
-                div()
-                    .min_w_0()
-                    .when_else(beside, |this| this.flex_1(), |this| this.w_full())
-                    .child(table),
-            )
-            .children(detail.map(|detail| {
-                div()
-                    .when_else(
-                        beside,
-                        |this| this.w(dp(PANE_WIDTH)).min_w(dp(PANE_MIN_WIDTH)).flex_none(),
-                        |this| this.w_full(),
-                    )
-                    .child(detail)
-            }))
-            .into_any_element()
+        view::split("obs-incidents-split", beside, table, detail)
     }
 }

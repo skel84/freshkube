@@ -688,3 +688,351 @@ pub(super) fn incident_view(
     };
     Some(serde_json::from_value(value).expect("example incident"))
 }
+
+/// One span of an example trace: service, name, parent index, and start
+/// and length as fractions of the request.
+type Step = (&'static str, &'static str, Option<usize>, f64, f64, bool);
+/// The four example requests: three failures and a healthy call, each
+/// with its status code and the failed spans' message.
+const REQUESTS: [(&[Step], u16, &str); 4] = [
+    (
+        &[
+            ("ingress-nginx", "POST /v1/settlements", None, 0., 1., false),
+            (
+                "payments/api",
+                "POST /v1/settlements",
+                Some(0),
+                0.02,
+                0.95,
+                true,
+            ),
+            (
+                "payments/api",
+                "redis GET settlement",
+                Some(1),
+                0.05,
+                0.03,
+                false,
+            ),
+            (
+                "payments/ledger",
+                "GET /accounts/8…",
+                Some(1),
+                0.07,
+                0.12,
+                false,
+            ),
+            (
+                "payments/api",
+                "POST http://worker:8080",
+                Some(1),
+                0.18,
+                0.76,
+                true,
+            ),
+            (
+                "payments/api",
+                "retry 1 · connection refused",
+                Some(4),
+                0.20,
+                0.21,
+                true,
+            ),
+            (
+                "payments/api",
+                "retry 2 · connection refused",
+                Some(4),
+                0.48,
+                0.24,
+                true,
+            ),
+            (
+                "payments/api",
+                "retry 3 · connection refused",
+                Some(4),
+                0.77,
+                0.16,
+                true,
+            ),
+        ],
+        503,
+        "connection refused · peer: worker:8080",
+    ),
+    (
+        &[
+            ("ingress-nginx", "GET /v1/balances", None, 0., 1., false),
+            (
+                "payments/api",
+                "GET /v1/balances",
+                Some(0),
+                0.02,
+                0.97,
+                true,
+            ),
+            (
+                "payments/ledger",
+                "GET /accounts/8…",
+                Some(1),
+                0.04,
+                0.94,
+                true,
+            ),
+            (
+                "payments/ledger",
+                "SELECT balance",
+                Some(2),
+                0.08,
+                0.87,
+                true,
+            ),
+            (
+                "payments/ledger",
+                "context deadline",
+                Some(3),
+                0.96,
+                0.02,
+                true,
+            ),
+        ],
+        504,
+        "deadline exceeded · peer: ledger-db:6432",
+    ),
+    (
+        &[
+            ("ingress-nginx", "GET /auth", None, 0., 1., false),
+            ("oauth2-proxy", "GET /auth", Some(0), 0.02, 0.94, true),
+            (
+                "oauth2-proxy",
+                "GET keycloak/userinfo",
+                Some(1),
+                0.09,
+                0.83,
+                true,
+            ),
+            (
+                "oauth2-proxy",
+                "dial: no route to host",
+                Some(2),
+                0.12,
+                0.76,
+                true,
+            ),
+        ],
+        502,
+        "no route to host · peer: keycloak:8080",
+    ),
+    (
+        &[
+            ("ingress-nginx", "GET /v1/balances", None, 0., 1., false),
+            (
+                "payments/api",
+                "GET /v1/balances",
+                Some(0),
+                0.02,
+                0.94,
+                false,
+            ),
+            (
+                "payments/api",
+                "redis GET balance",
+                Some(1),
+                0.06,
+                0.12,
+                false,
+            ),
+            (
+                "payments/ledger",
+                "GET /accounts/8…",
+                Some(1),
+                0.22,
+                0.62,
+                false,
+            ),
+            ("ledger-db", "SELECT balance", Some(3), 0.26, 0.52, false),
+        ],
+        200,
+        "",
+    ),
+];
+/// How long each failure takes, in milliseconds.
+const FAILED_MS: [f64; 3] = [1_020., 2_000., 540.];
+const HEALTHY: usize = 3;
+/// Failures begin this long before the window's end, as INC-12 does.
+const FAILING_MINUTES: i64 = 122;
+/// Heatmap rows, fastest first and failures last, as Coroot answers them:
+/// label, upper bound and requests per second.
+const BUCKETS: [(&str, &str, f32); 12] = [
+    ("5ms", "0.005", 0.4),
+    ("10ms", "0.01", 1.2),
+    ("25ms", "0.025", 3.0),
+    ("50ms", "0.05", 4.2),
+    ("100ms", "0.1", 3.1),
+    ("250ms", "0.25", 1.6),
+    ("500ms", "0.5", 0.7),
+    ("1s", "1", 0.3),
+    ("2.5s", "2.5", 0.1),
+    ("5s", "5", 0.),
+    (">5s", "inf", 0.),
+    ("errors", "err", 0.7),
+];
+const POINTS: i64 = 72;
+/// Requests a selection lists; Recent stops at its limit, as Coroot does.
+const RECENT: i64 = 40;
+const CELL: i64 = 5;
+
+/// An id `trace` can build the same request from again: its kind, start
+/// and length in microseconds, in letters and digits as Coroot's are.
+fn trace_id(kind: usize, at: i64, ms: f64) -> String {
+    format!("x{kind}t{at}d{}", (ms * 1_000.) as i64)
+}
+
+/// Every span of one example trace, as Coroot's trace view answers it.
+pub(super) fn trace(id: &str) -> Vec<api::Span> {
+    let parsed = id.strip_prefix('x').and_then(|rest| {
+        let (kind, rest) = rest.split_once('t')?;
+        let (at, micros) = rest.split_once('d')?;
+        Some((
+            kind.parse::<usize>().ok().filter(|k| *k < REQUESTS.len())?,
+            at.parse::<i64>().ok()?,
+            micros.parse::<i64>().ok()? as f64 / 1_000.,
+        ))
+    });
+    let Some((kind, at, ms)) = parsed else {
+        return Vec::new();
+    };
+    let (steps, code, message) = REQUESTS[kind];
+    steps
+        .iter()
+        .enumerate()
+        .map(|(ix, &(service, name, parent, start, width, error))| {
+            let mut attributes = serde_json::Map::new();
+            if ix == 1 {
+                attributes.insert("http.status_code".into(), code.to_string().into());
+            }
+            serde_json::from_value(serde_json::json!({
+                "service": service,
+                "trace_id": id,
+                "id": format!("s{ix}"),
+                "parent_id": parent.map_or_else(String::new, |p| format!("s{p}")),
+                "name": name,
+                "timestamp": at + (start * ms) as i64,
+                "duration": width * ms,
+                "status": {"error": error, "message": if error { message } else { "" }},
+                "attributes": attributes,
+            }))
+            .expect("example span")
+        })
+        .collect()
+}
+
+/// The application's span from one example request: what Coroot lists.
+fn request(kind: usize, at: i64, ms: f64) -> api::Span {
+    trace(&trace_id(kind, at, ms)).swap_remove(1)
+}
+
+/// Example tracing for the window, as Coroot's tracing view answers it:
+/// sources, the heatmap, and the requests a selection lists.
+pub(super) fn tracing(
+    source: &str,
+    selection: &api::TraceSelection,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> api::Tracing {
+    let (from_ms, to_ms) = (from.timestamp_millis(), to.timestamp_millis());
+    let failing_ms = to_ms - FAILING_MINUTES * 60_000;
+    let step_ms = ((to_ms - from_ms) / POINTS).max(1);
+    let heatmap = api::Heatmap {
+        from_ms,
+        to_ms,
+        step_ms,
+        rows: BUCKETS
+            .iter()
+            .map(|&(name, value, rate)| api::HeatRow {
+                name: name.into(),
+                value: value.into(),
+                points: (0..POINTS)
+                    .map(|p| {
+                        let at = from_ms + p * step_ms;
+                        let wave = 1. + 0.3 * (p % 5) as f32 / 4.;
+                        match value {
+                            "err" if at < failing_ms => None,
+                            _ if rate == 0. => None,
+                            _ => Some(rate * wave),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    // `count` requests evenly spread over a span of time, newest first.
+    let spread = |from: i64, to: i64, count: i64| {
+        (0..count).map(move |i| to - (i * 2 + 1) * (to - from) / (count * 2))
+    };
+    let failed = |from: i64, to: i64| {
+        let from = from.max(failing_ms);
+        (from < to)
+            .then(|| {
+                spread(from, to, CELL * 2)
+                    .enumerate()
+                    .map(|(i, at)| request(i % 3, at, FAILED_MS[i % 3]))
+            })
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+    };
+    let (spans, limited) = match selection {
+        api::TraceSelection::Recent => (
+            spread(from_ms, to_ms, RECENT)
+                .enumerate()
+                .map(|(i, at)| match i % 6 {
+                    0 if at >= failing_ms => request((i / 6) % 3, at, FAILED_MS[(i / 6) % 3]),
+                    n => request(HEALTHY, at, [180., 42., 95., 260., 61., 730.][n]),
+                })
+                .collect(),
+            true,
+        ),
+        api::TraceSelection::Errors { from_ms, to_ms } => (failed(*from_ms, *to_ms), false),
+        api::TraceSelection::Latency {
+            from_ms,
+            to_ms,
+            above,
+            up_to,
+        } => {
+            let low = above.parse::<f64>().unwrap_or(0.) * 1_000.;
+            let high = up_to.parse::<f64>().map_or(low * 2., |s| s * 1_000.);
+            // The heatmap's empty rows list nothing.
+            let spans = (low < 2_500.)
+                .then(|| {
+                    spread(*from_ms, *to_ms, CELL)
+                        .enumerate()
+                        .map(move |(i, at)| {
+                            request(HEALTHY, at, low + (high - low) * (i + 1) as f64 / 6.)
+                        })
+                })
+                .into_iter()
+                .flatten()
+                .collect();
+            (spans, false)
+        }
+        api::TraceSelection::Trace(id) => (trace(id), false),
+    };
+    let agent = source == "agent";
+    api::Tracing {
+        sources: vec![
+            api::TraceSource {
+                kind: "otel".into(),
+                name: "OpenTelemetry".into(),
+                selected: !agent,
+            },
+            api::TraceSource {
+                kind: "agent".into(),
+                name: "eBPF".into(),
+                selected: agent,
+            },
+        ],
+        heatmap: Some(heatmap),
+        spans,
+        limited,
+        ..Default::default()
+    }
+}

@@ -15,7 +15,7 @@ use super::PAGE_PADDING;
 use crate::ui::dp_px;
 
 /// DESIGN.md's table page, in dp.
-pub(crate) const HEADER_HEIGHT: f32 = 30.;
+pub(crate) const HEADER_HEIGHT: f32 = 26.;
 pub(crate) const ROW_HEIGHT: f32 = 34.;
 pub(crate) const COMPACT_ROW_HEIGHT: f32 = 26.;
 pub(crate) const TITLE_TEXT: f32 = 20.;

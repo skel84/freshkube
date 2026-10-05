@@ -12,6 +12,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Live Profiling:** an application's profile types, instances and flame graph, with zoom, search and a comparison with the window before that colours each frame by its change and lists the biggest increases.
 - **A tidier Observability page:** the source, project and time picker sit in the page header, with one page Refresh. Coroot connection settings, Disconnect and the Kubernetes link open from the sidebar footer. The column uses the shell's usual rows, so only the open destination is highlighted, and Deployments shows only with example data. Application names take the table's spare width. Traces and Profiling pick an application by typing part of its name. The flame graph names only frames wide enough to read, outlines the selected one and shows its details above the graph.
 - **Coroot's markup no longer shows:** report titles and messages lose HTML tags such as `<var>` and decode entities, keeping a plain `<` or `>` in text such as "latency < 500ms".
+- **Traces is a table page like Pods:** example and live data now draw the same page. A filter over request name, service and trace id, the sources, All and Failed requests, Columns and the time range sit in the page header. Requests are one-line table rows with a status glyph, service, local start time and duration; a failed request's message is in its tooltip. The selected request's trace opens in a pane beside the list, or below it in a narrow window, and stays selected by trace and span when Coroot answers again. The heatmap's axis reads local time. The example-only error causes, Errors only, Clear selection and heatmap arrow keys are gone. Incident titles read as prose, and long text in both tables ends in "…" instead of clipping mid-word.
 
 ### Other changes
 
@@ -25,6 +26,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Pinned cells take their own clicks:** in a table scrolled sideways, a click, hover or tooltip on a pinned name or header no longer reaches the cell passing under it, so clicking the pinned Name header sorts by name alone.
 - **Wide tables keep their bearings:** scrolled sideways, a table's group rows keep their label in view, and Pods, every other Resources kind and System services keep each row's status and name at the left edge.
 - **Overview's cards share Monitoring's card:** each figure takes its tone's colour above its detail, with a meter of the cluster's nodes (in large clusters, a run per state, problems first, so one failing node still shows) or Peak memory's bar in the card's colour. A card waiting for its first answer shows a skeleton, and one showing the last known answer has the stale mark with the reason. Tab reaches each card, and Enter or Space opens it.
+- **Slimmer table headers:** a table's header row is 26 high, down from 30, closer to a desktop app's.
 - **A table scrolls the way you swipe:** a plain wheel scrolls a table's rows and Shift+wheel or a sideways swipe scrolls its columns, without nudging the other way; a slightly diagonal trackpad swipe keeps to its main direction.
 
 ## 0.5.0 (2026-10-04)
