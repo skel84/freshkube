@@ -1,0 +1,1 @@
+- **Changelog fragments:** pull requests keep their release notes in separate files, checked by CI and collected in section order before a release, so parallel changes no longer contend on Unreleased.

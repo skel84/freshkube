@@ -29,7 +29,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Slimmer table headers:** a table's header row is 26 high, down from 30, closer to a desktop app's.
 - **One row height:** every table draws 26-high rows, and the Density control is gone; a larger text size scales the rows for anyone who wants them bigger.
 - **A table scrolls the way you swipe:** a plain wheel scrolls a table's rows and Shift+wheel or a sideways swipe scrolls its columns, without nudging the other way; a slightly diagonal trackpad swipe keeps to its main direction.
-- **A pod's log level chips count its lines:** Error, Warn, Info, Debug and Unknown on a pod's Logs tab read 0 whatever the stream held. They now count every line the pod's container wrote, as a node's Logs tab always did.
+- **Tables without a card:** Pods, every other Resources kind, Nodes, System services and Applications draw their table straight on the page, with a hairline above and below, instead of inside a rounded card.
 
 ## 0.5.0 (2026-10-04)
 
