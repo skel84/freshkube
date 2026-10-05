@@ -6,7 +6,6 @@ mod tests;
 
 use crate::{
     presentation::{self, Health, NodeSummary},
-    screens::inset_width,
     ui::{self, dp},
 };
 use freshkube_ui::{page, table};
@@ -17,12 +16,12 @@ use gpui_kit::{
         Icon, Sizable,
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
-        popover::Popover,
-        v_flex,
+        menu::{DropdownMenu, PopupMenuItem},
     },
     *,
 };
 use source::Column;
+use std::rc::Rc;
 
 /// The page's id prefix: `system-services-title`, `-list`, `-tally-…`.
 const PREFIX: &str = "system-services";
@@ -253,9 +252,8 @@ impl SystemServices {
         self.health = (self.health != Some(health)).then_some(health);
         self.refilter(cx);
     }
-    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let narrow = inset_width(window) < page::HEADER_NARROW;
-        let header = page::PageHeader::new(PREFIX, "System services", narrow);
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = page::PageHeader::new(PREFIX, "System services");
         let filter = div().child(
             Input::new(&self.filter)
                 .id("system-service-filter")
@@ -281,49 +279,49 @@ impl SystemServices {
             }),
             cx,
         );
+        let nodes = self.node_items(cx);
         header
             .filter(filter)
             .chips(Some(chips))
-            .control(self.render_node_picker(cx))
+            .foldable(
+                self.render_node_picker(nodes.clone()),
+                page::submenu("Node", nodes),
+            )
             .meta([self.meta.clone().into_any_element()])
-            .render(cx)
+            .render(window, cx)
     }
-    fn render_node_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// All nodes, then each node, as checked items: the node picker's menu,
+    /// and its folded form.
+    fn node_items(&self, cx: &Context<Self>) -> page::MenuItems {
         let entity = cx.entity().downgrade();
         let nodes = self.nodes.clone();
-        Popover::new("system-service-node-picker")
-            .trigger(
-                Button::new("system-service-node")
-                    .outline()
-                    .small()
-                    .h(dp(crate::ui::CONTROL_HEIGHT))
-                    .label(self.node.clone().unwrap_or_else(|| "All nodes".into()))
-                    .dropdown_caret(true),
-            )
-            .content(move |_, _, cx| {
-                let popover = cx.entity();
-                v_flex()
-                    .children(
-                        std::iter::once(None)
-                            .chain(nodes.iter().cloned().map(Some))
-                            .map(|node| {
-                                let label = node.clone().unwrap_or_else(|| "All nodes".into());
-                                let entity = entity.clone();
-                                let popover = popover.clone();
-                                Button::new(SharedString::from(label.clone()))
-                                    .ghost()
-                                    .label(label)
-                                    .on_click(move |_, window, cx| {
-                                        _ = entity.update(cx, |this, cx| {
-                                            this.node = node.clone();
-                                            this.refilter(cx);
-                                        });
-                                        popover.update(cx, |state, cx| state.dismiss(window, cx));
-                                    })
-                            }),
-                    )
-                    .into_any_element()
-            })
+        let current = self.node.clone();
+        Rc::new(move |mut menu, _, _| {
+            for node in std::iter::once(None).chain(nodes.iter().cloned().map(Some)) {
+                let label = node.clone().unwrap_or_else(|| "All nodes".into());
+                let entity = entity.clone();
+                let checked = node == current;
+                menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
+                    move |_, _, cx| {
+                        _ = entity.update(cx, |this, cx| {
+                            this.node = node.clone();
+                            this.refilter(cx);
+                        });
+                    },
+                ));
+            }
+            menu
+        })
+    }
+
+    fn render_node_picker(&self, items: page::MenuItems) -> impl IntoElement {
+        Button::new("system-service-node")
+            .outline()
+            .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
+            .label(self.node.clone().unwrap_or_else(|| "All nodes".into()))
+            .dropdown_caret(true)
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
     }
 }
 impl Render for SystemServices {

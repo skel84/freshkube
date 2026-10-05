@@ -152,41 +152,44 @@ impl Pilot {
         self.rebuild_nodes_meta();
     }
 
-    pub(super) fn nodes_columns_menu(&self, cx: &Context<Self>) -> AnyElement {
-        use gpui_kit::component::{
-            Sizable,
-            button::Button,
-            menu::{DropdownMenu, PopupMenuItem},
-        };
+    /// The table's columns as checked items: the Columns menu, and its
+    /// folded form.
+    pub(super) fn nodes_columns_items(&self, cx: &Context<Self>) -> freshkube_ui::page::MenuItems {
+        use gpui_kit::component::menu::PopupMenuItem;
         let owner = cx.entity().downgrade();
         let columns = self.node_workspace.menu_columns.clone();
         let hidden: BTreeSet<_> = self.node_workspace.hidden_columns.clone();
+        std::rc::Rc::new(move |mut menu, _, _| {
+            for (field, label) in columns.iter() {
+                let field = *field;
+                let owner = owner.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label.clone())
+                        .checked(!hidden.contains(&field))
+                        .on_click(move |_, _, cx| {
+                            _ = owner.update(cx, |view, cx| {
+                                if !view.node_workspace.hidden_columns.remove(&field) {
+                                    view.node_workspace.hidden_columns.insert(field);
+                                }
+                                view.node_workspace.show_columns();
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    pub(super) fn nodes_columns_menu(&self, items: freshkube_ui::page::MenuItems) -> AnyElement {
+        use gpui_kit::component::{Sizable, button::Button, menu::DropdownMenu};
         Button::new(self.node_workspace.table.id("columns"))
             .outline()
             .small()
             .h(crate::ui::dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
-                for (field, label) in columns.iter() {
-                    let field = *field;
-                    let owner = owner.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(label.clone())
-                            .checked(!hidden.contains(&field))
-                            .on_click(move |_, _, cx| {
-                                _ = owner.update(cx, |view, cx| {
-                                    if !view.node_workspace.hidden_columns.remove(&field) {
-                                        view.node_workspace.hidden_columns.insert(field);
-                                    }
-                                    view.node_workspace.show_columns();
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
             .into_any_element()
     }
 }

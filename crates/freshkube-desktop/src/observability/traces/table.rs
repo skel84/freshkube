@@ -3,6 +3,7 @@
 //! read them.
 use super::*;
 use crate::observability::tables::{ColumnKind, TableCells};
+use freshkube_ui::page;
 use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
@@ -30,7 +31,7 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let header = self.source_header(self.page_header(window), cx);
+        let header = self.source_header(self.page_header(), cx);
         let traces = &self.live_traces;
         let filter = div().child(
             Input::new(&self.trace_query)
@@ -78,68 +79,95 @@ impl ObservabilityPage {
         let all = traces.selection == api::TraceSelection::Recent;
         let mut header = header.filter(filter).meta(meta);
         for (kind, name, selected) in &traces.sources {
-            let kind = kind.clone();
-            header = header.control(
+            let choose = {
+                let kind = kind.clone();
+                page::handler(cx, move |this: &mut Self, _, cx| {
+                    this.choose_trace_source(kind.clone(), cx)
+                })
+            };
+            header = header.foldable(
                 action(
                     SharedString::from(format!("obs-trace-source-{kind}")),
                     name.clone(),
                 )
                 .h(dp(crate::ui::CONTROL_HEIGHT))
                 .selected(*selected)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.choose_trace_source(kind.clone(), cx)),
-                ),
+                .on_click({
+                    let choose = choose.clone();
+                    move |_, window, cx| choose(window, cx)
+                }),
+                page::checked_item(name.clone(), *selected, choose),
             );
         }
+        let show_all = page::handler(cx, |this: &mut Self, _, cx| this.show_all_requests(cx));
+        let show_failed = page::handler(cx, |this: &mut Self, _, cx| this.show_failed_requests(cx));
+        let columns = self.trace_columns_items(cx);
         self.time_controls(
             header
-                .control(
+                .foldable(
                     action("obs-trace-all", "All requests")
                         .h(dp(crate::ui::CONTROL_HEIGHT))
                         .selected(all)
-                        .on_click(cx.listener(|this, _, _, cx| this.show_all_requests(cx))),
+                        .on_click({
+                            let show_all = show_all.clone();
+                            move |_, window, cx| show_all(window, cx)
+                        }),
+                    page::checked_item("All requests", all, show_all),
                 )
-                .control(
+                .foldable(
                     action("obs-trace-failed", "Failed requests")
                         .h(dp(crate::ui::CONTROL_HEIGHT))
                         .selected(errors)
-                        .on_click(cx.listener(|this, _, _, cx| this.show_failed_requests(cx))),
+                        .on_click({
+                            let show_failed = show_failed.clone();
+                            move |_, window, cx| show_failed(window, cx)
+                        }),
+                    page::checked_item("Failed requests", errors, show_failed),
                 )
-                .control(self.trace_columns_menu(cx)),
+                .foldable(
+                    self.trace_columns_menu(columns.clone()),
+                    page::submenu("Columns", columns),
+                ),
             cx,
         )
-        .render(cx)
+        .render(window, cx)
     }
 
-    fn trace_columns_menu(&self, cx: &Context<Self>) -> AnyElement {
+    /// The optional columns as checked items: the Columns menu, and its
+    /// folded form.
+    fn trace_columns_items(&self, cx: &Context<Self>) -> freshkube_ui::page::MenuItems {
         let owner = cx.entity().downgrade();
         let hidden = self.hidden_trace_columns.clone();
+        std::rc::Rc::new(move |mut menu, _, _| {
+            for kind in OPTIONAL {
+                let owner = owner.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label(kind))
+                        .checked(!hidden.contains(&kind))
+                        .on_click(move |_, _, cx| {
+                            _ = owner.update(cx, |this, cx| {
+                                let hidden = &mut this.hidden_trace_columns;
+                                if !hidden.remove(&kind) {
+                                    hidden.insert(kind);
+                                }
+                                this.prepare_trace_columns();
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    fn trace_columns_menu(&self, items: freshkube_ui::page::MenuItems) -> AnyElement {
         Button::new("obs-columns")
             .outline()
             .small()
             .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
-                for kind in OPTIONAL {
-                    let owner = owner.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(label(kind))
-                            .checked(!hidden.contains(&kind))
-                            .on_click(move |_, _, cx| {
-                                _ = owner.update(cx, |this, cx| {
-                                    let hidden = &mut this.hidden_trace_columns;
-                                    if !hidden.remove(&kind) {
-                                        hidden.insert(kind);
-                                    }
-                                    this.prepare_trace_columns();
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
             .into_any_element()
     }
 

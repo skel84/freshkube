@@ -119,7 +119,7 @@ impl Pilot {
     /// The context as the title, with the connection state, any version
     /// drift, what the cluster runs and where its node list comes from in
     /// the meta line. The texts are derived with the cards.
-    fn overview_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    fn overview_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let display = &self.overview_display;
         let context = self.applied.context.clone().unwrap_or_default();
@@ -176,13 +176,9 @@ impl Pilot {
                     .into_any_element(),
             );
         }
-        freshkube_ui::page::PageHeader::new(
-            "overview",
-            context,
-            Self::content_width(window) < freshkube_ui::page::HEADER_NARROW,
-        )
-        .meta(meta)
-        .render(cx)
+        freshkube_ui::page::PageHeader::new("overview", context)
+            .meta(meta)
+            .render(window, cx)
     }
 
     pub(super) fn render_overview(

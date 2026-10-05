@@ -32,7 +32,7 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let header = self.source_header(self.page_header(window), cx);
+        let header = self.source_header(self.page_header(), cx);
         let state = &self.incident_observations;
         let chips = table::status_chips(
             "obs-incident-tallies",
@@ -97,46 +97,56 @@ impl ObservabilityPage {
         {
             meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
         }
+        let columns = self.incident_columns_items(cx);
         self.time_controls(
             header
                 .filter(filter)
                 .chips(Some(chips))
                 .meta(meta)
-                .control(self.incident_columns_menu(cx)),
+                .foldable(
+                    self.incident_columns_menu(columns.clone()),
+                    freshkube_ui::page::submenu("Columns", columns),
+                ),
             cx,
         )
-        .render(cx)
+        .render(window, cx)
     }
 
-    fn incident_columns_menu(&self, cx: &Context<Self>) -> AnyElement {
+    /// The optional columns as checked items: the Columns menu, and its
+    /// folded form.
+    fn incident_columns_items(&self, cx: &Context<Self>) -> freshkube_ui::page::MenuItems {
         let owner = cx.entity().downgrade();
         let hidden = self.hidden_incident_columns.clone();
+        std::rc::Rc::new(move |mut menu, _, _| {
+            for kind in OPTIONAL {
+                let owner = owner.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label(kind))
+                        .checked(!hidden.contains(&kind))
+                        .on_click(move |_, _, cx| {
+                            _ = owner.update(cx, |this, cx| {
+                                let hidden = &mut this.hidden_incident_columns;
+                                if !hidden.remove(&kind) {
+                                    hidden.insert(kind);
+                                }
+                                this.prepare_incident_columns();
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    fn incident_columns_menu(&self, items: freshkube_ui::page::MenuItems) -> AnyElement {
         Button::new("obs-columns")
             .outline()
             .small()
             .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
-                for kind in OPTIONAL {
-                    let owner = owner.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(label(kind))
-                            .checked(!hidden.contains(&kind))
-                            .on_click(move |_, _, cx| {
-                                _ = owner.update(cx, |this, cx| {
-                                    let hidden = &mut this.hidden_incident_columns;
-                                    if !hidden.remove(&kind) {
-                                        hidden.insert(kind);
-                                    }
-                                    this.prepare_incident_columns();
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
             .into_any_element()
     }
 

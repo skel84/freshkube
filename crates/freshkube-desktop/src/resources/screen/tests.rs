@@ -99,8 +99,8 @@ fn deliver(screen: &Entity<ResourcesScreen>, events: Vec<ResourceEvent>, cx: &mu
 }
 
 #[gpui_kit::test]
-fn header_controls_fit_beside_the_title_or_stack_on_a_narrow_page(cx: &mut TestAppContext) {
-    for (width, beside_title) in [(1280., true), (760., false)] {
+fn header_controls_share_the_title_row_at_both_widths(cx: &mut TestAppContext) {
+    for width in [1280., 760.] {
         let (_runtime, _screen, handle) = mount_sized(cx, Some("homelab"), width);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -120,12 +120,8 @@ fn header_controls_fit_beside_the_title_or_stack_on_a_narrow_page(cx: &mut TestA
             };
             assert!(level(namespace, refresh), "{namespace:?} {refresh:?}");
             assert!(filter.size.width >= px(120.), "{width}: {filter:?}");
-            if beside_title {
-                assert!(level(namespace, filter), "{namespace:?} {filter:?}");
-                assert!(filter.right() <= namespace.left());
-            } else {
-                assert!(namespace.top() > filter.bottom(), "{namespace:?}");
-            }
+            assert!(level(namespace, filter), "{namespace:?} {filter:?}");
+            assert!(filter.right() <= namespace.left());
             assert!(window.find("resource-list").bounds().top() > refresh.bottom());
         })
         .unwrap();
@@ -1637,4 +1633,98 @@ fn old_metrics_cannot_change_the_new_access_or_a_disconnected_page(cx: &mut Test
         });
     })
     .unwrap();
+}
+
+/// Draws until the header stops asking for frames: it folds its controls
+/// from what its parts measured on the frame before.
+fn settle(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+    for _ in 0..4 {
+        cx.run_until_parked();
+        let asked = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.simulate_next_frame(cx)
+            })
+            .unwrap();
+        if asked == 0 {
+            return;
+        }
+    }
+    panic!("the header keeps moving");
+}
+
+#[gpui_kit::test]
+fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
+    // 316 dp inside the toolbar's insets: the title, filter and "…" fit,
+    // and nothing else.
+    let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 340.);
+    settle(handle, cx);
+    let payments = cx
+        .update_window(handle, |_, window, cx| {
+            assert!(
+                window.try_find("resource-namespace").is_none(),
+                "not folded"
+            );
+            assert!(window.try_find("resource-refresh").is_none());
+            let names = &screen.read(cx).namespaces;
+            // All namespaces comes first.
+            names.iter().position(|name| name == "payments").unwrap() + 1
+        })
+        .unwrap();
+    // Refresh lists again, as its button does.
+    let before = screen.read_with(cx, |screen, _| screen.usage_generation);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-more", cx);
+        window.render_frame(cx);
+        // Namespace, Columns, Refresh.
+        window.within("popup-menu").click(2usize, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_ne!(
+        screen.read_with(cx, |screen, _| screen.usage_generation),
+        before
+    );
+    // A namespace from the menu narrows the list as the picker does.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-more", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(0usize, cx);
+        window.render_frame(cx);
+        window
+            .within("submenu")
+            .within("popup-menu")
+            .click(payments, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        assert_eq!(view.namespace.as_deref(), Some("payments"));
+        assert_eq!(view.store.len(), 6);
+        assert_eq!(
+            view.namespace_select.read(cx).selected_value(),
+            Some(&Some("payments".to_owned()))
+        );
+    })
+    .unwrap();
+    // A column from the menu hides as the Columns menu hides it.
+    let hidden = screen.read_with(cx, |screen, _| screen.hidden_columns.len());
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-more", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(1usize, cx);
+        window.render_frame(cx);
+        window
+            .within("submenu")
+            .within("popup-menu")
+            .click(0usize, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_ne!(
+        screen.read_with(cx, |screen, _| screen.hidden_columns.len()),
+        hidden
+    );
 }

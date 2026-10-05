@@ -257,8 +257,11 @@ fn measure_frame(window: &Window, frame: &PageFrame) -> FrameLayout {
     let title = window.find(frame.title).bounds();
     let content = window.find(frame.content).bounds();
     let prefix = prefix(frame);
-    let controls = (0..)
-        .map_while(|ix| window.try_find(format!("{prefix}-slot-{ix}")))
+    // The controls left on the row, and the "…" holding the rest.
+    let controls = (0..16)
+        .map(|ix| format!("{prefix}-slot-{ix}"))
+        .chain([format!("{prefix}-more")])
+        .filter_map(|id| window.try_find(id))
         .map(|slot| slot.bounds().size.height)
         .collect();
     FrameLayout {

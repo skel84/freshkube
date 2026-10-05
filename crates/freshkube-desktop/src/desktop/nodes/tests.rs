@@ -1045,7 +1045,7 @@ fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppCont
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         crate::text_size::set(20., cx);
-        window.render_frame(cx);
+        crate::desktop::tests::settle_header(window, cx);
         layout_check::assert_table_page(
             window,
             cx,
@@ -1075,6 +1075,57 @@ fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppCont
                 "{id} extends beyond the page"
             );
         }
+        // The chips take their own row, which leaves room for every control.
+        assert!(window.try_find("nodes-more").is_none());
+        assert!(
+            window.find("nodes-chips").bounds().top()
+                >= window.find("nodes-toolbar").bounds().bottom()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_folded_nodes_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
+    // At 760 the chips' own row leaves room for every control; at 600 the
+    // last two fold.
+    let (_runtime, handle, pilot) = fixture(cx, 600., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        // Refresh reads again, as its button does.
+        let tick = pilot.read(cx).fixture_tick;
+        window.click("nodes-more", cx);
+        window.render_frame(cx);
+        // Columns, Refresh.
+        window.within("popup-menu").click(1usize, cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).fixture_tick, tick + 1);
+    })
+    .unwrap();
+    // The first menu finishes closing.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        // A column from the menu hides as the Columns menu hides it.
+        let first = pilot.read(cx).node_workspace.menu_columns[0].0;
+        window.click("nodes-more", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(0usize, cx);
+        window.render_frame(cx);
+        window
+            .within("submenu")
+            .within("popup-menu")
+            .click(0usize, cx);
+        window.render_frame(cx);
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .hidden_columns
+                .contains(&first)
+        );
     })
     .unwrap();
 }

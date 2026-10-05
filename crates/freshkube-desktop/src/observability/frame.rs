@@ -40,8 +40,8 @@ impl Render for ObservabilityPage {
             Destination::Incidents => self.incidents_header(window, cx),
             Destination::Traces => self.traces_header(window, cx),
             _ => self
-                .source_controls(self.page_header(window), cx)
-                .render(cx),
+                .source_controls(self.page_header(), cx)
+                .render(window, cx),
         };
         let frame = if edge {
             freshkube_ui::page::page("obs-frame")

@@ -92,7 +92,7 @@ fn narrow_window_keeps_the_header_and_scrolls_the_table(cx: &mut TestAppContext)
     let (_runtime, handle, _view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
-        window.render_frame(cx);
+        crate::desktop::tests::settle_header(window, cx);
         let page = window.find("system-services-page").bounds();
         for id in [
             "system-services-title",
@@ -250,6 +250,34 @@ fn health_check_reaches_the_actions_when_the_table_scrolls(cx: &mut TestAppConte
         window.render_frame(cx);
         // Only the first rows are drawn in this short window.
         assert_health_check_reaches_the_actions(window, &[UNHEALTHY], 20.);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_folded_node_picker_picks_a_node_as_the_picker_does(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        assert!(
+            window.try_find("system-service-node").is_none(),
+            "not folded"
+        );
+        let services = view.read(cx).system_services.clone();
+        let first = services.read(cx).nodes[0].clone();
+        window.click("system-services-more", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(0usize, cx);
+        window.render_frame(cx);
+        // All nodes, then each node.
+        window
+            .within("submenu")
+            .within("popup-menu")
+            .click(1usize, cx);
+        window.render_frame(cx);
+        assert_eq!(services.read(cx).node.as_deref(), Some(first.as_str()));
     })
     .unwrap();
 }

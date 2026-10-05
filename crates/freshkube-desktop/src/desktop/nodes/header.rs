@@ -1,7 +1,7 @@
 //! Nodes' shared header, with cached source and freshness metadata.
 use super::projection::Status;
 use super::*;
-use crate::{screens::inset_width, ui::dp};
+use crate::ui::dp;
 use freshkube_ui::{page, table};
 use gpui_kit::base::Selectable;
 use gpui_kit::{
@@ -16,9 +16,8 @@ use gpui_kit::{
 };
 
 impl Pilot {
-    pub(super) fn nodes_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let header =
-            page::PageHeader::new("nodes", "Nodes", inset_width(window) < page::HEADER_NARROW);
+    pub(super) fn nodes_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = page::PageHeader::new("nodes", "Nodes");
         let segment = ButtonGroup::new("nodes-view")
             .outline()
             .small()
@@ -96,22 +95,29 @@ impl Pilot {
                 h_flex().gap(dp(8.)).flex_wrap().child(segment).child(chips),
             ));
         let header = if self.node_workspace.view == NodeView::Table {
-            header.control(self.nodes_columns_menu(cx))
+            let items = self.nodes_columns_items(cx);
+            header.foldable(
+                self.nodes_columns_menu(items.clone()),
+                page::submenu("Columns", items),
+            )
         } else {
             header
         };
+        let refresh = page::handler(cx, |view: &mut Self, window, cx| view.refresh(window, cx));
+        let button = Button::new("nodes-refresh")
+            .ghost()
+            .small()
+            .size(dp(crate::ui::CONTROL_HEIGHT))
+            .icon(IconName::RefreshCw)
+            .accessibility_label("Refresh nodes")
+            .tooltip("Refresh nodes")
+            .on_click({
+                let refresh = refresh.clone();
+                move |_, window, cx| refresh(window, cx)
+            });
         header
-            .control(
-                Button::new("nodes-refresh")
-                    .ghost()
-                    .small()
-                    .size(dp(crate::ui::CONTROL_HEIGHT))
-                    .icon(IconName::RefreshCw)
-                    .accessibility_label("Refresh nodes")
-                    .tooltip("Refresh nodes")
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
-            )
-            .render(cx)
+            .foldable(button, page::item("Refresh", refresh))
+            .render(window, cx)
     }
 }
 

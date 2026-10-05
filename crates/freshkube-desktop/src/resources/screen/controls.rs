@@ -2,14 +2,14 @@
 use super::*;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use layout::ColumnSource;
+use std::rc::Rc;
 
 impl ResourcesScreen {
     /// The page's toolbar: the kind, its filter, Pods' Problems and All, the
     /// namespace, Pods' columns and Refresh, with where the rows come from
     /// in the meta line.
-    pub(super) fn header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let narrow = inset_width(window) < page::HEADER_NARROW;
-        let header = page::PageHeader::new("resource", self.title(), narrow);
+    pub(super) fn header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = page::PageHeader::new("resource", self.title());
         let filter = div()
             .key_context(FILTER_CONTEXT)
             .on_action(
@@ -28,19 +28,33 @@ impl ResourcesScreen {
                     })
                     .prefix(Icon::new(IconName::Search).size(dp(14.))),
             );
-        let namespace = (self.kind.namespaced && !self.embedded).then(|| {
-            Select::new(&self.namespace_select)
+        let mut header = header
+            .filter(filter)
+            .chips(self.pod_switch(cx))
+            .meta(self.meta());
+        if self.kind.namespaced && !self.embedded {
+            let namespace = Select::new(&self.namespace_select)
                 .id(header.id("namespace"))
                 .small()
                 .h(dp(ui::CONTROL_HEIGHT))
                 .w(dp(NAMESPACE_WIDTH))
                 .menu_width(dp(260.))
                 .search_placeholder("Find a namespace")
-                .accessibility_label("Namespace")
-        });
-        let columns = (self.lists_pods() && !self.embedded)
-            .then(|| div().flex_none().child(self.columns_menu(cx)));
-        let refresh = Button::new(header.id("refresh"))
+                .accessibility_label("Namespace");
+            header = header.foldable(
+                namespace,
+                page::submenu("Namespace", self.namespace_items(cx)),
+            );
+        }
+        if self.lists_pods() && !self.embedded {
+            let items = self.columns_items(cx);
+            header = header.foldable(
+                div().flex_none().child(self.columns_menu(items.clone())),
+                page::submenu("Columns", items),
+            );
+        }
+        let refresh = page::handler(cx, |view: &mut Self, window, cx| view.refresh(window, cx));
+        let button = Button::new(header.id("refresh"))
             .ghost()
             .small()
             .size(dp(ui::CONTROL_HEIGHT))
@@ -50,16 +64,37 @@ impl ResourcesScreen {
             } else {
                 "Refresh"
             })
-            .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)));
-        let mut header = header
-            .filter(filter)
-            .chips(self.pod_switch(cx))
-            .meta(self.meta());
-        header = namespace
-            .into_iter()
-            .fold(header, page::PageHeader::control);
-        header = columns.into_iter().fold(header, page::PageHeader::control);
-        header.control(refresh).render(cx)
+            .on_click({
+                let refresh = refresh.clone();
+                move |_, window, cx| refresh(window, cx)
+            });
+        header
+            .foldable(button, page::item("Refresh", refresh))
+            .render(window, cx)
+    }
+
+    /// The namespace picker's choices as menu items, its folded form: each
+    /// sets the namespace as choosing it in the picker does.
+    fn namespace_items(&self, cx: &Context<Self>) -> page::MenuItems {
+        let owner = cx.entity().downgrade();
+        Rc::new(move |mut menu, window, cx| {
+            let Some(view) = owner.upgrade() else {
+                return menu;
+            };
+            let view = view.read(cx);
+            let current = view.namespace.clone();
+            for (label, value) in namespace_entries(&view.namespaces, current.as_deref()) {
+                let owner = owner.clone();
+                let checked = value == current;
+                menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
+                    move |_, window, cx| {
+                        _ = owner
+                            .update(cx, |view, cx| view.set_namespace(value.clone(), window, cx));
+                    },
+                ));
+            }
+            menu.scrollable(true).max_h(ui::dp_px(360., window))
+        })
     }
 
     /// The meta line: the context, how many rows, the read's state and when
@@ -123,42 +158,47 @@ impl ResourcesScreen {
         meta
     }
 
-    fn columns_menu(&self, cx: &Context<Self>) -> AnyElement {
+    /// Pods' columns as checked items: the Columns menu, and its folded form.
+    fn columns_items(&self, cx: &Context<Self>) -> page::MenuItems {
         let owner = cx.entity().downgrade();
         let columns = self.layout.all_columns.clone();
         let hidden = self.hidden_columns.clone();
+        Rc::new(move |mut menu, _, _| {
+            for column in &columns {
+                if matches!(
+                    column.source,
+                    ColumnSource::Glyph | ColumnSource::Name(_) | ColumnSource::Namespace
+                ) {
+                    continue;
+                }
+                let owner = owner.clone();
+                let source = column.source;
+                menu = menu.item(
+                    PopupMenuItem::new(column.label.clone())
+                        .checked(!hidden.contains(&source))
+                        .on_click(move |_, _, cx| {
+                            _ = owner.update(cx, |view, cx| {
+                                if !view.hidden_columns.remove(&source) {
+                                    view.hidden_columns.insert(source);
+                                }
+                                view.layout.hide(&view.hidden_columns);
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    fn columns_menu(&self, items: page::MenuItems) -> AnyElement {
         Button::new(self.table.id("columns"))
             .outline()
             .small()
             .h(dp(ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
-                for column in &columns {
-                    if matches!(
-                        column.source,
-                        ColumnSource::Glyph | ColumnSource::Name(_) | ColumnSource::Namespace
-                    ) {
-                        continue;
-                    }
-                    let owner = owner.clone();
-                    let source = column.source;
-                    menu = menu.item(
-                        PopupMenuItem::new(column.label.clone())
-                            .checked(!hidden.contains(&source))
-                            .on_click(move |_, _, cx| {
-                                _ = owner.update(cx, |view, cx| {
-                                    if !view.hidden_columns.remove(&source) {
-                                        view.hidden_columns.insert(source);
-                                    }
-                                    view.layout.hide(&view.hidden_columns);
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
             .into_any_element()
     }
 
