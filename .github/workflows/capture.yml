@@ -52,8 +52,9 @@ jobs:
         run: brew install protobuf
       - uses: Swatinem/rust-cache@v2
         with:
-          key: macos-app-x86_64-apple-darwin
-          save-if: ${{ github.event_name != 'pull_request' }}
+          # PR caches are scoped to that PR; a manual main run seeds the
+          # default-branch cache that every new PR can restore.
+          key: capture-debug-x86_64
       - name: Build the debug executable
         run: cargo build --locked --bin freshkube
       - uses: actions/upload-artifact@v4

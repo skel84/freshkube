@@ -116,8 +116,15 @@ build, and this workflow never cancels the required CI check. To request a build
 on a branch by hand, run
 `gh workflow run capture.yml --ref <branch> -f debug_binary=true`.
 
-The job uses stable Rust, protobuf and the same Rust-cache setup as the Intel
-bundle jobs, with pull requests restoring caches without saving their own. It runs
+The job uses stable Rust, protobuf and `Swatinem/rust-cache`, with a separate
+`capture-debug-x86_64` key for debug builds. Successful PR runs save a cache scoped
+to that PR, so its next push can reuse dependencies. Seed the cache for new PRs
+once on `main` with
+`gh workflow run capture.yml --ref main -f debug_binary=true`; PRs can restore
+the default branch's cache. Keep an eye on the repository's shared cache usage
+under **Actions → Caches** (10 GB budget).
+
+The job runs
 `cargo build --locked --bin freshkube` and uploads `target/debug/freshkube` as
 `freshkube-debug-x86_64-apple-darwin-<short-sha>`, kept for **3 days**. The SHA is
 the checked-out PR head (or the selected revision for a manual run). Release
