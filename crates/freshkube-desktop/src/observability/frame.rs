@@ -48,12 +48,18 @@ impl Render for ObservabilityPage {
         } else {
             freshkube_ui::page::padded("obs-frame")
         };
-        // On the edge-to-edge frame, what isn't the table sits in an inset;
-        // one after the header needs no space above.
-        let inset = |element: AnyElement, after: bool| {
+        // On the edge-to-edge frame the header is a toolbar, and what isn't
+        // the table sits in an inset.
+        let header = if edge {
+            freshkube_ui::page::toolbar(cx)
+                .child(header)
+                .into_any_element()
+        } else {
+            header.into_any_element()
+        };
+        let inset = |element: AnyElement| {
             if edge {
                 freshkube_ui::page::inset()
-                    .when(after, |this| this.pt_0())
                     .child(element)
                     .into_any_element()
             } else {
@@ -82,14 +88,12 @@ impl Render for ObservabilityPage {
                         frame
                             .h_auto()
                             .flex_none()
-                            .child(inset(header.into_any_element(), false))
+                            .child(header)
                             .when(!self.fixture && !unavailable, |this| {
                                 this.when(self.settings_open, |this| {
-                                    this.child(inset(self.render_connection(cx), true))
+                                    this.child(inset(self.render_connection(cx)))
                                 })
-                                .children(
-                                    self.render_read_state(cx).map(|state| inset(state, true)),
-                                )
+                                .children(self.render_read_state(cx).map(inset))
                             })
                             .child(content),
                     ),

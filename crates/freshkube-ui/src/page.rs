@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 
 use crate::palette::palette;
-use crate::ui::{dp, page_title};
+use crate::ui::{dp, toolbar_label};
 
 /// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
@@ -26,8 +26,12 @@ pub const PAGE_GAP: f32 = 14.;
 pub const PANE_PADDING: f32 = 12.;
 /// Above and below that content.
 pub const PANE_PADDING_Y: f32 = 10.;
-/// Below this content width the header stacks its parts.
-pub const HEADER_NARROW: f32 = 920.;
+/// A toolbar row's height: the header's row, and its secondary row.
+pub const TOOLBAR_HEIGHT: f32 = 38.;
+/// Below this width, the header's own (the page's inside its insets), the
+/// header stacks its parts. Pods' toolbar with all four status chips takes
+/// about 870 dp on one row at 13 px.
+pub const HEADER_NARROW: f32 = 880.;
 /// The header's filter beside the title, when it fits.
 const FILTER_WIDTH: f32 = 150.;
 
@@ -46,6 +50,17 @@ pub fn inset() -> Div {
         .min_w_0()
         .px(dp(PANE_PADDING))
         .py(dp(PANE_PADDING_Y))
+}
+
+/// A [`page`]'s toolbar: its [`PageHeader`], padded 12 at the sides, with a
+/// hairline under it.
+pub fn toolbar(cx: &App) -> Div {
+    div()
+        .flex_none()
+        .min_w_0()
+        .px(dp(PANE_PADDING))
+        .border_b_1()
+        .border_color(palette(cx).line)
 }
 
 /// The frame of a page of cards, which keeps its margins until it moves to
@@ -85,13 +100,17 @@ pub fn meta_line(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> 
         .text_color(palette(cx).muted)
 }
 
-/// A page's header: the title and filter, the status chips, then the
-/// controls at the right, with the meta line below. Its ids derive from the
-/// page's prefix: it draws `<prefix>-title` and `<prefix>-scope`, and
+/// A page's header, a toolbar: the title as its leading label, the filter
+/// and the status chips, then the controls at the right, each
+/// [`CONTROL_HEIGHT`](crate::ui::CONTROL_HEIGHT) high, on a row
+/// [`TOOLBAR_HEIGHT`] high, with the meta line below. Its ids derive from the
+/// page's prefix: it draws `<prefix>-title`, `<prefix>-toolbar` (the row),
+/// `<prefix>-slot-<n>` (each control's box) and `<prefix>-scope`, and
 /// [`id`](Self::id) names the parts the caller builds. It lays them out on
 /// one row when the content is at least [`HEADER_NARROW`] wide, wrapping the
 /// controls below when they don't fit, and stacked otherwise, where the
-/// controls wrap among themselves.
+/// controls wrap among themselves. A page without margins puts it in a
+/// [`toolbar`].
 ///
 /// A page with a [`secondary`](Self::secondary) row renders with
 /// [`render_fit`](Self::render_fit), which places the controls by what fits.
@@ -174,6 +193,38 @@ fn measured(element: impl IntoElement, slot: impl Fn(Pixels) + 'static) -> Div {
     )
 }
 
+/// One of a toolbar's rows: [`TOOLBAR_HEIGHT`] high, its parts centred.
+fn row(content: impl IntoElement) -> Div {
+    h_flex()
+        .w_full()
+        .min_h(dp(TOOLBAR_HEIGHT))
+        .items_center()
+        .child(content)
+}
+
+/// Each control in a box of its own width, `<prefix>-slot-<n>`: a
+/// control whose root fills its parent, such as a select, would otherwise
+/// take a whole line of a wrapping row.
+fn boxed(prefix: &str, controls: Vec<AnyElement>) -> Vec<AnyElement> {
+    controls
+        .into_iter()
+        .enumerate()
+        .map(|(ix, control)| {
+            div()
+                .id(SharedString::from(format!("{prefix}-slot-{ix}")))
+                .test_support()
+                .flex_none()
+                .child(control)
+                .into_any_element()
+        })
+        .collect()
+}
+
+/// The meta line under a toolbar's rows.
+fn meta_row(id: SharedString, parts: Vec<AnyElement>, cx: &App) -> Observed<Stateful<Div>> {
+    meta_line(id, cx).pb(dp(8.)).children(parts)
+}
+
 impl PageHeader {
     pub fn new(
         prefix: impl Into<SharedString>,
@@ -239,11 +290,12 @@ impl PageHeader {
             "a header with a secondary row renders with render_fit"
         );
         let narrow = self.narrow;
+        let toolbar_id = self.id("toolbar");
         let (title_id, scope_id) = (self.title_id, self.scope_id);
         let leading = h_flex()
             .gap(dp(8.))
             .min_w_0()
-            .child(page_title(self.title).id(title_id).test_support())
+            .child(toolbar_label(self.title, cx).id(title_id).test_support())
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
@@ -253,41 +305,38 @@ impl PageHeader {
                     )
                     .min_w_0()
             }));
-        // Each control sits in a box of its own size: a control whose root
-        // fills its parent, such as a select, would otherwise take a whole
-        // line of a wrapping row. The controls wrap among themselves when
-        // even a line of their own is too narrow.
-        let controls = h_flex().flex_wrap().gap(dp(8.)).children(
-            self.controls
-                .into_iter()
-                .map(|control| div().flex_none().child(control)),
-        );
+        // The controls wrap among themselves when even a line of their own
+        // is too narrow.
+        let controls = h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap(dp(8.))
+            .children(boxed(&self.prefix, self.controls));
         let toolbar = if narrow {
             v_flex()
                 .w_full()
-                .gap(dp(8.))
-                .child(leading.w_full())
-                .children(self.chips)
-                .child(controls.w_full())
+                .child(row(leading.w_full()).id(toolbar_id).test_support())
+                .children(self.chips.map(row))
+                .child(row(controls.w_full()))
+                .into_any_element()
         } else {
             // The controls start at their own width and fill what's left of
             // the line, at its right; when they don't fit beside the title
             // and chips they take a line of their own.
-            h_flex()
+            row(h_flex()
                 .w_full()
                 .flex_wrap()
+                .items_center()
                 .gap(dp(8.))
                 .child(leading)
                 .children(self.chips)
-                .child(controls.flex_grow_1().max_w_full().justify_end())
+                .child(controls.flex_grow_1().max_w_full().justify_end()))
+            .id(toolbar_id)
+            .test_support()
+            .into_any_element()
         };
-        let meta = (!self.meta.is_empty()).then(|| meta_line(scope_id, cx).children(self.meta));
-        v_flex()
-            .w_full()
-            .flex_none()
-            .gap(dp(8.))
-            .child(toolbar)
-            .children(meta)
+        let meta = (!self.meta.is_empty()).then(|| meta_row(scope_id, self.meta, cx));
+        v_flex().w_full().flex_none().child(toolbar).children(meta)
     }
 
     /// The header with its [`secondary`](Self::secondary) row: the title's
@@ -315,10 +364,12 @@ impl PageHeader {
         };
         let gap = dp(8.);
         let (controls_id, secondary_id) = (self.id("controls"), self.id("secondary"));
+        let toolbar_id = self.id("toolbar");
         let (title_id, scope_id) = (self.title_id, self.scope_id);
         let leading = h_flex()
             .gap(gap)
-            .child(page_title(self.title).id(title_id).test_support())
+            .items_center()
+            .child(toolbar_label(self.title, cx).id(title_id).test_support())
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
@@ -334,11 +385,8 @@ impl PageHeader {
             // sum is the same whichever row they sit on.
             h_flex()
                 .gap(gap)
-                .children(
-                    self.controls
-                        .into_iter()
-                        .map(|control| div().flex_none().child(control)),
-                )
+                .items_center()
+                .children(boxed(&self.prefix, self.controls))
                 .on_children_prepainted(move |bounds, window, _| {
                     let gaps =
                         gap.to_pixels(window.rem_size()) * bounds.len().saturating_sub(1) as f32;
@@ -357,16 +405,19 @@ impl PageHeader {
                 .test_support()
                 .max_w_full()
         });
-        let meta = (!self.meta.is_empty()).then(|| meta_line(scope_id, cx).children(self.meta));
+        let meta = (!self.meta.is_empty()).then(|| meta_row(scope_id, self.meta, cx));
         if self.narrow {
             return v_flex()
                 .w_full()
                 .flex_none()
-                .gap(gap)
-                .child(leading.w_full().min_w_0())
-                .children(self.chips)
-                .children(secondary)
-                .child(controls.w_full().flex_wrap())
+                .child(
+                    row(leading.w_full().min_w_0())
+                        .id(toolbar_id)
+                        .test_support(),
+                )
+                .children(self.chips.map(row))
+                .children(secondary.map(row))
+                .child(row(controls.w_full().flex_wrap()))
                 .children(meta);
         }
         let has_chips = self.chips.is_some();
@@ -387,19 +438,23 @@ impl PageHeader {
             ControlsRow::Secondary => (None, Some(controls), None),
             ControlsRow::Own => (None, None, Some(controls)),
         };
-        let title_row = h_flex()
+        let title_row = row(h_flex()
             .w_full()
             .flex_wrap()
+            .items_center()
             .gap(gap)
             .child(leading)
             .children(chips)
-            .children(title_controls.map(at_right));
+            .children(title_controls.map(at_right)))
+        .id(toolbar_id)
+        .test_support();
         let secondary_row = (secondary.is_some() || secondary_controls.is_some()).then(|| {
-            h_flex()
+            row(h_flex()
                 .w_full()
+                .items_center()
                 .gap(gap)
                 .children(secondary)
-                .children(secondary_controls.map(at_right))
+                .children(secondary_controls.map(at_right)))
         });
         // Decides after every part above has measured itself, since children
         // prepaint in order.
@@ -427,10 +482,9 @@ impl PageHeader {
             .w_full()
             .flex_none()
             .relative()
-            .gap(gap)
             .child(title_row)
             .children(secondary_row)
-            .children(own_controls.map(|controls| controls.w_full().flex_wrap()))
+            .children(own_controls.map(|controls| row(controls.w_full().flex_wrap())))
             .children(meta)
             .child(decide)
     }

@@ -260,6 +260,7 @@ impl SystemServices {
             Input::new(&self.filter)
                 .id("system-service-filter")
                 .small()
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .cleanable(true)
                 .aria_label("Filter system services by node, service, state or message")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -295,6 +296,7 @@ impl SystemServices {
                 Button::new("system-service-node")
                     .outline()
                     .small()
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label(self.node.clone().unwrap_or_else(|| "All nodes".into()))
                     .dropdown_caret(true),
             )
@@ -327,7 +329,7 @@ impl SystemServices {
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         page::page("system-services-page")
-            .child(page::inset().child(self.render_header(window, cx)))
+            .child(page::toolbar(cx).child(self.render_header(window, cx)))
             .child(table::data_table(self, window, cx).flex_1().min_h_0())
     }
 }

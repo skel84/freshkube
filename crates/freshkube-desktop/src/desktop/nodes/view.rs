@@ -102,7 +102,7 @@ impl Pilot {
                 }
             }))
             .when(!pane, |this| {
-                this.child(freshkube_ui::page::inset().child(self.nodes_header(window, cx)))
+                this.child(freshkube_ui::page::toolbar(cx).child(self.nodes_header(window, cx)))
             })
             .child(
                 div()

@@ -4,160 +4,6 @@ use super::*;
 use gpui_kit::base::Selectable;
 
 impl ResourcesScreen {
-    fn header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        if self.lists_pods() && !self.embedded {
-            return self.pods_toolbar(window, cx);
-        }
-        let p = palette(cx);
-        let example = self
-            .source
-            .as_ref()
-            .is_some_and(|source| matches!(source.access, KubeAccess::Example));
-        let read = self.store.read_state();
-        let state = match read {
-            ReadState::Loading => "loading",
-            ReadState::Loaded if example => "example data",
-            ReadState::Loaded => "watching",
-            ReadState::Stale(_) => "reconnecting",
-            ReadState::Refused(_) => "not permitted",
-            ReadState::Failed(_) => "failed",
-            ReadState::Missing(_) => "not served",
-        };
-        let (total, shown) = (self.store.len(), self.projection.len());
-        // Folded healthy pods aren't hidden by the filter.
-        let shown = if self.projection.grouping().is_some() {
-            self.projection.tally().total()
-        } else {
-            shown
-        };
-        let scope = h_flex()
-            .id("resource-scope")
-            .test_support()
-            .gap_1p5()
-            .flex_wrap()
-            .text_size(dp(12.5))
-            .text_color(p.muted)
-            .map(|this| match &self.source {
-                Some(source) => this.child("in").child(mono(source.context.clone())),
-                None => this.child("not connected"),
-            })
-            .when(read.shows_rows(), |this| {
-                this.child("·").child(if shown == total {
-                    total.to_string()
-                } else {
-                    format!("{shown} of {total}")
-                })
-            })
-            .when(self.source.is_some(), |this| this.child("·").child(state))
-            .when_some(self.updated, |this, time| {
-                this.child("·").child(clock(time))
-            });
-        // The controls keep to one row: beside the title when they fit,
-        // below it otherwise, where a narrow page shrinks the filter. A page
-        // too narrow even for that, such as a small window at a large text
-        // size, puts the filter on a line of its own. (A wrapping row would
-        // be measured without its gaps and wrap early, so this is decided
-        // here.)
-        let one_row = CONTROLS_MIN_WIDTH
-            + if self.kind.namespaced && !self.embedded {
-                NAMESPACE_WIDTH + 8.
-            } else {
-                0.
-            };
-        let stacked = inset_width(window) < one_row;
-        let namespace = (self.kind.namespaced && !self.embedded).then(|| {
-            div()
-                .when_else(
-                    stacked,
-                    |this| this.flex_1().min_w_0(),
-                    |this| this.flex_none(),
-                )
-                .child(
-                    Select::new(&self.namespace_select)
-                        .id("resource-namespace")
-                        .small()
-                        .when_else(
-                            stacked,
-                            |this| this.w_full(),
-                            |this| this.w(dp(NAMESPACE_WIDTH)),
-                        )
-                        .menu_width(dp(260.))
-                        .search_placeholder("Find a namespace")
-                        .accessibility_label("Namespace"),
-                )
-        });
-        let filter = div()
-                    .when_else(stacked, |this| this.w_full(), |this| this.w(dp(240.)))
-                    .min_w(dp(120.))
-                    .key_context(FILTER_CONTEXT)
-                    .on_action(cx.listener(|view, _: &LeaveFilter, window, cx| {
-                        view.leave_filter(window, cx)
-                    }))
-                    .child(
-                        Input::new(&self.query)
-                            .id("resource-filter")
-                            .aria_label("Filter by name, namespace or any column; Escape clears it, then returns to the list")
-                            .small()
-                            .cleanable(true)
-                            .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                    );
-        let refresh = div().flex_none().child(
-            Button::new("resource-refresh")
-                .outline()
-                .small()
-                .icon(IconName::RefreshCw)
-                .label("Refresh")
-                .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
-        );
-        let controls = if stacked {
-            v_flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .children(namespace)
-                        .when(!self.kind.namespaced, |this| this.child(div().flex_1()))
-                        .child(refresh),
-                )
-                .child(filter)
-        } else {
-            h_flex()
-                .max_w_full()
-                .gap_2()
-                .children(namespace)
-                .child(filter)
-                .child(refresh)
-        };
-        h_flex()
-            .items_center()
-            .gap_x(dp(14.))
-            .gap_y_2()
-            .flex_wrap()
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_w(dp(240.))
-                    .items_baseline()
-                    .gap_x(dp(12.))
-                    .flex_wrap()
-                    .child(
-                        ui::page_title(self.title())
-                            .id("resource-title")
-                            .test_support(),
-                    )
-                    .child(scope),
-            )
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap(dp(14.))
-                    .children(self.pod_switch(cx)),
-            )
-            .child(controls)
-    }
-
     /// The pods page's Problems and All, with how many pods each glyph
     /// marks.
     pub(super) fn pod_switch(&self, cx: &mut Context<Self>) -> Option<Div> {
@@ -189,11 +35,13 @@ impl ResourcesScreen {
                         .small()
                         .child(
                             Button::new("resource-view-problems")
+                                .h(dp(ui::CONTROL_HEIGHT))
                                 .label("Problems")
                                 .selected(self.list_view == ListView::Problems),
                         )
                         .child(
                             Button::new("resource-view-all")
+                                .h(dp(ui::CONTROL_HEIGHT))
                                 .label("All")
                                 .selected(self.list_view == ListView::All),
                         )
@@ -638,10 +486,10 @@ impl Render for ResourcesScreen {
         page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| this.overflow_y_scroll())
-            .child(page::inset().child(self.header(window, cx)))
+            .child(page::toolbar(cx).child(self.header(window, cx)))
             .children(
                 self.stale_banner(cx)
-                    .map(|banner| page::inset().pt_0().child(banner)),
+                    .map(|banner| page::inset().child(banner)),
             )
             .child(body)
     }
