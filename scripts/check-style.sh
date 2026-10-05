@@ -13,6 +13,9 @@
 #           instead of ui::status_glyph, ui::status_mark or ui::health_mark;
 #   tip     give a button an icon and neither a label, a child nor a tooltip
 #           (DESIGN.md "Tooltips": an icon-only control names its action).
+#   scroll  scroll vertically without .restrict_scroll_to_axis(): unrestricted, GPUI
+#           hands a vertical-only scroll a sideways wheel's movement too, so a
+#           sideways swipe over a table inside it also scrolls the page.
 #
 # scripts/style-allowlist.txt names, per rule, the files that broke it when the
 # check arrived. It may only shrink: the check fails when an unlisted file
@@ -25,7 +28,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --root) root="$(cd "$2" && pwd)"; shift 2 ;;
     --list) list=1; shift ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "check-style: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -79,6 +82,9 @@ offences() {
     }
     while ($text =~ /\.size\(\s*dp\(\s*([0-9.]+)\s*\)\s*\)\s*\.rounded_full\(\)/g) {
       $report->("glyph", $-[0]) if $1 <= 12;
+    }
+    while ($text =~ /\.overflow_y_scroll\(\)(?!\s*\.restrict_scroll_to_axis\(\))/g) {
+      $report->("scroll", $-[0]);
     }
     # A button and its builder chain run until a comma, semicolon or closing
     # bracket at its own depth. A tooltip added after a wrapper call, as in
@@ -135,7 +141,8 @@ if [ -n "$new" ]; then
     printf '%s\n' "$found" | grep -F "$rule $file:" | sed 's/^/  /'
   done <<<"$new"
   echo "Use the shared components (ui::page_title, ui::status_glyph, the table) instead,"
-  echo "and give an icon-only button a tooltip; the allowlist only shrinks, so don't add to it."
+  echo "give an icon-only button a tooltip and restrict a vertical scroll to its axis;"
+  echo "the allowlist only shrinks, so don't add to it."
 fi
 if [ -n "$clean" ]; then
   status=1

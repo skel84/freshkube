@@ -904,6 +904,7 @@ impl Render for EtcdScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .px(dp(crate::desktop::PAGE_PADDING))
             .pt(dp(22.))
             .pb(dp(18.))

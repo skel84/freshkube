@@ -82,6 +82,7 @@ impl Pilot {
             .flex_none()
             .h_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .items_center()
             .py(dp(12.))
             .gap(dp(4.))

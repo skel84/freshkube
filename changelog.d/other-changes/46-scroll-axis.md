@@ -1,0 +1,1 @@
+- **Sideways scrolls stay sideways:** swiping sideways over a wide table, such as a node's Disks at a narrow window, scrolls only its columns; the page around it no longer scrolls down at the same time. A column that passes under the pinned name column keeps its header label beside it, so a short label such as Flags no longer disappears while its cells still show.

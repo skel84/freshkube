@@ -181,6 +181,7 @@ impl Pilot {
             NodeTab::Overview => div()
                 .id("node-overview")
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .p(dp(16.))
                 .child(
                     v_flex()

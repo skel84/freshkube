@@ -170,6 +170,7 @@ impl DetailPane {
             .test_support()
             .size_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .px_4()
             .py_3()
             .child(v_flex().gap_3().children(stale).child(body))

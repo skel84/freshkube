@@ -84,6 +84,7 @@ pub(super) fn bars(id: SharedString, rows: &[BarRow], cx: &App) -> AnyElement {
         .id(id)
         .size_full()
         .overflow_y_scroll()
+        .restrict_scroll_to_axis()
         .px(dp(14.))
         .pt(dp(2.))
         .pb(dp(8.))
@@ -181,6 +182,7 @@ pub(super) fn table(id: SharedString, table: &TableData, cx: &App) -> AnyElement
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .children(rows)
                 .when(table.total > table.rows.len(), |this| {
                     this.child(

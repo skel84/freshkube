@@ -485,7 +485,9 @@ impl Render for ResourcesScreen {
         };
         page::page("resources-page")
             .track_scroll(&self.page_scroll)
-            .when(short, |this| this.overflow_y_scroll())
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
             .child(page::toolbar(cx).child(self.header(window, cx)))
             .children(
                 self.stale_banner(cx)

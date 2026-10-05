@@ -305,6 +305,7 @@ impl DetailPane {
                             .test_support()
                             .max_h(dp(120.))
                             .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
                             .px_2()
                             .py_1p5()
                             .rounded(px(8.))
