@@ -17,9 +17,8 @@ use gpui_kit::*;
 use super::DetailPane;
 use crate::palette::{Palette, palette};
 use crate::resources::detail::{DocumentView, MAX_MATCHES, YamlLine};
-use crate::ui::{self, MONO_FONT, dp};
-
-const LINE_HEIGHT: f32 = 20.;
+use crate::ui::{self, dp};
+use freshkube_ui::document;
 
 /// Styles for one drawn line: the key tinted, and search matches marked,
 /// the current one more strongly. `StyledText` needs ranges in order and
@@ -141,20 +140,14 @@ impl DetailPane {
                     .border_t_1()
                     .border_color(p.line)
                     .child(
-                        uniform_list(
+                        document::lines(
                             "detail-yaml-lines",
                             lines,
-                            cx.processor(move |pane, range: Range<usize>, _, cx| {
-                                range
-                                    .filter_map(|ix| pane.render_line(ix, gutter, cx))
-                                    .collect::<Vec<_>>()
-                            }),
+                            Some(view.longest),
+                            &self.yaml_scroll,
+                            move |pane: &mut Self, ix, _, cx| pane.render_line(ix, gutter, cx),
+                            cx,
                         )
-                        .with_horizontal_sizing_behavior(
-                            ListHorizontalSizingBehavior::Unconstrained,
-                        )
-                        .with_width_from_item(Some(view.longest))
-                        .track_scroll(&self.yaml_scroll)
                         .size_full(),
                     ),
             )
@@ -180,17 +173,15 @@ impl DetailPane {
             .collect();
         let highlights = line_highlights(line.key.clone(), &matches, key_color(&p), p.mark);
         Some(
-            h_flex()
+            document::line()
+                .flex()
+                .items_center()
                 .id(("detail-yaml-line", ix))
                 .test_support()
                 .role(Role::ListBoxOption)
                 .aria_selected(selected)
                 .aria_label(view.line(ix).to_owned())
                 .w_full()
-                .h(dp(LINE_HEIGHT))
-                .font_family(MONO_FONT)
-                .text_size(dp(12.))
-                .whitespace_nowrap()
                 .cursor_text()
                 .when(selected, |this| this.bg(p.accent_soft))
                 .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
