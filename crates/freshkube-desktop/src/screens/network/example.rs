@@ -457,7 +457,8 @@ pub(super) fn example_kubespan(source: &ScreenSource, tick: u64) -> KubeSpanStat
                         },
                     }
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
         )
     }
 }

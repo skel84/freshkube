@@ -1,0 +1,1 @@
+- **Network tables:** the node's interfaces, connections, listeners and KubeSpan peers use the shared table, with glyphs on interfaces that have errors or drops, half-open or closing sockets and peers. Narrow windows scroll the columns sideways instead of dropping them.

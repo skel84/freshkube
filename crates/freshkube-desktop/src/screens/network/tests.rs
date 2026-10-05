@@ -3,7 +3,11 @@ use std::sync::Arc;
 use freshkube_core::inspection::{InspectionSource, InspectionUnavailable};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{
+    App, AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point, ScrollDelta,
+    ScrollWheelEvent, SharedString, Size, TestAppContext, TouchPhase, Window, WindowHandle, point,
+    px, size,
+};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -30,6 +34,14 @@ fn mount(
     cx: &mut TestAppContext,
     node: &str,
 ) -> (Runtime, Entity<NetworkScreen>, WindowHandle<Root>) {
+    mount_in(cx, node, size(px(1100.), px(1500.)))
+}
+
+fn mount_in(
+    cx: &mut TestAppContext,
+    node: &str,
+    bounds: Size<Pixels>,
+) -> (Runtime, Entity<NetworkScreen>, WindowHandle<Root>) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -41,7 +53,7 @@ fn mount(
     });
     let source = source(node);
     let mut screen = None;
-    let handle = cx.open_window(size(px(1100.), px(1500.)), |window, cx| {
+    let handle = cx.open_window(bounds, |window, cx| {
         let view = cx.new(|cx| {
             let mut view = NetworkScreen::new(runtime.handle().clone(), window, cx);
             view.set_source(Some(source), window, cx);
@@ -55,6 +67,22 @@ fn mount(
     (runtime, screen.unwrap(), handle)
 }
 
+/// The showing view's row keys, derived as render would.
+fn keys(screen: &Entity<NetworkScreen>, cx: &mut App) -> Vec<String> {
+    screen.update(cx, |screen, cx| {
+        screen.sync_rows(cx);
+        screen.row_keys().iter().map(ToString::to_string).collect()
+    })
+}
+
+/// The showing view's row element ids, top to bottom.
+fn row_ids(screen: &Entity<NetworkScreen>, cx: &mut App) -> Vec<SharedString> {
+    screen.update(cx, |screen, cx| {
+        screen.sync_rows(cx);
+        screen.row_ids()
+    })
+}
+
 #[gpui_kit::test]
 fn keyboard_selection_updates_details(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
@@ -62,16 +90,18 @@ fn keyboard_selection_updates_details(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_some());
         window.find("interface-details");
-        window.click(("interface", 0usize), cx);
-        let first = screen.read(cx).keys(cx)[0].clone();
+        let ids = row_ids(&screen, cx);
+        window.click(ids[0].clone(), cx);
+        let first = keys(&screen, cx)[0].clone();
         window.press("down", cx);
-        let second = screen.read(cx).keys(cx)[1].clone();
+        let second = keys(&screen, cx)[1].clone();
         assert_eq!(screen.read(cx).selected_iface.as_ref(), Some(&second));
         assert_ne!(first, second);
-        assert_eq!(window.find(("interface", 1usize)).selected(), Some(true));
-        assert_eq!(window.find(("interface", 0usize)).selected(), Some(false));
+        window.render_frame(cx);
+        assert_eq!(window.find(ids[1].clone()).selected(), Some(true));
+        assert_eq!(window.find(ids[0].clone()).selected(), Some(false));
         window.press("end", cx);
-        let last = screen.read(cx).keys(cx).last().cloned();
+        let last = keys(&screen, cx).last().cloned();
         assert_eq!(screen.read(cx).selected_iface, last);
     })
     .unwrap();
@@ -108,11 +138,11 @@ fn connections_view_filters_rows(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(screen.read(cx).view, View::Connections);
         window.find("connection-list");
-        window.find(("connection", 0usize));
-        let all = screen.read(cx).visible_connections(cx).len();
+        window.find(row_ids(&screen, cx)[0].clone());
+        let all = keys(&screen, cx).len();
         window.click("state-syn-sent", cx);
         window.render_frame(cx);
-        let syn = screen.read(cx).visible_connections(cx).len();
+        let syn = keys(&screen, cx).len();
         assert_eq!(syn, 7, "example has seven SYN_SENT sockets");
         window.click("state-all", cx);
         screen.update(cx, |screen, cx| {
@@ -121,13 +151,13 @@ fn connections_view_filters_rows(cx: &mut TestAppContext) {
                 .update(cx, |input, cx| input.set_value("kubelet", window, cx));
         });
         window.render_frame(cx);
-        let text = screen.read(cx).visible_connections(cx).len();
+        let text = keys(&screen, cx).len();
         assert!(text > 0 && text < all);
         // The listeners tab keeps listening sockets only.
         window.click("network-view-listeners", cx);
         window.render_frame(cx);
         window.find("listener-list");
-        assert!(screen.read(cx).visible_connections(cx).len() <= text);
+        assert!(keys(&screen, cx).len() <= text);
     })
     .unwrap();
 }
@@ -144,10 +174,7 @@ fn degraded_node_is_notable_and_kubespan_is_unknown(cx: &mut TestAppContext) {
         screen.update(cx, |screen, cx| {
             screen.set_sort(super::Sort::Errors, cx);
         });
-        assert_eq!(
-            screen.read(cx).keys(cx).first().map(String::as_str),
-            Some("eth0")
-        );
+        assert_eq!(keys(&screen, cx).first().map(String::as_str), Some("eth0"));
         window.click("network-view-kubespan", cx);
         window.render_frame(cx);
         // It couldn't be read: reported as unavailable, not failed.
@@ -169,7 +196,7 @@ fn kubespan_peers_render_when_enabled(cx: &mut TestAppContext) {
             Some(KubeSpanState::Enabled(peers)) if !peers.is_empty()
         ));
         window.find("peer-list");
-        window.find(("peer", 0usize));
+        window.find(row_ids(&screen, cx)[0].clone());
         window.find("peer-details");
     })
     .unwrap();
@@ -192,10 +219,12 @@ fn missing_connections_still_show_interfaces(cx: &mut TestAppContext) {
         });
         window.render_frame(cx);
         window.find("partial-notice");
-        window.find(("interface", 0usize));
+        window.find(row_ids(&screen, cx)[0].clone());
         window.click("network-view-connections", cx);
         window.render_frame(cx);
-        assert!(window.try_find(("connection", 0usize)).is_none());
+        assert!(row_ids(&screen, cx).is_empty());
+        // Unknown, not empty: the table says netstat didn't answer.
+        window.find("connection-empty");
     })
     .unwrap();
 }
@@ -467,31 +496,29 @@ fn capture_files_are_named_for_the_node_and_the_time() {
 }
 
 #[gpui_kit::test]
-fn connection_rows_are_cached_until_the_data_filters_or_sort_change(cx: &mut TestAppContext) {
+fn connection_rows_are_derived_only_when_the_data_filters_or_sort_change(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-02");
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("network-view-connections", cx);
         window.render_frame(cx);
         let computed = || crate::desktop::probe::count("network.rows");
-        let first = screen.read(cx).visible_connections(cx);
         let base = computed();
-        // Render, the list processor, selection and navigation share it.
+        // Render, selection and navigation read the rows as derived.
         window.render_frame(cx);
-        window.click(("connection", 0usize), cx);
+        window.click(row_ids(&screen, cx)[0].clone(), cx);
         window.press("down", cx);
         window.press("down", cx);
-        let again = screen.read(cx).visible_connections(cx);
-        assert!(std::rc::Rc::ptr_eq(&first, &again));
-        assert_eq!(computed(), base, "nothing it depends on changed");
+        window.render_frame(cx);
+        assert_eq!(computed(), base, "nothing they depend on changed");
         // The state filter.
         window.click("state-syn-sent", cx);
-        assert_eq!(screen.read(cx).visible_connections(cx).len(), 7);
+        assert_eq!(keys(&screen, cx).len(), 7);
         assert_eq!(computed(), base + 1);
         window.click("state-all", cx);
         // Sort.
         screen.update(cx, |screen, cx| screen.set_sort(super::Sort::Port, cx));
-        screen.read(cx).visible_connections(cx);
+        keys(&screen, cx);
         let sorted = computed();
         assert!(sorted > base + 1);
         // The filter text.
@@ -500,17 +527,17 @@ fn connection_rows_are_cached_until_the_data_filters_or_sort_change(cx: &mut Tes
                 .query
                 .update(cx, |input, cx| input.set_value("kubelet", window, cx));
         });
-        screen.read(cx).visible_connections(cx);
+        keys(&screen, cx);
         assert_eq!(computed(), sorted + 1);
-        screen.read(cx).visible_connections(cx);
+        keys(&screen, cx);
         assert_eq!(computed(), sorted + 1);
         // The tab: listeners keep listening sockets only.
         window.click("network-view-listeners", cx);
-        screen.read(cx).visible_connections(cx);
+        keys(&screen, cx);
         assert_eq!(computed(), sorted + 2);
         // A new sample.
         screen.update(cx, |screen, cx| screen.refresh(window, cx));
-        screen.read(cx).visible_connections(cx);
+        keys(&screen, cx);
         assert_eq!(computed(), sorted + 3);
     })
     .unwrap();
@@ -523,17 +550,16 @@ fn selection_survives_a_refresh_by_key(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("network-view-connections", cx);
         window.render_frame(cx);
-        window.click(("connection", 0usize), cx);
+        window.click(row_ids(&screen, cx)[0].clone(), cx);
         window.press("down", cx);
         window.press("down", cx);
         let key = screen.read(cx).selected_conn.clone().unwrap();
-        let row = screen.read(cx).selected_connection_row(cx);
-        assert_eq!(row, Some(2));
+        assert_eq!(keys(&screen, cx).iter().position(|k| *k == key), Some(2));
         screen.update(cx, |screen, cx| screen.refresh(window, cx));
         // The sockets are the same, so the same one stays selected.
-        let after = screen.read(cx).selected_connection(cx).unwrap();
+        assert_eq!(keys(&screen, cx).iter().position(|k| *k == key), Some(2));
+        let after = screen.read(cx).selected_connection().unwrap();
         assert_eq!(super::conn_key(&after.connection), key);
-        assert_eq!(screen.read(cx).selected_connection_row(cx), Some(2));
     })
     .unwrap();
 }
@@ -596,6 +622,124 @@ fn kubespan_tab_says_loading_not_off_before_it_has_an_answer(cx: &mut TestAppCon
         let label = status.label().unwrap_or_default().to_owned();
         assert!(label.contains("Loading"), "{label}");
         assert!(!label.contains("isn't enabled"));
+    })
+    .unwrap();
+}
+
+/// Each view's table follows DESIGN.md's rows and header at both text sizes.
+#[gpui_kit::test]
+fn network_draws_the_shared_tables_at_both_text_sizes(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{Table, assert_table};
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    let views = [
+        (View::Interfaces, "interface-table-scroll", "interface-list"),
+        (
+            View::Connections,
+            "connection-table-scroll",
+            "connection-list",
+        ),
+        (View::Listeners, "listener-table-scroll", "listener-list"),
+        (View::KubeSpan, "peer-table-scroll", "peer-list"),
+    ];
+    for text_size in [crate::ui::BASE_TEXT, 20.] {
+        for (view, scroll, list) in views {
+            cx.update_window(handle.into(), |_, window, cx| {
+                crate::text_size::set(text_size, cx);
+                screen.update(cx, |screen, cx| screen.switch(view, window, cx));
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, cx| {
+                let table = Table {
+                    table: Some(scroll),
+                    list,
+                };
+                let rows = assert_table(window, cx, &table);
+                assert!(rows.header.is_some(), "{view:?} at {text_size}: {rows:#?}");
+            })
+            .unwrap();
+        }
+    }
+}
+
+/// Marks only what needs a look: an interface with errors, a peer by its
+/// state, and none on a quiet interface.
+#[gpui_kit::test]
+fn glyphs_mark_errors_and_peer_states(cx: &mut TestAppContext) {
+    let (_runtime, _screen, handle) = mount(cx, "talos-wk-fra1-02");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.find("interface-eth0-state");
+        assert!(window.try_find("interface-lo-state").is_none());
+    })
+    .unwrap();
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("network-view-kubespan", cx);
+        window.render_frame(cx);
+        let first = row_ids(&screen, cx)[0].clone();
+        window.find(SharedString::from(format!("{first}-state")));
+    })
+    .unwrap();
+}
+
+/// One wheel event at `position`, as the start of a gesture.
+fn wheel(window: &mut Window, position: Point<Pixels>, y: f32, cx: &mut App) {
+    window.dispatch_event(
+        MouseMoveEvent {
+            position,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.dispatch_event(
+        ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(0.), px(y))),
+            touch_phase: TouchPhase::Started,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.render_frame(cx);
+}
+
+/// A short window keeps a list of `SHORT_LIST_HEIGHT` and scrolls the page
+/// down to the details under it, rather than squeezing either.
+#[gpui_kit::test]
+fn a_short_window_scrolls_the_page_to_the_details(cx: &mut TestAppContext) {
+    use freshkube_ui::page::SHORT_LIST_HEIGHT;
+    let (_runtime, _screen, handle) = mount_in(cx, "talos-cp-fra1-01", size(px(760.), px(560.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let bottom = window.viewport_size().height;
+        let list = window.find("interface-table-scroll").bounds();
+        let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
+        let table = window.find("network-table").bounds();
+        assert!(table.size.height >= least, "{table:?} < {least:?}");
+        let details = window.find("interface-details").bounds();
+        assert!(
+            details.top() >= table.bottom(),
+            "the details sit under the list"
+        );
+        assert!(
+            details.bottom() > bottom,
+            "the page is taller than the window"
+        );
+        // A wheel over the page, outside the table, scrolls to the details.
+        let at = point(list.center().x, px(40.));
+        for _ in 0..20 {
+            wheel(window, at, -200., cx);
+        }
+        let details = window.find("interface-details").bounds();
+        assert!(
+            details.top() < bottom && details.top() >= px(0.),
+            "the details are out of reach: {details:?}"
+        );
     })
     .unwrap();
 }
