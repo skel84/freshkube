@@ -20,16 +20,15 @@ use freshkube_core::monitoring::{
     markers::Marker,
     model::{PanelSpec, time::TimeWindow},
 };
-use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
+use freshkube_ui::card::{CardHeader, ChartCard, StatCard};
+use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, ClipboardItem, Context, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    SharedString, StyleRefinement, TestSupportExt, Window, div, px,
+    AnyElement, Context, Entity, EventEmitter, IntoElement, Render, SharedString, StyleRefinement,
+    TestSupportExt, Window, div,
 };
 
 use super::derive::{self, Body, PanelData};
-use crate::palette::palette;
 use crate::ui::{self, dp};
 
 pub(crate) use cursor::Cursor;
@@ -267,118 +266,25 @@ impl Render for PanelView {
         #[cfg(test)]
         crate::desktop::probe::hit("monitoring-panel");
         let _span = crate::perf::span("monitoring.panel_render");
-        let p = palette(cx);
         let stat = matches!(
             self.data.as_ref().map(|data| &data.body),
             Some(Body::Stats(_))
         );
-        v_flex()
-            .id(self.id.clone())
-            .size_full()
-            .min_w_0()
-            .overflow_hidden()
-            .rounded(px(12.))
-            .border_1()
-            .border_color(p.line)
-            .bg(p.surface)
-            .child(self.render_header(stat, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(self.render_body(window, cx)),
-            )
-            .test_support()
+        let header = CardHeader::new(self.id.clone(), self.spec.title.clone())
+            .unit(self.data.as_ref().and_then(|data| data.unit.clone()))
+            .about(self.about.clone())
+            .copy(self.promql.clone(), "Click to copy the PromQL")
+            .stale(self.stale.clone());
+        let body = self.render_body(window, cx);
+        if stat {
+            StatCard::new(header).render(body, cx)
+        } else {
+            ChartCard::new(header).render(body, cx)
+        }
     }
 }
 
 impl PanelView {
-    /// The title row: the title (muted and smaller on a stat, as the mock's
-    /// cards), the unit the axis gave up, the PromQL behind an info icon
-    /// and the stale mark.
-    fn render_header(&self, stat: bool, cx: &Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
-        let unit = self.data.as_ref().and_then(|data| data.unit.clone());
-        let about = self.about.clone();
-        let promql = self.promql.clone();
-        let copy: Option<SharedString> =
-            (!promql.is_empty()).then(|| "Click to copy the PromQL".into());
-        h_flex()
-            .flex_none()
-            .gap(dp(8.))
-            .h(dp(if stat { 28. } else { 32. }))
-            .pl(dp(if stat { 14. } else { 12. }))
-            .pr(dp(8.))
-            .pt(dp(if stat { 4. } else { 0. }))
-            .child(
-                div()
-                    .id(self.element_id("title"))
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::BOLD)
-                    .text_size(dp(if stat { 12. } else { 13. }))
-                    .text_color(if stat { p.muted } else { p.ink })
-                    .child(self.spec.title.clone())
-                    .test_support(),
-            )
-            .when_some(unit, |this, unit| {
-                this.child(
-                    div()
-                        .flex_none()
-                        .text_size(dp(12.))
-                        .text_color(p.muted)
-                        .child(unit),
-                )
-            })
-            .when(!about.is_empty(), |this| {
-                this.child(
-                    div()
-                        .id(self.element_id("query"))
-                        .flex_none()
-                        .child(Icon::new(IconName::Info).size(dp(13.)).text_color(p.faint))
-                        .when(!promql.is_empty(), |this| {
-                            this.cursor_pointer().on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(promql.to_string()))
-                            })
-                        })
-                        .tooltip(move |window, cx| {
-                            let (about, copy) = (about.clone(), copy.clone());
-                            Tooltip::element(move |_, cx| {
-                                v_flex()
-                                    .max_w(dp(420.))
-                                    .gap(dp(6.))
-                                    .child(
-                                        div()
-                                            .font_family(ui::MONO_FONT)
-                                            .text_size(dp(11.5))
-                                            .whitespace_normal()
-                                            .child(about.clone()),
-                                    )
-                                    .children(copy.clone().map(|copy| {
-                                        div()
-                                            .text_size(dp(11.5))
-                                            .text_color(palette(cx).muted)
-                                            .child(copy)
-                                    }))
-                            })
-                            .build(window, cx)
-                        })
-                        .test_support(),
-                )
-            })
-            .child(div().flex_1())
-            .when_some(self.stale.clone(), |this, error| {
-                this.child(ui::status_mark(
-                    self.element_id("stale"),
-                    ui::Tone::Warn,
-                    format!("Showing the last answer; the refresh failed: {error}"),
-                    cx,
-                ))
-            })
-    }
-
     fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match (&self.state, &self.data) {
             (State::Failed(error), _) => summary::message(
