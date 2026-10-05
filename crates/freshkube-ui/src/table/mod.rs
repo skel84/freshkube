@@ -16,6 +16,7 @@ use gpui_kit::{
 use crate::palette::palette;
 
 mod data;
+mod pinned;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
     DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState, data_table, reveal,
@@ -38,6 +39,11 @@ pub trait TableColumn {
     fn width(&self) -> f32;
     /// Takes the room left over; at most one column does.
     fn flexible(&self) -> bool;
+    /// Stays at the table's left edge when it scrolls sideways, as a row's
+    /// glyph and name do. Only the leading run of pinned columns pins.
+    fn pinned(&self) -> bool {
+        false
+    }
 }
 
 /// A cell's frame: padded, truncated, at its column's width.

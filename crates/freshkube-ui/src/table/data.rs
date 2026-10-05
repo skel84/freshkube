@@ -8,10 +8,11 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Div, ElementId, Role, ScrollStrategy, SharedString,
-    TestSupportExt, UniformListScrollHandle, Window, div, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Role, ScrollHandle, ScrollStrategy,
+    SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 
+use super::pinned::{Pinned, scrolled_by};
 use super::{COMPACT_ROW_HEIGHT, HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
 use crate::page::card;
 use crate::palette::{Palette, palette};
@@ -63,6 +64,7 @@ struct TableIds {
     scroll: SharedString,
     empty: SharedString,
     sort: SharedString,
+    pinned: SharedString,
 }
 
 impl TableIds {
@@ -75,6 +77,7 @@ impl TableIds {
             scroll: id("table-scroll"),
             empty: id("empty"),
             sort: id("sort"),
+            pinned: id("pinned"),
         }
     }
 }
@@ -84,6 +87,8 @@ pub struct TableState {
     pub scroll: UniformListScrollHandle,
     /// Compact rows, from the density toggle; comfortable by default.
     pub compact: bool,
+    /// The sideways scroll, which group labels and pinned columns undo.
+    sideways: ScrollHandle,
     ids: TableIds,
 }
 
@@ -94,6 +99,7 @@ impl TableState {
         Self {
             scroll: UniformListScrollHandle::new(),
             compact: false,
+            sideways: ScrollHandle::new(),
             ids: TableIds::new(prefix),
         }
     }
@@ -115,6 +121,20 @@ impl TableState {
     pub fn reveal(&self, line: usize, strategy: ScrollStrategy) {
         self.scroll.scroll_to_item(line, strategy);
     }
+
+    /// Whether the table is scrolled sideways. Until it is, nothing pins
+    /// and the rows draw as if pinning didn't exist.
+    fn scrolled(&self) -> bool {
+        scrolled_by(&self.sideways).is_some()
+    }
+}
+
+/// How many leading columns pin, and their width.
+fn pinned_run<C: TableColumn>(columns: &[C]) -> (usize, f32) {
+    let run = columns.iter().take_while(|column| column.pinned());
+    run.fold((0, 0.), |(count, width), column| {
+        (count + 1, width + column.width())
+    })
 }
 
 /// A page entity that shows a table. Everything it returns was derived
@@ -346,6 +366,7 @@ impl DataTable {
                     )
                     .w_full()
                     .overflow_x_scroll()
+                    .track_scroll(&state.sideways)
                     .child(
                         v_flex()
                             .when(!fitted && !is_empty, |this| this.h_full())
@@ -367,58 +388,118 @@ pub fn data_table<S: TableSource>(source: &S, window: &Window, cx: &mut Context<
 
 fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
     let p = palette(cx);
-    let sort_id = &source.table_state().ids.sort;
-    h_flex()
+    let state = source.table_state();
+    let columns = source.columns();
+    let (pinned, width) = if state.scrolled() {
+        pinned_run(columns)
+    } else {
+        (0, 0.)
+    };
+    let header = h_flex()
         .w_full()
         .h(dp(HEADER_HEIGHT))
         .flex_none()
         .bg(p.surface_2)
         .border_b_1()
         .border_color(p.line)
-        .children(source.columns().iter().enumerate().map(|(ix, column)| {
-            let label = column.label();
-            let Some((sort, order)) = source.sorting(column) else {
-                // A column without a label, such as the glyph's, stays bare.
-                if label.is_empty() {
-                    return cell(column).into_any_element();
-                }
-                return cell(column)
-                    .id((sort_id.clone(), ix))
-                    .test_support()
-                    .role(Role::ColumnHeader)
-                    .aria_label(label.clone())
-                    .flex()
-                    .items_center()
-                    .child(ui::caption(label, cx))
-                    .into_any_element();
-            };
-            let order = order.map(|order| match order {
-                SortOrder::Ascending => ("ascending", IconName::ArrowUp),
-                SortOrder::Descending => ("descending", IconName::ArrowDown),
-            });
-            cell(column)
-                .id((sort_id.clone(), ix))
+        .children(columns.iter().enumerate().map(|(ix, column)| {
+            // A pinned cell's place is kept by an empty one of its width.
+            if ix < pinned {
+                cell(column).into_any_element()
+            } else {
+                header_cell(source, ix, column, cx)
+            }
+        }));
+    if pinned == 0 {
+        return header;
+    }
+    let cells: Vec<_> = (columns.iter().enumerate().take(pinned))
+        .map(|(ix, column)| header_cell(source, ix, column, cx))
+        .collect();
+    // Drawn before a resize could clamp the scroll to its left edge; if it
+    // did, the table draws again unpinned, a flexible column at its width.
+    header.relative().child(
+        Pinned::overlay(
+            &state.sideways,
+            h_flex()
+                .id(state.id("pinned-header"))
                 .test_support()
-                .role(Role::ColumnHeader)
-                .aria_label(match order {
-                    Some((order, _)) => format!("{label}, sorted {order}"),
-                    None => label.to_string(),
-                })
-                .flex()
-                .items_center()
-                .gap_1()
-                .cursor_pointer()
-                .child(ui::caption(label, cx))
-                .children(order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)))
-                .on_click(cx.listener(move |view, _, _, cx| view.sort(sort.clone(), cx)))
-                .into_any_element()
-        }))
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(dp(width))
+                .bg(p.surface_2)
+                .children(cells),
+            p.line,
+        )
+        .settle(cx.entity_id()),
+    )
+}
+
+fn header_cell<S: TableSource>(
+    source: &S,
+    ix: usize,
+    column: &S::Column,
+    cx: &mut Context<S>,
+) -> AnyElement {
+    let p = palette(cx);
+    let sort_id = &source.table_state().ids.sort;
+    let label = column.label();
+    let Some((sort, order)) = source.sorting(column) else {
+        // A column without a label, such as the glyph's, stays bare.
+        if label.is_empty() {
+            return cell(column).into_any_element();
+        }
+        return cell(column)
+            .id((sort_id.clone(), ix))
+            .test_support()
+            .role(Role::ColumnHeader)
+            .aria_label(label.clone())
+            .flex()
+            .items_center()
+            .child(ui::caption(label, cx))
+            .into_any_element();
+    };
+    let order = order.map(|order| match order {
+        SortOrder::Ascending => ("ascending", IconName::ArrowUp),
+        SortOrder::Descending => ("descending", IconName::ArrowDown),
+    });
+    cell(column)
+        .id((sort_id.clone(), ix))
+        .test_support()
+        .role(Role::ColumnHeader)
+        .aria_label(match order {
+            Some((order, _)) => format!("{label}, sorted {order}"),
+            None => label.to_string(),
+        })
+        .flex()
+        .items_center()
+        .gap_1()
+        .cursor_pointer()
+        .child(ui::caption(label, cx))
+        .children(order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)))
+        .on_click(cx.listener(move |view, _, _, cx| view.sort(sort.clone(), cx)))
+        .into_any_element()
 }
 
 /// One line of the list: a group's header or a row.
 fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> Option<AnyElement> {
+    // Rows draw while the list lays out, after the sideways scroll has
+    // clamped its offset, so this is the offset the frame paints with.
+    let state = source.table_state();
+    let scrolled = state.scrolled();
     let row = match source.line(line, cx)? {
-        Line::Group(group) => return source.group(group, cx),
+        // A group's label stays in view: the whole group line moves back
+        // by the scroll, still as wide as the table.
+        Line::Group(group) => {
+            let group = source.group(group, cx)?;
+            return Some(if scrolled {
+                Pinned::new(&state.sideways, group).into_any_element()
+            } else {
+                group
+            });
+        }
         Line::Row(row) => row,
     };
     let selected = source.selected_key() == Some(&row.key);
@@ -463,8 +544,61 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
         .when_some(row.tooltip.clone(), |this, tooltip| {
             this.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         });
-    for column in source.columns() {
-        element = element.child(source.cell(&row, &style, column, cx));
+    let columns = source.columns();
+    let (pinned, width) = if scrolled {
+        pinned_run(columns)
+    } else {
+        (0, 0.)
+    };
+    for (ix, column) in columns.iter().enumerate() {
+        // A pinned cell's place is kept by an empty one of its width; the
+        // cell itself draws last, over the cells that pass under it.
+        element = element.child(if ix < pinned {
+            cell(column).into_any_element()
+        } else {
+            source.cell(&row, &style, column, cx)
+        });
+    }
+    if pinned > 0 {
+        let cells: Vec<_> = (columns.iter().take(pinned))
+            .map(|column| source.cell(&row, &style, column, cx))
+            .collect();
+        // Opaque, so the cells passing under them don't show through: the
+        // card's background with the row's own over it, in each of its
+        // states. They stay inside the row, so its hover, tooltip and click
+        // reach them unchanged.
+        let tint = |this: Div| {
+            this.when(marked && !selected, |this| this.bg(p.hover))
+                .when(selected, |this| this.bg(p.accent_soft))
+                .when(clickable && !selected, |this| {
+                    this.group_hover(ROW_GROUP, |style| style.bg(p.hover))
+                })
+        };
+        // The row's left border, transparent unless it is selected, would
+        // let the passing cells show through; this edge covers it.
+        let edge = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(-1.))
+            .w(px(1.))
+            .bg(if selected { p.accent } else { p.surface })
+            .when(!selected, |this| this.child(tint(div().size_full())));
+        element = element.relative().child(Pinned::overlay(
+            &state.sideways,
+            div()
+                .id((state.ids.pinned.clone(), line))
+                .test_support()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(dp(width))
+                .bg(p.surface)
+                .child(edge)
+                .child(tint(h_flex().size_full()).children(cells)),
+            p.line,
+        ));
     }
     let key = row.key;
     Some(
@@ -482,9 +616,14 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
 mod tests {
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt;
-    use gpui_kit::{AppContext, IntoElement, Render, ScrollDelta, TestAppContext, point, px, size};
+    use gpui_kit::{
+        AnyView, AnyWindowHandle, AppContext, Entity, InputEvent, IntoElement, MouseMoveEvent,
+        Render, ScrollDelta, ScrollWheelEvent, StyleRefinement, TestAppContext, point, px, size,
+    };
 
     use super::*;
+    use crate::table::GroupRow;
+    use crate::ui::Tone;
 
     /// Lines 0 and 3 are group headers; the rest are rows.
     fn lines(line: usize) -> Option<bool> {
@@ -514,7 +653,8 @@ mod tests {
         assert_eq!(step_line(1, None, 1, lines), None);
     }
 
-    struct Column(SharedString);
+    /// A label, and whether the column pins.
+    struct Column(SharedString, bool);
 
     impl TableColumn for Column {
         fn label(&self) -> &SharedString {
@@ -528,13 +668,38 @@ mod tests {
         fn flexible(&self) -> bool {
             false
         }
+
+        fn pinned(&self) -> bool {
+            self.1
+        }
     }
 
     /// Six 200 dp columns, wider than its window, so it scrolls sideways.
+    /// With `grouped`, line 0 is a group's header and the rows follow it.
     struct Wide {
         table: TableState,
         columns: Vec<Column>,
         rows: usize,
+        grouped: bool,
+        selected: Option<usize>,
+    }
+
+    impl Wide {
+        fn new(pinned: usize, rows: usize, grouped: bool) -> Self {
+            Self {
+                table: TableState::new("wide"),
+                columns: (0..6)
+                    .map(|ix| Column(format!("Column {ix}").into(), ix < pinned))
+                    .collect(),
+                rows,
+                grouped,
+                selected: None,
+            }
+        }
+
+        fn first_row(&self) -> usize {
+            usize::from(self.grouped)
+        }
     }
 
     impl TableSource for Wide {
@@ -566,11 +731,14 @@ mod tests {
         fn sort(&mut self, _: (), _: &mut Context<Self>) {}
 
         fn line_count(&self) -> usize {
-            self.rows
+            self.rows + self.first_row()
         }
 
         fn line(&self, line: usize, _: &App) -> Option<Line<usize, ()>> {
-            (line < self.rows).then(|| {
+            if self.grouped && line == 0 {
+                return Some(Line::Group(0));
+            }
+            (line < self.line_count()).then(|| {
                 Line::Row(TableRow {
                     key: line,
                     id: SharedString::from(format!("wide-row-{line}")).into(),
@@ -591,16 +759,36 @@ mod tests {
             _: &mut Context<Self>,
         ) -> AnyElement {
             cell(column)
+                .id(SharedString::from(format!("{} {}", column.0, row.key)))
+                .test_support()
                 .child(format!("{} {}", column.0, row.key))
                 .into_any_element()
         }
 
-        fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
-            None
+        fn group(&self, _: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+            Some(
+                GroupRow::new("wide-group", Tone::Crit, "Failing", ROW_HEIGHT)
+                    .detail(vec![format!("{} rows", self.rows)])
+                    .render(cx)
+                    .into_any_element(),
+            )
         }
 
         fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
             (self.rows == 0).then(|| "No rows match this filter.".into_any_element())
+        }
+
+        fn selected_key(&self) -> Option<&usize> {
+            self.selected.as_ref()
+        }
+
+        fn line_of(&self, key: &usize) -> Option<usize> {
+            Some(*key)
+        }
+
+        fn click(&mut self, key: &usize, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+            self.selected = Some(*key);
+            cx.notify();
         }
     }
 
@@ -610,6 +798,50 @@ mod tests {
                 .size_full()
                 .child(data_table(self, window, cx).flex_1().min_h_0())
         }
+    }
+
+    /// The table in a window `width` wide and 400 tall, at the default
+    /// text size.
+    fn open(cx: &mut TestAppContext, wide: Wide, width: f32) -> (AnyWindowHandle, Entity<Wide>) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(width), px(400.)), |window, cx| {
+            let wide = cx.new(|_| wide);
+            view = Some(wide.clone());
+            Root::new(wide, window, cx)
+        });
+        (handle.into(), view.unwrap())
+    }
+
+    /// Scrolls the table `by` points to the right.
+    fn scroll_right(window: &mut Window, by: f32, cx: &mut App) {
+        window.scroll(
+            "wide-table-scroll",
+            ScrollDelta::Pixels(point(px(-by), px(0.))),
+            cx,
+        );
+    }
+
+    /// How far right of the table's visible left edge an element starts.
+    fn inset(window: &Window, id: impl Into<ElementId>) -> f32 {
+        let viewport = window.find("wide-table-scroll").bounds();
+        f32::from(window.find(id).bounds().left() - viewport.left())
+    }
+
+    /// The same for a pinned cell on `line`, or a header cell with `line`
+    /// `None`, found inside the pinned part.
+    fn pinned_inset(window: &mut Window, line: Option<usize>, id: impl Into<ElementId>) -> f32 {
+        let viewport = window.find("wide-table-scroll").bounds();
+        let scope: ElementId = match line {
+            Some(line) => ("wide-pinned", line).into(),
+            None => "wide-pinned-header".into(),
+        };
+        f32::from(window.within(scope).find(id).bounds().left() - viewport.left())
     }
 
     /// A filter that leaves no rows after a sideways scroll still shows why,
@@ -622,20 +854,8 @@ mod tests {
             crate::text_size::install(None, cx);
             cx.set_reduce_motion(true);
         });
-        let mut wide = None;
-        let handle = cx.open_window(size(px(600.), px(400.)), |window, cx| {
-            let view = cx.new(|_| Wide {
-                table: TableState::new("wide"),
-                columns: (0..6)
-                    .map(|ix| Column(format!("Column {ix}").into()))
-                    .collect(),
-                rows: 3,
-            });
-            wide = Some(view.clone());
-            Root::new(view, window, cx)
-        });
-        let wide = wide.unwrap();
-        cx.update_window(handle.into(), |_, window, cx| {
+        let (handle, wide) = open(cx, Wide::new(0, 3, false), 600.);
+        cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.scroll(
                 "wide-table-scroll",
@@ -656,7 +876,7 @@ mod tests {
                 cx.notify();
             })
         });
-        cx.update_window(handle.into(), |_, window, cx| {
+        cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let viewport = window.find("wide-table-scroll").bounds();
             let empty = window.find("wide-empty");
@@ -667,6 +887,206 @@ mod tests {
                 "the empty state at {bounds:?} leaves the table's width {viewport:?}"
             );
             assert!(empty.visible());
+        })
+        .unwrap();
+    }
+
+    /// Scrolled sideways, a group's label and the pinned columns stay at
+    /// the table's left edge while the other cells pass under them.
+    #[gpui_kit::test]
+    fn group_labels_and_pinned_columns_stay_in_view_when_scrolled(cx: &mut TestAppContext) {
+        // The two pinned columns' 400 take less than two thirds of the 900.
+        let (handle, _) = open(cx, Wide::new(2, 4, true), 900.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(inset(window, "Column 0 1").abs() <= 1.5);
+            assert!(window.try_find("wide-pinned-header").is_none());
+            scroll_right(window, 100., cx);
+            assert!(
+                (inset(window, "Column 4 1") - 700.).abs() <= 1.5,
+                "no scroll"
+            );
+            assert!(inset(window, "wide-group").abs() <= 1.5);
+            // Inside the row's one-pixel border, as before the scroll.
+            assert!(pinned_inset(window, Some(1), "Column 0 1").abs() <= 1.5);
+            assert!((pinned_inset(window, Some(1), "Column 1 1") - 200.).abs() <= 1.5);
+            assert!(pinned_inset(window, None, ("wide-sort", 0usize)).abs() <= 1.5);
+            assert!((pinned_inset(window, None, ("wide-sort", 1usize)) - 200.).abs() <= 1.5);
+            // Each cell is drawn once, so its id finds one element.
+            assert!(inset(window, "Column 0 1").abs() <= 1.5);
+            assert!(inset(window, ("wide-sort", 0usize)).abs() <= 1.5);
+            // Back at the left edge, nothing pins.
+            scroll_right(window, -100., cx);
+            assert!(window.try_find(("wide-pinned", 1usize)).is_none());
+            assert!(window.try_find("wide-pinned-header").is_none());
+            assert!(inset(window, "Column 0 1").abs() <= 1.5);
+        })
+        .unwrap();
+    }
+
+    /// Pinned columns wider than two thirds of the table's visible width
+    /// scroll with the rest, so they never cover it; the group's label
+    /// still stays.
+    #[gpui_kit::test]
+    fn pinned_columns_too_wide_for_the_table_scroll(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, Wide::new(2, 4, true), 560.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            scroll_right(window, 500., cx);
+            assert!(inset(window, "wide-group").abs() <= 1.5);
+            assert!((inset(window, ("wide-pinned", 1usize)) + 499.).abs() <= 1.5);
+            assert!((inset(window, "Column 0 1") + 499.).abs() <= 1.5);
+            assert!((inset(window, ("wide-sort", 0usize)) + 500.).abs() <= 1.5);
+        })
+        .unwrap();
+    }
+
+    /// A page that keeps its table in a cached view, as the Resources pane
+    /// keeps its own.
+    struct CachedTable(Entity<Wide>);
+
+    impl Render for CachedTable {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            AnyView::from(self.0.clone()).cached(StyleRefinement::default().size_full())
+        }
+    }
+
+    /// The first sideways scroll from the left edge pins on the frame it
+    /// draws, inside a cached view too: the wheel notifies the table's view,
+    /// which marks the cached views around it dirty. The frames here are
+    /// the ones the app draws, through the caches, never `render_frame`.
+    #[gpui_kit::test]
+    fn the_first_scroll_pins_through_a_cached_view(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(900.), px(400.)), |window, cx| {
+                let wide = cx.new(|_| Wide::new(2, 4, true));
+                let page = cx.new(|_| CachedTable(wide));
+                Root::new(page, window, cx)
+            })
+            .into();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.try_find(("wide-pinned", 1usize)).is_none());
+            let position = window.find("wide-table-scroll").bounds().center();
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        // The update's end drew the window the wheel left dirty.
+        cx.update_window(handle, |_, window, cx| {
+            assert!(
+                (inset(window, "Column 4 1") - 700.).abs() <= 1.5,
+                "no scroll"
+            );
+            assert!(inset(window, "wide-group").abs() <= 1.5);
+            assert!(pinned_inset(window, Some(1), "Column 0 1").abs() <= 1.5);
+            assert!(pinned_inset(window, None, ("wide-sort", 0usize)).abs() <= 1.5);
+            // Nothing waits for a next frame, and the next one changes nothing.
+            assert_eq!(window.simulate_next_frame(cx), 0);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, _| {
+            assert!(pinned_inset(window, Some(1), "Column 0 1").abs() <= 1.5);
+        })
+        .unwrap();
+    }
+
+    /// A table without pinned columns still keeps its group labels in view,
+    /// and draws its rows as it always has.
+    #[gpui_kit::test]
+    fn without_pinned_columns_only_group_labels_stay(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, Wide::new(0, 4, true), 600.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            scroll_right(window, 500., cx);
+            assert!(inset(window, "wide-group").abs() <= 1.5);
+            assert!((inset(window, "Column 0 1") + 500.).abs() <= 1.5);
+            assert!(window.try_find(("wide-pinned", 1usize)).is_none());
+            assert!(window.try_find("wide-pinned-header").is_none());
+        })
+        .unwrap();
+    }
+
+    /// A click on a pinned cell selects its row, and stepping and revealing
+    /// the selection keep the sideways scroll and the pinned cells.
+    #[gpui_kit::test]
+    fn pinned_cells_click_and_step_like_their_rows(cx: &mut TestAppContext) {
+        let (handle, wide) = open(cx, Wide::new(2, 30, false), 900.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            scroll_right(window, 100., cx);
+            // The wheel's sideways delta also moves the list down a little,
+            // as GPUI scrolls a list without a sideways scroll of its own.
+            window
+                .within(("wide-pinned", 8usize))
+                .click("Column 0 8", cx);
+            assert_eq!(wide.read(cx).selected, Some(8));
+            for _ in 0..14 {
+                let next = step(wide.read(cx), 1, cx);
+                wide.update(cx, |wide, cx| {
+                    wide.selected = next;
+                    reveal(wide, ScrollStrategy::Top);
+                    cx.notify();
+                });
+            }
+            window.render_frame(cx);
+            assert_eq!(wide.read(cx).selected, Some(22));
+            assert!(window.find("wide-row-22").visible());
+            assert!(pinned_inset(window, Some(22), "Column 0 22").abs() <= 1.5);
+            assert!((inset(window, "Column 4 22") - 700.).abs() <= 1.5);
+        })
+        .unwrap();
+    }
+
+    /// A window grown wide enough for the whole table clamps the scroll to
+    /// its left edge without a scroll event; the pinned cells stay in their
+    /// place, and the table draws again unpinned without any input.
+    #[gpui_kit::test]
+    fn a_resize_that_ends_the_scroll_unpins_at_once(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, Wide::new(2, 4, true), 900.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            scroll_right(window, 100., cx);
+            assert!(window.find("wide-pinned-header").visible());
+        })
+        .unwrap();
+        cx.simulate_window_resize(handle, size(px(1400.), px(400.)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(inset(window, ("wide-sort", 0usize)).abs() <= 1.5);
+            let mut frames = 0;
+            while window.simulate_next_frame(cx) > 0 {
+                frames += 1;
+                assert!(frames < 4, "the table didn't settle");
+                window.render_frame(cx);
+            }
+            assert_eq!(frames, 1);
+            assert!(window.try_find("wide-pinned-header").is_none());
+            assert!(window.try_find(("wide-pinned", 1usize)).is_none());
+            assert!((inset(window, "Column 4 1") - 800.).abs() <= 1.5);
+            assert!(inset(window, "wide-group").abs() <= 1.5);
         })
         .unwrap();
     }
