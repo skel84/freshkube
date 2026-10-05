@@ -178,12 +178,10 @@ pub(super) fn example(source: &ScreenSource) -> Result<StorageData, String> {
             None,
         ));
     }
-    Ok(StorageData {
-        disks: Ok(disks),
-        volumes: if baremetal {
-            Err("Example: the volume status query timed out after 12 s".into())
-        } else {
-            Ok(volumes)
-        },
-    })
+    let volumes = if baremetal {
+        Err("Example: the volume status query timed out after 12 s".into())
+    } else {
+        Ok(volumes)
+    };
+    Ok(StorageData::new(Ok(disks), volumes))
 }

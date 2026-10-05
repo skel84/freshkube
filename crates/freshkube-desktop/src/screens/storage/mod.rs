@@ -23,14 +23,15 @@ use talos_rs::{
 use tokio::runtime::Handle;
 
 use super::{
-    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page_mode, header_mode, mono, panel, partial_notice, stat,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
+    gated_page_mode, header_mode, mono, panel, partial_notice, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::table;
+use source::{DiskRow, Listing, VolumeRow};
 
 const CONTEXT: &str = "TalosStorage";
-const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Below this content width the details pane moves under the list.
 const SIDE_DETAILS: f32 = 900.;
@@ -38,60 +39,6 @@ const LIST_MIN_HEIGHT: f32 = 200.;
 const DETAILS_HEIGHT: f32 = 220.;
 /// Each talosctl query gets this long before it counts as unavailable.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(12);
-
-const DISK_COLUMNS: [Column; 6] = [
-    Column {
-        label: "Device",
-        width: Some(120.),
-    },
-    Column {
-        label: "Size",
-        width: Some(90.),
-    },
-    Column {
-        label: "Type",
-        width: Some(80.),
-    },
-    Column {
-        label: "Transport",
-        width: Some(90.),
-    },
-    Column {
-        label: "Flags",
-        width: Some(90.),
-    },
-    Column {
-        label: "Model",
-        width: None,
-    },
-];
-
-const VOLUME_COLUMNS: [Column; 6] = [
-    Column {
-        label: "Volume",
-        width: Some(130.),
-    },
-    Column {
-        label: "Size",
-        width: Some(90.),
-    },
-    Column {
-        label: "Phase",
-        width: Some(90.),
-    },
-    Column {
-        label: "Filesystem",
-        width: Some(90.),
-    },
-    Column {
-        label: "Encryption",
-        width: Some(100.),
-    },
-    Column {
-        label: "Mount",
-        width: None,
-    },
-];
 
 actions!(
     talos_storage,
@@ -113,12 +60,31 @@ enum ViewMode {
     Volumes,
 }
 
-/// What the node reported. Each side is its own source: an `Err` is "unknown",
-/// not "no disks".
-#[derive(Clone, Debug)]
+/// What the node reported, with its rows and their columns derived when it
+/// arrives. Each side is its own source: an `Err` is "unknown", not "no disks".
+#[derive(Debug)]
 struct StorageData {
-    disks: Result<Vec<DiskInfo>, String>,
-    volumes: Result<Vec<VolumeStatus>, String>,
+    disks: Result<Listing<DiskRow>, String>,
+    volumes: Result<Listing<VolumeRow>, String>,
+    /// What each table says instead of rows: unknown, or none reported.
+    no_disks: Option<SharedString>,
+    no_volumes: Option<SharedString>,
+}
+
+impl StorageData {
+    fn new(
+        disks: Result<Vec<DiskInfo>, String>,
+        volumes: Result<Vec<VolumeStatus>, String>,
+    ) -> Self {
+        let no_disks = source::no_rows(&disks, "disks");
+        let no_volumes = source::no_rows(&volumes, "volumes");
+        Self {
+            disks: disks.map(source::disk_listing),
+            volumes: volumes.map(source::volume_listing),
+            no_disks,
+            no_volumes,
+        }
+    }
 }
 
 pub(crate) struct StorageScreen {
@@ -127,11 +93,13 @@ pub(crate) struct StorageScreen {
     source: Option<ScreenSource>,
     loader: Loader<StorageData>,
     mode: ViewMode,
-    selected_disk: Option<String>,
-    selected_volume: Option<String>,
+    /// The chosen rows by id; the first row stands in until one is chosen.
+    selected_disk: Option<SharedString>,
+    selected_volume: Option<SharedString>,
     focus: FocusHandle,
-    disk_scroll: UniformListScrollHandle,
-    volume_scroll: UniformListScrollHandle,
+    /// Each table keeps its own scroll, so switching back finds it as it was.
+    disk_table: table::TableState,
+    volume_table: table::TableState,
 }
 
 impl EventEmitter<ScreenEvent> for StorageScreen {}
@@ -160,8 +128,8 @@ impl ScreenPanel for StorageScreen {
             selected_disk: None,
             selected_volume: None,
             focus: cx.focus_handle(),
-            disk_scroll: UniformListScrollHandle::new(),
-            volume_scroll: UniformListScrollHandle::new(),
+            disk_table: table::TableState::new("storage-disks"),
+            volume_table: table::TableState::new("storage-volumes"),
         }
     }
 
@@ -279,7 +247,7 @@ async fn collect_storage(request: StorageRequest) -> Result<StorageData, String>
     let (disks, volumes) = tokio::join!(disks, volumes);
     match (&disks, &volumes) {
         (Err(disks), Err(volumes)) => Err(format!("Disks: {disks}. Volumes: {volumes}")),
-        _ => Ok(StorageData { disks, volumes }),
+        _ => Ok(StorageData::new(disks, volumes)),
     }
 }
 
@@ -289,9 +257,10 @@ fn is_loop(disk: &DiskInfo) -> bool {
     disk.dev_path.starts_with("/dev/loop")
 }
 
-/// Read-only worth noticing: a real disk that can't be written.
+/// Read-only worth noticing: a real disk that can't be written. A loop
+/// device or an optical drive is read-only by design.
 fn unexpected_read_only(disk: &DiskInfo) -> bool {
-    disk.readonly && !is_loop(disk)
+    disk.readonly && !is_loop(disk) && !disk.cdrom
 }
 
 fn disk_type(disk: &DiskInfo) -> &'static str {
@@ -332,61 +301,63 @@ fn flags(disk: &DiskInfo) -> String {
 }
 
 impl StorageScreen {
-    fn disks(&self) -> &[DiskInfo] {
+    fn disks(&self) -> &[DiskRow] {
         match self.loader.data().map(|data| &data.disks) {
-            Some(Ok(disks)) => disks,
+            Some(Ok(disks)) => &disks.rows,
             _ => &[],
         }
     }
 
-    fn volumes(&self) -> &[VolumeStatus] {
+    fn volumes(&self) -> &[VolumeRow] {
         match self.loader.data().map(|data| &data.volumes) {
-            Some(Ok(volumes)) => volumes,
+            Some(Ok(volumes)) => &volumes.rows,
             _ => &[],
         }
     }
 
-    /// The selected row, or the first one before anything was chosen (as the
-    /// TUI does). A selection whose item disappeared falls back the same way.
-    fn disk_index(&self) -> Option<usize> {
+    /// The selected disk's id, or the first one's before anything was chosen
+    /// (as the TUI does). A selection whose disk disappeared falls back the
+    /// same way.
+    fn disk_key(&self) -> Option<&SharedString> {
         let disks = self.disks();
-        let found = self
-            .selected_disk
-            .as_ref()
-            .and_then(|id| disks.iter().position(|disk| &disk.id == id));
-        found.or((!disks.is_empty()).then_some(0))
+        let chosen = self.selected_disk.as_ref();
+        chosen
+            .filter(|id| disks.iter().any(|disk| &disk.id == *id))
+            .or(disks.first().map(|disk| &disk.id))
     }
 
-    fn volume_index(&self) -> Option<usize> {
+    fn volume_key(&self) -> Option<&SharedString> {
         let volumes = self.volumes();
-        let found = self
-            .selected_volume
-            .as_ref()
-            .and_then(|id| volumes.iter().position(|volume| &volume.id == id));
-        found.or((!volumes.is_empty()).then_some(0))
+        let chosen = self.selected_volume.as_ref();
+        chosen
+            .filter(|id| volumes.iter().any(|volume| &volume.id == *id))
+            .or(volumes.first().map(|volume| &volume.id))
+    }
+
+    fn selected_disk_row(&self) -> Option<&DiskRow> {
+        let key = self.disk_key()?;
+        self.disks().iter().find(|disk| &disk.id == key)
+    }
+
+    fn selected_volume_row(&self) -> Option<&VolumeRow> {
+        let key = self.volume_key()?;
+        self.volumes().iter().find(|volume| &volume.id == key)
+    }
+
+    /// Chooses a row of the showing table by its id.
+    fn choose(&mut self, key: SharedString) {
+        match self.mode {
+            ViewMode::Disks => self.selected_disk = Some(key),
+            ViewMode::Volumes => self.selected_volume = Some(key),
+        }
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        match self.mode {
-            ViewMode::Disks => {
-                let (Some(current), len) = (self.disk_index(), self.disks().len()) else {
-                    return;
-                };
-                let next = current.saturating_add_signed(delta).min(len - 1);
-                self.selected_disk = Some(self.disks()[next].id.clone());
-                self.disk_scroll
-                    .scroll_to_item(next, ScrollStrategy::Nearest);
-            }
-            ViewMode::Volumes => {
-                let (Some(current), len) = (self.volume_index(), self.volumes().len()) else {
-                    return;
-                };
-                let next = current.saturating_add_signed(delta).min(len - 1);
-                self.selected_volume = Some(self.volumes()[next].id.clone());
-                self.volume_scroll
-                    .scroll_to_item(next, ScrollStrategy::Nearest);
-            }
-        }
+        let Some(key) = table::step(&*self, delta, cx) else {
+            return;
+        };
+        self.choose(key);
+        table::reveal(&*self, ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -397,6 +368,7 @@ impl StorageScreen {
 }
 
 mod example;
+mod source;
 mod view;
 
 use example::example;
