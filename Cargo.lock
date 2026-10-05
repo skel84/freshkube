@@ -2529,6 +2529,7 @@ dependencies = [
  "keyring",
  "kube",
  "libc",
+ "rustls",
  "serde",
  "serde_json",
  "serde_yaml",
