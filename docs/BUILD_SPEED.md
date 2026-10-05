@@ -34,6 +34,13 @@ unset and `CARGO_BUILD_JOBS=2`. The lead grants build slots. Timed commands star
 only below a one-minute load of 10. Profile comparisons need repeated alternating
 runs in one session; machine load and warm-up runs are recorded separately.
 
+The cold run started at 09:13 UTC with no other Cargo/rustc process. Another
+approved build later overlapped it. At approximately 09:42 UTC the lead reported
+stopping a Docker VM that had been consuming about four cores. Consequently this
+cold sample has changing contention; do not compare it with later quiet runs to
+claim an optimization. The load history and compiler-process samples are retained
+with the local measurement records.
+
 Nightly, sccache, nextest, cargo-llvm-lines, cargo-bloat and sold are not installed.
 No tool has been installed for this research. Stable Cargo's timing report
 separates compilation units; it does not prove a split between type checking,
@@ -165,6 +172,16 @@ clippy's metadata a substitute for linked test objects. It also adds another
 runner/cache setup. Treat that as a latency-versus-runner-cost experiment, not a
 way to share a single compilation; they already share the same `target/` in one
 job.
+
+The stress step's own logs split into 20.87–32.21 seconds of clippy and
+35.79–60 seconds of test compilation; its two tests run in 0.01 seconds in the
+sampled run. Moving both lint commands to a concurrent lint job could, in an
+ideal model with identical setup and cache behavior, remove 63–80 seconds from
+the test job's critical path (about 20–23% of these complete checks). This is a
+modeled ceiling, not a measured improvement. It increases runner work and cache
+traffic; preserve all checks, keep ordinary tests free of the stress feature,
+and keep an aggregate required-check result. Repeated workflow runs are needed
+to establish the actual benefit.
 
 ## Feature work today
 
