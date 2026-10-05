@@ -141,6 +141,8 @@ pub(crate) struct ObservabilityPage {
     thresholds: BTreeMap<(String, Report), String>,
     charts: [Chart; 3],
     focus: FocusHandle,
+    /// The Traces heatmap, a tab stop with its own keys.
+    heat_focus: FocusHandle,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -154,6 +156,7 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        traces::bind_heatmap_keys(cx);
         let url =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://coroot.example.com"));
         let secret = cx.new(|cx| InputState::new(window, cx).masked(true));
@@ -331,6 +334,7 @@ impl ObservabilityPage {
                 example::chart("CPU usage", "% of limit", 3, false, true),
             ],
             focus: cx.focus_handle().tab_stop(true),
+            heat_focus: cx.focus_handle().tab_stop(true),
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         };

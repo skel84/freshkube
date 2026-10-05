@@ -24,6 +24,40 @@ fn span_times_read_in_local_time() {
     assert!(traces.rows[0].label.contains("failed: HTTP 503"));
 }
 
+#[test]
+fn the_heatmap_cursor_stays_inside_a_rebuilt_grid() {
+    let tracing = |points: usize, rows: &[&str]| api::Tracing {
+        heatmap: Some(api::Heatmap {
+            from_ms: 0,
+            to_ms: points as i64 * 60_000,
+            step_ms: 60_000,
+            rows: rows
+                .iter()
+                .map(|name| api::HeatRow {
+                    name: name.to_string(),
+                    value: if *name == "errors" { "err" } else { "0.5" }.into(),
+                    points: vec![Some(1.); points],
+                })
+                .collect(),
+        }),
+        ..Default::default()
+    };
+    let mut traces = Traces::default();
+    traces.prepare_list(&tracing(40, &["5ms", "500ms", "errors"]));
+    traces.cursor = Some((2, 39));
+    // A refresh with a shorter window and fewer rows keeps the cursor inside it.
+    traces.prepare_list(&tracing(30, &["5ms", "errors"]));
+    assert_eq!(traces.cursor, Some((1, 29)));
+    // A new window keeps the cursor until its heatmap arrives.
+    traces.reset();
+    assert_eq!(traces.cursor, Some((1, 29)));
+    traces.prepare_list(&tracing(10, &["5ms", "errors"]));
+    assert_eq!(traces.cursor, Some((1, 9)));
+    // No heatmap, no cursor.
+    traces.prepare_list(&api::Tracing::default());
+    assert_eq!(traces.cursor, None);
+}
+
 mod ui_tests {
     use crate::observability::{Destination, ObservabilityPage, tests::mount_size};
     use freshkube_core::coroot::TraceSelection;

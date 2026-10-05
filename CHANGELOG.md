@@ -14,6 +14,8 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Coroot's markup no longer shows:** report titles and messages lose HTML tags such as `<var>` and decode entities, keeping a plain `<` or `>` in text such as "latency < 500ms".
 - **Traces is a table page like Pods:** example and live data now draw the same page. A filter over request name, service and trace id, the sources, All and Failed requests, Columns and the time range sit in the page header. Requests are one-line table rows with a status glyph, service, local start time and duration; a failed request's message is in its tooltip. The selected request's trace opens in a pane beside the list, or below it in a narrow window, and stays selected by trace and span when Coroot answers again. The heatmap's axis reads local time. The example-only error causes, Errors only, Clear selection and heatmap arrow keys are gone. Incident titles read as prose, and long text in both tables ends in "…" instead of clipping mid-word.
 
+- **The Traces heatmap has keys again:** Tab reaches it, the arrows, Home and End move a cursor without reading anything, and Enter or Space lists the cell under it; Escape leaves. The cursor is outlined more heavily than the selected cell and its bucket, time range and rate show above the grid. The heatmap stays drawn while Coroot answers, saying when it is reading, failed or absent.
+
 ### Other changes
 
 - **Nodes looks like Pods:** the same page header and table styling, with a text filter, source freshness, matching health glyph counts and problems first. Healthy rows fold while problems exist; comfortable/compact rows, a Columns menu and 12 px cards keep the retained node pane.

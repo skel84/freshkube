@@ -9,6 +9,7 @@ mod table;
 mod tests;
 mod waterfall;
 use super::tables::{PageColumn, TableKey};
+pub(super) use heat::bind_keys as bind_heatmap_keys;
 use heat::{Heat, heat};
 pub(super) use table::SpanCells;
 use waterfall::{Waterfall, waterfall};
@@ -20,6 +21,8 @@ pub(super) struct Traces {
     pub(super) selection: api::TraceSelection,
     /// The selected heatmap cell, in display rows and columns.
     cell: Option<(usize, usize)>,
+    /// The heatmap's keyboard cursor, which moves without reading.
+    cursor: Option<(usize, usize)>,
     /// The trace the waterfall shows.
     pub(super) trace: Option<String>,
     /// The listed span chosen, by trace and span id; its trace is `trace`.
@@ -60,12 +63,14 @@ struct SpanRow {
 
 impl Traces {
     /// A new application or window: start from its latest spans. The filter
-    /// stays, since its field still shows it.
+    /// stays, since its field still shows it, and so does the heatmap's
+    /// cursor, clamped when the new heatmap arrives.
     pub(super) fn reset(&mut self) {
         *self = Self {
             source: std::mem::take(&mut self.source),
             app: self.app.take(),
             query: std::mem::take(&mut self.query),
+            cursor: self.cursor.take(),
             ..Self::default()
         };
     }
@@ -88,6 +93,7 @@ impl Traces {
             .map(|s| (s.kind.clone(), s.name.clone(), s.selected))
             .collect();
         self.heat = tracing.heatmap.as_ref().map(heat);
+        self.clamp_cursor();
         self.rows = tracing.spans.iter().map(span_row).collect();
         self.limited = tracing.limited;
         self.count = match (self.rows.len(), tracing.limited) {
@@ -364,14 +370,14 @@ impl ObservabilityPage {
                 ))
                 .into_any_element();
         }
-        if !self.fixture && self.live.tracing.data().is_none() {
-            return page.into_any_element();
-        }
-        if !traces.note.is_empty() {
+        // The heatmap stays drawn while Coroot answers, so it keeps the keyboard.
+        let waiting = !self.fixture && self.live.tracing.data().is_none();
+        if !waiting && !traces.note.is_empty() {
             page = page.child(muted(traces.note.clone(), cx).whitespace_normal());
         }
-        if let Some(heat) = &traces.heat {
-            page = page.child(self.live_heatmap(heat, cx));
+        page = page.child(self.live_heatmap(window, cx));
+        if waiting {
+            return page.into_any_element();
         }
         let beside = view::beside(window);
         let table = self.render_trace_table(beside, window, cx);
