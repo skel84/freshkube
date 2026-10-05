@@ -278,8 +278,10 @@ impl PageHeader {
     /// The header measures its parts as it draws and keeps the widths under
     /// its prefix, so the page holds no state for it. When they call for
     /// another placement it draws again on the next frame; a resize or a new
-    /// text size measures again. The secondary row is `<prefix>-secondary`
-    /// and the controls' row `<prefix>-controls`.
+    /// text size measures again. The first frame a prefix draws puts the
+    /// controls on the title's row, until its parts have been measured. The
+    /// secondary row is `<prefix>-secondary` and the controls' row
+    /// `<prefix>-controls`.
     pub fn render_fit(self, window: &mut Window, cx: &mut App) -> Div {
         let fit = window.use_keyed_state(self.id("fit"), cx, |_, _| Rc::new(Fit::default()));
         let state = fit.read(cx).clone();
@@ -416,7 +418,8 @@ mod tests {
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
-        AppContext, Bounds, Context, IntoElement, Pixels, Render, TestAppContext, Window, px, size,
+        AnyWindowHandle, AppContext, Bounds, Context, IntoElement, Pixels, Render, TestAppContext,
+        Window, px, size,
     };
 
     use super::*;
@@ -538,7 +541,8 @@ mod tests {
         redraws: usize,
     }
 
-    fn place(cx: &mut TestAppContext, width: f32, text: f32) -> Placed {
+    /// The fitted header in a `width` × 560 window at `text` px.
+    fn open(cx: &mut TestAppContext, width: f32, text: f32) -> AnyWindowHandle {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -548,15 +552,22 @@ mod tests {
         });
         // As a page decides it: the content's width in dp.
         let narrow = width * crate::ui::BASE_TEXT / text < HEADER_NARROW;
-        let handle = cx.open_window(size(px(width), px(560.)), |window, cx| {
+        cx.open_window(size(px(width), px(560.)), |window, cx| {
             let view = cx.new(|_| Fitted { narrow });
             Root::new(view, window, cx)
-        });
+        })
+        .into()
+    }
+
+    /// Draws until the header asks for no more frames, then reads where its
+    /// parts are. Only `simulate_next_frame` stands in for the platform: no
+    /// input reaches the window.
+    fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle) -> Placed {
         let mut redraws = 0;
         for _ in 0..4 {
             cx.run_until_parked();
             let asked = cx
-                .update_window(handle.into(), |_, window, cx| {
+                .update_window(handle, |_, window, cx| {
                     window.render_frame(cx);
                     window.simulate_next_frame(cx)
                 })
@@ -566,7 +577,7 @@ mod tests {
             }
             redraws += asked;
         }
-        cx.update_window(handle.into(), |_, window, cx| {
+        cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             // Settled: drawing again asks for nothing more.
             assert_eq!(window.simulate_next_frame(cx), 0, "the header keeps moving");
@@ -579,6 +590,11 @@ mod tests {
             }
         })
         .unwrap()
+    }
+
+    fn place(cx: &mut TestAppContext, width: f32, text: f32) -> Placed {
+        let handle = open(cx, width, text);
+        settle(cx, handle)
     }
 
     #[test]
@@ -626,6 +642,26 @@ mod tests {
         assert!(placed.scope.top() >= placed.controls.bottom());
         // The first frame drew them beside the title; it asked for the next.
         assert_eq!(placed.redraws, 1);
+    }
+
+    #[gpui_kit::test]
+    fn a_new_text_size_moves_the_controls_and_back_without_input(cx: &mut TestAppContext) {
+        let handle = open(cx, 1280., crate::ui::BASE_TEXT);
+        let beside_title = settle(cx, handle);
+        assert!(beside_title.controls.top() < beside_title.title.bottom());
+        cx.update(|cx| crate::text_size::set(14., cx));
+        let after_categories = settle(cx, handle);
+        assert_eq!(after_categories.redraws, 1);
+        assert_eq!(
+            after_categories.controls.top(),
+            after_categories.categories.top()
+        );
+        assert_eq!(after_categories.controls.right(), px(1280.));
+        cx.update(|cx| crate::text_size::set(crate::ui::BASE_TEXT, cx));
+        let back = settle(cx, handle);
+        assert_eq!(back.redraws, 1);
+        assert!(back.controls.top() < back.title.bottom());
+        assert_eq!(back.controls.right(), px(1280.));
     }
 
     #[gpui_kit::test]
