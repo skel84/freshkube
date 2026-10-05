@@ -36,6 +36,11 @@ impl TableColumn for Column {
     fn flexible(&self) -> bool {
         self.field == Field::Name
     }
+
+    /// The glyph and the name stay in view when the table scrolls sideways.
+    fn pinned(&self) -> bool {
+        matches!(self.field, Field::Glyph | Field::Name)
+    }
 }
 
 impl Column {
