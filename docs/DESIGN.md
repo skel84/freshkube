@@ -164,4 +164,5 @@ Two checks keep pages on these components ([#48](https://github.com/skel84/fresh
 - Default row density; comfortable remains the initial value.
 - More causal grouping beyond pod state and NotReady nodes.
 - Fog light theme.
+- Whether a last-known problem keeps a muted rail dot. Today a card whose evidence is stale shows Unknown with "Last known ·" and leaves no dot, Kubernetes and Talos cards alike ([#65](https://github.com/skel84/freshkube/issues/65)).
 - Later Coroot destinations and a reviewed workflow for any fixes. The first live slice is read-only; [COROOT.md](COROOT.md) records its supported evidence and remaining API gaps.
