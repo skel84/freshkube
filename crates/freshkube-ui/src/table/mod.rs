@@ -11,6 +11,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Div, ElementId, FontWeight, Role, SharedString, Stateful, TestSupportExt, div,
+    px,
 };
 
 use crate::palette::palette;
@@ -30,6 +31,10 @@ pub const ROW_HEIGHT: f32 = 26.;
 pub const HEADER_HEIGHT: f32 = 26.;
 /// The hover group of a row, for cells that brighten with it.
 pub const ROW_GROUP: &str = "table-row";
+/// A cell's padding on either side, in dp.
+pub const CELL_PAD: f32 = 10.;
+/// The width of a row's glyph column, whose glyph sits at its centre.
+pub const GLYPH_WIDTH: f32 = 34.;
 
 /// What the table needs to know of a column.
 pub trait TableColumn {
@@ -47,12 +52,32 @@ pub trait TableColumn {
 
 /// A cell's frame: padded, truncated, at its column's width.
 pub fn cell(column: &impl TableColumn) -> Div {
-    let cell = div().px(dp(10.)).min_w_0().whitespace_nowrap().truncate();
+    let cell = div()
+        .px(dp(CELL_PAD))
+        .min_w_0()
+        .whitespace_nowrap()
+        .truncate();
     if column.flexible() {
         cell.flex_1().min_w(dp(column.width()))
     } else {
         cell.flex_none().w(dp(column.width()))
     }
+}
+
+/// A glyph column's cell: unpadded, its glyph (or a marked row's box)
+/// centred, so every page's glyphs sit on one line with their groups'.
+pub fn glyph_cell(column: &impl TableColumn) -> Div {
+    debug_assert_eq!(
+        column.width(),
+        GLYPH_WIDTH,
+        "a glyph column is GLYPH_WIDTH wide"
+    );
+    cell(column)
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px_0()
 }
 
 /// A group's header row: its glyph and label, an optional subject such as
@@ -110,6 +135,10 @@ impl GroupRow {
             _ => p.muted,
         };
         let detail = self.detail.join(" · ");
+        let glyph = glyph_slot(self.tone, cx)
+            .id((self.id.clone(), "glyph"))
+            .test_support();
+        let label = (self.id.clone(), "label");
         h_flex()
             .id(self.id)
             .test_support()
@@ -117,15 +146,17 @@ impl GroupRow {
             .aria_label(format!("{} · {detail}", self.label))
             .w_full()
             .h(dp(self.height))
-            .px_3()
-            .gap(dp(10.))
+            .pr_3()
+            .gap(dp(CELL_PAD))
             .bg(p.track.opacity(0.45))
             .border_b_1()
             .border_color(p.line)
             .text_size(dp(12.))
-            .children(ui::status_glyph(self.tone, cx))
+            .child(glyph)
             .child(
                 div()
+                    .id(label)
+                    .test_support()
                     .flex_none()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(color)
@@ -145,6 +176,22 @@ impl GroupRow {
             )
             .child(h_flex().flex_none().gap_1().children(self.actions))
     }
+}
+
+/// A line's leading glyph in a slot where a row's glyph column sits:
+/// inside the row's 1 px border, [`GLYPH_WIDTH`] wide, the glyph centred.
+/// A line with no border of its own and no left padding, as a group row
+/// is, starts with it; with a [`CELL_PAD`] gap after it, its text then
+/// starts where the next column's does.
+pub fn glyph_slot(tone: Tone, cx: &App) -> Div {
+    div()
+        .flex_none()
+        .ml(px(1.))
+        .w(dp(GLYPH_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center()
+        .children(ui::status_glyph(tone, cx))
 }
 
 /// The frame of a bar above the rows.

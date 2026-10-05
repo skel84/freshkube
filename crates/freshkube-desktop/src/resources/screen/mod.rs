@@ -37,7 +37,7 @@ use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
-use crate::screens::{SCREEN_DEADLINE, content_width, mono};
+use crate::screens::{SCREEN_DEADLINE, inset_width, page_width};
 use crate::ui::{self, clock, dp, dp_px};
 use freshkube_ui::{page, table};
 use layout::TableLayout;
@@ -56,10 +56,7 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 /// most ten times a second instead of once per batch core sends.
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
 /// The namespace picker's width in the toolbar.
-const NAMESPACE_WIDTH: f32 = 200.;
-/// The narrowest one-row toolbar without the namespace picker: the
-/// filter at its narrowest, the Refresh button and the gap between them.
-const CONTROLS_MIN_WIDTH: f32 = 120. + 8. + 96.;
+const NAMESPACE_WIDTH: f32 = 132.;
 /// The table's header and a couple of rows.
 const LIST_MIN_HEIGHT: f32 = 96.;
 /// Below this content width the detail pane stacks under the list.

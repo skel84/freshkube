@@ -369,7 +369,11 @@ impl EtcdScreen {
                     .flex_wrap()
                     .child(ui::tag(quorum.tone, None, quorum.label, cx))
                     .child(
+                        // Shrinks to wrap its text on a narrow page.
                         div()
+                            .id("etcd-quorum-detail")
+                            .test_support()
+                            .min_w_0()
                             .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(quorum.detail),
@@ -1014,6 +1018,14 @@ mod ui_tests {
         cx: &mut TestAppContext,
         node: &str,
     ) -> (Runtime, Entity<EtcdScreen>, WindowHandle<Root>) {
+        mount_sized(cx, node, 1100.)
+    }
+
+    fn mount_sized(
+        cx: &mut TestAppContext,
+        node: &str,
+        width: f32,
+    ) -> (Runtime, Entity<EtcdScreen>, WindowHandle<Root>) {
         let runtime = Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -1025,7 +1037,7 @@ mod ui_tests {
         });
         let source = source(node);
         let mut screen = None;
-        let handle = cx.open_window(size(px(1100.), px(760.)), |window, cx| {
+        let handle = cx.open_window(size(px(width), px(760.)), |window, cx| {
             let view = cx.new(|cx| {
                 let mut view = EtcdScreen::new(runtime.handle().clone(), window, cx);
                 view.set_source(Some(source), window, cx);
@@ -1063,6 +1075,17 @@ mod ui_tests {
             errors: Vec::new(),
             is_learner: false,
         }
+    }
+
+    #[gpui_kit::test]
+    fn the_quorum_detail_wraps_inside_a_narrow_page(cx: &mut TestAppContext) {
+        let (_runtime, _screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 360.);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let detail = window.find("etcd-quorum-detail").bounds();
+            assert!(detail.right() <= px(360.), "{detail:?} leaves the page");
+        })
+        .unwrap();
     }
 
     #[gpui_kit::test]

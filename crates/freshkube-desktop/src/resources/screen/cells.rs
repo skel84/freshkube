@@ -13,6 +13,7 @@ use super::super::rows::{PodRow, PodState, RowOwner, died};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
+use crate::presentation::whole_percent;
 use freshkube_ui::table::ROW_GROUP;
 pub(super) use freshkube_ui::table::cell;
 
@@ -72,12 +73,7 @@ pub(super) fn glyph(
     cx: &App,
 ) -> AnyElement {
     let p = palette(cx);
-    let cell = cell(column)
-        .id("glyph")
-        .flex()
-        .items_center()
-        .justify_center()
-        .px_0();
+    let cell = freshkube_ui::table::glyph_cell(column).id("glyph");
     if marked {
         return cell
             .child(
@@ -373,7 +369,7 @@ pub(super) fn usage(
     let text = |amount: Option<f64>| amount.map_or("none".to_owned(), |v| resource.format(v));
     let percent = limit
         .filter(|v| *v > 0.)
-        .map(|v| format!(" · {:.0}% of limit", value / v * 100.))
+        .map(|v| format!(" · {}% of limit", whole_percent(value / v * 100.)))
         .unwrap_or_default();
     let requested = match (request, limit.filter(|v| *v > 0.)) {
         (Some(request), Some(limit)) => format!(

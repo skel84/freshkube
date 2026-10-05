@@ -1,6 +1,6 @@
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, size};
+use gpui_kit::{AnyWindowHandle, AppContext, Bounds, Entity, Pixels, TestAppContext, px, size};
 use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -114,10 +114,14 @@ fn header_controls_fit_beside_the_title_or_stack_on_a_narrow_page(cx: &mut TestA
             }
             assert!(title.right() <= filter.left());
             assert!(namespace.right() <= refresh.left());
-            assert_eq!(namespace.center().y, refresh.center().y);
+            // Centred on one line, to layout's rounding.
+            let level = |a: Bounds<Pixels>, b: Bounds<Pixels>| {
+                (a.center().y - b.center().y).abs() < px(0.5)
+            };
+            assert!(level(namespace, refresh), "{namespace:?} {refresh:?}");
             assert!(filter.size.width >= px(120.), "{width}: {filter:?}");
             if beside_title {
-                assert_eq!(namespace.center().y, filter.center().y);
+                assert!(level(namespace, filter), "{namespace:?} {filter:?}");
                 assert!(filter.right() <= namespace.left());
             } else {
                 assert!(namespace.top() > filter.bottom(), "{namespace:?}");

@@ -217,7 +217,7 @@ pub(crate) fn render_forward(
         .gap_1()
         .px_2()
         .py_1p5()
-        .rounded(px(6.))
+        .rounded(px(8.))
         .border_1()
         .border_color(p.line)
         .when(!running, |this| this.opacity(0.7))

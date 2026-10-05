@@ -36,6 +36,25 @@ pub fn page_title(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// Weight of a toolbar's label, the page title on a page with a toolbar.
+pub const LABEL_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
+/// The height of a control in a toolbar: a button, field, select or segment.
+/// Kit's small controls are 1.5 rem, 19.5 at 13 px, so a caller sizes each
+/// one with `.h(dp(CONTROL_HEIGHT))`, or `.size(…)` for an icon button.
+pub const CONTROL_HEIGHT: f32 = 24.;
+
+/// A toolbar's leading label: the page's title, 13 semibold in `ink`.
+pub fn toolbar_label(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .flex_none()
+        .text_size(dp(13.))
+        .line_height(dp(18.))
+        .font_weight(LABEL_WEIGHT)
+        .text_color(palette(cx).ink)
+        .whitespace_nowrap()
+        .child(text.into())
+}
+
 /// A quiet cross-reference. Dots are quads so a table adds no separate
 /// full-window path pass for each underline.
 pub fn reference(text: impl Into<SharedString>, p: &crate::palette::Palette) -> Div {

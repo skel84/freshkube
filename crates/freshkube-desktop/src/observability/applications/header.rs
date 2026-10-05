@@ -15,6 +15,7 @@ impl ObservabilityPage {
             .small()
             .children([Filter::Problems, Filter::All].into_iter().map(|filter| {
                 Button::new(SharedString::from(format!("obs-filter-{}", filter.slug())))
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label(filter.label())
                     .selected(self.filter == filter)
             }))
@@ -69,6 +70,7 @@ impl ObservabilityPage {
             .flex_wrap()
             .children(self.categories.iter().take(6).map(|category| {
                 Button::new(category.id.clone())
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label(category.name.clone())
                     .selected(
                         self.all_categories || self.active_categories.contains(&category.name),
@@ -97,6 +99,7 @@ impl ObservabilityPage {
             Input::new(&self.query)
                 .id(header.id("filter"))
                 .small()
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .cleanable(true)
                 .aria_label("Filter applications by name, namespace or type")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -138,6 +141,7 @@ impl ObservabilityPage {
         Select::new(&self.namespace_select)
             .id("obs-namespace")
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .w(dp(132.))
             .menu_width(dp(260.))
             .search_placeholder("Find a namespace")
@@ -176,6 +180,7 @@ impl ObservabilityPage {
         Button::new("obs-columns")
             .outline()
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {
@@ -213,6 +218,7 @@ impl ObservabilityPage {
         Button::new("obs-more-categories")
             .ghost()
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("More categories")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {

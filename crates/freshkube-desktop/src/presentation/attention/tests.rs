@@ -215,7 +215,8 @@ fn a_responding_nodes_memory_follows_the_memory_level() {
         );
         if tone.is_some() {
             assert_eq!(attention.total, 1);
-            let percent = used.div_ceil(10);
+            // Rounded down, so 94.9 % on a Warn row never reads as 95.
+            let percent = used / 10;
             assert_eq!(attention.rows[0].reason, format!("Memory at {percent} %"));
         }
     }

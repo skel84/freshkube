@@ -786,11 +786,13 @@ fn health_tone(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static st
     }
 }
 
-fn presence(value: Option<bool>) -> &'static str {
+/// A roster's glyph: listed is good, missing is worth a look rather than a
+/// failure, and an unread roster is unknown.
+fn presence(value: Option<bool>) -> Tone {
     match value {
-        Some(true) => "✓",
-        Some(false) => "✗",
-        None => "?",
+        Some(true) => Tone::Good,
+        Some(false) => Tone::Warn,
+        None => Tone::Unknown,
     }
 }
 

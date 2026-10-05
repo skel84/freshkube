@@ -66,7 +66,7 @@ pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
         width,
     };
     let columns = vec![
-        column(Field::Glyph, "", 34.),
+        column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
             Field::Node,
             "Node",
@@ -155,9 +155,7 @@ impl TableSource for SystemServices {
         let row = line.data;
         let cell = table::cell(column);
         match column.field {
-            Field::Glyph => cell
-                .flex()
-                .items_center()
+            Field::Glyph => table::glyph_cell(column)
                 .child(ui::health_mark(
                     SharedString::from(format!("{}-health", row.id)),
                     row.health,

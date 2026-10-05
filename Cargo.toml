@@ -93,6 +93,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "Native desktop app for Talos Linux and Kubernetes clusters"
 
+[features]
+# A downloaded debug binary cannot read GPUI Kit's icons from the CI runner.
+capture-embed = ["dep:rust-embed"]
+
 [dependencies]
 freshkube-desktop.workspace = true
 clap.workspace = true
@@ -100,6 +104,8 @@ tokio.workspace = true
 color-eyre.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Match gpui-kit-assets' resolved version so debug-embed unifies with its assets.
+rust-embed = { version = "=8.12.0", optional = true, features = ["debug-embed"] }
 
 # Keep source-line backtraces in development, matching CI.
 [profile.dev]

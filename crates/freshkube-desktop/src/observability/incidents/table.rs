@@ -64,6 +64,7 @@ impl ObservabilityPage {
             Input::new(&self.incident_query)
                 .id(header.id("filter"))
                 .small()
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .cleanable(true)
                 .aria_label("Filter incidents by key, title or application")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -113,6 +114,7 @@ impl ObservabilityPage {
         Button::new("obs-columns")
             .outline()
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {
@@ -181,7 +183,7 @@ impl ObservabilityPage {
                     kind,
                     label: label(kind).into(),
                     width: match kind {
-                        ColumnKind::Glyph => 34.,
+                        ColumnKind::Glyph => table::GLYPH_WIDTH,
                         ColumnKind::Title => 120.,
                         ColumnKind::App => measured.clamp(96., 240.),
                         _ => measured.max(56.),
@@ -266,7 +268,9 @@ impl ObservabilityPage {
                 .child(text(value.clone()).truncate())
         };
         match column.kind {
-            ColumnKind::Glyph => cell.children(ui::status_glyph(row.severity.tone(), cx)),
+            ColumnKind::Glyph => {
+                table::glyph_cell(column).children(ui::status_glyph(row.severity.tone(), cx))
+            }
             ColumnKind::Key => cell
                 .font_family(MONO_FONT)
                 .text_size(dp(12.5))
