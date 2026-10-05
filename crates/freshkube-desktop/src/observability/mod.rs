@@ -81,6 +81,7 @@ pub(crate) struct ObservabilityPage {
     matrix: Vec<MatrixRow>,
     application_table: freshkube_ui::table::TableState,
     application_columns: Vec<application_columns::ApplicationColumn>,
+    application_metrics: application_columns::ApplicationMetrics,
     hidden_application_columns: std::collections::BTreeSet<application_columns::ColumnKind>,
     application_width: f32,
     counts: [usize; 7],
@@ -175,6 +176,12 @@ impl ObservabilityPage {
                 .searchable(true)
         });
         let subscriptions = vec![
+            cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
+                if this.application_metrics.sync(cx) {
+                    this.prepare_application_columns();
+                    cx.notify();
+                }
+            }),
             cx.subscribe(
                 &namespace_select,
                 |this,
@@ -253,6 +260,7 @@ impl ObservabilityPage {
             matrix: vec![],
             application_table: freshkube_ui::table::TableState::new("obs-applications"),
             application_columns: vec![],
+            application_metrics: application_columns::ApplicationMetrics::new(window, cx),
             hidden_application_columns: Default::default(),
             application_width: 0.,
             counts: [0; 7],

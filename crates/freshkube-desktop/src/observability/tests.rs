@@ -1159,24 +1159,143 @@ fn filtering_applications_resets_the_uniform_list_to_the_first_row(cx: &mut Test
     .unwrap();
 }
 
+/// Measure independently from the cached column builder, in physical pixels.
+fn shaped_width(
+    window: &gpui_kit::Window,
+    value: &str,
+    face: gpui_kit::Font,
+    size: f32,
+) -> gpui_kit::Pixels {
+    let run = gpui_kit::TextRun {
+        len: value.len(),
+        font: face,
+        color: Default::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(value.to_owned().into(), px(size), &[run], None)
+        .width
+}
+
 #[gpui_kit::test]
-fn default_applications_columns_fit_the_1280_page_and_keep_reports_clickable(
+fn application_captions_and_problem_values_fit_their_cells_after_text_size_changes(
     cx: &mut TestAppContext,
 ) {
+    use super::application_columns::ColumnKind;
+    use freshkube_ui::table::TableColumn;
     let (_runtime, handle, page) = mount_size(cx, true, 1280., 880.);
+    for base in [13., 14., 20., 13.] {
+        cx.update(|cx| crate::text_size::set(base, cx));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let scale = base / crate::ui::BASE_TEXT;
+            let mut face = gpui_kit::font(Theme::global(cx).font_family.clone());
+            face.weight = crate::ui::HEADING_WEIGHT;
+            for (ix, column) in page.read(cx).application_columns.iter().enumerate() {
+                if column.label().is_empty() {
+                    continue;
+                }
+                let header =
+                    window.find((gpui_kit::SharedString::from("obs-applications-sort"), ix));
+                let caption = shaped_width(
+                    window,
+                    &column.label().to_uppercase(),
+                    face.clone(),
+                    11. * scale,
+                );
+                assert!(
+                    header.bounds().size.width >= caption + px(19.5 * scale),
+                    "{} caption must fit at {base}: {:?}, text {caption:?}",
+                    column.label(),
+                    header.bounds()
+                );
+                if let ColumnKind::Report(report) = column.kind {
+                    for app in &page.read(cx).applications {
+                        let check = app.check(report);
+                        if let Some(button) = window.try_find(check.element_id.clone()) {
+                            let value = shaped_width(
+                                window,
+                                &check.value,
+                                gpui_kit::font(crate::ui::MONO_FONT),
+                                12. * scale,
+                            );
+                            let glyph = if check.status.report_tone().is_some() {
+                                px(14. * scale)
+                            } else {
+                                px(0.)
+                            };
+                            assert!(
+                                button.bounds().size.width >= value + glyph,
+                                "{} {} must fit at {base}: {:?}, text {value:?}, glyph {glyph:?}",
+                                app.name,
+                                report.label(),
+                                button.bounds()
+                            );
+                        }
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn applications_sideways_scroll_reaches_the_last_report_and_opens_it(cx: &mut TestAppContext) {
+    // This harness mounts only the page: subtract the shell's rail and column
+    // to give its table the same viewport as the real 1280-wide desktop.
+    let width = 1280. - crate::desktop::RAIL_WIDTH - crate::desktop::COLUMN_WIDTH;
+    let (_runtime, handle, page) = mount_size(cx, true, width, 880.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        let card = window.find("obs-applications-table-scroll").bounds();
         assert!(
-            page.read(cx).application_width <= crate::screens::content_width(window),
-            "minimum columns {} must fit content {}",
-            page.read(cx).application_width,
-            crate::screens::content_width(window)
+            window
+                .find("obs-check-fixture:payments:Deployment:worker-logs")
+                .bounds()
+                .right()
+                > card.right(),
+            "the last report must begin clipped, so the scroll proves reachability"
         );
-        window.click("obs-check-fixture:payments:Deployment:worker-net", cx);
+        window.scroll(
+            "obs-applications-table-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-2000.), px(0.))),
+            cx,
+        );
+        let report = window.find("obs-check-fixture:payments:Deployment:worker-logs");
+        let card = window.find("obs-applications-table-scroll").bounds();
+        assert!(report.visible());
+        assert!(report.bounds().left() >= card.left() && report.bounds().right() <= card.right());
+        window.click("obs-check-fixture:payments:Deployment:worker-logs", cx);
         assert_eq!(page.read(cx).destination, Destination::Application);
-        assert_eq!(page.read(cx).report, Report::Net);
+        assert_eq!(page.read(cx).report, Report::Logs);
     })
     .unwrap();
+}
+
+#[test]
+fn upstream_count_preserves_failing_names_and_state_in_its_details() {
+    use freshkube_core::coroot as api;
+    let mut raw = example::applications();
+    raw[0].signals.insert(
+        "upstreams".into(),
+        api::Signal {
+            status: api::Status::Critical,
+            value: "worker, ledger-db".into(),
+        },
+    );
+    let applications = super::projection::applications(&raw);
+    let app = applications.iter().find(|app| app.id == raw[0].id).unwrap();
+    let check = app.check(Report::Upstreams);
+    assert_eq!(check.value.as_ref(), "2");
+    assert!(check.tooltip.contains("worker, ledger-db"));
+    assert!(check.tooltip.contains("Critical"));
+    assert!(check.label.contains("worker, ledger-db"));
+    assert!(check.label.contains("critical"));
 }
 
 #[gpui_kit::test]

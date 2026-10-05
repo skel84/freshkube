@@ -88,13 +88,7 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
                 let signal = app.signals.get(report.signal());
                 let state = signal.map_or(Status::Absent, |signal| signal.status.into());
                 let raw_value = signal.map_or("", |s| s.value.as_str());
-                let value: String = match state {
-                    Status::Absent => "—".into(),
-                    Status::Ok if raw_value.is_empty() => "ok".into(),
-                    Status::Info if raw_value.is_empty() => "info".into(),
-                    _ if raw_value.chars().count() > 24 => state.label().into(),
-                    _ => raw_value.to_owned(),
-                };
+                let value = compact_signal(report, state, raw_value);
                 Check {
                     status: state,
                     tooltip: format!(
@@ -145,6 +139,63 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
             .then(a.id.cmp(&b.id))
     });
     values
+}
+
+/// Coroot's original text remains in the tooltip and accessibility label.
+/// Only the table's display value is compacted, when observations arrive.
+fn compact_signal(report: Report, state: Status, raw: &str) -> String {
+    match state {
+        Status::Absent => return "—".into(),
+        Status::Ok if raw.is_empty() => return "ok".into(),
+        Status::Info if raw.is_empty() => return "info".into(),
+        _ => {}
+    }
+    let raw = raw.trim();
+    if report == Report::Upstreams && matches!(state, Status::Critical | Status::Warning) {
+        // A numeric upstream value is already a count. Otherwise Coroot's
+        // value names the failing upstreams; retain those names in the detail.
+        if let Ok(count) = raw.parse::<u64>() {
+            return count.to_string();
+        }
+        if let Some((count, label)) = raw.split_once(char::is_whitespace)
+            && matches!(
+                label.trim(),
+                "upstreams" | "failed upstreams" | "failing upstreams"
+            )
+            && let Ok(count) = count.parse::<u64>()
+        {
+            return count.to_string();
+        }
+        if !raw.is_empty() {
+            return raw
+                .split([',', ';', '\n'])
+                .filter(|name| !name.trim().is_empty())
+                .count()
+                .to_string();
+        }
+    }
+    // Coroot supplies human-readable values. Remove whitespace around known
+    // units and count labels without discarding an unrecognised qualifier.
+    if let Some((number, unit)) = raw.split_once(char::is_whitespace)
+        && number.parse::<f64>().is_ok_and(f64::is_finite)
+    {
+        let unit = match unit.trim() {
+            "percent" | "%" => Some("%"),
+            "ms" | "s" | "µs" | "ns" | "B" | "KB" | "MB" | "GB" | "KiB" | "MiB" | "GiB" | "B/s" => {
+                Some(unit.trim())
+            }
+            "restarts" | "restart" | "errors" | "error" | "logs" | "instances" => Some(""),
+            _ => None,
+        };
+        if let Some(unit) = unit {
+            return format!("{number}{unit}");
+        }
+    }
+    if raw.chars().count() > 24 || raw.contains(['\n', '\r']) {
+        state.label().into()
+    } else {
+        raw.into()
+    }
 }
 
 pub(super) fn map(
@@ -343,4 +394,32 @@ impl ObservabilityPage {
 
 fn app_count(count: usize) -> String {
     format!("{count} {}", if count == 1 { "app" } else { "apps" })
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::{Report, Status, compact_signal};
+
+    #[test]
+    fn compact_values_keep_units_and_count_failing_upstreams() {
+        for (report, raw, expected) in [
+            (Report::Errors, "2.1 percent", "2.1%"),
+            (Report::Latency, "340 ms", "340ms"),
+            (Report::Restarts, "14 restarts", "14"),
+            (Report::Instances, "0/1", "0/1"),
+            (Report::Logs, "1.9k", "1.9k"),
+            (Report::Upstreams, "worker, ledger-db", "2"),
+            (Report::Upstreams, "ledger-db", "1"),
+            (Report::Upstreams, "14", "14"),
+            (Report::Upstreams, "14 failing upstreams", "14"),
+        ] {
+            assert_eq!(compact_signal(report, Status::Critical, raw), expected);
+        }
+        assert_eq!(
+            compact_signal(Report::Upstreams, Status::Unknown, "required"),
+            "required"
+        );
+        assert_eq!(compact_signal(Report::Errors, Status::Ok, ""), "ok");
+        assert_eq!(compact_signal(Report::Errors, Status::Absent, ""), "—");
+    }
 }
