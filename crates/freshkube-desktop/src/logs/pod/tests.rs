@@ -5,7 +5,7 @@ use tokio::runtime::Runtime;
 
 use freshkube_core::resources::{ContainerRole, PodContainers};
 
-use super::{EXAMPLE_INTERVAL, PodLogPanel, PodLogView, StreamState};
+use super::{EXAMPLE_INTERVAL, PodLogPanel, PodLogView, Stream, StreamState};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example, live};
 
