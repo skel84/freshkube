@@ -3,6 +3,7 @@ use super::*;
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
+        let _span = crate::perf::span("shell.render");
         self.layout_chrome(window);
         let page = match self.page {
             Page::Observability => self

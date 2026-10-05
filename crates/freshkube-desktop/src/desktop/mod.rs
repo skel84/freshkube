@@ -258,6 +258,11 @@ struct PageHost {
 impl Render for PageHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit(self.page.slug());
+        let _span = crate::perf::span(match self.page {
+            Page::Overview => "overview.render",
+            Page::Nodes => "nodes.render",
+            _ => "services.render",
+        });
         let page = self.page;
         self.pilot
             .update(cx, |pilot, cx| match page {

@@ -783,6 +783,7 @@ impl ResourcesScreen {
         if !stored {
             return;
         }
+        crate::perf::value("table.rows", self.store.entries().len() as f64);
         if served && let ReadState::Missing(_) = self.store.read_state() {
             // Nothing of the kind can be shown any more.
             self.close_detail(cx);

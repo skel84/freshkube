@@ -44,7 +44,10 @@ The `stress` feature turns on spans around the work that matters (`freshkube_pro
 | `main.stall` | how late a 4 ms timer on the main thread fires: time the thread spent on something else. Its total is roughly how long the thread was busy |
 | `table.apply` | one watch batch on the Resources page: `table.store` (the store), `table.rebuild` (filter and sort) and, after a list, `table.layout` (column widths) |
 | `table.batch` | events in a watch batch |
+| `table.rows` | retained Table rows after a batch; 20,000 marks the complete first list in the combined workload |
+| `table.filter`, `table.sort`, `table.group` | the separate phases inside `table.rebuild`, including allocations and group tallies |
 | `table.render`, `logs.render` | building the view's element tree; GPUI's layout and paint come after and show only in `main.stall` |
+| `shell.render`, `overview.render`, `nodes.render`, `services.render` | shell and cached page element-tree construction; span counts also show how often each renders |
 | `logs.apply`, `logs.batch` | appending a batch of log lines, and its size |
 | `logs.lag` | how far behind its due time the newest line of a batch is when it is appended |
 | `logs.measure`, `logs.measure_row` | laying out log rows for their heights, per frame and per row |
@@ -54,6 +57,7 @@ The `stress` feature turns on spans around the work that matters (`freshkube_pro
 | `terminal.paint` | painting the grid; its count a second is the frame rate |
 | `monitoring.page_render`, `monitoring.panel_render`, `monitoring.plot_paint`, `monitoring.cursor` | building the Monitoring page's tree, building a dashboard panel's tree, painting a timeseries' paths, and placing the crosshairs one chart's cursor puts on the others |
 | `summary.tokio`, `summary.apply` | deriving compact reflector evidence on Tokio, then applying prepared display data on GPUI; before the watch migration, `summary.tokio` also included API collection |
+| `summary.health`, `summary.joined_nodes`, `summary.resource_nodes`, `summary.context`, `summary.lifecycle` | the consumers inside `summary.apply`: Health rows; joined Nodes, Overview and Attention; Resources node metadata; context labels; Lifecycle's Node subscription |
 | `summary.lag` | first dirty-store notification to GPUI apply, including the 500 ms debounce; excludes network and producer backlog |
 | `summary.live_sources` | synchronized and current summary collections, from zero through nine; the first nine marks completed initial synchronization |
 | `summary.retained_mib`, `summary.staging_peak_mib`, `summary.bytes_per_pod` | retained payload and maximum staging payload in MiB, and mean retained Pod payload bytes; excludes map/Arc/allocator overhead |

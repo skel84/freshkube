@@ -307,11 +307,26 @@ impl Pilot {
         self.kubernetes_summary
             .apply(&request, Ok(publication.summary.clone()));
         self.summary_health = Some(health.clone());
-        self.deliver_workloads(health, cx);
-        self.rebuild_joined_nodes();
-        self.push_node_rows(cx);
-        self.prepare_context_display(window, cx);
-        self.deliver_summary_nodes(cx);
+        {
+            let _span = crate::perf::span("summary.health");
+            self.deliver_workloads(health, cx);
+        }
+        {
+            let _span = crate::perf::span("summary.joined_nodes");
+            self.rebuild_joined_nodes();
+        }
+        {
+            let _span = crate::perf::span("summary.resource_nodes");
+            self.push_node_rows(cx);
+        }
+        {
+            let _span = crate::perf::span("summary.context");
+            self.prepare_context_display(window, cx);
+        }
+        {
+            let _span = crate::perf::span("summary.lifecycle");
+            self.deliver_summary_nodes(cx);
+        }
         cx.notify();
     }
 }

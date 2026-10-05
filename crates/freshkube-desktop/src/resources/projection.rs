@@ -339,9 +339,11 @@ impl ResourceProjection {
     /// current revision. A selection that is no longer visible is cleared,
     /// never moved to whatever now occupies its old position.
     pub(crate) fn rebuild(&mut self, store: &ResourceStore) {
+        crate::desktop::probe::hit("table.rebuild");
         let _span = crate::perf::span("table.rebuild");
         let entries = store.entries();
         let query = self.query.as_str();
+        let filter_span = crate::perf::span("table.filter");
         self.visible.clear();
         self.visible.extend(
             entries
@@ -350,6 +352,8 @@ impl ResourceProjection {
                 .filter(|(_, entry)| query.is_empty() || entry.search_key().contains(query))
                 .map(|(slot, _)| slot),
         );
+        drop(filter_span);
+        let sort_span = crate::perf::span("table.sort");
         match self.direction {
             SortDirection::Default => self
                 .visible
@@ -372,6 +376,7 @@ impl ResourceProjection {
                 });
             }
         }
+        drop(sort_span);
         self.group(store);
         self.selected_ix = self
             .selected
@@ -389,6 +394,7 @@ impl ResourceProjection {
     /// Orders the sorted rows by cause, keeping the sort within each, and
     /// leaves out the healthy ones while they are collapsed.
     fn group(&mut self, store: &ResourceStore) {
+        let _span = crate::perf::span("table.group");
         self.groups.clear();
         self.items.clear();
         self.tally = Tally::default();
