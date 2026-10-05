@@ -208,7 +208,7 @@ impl<S: LogSource> LogView<S> {
 
     fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
         let p = palette(cx);
-        let counts = self.review.level_counts(&self.showing);
+        let counts = self.review.level_counts();
         h_flex().gap_1().flex_wrap().children(
             [
                 ("error", "Error", LogLevel::Error, Some(p.accent)),

@@ -31,6 +31,11 @@ impl<S: LogSource> LogView<S> {
         self.review.id(ix)
     }
 
+    /// The level chips' counts: Error, Warn, Info, Debug, Unknown.
+    pub fn level_counts(&self) -> [usize; 5] {
+        self.review.level_counts()
+    }
+
     pub fn following(&self) -> bool {
         self.following
     }
