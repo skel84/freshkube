@@ -1,1 +1,0 @@
-- **Capture builds:** requesting another CI debug binary on main lets the running build finish, preserving its artifact and cache; newer PR heads still replace their previous capture builds.

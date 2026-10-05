@@ -1,1 +1,0 @@
-- **A pod's log level chips count its lines:** Error, Warn, Info, Debug and Unknown on a pod's Logs tab read 0 whatever the stream held. They now count every line the pod's container wrote, as a node's Logs tab always did.

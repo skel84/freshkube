@@ -1,1 +1,0 @@
-- **Memory percentages round down:** Attention, Nodes, the Peak memory card and pod meter tooltips now show memory as a whole percent rounded down, so a node at 94.6 % reads 94 % on its warning row instead of 95 %, the critical threshold.

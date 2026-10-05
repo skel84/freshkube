@@ -4,8 +4,18 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.5.0 (2026-10-06)
+
+### Metrics sources
+
+- **Monitoring reads any Prometheus API:** besides Prometheus, discovery finds VictoriaMetrics (single-node and vmselect), Thanos Query and Mimir query frontends, with their ports and path prefixes. Each is confirmed with a query before use, so a missing prefix or refused token shows at once.
+- **Settings → Metrics source**, per context: Automatic, one Service through the Kubernetes API (namespace, name, port, path prefix, HTTPS), or a URL read directly from your Mac with an optional bearer token. **Test** checks the form before you save it. The token is kept in the Keychain; `monitoring.json` only notes that one exists.
+
 ### Coroot
 
+- **Read-only Incidents:** the project's latest incidents, each with its SLO objective, compliance and burn rates, root-cause analysis and suggested fixes as Coroot reports them, and links from propagated applications to their reports. Missing evidence is marked not reported, never invented. See [COROOT.md](docs/COROOT.md#read-only-incidents-slice).
+- **Freshkube remembers the Coroot connection:** server, sign-in choice and last project, in `coroot.json` beside the preferences. **Remember key in Keychain** keeps the key in the system's credential store, sent only to its own server. The page reconnects when it first shows, and Disconnect forgets the key.
+- **A visual pass:** Observability gets its own rail icon; chosen chips, toggles and segments are blue everywhere, Settings included; reports merge REST and MCP evidence with formatted units; the service map is layered with weighted, arrowed links; and an unconnected page shows one Connect Coroot state.
 - **Applications uses the shared page and table:** namespace groups show their worst health and app count, with comfortable or compact rows, Columns, Show all and a legend. Categories start with applications only, falling back to all when that category is absent; All also includes newly discovered categories. The count follows the filters, which return the list to its first row. Healthy figures stay plain and healthy checks without a figure read “ok”; unknown reports keep their outlined circle and missing reports show “—”. Full captions and compact signal values keep their widths at each text size; failing upstreams show a count with their names in the tooltip. The namespace picker is searchable, tooltips name the app, and time ranges include local dates. Traces and Profiling show a failed first read with Retry.
 - **Incidents is a table page like Pods:** a filter, Open and Resolved counts that filter the list, comfortable or compact rows, Columns, and "Showing n of m" with Show all in place of Previous and Next. The selected incident opens in a pane beside the list, or below it in a narrow window, with its objectives, Coroot's analysis and the affected applications. Rows stay selected by incident and application when Coroot answers again. Duration and Impact are hidden by default, since the pane's summary shows both; Columns shows them. Times are local, not UTC. A typed filter and the chosen count survive a reconnect. Example data now goes through the same page as live data, so the example-only mute, fix, edit and diff actions are gone; Incidents stays read-only.
 - **Live Traces:** an application's latency and error heatmap, its latest requests, and the selected trace as a waterfall with each span's status, attributes and events. Click a cell to list that bucket's requests, or list the failed ones; choose OpenTelemetry or eBPF when Coroot has both.
@@ -13,11 +23,12 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **A tidier Observability page:** the source, project and time picker sit in the page header, with one page Refresh. Coroot connection settings, Disconnect and the Kubernetes link open from the sidebar footer. The column uses the shell's usual rows, so only the open destination is highlighted, and Deployments shows only with example data. Application names take the table's spare width. Traces and Profiling pick an application by typing part of its name. The flame graph names only frames wide enough to read, outlines the selected one and shows its details above the graph.
 - **Coroot's markup no longer shows:** report titles and messages lose HTML tags such as `<var>` and decode entities, keeping a plain `<` or `>` in text such as "latency < 500ms".
 - **Traces is a table page like Pods:** example and live data now draw the same page. A filter over request name, service and trace id, the sources, All and Failed requests, Columns and the time range sit in the page header. Requests are one-line table rows with a status glyph, service, local start time and duration; a failed request's message is in its tooltip. The selected request's trace opens in a pane beside the list, or below it in a narrow window, and stays selected by trace and span when Coroot answers again. The heatmap's axis reads local time. The example-only error causes, Errors only, Clear selection and heatmap arrow keys are gone. Incident titles read as prose, and long text in both tables ends in "…" instead of clipping mid-word.
-
 - **The Traces heatmap has keys again:** Tab reaches it, the arrows, Home and End move a cursor without reading anything, and Enter or Space lists the cell under it; Escape leaves. The cursor is outlined more heavily than the selected cell and its bucket, time range and rate show above the grid. The heatmap stays drawn while Coroot answers, saying when it is reading, failed or absent.
 
 ### Other changes
 
+- On Linux and Windows, preferences move to the platform's folder: `~/.config/freshkube` and `%APPDATA%\Freshkube`. macOS keeps `~/Library/Application Support/Freshkube`.
+- Lifecycle's Kubernetes version rules move into core, with no change in behaviour.
 - **Nodes looks like Pods:** the same page header and table styling, with a text filter, source freshness, matching health glyph counts and problems first. Healthy rows fold while problems exist; comfortable/compact rows, a Columns menu and 12 px cards keep the retained node pane.
 - **Nodes shows CPU and memory with Pods’ request/use meters** against node allocatable, retains stale metrics, and falls back to Talos memory when metrics-server is unavailable; load averages are an optional column.
 - **New status glyphs:** every status is a round glyph whose inside tells the state: a dot for OK, a half-filled ring for a warning, a disc with a bar for critical, a dashed ring for pending and a ring with a plus where an integration is needed. A pod whose container crashed, errored or ran out of memory shows a small skull; one that can't start, such as an image that won't pull, keeps the critical disc. Both count as failing. Health and Overview's Needs attention show the skull for those pods too.
@@ -32,24 +43,70 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **One row height:** every table draws 26-high rows, and the Density control is gone; a larger text size scales the rows for anyone who wants them bigger.
 - **A table scrolls the way you swipe:** a plain wheel scrolls a table's rows and Shift+wheel or a sideways swipe scrolls its columns, without nudging the other way; a slightly diagonal trackpad swipe keeps to its main direction.
 - **Tables without a card:** Pods, every other Resources kind, Nodes, System services and Applications draw their table straight on the page, with a hairline above and below, instead of inside a rounded card.
-
-## 0.5.0 (2026-10-04)
-
-### Metrics sources
-
-- **Monitoring reads any Prometheus API:** besides Prometheus, discovery finds VictoriaMetrics (single-node and vmselect), Thanos Query and Mimir query frontends, with their ports and path prefixes. Each is confirmed with a query before use, so a missing prefix or refused token shows at once.
-- **Settings → Metrics source**, per context: Automatic, one Service through the Kubernetes API (namespace, name, port, path prefix, HTTPS), or a URL read directly from your Mac with an optional bearer token. **Test** checks the form before you save it. The token is kept in the Keychain; `monitoring.json` only notes that one exists.
-
-### Coroot
-
-- **Read-only Incidents:** the project's latest incidents, each with its SLO objective, compliance and burn rates, root-cause analysis and suggested fixes as Coroot reports them, and links from propagated applications to their reports. Missing evidence is marked not reported, never invented. See [COROOT.md](docs/COROOT.md#read-only-incidents-slice).
-- **Freshkube remembers the Coroot connection:** server, sign-in choice and last project, in `coroot.json` beside the preferences. **Remember key in Keychain** keeps the key in the system's credential store, sent only to its own server. The page reconnects when it first shows, and Disconnect forgets the key.
-- **A visual pass:** Observability gets its own rail icon; chosen chips, toggles and segments are blue everywhere, Settings included; reports merge REST and MCP evidence with formatted units; the service map is layered with weighted, arrowed links; and an unconnected page shows one Connect Coroot state.
-
-### Other changes
-
-- On Linux and Windows, preferences move to the platform's folder: `~/.config/freshkube` and `%APPDATA%\Freshkube`. macOS keeps `~/Library/Application Support/Freshkube`.
-- Lifecycle's Kubernetes version rules move into core, with no change in behaviour.
+- **Peak memory agrees with itself:** Overview's card, and the Nodes dot it puts on the rail, turn yellow at 85% and red at 95%, the same thresholds as its bar and its High or Critical word. It used to turn red at 90%, so a node at 92% showed red over the word High.
+- **Capture builds:** requesting another CI debug binary on main lets the running build finish, preserving its artifact and cache; newer PR heads still replace their previous capture builds.
+- **Capture icons:** downloaded CI debug binaries embed GPUI Kit's icons, so Search, Refresh and other Kit controls draw their glyphs away from the build runner. Ordinary local debug builds keep their existing asset loading.
+- **A node's memory warns where its meter does:** a Nodes row now warns from 85% memory and fails from 95%, the thresholds where Overview's Peak memory card says High and Critical. Overview's attention list and the node pane follow. It used to warn only from 90% and never fail, so a node at 87% sat among the healthy ones while Overview called it High.
+- **Group actions stay in view:** when a table's columns are wider than its view, as Pods' are with the detail pane open, a group row's details now truncate before its actions, so Select all and Open node stay on screen instead of being cut off at the edge.
+- **Group rows line up:** every grouped table now draws its glyph column the same way, centred, and a group row's glyph sits exactly over its rows' glyphs with its label starting where the names do, at every text size. The group glyph used to sit a pixel or two left of the rows' (more on Pods), and its label well left of the names; Overview's Needs attention rows move with their group rows.
+- **Short windows keep Nodes and System services usable:** under 620 dp of height their page scrolls and the table keeps at least 180 dp, as Pods already did, instead of squeezing the list to a row or two.
+- **Lifecycle's node table fits at every size:** the roster now uses the shared table, so its last column (Discovery · K8s) is no longer cut off at 1280 wide with text size 14 or at 760 wide with text size 20. Its columns fit their content, the table scrolls sideways when the window is narrower than they are, and each node's name stays at the left edge while it does. Rows take the shared 26 dp height, and a long node name shows whole in its row's tooltip.
+- **Node logs fit short windows:** under 620 dp of height the node pane scrolls on its Logs tab, which keeps every control and a usable list, and a wheel over a log scrolls the log rather than the frame around it.
+- **Monitoring legends and stat tags fit:** a legend under a unit in its title, such as GiB, shows every value in that unit (0.91, not 929 MiB), and its value columns size to the widest value instead of wrapping into the next row. A stat's tag, such as "above 500 ms", drops under a wide value instead of running past the card.
+- **One corner dot for the rail and Observability:** the problem dots on the rail's areas and the incidents dot on Observability's collapsed column are now drawn by the shared `badge_dot`, so they look the same as before and follow the theme from one place.
+- **Console corners and glyphs on more pages:** the Services tab,
+  forwards list, pod cause card, Secret values, suggested fixes and Operations'
+  toggles take the Console's corner sizes; Lifecycle's Discovery · K8s column
+  shows status glyphs, a node missing from a roster as a warning; and
+  Operations marks a selected node's run order with a check icon.
+- **Flame graphs and the traces heatmap round at 3 px:** live flame frames, the flame legend's swatches and the heatmap's cells now use the meter radius, 3 px, instead of 2. A selected cell's inner ring is square.
+- **Maintenance mode's configuration review:** the generated YAML is drawn with the shared document view, in 20-high lines like the YAML tab. In a narrow window it now scrolls sideways instead of cutting off the end of a long line.
+- **etcd looks like Pods:** the same header, table and row heights, with counts by health that
+  filter the members and a summary of quorum, leader and alarms. A lost quorum shows a critical
+  banner and one with no failure to spare a warning, each with the arithmetic; alarms show as a
+  banner of three lines and a count. Selecting a member opens its details beside the table, or
+  below it in a narrow window.
+- **Folded controls keep their values:** in a narrow window, the "…" menu
+  shows what its folded controls are set to (`Namespace · payments`,
+  `Columns · 2 hidden`, `Time range · 7d`), and a dot on "…" with a matching
+  tooltip says when one of them narrows the list, so a filtered page no
+  longer looks like missing rows.
+- **Maintenance mode code:** the maintenance view is split into a module directory: the view and its actions, its presentation, the configuration review and the UI tests. Nothing changes on screen.
+- **Toolbar overflow menu:** a page header that runs out of room folds its
+  controls, rightmost first, into a "…" menu instead of stacking them on
+  extra rows, so a narrow or large-text window keeps more of its list.
+- **Pages without margins:** Pods, every other Resources kind, Nodes, System services
+  and Applications run their table from the column to the window's edge, with the
+  header and any banner padded inside the page instead of the whole page inset.
+- **Processes use the shared table:** a node's processes are drawn by the same table as Pods, with its header, 26 dp rows and glyph column. The command now comes right after the PID, so the node pane shows what each process is without scrolling; a long command truncates, and hovering the row shows it in full. Zombies and processes waiting on the disk show a warning glyph. Click CPU, CPU time or Memory in the header to sort. Numbers sit under their labels, column widths follow the data, and a narrow table scrolls sideways with the PID kept in view.
+- **Sideways scrolls stay sideways:** swiping sideways over a wide table, such as a node's Disks at a narrow window, scrolls only its columns; the page around it no longer scrolls down at the same time. A column that passes under the pinned name column keeps its header label beside it, so a short label such as Flags no longer disappears while its cells still show.
+- **Shell tab and log levels draw the shared glyphs:** a running shell shows the
+  OK glyph on its tab, and the log level toggles show the information dot for
+  errors and the warning glyph for warnings.
+- **Context switcher corners:** the context switcher's tile and the rows of its context list round at 8 px, the control radius, instead of 7.
+- **Storage and Diagnostics take the toolbar header:** a node's Storage and Diagnostics tabs open
+  with the same 38 dp header as Pods and etcd: the title, a Refresh icon and, below it, when the
+  data was updated. Storage's counts of disks, total size, volumes and those not ready move into
+  that line; its Disks / Volumes switch sits in the header and moves into the "…" menu when the
+  pane is narrow; its table runs edge to edge with the selection's details beside or below it.
+  A node that isn't responding, or a read that failed, shows its message under the header.
+- **Storage uses the shared table:** a node's Disks and Volumes are drawn by the same table as Pods, with its header, 26 dp rows and glyph column. Each volume shows its phase glyph; a disk shows a warning only when it is read-only by surprise. A loop device or an optical drive is read-only by design, so a DVD drive's read-only flag no longer turns yellow. Selection follows the disk or volume by name, not by line, and each tab keeps its own.
+- **Page headers as toolbars:** every page's title is a 13 px label in a 38 px
+  toolbar row with its filter and controls, each control 24 px high, under a
+  hairline on table pages. Every Resources kind now has Pods' header, with the
+  namespace picker on namespaced kinds.
+- **Monitoring's header:** dashboards use the shared page header and frame, with
+  a "Dashboards / title" breadcrumb that opens a collapsed dashboards column, a
+  meta line with the panel count, state and time of the last answer, and panels
+  that end at the page's padding.
+- **A pod's log level chips count its lines:** Error, Warn, Info, Debug and Unknown on a pod's Logs tab read 0 whatever the stream held. They now count every line the pod's container wrote, as a node's Logs tab always did.
+- **Native platform CI:** advisory Linux and Windows checks also run weekly on main. Linux reuses a dependency cache saved only from main, while PR runs restore without adding copies; Windows stays uncached to preserve the shared cache budget. Failed native checks still need resolution before review approval.
+- **Linux and Windows checks:** advisory CI checks and lints the workspace on both platforms and tests the terminal keyboard. Copy, paste and leaving the terminal use Ctrl-Shift there, while plain Ctrl-C/V still reach the shell; macOS keeps its Command shortcuts.
+- **Changelog fragments:** pull requests keep their release notes in separate files, checked by CI and collected in section order before a release, so parallel changes no longer contend on Unreleased.
+- **etcd without a leader no longer crashes the app:** when members answer but none reports a
+  leader, as after a lost quorum, the etcd page crashed; it now shows the leader as not reported.
+- **Memory percentages round down:** Attention, Nodes, the Peak memory card and pod meter tooltips now show memory as a whole percent rounded down, so a node at 94.6 % reads 94 % on its warning row instead of 95 %, the critical threshold.
+- **Network tables:** the node's interfaces, connections, listeners and KubeSpan peers use the shared table, with glyphs on interfaces that have errors or drops, half-open or closing sockets and peers. Narrow windows scroll the columns sideways instead of dropping them.
 
 ## 0.4.0 (2026-10-04)
 

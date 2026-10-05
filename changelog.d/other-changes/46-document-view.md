@@ -1,1 +1,0 @@
-- **Maintenance mode's configuration review:** the generated YAML is drawn with the shared document view, in 20-high lines like the YAML tab. In a narrow window it now scrolls sideways instead of cutting off the end of a long line.
