@@ -31,6 +31,11 @@ impl TableColumn for Column {
     fn flexible(&self) -> bool {
         self.field == Field::Message
     }
+
+    /// The glyph and node stay in view when the table scrolls sideways.
+    fn pinned(&self) -> bool {
+        matches!(self.field, Field::Glyph | Field::Node)
+    }
 }
 
 /// DESIGN.md's widths: 7.5 a character plus 24, between 64 and 280; the
