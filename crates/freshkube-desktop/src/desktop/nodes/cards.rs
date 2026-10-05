@@ -184,10 +184,16 @@ impl Pilot {
             .px(dp(12.))
             .py(dp(if cards { 14. } else { 10. }))
             .border_b_1()
-            .border_color(p.line)
-            .bg(if selected { p.surface } else { p.surface_2 })
+            .border_color(if cards && selected { p.accent } else { p.line })
+            .when(cards, |this| {
+                this.when(selected, |this| this.bg(p.accent_soft))
+                    .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
+            })
+            .when(!cards, |this| {
+                this.bg(if selected { p.surface } else { p.surface_2 })
+                    .hover(|style| style.bg(p.surface))
+            })
             .cursor_pointer()
-            .hover(|style| style.bg(p.surface))
             .child(content)
             .on_click(
                 cx.listener(move |view, _, window, cx| view.open_node(key.clone(), window, cx)),
