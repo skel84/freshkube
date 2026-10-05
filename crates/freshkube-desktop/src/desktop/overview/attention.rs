@@ -114,7 +114,13 @@ impl Pilot {
                         cx.notify();
                     }))
             });
-            table::showing_bar("overview-collapsed", count, attention.total, show_all, cx)
+            table::showing_bar(
+                "overview-collapsed",
+                count,
+                attention.total,
+                div().children(show_all),
+                cx,
+            )
         });
         let empty = rows.is_empty().then(|| {
             div()
@@ -180,7 +186,7 @@ impl Pilot {
             )
             .child(
                 div()
-                    .flex_shrink()
+                    .flex_shrink(1.)
                     .min_w(dp(80.))
                     .max_w(dp(280.))
                     .truncate()

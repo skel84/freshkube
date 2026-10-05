@@ -38,8 +38,6 @@ pub(crate) enum AttentionGroup {
 }
 
 impl AttentionGroup {
-    pub(crate) const ALL: [Self; 3] = [Self::Failing, Self::Warning, Self::Unknown];
-
     fn of(tone: Tone) -> Self {
         match tone {
             Tone::Crit => Self::Failing,

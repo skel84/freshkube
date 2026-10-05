@@ -3,10 +3,7 @@ use super::Pilot;
 use crate::palette::palette;
 use crate::presentation::overview::CardTarget;
 use crate::ui::{self, Tone, dp};
-use gpui_kit::component::{
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use gpui_kit::component::{button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -15,81 +12,81 @@ impl Pilot {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> impl IntoElement + use<> {
         let p = palette(cx);
         let display = &self.overview_display;
-        let cards =
-            div()
-                .id("overview-cards")
-                .test_support()
-                .grid()
-                .grid_cols(if Self::content_width(window) < 900. {
-                    2
-                } else {
-                    4
-                })
-                .gap(dp(12.))
-                .children(display.cards.iter().map(|card| {
-                    let target = card.target.clone();
-                    let content =
-                        v_flex()
-                            .size_full()
-                            .whitespace_normal()
-                            .min_w_0()
-                            .p(dp(14.))
-                            .gap(dp(8.))
-                            .id("tile-card-content")
-                            .test_support()
-                            .child(ui::caption(card.label, cx))
-                            .child(
-                                div()
-                                    .font_weight(ui::TITLE_WEIGHT)
-                                    .text_size(dp(25.))
-                                    .text_color(match card.tone {
-                                        Tone::Good => p.good_ink,
-                                        Tone::Crit => p.crit_ink,
-                                        Tone::Warn => p.warn_ink,
-                                        _ => p.muted,
-                                    })
-                                    .child(card.figure.clone()),
-                            )
-                            .child(h_flex().gap(dp(3.)).flex_wrap().children(
-                                card.segments.iter().map(|tone| {
-                                    div().w(dp(16.)).h(dp(6.)).rounded(px(2.)).bg(match tone {
-                                        Tone::Good => p.good,
-                                        Tone::Crit => p.crit,
-                                        Tone::Warn => p.warn,
-                                        _ => p.unk,
-                                    })
-                                }),
-                            ))
-                            .when_some(card.meter, |this, (percent, level)| {
-                                this.child(ui::meter(percent, level, cx))
+        div()
+            .id("overview-cards")
+            .test_support()
+            .grid()
+            .grid_cols(if Self::content_width(window) < 900. {
+                2
+            } else {
+                4
+            })
+            .gap(dp(12.))
+            .children(display.cards.iter().map(|card| {
+                let target = card.target.clone();
+                let content = v_flex()
+                    .size_full()
+                    .whitespace_normal()
+                    .min_w_0()
+                    .p(dp(14.))
+                    .gap(dp(8.))
+                    .id("tile-card-content")
+                    .test_support()
+                    .child(ui::caption(card.label, cx))
+                    .child(
+                        div()
+                            .font_weight(ui::TITLE_WEIGHT)
+                            .text_size(dp(25.))
+                            .text_color(match card.tone {
+                                Tone::Good => p.good_ink,
+                                Tone::Crit => p.crit_ink,
+                                Tone::Warn => p.warn_ink,
+                                _ => p.muted,
                             })
-                            .child(
-                                div()
-                                    .text_size(dp(12.))
-                                    .text_color(p.muted)
-                                    .child(card.detail.clone()),
-                            );
-                    Button::new(card.id)
-                        .accessibility_label(card.label)
-                        .outline()
-                        .border_1()
-                        .border_color(p.line)
-                        .rounded(px(10.))
-                        .bg(p.surface)
-                        .items_start()
-                        .h_auto()
-                        .w_full()
-                        .min_w_0()
-                        .p_0()
-                        .child(content)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_card(target.clone(), window, cx)
-                        }))
-                }));
-        cards
+                            .child(card.figure.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(dp(3.))
+                            .flex_wrap()
+                            .children(card.segments.iter().map(|tone| {
+                                div().w(dp(16.)).h(dp(6.)).rounded(px(2.)).bg(match tone {
+                                    Tone::Good => p.good,
+                                    Tone::Crit => p.crit,
+                                    Tone::Warn => p.warn,
+                                    _ => p.unk,
+                                })
+                            })),
+                    )
+                    .when_some(card.meter, |this, (percent, level)| {
+                        this.child(ui::meter(percent, level, cx))
+                    })
+                    .child(
+                        div()
+                            .text_size(dp(12.))
+                            .text_color(p.muted)
+                            .child(card.detail.clone()),
+                    );
+                Button::new(card.id)
+                    .accessibility_label(card.label)
+                    .outline()
+                    .border_1()
+                    .border_color(p.line)
+                    .rounded(px(10.))
+                    .bg(p.surface)
+                    .items_start()
+                    .h_auto()
+                    .w_full()
+                    .min_w_0()
+                    .p_0()
+                    .child(content)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_card(target.clone(), window, cx)
+                    }))
+            }))
     }
 
     fn open_card(&mut self, target: CardTarget, window: &mut Window, cx: &mut Context<Self>) {
