@@ -464,8 +464,38 @@ fn overview_uses_the_shared_frame_with_its_state_in_the_meta_line(cx: &mut TestA
                 window.find("roster").label().map(str::to_owned),
                 Some(pilot.read(cx).overview_display.roster_tip.to_string())
             );
+            assert_actions_inside_rows(window, width, text);
         })
         .unwrap();
+    }
+}
+
+/// Every row's Open, Logs and Open node buttons sit inside Needs attention,
+/// however narrow the page.
+fn assert_actions_inside_rows(window: &gpui_kit::Window, width: f32, text: f32) {
+    use gpui_kit::base::test_support::snapshots;
+    let list = window.find("needs-attention-rows").bounds();
+    let actions: Vec<_> = snapshots(window)
+        .into_iter()
+        .filter(|line| {
+            line.path().last().is_some_and(|id| {
+                ["attention-open", "attention-logs", "attention-open-node"]
+                    .iter()
+                    .any(|action| *id == gpui_kit::ElementId::from(*action))
+            })
+        })
+        .collect();
+    assert!(
+        actions.iter().any(|line| *line.path().last().unwrap()
+            == gpui_kit::ElementId::from("attention-logs")),
+        "no Logs button at {width}/{text}"
+    );
+    for action in actions {
+        assert!(
+            action.bounds().right() <= list.right() + gpui_kit::px(0.5),
+            "{:?} runs past Needs attention at {width}/{text}",
+            action.path().last()
+        );
     }
 }
 

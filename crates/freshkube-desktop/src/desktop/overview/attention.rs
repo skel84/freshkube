@@ -179,7 +179,8 @@ impl Pilot {
             .child(
                 div()
                     .flex_none()
-                    .w(dp(104.))
+                    // "System service", the longest kind, fits.
+                    .w(dp(88.))
                     .truncate()
                     .text_color(p.muted)
                     .child(row.kind),
@@ -187,7 +188,7 @@ impl Pilot {
             .child(
                 div()
                     .flex_shrink(1.)
-                    .min_w(dp(80.))
+                    .min_w(dp(64.))
                     .max_w(dp(280.))
                     .truncate()
                     .font_family(MONO_FONT)
@@ -196,7 +197,8 @@ impl Pilot {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    // Room for the reason before the name takes it all.
+                    .min_w(dp(56.))
                     .truncate()
                     .text_color(p.muted)
                     .child(row.reason.clone()),
