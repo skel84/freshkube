@@ -278,6 +278,7 @@ impl DataTable {
         let state = source.table_state();
         let ids = &state.ids;
         let empty = source.empty(cx);
+        let is_empty = empty.is_some();
         // A fitted list is as tall as its lines; an empty one as its state.
         let list_height = self
             .fit
@@ -324,6 +325,13 @@ impl DataTable {
             card(cx)
         };
         let fitted = self.fit.is_some();
+        // The empty state sits below the sideways scroll, in the card's
+        // width: inside it, a table scrolled right would hide it.
+        let (inside, below) = if is_empty {
+            (None, Some(list))
+        } else {
+            (Some(list), None)
+        };
         frame
             .overflow_hidden()
             .children(source.notes(cx))
@@ -332,7 +340,7 @@ impl DataTable {
                     .id(ids.scroll.clone())
                     .test_support()
                     .when_else(
-                        fitted,
+                        fitted || is_empty,
                         |this| this.flex_none(),
                         |this| this.flex_1().min_h_0(),
                     )
@@ -340,13 +348,14 @@ impl DataTable {
                     .overflow_x_scroll()
                     .child(
                         v_flex()
-                            .when(!fitted, |this| this.h_full())
+                            .when(!fitted && !is_empty, |this| this.h_full())
                             .w_full()
                             .min_w(dp(source.width()))
                             .child(header(source, cx))
-                            .child(list),
+                            .children(inside),
                     ),
             )
+            .children(below)
             .children(source.footer(window, cx))
     }
 }
@@ -471,7 +480,11 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::step_line;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AppContext, IntoElement, Render, ScrollDelta, TestAppContext, point, px, size};
+
+    use super::*;
 
     /// Lines 0 and 3 are group headers; the rest are rows.
     fn lines(line: usize) -> Option<bool> {
@@ -499,5 +512,162 @@ mod tests {
         assert_eq!(step_line(7, Some(99), 1, lines), Some(1));
         assert_eq!(step_line(0, None, 1, lines), None);
         assert_eq!(step_line(1, None, 1, lines), None);
+    }
+
+    struct Column(SharedString);
+
+    impl TableColumn for Column {
+        fn label(&self) -> &SharedString {
+            &self.0
+        }
+
+        fn width(&self) -> f32 {
+            200.
+        }
+
+        fn flexible(&self) -> bool {
+            false
+        }
+    }
+
+    /// Six 200 dp columns, wider than its window, so it scrolls sideways.
+    struct Wide {
+        table: TableState,
+        columns: Vec<Column>,
+        rows: usize,
+    }
+
+    impl TableSource for Wide {
+        type Key = usize;
+        type Sort = ();
+        type Column = Column;
+        type Row<'a> = ();
+
+        fn table_state(&self) -> &TableState {
+            &self.table
+        }
+
+        fn columns(&self) -> &[Column] {
+            &self.columns
+        }
+
+        fn width(&self) -> f32 {
+            self.columns.len() as f32 * 200.
+        }
+
+        fn list_label(&self) -> String {
+            "Wide rows".into()
+        }
+
+        fn sorting(&self, _: &Column) -> Option<((), Option<SortOrder>)> {
+            None
+        }
+
+        fn sort(&mut self, _: (), _: &mut Context<Self>) {}
+
+        fn line_count(&self) -> usize {
+            self.rows
+        }
+
+        fn line(&self, line: usize, _: &App) -> Option<Line<usize, ()>> {
+            (line < self.rows).then(|| {
+                Line::Row(TableRow {
+                    key: line,
+                    id: SharedString::from(format!("wide-row-{line}")).into(),
+                    label: format!("Row {line}").into(),
+                    tooltip: None,
+                    marked: false,
+                    muted: false,
+                    data: (),
+                })
+            })
+        }
+
+        fn cell(
+            &self,
+            row: &TableRow<usize, ()>,
+            _: &RowStyle,
+            column: &Column,
+            _: &mut Context<Self>,
+        ) -> AnyElement {
+            cell(column)
+                .child(format!("{} {}", column.0, row.key))
+                .into_any_element()
+        }
+
+        fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
+            None
+        }
+
+        fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
+            (self.rows == 0).then(|| "No rows match this filter.".into_any_element())
+        }
+    }
+
+    impl Render for Wide {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .child(data_table(self, window, cx).flex_1().min_h_0())
+        }
+    }
+
+    /// A filter that leaves no rows after a sideways scroll still shows why,
+    /// inside the table's width.
+    #[gpui_kit::test]
+    fn the_empty_state_shows_after_a_sideways_scroll(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let mut wide = None;
+        let handle = cx.open_window(size(px(600.), px(400.)), |window, cx| {
+            let view = cx.new(|_| Wide {
+                table: TableState::new("wide"),
+                columns: (0..6)
+                    .map(|ix| Column(format!("Column {ix}").into()))
+                    .collect(),
+                rows: 3,
+            });
+            wide = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let wide = wide.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.scroll(
+                "wide-table-scroll",
+                ScrollDelta::Pixels(point(px(-500.), px(0.))),
+                cx,
+            );
+            let viewport = window.find("wide-table-scroll").bounds();
+            let row = window.find("wide-row-0").bounds();
+            assert!(
+                row.left() < viewport.left() - px(400.),
+                "the rows didn't scroll sideways: {row:?} in {viewport:?}"
+            );
+        })
+        .unwrap();
+        cx.update(|cx| {
+            wide.update(cx, |wide, cx| {
+                wide.rows = 0;
+                cx.notify();
+            })
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let viewport = window.find("wide-table-scroll").bounds();
+            let empty = window.find("wide-empty");
+            let bounds = empty.bounds();
+            assert!(
+                bounds.left() >= viewport.left() - px(1.)
+                    && bounds.right() <= viewport.right() + px(1.),
+                "the empty state at {bounds:?} leaves the table's width {viewport:?}"
+            );
+            assert!(empty.visible());
+        })
+        .unwrap();
     }
 }
