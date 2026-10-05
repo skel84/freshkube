@@ -8,6 +8,7 @@
 //! the snapshot's `next_sample` like the Processes screen does for CPU.
 mod capture;
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -21,6 +22,7 @@ use freshkube_core::inspection::{
 };
 use freshkube_core::network::ConnectionDirection;
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
     Icon, Selectable, Sizable,
     button::{Button, ButtonGroup, ButtonVariants},
@@ -37,19 +39,19 @@ use talos_rs::{
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gated_page_mode, mono, panel, partial_notice,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
+    panel, partial_notice, refresh_control,
 };
 use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::table::{self, DataTable, TableState};
 use source::Derived;
 
 const CONTEXT: &str = "TalosNetwork";
 const PAGE_ROWS: isize = 20;
-/// Below this content width the details pane moves under the list.
-const SIDE_DETAILS: f32 = 900.;
-const LIST_MIN_HEIGHT: f32 = 200.;
+/// The page header's id prefix.
+const PREFIX: &str = "network";
 const DETAILS_HEIGHT: f32 = 240.;
 /// The TUI warns about TIME_WAIT only above this many sockets.
 const TIME_WAIT_WARNING: usize = 100;
@@ -110,6 +112,24 @@ impl View {
         }
     }
 
+    fn id(self) -> &'static str {
+        match self {
+            View::Interfaces => "network-view-interfaces",
+            View::Connections => "network-view-connections",
+            View::Listeners => "network-view-listeners",
+            View::KubeSpan => "network-view-kubespan",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            View::Interfaces => IconName::EthernetPort,
+            View::Connections => IconName::ArrowUpDown,
+            View::Listeners => IconName::RadioTower,
+            View::KubeSpan => IconName::Waypoints,
+        }
+    }
+
     fn shifted(self, delta: isize) -> Self {
         let len = Self::ALL.len() as isize;
         Self::from_index((self.index() as isize + delta).rem_euclid(len) as usize)
@@ -151,6 +171,31 @@ impl StateFilter {
         StateFilter::SynSent,
         StateFilter::Other,
     ];
+
+    fn id(self) -> &'static str {
+        match self {
+            StateFilter::All => "state-all",
+            StateFilter::Established => "state-established",
+            StateFilter::Listen => "state-listen",
+            StateFilter::TimeWait => "state-time-wait",
+            StateFilter::CloseWait => "state-close-wait",
+            StateFilter::SynSent => "state-syn-sent",
+            StateFilter::Other => "state-other",
+        }
+    }
+
+    /// The segment's label, without its count.
+    fn name(self) -> &'static str {
+        match self {
+            StateFilter::All => "All",
+            StateFilter::Established => "Est.",
+            StateFilter::Listen => "Listen",
+            StateFilter::TimeWait => "TIME_WAIT",
+            StateFilter::CloseWait => "CLOSE_WAIT",
+            StateFilter::SynSent => "SYN_SENT",
+            StateFilter::Other => "Other",
+        }
+    }
 
     fn from_index(index: usize) -> Self {
         Self::ALL.get(index).copied().unwrap_or(StateFilter::All)
@@ -763,6 +808,12 @@ impl NetworkScreen {
         self.iface_filter = Some(key.to_string());
         self.view = View::Connections;
         self.tables[View::Connections.index()].reveal(0, ScrollStrategy::Top);
+        cx.notify();
+    }
+
+    /// Shows every interface's connections again.
+    fn clear_interface(&mut self, cx: &mut Context<Self>) {
+        self.iface_filter = None;
         cx.notify();
     }
 

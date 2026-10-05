@@ -4,16 +4,27 @@ use freshkube_core::inspection::{InspectionSource, InspectionUnavailable};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    App, AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TestAppContext, TouchPhase, Window, WindowHandle, point,
-    px, size,
+    AnyWindowHandle, App, AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point,
+    ScrollDelta, ScrollWheelEvent, SharedString, Size, TestAppContext, TouchPhase, Window,
+    WindowHandle, point, px, size,
 };
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use super::{KubeSpanState, NetworkScreen, ScreenPanel, ScreenSource, View, example};
+use super::{KubeSpanState, NetworkScreen, ScreenPanel, ScreenSource, StateFilter, View, example};
 use crate::backend::Target;
+use crate::desktop::layout_check;
+use crate::desktop::nodes::NodeTab;
+use crate::desktop::tests::{fixture as app, open_node_tab};
 use crate::{fixture, presentation};
+
+/// The page's frame reaches the split of the table and its details.
+const NETWORK_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "network-page",
+    title: "network-title",
+    title_text: "Network",
+    content: "network-split",
+};
 
 fn source(node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -114,12 +125,8 @@ fn second_refresh_produces_rates(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let first = screen.read(cx).snapshot().unwrap().clone();
         assert!(first.interfaces.iter().all(|i| i.rate.is_none()));
-        assert!(
-            window
-                .find("network-summary")
-                .label()
-                .is_some_and(|label| label.contains("measuring"))
-        );
+        let summary = &screen.read(cx).derived.summary.as_ref().unwrap().1;
+        assert_eq!(summary[0].as_ref(), "throughput measuring…");
         let row = |window: &mut Window, cx: &mut App| {
             let id = row_ids(&screen, cx)[0].clone();
             window.render_frame(cx);
@@ -144,11 +151,12 @@ fn second_refresh_produces_rates(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn connections_view_filters_rows(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-02");
+    // Wide enough that the seven states don't fold into "…".
+    let (_runtime, screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(2000.), px(1500.)));
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("network-view-connections", cx);
-        window.render_frame(cx);
+        crate::desktop::tests::settle_header(window, cx);
         assert_eq!(screen.read(cx).view, View::Connections);
         window.find("connection-list");
         window.find(row_ids(&screen, cx)[0].clone());
@@ -510,11 +518,12 @@ fn capture_files_are_named_for_the_node_and_the_time() {
 
 #[gpui_kit::test]
 fn connection_rows_are_derived_only_when_the_data_filters_or_sort_change(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-02");
+    // Wide enough that the seven states don't fold into "…".
+    let (_runtime, screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(2000.), px(1500.)));
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("network-view-connections", cx);
-        window.render_frame(cx);
+        crate::desktop::tests::settle_header(window, cx);
         let computed = || crate::desktop::probe::count("network.rows");
         let base = computed();
         // Render, selection and navigation read the rows as derived.
@@ -755,4 +764,180 @@ fn a_short_window_scrolls_the_page_to_the_details(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn network_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            open_node_tab(window, cx, NodeTab::Network);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            layout_check::assert_edge_frame(window, cx, &NETWORK_FRAME);
+            let rows = layout_check::assert_table(
+                window,
+                cx,
+                &layout_check::Table {
+                    table: Some("interface-table-scroll"),
+                    list: "interface-list",
+                },
+            );
+            assert!(rows.header.is_some(), "{rows:#?}");
+        })
+        .unwrap();
+    }
+}
+
+/// The state in the table's place sits under the toolbar, which keeps the
+/// title and Refresh.
+fn under_the_toolbar(window: &Window, id: &'static str) {
+    let toolbar = window.find("network-toolbar").bounds();
+    window.find("network-title");
+    window.find("network-refresh");
+    let state = window.find(id).bounds();
+    assert!(
+        state.top() >= toolbar.bottom(),
+        "{id} {state:?} isn't under the toolbar {toolbar:?}"
+    );
+    assert!(window.try_find("network-table").is_none());
+}
+
+#[gpui_kit::test]
+fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // A node that isn't responding.
+        under_the_toolbar(window, "screen-retry");
+        // A responding node whose read failed.
+        screen.update(cx, |screen, cx| {
+            let source = source("talos-wk-fra1-02");
+            let target = source.target.clone();
+            screen.set_source(Some(source), window, cx);
+            screen
+                .loader
+                .resolve(target, Err("no network statistics".into()));
+        });
+        window.render_frame(cx);
+        under_the_toolbar(window, "screen-retry");
+        // No node.
+        screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+        window.render_frame(cx);
+        under_the_toolbar(window, "network-state");
+        assert!(window.try_find("screen-retry").is_none());
+        // The page keeps its keys while a state shows.
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+        window.press("tab", cx);
+        assert_eq!(screen.read(cx).view, View::Connections);
+    })
+    .unwrap();
+}
+
+/// KubeSpan's status sits in the inset under the toolbar, with no table.
+#[gpui_kit::test]
+fn kubespan_status_sits_under_the_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-02");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| {
+            screen.view = View::KubeSpan;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let toolbar = window.find("network-toolbar").bounds();
+        let status = window.find("kubespan-status").bounds();
+        assert!(status.top() >= toolbar.bottom());
+        assert!(window.try_find("network-table").is_none());
+    })
+    .unwrap();
+}
+
+/// Draws until the header stops asking for another frame to place its
+/// parts.
+fn settle(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+    for _ in 0..4 {
+        cx.run_until_parked();
+        let asked = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.simulate_next_frame(cx)
+            })
+            .unwrap();
+        if asked == 0 {
+            return;
+        }
+    }
+    panic!("the header keeps moving");
+}
+
+/// Opens the "…" menu and clicks its `item`th entry, then, for a submenu,
+/// its `sub`th entry.
+fn pick(handle: AnyWindowHandle, item: usize, sub: Option<usize>, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| {
+        window.click("network-more", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(item, cx);
+        window.render_frame(cx);
+        if let Some(sub) = sub {
+            window.within("submenu").within("popup-menu").click(sub, cx);
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+    settle(handle, cx);
+}
+
+#[gpui_kit::test]
+fn the_folded_controls_act_as_their_controls(cx: &mut TestAppContext) {
+    // The title, the filter, Refresh and "…" fit; no other control does.
+    let (_runtime, screen, handle) = mount_in(cx, "talos-cp-fra1-01", size(px(340.), px(600.)));
+    let handle: AnyWindowHandle = handle.into();
+    settle(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        assert!(
+            window.try_find("network-view").is_none(),
+            "the views aren't folded"
+        );
+        window.find("network-refresh");
+    })
+    .unwrap();
+    // The views' submenu: Interfaces, Connections, Listeners, KubeSpan.
+    pick(handle, 0, Some(1), cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.view),
+        View::Connections
+    );
+    // On Connections the states fold after the views.
+    pick(handle, 1, Some(1), cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.state_filter),
+        StateFilter::Established
+    );
+    cx.update_window(handle, |_, window, _| {
+        window.find("network-more-dot");
+        window.find("network-filter");
+    })
+    .unwrap();
+    pick(handle, 1, Some(0), cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.state_filter),
+        StateFilter::All
+    );
+    // An interface's connections fold between them, and its item shows
+    // every interface again.
+    screen.update(cx, |screen, cx| {
+        screen.iface_filter = Some("eth0".into());
+        cx.notify();
+    });
+    settle(handle, cx);
+    pick(handle, 1, None, cx);
+    assert!(screen.read_with(cx, |screen, _| screen.iface_filter.is_none()));
 }
