@@ -24,6 +24,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Quieter column headers:** tables label their columns in sentence case (Name, Ready, Health check), not uppercase.
 - **Pinned cells take their own clicks:** in a table scrolled sideways, a click, hover or tooltip on a pinned name or header no longer reaches the cell passing under it, so clicking the pinned Name header sorts by name alone.
 - **Wide tables keep their bearings:** scrolled sideways, a table's group rows keep their label in view, and Pods, every other Resources kind and System services keep each row's status and name at the left edge.
+- **A table scrolls the way you swipe:** a plain wheel scrolls a table's rows and Shift+wheel or a sideways swipe scrolls its columns, without nudging the other way; a slightly diagonal trackpad swipe keeps to its main direction.
 
 ## 0.5.0 (2026-10-04)
 
