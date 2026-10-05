@@ -105,7 +105,7 @@ Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette 
 | --- | --- |
 | OK | Mint dot in a soft mint halo |
 | Warning / at risk | Amber ring, half filled |
-| Died | Coral skull, `Tone::Died`: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`). Counted with critical. The 10 dp skull is the simplified drawing B: K1 with three teeth and no nose, which hold at 10 px where K1's nose and thin teeth blur. K1 itself is kept for a larger size, if one ever appears |
+| Died | Coral skull, `Tone::Died`: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`). Counted with critical. Pods, Health and Overview's Needs attention use it, from core's `PodIssue::died` where a page reads the summary. The 10 dp skull is the simplified drawing B: K1 with three teeth and no nose, which hold at 10 px where K1's nose and thin teeth blur. K1 itself is kept for a larger size, if one ever appears |
 | Critical / can't run | Coral disc with a bar cut out: an image that won't pull, a node down, an etcd alarm |
 | Pending / unknown | Dashed grey ring |
 | Completed | Grey tick in a faint ring (not drawn yet: Pods shows a tick icon) |

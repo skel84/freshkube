@@ -1436,9 +1436,7 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 640.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        // GPUI's list also takes a sideways wheel as a little downward
-        // scroll, so the rows checked sit below the first few.
-        let rows: Vec<_> = (6..9)
+        let rows: Vec<_> = (0..3)
             .map(|ix| row_id(&identity_at(&screen, ix, cx)))
             .collect();
         let left = |window: &mut gpui_kit::Window, row: &gpui_kit::ElementId| {

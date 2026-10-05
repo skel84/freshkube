@@ -340,6 +340,12 @@ pub(crate) struct Pilot {
     column_scroll: ScrollHandle,
     /// A column row to scroll into view on the next frame.
     column_reveal: Option<ColumnReveal>,
+    /// The Observability column's list, which scrolls when the window is
+    /// short or the text large.
+    obs_column_scroll: ScrollHandle,
+    /// The destination, and whether the column was collapsed, last scrolled
+    /// into view.
+    obs_column_revealed: Option<(crate::observability::Destination, bool)>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
     /// Set without Talos: contexts come from a kubeconfig and only the
@@ -753,6 +759,8 @@ impl Pilot {
             rail_marks: Default::default(),
             column_scroll: ScrollHandle::new(),
             column_reveal: None,
+            obs_column_scroll: ScrollHandle::new(),
+            obs_column_revealed: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
             settings_open: false,

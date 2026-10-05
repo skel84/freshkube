@@ -108,6 +108,44 @@ CI has only `contents: read` permission and needs no Apple secrets. The old
 cargo-dist publishing workflow, shell installer, updater configuration and dist
 profile have been removed; do not regenerate them with `cargo dist init`.
 
+For local captures on an Intel Mac, the separate
+[Capture workflow](../.github/workflows/capture.yml) builds a **debug** executable
+on `macos-15-intel`. Add the `capture` label to a pull request; each new commit
+then replaces its pending capture build. Adding other labels does not start a
+build, and this workflow never cancels the required CI check. To request a build
+on a branch by hand, run
+`gh workflow run capture.yml --ref <branch> -f debug_binary=true`.
+
+The job uses stable Rust, protobuf and `Swatinem/rust-cache`, with a separate
+`capture-debug-x86_64` key for debug builds. Only runs on `main` save the cache;
+PRs and manual runs on other branches restore it without saving. Seed it once
+on `main` with `gh workflow run capture.yml --ref main -f debug_binary=true`.
+Keep an eye on the repository's shared cache usage under **Actions → Caches**
+(10 GB budget).
+
+The job runs
+`cargo build --locked --bin freshkube` and uploads `target/debug/freshkube` as
+`freshkube-debug-x86_64-apple-darwin-<short-sha>`, kept for **3 days**. The SHA is
+the checked-out PR head (or the selected revision for a manual run). Release
+bundles ignore the debug page, kind, theme, window-size and text-size overrides;
+use this debug artifact when a capture needs them.
+
+After the Capture run succeeds, download the artifact for the revision you want.
+GitHub's artifact archive strips executable permissions, so restore them before
+using the smoke helper. Replace the example run ID and short SHA below:
+
+```sh
+gh run list --workflow capture.yml
+CAPTURE_RUN=123456789
+CAPTURE_SHA=abc1234
+CAPTURE_DIR="$PWD/target/ci-capture/$CAPTURE_SHA"
+gh run download "$CAPTURE_RUN" --name "freshkube-debug-x86_64-apple-darwin-$CAPTURE_SHA" --dir "$CAPTURE_DIR"
+chmod +x "$CAPTURE_DIR/freshkube"
+FRESHKUBE_SMOKE_BINARY="$CAPTURE_DIR/freshkube" scripts/smoke.sh start --page monitoring
+scripts/smoke.sh shot monitoring
+scripts/smoke.sh stop
+```
+
 ## Releases
 
 A release ships the bundles `main` built for the release commit; it never
