@@ -54,9 +54,35 @@ def bundle_files(app):
             for p in app.rglob("*") if p.is_file()}
 
 
+MACH_O = {
+    bytes.fromhex(magic)
+    for magic in ("feedface", "feedfacf", "cefaedfe", "cffaedfe", "cafebabe", "bebafeca")
+}
+
+
+def stray_executables(app):
+    """Executables in the bundle other than the app's own binary.
+
+    Developer tools such as `freshkube-workbench` must never ship, so any
+    other file that is executable or Mach-O fails the bundle."""
+    own = app / "Contents/MacOS/freshkube"
+    stray = []
+    for path in sorted(app.rglob("*")):
+        if path == own or path.is_symlink() or not path.is_file():
+            continue
+        with path.open("rb") as file:
+            magic = file.read(4)
+        if path.stat().st_mode & 0o111 or magic in MACH_O:
+            stray.append(path.relative_to(app))
+    return stray
+
+
 def verify_bundle(app, target, version):
     run("plutil", "-lint", str(app / "Contents/Info.plist"))
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app))
+    stray = stray_executables(app)
+    if stray:
+        raise ValueError(f"Bundle holds executables other than freshkube: {stray}")
     binary = app / "Contents/MacOS/freshkube"
     details = inspect_binary(binary, target)
     # CLI smoke test on native builds only; never opens a cluster connection.

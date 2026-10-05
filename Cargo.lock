@@ -2467,6 +2467,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "freshkube-desktop",
+ "freshkube-probe",
  "rust-embed",
  "tokio",
  "tracing",
@@ -2574,6 +2575,15 @@ dependencies = [
  "chrono",
  "gpui-kit",
  "serde_json",
+]
+
+[[package]]
+name = "freshkube-workbench"
+version = "0.5.0"
+dependencies = [
+ "freshkube-probe",
+ "freshkube-ui",
+ "gpui-kit",
 ]
 
 [[package]]

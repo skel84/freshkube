@@ -283,6 +283,14 @@ Every page should look like Pods. Only the Resources screen does today; Nodes, O
 
 No new entities ([#5](https://github.com/skel84/freshkube/issues/5)), moves in their own commits, stress numbers before and after table changes ([#22](https://github.com/skel84/freshkube/issues/22)), and generic row keys so the session registry ([#44](https://github.com/skel84/freshkube/issues/44)) can add a session. New platform pages ([#42](https://github.com/skel84/freshkube/issues/42)) start on these components.
 
+## Next: a component workbench
+
+A page's components should be checked without starting the app. [#53](https://github.com/skel84/freshkube/issues/53) adds a workbench, [WORKBENCH.md](WORKBENCH.md), and then moves the service map's layout and drawing out of `observability/` so it can be built there. Steps (b) and (c) go ahead only if (a)'s rebuild and open times are clearly shorter than the app's.
+
+- (a) Done in `WORKBENCH_COMMIT`: `crates/freshkube-workbench` with a story list, a strip for theme, text size and width, and a DataTable story with its states and 2,000 rows. `scripts/smoke.sh start --story` opens a story. Measured on a busy M-series laptop, debug, three alternating runs each: WORKBENCH_NUMBERS.
+- (b) Move `layered()` and `curve()` from `observability/map.rs` into a `crates/freshkube-graph` `layout` module, unchanged in a move-only commit, then add tests and a graph story.
+- (c) A `GraphView<S: GraphSource>` in that crate, with the service map as its first source.
+
 ## Next: Coroot observability
 
 The user selected connecting design2's H1–H7 mocks to the `coroot-rs` library in `skel84/corust` as the next feature. [COROOT.md](COROOT.md) records the source review, ownership, capability gaps and validation; [#25](https://github.com/skel84/freshkube/issues/25) tracks delivery. The first read-only slice is delivered in `05d03ce` and `1b16b42` ([PR #31](https://github.com/skel84/freshkube/pull/31)); its actual validation and limitations are recorded in [COROOT.md](COROOT.md#validation). Read-only Incidents landed as `8d3c5d7` ([PR #35](https://github.com/skel84/freshkube/pull/35)), after the audited additive client API in [corust PR #7](https://github.com/skel84/corust/pull/7), merge `362b8d9`. [Its contract and validation](COROOT.md#read-only-incidents-slice) are documented separately. Traces and Profiling read Coroot's per-application views ([contract](COROOT.md#traces-and-profiling)). The broader issue stays open for chart histories, deployment comparisons and shared Health/attention.

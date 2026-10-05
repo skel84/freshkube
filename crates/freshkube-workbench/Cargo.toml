@@ -1,0 +1,22 @@
+[package]
+name = "freshkube-workbench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "A developer workbench: Freshkube's shared components on invented data, one story at a time. Never shipped"
+
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
+# Depends on the shared components only, never on freshkube-desktop or
+# freshkube-core, so a story shows what a page can build from them
+# (docs/WORKBENCH.md).
+[dependencies]
+gpui-kit = "=0.7.0"
+freshkube-probe.workspace = true
+freshkube-ui.workspace = true
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
