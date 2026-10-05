@@ -22,9 +22,13 @@ pub(super) fn kind_icon(key: &str) -> IconName {
     }
 }
 impl Pilot {
-    pub(super) fn render_collapsed_column(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn render_collapsed_column(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if self.area == Area::Observability {
-            return self.render_observability_column(true, cx);
+            return self.render_observability_column(true, window, cx);
         }
         let mut column = self
             .compact_column(cx)
@@ -163,21 +167,44 @@ impl Pilot {
             .on_click(cx.listener(|this, _, window, cx| this.toggle_column(window, cx)))
     }
     pub(super) fn render_observability_column(
-        &self,
+        &mut self,
         collapsed: bool,
-        cx: &Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
         let destination = self.observability.read(cx).destination();
+        let active = |item: Destination| {
+            item == destination
+                || (item == Destination::Applications && destination == Destination::Application)
+        };
         // Deployments has no live source yet; only example data shows it.
-        let items = Destination::NAVIGATION
+        let items: Vec<_> = Destination::NAVIGATION
             .into_iter()
-            .filter(|item| self.fixture || *item != Destination::Deployments);
+            .filter(|item| self.fixture || *item != Destination::Deployments)
+            .collect();
+        // A short window or large text scrolls the list; keep the
+        // destination in view whenever it, or the column's width, changes.
+        let revealed = Some((destination, collapsed));
+        if self.obs_column_revealed != revealed
+            && column::reveal_item(
+                &self.obs_column_scroll,
+                items.iter().position(|&item| active(item)),
+                window,
+            )
+        {
+            self.obs_column_revealed = revealed;
+        }
         let incidents = self.observability.read(cx).incident_count();
-        let mut rows = v_flex().gap(dp(4.));
+        let mut rows = v_flex()
+            .id("obs-navigation-scroll")
+            .test_support()
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.obs_column_scroll)
+            .gap(dp(4.));
         for item in items {
-            let active = item == destination
-                || (item == Destination::Applications && destination == Destination::Application);
+            let active = active(item);
             let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.observability
                     .update(cx, |page, cx| page.open(item, cx));
@@ -291,12 +318,9 @@ impl Pilot {
                     .child(self.column_toggle(collapsed, cx)),
             )
             .child(
-                div()
-                    .id("obs-navigation-scroll")
+                column::with_scrollbar(rows, &self.obs_column_scroll, "obs-navigation-scrollbar")
                     .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(rows),
+                    .min_h_0(),
             )
             .child(sources)
             .into_any_element()
