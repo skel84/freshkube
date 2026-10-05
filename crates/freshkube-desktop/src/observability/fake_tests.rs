@@ -759,6 +759,12 @@ fn span_wire(id: &str, parent: &str, at: i64, ms: f64, error: bool) -> serde_jso
         "status":{"error":error,"message":if error {"HTTP 503"} else {""}},
         "details":{"text":"","lang":""},"attributes":{"http.route":"/cart"},"events":null})
 }
+/// A healthy request in another trace, listed after the failed one.
+fn other_trace(at: i64) -> serde_json::Value {
+    let mut span = span_wire("other", "", at - 60_000, 40., false);
+    span["trace_id"] = "t2".into();
+    span
+}
 fn tracing_wire(path: &str) -> serde_json::Value {
     let at = 1_789_999_000_000_i64;
     let sources = serde_json::json!([
@@ -774,7 +780,7 @@ fn tracing_wire(path: &str) -> serde_json::Value {
                 {"name":"5ms","value":"0.005","data":[1.5,null,2]},
                 {"name":">5s","value":"inf","data":[null,null,0.1]},
                 {"name":"errors","value":"err","data":[0,0.2,null]}],"annotations":null},
-        "spans":[span_wire("root","",at,100.,true)],"limit":0})
+        "spans":[span_wire("root","",at,100.,true),other_trace(at)],"limit":0})
 }
 fn profiling_wire(path: &str) -> serde_json::Value {
     let diff = path.contains("diff");
@@ -980,6 +986,71 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
         // main gained 30 points of the total; gc lost them.
         assert!(window.try_find("obs-live-increase-2").is_some());
         assert!(window.try_find("obs-live-increase-1").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn the_trace_pane_names_its_read_and_retries_a_failed_trace(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            let app = page.applications[0].id.clone();
+            page.open_app(app, Report::Cpu, cx);
+        });
+        window.render_frame(cx);
+        window.click("obs-app-traces", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    let read = |window: &mut gpui_kit::Window| {
+        window
+            .try_find("obs-trace-read")
+            .map(|tag| tag.label().unwrap_or_default().to_string())
+    };
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-trace-detail").visible());
+        assert!(window.find("obs-live-waterfall").visible());
+        assert_eq!(read(window), None, "a current trace shows no read tag");
+
+        // A refresh reads the trace again; its tag says so until it answers.
+        server.status.store(500, Ordering::SeqCst);
+        page.update(cx, |page, cx| page.refresh(cx));
+        window.render_frame(cx);
+        assert_eq!(read(window).as_deref(), Some("Reading"));
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The last trace stays, marked stale, with the error and Retry.
+        assert_eq!(read(window).as_deref(), Some("Stale"));
+        assert!(window.find("obs-live-waterfall").visible());
+        assert!(window.find("obs-trace-retry").visible());
+
+        // Another trace has nothing to keep, so its read failed.
+        window.click("obs-live-span-t2-other", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(read(window).as_deref(), Some("Failed"));
+        assert!(window.try_find("obs-live-waterfall").is_none());
+        server.status.store(200, Ordering::SeqCst);
+        window.click("obs-trace-retry", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(read(window), None);
+        assert!(window.try_find("obs-trace-retry").is_none());
+        assert!(window.find("obs-live-waterfall").visible());
     })
     .unwrap();
 }
