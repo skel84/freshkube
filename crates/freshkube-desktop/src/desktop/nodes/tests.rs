@@ -1095,6 +1095,8 @@ fn the_folded_nodes_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
         window.click("nav-nodes", cx);
         crate::text_size::set(20., cx);
         crate::desktop::tests::settle_header(window, cx);
+        // Columns at the page's default, and Refresh never marks the menu.
+        assert!(window.try_find("nodes-more-dot").is_none());
         // Refresh reads again, as its button does.
         let tick = pilot.read(cx).fixture_tick;
         window.click("nodes-more", cx);
@@ -1125,6 +1127,14 @@ fn the_folded_nodes_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
                 .node_workspace
                 .hidden_columns
                 .contains(&first)
+        );
+        // Off the page's default, the "…" counts the hidden columns.
+        window.find("nodes-more-dot");
+        let hidden = pilot.read(cx).node_workspace.hidden_columns.len();
+        assert_eq!(hidden, 2);
+        assert_eq!(
+            window.find("nodes-more").label(),
+            Some("More · 2 columns hidden")
         );
     })
     .unwrap();

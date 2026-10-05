@@ -105,7 +105,13 @@ impl ObservabilityPage {
                 .meta(meta)
                 .foldable(
                     self.incident_columns_menu(columns.clone()),
-                    freshkube_ui::page::submenu("Columns", columns),
+                    freshkube_ui::page::columns_fold(
+                        columns,
+                        self.hidden_incident_columns.len(),
+                        self.hidden_incident_columns
+                            .iter()
+                            .eq(std::collections::BTreeSet::from(super::HIDDEN_BY_DEFAULT).iter()),
+                    ),
                 ),
             cx,
         )

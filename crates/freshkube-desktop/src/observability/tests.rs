@@ -1491,19 +1491,40 @@ fn the_folded_applications_controls_do_what_the_controls_do(cx: &mut TestAppCont
         .unwrap();
         cx.run_until_parked();
     };
+    // The "…" names what its folded controls are set to, in their order.
+    let says = |cx: &mut TestAppContext, label: &str| {
+        cx.update_window(handle, |_, window, cx| {
+            settle_header(window, cx);
+            assert_eq!(window.find("obs-more").label(), Some(label));
+            let dot = window.try_find("obs-more-dot").is_some();
+            assert_eq!(dot, label != "More");
+        })
+        .unwrap();
+    };
+    says(cx, "More");
     open(cx, 2);
     // 1 hour, 3 hours, 24 hours, 7 days.
     choose(cx, 3);
     cx.update(|cx| assert_eq!(page.read(cx).hours(), 168));
+    says(cx, "More · Time range 7d");
     let first = cx.update(|cx| page.read(cx).namespaces[0].clone());
     open(cx, 0);
     // All namespaces, then each namespace.
     choose(cx, 1);
     cx.update(|cx| assert_eq!(page.read(cx).namespace.as_ref(), Some(&first)));
+    says(cx, &format!("More · Namespace {first} · Time range 7d"));
     let hidden = cx.update(|cx| page.read(cx).hidden_application_columns.len());
     open(cx, 1);
     choose(cx, 0);
     cx.update(|cx| {
         assert_ne!(page.read(cx).hidden_application_columns.len(), hidden);
     });
+    says(
+        cx,
+        &format!("More · Namespace {first} · 1 column hidden · Time range 7d"),
+    );
+    // Back to 3 hours: the range drops out, the others stay.
+    open(cx, 2);
+    choose(cx, 1);
+    says(cx, &format!("More · Namespace {first} · 1 column hidden"));
 }

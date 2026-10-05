@@ -283,12 +283,15 @@ impl SystemServices {
             cx,
         );
         let nodes = self.node_items(cx);
+        let picked = self.node.clone();
+        let value = picked.clone().unwrap_or_else(|| "All nodes".into());
         header
             .filter(filter)
             .chips(Some(chips))
             .foldable(
                 self.render_node_picker(nodes.clone()),
-                page::submenu("Node", nodes),
+                page::Fold::from(page::submenu_value("Node", value, nodes))
+                    .changed(picked.map(|node| format!("Node {node}").into())),
             )
             .meta([self.meta.clone().into_any_element()])
             .render(window, cx)

@@ -78,6 +78,7 @@ impl ObservabilityPage {
             matches!(traces.selection, api::TraceSelection::Errors { .. }) && traces.cell.is_none();
         let all = traces.selection == api::TraceSelection::Recent;
         let mut header = header.filter(filter).meta(meta);
+        let source_changed = self.trace_source_changed();
         for (kind, name, selected) in &traces.sources {
             let choose = {
                 let kind = kind.clone();
@@ -96,7 +97,9 @@ impl ObservabilityPage {
                     let choose = choose.clone();
                     move |_, window, cx| choose(window, cx)
                 }),
-                page::checked_item(name.clone(), *selected, choose),
+                page::Fold::from(page::checked_item(name.clone(), *selected, choose)).changed(
+                    (*selected && source_changed).then(|| format!("Source {name}").into()),
+                ),
             );
         }
         let show_all = page::handler(cx, |this: &mut Self, _, cx| this.show_all_requests(cx));
@@ -122,11 +125,16 @@ impl ObservabilityPage {
                             let show_failed = show_failed.clone();
                             move |_, window, cx| show_failed(window, cx)
                         }),
-                    page::checked_item("Failed requests", errors, show_failed),
+                    page::Fold::from(page::checked_item("Failed requests", errors, show_failed))
+                        .changed(errors.then(|| "Failed requests".into())),
                 )
                 .foldable(
                     self.trace_columns_menu(columns.clone()),
-                    page::submenu("Columns", columns),
+                    page::columns_fold(
+                        columns,
+                        self.hidden_trace_columns.len(),
+                        self.hidden_trace_columns.is_empty(),
+                    ),
                 ),
             cx,
         )
