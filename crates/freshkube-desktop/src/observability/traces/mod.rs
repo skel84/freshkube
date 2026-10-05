@@ -31,6 +31,8 @@ pub(super) struct Traces {
     span: usize,
     heat: Option<Heat>,
     sources: Vec<(String, String, bool)>,
+    /// The source Coroot chose before the user picked one.
+    default_source: Option<String>,
     note: String,
     rows: Vec<SpanRow>,
     /// Indexes into `rows` the filter leaves, in Coroot's order.
@@ -68,6 +70,7 @@ impl Traces {
     pub(super) fn reset(&mut self) {
         *self = Self {
             source: std::mem::take(&mut self.source),
+            default_source: self.default_source.take(),
             app: self.app.take(),
             query: std::mem::take(&mut self.query),
             cursor: self.cursor.take(),
@@ -92,6 +95,9 @@ impl Traces {
             .iter()
             .map(|s| (s.kind.clone(), s.name.clone(), s.selected))
             .collect();
+        if self.source.is_empty() {
+            self.default_source = self.sources.iter().find(|s| s.2).map(|s| s.0.clone());
+        }
         self.heat = tracing.heatmap.as_ref().map(heat);
         self.clamp_cursor();
         self.rows = tracing.spans.iter().map(span_row).collect();
@@ -322,6 +328,12 @@ impl ObservabilityPage {
         traces.waterfall = None;
         self.read_traces(cx);
         cx.notify();
+    }
+
+    /// Whether the user picked a source other than the one Coroot chose.
+    fn trace_source_changed(&self) -> bool {
+        let traces = &self.live_traces;
+        !traces.source.is_empty() && traces.default_source.as_ref() != Some(&traces.source)
     }
 
     fn choose_trace_source(&mut self, kind: String, cx: &mut Context<Self>) {

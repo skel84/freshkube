@@ -138,6 +138,11 @@ mod ui_tests {
             assert_eq!(page.read(cx).live_traces.source, "agent");
             window.render_frame(cx);
             assert!(window.find(row(&page, 0, cx)).visible());
+            // eBPF isn't the source Coroot chose; OpenTelemetry, chosen
+            // again, is.
+            assert!(page.read(cx).trace_source_changed());
+            window.click("obs-trace-source-otel", cx);
+            assert!(!page.read(cx).trace_source_changed());
         })
         .unwrap();
     }

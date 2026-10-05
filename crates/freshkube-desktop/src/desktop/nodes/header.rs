@@ -96,9 +96,14 @@ impl Pilot {
             ));
         let header = if self.node_workspace.view == NodeView::Table {
             let items = self.nodes_columns_items(cx);
+            let hidden = &self.node_workspace.hidden_columns;
             header.foldable(
                 self.nodes_columns_menu(items.clone()),
-                page::submenu("Columns", items),
+                page::columns_fold(
+                    items,
+                    hidden.len(),
+                    hidden.iter().eq(super::DEFAULT_HIDDEN.iter()),
+                ),
             )
         } else {
             header

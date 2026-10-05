@@ -46,6 +46,9 @@ pub(crate) use model::Destination;
 use model::*;
 use view::*;
 
+/// The time range a page opens with, in hours.
+const DEFAULT_HOURS: u32 = 3;
+
 pub(crate) enum ObservabilityEvent {
     Navigation,
     OpenObject {
@@ -289,7 +292,7 @@ impl ObservabilityPage {
             selected_app: fixture.then(|| example::id(example::WORKER)),
             report: Report::Net,
             report_name: "Net".into(),
-            hours: 3,
+            hours: DEFAULT_HOURS,
             nodes,
             connections,
             visible_links: vec![],

@@ -59,7 +59,7 @@ impl ObservabilityPage {
             let folded = if self.live.projects.is_empty() {
                 page::disabled_item("Project")
             } else {
-                page::submenu("Project", items.clone())
+                page::submenu_value("Project", self.live.project_label.clone(), items.clone())
             };
             header = header.foldable(self.project_picker(items), folded);
         }
@@ -85,16 +85,23 @@ impl ObservabilityPage {
             }
             menu
         });
+        let span = if hours == 168 {
+            "7d".to_string()
+        } else {
+            format!("{hours}h")
+        };
+        let range = page::Fold::from(page::submenu_value(
+            "Time range",
+            span.clone(),
+            ranges.clone(),
+        ))
+        .changed((hours != super::DEFAULT_HOURS).then(|| format!("Time range {span}").into()));
         let time = Button::new(header.id("time"))
             .outline()
             .small()
             .h(dp(crate::ui::CONTROL_HEIGHT))
             .icon(IconName::Clock)
-            .label(if hours == 168 {
-                "7d".into()
-            } else {
-                format!("{hours}h")
-            })
+            .label(span.clone())
             .dropdown_caret(true)
             .accessibility_label("Observability time range")
             .tooltip(self.live.range_label.clone())
@@ -128,7 +135,7 @@ impl ObservabilityPage {
             page::disabled_item("Refresh")
         };
         header
-            .foldable(time, page::submenu("Time range", ranges))
+            .foldable(time, range)
             .foldable(button, folded_refresh)
     }
 
