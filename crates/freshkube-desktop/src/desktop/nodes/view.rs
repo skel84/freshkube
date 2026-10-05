@@ -365,7 +365,9 @@ impl Pilot {
             .size_full()
             .min_h_0()
             .track_scroll(&self.node_workspace.pane_scroll)
-            .when(short, |this| this.overflow_y_scroll())
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
             .gap(dp(12.))
             .pl(dp(12.))
             .child(header)
