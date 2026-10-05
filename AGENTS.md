@@ -351,7 +351,7 @@ The keyboard follows one path through the page, and each level owns a key contex
 2. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `ScreenKind`, the screen factory and `Page::screen` or `NodeTab::screen`, according to their scope.
 3. Implement `ScreenPanel` in `screens/<name>.rs`. The screen owns its requests (`OwnedJob`), its data and its offline example data.
 4. Put cluster logic in `freshkube-core` and keep the screen to presentation.
-5. Add UI tests for loading, empty, failure and the main interactions. A table page also calls `desktop::layout_check::assert_table_page`, which measures its header, rows, group rows, padding and title against Pods' sizes; a dashboard or a page with several lists calls its halves, `assert_page_frame` and `assert_table`.
+5. Add UI tests for loading, empty, failure and the main interactions. A table page also calls `desktop::layout_check::assert_table_page`, which measures its header, rows, group rows, edge-to-edge frame and title against Pods' sizes; a page with several lists calls its halves, `assert_edge_frame` and `assert_table`, and a padded page of cards, such as a dashboard, `assert_page_frame`.
 
 Diagnostic checks follow the reliability rules below: find the source of truth first, use the `DiagnosticCheck` constructors, provide an actionable fix where possible, and return `unknown` rather than failing when data is unavailable.
 
