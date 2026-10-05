@@ -1,0 +1,1 @@
+- **Capture icons:** downloaded CI debug binaries embed GPUI Kit's icons, so Search, Refresh and other Kit controls draw their glyphs away from the build runner. Ordinary local debug builds keep their existing asset loading.

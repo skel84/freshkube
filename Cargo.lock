@@ -2467,6 +2467,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "freshkube-desktop",
+ "rust-embed",
  "tokio",
  "tracing",
  "tracing-subscriber",
