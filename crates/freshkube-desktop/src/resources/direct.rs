@@ -143,6 +143,8 @@ mod tests {
     ) -> BoxFuture<'static, Result<Connection, String>> {
         async move {
             std::fs::write(&sources[0], "new configuration").unwrap();
+            // This fixture bypasses the production connector's TLS provider setup.
+            let _ = rustls::crypto::ring::default_provider().install_default();
             Ok(Connection {
                 context: freshkube_core::resources::KubeContext {
                     name: context,
