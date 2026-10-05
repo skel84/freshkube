@@ -1193,7 +1193,8 @@ fn application_namespace_select_searches_and_applies_the_chosen_namespace(cx: &m
         window.input("cache", cx);
     })
     .unwrap();
-    cx.advance_clock(std::time::Duration::from_millis(110));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(110));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
