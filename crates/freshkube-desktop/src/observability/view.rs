@@ -1,21 +1,9 @@
 //! Shared Fog presentation, with normal Kit controls for interactive content.
 use super::*;
 
-pub(super) fn ink(status: Status, cx: &App) -> Hsla {
-    let p = palette(cx);
-    match status {
-        Status::Ok => p.good,
-        Status::Warning => p.warn_ink,
-        Status::Critical => p.crit_ink,
-        Status::Unknown | Status::Absent => p.muted,
-        Status::Integration => p.integration,
-        Status::LogError | Status::Info => p.accent,
-    }
-}
 pub(super) fn status(state: Status, cx: &App) -> AnyElement {
     let p = palette(cx);
     match state {
-        Status::Integration => ui::status_glyph(Tone::Integration, cx).unwrap(),
         Status::Absent => text("—").text_color(p.muted).into_any_element(),
         Status::LogError | Status::Info => div()
             .size(dp(8.))

@@ -135,7 +135,6 @@ pub(super) enum Status {
     Warning,
     Critical,
     Unknown,
-    Integration,
     LogError,
     Info,
     Absent,

@@ -6,7 +6,7 @@ use crate::{
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, IndexPath, Selectable, Sizable, WindowExt,
+    Disableable, Icon, IndexPath, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},

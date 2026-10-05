@@ -46,7 +46,6 @@ impl Status {
             Self::Ok => Tone::Good,
             Self::Critical => Tone::Crit,
             Self::Warning | Self::LogError => Tone::Warn,
-            Self::Integration => Tone::Integration,
             _ => Tone::Unknown,
         }
     }
@@ -61,7 +60,7 @@ impl Status {
         match self {
             Self::Critical => 0,
             Self::Warning | Self::LogError => 1,
-            Self::Unknown | Self::Integration => 2,
+            Self::Unknown => 2,
             Self::Info => 3,
             _ => 4,
         }
@@ -74,7 +73,6 @@ impl Status {
             Self::Info => "Info",
             Self::Warning => "Warning",
             Self::Critical => "Critical",
-            Self::Integration => "Integration required",
             Self::LogError => "Log errors",
         }
     }
