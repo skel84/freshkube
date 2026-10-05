@@ -1097,8 +1097,9 @@ fn the_rail_marks_areas_the_overview_finds_problems_in(cx: &mut TestAppContext) 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let marks = &view.read(cx).rail_marks;
-        // The example cluster has a NotReady node and a node near its memory.
-        assert_eq!(marks.tone(Area::Nodes), Some(crate::ui::Tone::Crit));
+        // The example cluster has NotReady nodes and a node at 92% memory,
+        // High: both warn.
+        assert_eq!(marks.tone(Area::Nodes), Some(crate::ui::Tone::Warn));
         assert_eq!(marks.tone(Area::ControlPlane), Some(crate::ui::Tone::Warn));
         assert_eq!(
             marks.tone(Area::Group("workloads")),

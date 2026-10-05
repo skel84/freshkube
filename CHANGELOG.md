@@ -28,6 +28,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Overview's cards share Monitoring's card:** each figure takes its tone's colour above its detail, with a meter of the cluster's nodes (in large clusters, a run per state, problems first, so one failing node still shows) or Peak memory's bar in the card's colour. A card waiting for its first answer shows a skeleton, and one showing the last known answer has the stale mark with the reason. Tab reaches each card, and Enter or Space opens it.
 - **Slimmer table headers:** a table's header row is 26 high, down from 30, closer to a desktop app's.
 - **One row height:** every table draws 26-high rows, and the Density control is gone; a larger text size scales the rows for anyone who wants them bigger.
+- **Peak memory agrees with itself:** Overview's card, and the Nodes dot it puts on the rail, turn yellow at 85% and red at 95%, the same thresholds as its bar and its High or Critical word. It used to turn red at 90%, so a node at 92% showed red over the word High.
 
 ## 0.5.0 (2026-10-04)
 

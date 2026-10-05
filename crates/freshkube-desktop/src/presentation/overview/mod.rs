@@ -468,10 +468,12 @@ impl Overview {
                     })
                     .unwrap_or("No memory data reported".into())
                     .into(),
+                // The memory level's thresholds, so the figure, the bar, the
+                // word and the rail's dot agree.
                 tone: match peak {
                     None => Tone::Unknown,
-                    Some((_, percent)) if *percent >= 90. => Tone::Crit,
-                    Some(_) => Tone::Good,
+                    Some((_, percent)) => crate::ui::memory_tone(super::memory_level(*percent))
+                        .map_or(Tone::Good, |(tone, _)| tone),
                 },
                 segments: vec![],
                 meter: peak.map(|(_, percent)| (*percent, super::memory_level(*percent))),
