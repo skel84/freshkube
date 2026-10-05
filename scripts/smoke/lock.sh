@@ -21,7 +21,14 @@ SCREEN_LOCK=${FRESHKUBE_SCREEN_LOCK:-$HOME/.cache/freshkube/screen.lock}
 SCREEN_IDLE=${FRESHKUBE_SCREEN_IDLE:-600}
 SCREEN_WAIT=${FRESHKUBE_SCREEN_WAIT:-3600}
 
-screen_locked() { ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked"=Yes'; }
+# Not `ioreg | grep -q`: under pipefail, as smoke.sh and browser.sh run, grep
+# exits at the match, ioreg dies of SIGPIPE and the pipeline reads as unlocked.
+screen_locked() {
+  case $(ioreg -n Root -d1) in
+    *'"CGSSessionScreenIsLocked"=Yes'*) return 0 ;;
+  esac
+  return 1
+}
 
 # Wait for the user to unlock the screen, holding on to the lock meanwhile.
 screen_wait_unlocked() {
