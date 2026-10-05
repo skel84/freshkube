@@ -14,6 +14,8 @@ pub(super) enum Subject {
     Applications,
     Map,
     Report(api::AppId, bool),
+    /// Coroot's own view of an application.
+    View(api::AppId),
     Incidents,
     Incident(String, api::AppId),
     /// An application, its trace source and the spans listed.
@@ -58,6 +60,9 @@ pub(super) struct Live {
     pub map: Snapshot<api::ServiceMap, ReadIdentity>,
     pub rest: Snapshot<api::AppHealth, ReadIdentity>,
     pub extended: Snapshot<api::AppHealth, ReadIdentity>,
+    pub view: Snapshot<api::AppView, ReadIdentity>,
+    /// The view's last read was refused, rather than failed.
+    pub view_refused: bool,
     pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity>,
     pub incident: Snapshot<api::IncidentView, ReadIdentity>,
     pub tracing: Snapshot<api::Tracing, ReadIdentity>,
@@ -102,6 +107,8 @@ impl Live {
             map: Snapshot::default(),
             rest: Snapshot::default(),
             extended: Snapshot::default(),
+            view: Snapshot::default(),
+            view_refused: false,
             incidents: Snapshot::default(),
             incident: Snapshot::default(),
             tracing: Snapshot::default(),
@@ -125,6 +132,8 @@ impl Live {
         self.map = Snapshot::default();
         self.rest = Snapshot::default();
         self.extended = Snapshot::default();
+        self.view = Snapshot::default();
+        self.view_refused = false;
         self.incidents = Snapshot::default();
         self.incident = Snapshot::default();
         self.tracing = Snapshot::default();
@@ -407,6 +416,7 @@ impl ObservabilityPage {
         if self.fixture {
             if self.destination == Destination::Application {
                 self.prepare_report();
+                self.read_embedded(cx);
             }
             self.answer_example_incidents();
             if self.destination == Destination::Traces {
@@ -479,6 +489,8 @@ impl ObservabilityPage {
                     cx.notify();
                     return;
                 };
+                self.read_view(provider.clone(), source.clone(), cx);
+                self.read_embedded(cx);
                 for extended in [false, true] {
                     let key = ReadIdentity {
                         subject: Subject::Report(app.clone(), extended),

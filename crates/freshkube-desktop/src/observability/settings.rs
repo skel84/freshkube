@@ -285,6 +285,11 @@ impl ObservabilityPage {
                 self.live.profiling.is_stale(),
                 self.live.profiling.error(),
             ),
+            Destination::Application => (
+                self.live.view.is_loading(),
+                self.live.view.is_stale(),
+                self.live.view.error(),
+            ),
             _ => return None,
         };
         if stale {
@@ -294,6 +299,7 @@ impl ObservabilityPage {
                 Destination::Incidents => self.live.incidents.last_successful(),
                 Destination::Traces => self.live.tracing.last_successful(),
                 Destination::Profiling => self.live.profiling.last_successful(),
+                Destination::Application => self.live.view.last_successful(),
                 _ => None,
             };
             let lead = last.map(|time| {

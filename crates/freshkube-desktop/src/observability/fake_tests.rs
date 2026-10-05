@@ -71,7 +71,9 @@ impl Server {
                     } else if path.contains("/profiling") {
                         profiling_wire(path)
                     } else if path.contains("/app/") {
-                        serde_json::json!({"app_map":{"application":{"status":"warning"}},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available"}]}]})
+                        // The application the path names, as Coroot answers for it.
+                        let id=path.split("/app/").nth(1).unwrap_or("").split('?').next().unwrap_or("").replace("%3A",":");
+                        serde_json::json!({"app_map":{"application":{"id":id,"status":"warning"},"dependencies":[{"id":"cluster-a:prod:Deployment:db","status":"ok","link":{"status":"critical"}}]},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available","threshold":80,"unit":"percent","condition_format_template":"the CPU usage > <threshold>"}],"widgets":[{"table":{"header":["Container","Usage"],"rows":[{"cells":[{"value":"api"},{"value":"0.2","unit":"cores"}]}]},"width":"100%"}]}]})
                     } else if path.contains("map") {
                         serde_json::json!({"map":[]})
                     } else if status==204 {
@@ -1233,6 +1235,41 @@ async fn heatmap_arrows_read_nothing_until_enter(cx: &mut TestAppContext) {
         assert!(!page.read(cx).heat_focus.is_focused(window));
         assert!(page.read(cx).focus.is_focused(window));
         assert_eq!(cursor(window), None);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn an_application_reads_coroots_own_view(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let app = page.applications[0].id.clone();
+            page.open_app(app, Report::Cpu, cx);
+        })
+    });
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        !observed.read(cx).live.view.is_loading()
+    })
+    .await;
+    assert!(
+        last_path(&server, "/app/").contains("/project/p1/app/cluster-a%3Aprod%3ADeployment%3Aapi")
+    );
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.view.error().is_none());
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("obs-app-map-cluster-a:prod:Deployment:db")
+                .visible()
+        );
+        assert!(window.find("obs-report-cpu").visible());
+        assert!(window.find("obs-app-checks").visible());
+        assert!(window.find("obs-app-table-0-row-0").visible());
     })
     .unwrap();
 }

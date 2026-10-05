@@ -77,6 +77,8 @@ impl ObservabilityPage {
         match self.destination {
             Destination::Incidents => Shown::Incidents,
             Destination::Traces => Shown::Traces,
+            // The Tracing report embeds the Traces page's view and its table.
+            Destination::Application if self.embeds_tracing() => Shown::Traces,
             _ => Shown::Applications,
         }
     }

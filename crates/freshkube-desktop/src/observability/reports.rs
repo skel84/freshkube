@@ -4,7 +4,6 @@ use freshkube_core::coroot as api;
 
 pub(super) struct ReportSnapshot {
     key: ReportKey,
-    tabs: Vec<(String, SharedString, Status)>,
     rest: Option<Evidence>,
     extended: Option<Evidence>,
     subject: Option<api::ObjectSubject>,
@@ -281,6 +280,7 @@ impl Evidence {
 }
 impl ObservabilityPage {
     pub(super) fn prepare_report(&mut self) {
+        self.prepare_view();
         let Some(id) = &self.selected_app else {
             self.report_snapshot = None;
             return;
@@ -317,14 +317,6 @@ impl ObservabilityPage {
         } else {
             (self.live.rest.data(), self.live.extended.data())
         };
-        // A tab shows the primary source's verdict, or the other's when the
-        // primary has no report by that name.
-        let mut tabs = BTreeMap::new();
-        for health in extended.into_iter().chain(rest) {
-            for report in &health.reports {
-                tabs.insert(report.name.clone(), Status::from(report.status));
-            }
-        }
         let rest = rest.map(|h| prepare(h, "rest", pages[0]));
         let extended = extended.map(|h| {
             let mut evidence = evidence(h, &self.report_name, "extended").without(rest.as_ref());
@@ -333,13 +325,6 @@ impl ObservabilityPage {
         });
         self.report_snapshot = Some(ReportSnapshot {
             key,
-            tabs: tabs
-                .into_iter()
-                .map(|(name, state)| {
-                    let key = format!("obs-report-{}", name.to_lowercase());
-                    (name, key.into(), state)
-                })
-                .collect(),
             rest,
             extended,
             subject: self
@@ -349,7 +334,7 @@ impl ObservabilityPage {
                 .and_then(|s| api::ObjectSubject::for_app(s, id)),
         });
     }
-    pub(super) fn render_report(&self, _window: &Window, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn render_report(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(id) = &self.selected_app else {
             return text("Select an application to inspect its reports").into_any_element();
         };
@@ -434,7 +419,7 @@ impl ObservabilityPage {
                     .child(self.breadcrumbs("Applications", Destination::Applications, cx))
                     .child(actions),
             )
-            .child(self.report_tabs(snapshot, cx));
+            .child(self.render_app_view(window, cx));
         if snapshot.subject.is_none() && !self.fixture {
             content = content.child(muted(
                 "No Kubernetes link: the application is external, of an unsupported kind, or its cluster isn't associated.",
@@ -444,30 +429,6 @@ impl ObservabilityPage {
         content
             .child(self.render_evidence(snapshot, cx))
             .into_any_element()
-    }
-    fn report_tabs(&self, snapshot: &ReportSnapshot, cx: &Context<Self>) -> Div {
-        let p = palette(cx);
-        line()
-            .flex_wrap()
-            .gap(dp(2.))
-            .p(dp(3.))
-            .rounded(px(8.))
-            .bg(p.surface_2)
-            .children(snapshot.tabs.iter().map(|(name, key, state)| {
-                let report = name.clone();
-                ui::segment(Button::new(key.clone()), self.report_name == *name, cx)
-                    .group("fog-control")
-                    .small()
-                    .gap(dp(6.))
-                    .child(status(*state, cx))
-                    .child(text(name.clone()))
-                    .tooltip(format!("{name} · {}", state.label()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.report_name = report.clone();
-                        this.prepare_report();
-                        cx.notify();
-                    }))
-            }))
     }
     fn render_evidence(&self, snapshot: &ReportSnapshot, cx: &Context<Self>) -> Div {
         let p = palette(cx);
@@ -720,7 +681,6 @@ mod tests {
                         app: page.selected_app.clone().unwrap(),
                         report: page.report_name.clone(),
                     },
-                    tabs: vec![],
                     rest: Some(evidence),
                     extended: None,
                     subject: None,

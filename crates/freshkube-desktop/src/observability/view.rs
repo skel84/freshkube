@@ -132,6 +132,10 @@ pub(super) fn app_label(id: &freshkube_core::coroot::AppId) -> String {
 impl ObservabilityPage {
     /// A live evidence page's application picker and a way back to its report.
     pub(super) fn evidence_header(&self, id: &'static str, cx: &Context<Self>) -> Div {
+        // Embedded in an application's report, the page already names it.
+        if self.destination == Destination::Application {
+            return div();
+        }
         // Kit's Select fills its parent, so a box sets its size in the row.
         let picker = div().w(dp(300.)).flex_none().child(
             Select::new(&self.app_select)
@@ -199,6 +203,7 @@ impl ObservabilityPage {
         }
         self.selected_app = Some(id);
         self.report_snapshot = None;
+        self.app_page = None;
         self.refresh(cx);
     }
 }
