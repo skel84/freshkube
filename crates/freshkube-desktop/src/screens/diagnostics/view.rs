@@ -278,7 +278,7 @@ impl DiagnosticsScreen {
                                         v_flex()
                                             .px_2p5()
                                             .py_2()
-                                            .rounded(px(6.))
+                                            .rounded(px(8.))
                                             .border_1()
                                             .border_color(p.line)
                                             .bg(p.hover)

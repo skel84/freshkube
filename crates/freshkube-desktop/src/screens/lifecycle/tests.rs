@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{
     Drift, Item, LifecycleScreen, LifecycleView, ScreenPanel, ScreenSource, alert_rows,
-    etcd_verdict, example, node_rows,
+    etcd_verdict, example, node_rows, presence,
 };
 use crate::backend::Target;
 use crate::ui::Tone;
@@ -564,4 +564,13 @@ fn minor_and_support_alerts_keep_wording_node_order_and_evidence() {
             .iter()
             .all(|alert| alert.health == freshkube_core::HealthIndicator::Warning)
     );
+}
+
+/// A node missing from a roster is worth a look, not a failure, and a roster
+/// that wasn't read says nothing either way.
+#[test]
+fn roster_presence_glyphs_never_show_a_failure() {
+    assert_eq!(presence(Some(true)), Tone::Good);
+    assert_eq!(presence(Some(false)), Tone::Warn);
+    assert_eq!(presence(None), Tone::Unknown);
 }
