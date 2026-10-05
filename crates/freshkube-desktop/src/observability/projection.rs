@@ -212,3 +212,53 @@ impl ObservabilityPage {
         self.applications.iter().find(|a| &a.id == selected)
     }
 }
+
+impl ObservabilityPage {
+    pub(super) fn project(&mut self) {
+        self.matrix.clear();
+        self.counts = [0; 7];
+        let mut offset = 0;
+        // The projection is already sorted by category. Visit each app once,
+        // including projects with one category per app.
+        for apps in self.applications.chunk_by(|a, b| a.category == b.category) {
+            let base = offset;
+            offset += apps.len();
+            let category = &apps[0].category;
+            if self.category.as_ref().is_some_and(|cat| cat != category) {
+                continue;
+            }
+            let mut shown = vec![];
+            let mut hidden = 0;
+            for (index, app) in apps.iter().enumerate() {
+                if !app.search.contains(&self.query_text)
+                    || self
+                        .namespace
+                        .as_ref()
+                        .is_some_and(|ns| *ns != app.namespace)
+                {
+                    continue;
+                }
+                for (ix, filter) in Filter::ALL.iter().enumerate() {
+                    if filter.matches(app) {
+                        self.counts[ix] += 1;
+                    }
+                }
+                if self.filter.matches(app) {
+                    shown.push(MatrixRow::App(base + index));
+                } else if app.status == Status::Ok {
+                    hidden += 1;
+                }
+            }
+            if !shown.is_empty() || hidden > 0 {
+                self.matrix.push(MatrixRow::Group {
+                    label: category.clone(),
+                    summary: format!("{} shown · {hidden} healthy hidden", shown.len()),
+                });
+                self.matrix.extend(shown);
+            }
+        }
+        self.count_labels =
+            std::array::from_fn(|ix| format!("{} {}", Filter::ALL[ix].label(), self.counts[ix]));
+        self.app_count = self.applications.len().to_string();
+    }
+}
