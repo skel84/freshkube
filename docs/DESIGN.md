@@ -2,7 +2,7 @@
 
 Fog is the design direction chosen on 3 October 2026: calm grey content, a blue-slate frame, dense tables and pastel semantic colour. Figtree carries the interface; IBM Plex Mono carries resource names, numbers and code. Colour identifies status, selection or resource type. The visual language must remain distinct from Aptakube, Lens and Rubick.
 
-The reference is the user's **Freshkube holistic layout-selection.pdf** (1280×880 fictional window comps). G7/G7c, G8 and H1–H7 are canonical. G2b/G3b only introduced bullet meters and quieter links; G–G6 are earlier palette studies. H and G7–G8 win over G2b/G3b, which win over G–G6. The written rules win when a mock disagrees; the comps were not pixel-QA'd. This supersedes the earlier Console direction.
+The reference is the user's **Freshkube holistic layout-selection.pdf** (1280×880 fictional window comps), exported from the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1), which holds every board named here and is private to its owner until shared. G7/G7c, G8 and H1–H7 are canonical. G2b/G3b only introduced bullet meters and quieter links; G–G6 are earlier palette studies. H and G7–G8 win over G2b/G3b, which win over G–G6. The written rules win when a mock disagrees; the comps were not pixel-QA'd. This supersedes the earlier Console direction.
 
 ## Tokens and type
 
@@ -31,6 +31,64 @@ Figtree Regular, SemiBold, Bold and Black are embedded as static faces (GPUI loa
 
 Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12 px gaps. Radii: cards 12 px, controls 8 px, rail buttons 10 px, meters 3 px, chips fully rounded. Shadows belong only to tooltips and popovers. The previous light palette remains available until a Fog light theme is designed.
 
+## Platforms: desktop grade, adapted at the edges
+
+Freshkube is a desktop app and is meant to ship on macOS, Windows and Linux. GPUI draws every control itself, so the app imitates no operating system: it keeps one look of its own on all three, holds it to the conventions desktop apps share, and adapts each platform's differences in one place. Agreed with the user on 5 October 2026, and chosen the same day as the look for every screen over the dashboard style of the platform boards P1–P7, which remain the reference for what each screen holds ([PLATFORM.md](PLATFORM.md#desktop-grade)).
+
+What desktop apps share, and new screens follow:
+
+- **Lists, tables and outlines carry the content.** Selecting a row shows it in an inspector or pane. No dashboards of cards.
+- **Actions act on the selection,** from the toolbar, a context menu or a key. An inspector or dialog has at most one default button; rows and cards don't carry their own.
+- **The frame states the location.** Pages don't open on a hero heading or a greeting.
+- **Desktop density.** Controls 24 dp, toolbars 38 dp, rows 26–28 dp, column headers in sentence case at 11.5 px semibold, panes padded 10–12 dp.
+- **Space belongs to panes.** Splits are resizable and remembered; empty space sits inside a pane, not between cards.
+- **Every action has a key,** and ⌘K reaches everything.
+
+What differs, handled by one platform module and never by a screen:
+
+| Concern | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Window controls | Traffic lights, leading | Caption buttons, trailing | The desktop's decorations; client-side when the compositor asks |
+| Primary modifier | ⌘ | Ctrl | Ctrl |
+| Default button in a group | Trailing | Leading | Trailing |
+| App menu | Global menu bar | Menu button in the header | Menu button in the header |
+| Credentials | Keychain | Credential Manager | Secret Service |
+| Terminal-wide shortcuts | ⌘ | Ctrl-Shift (proposed) | Ctrl-Shift (proposed) |
+| Packaging | DMG, Homebrew cask | MSI or winget | AppImage, Flatpak or deb |
+
+Bind keys with `secondary-` and show the platform's label (`⌘K`, `Ctrl+K`). A focused terminal takes every key without the modifier above, so on Windows and Linux its shortcuts can't use plain Ctrl, which the shell needs. The bundled faces keep the same metrics on every platform. [#81](https://github.com/skel84/freshkube/issues/81) adds Linux and Windows checks to CI and fixes the terminal's copy and paste keys there first.
+
+The comps are in the canvas's [Desktop grade](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1) section. P1d, P4d and P4w are pages, also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`. N1, N1c and N2, the Native pass, are the workspace around a page: a source list, document tabs, the inspector and a bottom panel for logs, the terminal and agent activity. R is the app today, for comparison.
+
+### From today's app to desktop grade
+
+The changes below take what Pods draws today (R) to desktop grade. They are in order, and each is one PR in `freshkube-ui`'s page and table components. Two pages draw with those components today: **Resources** (Pods and every other kind, with its detail pane) and **System services**. **Applications** (Observability, [#68](https://github.com/skel84/freshkube/pull/68)) and **Nodes** ([#69](https://github.com/skel84/freshkube/pull/69)) join them when those PRs merge, and each change below names them where it reaches them. Overview, the Talos screens, Monitoring and Observability's other screens take each change when they migrate; no PR here restyles them by hand.
+
+Each PR updates the rows of [Components](#components) it changes, since that section describes the app as it is, and the numbers in `layout_check` and `scripts/check-style.sh` in the same change.
+
+1. **Sentence-case column headers.** The header cells use a new `ui::column_label` (11.5 px semibold, muted, the label as given) instead of `ui::caption`, which keeps uppercase for section and field labels for now. Pages give labels in sentence case: `Ready ↻`, not `READY`. Resources' server-printed columns already arrive as `Name`, `Ready`. *Resources, System services, Applications, Nodes.*
+2. **A 26 header row.** `HEADER_HEIGHT` 30 → 26, still on `surface_2` with a bottom hairline. *Resources, System services, Applications, Nodes.*
+3. **Rows 28 and 26.** `ROW_HEIGHT` 34 → 28; `COMPACT_ROW_HEIGHT` stays 26 and group rows follow the row height. Cells pad 10 horizontally instead of 12. *Resources, System services, Applications, Nodes.*
+4. **No card around the table.** `data_table` draws the table bare by default, edge to edge across its pane, with hairlines where it meets the toolbar, the inspector and the status bar. A table inside a card of its own asks for `.carded()`, which replaces `.bare()`. *Resources, System services, Applications, Nodes.*
+5. **A page frame without margins.** `page::page` drops the 26 / 22 / 18 padding and the 14 gaps: toolbar, any banner and panes stack edge to edge, divided by hairlines, and content inside a pane is padded 10–12. *Resources, System services, Applications, Nodes.*
+6. **`PageHeader` as a toolbar.** One 38 row with a bottom hairline: the filter, the segment and `StatusChips` at the left, the controls after the spacer, every control 24 high. A page's `.secondary(row)` becomes a second toolbar row. In a narrow window the controls fold into an overflow menu instead of wrapping onto more lines. The title stays where it is until its open question is answered. *Resources, System services, Applications, Nodes.*
+7. **The meta line in the status bar.** The context, count, state and refresh time move from under the header to the status bar's page segment, which the page fills. *Resources, System services, Applications, Nodes, and the shell's status bar.*
+8. **Counts in the table's footer.** `ShowingBar`'s `Showing 40 of 212` with Show all, and `SelectionBar`'s `3 selected` with its actions, move into the `Legend` row: 26 high, on the frame's fill, with a top hairline. The blue strip above the rows goes. *Resources, System services, Applications.*
+9. **An inspector instead of the detail card.** A shared `Inspector` takes the pane's frame: the split's trailing pane, with no card, divided by a hairline, padded 12, tabs 28 high. The split stays resizable, and its width is remembered per page in `navigation.json`. Below 900 content width it still opens under the table. *Resources (the detail pane of every kind), Nodes (the node pane).*
+10. **Actions on the selection, not the row.** A shared row context menu is built from the same actions as the toolbar, each shown with its key in the platform's label. `GroupRow`'s Select all, Expand and Open node move to it and to keys; a group row keeps its chevron, glyph, label and count. *Resources (Pods grouped by cause), Nodes (Expand and Collapse on Healthy).*
+11. **System services without an actions column.** Its row actions, such as Health check, act on the selected row from the toolbar, the context menu and keys, and the column goes. *System services.*
+
+12. **The page title in the toolbar.** `PageHeader`'s 20 px black title becomes the toolbar's leading label, 13 semibold in `ink`, before the filter in change 6's 38 row. A `Breadcrumb` folds the same way: its parent muted, a faint `/`, then the label. The id `<page>-title` stays, and `layout_check` measures the label instead of the 20 title on its 28 line. *Resources, System services, Applications, Nodes.*
+13. **G6 glyphs and the skull.** `ui::status_glyph`, `status_mark` and `health_mark` draw the round G6 set in [Status and links](#status-and-links) instead of the dot, triangle and diamond. A new `Tone::Died` draws the K1 skull in the critical colour and counts with critical in `StatusChips`. Pods map a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`) to it; a pod that can't start (`ImagePullBackOff`, an unschedulable pod) stays critical, the disc with a bar. The style check already keeps these three functions the only places glyphs are drawn, so no page changes its own code apart from Pods' mapping. *Every page that shows a status: Resources (rows, group rows, chips and the pod's cause card), System services, Applications, Nodes, Overview, etcd, Monitoring, Observability, Kubernetes-only, the shell's header and status bar, and every `ui::tag`.*
+
+The user settled three of the open questions on 5 October 2026:
+
+- **Page titles:** a label in the toolbar, change 12.
+- **The interface face:** Figtree stays, at desktop density. No font change.
+- **Status glyphs:** G6 Round, with the K1 skull for a container that died, change 13.
+
+The terminal's Ctrl-Shift shortcuts stay open and belong to [#81](https://github.com/skel84/freshkube/issues/81), not to this list.
+
 ## Frame
 
 - Header 52 dp: context and “Talos + Kubernetes”, Dashboard / Nodes / Workloads / Events / Observability tabs, relevant time range, Search (⌘K), refresh and settings. Tabs become icons in narrow windows.
@@ -40,15 +98,18 @@ Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12
 
 ## Status and links
 
+Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette for every state, drawn 10 dp, whose inside carries the meaning. The app draws the dot, triangle and diamond until [change 13](#from-todays-app-to-desktop-grade) lands.
+
 | State | Glyph |
 | --- | --- |
-| OK | Filled mint dot |
-| Warning / at risk | Amber outlined triangle |
-| Critical / failing | Filled coral diamond |
-| Pending / unknown | Hollow grey circle |
-| Completed | Grey tick |
-| Integration required | Lavender outlined square |
-| Log errors | Blue dot |
+| OK | Mint dot in a soft mint halo |
+| Warning / at risk | Amber ring, half filled |
+| Died | Coral K1 skull: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`) |
+| Critical / can't run | Coral disc with a bar cut out: an image that won't pull, a node down, an etcd alarm |
+| Pending / unknown | Dashed grey ring |
+| Completed | Grey tick in a faint ring |
+| Integration required | Lavender ring with a plus |
+| Log errors | Small blue dot |
 
 Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. Prose links, breadcrumbs, selection and focus are blue. A chosen chip or outline toggle takes the primary outline (`ui::choice`); a chosen segment of a ghost segmented control on a `surface_2` track takes the accent tint (`ui::segment`), since Kit's own selected ghost colour matches that track. Dense cross-references use secondary text with dotted underlines and become blue on hover.
 
@@ -187,8 +248,11 @@ Two checks keep pages on these components ([#48](https://github.com/skel84/fresh
 
 ## Open
 
+Page titles, the interface face and status glyphs were [decided on 5 October 2026](#from-todays-app-to-desktop-grade). Still open:
+
+- **Terminal shortcuts.** Whether the terminal's own shortcuts on Windows and Linux use Ctrl-Shift, as the [platform table](#platforms-desktop-grade-adapted-at-the-edges) proposes ([#81](https://github.com/skel84/freshkube/issues/81)).
 - Whether integration-required lavender should become soft teal, to separate it from memory.
-- Default row density; comfortable remains the initial value.
+- Default row density; comfortable remains the initial value. Once rows are 28 and 26, whether the Density control still earns its place.
 - More causal grouping beyond pod state and NotReady nodes.
 - Fog light theme.
 - Whether a last-known problem keeps a muted rail dot. Today a card whose evidence is stale shows Unknown with "Last known ·" and leaves no dot, Kubernetes and Talos cards alike ([#65](https://github.com/skel84/freshkube/issues/65)).
