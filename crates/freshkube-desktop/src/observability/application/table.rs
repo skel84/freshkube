@@ -72,7 +72,13 @@ fn cell(raw: &api::Cell) -> Cell {
     } else {
         raw.value.clone()
     };
-    let note = [raw.unit.as_str()]
+    // A missing figure ("—" for a refused connection) has no unit to read.
+    let unit = if is_missing(&text) {
+        ""
+    } else {
+        raw.unit.as_str()
+    };
+    let note = [unit]
         .into_iter()
         .chain(raw.tags.iter().map(String::as_str))
         .filter(|s| !s.is_empty())
@@ -106,6 +112,11 @@ fn cell(raw: &api::Cell) -> Cell {
         status,
         tooltip: None,
     }
+}
+
+/// Whether a cell's text stands for no figure at all.
+fn is_missing(text: &str) -> bool {
+    matches!(text.trim(), "" | "—" | "-" | "–")
 }
 
 /// The characters a cell shows, as the column's width counts them.
@@ -326,5 +337,34 @@ impl TableSource for ReportTable {
             .rows
             .is_empty()
             .then(|| "Coroot sent this table without rows.".into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{api, cell};
+
+    fn rtt(value: &str) -> api::Cell {
+        api::Cell {
+            value: value.into(),
+            unit: "ms".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_missing_figure_reads_alone_without_its_unit() {
+        for missing in ["—", "-", ""] {
+            let cell = cell(&rtt(missing));
+            assert!(cell.note.is_empty(), "{missing:?} kept {:?}", cell.note);
+        }
+        let measured = cell(&rtt("0.4"));
+        assert_eq!(measured.text, "0.4");
+        assert_eq!(measured.note, "ms");
+        let tagged = cell(&api::Cell {
+            tags: vec!["refused".into()],
+            ..rtt("—")
+        });
+        assert_eq!(tagged.note, "refused");
     }
 }

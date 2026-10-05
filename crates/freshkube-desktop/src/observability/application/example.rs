@@ -113,6 +113,10 @@ pub(in crate::observability) fn app_view(app: &api::AppId) -> api::AppView {
     let record = apps.iter().find(|a| a.id == *app);
     let health = example::health(app, false);
     let worker = *app == example::id(example::WORKER);
+    let pods = pods(app, record);
+    let restarts = record
+        .and_then(|r| r.signals.get(Report::Restarts.signal()))
+        .map_or("0", |s| s.value.as_str());
     let reports = REPORTS
         .into_iter()
         .map(|name| {
@@ -147,14 +151,14 @@ pub(in crate::observability) fn app_view(app: &api::AppId) -> api::AppView {
                 name: name.into(),
                 status,
                 checks,
-                widgets: widgets(name, worker, logs.flatten()),
+                widgets: widgets(name, worker, &pods, restarts, logs.flatten()),
                 custom: false,
                 instrumentation: String::new(),
             }
         })
         .collect();
     api::AppView {
-        map: map(app, record, worker),
+        map: map(app, record, &apps, &pods),
         reports,
     }
 }
@@ -175,7 +179,7 @@ fn logs_check(record: Option<&api::Application>, health: &api::AppHealth) -> Opt
     let (_, title, condition, threshold, unit) = CHECKS[Report::Logs.index()];
     let signal = record?.signals.get(Report::Logs.signal())?;
     Some(api::Check {
-        id: "LogErrors".into(),
+        id: format!("{}Check", Report::Logs.label().replace(' ', "")),
         title: title.into(),
         status: signal.status,
         message: issue(health, Report::Logs)
@@ -187,10 +191,16 @@ fn logs_check(record: Option<&api::Application>, health: &api::AppHealth) -> Opt
     })
 }
 
-fn widgets(report: &str, worker: bool, logs: Option<api::Check>) -> Vec<api::Widget> {
+fn widgets(
+    report: &str,
+    worker: bool,
+    pods: &[(String, bool)],
+    restarts: &str,
+    logs: Option<api::Check>,
+) -> Vec<api::Widget> {
     let full = |kind| api::Widget { kind, width: 1. };
     match report {
-        "Instances" => vec![full(api::WidgetKind::Table(instances(worker)))],
+        "Instances" => vec![full(api::WidgetKind::Table(instances(pods, restarts)))],
         "Net" if worker => vec![full(api::WidgetKind::Table(dependencies()))],
         "Logs" => vec![full(api::WidgetKind::Logs(logs))],
         "Deployments" => vec![full(api::WidgetKind::Table(deployments()))],
@@ -213,31 +223,43 @@ fn with_status(value: &str, status: api::Status) -> api::Cell {
     }
 }
 
-fn instances(worker: bool) -> api::Table {
-    let restarts = if worker { "14" } else { "0" };
-    let pods = [
-        (example::POD, worker, "node-a", "10.0.1.17"),
-        ("worker-6c4f8da0-x2k9q", false, "node-b", "10.0.2.31"),
-    ];
+/// The application's pods, as the map lists them: the worker's two, or one
+/// named after any other application, up while its instances check passes.
+fn pods(app: &api::AppId, record: Option<&api::Application>) -> Vec<(String, bool)> {
+    if *app == example::id(example::WORKER) {
+        return vec![
+            (example::POD.into(), true),
+            ("worker-6c4f8da0-x2k9q".into(), false),
+        ];
+    }
+    let failing = record
+        .and_then(|r| r.signals.get(Report::Instances.signal()))
+        .is_some_and(|s| s.status >= api::Status::Warning);
+    vec![(format!("{}-0", app.name()), failing)]
+}
+
+fn instances(pods: &[(String, bool)], restarts: &str) -> api::Table {
     api::Table {
         header: ["Instance", "Status", "Restarts", "IP", "Node"]
             .map(String::from)
             .into(),
         rows: pods
-            .into_iter()
-            .map(|(name, failing, node, ip)| {
+            .iter()
+            .enumerate()
+            .map(|(ix, (name, failing))| {
+                let node = ["node-a", "node-b"][ix % 2];
                 vec![
                     with_status(
                         name,
-                        if failing {
+                        if *failing {
                             api::Status::Critical
                         } else {
                             api::Status::Ok
                         },
                     ),
-                    text(if failing { "CrashLoopBackOff" } else { "up" }),
-                    text(if failing { restarts } else { "0" }),
-                    text(ip),
+                    text(if *failing { "CrashLoopBackOff" } else { "up" }),
+                    text(if *failing { restarts } else { "0" }),
+                    text(&format!("10.0.{}.{}", ix + 1, 17 + 14 * ix)),
                     api::Cell {
                         link: Some(api::CellLink {
                             title: node.into(),
@@ -328,25 +350,33 @@ fn deployments() -> api::Table {
     }
 }
 
-fn map(app: &api::AppId, record: Option<&api::Application>, worker: bool) -> api::AppMap {
-    let node = |key: &str, status, link: Option<(api::Status, &str)>| api::MapApp {
-        id: example::id(key),
-        cluster: "Fictional cluster".into(),
-        category: "application".into(),
-        status,
-        link: link.map(|(status, reason)| api::MapLink {
-            status,
-            reason: reason.into(),
-            both_ways: false,
-            stats: vec!["12 rps".into(), "3 ms".into()],
-            weight: None,
-        }),
-        ..Default::default()
-    };
-    let instances = if worker {
-        vec![example::POD, "worker-6c4f8da0-x2k9q"]
-    } else {
-        vec![app.name()]
+fn map(
+    app: &api::AppId,
+    record: Option<&api::Application>,
+    apps: &[api::Application],
+    pods: &[(String, bool)],
+) -> api::AppMap {
+    let worker = *app == example::id(example::WORKER);
+    // A box's status is the application's own, as the Applications list shows it.
+    let node = |key: &str, link: Option<(api::Status, &str)>| {
+        let id = example::id(key);
+        api::MapApp {
+            status: apps
+                .iter()
+                .find(|a| a.id == id)
+                .map_or(api::Status::Unknown, |a| a.status),
+            id,
+            cluster: "Fictional cluster".into(),
+            category: "application".into(),
+            link: link.map(|(status, reason)| api::MapLink {
+                status,
+                reason: reason.into(),
+                both_ways: false,
+                stats: vec!["12 rps".into(), "3 ms".into()],
+                weight: None,
+            }),
+            ..Default::default()
+        }
     };
     api::AppMap {
         app: api::MapApp {
@@ -355,19 +385,15 @@ fn map(app: &api::AppId, record: Option<&api::Application>, worker: bool) -> api
             labels: BTreeMap::from([("ns".into(), app.namespace().unwrap_or_default().into())]),
             ..Default::default()
         },
-        instances: instances
-            .into_iter()
-            .map(|id| api::MapInstance {
-                id: id.into(),
+        instances: pods
+            .iter()
+            .map(|(id, _)| api::MapInstance {
+                id: id.clone(),
                 labels: BTreeMap::new(),
             })
             .collect(),
         clients: if worker {
-            vec![node(
-                "payments/api",
-                api::Status::Critical,
-                Some((api::Status::Ok, "")),
-            )]
+            vec![node("payments/api", Some((api::Status::Ok, "")))]
         } else {
             vec![]
         },
@@ -375,14 +401,9 @@ fn map(app: &api::AppId, record: Option<&api::Application>, worker: bool) -> api
             vec![
                 node(
                     "payments/ledger-db",
-                    api::Status::Warning,
                     Some((api::Status::Critical, "connection refused")),
                 ),
-                node(
-                    "cache/redis-cache",
-                    api::Status::Warning,
-                    Some((api::Status::Ok, "")),
-                ),
+                node("cache/redis-cache", Some((api::Status::Ok, ""))),
             ]
         } else {
             vec![]

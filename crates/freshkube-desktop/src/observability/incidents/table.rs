@@ -53,7 +53,7 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let header = self.source_header(self.page_header(), cx);
+        let header = self.source_header(self.page_header(cx), cx);
         let state = &self.incident_observations;
         let chips = table::status_chips(
             "obs-incident-tallies",

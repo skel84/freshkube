@@ -96,9 +96,70 @@ fn tracing_and_profiling_reports_embed_their_pages(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(!page.read(cx).embeds_tracing());
         assert!(window.try_find("obs-live-traces").is_none());
-        assert!(window.find("obs-profile-compare").visible());
+        // The profile is the worker's own, not another application's.
+        assert!(window.find("obs-live-flame").visible());
+        let names = page.read(cx).live_profiles.frame_names().join(" ");
+        assert!(names.contains("main.(*Worker).settle"), "{names}");
+        assert!(!names.contains("ApplicationController"), "{names}");
     })
     .unwrap();
+    // An application without profiles says so.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.open_app(example::id("payments/ledger-db"), Report::Net, cx);
+            page.select_report("Profiling".into(), cx);
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-live-profiling").visible());
+        assert!(window.try_find("obs-live-flame").is_none());
+        assert!(page.read(cx).live_profiles.frame_names().is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_header_is_the_applications_breadcrumb(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| page.update(cx, |page, cx| page.open_app(worker(), Report::Net, cx)));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let crumb = window.find("obs-breadcrumb").bounds();
+        let title = window.find("obs-title").bounds();
+        // One row: Applications / payments / ● worker.
+        assert!((crumb.center().y - title.center().y).abs() < gpui_kit::px(4.));
+        assert!(crumb.right() < title.left());
+        window.click("obs-breadcrumb", cx);
+        assert_eq!(page.read(cx).destination, Destination::Applications);
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_example_agrees_with_itself() {
+    let view = super::example::app_view(&worker());
+    let ledger = view
+        .map
+        .dependencies
+        .iter()
+        .find(|d| d.id == example::id("payments/ledger-db"))
+        .unwrap();
+    // The box, its link and its row in Net all say critical.
+    assert_eq!(ledger.status, api::Status::Critical);
+    assert_eq!(ledger.link.as_ref().unwrap().status, api::Status::Critical);
+    let instances = view.reports.iter().find(|r| r.name == "Instances").unwrap();
+    let check = &instances.checks[0];
+    assert!(check.message.contains("1/2"), "{}", check.message);
+    let api::WidgetKind::Table(table) = &instances.widgets[0].kind else {
+        panic!("Instances has its table");
+    };
+    let up = table.rows.iter().filter(|r| r[1].value == "up").count();
+    assert_eq!((table.rows.len(), up), (2, 1));
+    assert_eq!(view.map.instances.len(), 2);
+    // Another application lists its own pod, not the worker's.
+    let ledger = super::example::app_view(&example::id("payments/ledger-db"));
+    assert_eq!(ledger.map.instances[0].id, "ledger-db-0");
 }
 
 /// A live page on the worker's report, its view not read yet.

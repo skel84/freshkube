@@ -5,15 +5,29 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use std::rc::Rc;
 
 impl ObservabilityPage {
-    pub(super) fn page_header(&self) -> PageHeader {
-        let title = if self.destination == Destination::Application {
-            self.selected_app
-                .as_ref()
-                .map_or("Application", |app| app.name())
-        } else {
-            self.destination.label()
+    /// The page's title. An application's report leads with its
+    /// breadcrumb, "Applications / namespace / name" with the application's
+    /// status glyph before its name, as a dashboard leads with its own.
+    pub(super) fn page_header(&self, cx: &Context<Self>) -> PageHeader {
+        if self.destination != Destination::Application {
+            return PageHeader::new("obs", self.destination.label());
+        }
+        let Some(app) = &self.selected_app else {
+            return PageHeader::new("obs", "Application");
         };
-        PageHeader::new("obs", title.to_owned())
+        let mut header = PageHeader::new("obs", app.name().to_owned()).parent(
+            "breadcrumb",
+            "Applications",
+            cx.listener(|this, _, _, cx| this.open(Destination::Applications, cx)),
+        );
+        header = header.crumb(app.namespace().unwrap_or("External / unmapped").to_owned());
+        let state = self
+            .selected_application()
+            .map_or(Status::Unknown, |a| a.status);
+        match tone(state) {
+            Some(tone) => header.glyph(tone),
+            None => header,
+        }
     }
 
     pub(super) fn source_controls(&self, header: PageHeader, cx: &Context<Self>) -> PageHeader {

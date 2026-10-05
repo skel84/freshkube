@@ -41,6 +41,8 @@ pub(super) struct Profiles {
     increases: Vec<(usize, String, String)>,
     detail: Option<FrameDetail>,
     legend: String,
+    /// The example's answer arrived; a live page asks its snapshot.
+    answered: bool,
 }
 
 struct Drawn {
@@ -72,6 +74,7 @@ impl Profiles {
     }
 
     fn prepare(&mut self, profiling: &api::Profiling) {
+        self.answered = true;
         self.note = profiling.message.clone();
         self.kinds = profiling
             .kinds
@@ -129,6 +132,16 @@ impl Profiles {
                 .collect()
         });
         self.layout();
+    }
+
+    /// The frames' names, root first, for tests.
+    #[cfg(test)]
+    pub(super) fn frame_names(&self) -> Vec<&str> {
+        self.graph
+            .iter()
+            .flat_map(|g| &g.frames)
+            .map(|f| f.name.as_str())
+            .collect()
     }
 
     pub(super) fn set_search(&mut self, search: &str) {
@@ -280,15 +293,22 @@ fn amount(value: i64, unit: api::ProfileUnit) -> String {
 
 impl ObservabilityPage {
     pub(super) fn read_profiling(&mut self, cx: &mut Context<Self>) {
-        let (Some(provider), Some(source), Some(app)) = (
-            self.live.provider.clone(),
-            self.live.source.clone(),
-            self.selected_app.clone(),
-        ) else {
+        let Some(app) = self.selected_app.clone() else {
             return;
         };
         self.live_profiles.reset_for(Some(&app));
         let query = self.live_profiles.query.clone();
+        if self.fixture {
+            // The example answers for the application asked, as Coroot would.
+            let profiling = example::profiling(&app, &query);
+            self.live_profiles.prepare(&profiling);
+            cx.notify();
+            return;
+        }
+        let (Some(provider), Some(source)) = (self.live.provider.clone(), self.live.source.clone())
+        else {
+            return;
+        };
         let Some(identity) = self
             .live
             .identity(connection::Subject::Profiling(app.clone(), query.clone()))
@@ -344,7 +364,12 @@ impl ObservabilityPage {
                 ))
                 .into_any_element();
         }
-        if self.live.profiling.data().is_none() {
+        let answered = if self.fixture {
+            profiles.answered
+        } else {
+            self.live.profiling.data().is_some()
+        };
+        if !answered {
             return page.into_any_element();
         }
         page = page.child(self.profile_controls(cx));

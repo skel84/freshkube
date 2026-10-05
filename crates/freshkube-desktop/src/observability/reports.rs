@@ -33,6 +33,9 @@ struct EvidenceEntry {
     samples: Vec<f64>,
     /// An application the row points at, with the link's id.
     link: Option<(api::AppId, SharedString)>,
+    /// The check this row states: an issue's id, or empty for the report's
+    /// verdict. Coroot's own view shows these, so the card leaves them out.
+    check: Option<String>,
 }
 struct EvidencePage {
     entries: std::ops::Range<usize>,
@@ -47,7 +50,12 @@ impl EvidenceEntry {
             metrics: String::new(),
             samples: vec![],
             link: None,
+            check: None,
         }
+    }
+    fn check(mut self, id: impl Into<String>) -> Self {
+        self.check = Some(id.into());
+        self
     }
     fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = detail.into();
@@ -149,19 +157,20 @@ fn evidence(health: &api::AppHealth, name: &str, prefix: &str) -> Evidence {
     {
         let state = Status::from(report.status);
         entries.push(
-            EvidenceEntry::new(state, format!("{} · {}", report.name, state.label())).detail(
-                if report.issues.is_empty() {
+            EvidenceEntry::new(state, format!("{} · {}", report.name, state.label()))
+                .detail(if report.issues.is_empty() {
                     "Coroot reported no issues for this check."
                 } else {
                     ""
-                },
-            ),
+                })
+                .check(""),
         );
         for issue in &report.issues {
             entries.push(
                 EvidenceEntry::new(issue.status.into(), issue.title.clone())
                     .detail(issue.message.clone())
-                    .metrics([Some(issue.id.clone())]),
+                    .metrics([Some(issue.id.clone())])
+                    .check(issue.id.clone()),
             );
         }
         for chart in &report.charts {
@@ -196,7 +205,8 @@ fn evidence(health: &api::AppHealth, name: &str, prefix: &str) -> Evidence {
     } else {
         entries.push(
             EvidenceEntry::new(Status::Absent, format!("{name} · Not reported"))
-                .detail("This source has no report by that name."),
+                .detail("This source has no report by that name.")
+                .check(""),
         );
     }
     entries.extend(health.vitals.iter().map(|v| series("Vital", v)));
@@ -267,6 +277,18 @@ fn paginate(entries: &[EvidenceEntry]) -> Vec<EvidencePage> {
         .collect()
 }
 impl Evidence {
+    /// Drops the verdicts and the checks Coroot's own view already shows,
+    /// by their id or their words, keeping what only this source adds.
+    fn without_checks(mut self, said: Option<&[String]>) -> Self {
+        if let Some(said) = said {
+            self.entries.retain(|entry| match &entry.check {
+                None => true,
+                Some(id) => !id.is_empty() && !said.contains(id) && !said.contains(&entry.detail),
+            });
+            self.pages = paginate(&self.entries);
+        }
+        self
+    }
     /// Drops what the primary source already shows, so a second source adds
     /// only its own evidence.
     fn without(mut self, shown: Option<&Evidence>) -> Self {
@@ -303,8 +325,9 @@ impl ObservabilityPage {
                 previous.extended.as_ref().map_or(0, |e| e.page),
             ]
         });
+        let said = self.app_page.as_ref().map(|page| page.said.as_slice());
         let prepare = |health, prefix, page: usize| {
-            let mut evidence = evidence(health, &self.report_name, prefix);
+            let mut evidence = evidence(health, &self.report_name, prefix).without_checks(said);
             evidence.page = page.min(evidence.pages.len() - 1);
             evidence
         };
@@ -319,7 +342,9 @@ impl ObservabilityPage {
         };
         let rest = rest.map(|h| prepare(h, "rest", pages[0]));
         let extended = extended.map(|h| {
-            let mut evidence = evidence(h, &self.report_name, "extended").without(rest.as_ref());
+            let mut evidence = evidence(h, &self.report_name, "extended")
+                .without_checks(said)
+                .without(rest.as_ref());
             evidence.page = pages[1].min(evidence.pages.len() - 1);
             evidence
         });
@@ -381,13 +406,7 @@ impl ObservabilityPage {
         let mut content = v_flex().gap(dp(14.));
         let Some(snapshot) = &self.report_snapshot else {
             return content
-                .child(
-                    line()
-                        .flex_wrap()
-                        .justify_between()
-                        .child(self.breadcrumbs("Applications", Destination::Applications, cx))
-                        .child(actions),
-                )
+                .child(line().flex_wrap().justify_end().child(actions))
                 .child(muted("Reading application reports…", cx))
                 .into_any_element();
         };
@@ -412,13 +431,7 @@ impl ObservabilityPage {
             );
         }
         content = content
-            .child(
-                line()
-                    .flex_wrap()
-                    .justify_between()
-                    .child(self.breadcrumbs("Applications", Destination::Applications, cx))
-                    .child(actions),
-            )
+            .child(line().flex_wrap().justify_end().child(actions))
             .child(self.render_app_view(window, cx));
         if snapshot.subject.is_none() && !self.fixture {
             content = content.child(muted(
@@ -427,14 +440,27 @@ impl ObservabilityPage {
             ));
         }
         content
-            .child(self.render_evidence(snapshot, cx))
+            .children(self.render_evidence(snapshot, cx))
             .into_any_element()
     }
-    fn render_evidence(&self, snapshot: &ReportSnapshot, cx: &Context<Self>) -> Div {
+    /// What the REST and MCP reports add to Coroot's own view: calls,
+    /// clients, charts and log patterns. None when they add nothing and
+    /// both sources answered.
+    fn render_evidence(&self, snapshot: &ReportSnapshot, cx: &Context<Self>) -> Option<Div> {
         let p = palette(cx);
         let mut card = card(format!("{} evidence", self.report_name), cx);
-        let primary = snapshot.rest.as_ref();
+        let primary = snapshot.rest.as_ref().filter(|e| !e.entries.is_empty());
         let added = snapshot.extended.as_ref().filter(|e| !e.entries.is_empty());
+        // A live card stays while a source reads, fails or hasn't answered,
+        // for its state and Retry.
+        let settled = self.fixture
+            || (snapshot.rest.is_some() || snapshot.extended.is_some())
+                && [&self.live.rest, &self.live.extended]
+                    .iter()
+                    .all(|s| s.error().is_none() && !s.is_loading());
+        if primary.is_none() && added.is_none() && settled {
+            return None;
+        }
         if primary.is_none() && added.is_none() && !self.fixture {
             card = card.child(body().child(muted("No evidence has been read yet.", cx)));
         }
@@ -454,7 +480,7 @@ impl ObservabilityPage {
                 )
                 .child(self.evidence_rows(evidence, true, cx));
         }
-        card.child(self.evidence_sources(cx))
+        Some(card.child(self.evidence_sources(cx)))
     }
     fn evidence_rows(&self, evidence: &Evidence, extended: bool, cx: &Context<Self>) -> Div {
         let page = &evidence.pages[evidence.page];
@@ -625,6 +651,28 @@ mod tests {
     use super::{ReportKey, ReportSnapshot, api, evidence};
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    fn evidence_leaves_out_what_coroots_checks_already_say(cx: &mut TestAppContext) {
+        let (_runtime, _handle, page) = super::super::tests::mount(cx, true);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.open_app(example::id(example::WORKER), super::super::Report::Net, cx);
+                let said = page.app_page.as_ref().unwrap().said.clone();
+                let snapshot = page.report_snapshot.as_ref().unwrap();
+                let rest = snapshot.rest.as_ref().unwrap();
+                assert!(rest.entries.iter().all(|e| e.check.is_none()));
+                assert!(rest.entries.iter().all(|e| !said.contains(&e.detail)));
+                // Calls and clients stay, with their Open report links.
+                assert!(rest.entries.iter().any(|e| e.title.starts_with("Calls ")));
+                assert!(
+                    rest.entries
+                        .iter()
+                        .any(|e| e.title.starts_with("Called by "))
+                );
+            })
+        });
+    }
 
     #[gpui_kit::test]
     fn large_report_evidence_is_paged_without_losing_source_text(cx: &mut TestAppContext) {

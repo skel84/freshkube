@@ -41,7 +41,7 @@ impl Render for ObservabilityPage {
             Destination::Incidents => self.incidents_header(window, cx),
             Destination::Traces => self.traces_header(window, cx),
             _ => self
-                .source_controls(self.page_header(), cx)
+                .source_controls(self.page_header(cx), cx)
                 .render(window, cx),
         };
         let frame = if edge {

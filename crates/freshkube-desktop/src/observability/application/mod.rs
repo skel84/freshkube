@@ -23,6 +23,8 @@ pub(super) struct AppPage {
     tables: Vec<Rc<table::Prepared>>,
     /// Coroot sent no reports at all.
     empty: bool,
+    /// The shown checks' ids and words, which the evidence card leaves out.
+    pub(super) said: Vec<String>,
 }
 
 struct Tab {
@@ -111,9 +113,20 @@ impl AppPage {
             blocks: vec![],
             tables: vec![],
             empty: view.reports.is_empty(),
+            said: vec![],
         };
         if let Some(report) = view.reports.iter().find(|r| r.name == report) {
             page.checks = report.checks.iter().map(check).collect();
+            let logs = report.widgets.iter().filter_map(|w| match &w.kind {
+                api::WidgetKind::Logs(Some(check)) => Some(check),
+                _ => None,
+            });
+            for check in report.checks.iter().chain(logs) {
+                page.said.push(check.id.clone());
+                if !check.message.is_empty() {
+                    page.said.push(check.message.clone());
+                }
+            }
             for widget in &report.widgets {
                 let kind = match &widget.kind {
                     api::WidgetKind::Header(title) => BlockKind::Header(title.clone().into()),
@@ -210,7 +223,7 @@ impl ObservabilityPage {
     pub(super) fn read_embedded(&mut self, cx: &mut Context<Self>) {
         if self.embeds_tracing() {
             self.read_traces(cx);
-        } else if self.embeds_profiling() && !self.fixture {
+        } else if self.embeds_profiling() {
             self.read_profiling(cx);
         }
     }
@@ -231,7 +244,7 @@ impl ObservabilityPage {
             .is_some_and(|page| page.embeds(|b| matches!(b, BlockKind::Profiling)))
     }
 
-    fn select_report(&mut self, name: String, cx: &mut Context<Self>) {
+    pub(super) fn select_report(&mut self, name: String, cx: &mut Context<Self>) {
         self.report_name = name;
         self.prepare_report();
         self.read_embedded(cx);
@@ -433,7 +446,6 @@ impl ObservabilityPage {
                     Some(table) => table.clone().into_any_element(),
                     None => continue,
                 },
-                BlockKind::Profiling if self.fixture => self.render_profiling(cx),
                 BlockKind::Profiling => self.render_live_profiling(cx),
                 BlockKind::Tracing => self.render_live_traces(window, cx),
             };
