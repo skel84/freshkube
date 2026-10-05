@@ -79,6 +79,7 @@ talos-rs = { path = "crates/talos-rs" }
 freshkube-core = { path = "crates/freshkube-core" }
 freshkube-probe = { path = "crates/freshkube-probe" }
 freshkube-desktop = { path = "crates/freshkube-desktop" }
+freshkube-ui = { path = "crates/freshkube-ui" }
 
 [package]
 name = "freshkube"

@@ -145,11 +145,9 @@ mod fixture;
 mod forwards;
 mod logs;
 mod maintenance;
-mod meters;
 mod monitoring;
 mod mutation;
 mod observability;
-mod palette;
 mod presentation;
 mod resources;
 // Framework pieces land before the screens that use them; drop this once
@@ -160,11 +158,11 @@ mod state;
 #[cfg(feature = "stress")]
 mod stress;
 mod terminal;
-mod text_size;
-mod theme;
 mod ui;
 
 use freshkube_probe::perf;
+// The look lives in freshkube-ui; the app reaches it by its old paths.
+use freshkube_ui::{meters, palette, text_size, theme};
 
 /// Where the app keeps its preferences: `preferences.json` in
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`

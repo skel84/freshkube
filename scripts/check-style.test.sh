@@ -87,13 +87,16 @@ EOF
 cat >"$work/tree/crates/freshkube-ui/src/table.rs" <<'EOF'
 fn table() { uniform_list("rows", 1, f); div().rounded(px(6.)).text_size(dp(20.)); }
 EOF
-cat >"$work/tree/crates/freshkube-desktop/src/ui.rs" <<'EOF'
-pub fn page_title() -> Div { div().text_size(dp(20.)).size(dp(8.)).rounded_full() }
-EOF
 page tests.rs <<'EOF'
 fn sample() { uniform_list("rows", 1, f); }
 EOF
-expect 0 "logs, the shared UI code and tests are exempt"
+expect 0 "logs, freshkube-ui and tests are exempt"
+
+mkdir -p "$work/tree/crates/freshkube-desktop/src/resources/screen"
+page resources/screen/view.rs <<'EOF'
+fn table() { uniform_list("rows", 1, f); }
+EOF
+expect 1 "the Resources screen is a page like any other" "list crates/freshkube-desktop/src/resources/screen/view.rs:1:"
 
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"

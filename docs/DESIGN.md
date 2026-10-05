@@ -113,7 +113,7 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 
 **The page frame.** Padding 26 left and right (`PAGE_PADDING`), 22 top, 18 bottom, and 14 between the header, banners and body, on the content background. Monitoring's 20/14/10 on `surface_2` moves to this when it migrates.
 
-**Cards.** 12 px radius, a `line` hairline, `surface` fill, no shadow (`screens::panel` today). Card padding 12–14.
+**Cards.** 12 px radius, a `line` hairline, `surface` fill, no shadow (`page::card`; desktop's `screens::panel` draws the same). Card padding 12–14.
 
 ### Components
 
@@ -142,6 +142,20 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 
 Each state's element has role status and an id `<page>-<state>`.
 
+### In code
+
+[#47](https://github.com/skel84/freshkube/issues/47) moved what Pods draws into `freshkube-ui`, with ui.rs, the palette, theme, text size and meters; the app still reaches those by their old `crate::` paths.
+
+- `freshkube_ui::page`: `page(id)` is the frame, with `PAGE_PADDING`, `PAGE_TOP`, `PAGE_BOTTOM` and `PAGE_GAP`. Also `card(cx)` and `meta_line(id, cx)`.
+  - `PageHeader::new(prefix, title, narrow)` draws `<prefix>-title` and, from `.meta(…)`, `<prefix>-scope`. `header.id("density")` gives the caller its other ids. Then `.filter(div)`, `.chips(…)`, `.control(…)` (call it once per control, in order) and `.render(cx)`. Narrow means content width below `HEADER_NARROW`.
+- `freshkube_ui::table`: `data_table(source, window, cx)` draws the card for any page entity that implements `TableSource`. The page keeps a `TableState::new(prefix)` (scroll and density, and the ids `<prefix>-list`, `-rows`, `-table-scroll`, `-empty` and `-sort`), so several tables can share a page and supplies:
+  - its `columns()` (any `TableColumn`) and `width()`;
+  - `line_count()` and `line(n)`, either a `TableRow` with a `Key: Hash + Eq + Clone`, an element id, a label, selected, marked and muted, or a `Group(n)`;
+  - `cell(row, column)`, `group(n)`, `sorting(column)` and `sort(..)`, `click(key)`, `empty()`, `notes()` and `footer()`.
+
+  It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`.
+- Not in the crate yet: `StatCard` and `ChartCard`, which [#62](https://github.com/skel84/freshkube/issues/62) moves from `monitoring/panel`; `Breadcrumb`; and the states, which stay `ui::empty_state` and `ui::warning_banner`.
+
 ### Settled values
 
 - **Padding:** 26 on every page (`PAGE_PADDING`), with 22 / 18 / 14 as above.
@@ -156,7 +170,7 @@ Each state's element has role status and an id `<page>-<state>`.
 Two checks keep pages on these components ([#48](https://github.com/skel84/freshkube/issues/48)).
 
 - **Layout tests.** A table page's UI test calls `desktop::layout_check::assert_table_page` with its page, title, table, list and density ids. It measures a headless render's painted bounds at both densities: the 30 header, 34 and 26 rows, group rows at the row height, 26 side padding and the 20 title on its 28 line. Pods' test runs it at the default text size and at 20 px; every migrated table page adds its own. A page whose table isn't the whole page uses the two halves: `assert_page_frame` (page, title and content ids: padding and title) and `assert_table` (an optional header frame, the list and its density, toggled or fixed: header, rows and group rows), once per table.
-- **Style check.** `scripts/check-style.sh` runs in CI beside Clippy. Outside the shared components (`crates/freshkube-ui`; until #47 lands, `ui.rs` and `resources/screen/`) a page may not run its own `uniform_list` or `VirtualList` (logs, YAML and the terminal measure their own rows), round a corner with `px` radii other than 3, 8, 10 or 12, set text 20 or larger with a literal, or draw a status glyph itself (a `●` `◆` `▲` `○` `✓` string, or a small `rounded_full` dot) instead of `ui::status_glyph`, `ui::status_mark` or `ui::health_mark`. `scripts/style-allowlist.txt` names, per rule, the files that broke a rule when the check arrived. It only shrinks: the check fails when an unlisted file breaks a rule and when a listed one no longer does, so a migration removes its entries in the same change. `--list` prints every offence with its line.
+- **Style check.** `scripts/check-style.sh` runs in CI beside Clippy. Outside the shared components (`crates/freshkube-ui`) a page may not run its own `uniform_list` or `VirtualList` (logs, YAML and the terminal measure their own rows), round a corner with `px` radii other than 3, 8, 10 or 12, set text 20 or larger with a literal, or draw a status glyph itself (a `●` `◆` `▲` `○` `✓` string, or a small `rounded_full` dot) instead of `ui::status_glyph`, `ui::status_mark` or `ui::health_mark`. `scripts/style-allowlist.txt` names, per rule, the files that broke a rule when the check arrived. It only shrinks: the check fails when an unlisted file breaks a rule and when a listed one no longer does, so a migration removes its entries in the same change. `--list` prints every offence with its line.
 
 ## Open
 

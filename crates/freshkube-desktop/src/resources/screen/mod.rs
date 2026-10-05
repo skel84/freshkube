@@ -4,7 +4,6 @@
 //! changes the cluster.
 
 use std::collections::BTreeSet;
-use std::ops::Range;
 use std::time::{Duration, SystemTime};
 
 use freshkube_core::resources::{
@@ -37,10 +36,10 @@ use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
-use crate::desktop::PAGE_PADDING;
 use crate::palette::palette;
-use crate::screens::{SCREEN_DEADLINE, content_width, mono, panel};
-use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
+use crate::screens::{SCREEN_DEADLINE, content_width, mono};
+use crate::ui::{self, clock, dp, dp_px};
+use freshkube_ui::{page, table};
 use layout::TableLayout;
 use pods::{ListView, NotReady, UsageState};
 
@@ -224,7 +223,8 @@ pub(crate) struct ResourcesScreen {
     /// When the last batch landed.
     updated: Option<SystemTime>,
     focus: FocusHandle,
-    scroll: UniformListScrollHandle,
+    /// The table's scroll and density.
+    table: table::TableState,
     page_scroll: ScrollHandle,
     watch: Option<(OwnedJob, Task<()>)>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
@@ -239,7 +239,6 @@ pub(crate) struct ResourcesScreen {
     healthy_open: bool,
     not_ready: NotReady,
     /// Compact rows, from the density toggle; comfortable by default.
-    compact: bool,
     /// Rows marked with X or a group's Select all, by identity.
     marked: BTreeSet<ResourceIdentity>,
     /// Reads pods' use while the pods list shows.
@@ -301,7 +300,7 @@ impl ResourcesScreen {
                     InputEvent::Change => {
                         let text = input.read(cx).value().to_string();
                         this.projection.filter(&this.store, &text);
-                        this.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                        this.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
                         cx.notify();
                     }
                     // Enter hands the keyboard back to the list.
@@ -374,7 +373,7 @@ impl ResourcesScreen {
             now: live::now(),
             updated: None,
             focus: cx.focus_handle(),
-            scroll: UniformListScrollHandle::new(),
+            table: table::TableState::new("resource"),
             page_scroll: ScrollHandle::new(),
             watch: None,
             namespace_job: None,
@@ -385,7 +384,6 @@ impl ResourcesScreen {
             list_view: ListView::default(),
             healthy_open: false,
             not_ready: NotReady::new(),
-            compact: false,
             marked: BTreeSet::new(),
             usage: None,
             usage_generation: 0,
@@ -463,7 +461,7 @@ impl ResourcesScreen {
         self.query
             .update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
         self.projection.filter(&self.store, text);
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -570,7 +568,7 @@ impl ResourcesScreen {
         self.leave_detail(cx);
         self.restore = None;
         self.projection.reset_sort();
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.restart(window, cx);
     }
 
@@ -940,7 +938,7 @@ impl ResourcesScreen {
         }
         self.namespace = namespace;
         self.sync_namespace_choices(window, cx);
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
         if self.kind.namespaced {
             self.leave_detail(cx);
             self.restart(window, cx);
@@ -1053,9 +1051,12 @@ impl ResourcesScreen {
     fn scroll_to_selection(&self, strategy: ScrollStrategy) {
         match self.projection.selected_index() {
             Some(ix) => self
+                .table
                 .scroll
                 .scroll_to_item(self.projection.line_of(ix), strategy),
-            None if strategy == ScrollStrategy::Top => self.scroll.scroll_to_item(0, strategy),
+            None if strategy == ScrollStrategy::Top => {
+                self.table.scroll.scroll_to_item(0, strategy)
+            }
             None => {}
         }
     }
@@ -1242,6 +1243,7 @@ mod cells;
 mod controls;
 mod layout;
 mod pods;
+mod source;
 mod view;
 
 #[cfg(test)]

@@ -1,0 +1,14 @@
+[package]
+name = "freshkube-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Freshkube's look: theme, palette, text size and the shared components every page draws"
+
+# Depends on neither freshkube-desktop nor freshkube-core, so a page can
+# use only what this crate exports (docs/DESIGN.md#components).
+[dependencies]
+gpui-kit = "=0.7.0"
+chrono.workspace = true
+serde_json.workspace = true

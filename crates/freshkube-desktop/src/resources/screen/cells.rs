@@ -13,6 +13,8 @@ use super::super::rows::{PodRow, PodState, RowOwner};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
+use freshkube_ui::table::ROW_GROUP;
+pub(super) use freshkube_ui::table::cell;
 
 /// The use bar's size and the figure's width beside it.
 const FIGURE_WIDTH: f32 = 40.;
@@ -126,7 +128,7 @@ pub(super) fn name(
                     div()
                         .flex_none()
                         .text_color(p.muted)
-                        .group_hover("resource-row", |style| style.text_color(p.ink_2))
+                        .group_hover(ROW_GROUP, |style| style.text_color(p.ink_2))
                         .child(format!("{}/", row.identity.namespace)),
                 )
             })
@@ -180,7 +182,7 @@ pub(super) fn owner(
     let Some(owner) = owner else {
         return cell(column)
             .text_color(p.muted)
-            .group_hover("resource-row", |style| style.text_color(p.ink_2))
+            .group_hover(ROW_GROUP, |style| style.text_color(p.ink_2))
             .child("—")
             .into_any_element();
     };
@@ -215,7 +217,7 @@ pub(super) fn owner(
                 div()
                     .flex_none()
                     .text_color(p.muted)
-                    .group_hover("resource-row", |style| style.text_color(p.ink_2))
+                    .group_hover(ROW_GROUP, |style| style.text_color(p.ink_2))
                     .child(format!("{}/", owner.short)),
             )
             .when_else(
@@ -362,7 +364,7 @@ pub(super) fn usage(
     let Some(value) = used else {
         return cell(column)
             .text_color(p.muted)
-            .group_hover("resource-row", |style| style.text_color(p.ink_2))
+            .group_hover(ROW_GROUP, |style| style.text_color(p.ink_2))
             .child("—")
             .into_any_element();
     };
@@ -399,7 +401,7 @@ pub(super) fn usage(
                     .text_right()
                     .when(stale, |this| {
                         this.text_color(p.muted)
-                            .group_hover("resource-row", |style| style.text_color(p.ink_2))
+                            .group_hover(ROW_GROUP, |style| style.text_color(p.ink_2))
                     })
                     .child(resource.format(value)),
             )
@@ -461,13 +463,4 @@ pub(super) fn node(
         move || full.clone(),
     )
     .into_any_element()
-}
-
-pub(super) fn cell(column: &DisplayColumn) -> Div {
-    let cell = div().px_3().min_w_0().whitespace_nowrap().truncate();
-    if column.flexible {
-        cell.flex_1().min_w(dp(column.width))
-    } else {
-        cell.flex_none().w(dp(column.width))
-    }
 }

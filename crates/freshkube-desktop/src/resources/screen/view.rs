@@ -1,7 +1,5 @@
 use super::super::model::format_age;
-use super::super::projection::{Cause, Item, PodFilter};
-use super::super::rows::PodState;
-use super::layout::{ColumnSource, ToneSource};
+use super::super::projection::{Cause, PodFilter};
 use super::*;
 use gpui_kit::base::Selectable;
 
@@ -107,12 +105,12 @@ impl ResourcesScreen {
             Button::new("resource-density")
                 .outline()
                 .small()
-                .icon(if self.compact {
+                .icon(if self.table.compact {
                     IconName::Rows4
                 } else {
                     IconName::Rows2
                 })
-                .tooltip(if self.compact {
+                .tooltip(if self.table.compact {
                     "Compact rows; switch to comfortable"
                 } else {
                     "Comfortable rows; switch to compact"
@@ -181,26 +179,20 @@ impl ResourcesScreen {
     /// marks.
     pub(super) fn pod_switch(&self, cx: &mut Context<Self>) -> Option<Div> {
         self.projection.grouping()?;
-        let p = palette(cx);
         let tally = self.projection.tally();
         let count = |tone: ui::Tone, count: usize, what: &'static str, filter: PodFilter| {
-            Button::new(SharedString::from(format!(
-                "resource-tally-{}",
-                what.replace(' ', "-")
-            )))
-            .ghost()
-            .small()
-            .px(dp(6.))
-            .selected(self.projection.pod_filter() == Some(filter))
-            .child(ui::status_glyph(tone, cx).unwrap())
-            .child(div().child(count.to_string()))
-            .text_color(p.ink_2)
-            .accessibility_label(format!("{count} {what}"))
-            .tooltip(format!("{count} {what} · click to filter"))
+            table::status_chip(
+                SharedString::from(format!("resource-tally-{}", what.replace(' ', "-"))),
+                tone,
+                count,
+                what,
+                self.projection.pod_filter() == Some(filter),
+                cx,
+            )
             .on_click(cx.listener(move |view, _, _, cx| {
                 let next = (view.projection.pod_filter() != Some(filter)).then_some(filter);
                 view.projection.set_pod_filter(&view.store, next);
-                view.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                view.table.scroll.scroll_to_item(0, ScrollStrategy::Top);
                 cx.notify();
             }))
         };
@@ -231,270 +223,33 @@ impl ResourcesScreen {
                             view.set_list_view(next, cx);
                         })),
                 )
-                .child(
-                    h_flex()
-                        .id("resource-tally")
-                        .test_support()
-                        .gap(dp(2.))
-                        .font_family(MONO_FONT)
-                        .text_size(dp(12.))
-                        .text_color(p.muted)
-                        .child(count(
-                            ui::Tone::Crit,
-                            tally.failing,
-                            "failing",
-                            PodFilter::Failing,
-                        ))
-                        .child(count(
+                .child(table::status_chips(
+                    "resource-tally",
+                    [
+                        count(ui::Tone::Crit, tally.failing, "failing", PodFilter::Failing),
+                        count(
                             ui::Tone::Warn,
                             tally.warning,
                             "not ready",
                             PodFilter::Warning,
-                        ))
-                        .child(count(
+                        ),
+                        count(
                             ui::Tone::Unknown,
                             tally.waiting,
                             "waiting",
                             PodFilter::Waiting,
-                        ))
-                        .child(count(
-                            ui::Tone::Good,
-                            tally.healthy,
-                            "healthy",
-                            PodFilter::Healthy,
-                        )),
-                ),
-        )
-    }
-
-    fn head(&self, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let (key, direction) = self.projection.sort_state();
-        let namespaced = self.layout.namespaced;
-        h_flex()
-            .w_full()
-            .h(dp(30.))
-            .flex_none()
-            .bg(p.surface_2)
-            .border_b_1()
-            .border_color(p.line)
-            .children(self.layout.columns.iter().enumerate().map(|(ix, column)| {
-                let Some(sort) = column.sort_key(namespaced) else {
-                    return cells::cell(column).into_any_element();
-                };
-                let order =
-                    (key == sort)
-                        .then_some(direction)
-                        .and_then(|direction| match direction {
-                            SortDirection::Ascending => Some(("ascending", IconName::ArrowUp)),
-                            SortDirection::Descending => Some(("descending", IconName::ArrowDown)),
-                            SortDirection::Default => None,
-                        });
-                cells::cell(column)
-                    .id(("resource-sort", ix))
-                    .test_support()
-                    .role(Role::ColumnHeader)
-                    .aria_label(match order {
-                        Some((order, _)) => format!("{}, sorted {order}", column.label),
-                        None => column.label.to_string(),
-                    })
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .cursor_pointer()
-                    .child(ui::caption(&column.label, cx))
-                    .children(
-                        order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)),
-                    )
-                    .on_click(cx.listener(move |view, _, _, cx| view.sort_by(sort, cx)))
-                    .into_any_element()
-            }))
-    }
-
-    /// One line of the list: a group's header or a row.
-    fn render_line(&self, line: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
-        match self.projection.item(line)? {
-            Item::Group(group) => self.group_header(group, cx),
-            Item::Row(ix) => self.render_row(ix, cx),
-        }
-    }
-
-    fn render_row(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let entry = self.projection.entry(&self.store, ix)?;
-        let row = entry.row();
-        let mut p = palette(cx);
-        let selected = self.projection.selected_index() == Some(ix);
-        let marked = self.marked.contains(&row.identity);
-        if selected || marked {
-            p.muted = p.ink_2;
-        }
-        let identity = row.identity.clone();
-        let pod = row.pod.as_ref();
-        let node_ready = pod.is_none_or(|pod| !self.not_ready.contains_key(&pod.node));
-        let stale = self.usage_state == UsageState::Stale || !node_ready;
-        let mut element = h_flex()
-            .group("resource-row")
-            .id(row_id(&identity))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(match &row.owner {
-                Some(owner) => format!(
-                    "{} · {} · {}",
-                    identity.address(),
-                    owner.label(),
-                    row.cells.join(" · ")
-                ),
-                None => format!("{} · {}", identity.address(), row.cells.join(" · ")),
-            })
-            .w_full()
-            .h(dp(self.row_height()))
-            .border_1()
-            .border_color(if selected {
-                p.accent
-            } else {
-                ui::transparent()
-            })
-            .font_family(MONO_FONT)
-            .text_size(dp(12.5))
-            .cursor_pointer()
-            .when(row.terminating, |this| this.text_color(p.muted))
-            .when(marked && !selected, |this| this.bg(p.hover))
-            .when(selected, |this| this.bg(p.accent_soft))
-            .when(!selected, |this| {
-                this.hover(|style| {
-                    let style = style.bg(p.hover);
-                    if row.terminating {
-                        style.text_color(p.ink_2)
-                    } else {
-                        style
-                    }
-                })
-            });
-        let printed = |cell_ix: usize| row.cells.get(cell_ix).map(String::as_str).unwrap_or("");
-        for column in &self.layout.columns {
-            let child = match column.source {
-                ColumnSource::Glyph => {
-                    let tone = match (pod, self.layout.tone_from) {
-                        (Some(pod), _) => Some((
-                            cells::pod_tone(pod, node_ready),
-                            if node_ready {
-                                pod.status.clone().into()
-                            } else {
-                                format!("{} · its node isn't ready", pod.status).into()
-                            },
-                        )),
-                        (None, Some(ToneSource::Status(cell_ix))) => {
-                            let text = printed(cell_ix);
-                            (!text.is_empty())
-                                .then(|| (cells::printed_tone(text), text.to_owned().into()))
-                        }
-                        (None, Some(ToneSource::Ready(cell_ix))) => {
-                            let text = printed(cell_ix);
-                            cells::ready_tone(text)
-                                .map(|tone| (tone, format!("{text} ready").into()))
-                        }
-                        (None, None) => None,
-                    };
-                    cells::glyph(
-                        column,
-                        tone,
-                        marked,
-                        pod.is_some_and(|pod| pod.state == PodState::Completed),
-                        cx,
-                    )
-                }
-                ColumnSource::Name(cell_ix) => {
-                    let reason = pod.filter(|pod| !pod.reason.is_empty()).map(|pod| {
-                        let color = match pod.state {
-                            PodState::Failing => p.crit_ink,
-                            PodState::NotReady => p.warn_ink,
-                            _ => p.muted,
-                        };
-                        (color, pod.reason.as_str())
-                    });
-                    cells::name(
-                        column,
-                        row,
-                        printed(cell_ix),
-                        self.layout.namespaced,
-                        reason,
-                        &p,
-                    )
-                }
-                ColumnSource::Owner => cells::owner(
-                    column,
-                    row.owner.as_ref(),
-                    &row.identity.namespace,
-                    selected,
+                        ),
+                        count(ui::Tone::Good, tally.healthy, "healthy", PodFilter::Healthy),
+                    ],
                     cx,
-                ),
-                ColumnSource::Ready => match pod {
-                    Some(pod) => cells::ready(column, pod, &p),
-                    None => cells::cell(column).into_any_element(),
-                },
-                ColumnSource::Cpu | ColumnSource::Memory => match pod {
-                    Some(pod) => {
-                        let (id, resource) = if column.source == ColumnSource::Cpu {
-                            ("cpu", cells::Resource::Cpu)
-                        } else {
-                            ("memory", cells::Resource::Memory)
-                        };
-                        cells::usage(column, id, resource, pod, entry.usage(), stale, &p)
-                    }
-                    None => cells::cell(column).into_any_element(),
-                },
-                ColumnSource::Node => match pod.filter(|pod| !pod.node.is_empty()) {
-                    Some(pod) => {
-                        cells::node(column, &pod.node, self.store.node_prefix(), node_ready, cx)
-                    }
-                    None => cells::cell(column)
-                        .text_color(p.muted)
-                        .child("—")
-                        .into_any_element(),
-                },
-                ColumnSource::Namespace => cells::cell(column)
-                    .child(identity.namespace.clone())
-                    .into_any_element(),
-                ColumnSource::Cell(cell_ix) => {
-                    let text: SharedString = match column.kind {
-                        ColumnKind::Age => row
-                            .age(self.now)
-                            .map(SharedString::from)
-                            .unwrap_or_else(|| printed(cell_ix).to_owned().into()),
-                        _ => printed(cell_ix).to_owned().into(),
-                    };
-                    let tone = column
-                        .status
-                        .then(|| match status_tone(&text) {
-                            StatusTone::Success => Some(p.good_ink),
-                            StatusTone::Warning => Some(p.warn_ink),
-                            StatusTone::Danger => Some(p.crit_ink),
-                            StatusTone::Neutral => None,
-                        })
-                        .flatten();
-                    cells::cell(column)
-                        .when_some(tone, |this, color| this.text_color(color))
-                        .child(text)
-                        .into_any_element()
-                }
-            };
-            element = element.child(child);
-        }
-        Some(
-            element
-                .on_click(
-                    cx.listener(move |view, _, window, cx| view.click_row(&identity, window, cx)),
-                )
-                .into_any_element(),
+                )),
         )
     }
 
     /// A group's header: its glyph and cause, how many pods, and what can
     /// be done with them.
-    fn group_header(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn group_header(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let group = self.projection.groups().get(ix)?.clone();
-        let p = palette(cx);
         let (tone, label) = match &group.cause {
             Cause::Failing => (ui::Tone::Crit, "Failing"),
             Cause::NodeNotReady(_) => (ui::Tone::Warn, "Node not ready"),
@@ -503,12 +258,6 @@ impl ResourcesScreen {
             Cause::Terminating => (ui::Tone::Unknown, "Terminating"),
             Cause::Unknown => (ui::Tone::Unknown, "Unknown state"),
             Cause::Healthy => (ui::Tone::Good, "Healthy"),
-        };
-        let color = match tone {
-            ui::Tone::Crit => p.crit_ink,
-            ui::Tone::Warn => p.warn_ink,
-            ui::Tone::Good => p.good_ink,
-            _ => p.muted,
         };
         let key = group_key(&group.cause);
         let pods = if group.total == 1 { "pod" } else { "pods" };
@@ -533,118 +282,67 @@ impl ResourcesScreen {
             Cause::NodeNotReady(node) => Some(node.clone()),
             _ => None,
         };
-        let actions = h_flex()
-            .flex_none()
-            .gap_1()
-            .when_some(node.clone(), |this, node| {
-                this.child(
-                    Button::new(SharedString::from(format!("{key}-open-node")))
-                        .ghost()
-                        .xsmall()
-                        .label("Open node")
-                        .on_click(
-                            cx.listener(move |view, _, _, cx| view.open_node(node.clone(), cx)),
-                        ),
-                )
-            })
-            .when(group.cause != Cause::Healthy, |this| {
-                let target = group.clone();
-                this.child(
-                    Button::new(SharedString::from(format!("{key}-select")))
-                        .ghost()
-                        .xsmall()
-                        .label(format!("Select all {}", group.total))
-                        .on_click(cx.listener(move |view, _, _, cx| view.mark_group(&target, cx))),
-                )
-            })
-            .when(group.cause == Cause::Healthy && problems, |this| {
-                this.child(
-                    Button::new(SharedString::from(format!("{key}-toggle")))
-                        .ghost()
-                        .xsmall()
-                        .label(if collapsed { "Expand" } else { "Collapse" })
-                        .on_click(cx.listener(|view, _, _, cx| view.toggle_healthy(cx))),
-                )
-            });
-        Some(
-            h_flex()
-                .id(SharedString::from(key))
-                .test_support()
-                .role(Role::Heading)
-                .aria_label(format!("{label} · {}", detail.join(" · ")))
-                .w_full()
-                .h(dp(self.row_height()))
-                .px_3()
-                .gap(dp(10.))
-                .bg(p.track.opacity(0.45))
-                .border_b_1()
-                .border_color(p.line)
-                .text_size(dp(12.))
-                .children(ui::status_glyph(tone, cx))
-                .child(
-                    div()
-                        .flex_none()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(color)
-                        .child(label),
-                )
-                .when_some(node, |this, node| {
-                    this.child(div().flex_none().font_family(MONO_FONT).child(node))
-                })
-                // The actions follow the text, so a table wider than its
-                // view still shows them.
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(p.muted)
-                        .child(format!("· {}", detail.join(" · "))),
-                )
-                .child(actions)
-                .into_any_element(),
+        let mut row = table::GroupRow::new(
+            SharedString::from(key.clone()),
+            tone,
+            label,
+            self.row_height(),
         )
+        .subject(node.clone())
+        .detail(detail);
+        if let Some(node) = node {
+            row = row.action(
+                Button::new(SharedString::from(format!("{key}-open-node")))
+                    .ghost()
+                    .xsmall()
+                    .label("Open node")
+                    .on_click(cx.listener(move |view, _, _, cx| view.open_node(node.clone(), cx))),
+            );
+        }
+        if group.cause != Cause::Healthy {
+            let target = group.clone();
+            row = row.action(
+                Button::new(SharedString::from(format!("{key}-select")))
+                    .ghost()
+                    .xsmall()
+                    .label(format!("Select all {}", group.total))
+                    .on_click(cx.listener(move |view, _, _, cx| view.mark_group(&target, cx))),
+            );
+        }
+        if group.cause == Cause::Healthy && problems {
+            row = row.action(
+                Button::new(SharedString::from(format!("{key}-toggle")))
+                    .ghost()
+                    .xsmall()
+                    .label(if collapsed { "Expand" } else { "Collapse" })
+                    .on_click(cx.listener(|view, _, _, cx| view.toggle_healthy(cx))),
+            );
+        }
+        Some(row.render(cx).into_any_element())
     }
 
     /// Above the rows: the marked rows' actions, and while healthy pods are
     /// folded, how many show.
-    fn table_notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = palette(cx);
+    pub(super) fn table_notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut notes = Vec::new();
         if !self.marked.is_empty() {
+            let actions = [
+                Button::new("resource-marks-copy")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Copy)
+                    .label("Copy names")
+                    .on_click(cx.listener(|view, _, _, cx| view.copy_marks(cx)))
+                    .into_any_element(),
+                Button::new("resource-marks-clear")
+                    .ghost()
+                    .xsmall()
+                    .label("Clear")
+                    .on_click(cx.listener(|view, _, _, cx| view.clear_marks(cx)))
+                    .into_any_element(),
+            ];
             notes.push(
-                h_flex()
-                    .bg(p.accent_soft)
-                    .id("resource-marks")
-                    .test_support()
-                    .role(Role::Status)
-                    .px_3()
-                    .py(dp(5.))
-                    .gap_2()
-                    .bg(p.accent_soft)
-                    .border_b_1()
-                    .border_color(p.line)
-                    .text_size(dp(12.5))
-                    .child(
-                        div()
-                            .flex_1()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{} selected", self.marked.len())),
-                    )
-                    .child(
-                        Button::new("resource-marks-copy")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Copy)
-                            .label("Copy names")
-                            .on_click(cx.listener(|view, _, _, cx| view.copy_marks(cx))),
-                    )
-                    .child(
-                        Button::new("resource-marks-clear")
-                            .ghost()
-                            .xsmall()
-                            .label("Clear")
-                            .on_click(cx.listener(|view, _, _, cx| view.clear_marks(cx))),
-                    )
+                table::selection_bar("resource-marks", self.marked.len(), actions, cx)
                     .into_any_element(),
             );
         }
@@ -655,117 +353,29 @@ impl ResourcesScreen {
             .iter()
             .find(|group| group.cause == Cause::Healthy && group.shown < group.total);
         if folded.is_some() {
-            let shown = self.projection.len();
+            let show_all = Button::new("resource-show-all")
+                .ghost()
+                .xsmall()
+                .label(format!("Show all {}", tally.total()))
+                .on_click(cx.listener(|view, _, _, cx| view.set_list_view(ListView::All, cx)));
             notes.push(
-                h_flex()
-                    .bg(p.accent_soft)
-                    .id("resource-collapsed")
-                    .test_support()
-                    .role(Role::Status)
-                    .px_3()
-                    .py(dp(5.))
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(p.line)
-                    .text_size(dp(12.5))
-                    .text_color(p.ink_2)
-                    .flex_none()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(format!("Showing {shown} of {}", tally.total(),)),
-                    )
-                    .child(
-                        Button::new("resource-show-all")
-                            .ghost()
-                            .xsmall()
-                            .label(format!("Show all {}", tally.total()))
-                            .on_click(
-                                cx.listener(|view, _, _, cx| view.set_list_view(ListView::All, cx)),
-                            ),
-                    )
-                    .into_any_element(),
+                table::showing_bar(
+                    "resource-collapsed",
+                    self.projection.len(),
+                    tally.total(),
+                    show_all,
+                    cx,
+                )
+                .into_any_element(),
             );
         }
         notes
     }
 
     fn table(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let count = self.projection.items_len();
-        let title = self.noun();
-        let empty = (count == 0).then(|| {
-            if !self.store.is_empty() {
-                format!("No {title} match this filter.")
-            } else if let Some(namespace) = self.namespace.as_ref().filter(|_| self.kind.namespaced)
-            {
-                format!("No {title} in {namespace}.")
-            } else {
-                format!("No {title} found.")
-            }
-        });
-        let list = div()
-            .id("resource-list")
-            .test_support()
-            .role(Role::ListBox)
-            .aria_label(format!(
-                "{}; arrows select and show details, Enter moves to them, X marks a row, L opens a pod's logs, slash or Command-F filters, N chooses the namespace, Escape clears the filter, then closes the details",
-                self.title()
-            ))
-            .flex_1()
-            .min_h_0()
-            .map(|this| match empty {
-                Some(text) => this.child(
-                    div()
-                        .id("resource-empty")
-                        .test_support()
-                        .px_3()
-                        .py_3p5()
-                        .text_size(dp(12.5))
-                        .text_color(p.muted)
-                        .child(text),
-                ),
-                None => this.child(
-                    uniform_list(
-                        "resource-rows",
-                        count,
-                        cx.processor(|view, range: Range<usize>, _, cx| {
-                            range
-                                .filter_map(|line| view.render_line(line, cx))
-                                .collect::<Vec<_>>()
-                        }),
-                    )
-                    .track_scroll(&self.scroll)
-                    .size_full(),
-                ),
-            });
-        let notes = self.table_notes(cx);
-        panel(cx)
+        table::data_table(self, window, cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .children(notes)
-            .child(
-                div()
-                    .id("resource-table-scroll")
-                    .test_support()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .overflow_x_scroll()
-                    .child(
-                        v_flex()
-                            .h_full()
-                            .w_full()
-                            .min_w(dp(self.layout.width))
-                            .child(self.head(cx))
-                            .child(list),
-                    ),
-            )
-            .when(self.lists_pods(), |this| {
-                this.child(self.meter_legend(content_width(window) < 600., cx))
-            })
             .into_any_element()
     }
 
@@ -852,7 +462,7 @@ impl ResourcesScreen {
         match self.store.read_state() {
             ReadState::Loading => state(
                 "resource-loading",
-                panel(cx)
+                page::card(cx)
                     .p_3()
                     .gap_3()
                     .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
@@ -1032,17 +642,9 @@ impl Render for ResourcesScreen {
                 .child(list)
                 .into_any_element()
         };
-        v_flex()
-            .id("resources-page")
-            .test_support()
+        page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| this.overflow_y_scroll())
-            .size_full()
-            .min_h_0()
-            .px(dp(PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
             .child(self.header(window, cx))
             .children(self.stale_banner(cx))
             .child(body)

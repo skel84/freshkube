@@ -30,18 +30,13 @@ done
 allowlist="$root/scripts/style-allowlist.txt"
 cd "$root"
 
-# Every Rust file a page could draw from. The shared components, the domain
-# crates and tests are not pages. Until #47 moves Pods' table into
-# crates/freshkube-ui, ui.rs (or ui/) and resources/screen/ are the shared
-# components.
+# Every Rust file a page could draw from. The shared components
+# (crates/freshkube-ui), the domain crates and tests are not pages.
 files() {
   find crates -path '*/src/*' -name '*.rs' \
     -not -path 'crates/freshkube-ui/*' \
     -not -path 'crates/freshkube-core/*' \
     -not -path 'crates/talos-rs/*' \
-    -not -path 'crates/freshkube-desktop/src/ui.rs' \
-    -not -path 'crates/freshkube-desktop/src/ui/*' \
-    -not -path 'crates/freshkube-desktop/src/resources/screen/*' \
     -not -name 'tests.rs' \
     -not -path '*/tests/*' |
     LC_ALL=C sort

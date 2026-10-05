@@ -2518,6 +2518,7 @@ dependencies = [
  "dirs 6.0.0",
  "freshkube-core",
  "freshkube-probe",
+ "freshkube-ui",
  "futures",
  "gpui-kit",
  "http-body-util",
@@ -2540,6 +2541,15 @@ name = "freshkube-probe"
 version = "0.5.0"
 dependencies = [
  "chrono",
+]
+
+[[package]]
+name = "freshkube-ui"
+version = "0.5.0"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "serde_json",
 ]
 
 [[package]]
