@@ -1,0 +1,1 @@
+- **Short windows keep Nodes and System services usable:** under 620 dp of height their page scrolls and the table keeps at least 180 dp, as Pods already did, instead of squeezing the list to a row or two.
