@@ -87,7 +87,10 @@ screen_acquire() {
     fi
     if screen_stale; then
       # An idle smoke app keeps running; stop it so its window leaves the screen.
-      [ "$(screen_field 2)" = smoke ] && kill "$(screen_field 3)" 2>/dev/null
+      # Usually it's gone already, and a failed kill mustn't end a set -e caller.
+      if [ "$(screen_field 2)" = smoke ]; then
+        kill "$(screen_field 3)" 2>/dev/null || true
+      fi
       echo "screen: taking over a stale lock from $(screen_field 1)" >&2
       rm -rf "$SCREEN_LOCK"
       continue
