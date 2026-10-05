@@ -12,7 +12,7 @@ crates/
 ├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
 ├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame and table
-└── freshkube-desktop/   the GPUI Kit application (shell, screens, logs)
+└── freshkube-desktop/   the GPUI Kit application (shell, screens, the log sources)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
 
@@ -50,7 +50,7 @@ scripts/check-style.sh            # pages use the shared components; see DESIGN.
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|14|16|18|20>` starts at that text size without saving it. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `search` and `kubernetes-only`; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select appearance and window bounds without changing saved settings. `FRESHKUBE_KIND=<key>` opens a Kubernetes kind on the Resources page by its kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`). With `--fixture` it also takes the example custom kinds, such as `certificates.cert-manager.io`. `FRESHKUBE_TEXT_SIZE=<12|13|14|16|18|20>` starts at that text size without saving it; 13 is the default. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
 
 ## Cluster safety
 
@@ -102,7 +102,7 @@ Documentation is thin. Before using an API, read the source of the pinned versio
 
 The user chooses the text size (`freshkube-ui`'s `text_size.rs`), which becomes the window's rem size, and the whole layout scales with it.
 
-- Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 14 px, as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
+- Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 13 px (`ui::BASE_TEXT`), as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
 - Keep borders, hairlines, corner radii and shadows in `px`, as Kit does.
 - Compare breakpoints in `dp`: `screens::content_width` and `table_width` return them, so a larger text size picks the narrower layout, as a narrower window would.
 
