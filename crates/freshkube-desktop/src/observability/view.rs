@@ -5,18 +5,13 @@ pub(super) fn status(state: Status, cx: &App) -> AnyElement {
     let p = palette(cx);
     match state {
         Status::Absent => text("—").text_color(p.muted).into_any_element(),
-        Status::LogError | Status::Info => div()
-            .size(dp(8.))
-            .rounded_full()
-            .bg(p.accent)
-            .flex_none()
-            .into_any_element(),
         _ => div()
             .children(ui::status_glyph(
                 match state {
                     Status::Ok => Tone::Good,
                     Status::Warning => Tone::Warn,
                     Status::Critical => Tone::Crit,
+                    Status::LogError | Status::Info => Tone::Info,
                     _ => Tone::Unknown,
                 },
                 cx,
