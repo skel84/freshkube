@@ -9,7 +9,7 @@ use gpui_kit::{
 use std::cell::Cell;
 use std::rc::Rc;
 
-pub(super) fn fixture(
+pub(crate) fn fixture(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
@@ -3056,6 +3056,31 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
     })
     .unwrap();
     cx.simulate_window_resize(handle, size(px(1280.), px(880.)));
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn monitoring_breadcrumb_opens_a_collapsed_dashboards_column(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Monitoring, window, cx));
+        window.render_frame(cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+        window.click("monitoring-dashboards", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+        window.render_frame(cx);
+        // An open column stays open.
+        window.click("monitoring-dashboards", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert!(!pilot.read(cx).column_collapsed(window));
     })

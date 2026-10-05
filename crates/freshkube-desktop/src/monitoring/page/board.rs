@@ -27,6 +27,8 @@ pub(super) struct Slot {
     /// The generation last asked for, and the read in flight.
     pub(super) asked: Option<u64>,
     pub(super) request: Option<Request>,
+    /// The last answer was an error.
+    pub(super) failed: bool,
 }
 
 /// A row of the dashboard, as its header shows it.
@@ -71,6 +73,10 @@ pub(super) struct Board {
     shapes: Vec<SectionShape>,
     /// The wide layout and the stacked one.
     pub(super) layouts: [Layout; 2],
+    /// The meta line's count, state and time, derived as answers land.
+    pub(super) meta: SharedString,
+    /// Unix seconds when the last read in flight answered.
+    answered_at: Option<i64>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -85,6 +91,31 @@ impl Board {
                 slot.asked = None;
             }
         }
+        self.derive_meta();
+    }
+
+    /// "12 panels", then "reading" while any read is in flight or how many
+    /// failed, then when the last read answered. Returns whether it changed,
+    /// so a page notifies only then, not on every answer.
+    pub(super) fn derive_meta(&mut self) -> bool {
+        let mut meta = match self.slots.len() {
+            1 => "1 panel".to_owned(),
+            count => format!("{count} panels"),
+        };
+        let failed = self.slots.iter().filter(|slot| slot.failed).count();
+        if self.slots.iter().any(|slot| slot.request.is_some()) {
+            meta.push_str(" · reading");
+        } else if failed > 0 {
+            meta.push_str(&format!(" · {failed} failed"));
+        }
+        if let Some(time) = self.answered_at.and_then(clock) {
+            meta.push_str(&format!(" · {time}"));
+        }
+        let changed = self.meta != meta.as_str();
+        if changed {
+            self.meta = meta.into();
+        }
+        changed
     }
 
     pub(super) fn layout(&self, narrow: bool) -> &Layout {
@@ -194,12 +225,15 @@ impl MonitoringPage {
             rows: Vec::new(),
             shapes: Vec::new(),
             layouts: Default::default(),
+            meta: SharedString::default(),
+            answered_at: None,
             _subscriptions: Vec::new(),
         };
         match parsed {
             Ok(dashboard) => self.fill_board(&mut board, dashboard, cx),
             Err(error) => board.error = Some(error),
         }
+        board.derive_meta();
         self.refresh_every = board.time.refresh;
         self.board = Some(board);
         self.scroll.set_offset(point(px(0.), px(0.)));
@@ -230,6 +264,7 @@ impl MonitoringPage {
                     view,
                     asked: None,
                     request: None,
+                    failed: false,
                 });
             }
             board.rows.push(section.row.as_ref().map(|row| RowHeader {
@@ -422,6 +457,9 @@ impl MonitoringPage {
             slot.asked = Some(generation);
             slot.request = Some(request);
         }
+        if self.board.as_mut().is_some_and(Board::derive_meta) {
+            cx.notify();
+        }
     }
 
     fn answered(
@@ -443,10 +481,19 @@ impl MonitoringPage {
             return;
         };
         slot.request = None;
+        slot.failed = result.is_err();
         slot.view.update(cx, |panel, cx| match result {
             Ok(result) => panel.set_result(result, window, cx),
             Err(error) => panel.set_error(&error, cx),
         });
+        let now = (self.now)();
+        let board = self.board.as_mut().unwrap();
+        if board.slots.iter().all(|slot| slot.request.is_none()) {
+            board.answered_at = Some(now);
+        }
+        if board.derive_meta() {
+            cx.notify();
+        }
     }
 
     /// Debug fixture checks: answers the variables and every panel from
@@ -485,11 +532,14 @@ impl MonitoringPage {
             slot.request = None;
             slot.asked = Some(generation);
             let result = source.query_panel(&slot.spec, &context, &variables);
+            slot.failed = result.is_err();
             slot.view.update(cx, |panel, cx| match result {
                 Ok(result) => panel.set_result(result, window, cx),
                 Err(error) => panel.set_error(&error, cx),
             });
         }
+        board.answered_at = Some((self.now)());
+        board.derive_meta();
         self.read_markers(window, cx);
         cx.notify();
     }
@@ -556,4 +606,13 @@ impl MonitoringPage {
         self.ask_visible(cx);
         cx.notify();
     }
+}
+
+/// Unix seconds as the meta line's local time.
+pub(super) fn clock(time: i64) -> Option<String> {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(time, 0)
+        .single()
+        .map(|time| time.format("%H:%M:%S").to_string())
 }

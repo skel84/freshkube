@@ -122,50 +122,6 @@ impl ObservabilityPage {
 
 /// An application as the pickers name it: namespace / name.
 /// From this content width a list's detail sits beside it.
-const SPLIT_WIDTH: f32 = 900.;
-const PANE_WIDTH: f32 = 460.;
-const PANE_MIN_WIDTH: f32 = 320.;
-const SPLIT_GAP: f32 = 14.;
-
-/// Whether a list's detail fits beside it.
-pub(super) fn beside(window: &Window) -> bool {
-    crate::screens::content_width(window) >= SPLIT_WIDTH
-}
-
-/// A list with its detail beside it on a wide page and below it on a narrow
-/// one, at DESIGN.md's detail pane sizes. The pane's size is fixed until
-/// change 9's Inspector.
-pub(super) fn split(
-    id: &'static str,
-    beside: bool,
-    table: AnyElement,
-    pane: Option<AnyElement>,
-) -> AnyElement {
-    div()
-        .id(id)
-        .test_support()
-        .flex()
-        .items_start()
-        .gap(dp(SPLIT_GAP))
-        .when_else(beside, |this| this.flex_row(), |this| this.flex_col())
-        .child(
-            div()
-                .min_w_0()
-                .when_else(beside, |this| this.flex_1(), |this| this.w_full())
-                .child(table),
-        )
-        .children(pane.map(|pane| {
-            div()
-                .when_else(
-                    beside,
-                    |this| this.w(dp(PANE_WIDTH)).min_w(dp(PANE_MIN_WIDTH)).flex_none(),
-                    |this| this.w_full(),
-                )
-                .child(pane)
-        }))
-        .into_any_element()
-}
-
 pub(super) fn app_label(id: &freshkube_core::coroot::AppId) -> String {
     match id.namespace() {
         Some(namespace) if !namespace.is_empty() => format!("{namespace} / {}", id.name()),

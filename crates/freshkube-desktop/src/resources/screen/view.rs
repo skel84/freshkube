@@ -423,8 +423,7 @@ impl Render for ResourcesScreen {
             })
             .unwrap_or_else(|| self.table(window, cx));
         let list = self.keyed(list, cx);
-        let short =
-            page_width(window) < SPLIT_WIDTH && window.viewport_size().height < dp_px(620., window);
+        let short = page_width(window) < SPLIT_WIDTH && page::is_short(window);
         let body = if self.detail.read(cx).target_identity().is_some() {
             // Cached: list updates and age ticks don't redraw the pane.
             let pane =
@@ -479,7 +478,7 @@ impl Render for ResourcesScreen {
                 .flex()
                 .flex_1()
                 .min_h_0()
-                .when(short, |this| this.min_h(dp(180.)))
+                .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
                 .child(list)
                 .into_any_element()
         };

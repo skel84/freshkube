@@ -268,6 +268,10 @@ pub(crate) struct Loader<T> {
     state: Snapshot<T, Target>,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
+    /// Rises whenever what [`data`](Self::data) or [`error`](Self::error)
+    /// return may have changed, so a screen derives its display data again
+    /// only then.
+    revision: u64,
 }
 
 impl<T> Default for Loader<T> {
@@ -276,6 +280,7 @@ impl<T> Default for Loader<T> {
             state: Snapshot::default(),
             job: None,
             task: None,
+            revision: 0,
         }
     }
 }
@@ -283,7 +288,13 @@ impl<T> Default for Loader<T> {
 impl<T: Send + 'static> Loader<T> {
     /// Forgets data and cancels in-flight work, e.g. when the target changes.
     pub(crate) fn reset(&mut self) {
+        let revision = self.revision + 1;
         *self = Self::default();
+        self.revision = revision;
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Runs `work` on Tokio for `identity`. The result lands only if this is
@@ -301,6 +312,7 @@ impl<T: Send + 'static> Loader<T> {
         cx: &mut Context<V>,
     ) {
         let request = self.state.begin(identity);
+        self.revision += 1;
         let (job, receiver) = backend::spawn_job(
             runtime,
             SCREEN_DEADLINE,
@@ -315,6 +327,7 @@ impl<T: Send + 'static> Loader<T> {
                 let loader = slot(view);
                 if loader.state.apply(&request, result) {
                     loader.job = None;
+                    loader.revision += 1;
                 }
                 cx.notify();
             });
@@ -327,6 +340,7 @@ impl<T: Send + 'static> Loader<T> {
         self.task = None;
         let request = self.state.begin(identity);
         self.state.apply(&request, result);
+        self.revision += 1;
     }
 
     pub(crate) fn data(&self) -> Option<&T> {
@@ -369,6 +383,50 @@ pub(crate) fn inset_width(window: &Window) -> f32 {
 /// `dp`, for choosing between side-by-side and stacked layouts there.
 pub(crate) fn content_width(window: &Window) -> f32 {
     (page_width(window) - PAGE_PADDING * 2.).max(240.)
+}
+
+const SPLIT_WIDTH: f32 = 900.;
+const PANE_WIDTH: f32 = 460.;
+const PANE_MIN_WIDTH: f32 = 320.;
+const SPLIT_GAP: f32 = 14.;
+
+/// Whether a list's detail fits beside it.
+pub(crate) fn beside(window: &Window) -> bool {
+    content_width(window) >= SPLIT_WIDTH
+}
+
+/// A list with its detail beside it on a wide page and below it on a narrow
+/// one, at DESIGN.md's detail pane sizes. The pane's size is fixed until
+/// change 9's Inspector.
+pub(crate) fn split(
+    id: &'static str,
+    beside: bool,
+    table: AnyElement,
+    pane: Option<AnyElement>,
+) -> AnyElement {
+    div()
+        .id(id)
+        .test_support()
+        .flex()
+        .items_start()
+        .gap(dp(SPLIT_GAP))
+        .when_else(beside, |this| this.flex_row(), |this| this.flex_col())
+        .child(
+            div()
+                .min_w_0()
+                .when_else(beside, |this| this.flex_1(), |this| this.w_full())
+                .child(table),
+        )
+        .children(pane.map(|pane| {
+            div()
+                .when_else(
+                    beside,
+                    |this| this.w(dp(PANE_WIDTH)).min_w(dp(PANE_MIN_WIDTH)).flex_none(),
+                    |this| this.w_full(),
+                )
+                .child(pane)
+        }))
+        .into_any_element()
 }
 
 thread_local! {

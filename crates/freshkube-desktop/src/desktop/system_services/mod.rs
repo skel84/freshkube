@@ -97,6 +97,8 @@ pub(super) struct SystemServices {
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
+    /// The frame's scroll, used while the window is short.
+    page_scroll: ScrollHandle,
     filter: Entity<InputState>,
     health: Option<Health>,
     node: Option<String>,
@@ -126,6 +128,7 @@ impl SystemServices {
             columns,
             width,
             table: table::TableState::new(PREFIX),
+            page_scroll: ScrollHandle::new(),
             filter,
             health: None,
             node: None,
@@ -328,8 +331,19 @@ impl SystemServices {
 }
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A short window scrolls the frame, so the list keeps some rows.
+        let short = page::is_short(window);
         page::page("system-services-page")
+            .track_scroll(&self.page_scroll)
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
             .child(page::toolbar(cx).child(self.render_header(window, cx)))
-            .child(table::data_table(self, window, cx).flex_1().min_h_0())
+            .child(
+                table::data_table(self, window, cx)
+                    .flex_1()
+                    .min_h_0()
+                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT))),
+            )
     }
 }
