@@ -108,6 +108,13 @@ impl Nodes {
         })
         .map(|field| Column::new(field, &self.rows))
         .collect();
+        self.menu_columns = Arc::new(
+            self.all_columns
+                .iter()
+                .filter(|column| !matches!(column.field, Field::Glyph | Field::Name))
+                .map(|column| (column.field, column.label.clone()))
+                .collect(),
+        );
         self.show_columns();
     }
 
@@ -134,13 +141,7 @@ impl Pilot {
             menu::{DropdownMenu, PopupMenuItem},
         };
         let owner = cx.entity().downgrade();
-        let columns: Vec<_> = self
-            .node_workspace
-            .all_columns
-            .iter()
-            .filter(|column| !matches!(column.field, Field::Glyph | Field::Name))
-            .map(|column| (column.field, column.label.clone()))
-            .collect();
+        let columns = self.node_workspace.menu_columns.clone();
         let hidden: BTreeSet<_> = self.node_workspace.hidden_columns.clone();
         Button::new(self.node_workspace.table.id("columns"))
             .outline()
@@ -148,7 +149,7 @@ impl Pilot {
             .label("Columns")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {
-                for (field, label) in &columns {
+                for (field, label) in columns.iter() {
                     let field = *field;
                     let owner = owner.clone();
                     menu = menu.item(
@@ -235,12 +236,24 @@ impl TableSource for Pilot {
                 .child(row.name.clone())
                 .into_any_element(),
             Field::Kubernetes => table::cell(column).child(row.ready).into_any_element(),
-            Field::Services => table::cell(column)
-                .id("node-table-services")
-                .test_support()
-                .text_color(style.p.muted)
-                .child(row.services.clone())
-                .into_any_element(),
+            Field::Services => {
+                let cell = table::cell(column)
+                    .text_color(style.p.muted)
+                    .child(row.services.clone());
+                // One column-lane marker preserves the existing horizontal-scroll check.
+                if self
+                    .node_workspace
+                    .lines
+                    .first()
+                    .is_some_and(|ix| self.node_workspace.rows[*ix].key == row.key)
+                {
+                    cell.id("node-table-services")
+                        .test_support()
+                        .into_any_element()
+                } else {
+                    cell.into_any_element()
+                }
+            }
             field => {
                 let value: SharedString = match field {
                     Field::Role => row.role.label().into(),
