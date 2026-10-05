@@ -2,7 +2,19 @@
 
 Research for [#53](https://github.com/skel84/freshkube/issues/53), measured from
 `e27a83d24acbf5ab3656c12b2e3fdfdbf25625ae` on 5 October 2026. This is a research
-draft: no application, dependency, profile or CI changes are proposed by this PR.
+record: no application, dependency, profile or CI changes are proposed by this PR.
+
+The user has ended the broad measurement batch. A separate small PR from current
+main will add focused inner-loop guidance, disable desktop doctests (there are
+none), and set workspace dev debug information to line tables, as CI already does.
+It will record one warmed, one-line desktop library-test rebuild on main and one
+on the branch, then run the standard checks once.
+
+**Parked: linker changes, sccache, nightly/Cranelift, nextest, further disk work
+and crate splits — revisit only if a real loop shows the need.** No cache or
+nightly tool was installed. Earlier proposed experiments below are the research
+record, not pending work. #53 step 3 also remains held until Monitoring's page
+migration lands.
 
 ## What is established
 
@@ -19,8 +31,9 @@ draft: no application, dependency, profile or CI changes are proposed by this PR
 - Cargo already defaults to unpacked debug information on macOS. Adding that
   setting explicitly is not a demonstrated optimization.
 
-Local timings and the final ranking will be filled in as the approved build
-sessions finish. Missing measurements below are not estimates of a gain.
+The cold observation and CI evidence below are retained. Broader local comparisons
+were not run after the user narrowed the work; no missing measurement implies a
+gain. The focused implementation PR will carry its own validation and timings.
 
 ## Measurement conditions
 
@@ -53,11 +66,11 @@ not a promise that Cranelift can remove all that time.
 | Baseline | Result |
 | --- | --- |
 | Empty-artifact `cargo build --locked --timings` | Passed: 3,134.0 s (52m 14s); start/end load 6.91/5.24; mixed contention |
-| Desktop one-line edit → build / test compile / clippy | Pending |
-| Core one-line edit → build / package test compile | Pending |
-| UI one-line edit → build / package test compile | Pending |
-| Workspace test binaries and link cost | Pending |
-| Build + test + clippy artifact size | Pending |
+| Desktop one-line edit → build / test compile / clippy | Not run; broader measurement batch parked |
+| Core one-line edit → build / package test compile | Not run; broader measurement batch parked |
+| UI one-line edit → build / package test compile | Not run; broader measurement batch parked |
+| Workspace test binaries and link cost | Not run; broader measurement batch parked |
+| Build + test + clippy artifact size | Not run; broader measurement batch parked |
 
 ### Empty-artifact build
 
@@ -241,7 +254,7 @@ than a crate per page. The two modules contain 96 test attributes (61 monitoring
 35 observability); moving their tests can make their focused commands independent
 of the rest of desktop, even if a full app rebuild remains expensive.
 
-### Ranked structural steps
+### Structural proposals (parked)
 
 The ranking below is by boundary readiness and usefulness for focused agent work;
 none is a measured full-app speedup. The lead is holding #53 step 3 until
@@ -287,7 +300,7 @@ storing it (`gpui-pre` 0.3.7, `src/element.rs`). Entity/listener/source
 instantiations still deserve measurement, but generic syntax and source lines
 alone do not establish their compile cost.
 
-## First loop experiment: avoid duplicate desktop variants
+## Focused follow-up: avoid duplicate desktop variants
 
 The second-opinion review with buildtalk prioritizes the local loop before another
 crate split. Desktop enables GPUI test support and component testing features only
@@ -296,18 +309,13 @@ a test harness and a clippy metadata pass are potentially distinct compilation
 work. Desktop currently has no fenced library doctests; the only fences in its
 Rust files are shell examples in the stress binary.
 
-First compare `cargo test -p freshkube-desktop --no-run` with
-`cargo test -p freshkube-desktop --lib --no-run`, with feature variants warmed and
-a separate one-line edit for each sample. `doctest = false` is a candidate only:
-the workspace app test still needs the ordinary desktop library, so this setting
-cannot be assumed to remove that compile from a workspace test.
-
-Also compare actual inner loops in alternating A/B/A/B order: A runs build,
-workspace tests and workspace clippy; B runs desktop library tests and desktop
-clippy. Record each step and the whole loop, including reuse between commands.
-These scopes differ deliberately: targeted iteration still ends with the required
-whole-workspace verification before a PR. A test-name filter reduces execution;
-`--lib` selects a Cargo target. Neither promises faster compiler work until measured.
+The proposed isolated command matrix and A/B/A/B whole-loop study were cancelled
+when the user chose to ship the three small changes. Use
+`cargo test -p <crate> --lib <filter>` during iteration and package clippy once at
+the end, while retaining workspace test/clippy/fmt/style before the PR. Desktop's
+`doctest = false` does not remove the ordinary desktop library needed by the app's
+workspace test. One main/branch narrow-loop sample is observational validation,
+not a controlled statistical estimate of the full-loop saving.
 
 ## Dependency and profile candidates
 
@@ -340,68 +348,38 @@ Debug line tables trade variable/type inspection for source-line backtraces;
 `debug = 0` also loses that line information. Explicit `split-debuginfo =
 "unpacked"` already matches the macOS commands emitted by this checkout. [Rust codegen options](https://doc.rust-lang.org/rustc/codegen-options/index.html)
 
-## Candidates to rank after measurement
+## Agreed action order and parked options
 
-1. **Configuration:** compare workspace line tables with full debug info, while
-   preserving dependency `opt-level = 3` and workspace incremental compilation.
-2. **CI:** separate test compilation from execution in timing evidence; examine
-   feature-specific cache reuse and the cost of the stress checks before changing
-   the cache policy or runner.
-3. **Structure:** evaluate monitoring and observability as focused-test boundaries
-   (20,195 lines combined), with explicit access/request/event seams and retained
-   lifecycle owners. Do not promise faster complete app rebuilds from a move.
-4. **Generic code:** inspect concrete instantiations before replacing typed GPUI
-   APIs with dynamic dispatch. The existing shared table and log view are generic;
-   their bodies may still be compiled in the consuming crate.
-5. **Tools:** measure the already-installed Apple and LLVM linkers; keep sccache,
-   nextest, nightly profiling and alternative codegen as unmeasured follow-ups
-   unless the lead authorizes installation and the required runtime checks.
+1. Ship focused inner-loop guidance and desktop `doctest = false`, retaining all
+   required whole-workspace checks before a PR.
+2. Match CI with workspace `[profile.dev] debug = "line-tables-only"`. Keep
+   dependency `opt-level = 3` and incremental compilation. Source-line backtraces
+   remain; variable/type inspection is reduced.
+3. Revisit only if a real loop shows the need: linker changes, sccache, nightly
+   codegen/profiling, nextest, more disk investigation and structural splits.
+   None has a measured local improvement in this record.
 
-### Cache experiment scope
+### Cache and backend notes retained for a future need
 
-The lead has relayed approval to install sccache after the cold build, with a
-private cache and shell-only `RUSTC_WRAPPER`; stop its server at the end. This
-experiment must distinguish three cases: ordinary local workspace builds keep
-incremental compilation; new worktrees may reuse eligible dependency compiles;
-CI already disables incremental and may reuse unchanged workspace libraries.
-The last case does not make a changed desktop library or linked test executable
-a cache hit.
+Local incremental workspace units are not sccache candidates. New worktrees may
+reuse eligible dependency compiles; CI's existing incremental-off mode may reuse
+unchanged workspace libraries. Changed libraries and linked test executables
+must be measured separately. The 0.18.0 parser accepts metadata-only library
+compilation but excludes incremental invocations and system-linker crate types.
+[sccache Rust parser](https://github.com/mozilla/sccache/blob/v0.18.0/src/compiler/rust.rs)
 
-The current sccache release is 0.18.0. Its Rust parser excludes incremental
-invocations and system-linker crate types. Cargo's unit-test invocations normally
-omit an `rlib` crate type, so test harness codegen/linking needs separate evidence,
-not a cache promise. The parser accepts metadata-only library compilation even
-though the Rust caveats document still says `link` is required; verify actual
-hit/miss reasons with the installed release before counting clippy savings.
-[sccache 0.18.0 Rust parser](https://github.com/mozilla/sccache/blob/v0.18.0/src/compiler/rust.rs)
-
-Its GitHub Actions backend is supported through `SCCACHE_GHA_ENABLED=on` and
-runner-provided cache credentials; read-only cache mode is available. No remote
-backend or CI cache is modified in this local experiment. Rank a CI trial on
-observed cacheable units and unchanged-code hits, including transfer/setup time;
-do not subtract the entire test-compile step from CI time.
+Its GitHub Actions backend exists, but transfer/setup overhead and actual hits
+would need measurement. No remote backend or CI cache was modified here.
 [sccache GitHub Actions backend](https://github.com/mozilla/sccache/blob/v0.18.0/docs/GHA.md)
 
-Version 0.18.0 hashes the compiler working directory and Cargo environment,
-while excluding output/search paths and hashing dependency contents. During this
-cold build, registry and git dependency compiler processes ran from their stable
-source-cache directories (verified with `lsof`); workspace paths differ between
-worktrees. Test cross-target dependency reuse separately from CI workspace hits,
-where the checkout path normally stays fixed.
+Keep writable targets separate. A read-only dependency seed needs a verified
+compiler/profile/target/feature key and must exclude workspace artifacts and stale
+build-script paths. Copying a complete target does not solve the stale-workspace
+failure documented in `AGENTS.md`.
 
-Keep each worktree's writable target separate. A read-only dependency seed would
-need a verified compiler/profile/target/feature key and must exclude workspace
-artifacts and stale build-script paths. Copying or hard-linking a complete target
-tree is not an acceptable shortcut around the stale-workspace failure documented
-in `AGENTS.md`. A content-addressed compiler cache is the candidate to measure.
-
-Nightly has conditional approval only: if repeated one-line desktop timings put
-codegen at roughly one-third or more, compare an isolated nightly's LLVM and
-workspace-only Cranelift backends. Keep Homebrew Cargo, global PATH and global
-configuration untouched; retain dependency LLVM optimization; test panic/test
-support and remove the isolated toolchain afterward. If the measured share is
-smaller, record that bound and skip the installation. Upstream still lists panic
-unwinding as unsupported on macOS, so a faster `build` would not establish a
+Nightly, self-profile, share-generics and Cranelift remain unmeasured. The earlier
+conditional installation plan is parked with the broader batch. Upstream lists
+panic unwinding as unsupported on macOS, so a faster build would not establish a
 usable test loop. [Cranelift support](https://github.com/rust-lang/rustc_codegen_cranelift#not-yet-supported)
 
 ## Technical references
