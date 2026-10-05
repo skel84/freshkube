@@ -49,6 +49,9 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
+      - name: Check changelog fragments were collected
+        run: scripts/changelog.sh check --empty
+
       - name: Find main's build of this commit
         run: |
           run=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=$SHA&status=success" \

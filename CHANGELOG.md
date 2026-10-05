@@ -29,7 +29,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Slimmer table headers:** a table's header row is 26 high, down from 30, closer to a desktop app's.
 - **One row height:** every table draws 26-high rows, and the Density control is gone; a larger text size scales the rows for anyone who wants them bigger.
 - **A table scrolls the way you swipe:** a plain wheel scrolls a table's rows and Shift+wheel or a sideways swipe scrolls its columns, without nudging the other way; a slightly diagonal trackpad swipe keeps to its main direction.
-- **Peak memory agrees with itself:** Overview's card, and the Nodes dot it puts on the rail, turn yellow at 85% and red at 95%, the same thresholds as its bar and its High or Critical word. It used to turn red at 90%, so a node at 92% showed red over the word High.
+- **Tables without a card:** Pods, every other Resources kind, Nodes, System services and Applications draw their table straight on the page, with a hairline above and below, instead of inside a rounded card.
 
 ## 0.5.0 (2026-10-04)
 

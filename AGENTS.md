@@ -31,6 +31,8 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 [docs/ROADMAP.md](docs/ROADMAP.md) sets the order of work and its ground rules. When a step lands, move it to Done with its commit in the same change. [docs/REFERENCES.md](docs/REFERENCES.md) maps the reference checkouts and the source-reuse policy. [docs/DESIGN.md](docs/DESIGN.md) holds the chosen look: tokens, type, status glyphs, the app frame and table rules.
 
+Each PR adds a release-note bullet in `changelog.d/<section>/<slug>.md`; never edit `CHANGELOG.md`'s Unreleased entries in a feature PR. Use `coroot` or `other-changes`, give the file a unique slug, and run `scripts/changelog.sh check`. Only release preparation collects the fragments into the changelog. [changelog.d/README.md](changelog.d/README.md) describes the format and adding a section.
+
 ## Build, run and test
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
