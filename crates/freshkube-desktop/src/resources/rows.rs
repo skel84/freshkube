@@ -88,6 +88,16 @@ pub(crate) enum PodState {
     Unknown,
 }
 
+/// Whether a printed status says a container ran and stopped:
+/// `CrashLoopBackOff`, `Error` or `OOMKilled`, in an init container too.
+/// A pod that couldn't start, such as `ImagePullBackOff` or an
+/// unschedulable one, has nothing that died.
+pub(crate) fn died(status: &str) -> bool {
+    let status = status.strip_prefix("Init:").unwrap_or(status);
+    let reason = status.split([' ', '(']).next().unwrap_or_default();
+    matches!(reason, "CrashLoopBackOff" | "Error" | "OOMKilled")
+}
+
 /// A pod's row, beyond the printed cells.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PodRow {
@@ -315,6 +325,33 @@ mod tests {
         ] {
             let row = pod_row(&columns(), &cells("0/1", status, "0"), None, false);
             assert_eq!(row.state, state, "{status}");
+        }
+    }
+
+    #[test]
+    fn only_a_container_that_ran_and_stopped_died() {
+        for status in [
+            "CrashLoopBackOff",
+            "Init:CrashLoopBackOff",
+            "Error",
+            "Error (exit 1)",
+            "Init:Error",
+            "OOMKilled",
+        ] {
+            assert!(died(status), "{status}");
+        }
+        for status in [
+            "ImagePullBackOff",
+            "ErrImagePull",
+            "Init:ImagePullBackOff",
+            "CreateContainerConfigError",
+            "Pending",
+            "Evicted",
+            "Running",
+            "Completed",
+            "",
+        ] {
+            assert!(!died(status), "{status}");
         }
     }
 

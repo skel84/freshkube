@@ -1,5 +1,6 @@
 //! Application column widths are prepared when observations or Columns change.
 use super::*;
+pub(in crate::observability) use crate::observability::tables::{ColumnKind, PageColumn};
 use freshkube_ui::table::TableColumn;
 use gpui_kit::component::Theme;
 
@@ -47,41 +48,14 @@ impl ApplicationMetrics {
         ) / scale
     }
 
-    fn caption(&self, label: &str) -> f32 {
+    pub(in crate::observability) fn caption(&self, label: &str) -> f32 {
         let mut face = font(self.family.clone());
         face.weight = ui::HEADING_WEIGHT;
         self.measure(label.to_uppercase().into(), face, 11.)
     }
 
-    fn value(&self, value: SharedString, size: f32) -> f32 {
+    pub(in crate::observability) fn value(&self, value: SharedString, size: f32) -> f32 {
         self.measure(value, font(MONO_FONT), size)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::observability) enum ColumnKind {
-    Glyph,
-    Name,
-    Type,
-    Report(Report),
-}
-
-#[derive(Clone)]
-pub(crate) struct ApplicationColumn {
-    pub(in crate::observability) kind: ColumnKind,
-    label: SharedString,
-    width: f32,
-}
-
-impl TableColumn for ApplicationColumn {
-    fn label(&self) -> &SharedString {
-        &self.label
-    }
-    fn width(&self) -> f32 {
-        self.width
-    }
-    fn flexible(&self) -> bool {
-        self.kind == ColumnKind::Name
     }
 }
 
@@ -97,13 +71,13 @@ impl ObservabilityPage {
                     ColumnKind::Name => "Application",
                     ColumnKind::Type => "Type",
                     ColumnKind::Report(report) => report.label(),
+                    _ => "",
                 };
                 let caption = self.application_metrics.caption(label);
                 let value = self
                     .applications
                     .iter()
                     .map(|app| match kind {
-                        ColumnKind::Glyph | ColumnKind::Name => 0.,
                         ColumnKind::Type => self
                             .application_metrics
                             .value(app.language.clone().into(), 12.5),
@@ -116,6 +90,8 @@ impl ObservabilityPage {
                                     0.
                                 }
                         }
+                        // The glyph and name take their least widths.
+                        _ => 0.,
                     })
                     .fold(0., f32::max);
                 // Includes both cell insets, with room for fractional shaping.
@@ -125,8 +101,9 @@ impl ObservabilityPage {
                     ColumnKind::Name => measured.max(120.),
                     ColumnKind::Report(_) => measured.max(48.),
                     ColumnKind::Type => measured.max(64.),
+                    _ => measured,
                 };
-                ApplicationColumn {
+                PageColumn {
                     kind,
                     label: label.into(),
                     width,

@@ -65,6 +65,9 @@ pub(super) fn stats(stats: &[Stat], cx: &App) -> AnyElement {
             note: stat.note.as_ref(),
             tone: stat.tier.map(tone),
             gauge: stat.gauge,
+            segments: None,
+            detail: None,
+            tinted: false,
             spark: stat.spark.as_ref().map(|spark| card::Spark {
                 ys: &spark.ys,
                 tail: spark.tail,

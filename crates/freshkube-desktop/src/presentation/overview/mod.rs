@@ -31,6 +31,20 @@ pub(crate) struct Card {
     pub(crate) segments: Vec<Tone>,
     pub(crate) meter: Option<(f64, super::MemoryLevel)>,
     pub(crate) target: CardTarget,
+    /// Whether the card shows a current answer, waits for its first, or
+    /// shows the last one; only the view reads it.
+    pub(crate) state: CardState,
+}
+
+/// What a card's figure stands on, for its skeleton and stale mark.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum CardState {
+    #[default]
+    Current,
+    /// No answer yet: the card draws its skeleton.
+    Waiting,
+    /// The last answer, with why the refresh failed.
+    LastKnown(SharedString),
 }
 #[derive(Default)]
 pub(crate) struct Overview {
@@ -46,23 +60,34 @@ fn part<T>(
     value: Option<&Part<T>>,
     kind: &str,
     loaded: impl FnOnce(&T) -> (String, String, Tone),
-) -> (String, String, Tone) {
+) -> (String, String, Tone, CardState) {
     match value {
-        Some(Part::Loaded(value)) => loaded(value),
+        Some(Part::Loaded(value)) => {
+            let (figure, detail, tone) = loaded(value);
+            (figure, detail, tone, CardState::Current)
+        }
         Some(Part::Refused(error) | Part::Failed(error)) => {
             let figure = error
                 .last_good
                 .as_ref()
                 .map(|value| loaded(value).0)
                 .unwrap_or_else(|| "Unavailable".into());
-            let detail = if error.last_good.is_some() {
-                format!("Last known · {kind}: {error}")
+            let (detail, state) = if error.last_good.is_some() {
+                (
+                    format!("Last known · {kind}: {error}"),
+                    CardState::LastKnown(error.to_string().into()),
+                )
             } else {
-                format!("Can't read {kind}: {error}")
+                (format!("Can't read {kind}: {error}"), CardState::Current)
             };
-            (figure, detail, Tone::Unknown)
+            (figure, detail, Tone::Unknown, state)
         }
-        None => ("—".into(), format!("Waiting for {kind}"), Tone::Unknown),
+        None => (
+            "—".into(),
+            format!("Waiting for {kind}"),
+            Tone::Unknown,
+            CardState::Waiting,
+        ),
     }
 }
 impl Overview {
@@ -164,7 +189,7 @@ impl Overview {
             .iter()
             .filter(|row| row.role == super::Role::ControlPlane)
             .count();
-        let (figure, detail, tone) = part(kube.map(|kube| &kube.nodes), "nodes", |_| {
+        let (figure, detail, tone, state) = part(kube.map(|kube| &kube.nodes), "nodes", |_| {
             (
                 format!("{ready} / {} Ready", rows.len()),
                 format!("{planes} control planes · {} workers", rows.len() - planes),
@@ -184,7 +209,15 @@ impl Overview {
             segments: rows.iter().map(|row| row.tone).collect(),
             meter: None,
             target: CardTarget::Page(Page::Nodes),
+            state,
         });
+        // The Talos cards wait for the first snapshot; a stale one is
+        // marked by `talos_stale`.
+        let talos_state = if summary.is_some() {
+            CardState::Current
+        } else {
+            CardState::Waiting
+        };
         if !kube_only {
             let (figure, detail, tone) = summary
                 .as_ref()
@@ -233,8 +266,18 @@ impl Overview {
                 segments: vec![],
                 meter: None,
                 target: CardTarget::Page(Page::Etcd),
+                state: talos_state.clone(),
             });
         }
+        let workloads_state = match kube {
+            Some(kube)
+                if kube.workloads.snapshot().is_some()
+                    || !kube.workloads.unavailable().is_empty() =>
+            {
+                CardState::Current
+            }
+            _ => CardState::Waiting,
+        };
         let (figure, detail, tone) = kube
             .and_then(|kube| kube.workloads.snapshot())
             .map(|snapshot| {
@@ -316,8 +359,9 @@ impl Overview {
             segments: vec![],
             meter: None,
             target: CardTarget::Page(Page::Health),
+            state: workloads_state,
         });
-        let (figure, detail, tone) = part(kube.map(|kube| &kube.pods), "pods", |pods| {
+        let (figure, detail, tone, state) = part(kube.map(|kube| &kube.pods), "pods", |pods| {
             let mut parts = Vec::new();
             let crash = pods
                 .issues_by_status
@@ -361,6 +405,7 @@ impl Overview {
             segments: vec![],
             meter: None,
             target: CardTarget::Kind("pods", filter),
+            state,
         });
         if !kube_only {
             let counts = summary
@@ -394,6 +439,7 @@ impl Overview {
                 segments: vec![],
                 meter: None,
                 target: CardTarget::Services,
+                state: talos_state.clone(),
             });
             let peak = summary
                 .as_ref()
@@ -430,28 +476,30 @@ impl Overview {
                 segments: vec![],
                 meter: peak.map(|(_, percent)| (*percent, super::memory_level(*percent))),
                 target,
+                state: talos_state,
             });
         }
-        let (figure, detail, tone) = part(kube.map(|kube| &kube.events), "events", |events| {
-            (
-                events.total.to_string(),
-                format!(
-                    "Warnings in the last hour · {}",
-                    events
-                        .reasons
-                        .iter()
-                        .take(3)
-                        .map(|(reason, count)| format!("{reason} {count}"))
-                        .collect::<Vec<_>>()
-                        .join(" · ")
-                ),
-                if events.total > 0 {
-                    Tone::Warn
-                } else {
-                    Tone::Good
-                },
-            )
-        });
+        let (figure, detail, tone, state) =
+            part(kube.map(|kube| &kube.events), "events", |events| {
+                (
+                    events.total.to_string(),
+                    format!(
+                        "Warnings in the last hour · {}",
+                        events
+                            .reasons
+                            .iter()
+                            .take(3)
+                            .map(|(reason, count)| format!("{reason} {count}"))
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    ),
+                    if events.total > 0 {
+                        Tone::Warn
+                    } else {
+                        Tone::Good
+                    },
+                )
+            });
         result.cards.push(Card {
             id: "tile-events",
             label: "Events",
@@ -461,33 +509,35 @@ impl Overview {
             segments: vec![],
             meter: None,
             target: CardTarget::Kind("events", "Warning".into()),
+            state,
         });
         if !kube_only {
-            let (figure, detail, tone) = part(kube.map(|kube| &kube.claims), "claims", |claims| {
-                (
-                    format!("{} Pending", claims.pending_count),
-                    format!(
-                        "{}{} bound · {} PVs available",
-                        claims
-                            .pending
-                            .first()
-                            .map(|claim| format!(
-                                "{}/{} · {} · ",
-                                claim.namespace, claim.name, claim.reason
-                            ))
-                            .unwrap_or_default(),
-                        claims.bound,
-                        kube.and_then(|kube| kube.available_volumes.loaded())
-                            .map(ToString::to_string)
-                            .unwrap_or("unavailable".into())
-                    ),
-                    if claims.pending_count > 0 {
-                        Tone::Warn
-                    } else {
-                        Tone::Good
-                    },
-                )
-            });
+            let (figure, detail, tone, state) =
+                part(kube.map(|kube| &kube.claims), "claims", |claims| {
+                    (
+                        format!("{} Pending", claims.pending_count),
+                        format!(
+                            "{}{} bound · {} PVs available",
+                            claims
+                                .pending
+                                .first()
+                                .map(|claim| format!(
+                                    "{}/{} · {} · ",
+                                    claim.namespace, claim.name, claim.reason
+                                ))
+                                .unwrap_or_default(),
+                            claims.bound,
+                            kube.and_then(|kube| kube.available_volumes.loaded())
+                                .map(ToString::to_string)
+                                .unwrap_or("unavailable".into())
+                        ),
+                        if claims.pending_count > 0 {
+                            Tone::Warn
+                        } else {
+                            Tone::Good
+                        },
+                    )
+                });
             result.cards.push(Card {
                 id: "tile-storage",
                 label: "Storage",
@@ -497,6 +547,7 @@ impl Overview {
                 segments: vec![],
                 meter: None,
                 target: CardTarget::Kind("persistentvolumeclaims", "Pending".into()),
+                state,
             });
         }
         if let Some(kube) = kube {
@@ -519,11 +570,12 @@ impl Overview {
 
     /// When the Talos snapshot is stale, the cards drawn from it show their
     /// last known figures as unknown rather than as good or bad now.
-    pub(crate) fn talos_stale(mut self) -> Self {
+    pub(crate) fn talos_stale(mut self, reason: SharedString) -> Self {
         for card in &mut self.cards {
             if TALOS_CARDS.contains(&card.id) && card.tone != Tone::Unknown {
                 card.tone = Tone::Unknown;
                 card.detail = format!("Last known · {}", card.detail).into();
+                card.state = CardState::LastKnown(reason.clone());
             }
         }
         self

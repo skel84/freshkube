@@ -13,8 +13,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Bounds, Canvas, DefiniteLength, Div, ElementId, FontWeight, Hsla, PathBuilder,
-    Pixels, Rems, SharedString, TestSupportExt, Window, canvas, div, fill, point, px, rems, size,
-    transparent_black,
+    Pixels, Rems, Role, SharedString, TestSupportExt, Window, canvas, div, fill, point, px, rems,
+    size, svg, transparent_black,
 };
 
 use crate::palette::palette;
@@ -93,10 +93,16 @@ pub enum Tone {
     Good,
     Warn,
     Crit,
+    /// A container that ran and stopped: drawn as a skull, counted with
+    /// critical.
+    Died,
     #[default]
     Unknown,
     /// Needs an integration before it can say more (docs/DESIGN.md).
     Integration,
+    /// Something to know that isn't a fault, such as errors in an
+    /// application's logs: a small blue dot.
+    Info,
     Accent,
     Outline,
 }
@@ -109,10 +115,10 @@ pub fn tag(tone: Tone, icon: Option<IconName>, text: impl Into<SharedString>, cx
     let (bg, fg) = match tone {
         Tone::Good => (p.good_soft, p.good_ink),
         Tone::Warn => (p.warn_soft, p.warn_ink),
-        Tone::Crit => (p.crit_soft, p.crit_ink),
+        Tone::Crit | Tone::Died => (p.crit_soft, p.crit_ink),
         Tone::Unknown => (p.unk_soft, p.unk_ink),
         Tone::Integration => (p.integration.opacity(0.14), p.integration),
-        Tone::Accent => (p.accent_soft, p.accent),
+        Tone::Info | Tone::Accent => (p.accent_soft, p.accent),
         Tone::Outline => (transparent_black(), p.muted),
     };
     h_flex()
@@ -160,46 +166,28 @@ pub fn segment(button: Button, selected: bool, cx: &App) -> Button {
         .when(selected, |b| b.bg(p.accent_soft).text_color(p.accent))
 }
 
-/// The status language of docs/DESIGN.md, shape and color together: ● OK,
-/// outlined ▲ warning, ◆ critical, ○ pending or unknown, outlined □
-/// integration required. Accent and Outline
-/// carry no status and have no glyph.
+/// The status language of docs/DESIGN.md, the G6 Round set: one round
+/// silhouette whose inside carries the meaning. A dot in a halo is OK, a
+/// half-filled ring a warning, a disc with a bar cut out critical, the
+/// skull a container that died, a dashed ring pending or unknown, a ring
+/// with a plus integration required, and a small blue dot information. Accent and Outline carry no
+/// status and have no glyph. The glyph is decorative: whatever holds it
+/// names the state, as a tag's text, a chip's label or [`status_mark`]'s
+/// tooltip do.
 pub fn status_glyph(tone: Tone, cx: &App) -> Option<AnyElement> {
-    let p = palette(cx);
-    let shape = match tone {
-        Tone::Good => div()
-            .size(dp(8.))
-            .rounded_full()
-            .bg(p.good)
-            .into_any_element(),
-        Tone::Warn => triangle(p.warn_ink).size(dp(10.)).into_any_element(),
-        Tone::Crit => diamond(p.crit).size(dp(9.)).into_any_element(),
-        Tone::Unknown => div()
-            .size(dp(8.))
-            .rounded_full()
-            .border(px(1.5))
-            .border_color(p.unk_ink)
-            .into_any_element(),
-        Tone::Integration => div()
-            .size(dp(9.))
-            .rounded(px(1.))
-            .border(px(1.5))
-            .border_color(p.integration)
-            .into_any_element(),
-        Tone::Accent | Tone::Outline => return None,
-    };
+    let (drawing, color) = glyph(tone, cx)?;
     Some(
-        h_flex()
+        svg()
+            .data(drawing)
             .flex_none()
             .size(dp(10.))
-            .items_center()
-            .justify_center()
-            .child(shape)
+            .text_color(color)
             .into_any_element(),
     )
 }
 
-/// A standalone [`status_glyph`] with a tooltip that says what it means.
+/// A standalone [`status_glyph`] with a tooltip that says what it means,
+/// which is also its accessible label.
 pub fn status_mark(
     id: impl Into<ElementId>,
     tone: Tone,
@@ -210,49 +198,45 @@ pub fn status_mark(
     div()
         .id(id)
         .flex_none()
+        .role(Role::Image)
+        .aria_label(tooltip.clone())
         .children(status_glyph(tone, cx))
         .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         .test_support()
         .into_any_element()
 }
 
-fn diamond(color: Hsla) -> Canvas<()> {
-    canvas(
-        |_, _, _| {},
-        move |bounds: Bounds<Pixels>, _, window, _| {
-            let center = bounds.center();
-            let r = bounds.size.width / 2.;
-            let mut path = PathBuilder::fill();
-            path.move_to(point(center.x, center.y - r));
-            path.line_to(point(center.x + r, center.y));
-            path.line_to(point(center.x, center.y + r));
-            path.line_to(point(center.x - r, center.y));
-            path.close();
-            if let Ok(path) = path.build() {
-                window.paint_path(path, color);
-            }
-        },
-    )
+/// A tone's drawing and its colour.
+fn glyph(tone: Tone, cx: &App) -> Option<(&'static [u8], Hsla)> {
+    let p = palette(cx);
+    let color = match tone {
+        Tone::Good => p.good,
+        Tone::Warn => p.warn_ink,
+        Tone::Crit | Tone::Died => p.crit,
+        Tone::Unknown => p.unk_ink,
+        Tone::Integration => p.integration,
+        Tone::Info => p.accent,
+        Tone::Accent | Tone::Outline => return None,
+    };
+    Some((drawing(tone)?, color))
 }
 
-fn triangle(color: Hsla) -> Canvas<()> {
-    canvas(
-        |_, _, _| {},
-        move |bounds: Bounds<Pixels>, _, window, _| {
-            // Inset by half the stroke so the outline stays inside the box.
-            let inset = px(1.);
-            let (left, right) = (bounds.left() + inset, bounds.right() - inset);
-            let (top, bottom) = (bounds.top() + inset, bounds.bottom() - inset);
-            let mut path = PathBuilder::stroke(px(1.5));
-            path.move_to(point(bounds.center().x, top));
-            path.line_to(point(right, bottom));
-            path.line_to(point(left, bottom));
-            path.close();
-            if let Ok(path) = path.build() {
-                window.paint_path(path, color);
-            }
-        },
-    )
+/// A tone's G6 drawing: a single-colour SVG on a 16 grid that GPUI draws as
+/// an alpha mask, so the halo keeps its transparency and the cut-outs show
+/// whatever lies behind the glyph. The drawings are compiled in rather than
+/// loaded as assets, so every window and test harness draws them, whatever
+/// its asset source.
+fn drawing(tone: Tone) -> Option<&'static [u8]> {
+    Some(match tone {
+        Tone::Good => include_bytes!("../assets/glyphs/ok.svg"),
+        Tone::Warn => include_bytes!("../assets/glyphs/warning.svg"),
+        Tone::Crit => include_bytes!("../assets/glyphs/critical.svg"),
+        Tone::Died => include_bytes!("../assets/glyphs/died.svg"),
+        Tone::Unknown => include_bytes!("../assets/glyphs/pending.svg"),
+        Tone::Integration => include_bytes!("../assets/glyphs/integration.svg"),
+        Tone::Info => include_bytes!("../assets/glyphs/info.svg"),
+        Tone::Accent | Tone::Outline => return None,
+    })
 }
 
 /// Uppercase caption used for section and field labels.
@@ -534,4 +518,150 @@ pub fn clock(time: std::time::SystemTime) -> String {
 
 pub fn transparent() -> Hsla {
     transparent_black()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AppContext, Context, Render, SvgRenderer, TestAppContext, size};
+
+    use super::*;
+
+    const STATUS: [(Tone, &str); 7] = [
+        (Tone::Good, "Running"),
+        (Tone::Warn, "Not ready"),
+        (Tone::Crit, "ImagePullBackOff"),
+        (Tone::Died, "CrashLoopBackOff"),
+        (Tone::Unknown, "Pending"),
+        (Tone::Integration, "Needs metrics-server"),
+        (Tone::Info, "3 errors in the logs"),
+    ];
+
+    /// A tone's drawing rasterised as GPUI rasterises it for a 16 px glyph
+    /// (twice over), as alpha by row.
+    fn alpha(tone: Tone) -> Vec<Vec<u8>> {
+        let image = SvgRenderer::new(Arc::new(()))
+            .render_single_frame(drawing(tone).unwrap(), 1.)
+            .unwrap();
+        let width = image.size(0).width.0 as usize;
+        let bgra = image.as_bytes(0).unwrap();
+        bgra.chunks_exact(width * 4)
+            .map(|row| {
+                row.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|pixel| pixel[3])
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The alpha at a point of the 16 grid.
+    fn at(mask: &[Vec<u8>], x: f32, y: f32) -> u8 {
+        let scale = mask.len() as f32 / 16.;
+        mask[(y * scale) as usize][(x * scale) as usize]
+    }
+
+    #[test]
+    fn every_status_tone_paints_a_glyph_of_its_own() {
+        let masks: Vec<_> = STATUS.iter().map(|(tone, _)| alpha(*tone)).collect();
+        for ((tone, _), mask) in STATUS.iter().zip(&masks) {
+            assert_eq!(mask.len(), 32, "{tone:?}");
+            assert!(
+                mask.iter().flatten().filter(|a| **a > 128).count() > 20,
+                "{tone:?} paints nothing"
+            );
+        }
+        for (ix, a) in masks.iter().enumerate() {
+            for b in &masks[ix + 1..] {
+                assert_ne!(a, b, "two tones share a drawing");
+            }
+        }
+        assert_eq!(drawing(Tone::Accent), None);
+        assert_eq!(drawing(Tone::Outline), None);
+    }
+
+    #[test]
+    fn the_drawings_have_their_shapes() {
+        // OK: a solid dot in a faint halo.
+        let ok = alpha(Tone::Good);
+        assert_eq!(at(&ok, 8., 8.), 255);
+        assert!((30..70).contains(&at(&ok, 8., 2.)), "{}", at(&ok, 8., 2.));
+        // Warning: a ring, empty above and filled below.
+        let warn = alpha(Tone::Warn);
+        assert_eq!(at(&warn, 8., 6.), 0);
+        assert_eq!(at(&warn, 8., 10.5), 255);
+        // Critical: a disc with a bar cut out of it.
+        let crit = alpha(Tone::Crit);
+        assert_eq!(at(&crit, 8., 8.), 0);
+        assert_eq!(at(&crit, 8., 4.), 255);
+        // Died: a skull, its eyes cut out of the cranium.
+        let died = alpha(Tone::Died);
+        assert_eq!(at(&died, 5.6, 7.2), 0);
+        assert_eq!(at(&died, 10.4, 7.2), 0);
+        assert_eq!(at(&died, 8., 3.), 255);
+        // Pending: a ring, open in the middle.
+        assert_eq!(at(&alpha(Tone::Unknown), 8., 8.), 0);
+        // Integration required: a ring with a plus.
+        assert_eq!(at(&alpha(Tone::Integration), 8., 8.), 255);
+        // Information: a small dot, nothing around it.
+        let info = alpha(Tone::Info);
+        assert_eq!(at(&info, 8., 8.), 255);
+        assert_eq!(at(&info, 8., 3.), 0);
+    }
+
+    struct Marks;
+
+    impl Render for Marks {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            h_flex().children(
+                STATUS
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, (tone, label))| status_mark(("mark", ix), *tone, *label, cx)),
+            )
+        }
+    }
+
+    /// Each status mark draws a 10 dp glyph and names its state.
+    fn assert_marks(cx: &mut TestAppContext, text: f32) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(text, cx);
+        });
+        let handle = cx.open_window(size(px(400.), px(200.)), |window, cx| {
+            let view = cx.new(|_| Marks);
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let side = dp_px(10., window);
+            for (ix, (tone, label)) in STATUS.iter().enumerate() {
+                let mark = window.find(ElementId::from(("mark", ix)));
+                assert_eq!(mark.role(), Some(Role::Image), "{tone:?}");
+                assert_eq!(mark.label(), Some(*label), "{tone:?}");
+                let drawn = mark.bounds().size;
+                assert!(
+                    (drawn.width - side).abs() < px(0.5) && (drawn.height - side).abs() < px(0.5),
+                    "{tone:?}: {drawn:?}, not {side:?}"
+                );
+            }
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn status_marks_are_10_dp_and_labelled(cx: &mut TestAppContext) {
+        assert_marks(cx, BASE_TEXT);
+    }
+
+    #[gpui_kit::test]
+    fn status_marks_follow_the_text_size(cx: &mut TestAppContext) {
+        assert_marks(cx, 20.);
+    }
 }
