@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use freshkube_ui::table::{
-    self, CELL_PAD, DataTable, GLYPH_WIDTH, Line, RowStyle, SortOrder, TableColumn, TableRow,
-    TableSource, TableState, WIDEST,
+    self, DataTable, GLYPH_WIDTH, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource,
+    TableState, WIDEST, WIDEST_FLEXIBLE,
 };
 use gpui_kit::component::{
     Sizable,
@@ -18,12 +18,6 @@ use gpui_kit::{AnyElement, App, Context, IntoElement, Render, SharedString, Wind
 use super::summary::tone;
 use crate::monitoring::derive::{FOLDED_ROWS, RowKey, TableData, TableRow as Row};
 use crate::ui;
-
-/// One character's advance in a 12 dp cell, a little generous: mono digits
-/// are 7.4, and proportional text is narrower.
-const ADVANCE: f32 = 7.4;
-/// The narrowest column, as wide as a short name such as "Value".
-const NARROWEST: f32 = 64.;
 
 pub(crate) struct TableView {
     /// The panel's title, for the list's label.
@@ -129,8 +123,8 @@ impl TableView {
 }
 
 /// A leading glyph column when the rows carry a severity, then the
-/// answer's columns, each as wide as its widest cell or name. The widest
-/// text column takes the room left over.
+/// answer's columns, each as wide as its widest cell or name by DESIGN.md's
+/// rule ([`table::fit`]). The widest text column takes the room left over.
 fn columns(data: &TableData) -> Vec<Column> {
     let flexible = data
         .columns
@@ -145,23 +139,24 @@ fn columns(data: &TableData) -> Vec<Column> {
         flexible: false,
         kind: Kind::Glyph,
     });
-    glyph
-        .into_iter()
-        .chain(
-            data.columns
-                .iter()
-                .enumerate()
-                .map(|(index, column)| Column {
-                    label: column.name.clone(),
-                    width: (column.chars as f32 * ADVANCE + 2. * CELL_PAD).clamp(NARROWEST, WIDEST),
-                    flexible: flexible == Some(index),
-                    kind: Kind::Cell {
-                        index,
-                        numeric: column.numeric,
-                    },
-                }),
-        )
-        .collect()
+    let cells = data.columns.iter().enumerate().map(|(index, column)| {
+        let flexible = flexible == Some(index);
+        let most = if flexible { WIDEST_FLEXIBLE } else { WIDEST };
+        Column {
+            label: column.name.clone(),
+            width: table::fit(
+                &column.name,
+                data.rows.iter().map(|row| &row.cells[index]),
+                most,
+            ),
+            flexible,
+            kind: Kind::Cell {
+                index,
+                numeric: column.numeric,
+            },
+        }
+    });
+    glyph.into_iter().chain(cells).collect()
 }
 
 /// `row-<labels>-<n>`: the labels joined, and which of the rows with
