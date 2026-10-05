@@ -827,13 +827,15 @@ fn integration_tally_paints_the_lavender_square_and_filters_apps(cx: &mut TestAp
         assert_eq!(chip.label(), Some("1 Integration"));
         let chip_bounds = chip.bounds().scale(window.scale_factor());
         let integration = crate::palette::palette(cx).integration;
-        let glyphs: Vec<_> = window
+        let mut glyphs: Vec<_> = window
             .painted_quads()
             .into_iter()
             .filter(|quad| {
                 quad.border_color == integration && chip_bounds.contains(&quad.bounds.center())
             })
             .collect();
+        // GPUI splits an outline into clipped strips that share its geometry.
+        glyphs.dedup_by(|a, b| a.bounds == b.bounds && a.corner_radii == b.corner_radii);
         assert_eq!(glyphs.len(), 1, "Integration needs its lavender outline");
         let glyph = &glyphs[0];
         let side = crate::ui::dp_px(9., window).scale(window.scale_factor()).0;

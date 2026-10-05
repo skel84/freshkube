@@ -129,7 +129,7 @@ impl TableSource for ObservabilityPage {
                 .into_any_element()
             }
             ColumnKind::Type => cell
-                .child(text(app.language.clone()).text_color(p.ink_2))
+                .child(text(app.language.clone()).truncate().text_color(p.ink_2))
                 .into_any_element(),
             ColumnKind::Report(report) => {
                 let check = app.check(report);
