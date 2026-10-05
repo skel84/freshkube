@@ -6,7 +6,7 @@
 #   scripts/smoke.sh shot NAME [SETTLE_SECONDS]   capture the window to target/smoke/<worktree>/NAME.png
 #   scripts/smoke.sh key 'keystroke "k" using command down'   any System Events key clause
 #   scripts/smoke.sh click X Y                    click at points from the window's top-left
-#   scripts/smoke.sh scroll X Y DY                scroll at X Y by DY points; DY > 0 goes down
+#   scripts/smoke.sh scroll X Y DY [DX]           scroll at X Y by DY points down, DX right
 #   scripts/smoke.sh full NAME [X Y] [MAX]        NAME-0.png, NAME-1.png, … one per screenful,
 #                                                 scrolling at X Y until the page stops moving
 #   scripts/smoke.sh stop
@@ -149,7 +149,7 @@ scroll() {
   front
   local x y w h
   read -r x y w h < <(helper bounds "$(pid)")
-  helper scroll $((x + ${1:?x})) $((y + ${2:?y})) "${3:?dy}"
+  helper scroll $((x + ${1:?x})) $((y + ${2:?y})) "${3:?dy}" ${4:+"$4"}
 }
 
 # The window between its header and status bar. The header's refresh ring and
