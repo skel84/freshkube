@@ -70,6 +70,11 @@ fn mount_sized(
     (runtime, screen.unwrap(), handle)
 }
 
+/// A node row's id, from the node's name.
+fn node(name: &str) -> gpui_kit::SharedString {
+    format!("lifecycle-node-{name}").into()
+}
+
 fn example_view() -> LifecycleView {
     example(&source("talos-cp-fra1-01")).unwrap()
 }
@@ -81,15 +86,12 @@ fn keyboard_selection_moves_through_nodes_and_updates_details(cx: &mut TestAppCo
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_some());
         window.find("lifecycle-details");
-        window.click(("lifecycle-node", 0usize), cx);
+        window.click(node("talos-cp-fra1-01"), cx);
         window.press("down", cx);
         window.render_frame(cx);
+        assert_eq!(window.find(node("talos-cp-fra1-02")).selected(), Some(true));
         assert_eq!(
-            window.find(("lifecycle-node", 1usize)).selected(),
-            Some(true)
-        );
-        assert_eq!(
-            window.find(("lifecycle-node", 0usize)).selected(),
+            window.find(node("talos-cp-fra1-01")).selected(),
             Some(false)
         );
         let details = window.find("lifecycle-details").label().unwrap().to_owned();
@@ -116,8 +118,8 @@ fn details_sit_beside_the_roster_only_when_it_fits_whole(cx: &mut TestAppContext
         let (_runtime, _screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
-            let scroll = window.find("lifecycle-node-scroll").bounds();
-            let row = window.find(("lifecycle-node", 0usize)).bounds();
+            let scroll = window.find("lifecycle-table-scroll").bounds();
+            let row = window.find(node("talos-cp-fra1-01")).bounds();
             let details = window.find("lifecycle-details").bounds();
             if beside {
                 assert!(details.left() >= scroll.right(), "{width}: {details:?}");
@@ -125,6 +127,48 @@ fn details_sit_beside_the_roster_only_when_it_fits_whole(cx: &mut TestAppContext
             } else {
                 assert!(details.top() >= scroll.bottom(), "{width}: {details:?}");
             }
+        })
+        .unwrap();
+    }
+}
+
+/// DESIGN.md's table at both text sizes, and no clipped column: the roster
+/// scrolls sideways inside its card, its name stays at the left edge, and
+/// the last column can be brought fully into view, at the two sizes #138
+/// found it cut off.
+#[gpui_kit::test]
+fn the_roster_is_the_shared_table_and_its_last_column_is_reachable(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{Table, assert_table};
+    use gpui_kit::{ScrollDelta, point};
+    let table = Table {
+        table: Some("lifecycle-table-scroll"),
+        list: "lifecycle-list",
+    };
+    for (width, text_size) in [(1280., 14.), (760., 20.)] {
+        let (_runtime, _screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
+        cx.update_window(handle.into(), |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            window.render_frame(cx);
+            let rows = assert_table(window, cx, &table);
+            assert!(rows.header.is_some(), "{width}/{text_size}: {rows:#?}");
+            let view = window.find("lifecycle-table-scroll").bounds();
+            let name = window.find(("lifecycle-sort", 0usize)).bounds().left();
+            window.scroll(
+                "lifecycle-table-scroll",
+                ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let last = window.find(("lifecycle-sort", 5usize)).bounds();
+            assert!(
+                last.right() <= view.right() + px(1.5) && last.left() >= view.left(),
+                "{width}/{text_size}: the last column {last:?} is outside its table {view:?}"
+            );
+            let kept = window.find(("lifecycle-sort", 0usize)).bounds().left();
+            assert!(
+                (kept - name).abs() <= px(1.5),
+                "{width}/{text_size}: the name moved from {name:?} to {kept:?}"
+            );
         })
         .unwrap();
     }
@@ -165,7 +209,7 @@ fn kubelet_skew_alert_is_shown(cx: &mut TestAppContext) {
         assert!(label.contains("talos-wk-fra1-02"), "{label}");
         // The skewed worker's row marks its kubelet as behind.
         let row = window
-            .find(("lifecycle-node", 4usize))
+            .find(node("talos-wk-fra1-02"))
             .label()
             .unwrap()
             .to_owned();
@@ -180,7 +224,7 @@ fn silent_node_is_not_reported_rather_than_failed(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let row = window
-            .find(("lifecycle-node", 5usize))
+            .find(node("talos-wk-fra1-03"))
             .label()
             .unwrap()
             .to_owned();
@@ -233,7 +277,7 @@ fn unavailable_source_is_named_in_the_partial_notice(cx: &mut TestAppContext) {
         assert!(rows.iter().all(|row| row.in_discovery.is_none()));
         assert!(alert_rows(&view, &rows).is_empty());
         let row = window
-            .find(("lifecycle-node", 0usize))
+            .find(node("talos-cp-fra1-01"))
             .label()
             .unwrap()
             .to_owned();

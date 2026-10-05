@@ -51,6 +51,8 @@ pub(crate) enum MonitoringEvent {
     Catalog,
     /// The Prometheus that pod and node history read may have changed.
     History,
+    /// The breadcrumb's Dashboards: show the column that lists them.
+    Dashboards,
 }
 
 /// The part of the dashboard in view, in dp from the grid's top.

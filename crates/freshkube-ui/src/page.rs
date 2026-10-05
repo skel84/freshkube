@@ -11,7 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui_kit::{
-    Anchor, AnyElement, App, Context, Div, ElementId, Pixels, SharedString, Stateful,
+    Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, Pixels, SharedString, Stateful,
     TestSupportExt, Window, canvas, div, px,
 };
 
@@ -29,6 +29,11 @@ pub const PAGE_GAP: f32 = 14.;
 pub const PANE_PADDING: f32 = 12.;
 /// Above and below that content.
 pub const PANE_PADDING_Y: f32 = 10.;
+/// A window shorter than this, in dp, scrolls a table page's frame: see
+/// [`is_short`].
+pub const SHORT_HEIGHT: f32 = 620.;
+/// The least height a table page's list keeps while its frame scrolls.
+pub const SHORT_LIST_HEIGHT: f32 = 180.;
 /// A toolbar row's height: the header's row, and its secondary row.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
 /// The header's filter beside the title, at its full width.
@@ -38,9 +43,18 @@ const FILTER_MIN: f32 = 96.;
 
 /// A page's frame, without margins: its header, any banners and its panes
 /// stack edge to edge, and the caller puts what isn't a pane, such as the
-/// header, in an [`inset`]. The caller adds scrolling.
+/// header, in an [`inset`]. The caller adds scrolling: a table page scrolls
+/// its frame when the window [`is_short`], and its list keeps at least
+/// [`SHORT_LIST_HEIGHT`].
 pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex().id(id).test_support().size_full().min_h_0()
+}
+
+/// Whether the window is too short for a table page's header and a usable
+/// list together, so the page scrolls its frame instead: under
+/// [`SHORT_HEIGHT`].
+pub fn is_short(window: &Window) -> bool {
+    window.viewport_size().height < crate::ui::dp_px(SHORT_HEIGHT, window)
 }
 
 /// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above
@@ -197,12 +211,75 @@ pub struct PageHeader {
     controls: Vec<Control>,
     secondary: Option<AnyElement>,
     meta: Vec<AnyElement>,
+    parent: Option<Parent>,
 }
 
 /// A control, with its menu form if it folds.
 struct Control {
     element: AnyElement,
     fold: Option<MenuItems>,
+}
+
+/// What a click on a breadcrumb's parent does.
+type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// A breadcrumb's parent: the collection the page sits in.
+struct Parent {
+    id: SharedString,
+    label: SharedString,
+    on_click: OnClick,
+}
+
+/// A breadcrumb's parts as [`title`] draws them, without ids or a click,
+/// at their full width.
+fn breadcrumb(parent: SharedString, text: SharedString, cx: &App) -> Div {
+    h_flex()
+        .gap(dp(6.))
+        .text_size(dp(13.))
+        .line_height(dp(18.))
+        .whitespace_nowrap()
+        .child(div().flex_none().child(parent))
+        .child(div().flex_none().child("/"))
+        .child(toolbar_label(text, cx))
+}
+
+/// The toolbar label, after its breadcrumb when it has one: the parent
+/// muted at 13, a faint "/", then the label.
+fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App) -> AnyElement {
+    let title = toolbar_label(text, cx).id(id).test_support();
+    let Some(parent) = parent else {
+        return title.into_any_element();
+    };
+    let p = palette(cx);
+    let accent = p.accent;
+    let on_click = parent.on_click;
+    h_flex()
+        .gap(dp(6.))
+        .items_center()
+        .min_w_0()
+        .text_size(dp(13.))
+        .line_height(dp(18.))
+        .child(
+            div()
+                .id(parent.id)
+                .flex_none()
+                .text_color(p.muted)
+                .cursor_pointer()
+                .hover(move |style| style.text_color(accent))
+                .on_click(move |event, window, cx| on_click(event, window, cx))
+                .child(parent.label)
+                .test_support(),
+        )
+        .child(div().flex_none().text_color(p.faint).child("/"))
+        // The label's own box hugs its text, so it measures as it does
+        // without a breadcrumb; the wrapper keeps 120 of it in view.
+        .child(
+            div()
+                .flex()
+                .min_w(dp(120.))
+                .child(title.flex_shrink(1.).min_w_0().truncate()),
+        )
+        .into_any_element()
 }
 
 /// Where the header puts its parts.
@@ -336,6 +413,7 @@ impl PageHeader {
             controls: Vec::new(),
             secondary: None,
             meta: Vec::new(),
+            parent: None,
         }
     }
 
@@ -385,6 +463,24 @@ impl PageHeader {
         self
     }
 
+    /// A breadcrumb before the title, for a page inside a collection (a
+    /// dashboard, an application report): the parent as a link back to it,
+    /// with the id `<prefix>-<part>`, then a faint `/`. The title keeps its
+    /// id and truncates, at least 120 wide.
+    pub fn parent(
+        mut self,
+        part: &str,
+        label: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.parent = Some(Parent {
+            id: self.id(part),
+            label: label.into(),
+            on_click: Box::new(on_click),
+        });
+        self
+    }
+
     /// The meta line's parts: source, count, state, time.
     pub fn meta(mut self, parts: impl IntoIterator<Item = AnyElement>) -> Self {
         self.meta.extend(parts);
@@ -408,10 +504,30 @@ impl PageHeader {
             .items_center()
             .child({
                 let state = state.clone();
-                measured(
-                    toolbar_label(self.title, cx).id(title_id).test_support(),
-                    move |width, window| state.label.set(width / window.rem_size()),
-                )
+                let slot = move |width: Pixels, window: &Window| {
+                    state.label.set(width / window.rem_size())
+                };
+                match self.parent.as_ref().map(|parent| parent.label.clone()) {
+                    None => measured(
+                        toolbar_label(self.title, cx).id(title_id).test_support(),
+                        slot,
+                    ),
+                    // A breadcrumb's title truncates, at least 120 wide, when
+                    // even a full fold leaves it no room, so what counts is
+                    // the width of an unseen copy that never shrinks.
+                    Some(parent) => div()
+                        .relative()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .child(
+                            measured(breadcrumb(parent, self.title.clone(), cx), slot)
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .opacity(0.),
+                        )
+                        .child(title(self.parent, self.title, title_id, cx)),
+                }
             })
             .children(self.filter.map(|filter| {
                 // Shrinks only when the row is full with every control folded.
@@ -605,11 +721,19 @@ mod tests {
     /// widths, and `CONTROLS`, whose folded forms count their presses.
     struct Fitted {
         pressed: Rc<Cell<usize>>,
+        /// A long title after a breadcrumb, which truncates on a full row.
+        breadcrumb: bool,
     }
 
     impl Render for Fitted {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let header = PageHeader::new("app", "Applications");
+            let header =
+                if self.breadcrumb {
+                    PageHeader::new("app", "Kubernetes compute resources by namespace and pod")
+                        .parent("parent", "Dashboards", |_, _, _| {})
+                } else {
+                    PageHeader::new("app", "Applications")
+                };
             let part =
                 |id: SharedString, width: f32| div().id(id).test_support().w(dp(width)).h(dp(20.));
             let chips = part(header.id("chips"), 220.);
@@ -649,6 +773,15 @@ mod tests {
 
     /// The header in a `width` × 560 window at `text` px.
     fn open(cx: &mut TestAppContext, width: f32, text: f32) -> (AnyWindowHandle, Rc<Cell<usize>>) {
+        open_titled(cx, width, text, false)
+    }
+
+    fn open_titled(
+        cx: &mut TestAppContext,
+        width: f32,
+        text: f32,
+        breadcrumb: bool,
+    ) -> (AnyWindowHandle, Rc<Cell<usize>>) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -656,10 +789,20 @@ mod tests {
             crate::text_size::set(text, cx);
             cx.set_reduce_motion(true);
         });
+        another(cx, width, breadcrumb)
+    }
+
+    /// One more such window, in the app as it is.
+    fn another(
+        cx: &mut TestAppContext,
+        width: f32,
+        breadcrumb: bool,
+    ) -> (AnyWindowHandle, Rc<Cell<usize>>) {
         let pressed = Rc::new(Cell::new(0));
         let handle = cx.open_window(size(px(width), px(560.)), |window, cx| {
             let view = cx.new(|_| Fitted {
                 pressed: pressed.clone(),
+                breadcrumb,
             });
             Root::new(view, window, cx)
         });
@@ -791,6 +934,45 @@ mod tests {
         let back = settle(cx, handle);
         assert!(back.more.is_none());
         assert_eq!(back.shown.len(), CONTROLS.len());
+    }
+
+    /// What a settled header shows: the controls left on the row, and
+    /// whether the chips took a row of their own.
+    fn layout(placed: &Placed) -> (Vec<usize>, bool) {
+        let shown = placed.shown.iter().map(|(ix, _)| *ix).collect();
+        (shown, placed.chips.top() >= placed.toolbar.bottom())
+    }
+
+    /// The layout a breadcrumb header opened fresh at `width`, at the app's
+    /// text size, settles on.
+    fn fresh(cx: &mut TestAppContext, width: f32) -> (Vec<usize>, bool) {
+        let (handle, _) = another(cx, width, true);
+        layout(&settle(cx, handle))
+    }
+
+    #[gpui_kit::test]
+    fn a_breadcrumb_title_folds_steadily_across_resizes_and_text_sizes(cx: &mut TestAppContext) {
+        let (handle, _) = open_titled(cx, 1800., crate::ui::BASE_TEXT, true);
+        let mut folds = 0;
+        // Across the fold points and back: a title that truncated on a full
+        // row keeps its full width, so each width settles where a fresh
+        // header does.
+        for width in [1800., 1100., 760., 520., 760., 1100., 1800.] {
+            cx.simulate_window_resize(handle, size(px(width), px(560.)));
+            let placed = settle(cx, handle);
+            let settled = layout(&placed);
+            folds += usize::from(placed.more.is_some());
+            assert_eq!(settled, fresh(cx, width), "{width}");
+        }
+        assert!(folds >= 2, "the widths never crossed a fold point");
+        // A new text size measures the title again, both ways.
+        cx.simulate_window_resize(handle, size(px(1280.), px(560.)));
+        settle(cx, handle);
+        for text in [20., crate::ui::BASE_TEXT] {
+            cx.update(|cx| crate::text_size::set(text, cx));
+            let settled = layout(&settle(cx, handle));
+            assert_eq!(settled, fresh(cx, 1280.), "{text}");
+        }
     }
 
     #[gpui_kit::test]

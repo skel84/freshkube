@@ -1,6 +1,6 @@
 name: Platform checks
 
-# Advisory until Linux and Windows have a reviewed green baseline on main.
+# Advisory: a red native run blocks review approval, not the merge button.
 # Keep failures separate from CI: releases promote that workflow's macOS bundles.
 on:
   pull_request:
@@ -8,6 +8,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  # Scheduled workflows run on the default branch (main), even without changes.
+  schedule:
+    - cron: '23 4 * * 1' # Monday, 04:23 UTC
   workflow_dispatch:
 
 permissions:
@@ -40,9 +43,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.sha }}
-        # Match ci.yml's app/docs filter; manual runs always check the branch.
+        # Match ci.yml's app/docs filter; scheduled and manual runs always check.
         run: |
-          if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+          if [ "$EVENT" = workflow_dispatch ] || [ "$EVENT" = schedule ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "app=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -75,6 +78,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Linux'
+        with:
+          key: platform-check-Linux
+          # Linux only until its size and the surviving macOS caches are audited.
+          # Main saves dependencies; PRs restore without saving their own copies.
+          # Workspace crates are excluded by rust-cache's defaults.
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -90,7 +102,6 @@ jobs:
             gcc g++ clang pkg-config libfontconfig-dev libwayland-dev \
             libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libx11-xcb-dev \
             libssl-dev libzstd-dev libvulkan-dev vulkan-validationlayers libvulkan1
-      # No cache yet: the shared Actions cache is already over its size budget.
       - name: Check every target
         run: cargo check --workspace --all-targets --locked
       - name: Clippy

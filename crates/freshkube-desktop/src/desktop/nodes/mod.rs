@@ -116,6 +116,8 @@ pub(super) struct Nodes {
     tab_focus: FocusHandle,
     tab_scroll: ScrollHandle,
     scroll: UniformListScrollHandle,
+    /// The frame's scroll, used while the window is short.
+    pub(super) page_scroll: ScrollHandle,
     split: Entity<ResizableState>,
     pub(super) document: Entity<DetailPane>,
 }
@@ -193,6 +195,7 @@ impl Nodes {
             tab_focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
             scroll: UniformListScrollHandle::new(),
+            page_scroll: ScrollHandle::new(),
             split: cx.new(|_| ResizableState::default()),
             document: cx.new(|cx| DetailPane::new(runtime, window, cx)),
         }
@@ -352,6 +355,9 @@ impl Pilot {
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
         }
         self.node_workspace.open = true;
+        self.node_workspace
+            .page_scroll
+            .set_offset(point(px(0.), px(0.)));
         self.node_workspace.sync_tabs();
         self.navigate(Page::Nodes, window, cx);
         self.activate_node_tab(window, cx);
@@ -359,6 +365,9 @@ impl Pilot {
 
     pub(super) fn close_node(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.node_workspace.open = false;
+        self.node_workspace
+            .page_scroll
+            .set_offset(point(px(0.), px(0.)));
         if self.node_workspace.view == NodeView::Table {
             self.node_workspace.show_selected_healthy();
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
