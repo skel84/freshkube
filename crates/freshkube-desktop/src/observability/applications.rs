@@ -119,7 +119,7 @@ impl TableSource for ObservabilityPage {
                         .font_family(MONO_FONT)
                         .text_size(dp(12.5))
                         .text_color(p.ink)
-                        .child(mono(app.name.clone()).truncate())
+                        .child(mono(app.name.clone()).w_full().truncate())
                         .tooltip(app.label.clone())
                         .accessibility_label(app.label.clone())
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -155,7 +155,7 @@ impl TableSource for ObservabilityPage {
                         .text_size(dp(12.))
                         .text_color(color)
                         .children(problem.and_then(|tone| ui::status_glyph(tone, cx)))
-                        .child(text(check.value.clone()))
+                        .child(text(check.value.clone()).flex_1().text_size(dp(12.)))
                         .tooltip(check.tooltip.clone())
                         .accessibility_label(check.label.clone())
                         .on_click(cx.listener(move |this, _, _, cx| {
