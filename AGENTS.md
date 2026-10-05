@@ -33,7 +33,7 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
 
-Worktrees on one machine share a build directory: `export CARGO_TARGET_DIR=~/.cache/freshkube/target`. Dependencies then build once, each worktree's own crates keep separate artifacts, and Cargo's lock queues builds instead of running two at once. "Blocking waiting for file lock" means another worktree is building; wait for it rather than switching directories.
+Each worktree builds into its own `target/`; leave `CARGO_TARGET_DIR` unset. Don't share one build directory between worktrees: Cargo fingerprints workspace crates by paths relative to the crate and judges freshness by modification time, so a worktree whose sources are older than another worktree's build links that other branch's code without rebuilding it. The first build in a new worktree compiles the dependencies.
 
 ```sh
 cargo build
