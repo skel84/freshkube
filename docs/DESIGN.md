@@ -113,7 +113,7 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 
 **The page frame.** Padding 26 left and right (`PAGE_PADDING`), 22 top, 18 bottom, and 14 between the header, banners and body, on the content background. Monitoring's 20/14/10 on `surface_2` moves to this when it migrates.
 
-**Cards.** 12 px radius, a `line` hairline, `surface` fill, no shadow (`page::card`; desktop's `screens::panel` draws the same). Card padding 12–14.
+**Cards.** 12 px radius, a `line` hairline, `surface` fill, no shadow (`page::card`, which desktop's `screens::panel` calls). Card padding 12–14.
 
 ### Components
 
@@ -148,12 +148,14 @@ Each state's element has role status and an id `<page>-<state>`.
 
 - `freshkube_ui::page`: `page(id)` is the frame, with `PAGE_PADDING`, `PAGE_TOP`, `PAGE_BOTTOM` and `PAGE_GAP`. Also `card(cx)` and `meta_line(id, cx)`.
   - `PageHeader::new(prefix, title, narrow)` draws `<prefix>-title` and, from `.meta(…)`, `<prefix>-scope`. `header.id("density")` gives the caller its other ids. Then `.filter(div)`, `.chips(…)`, `.control(…)` (call it once per control, in order) and `.render(cx)`. Narrow means content width below `HEADER_NARROW`.
-- `freshkube_ui::table`: `data_table(source, window, cx)` draws the card for any page entity that implements `TableSource`. The page keeps a `TableState::new(prefix)` (scroll and density, and the ids `<prefix>-list`, `-rows`, `-table-scroll`, `-empty` and `-sort`), so several tables can share a page and supplies:
+- `freshkube_ui::table`: `data_table(source, window, cx)` draws the table in its card, filling the room it is given, for any page entity that implements `TableSource`. `DataTable::new()` chooses otherwise: `.bare()` drops the card, for a table inside a card of its own; `.fit(max_lines)` makes it as tall as its header and lines, for a table in a scrolling page; then `.render(source, window, cx)`. The page keeps a `TableState::new(prefix)` (scroll and density; the ids `<prefix>-list`, `-rows`, `-table-scroll` and `-empty`, each labelled header cell `(<prefix>-sort, column)`, and `id(part)` for the rest), so several tables can share a page. The page supplies:
   - its `columns()` (any `TableColumn`) and `width()`;
-  - `line_count()` and `line(n)`, either a `TableRow` with a `Key: Hash + Eq + Clone`, an element id, a label, selected, marked and muted, or a `Group(n)`;
-  - `cell(row, column)`, `group(n)`, `sorting(column)` and `sort(..)`, `click(key)`, `empty()`, `notes()` and `footer()`.
+  - `line_count()` and `line(n)`, either a `TableRow` (a `Key: Hash + Eq + Clone`, an element id, a label, an optional tooltip, marked and muted) or a `Group(n)`;
+  - `cell(row, style, column)`, where `RowStyle` says whether the row is selected and carries its palette, muted text brightened on a selected or marked row;
+  - `selected_key()` and `line_of(key)`: selection is by key, never by position, and `table::step(source, delta, cx)` and `table::reveal(source, strategy)` move to and show it;
+  - `group(n)`, `sorting(column)` and `sort(..)`, `click(key, event)` (or `clickable() -> false` for rows that don't select), `empty()` as an element, `notes()` and `footer()`.
 
-  It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`.
+  It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `ROW_GROUP` (the row's hover group), `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`. `ui::Tone::Integration` is the integration-required square, from the palette's `integration` token, in `status_glyph`, `status_mark`, tags and chips.
 - Not in the crate yet: `StatCard` and `ChartCard`, which [#62](https://github.com/skel84/freshkube/issues/62) moves from `monitoring/panel`; `Breadcrumb`; and the states, which stay `ui::empty_state` and `ui::warning_banner`.
 
 ### Settled values

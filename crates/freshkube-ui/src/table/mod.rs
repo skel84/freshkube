@@ -17,7 +17,10 @@ use crate::palette::palette;
 
 mod data;
 use crate::ui::{self, MONO_FONT, Tone, dp};
-pub use data::{Line, SortOrder, TableIds, TableRow, TableSource, TableState, data_table};
+pub use data::{
+    DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState, data_table, reveal,
+    step,
+};
 
 /// Comfortable rows, and the compact ones the density toggle picks. Group
 /// rows take the same height, so the list stays uniform.
@@ -26,7 +29,7 @@ pub const COMPACT_ROW_HEIGHT: f32 = 26.;
 /// The header row's height.
 pub const HEADER_HEIGHT: f32 = 30.;
 /// The hover group of a row, for cells that brighten with it.
-pub const ROW_GROUP: &str = "resource-row";
+pub const ROW_GROUP: &str = "table-row";
 
 /// What the table needs to know of a column.
 pub trait TableColumn {

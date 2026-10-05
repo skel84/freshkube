@@ -81,7 +81,7 @@ impl ResourcesScreen {
         let owner = cx.entity().downgrade();
         let columns = self.layout.all_columns.clone();
         let hidden = self.hidden_columns.clone();
-        Button::new("resource-columns")
+        Button::new(self.table.id("columns"))
             .outline()
             .small()
             .label("Columns")
@@ -118,7 +118,7 @@ impl ResourcesScreen {
     pub(super) fn meter_legend(&self, narrow: bool, cx: &App) -> AnyElement {
         if narrow {
             return table::legend_line(
-                "resource-meter-legend",
+                self.table.id("meter-legend"),
                 "Meters: request · use · limit ⓘ",
                 "Band = request · line = use · end = limit. Brighter = above request; amber = at least 85% of limit; stripes = last known data.",
                 cx,
