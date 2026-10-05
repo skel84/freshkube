@@ -12,7 +12,13 @@ impl ObservabilityPage {
         } else {
             self.destination.label()
         };
-        let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
+        // Applications has source and table controls, so it stacks earlier.
+        let breakpoint = if self.destination == Destination::Applications {
+            1400.
+        } else {
+            page::HEADER_NARROW
+        };
+        let narrow = crate::screens::content_width(window) < breakpoint;
         PageHeader::new("obs", title.to_owned(), narrow)
     }
 

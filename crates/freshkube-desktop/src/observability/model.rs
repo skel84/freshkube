@@ -155,8 +155,9 @@ pub(super) enum Status {
 #[derive(Clone)]
 pub(super) struct Check {
     pub status: Status,
-    pub value: String,
-    pub tooltip: String,
+    pub value: gpui_kit::SharedString,
+    pub label: gpui_kit::SharedString,
+    pub tooltip: gpui_kit::SharedString,
     pub element_id: gpui_kit::SharedString,
 }
 #[derive(Clone)]

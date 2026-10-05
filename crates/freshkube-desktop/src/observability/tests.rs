@@ -729,11 +729,11 @@ fn application_report_values_preserve_missing_and_healthy_states_without_glyphs(
         .unwrap();
     assert_eq!(worker.label.as_ref(), "payments / worker · Deployment");
     let missing = worker.check(Report::DiskIo);
-    assert_eq!(missing.value, "—");
+    assert_eq!(missing.value.as_ref(), "—");
     assert_eq!(missing.status, Status::Absent);
     assert!(missing.status.report_tone().is_none());
     let unknown = worker.check(Report::Errors);
-    assert_eq!(unknown.value, "—");
+    assert_eq!(unknown.value.as_ref(), "—");
     assert_eq!(unknown.status, Status::Unknown);
     assert!(unknown.status.report_tone().is_none());
     let healthy = worker.check(Report::Cpu);
@@ -754,4 +754,37 @@ fn application_report_values_preserve_missing_and_healthy_states_without_glyphs(
         worker.check(Report::Logs).status.report_tone(),
         Some(super::Tone::Warn)
     );
+}
+
+#[gpui_kit::test]
+fn application_cells_expose_missing_unknown_and_healthy_values(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-filter", cx);
+        window.input("worker", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let worker = page
+            .read(cx)
+            .applications
+            .iter()
+            .find(|app| app.key == example::WORKER)
+            .unwrap();
+        for (report, label) in [
+            (Report::DiskIo, "Disk I/O: —"),
+            (Report::Errors, "Errors: —"),
+            (Report::Cpu, "CPU: "),
+            (Report::Net, "Net: refused"),
+        ] {
+            assert_eq!(
+                window.find(worker.check(report).element_id.clone()).label(),
+                Some(label)
+            );
+        }
+    })
+    .unwrap();
 }

@@ -118,6 +118,7 @@ impl ObservabilityPage {
                             .px_0()
                             .overflow_hidden()
                             .tooltip(app.label.clone())
+                            .accessibility_label(app.label.clone())
                             .child(
                                 h_flex()
                                     .w_full()
@@ -175,6 +176,7 @@ impl ObservabilityPage {
                                 )
                             })
                             .tooltip(check.tooltip.clone())
+                            .accessibility_label(check.label.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_app(app_id.clone(), report, cx)
                             }))

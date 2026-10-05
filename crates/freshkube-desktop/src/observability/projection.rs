@@ -80,7 +80,7 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
                 let signal = app.signals.get(report.signal());
                 let state = signal.map_or(Status::Absent, |signal| signal.status.into());
                 let raw_value = signal.map_or("", |s| s.value.as_str());
-                let value = match state {
+                let value: String = match state {
                     Status::Absent => "—".into(),
                     Status::Unknown if raw_value.is_empty() => "—".into(),
                     _ if raw_value.chars().count() > 24 => state.label().into(),
@@ -97,8 +97,10 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
                         } else {
                             format!(" · {raw_value}")
                         }
-                    ),
-                    value,
+                    )
+                    .into(),
+                    label: format!("{}: {value}", report.label()).into(),
+                    value: value.into(),
                     element_id: format!("obs-check-{}-{}", app.id, report.slug()).into(),
                 }
             });

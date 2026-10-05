@@ -110,7 +110,7 @@ impl ObservabilityPage {
                     .chips(Some(
                         v_flex()
                             .gap(dp(4.))
-                            .child(line().child(segment).child(chips))
+                            .child(line().flex_wrap().child(segment).child(chips))
                             .child(categories),
                     ))
                     .meta(meta),
