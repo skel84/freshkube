@@ -9,7 +9,7 @@ use freshkube_core::resources::Amounts;
 use gpui_kit::component::tooltip::Tooltip;
 
 use super::super::model::ResourceRow;
-use super::super::rows::{PodRow, PodState, RowOwner};
+use super::super::rows::{PodRow, PodState, RowOwner, died};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
@@ -21,10 +21,12 @@ const FIGURE_WIDTH: f32 = 40.;
 /// How much faster than the reason a name's generated suffix shrinks.
 const SUFFIX_SHRINK: f32 = 1000.;
 
-/// The glyph's tone for a pod's state; a pod on a node that isn't ready
-/// can't be confirmed, so it warns.
+/// The glyph's tone for a pod's state: a skull where a container ran and
+/// stopped, the critical disc where the pod can't run. A pod on a node
+/// that isn't ready can't be confirmed, so it warns.
 pub(super) fn pod_tone(pod: &PodRow, node_ready: bool) -> ui::Tone {
     match pod.state {
+        PodState::Failing if died(&pod.status) => ui::Tone::Died,
         PodState::Failing => ui::Tone::Crit,
         PodState::NotReady => ui::Tone::Warn,
         _ if !node_ready => ui::Tone::Warn,
