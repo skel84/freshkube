@@ -176,7 +176,7 @@ fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App)
             div()
                 .flex()
                 .min_w(dp(120.))
-                .child(title.flex_shrink().min_w_0().truncate()),
+                .child(title.flex_shrink(1.).min_w_0().truncate()),
         )
         .into_any_element()
 }
