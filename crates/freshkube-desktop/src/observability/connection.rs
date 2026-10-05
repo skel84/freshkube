@@ -408,6 +408,7 @@ impl ObservabilityPage {
             if self.destination == Destination::Application {
                 self.prepare_report();
             }
+            self.answer_example_incidents();
             cx.notify();
             return;
         }

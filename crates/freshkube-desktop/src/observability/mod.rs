@@ -26,7 +26,6 @@ mod fake_tests;
 mod format;
 mod frame;
 mod header;
-mod incidents;
 mod live_incidents;
 mod live_profiling;
 mod live_traces;
@@ -109,8 +108,6 @@ pub(crate) struct ObservabilityPage {
     map_scroll: UniformListScrollHandle,
     map_display: map::MapDisplay,
     map_problems: bool,
-    incident: usize,
-    incident_muted: bool,
     incident_observations: live_incidents::Incidents,
     live_traces: live_traces::Traces,
     live_profiles: live_profiling::Profiles,
@@ -288,8 +285,6 @@ impl ObservabilityPage {
             map_scroll: UniformListScrollHandle::new(),
             map_display: Default::default(),
             map_problems: false,
-            incident: 0,
-            incident_muted: false,
             incident_observations: Default::default(),
             live_traces: Default::default(),
             live_profiles: Default::default(),
@@ -331,6 +326,7 @@ impl ObservabilityPage {
         this.flame_matches = vec![true; this.frames.len()];
         if fixture {
             this.apply_applications(&example::applications());
+            this.answer_example_incidents();
         }
         this.fill_from_memory(window, cx);
         this.project();
@@ -403,11 +399,6 @@ impl ObservabilityPage {
         self.report_snapshot = None;
         self.open(Destination::Application, cx);
     }
-    fn open_named(&mut self, key: &str, report: Report, cx: &mut Context<Self>) {
-        if let Some(app) = self.applications.iter().find(|app| app.key == key) {
-            self.open_app(app.id.clone(), report, cx);
-        }
-    }
     fn edit_threshold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.fixture {
             return;
@@ -474,8 +465,8 @@ impl ObservabilityPage {
         }
         window.open_alert_dialog(cx,move |dialog,_,cx| dialog.ok_text("Close preview").title(format!("Preview: {action}"))
             .child(v_flex().gap(dp(12.)).child(ui::tag(Tone::Accent,None,"Example data",cx))
-                .child(if action == "Correct DATABASE_URL" { "Deployment payments/worker · proposed environment change" } else { "Deployment payments/worker · revision 14 → 13" })
-                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child(if action == "Correct DATABASE_URL" { "DATABASE_URL: ledger-db:5432 → ledger-db:6432" } else { "image: worker:1.8.2 → worker:1.8.1\nDATABASE_URL: ledger-db:5432 → ledger-db:6432" }))
+                .child("Deployment payments/worker · revision 14 → 13")
+                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child("image: worker:1.8.2 → worker:1.8.1\nDATABASE_URL: ledger-db:5432 → ledger-db:6432"))
                 .child("Expected result: the worker connects to the Service on port 6432. The next revision must be observed before recovery is confirmed.")
                 .child("This preview does not change a cluster.")));
     }

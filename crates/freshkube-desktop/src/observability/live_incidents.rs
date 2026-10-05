@@ -253,11 +253,23 @@ fn detail(value: &api::IncidentView) -> Detail {
 
 impl ObservabilityPage {
     pub(crate) fn incident_count(&self) -> Option<&str> {
-        if self.fixture {
-            Some("2")
-        } else {
-            self.incident_observations.count.as_deref()
-        }
+        self.incident_observations.count.as_deref()
+    }
+    /// Example mode answers the list and the selected incident at once,
+    /// through the same preparation as Coroot's answers.
+    pub(super) fn answer_example_incidents(&mut self) {
+        let Some(to) = self.live.range.to else {
+            return;
+        };
+        let state = &mut self.incident_observations;
+        state.prepare_list(&example::incidents(to));
+        state.detail = state
+            .selected
+            .as_ref()
+            .and_then(|(key, _)| example::incident_view(key, to))
+            .as_ref()
+            .map(detail);
+        state.prepare_related();
     }
     pub(super) fn read_incidents(
         &mut self,
