@@ -379,7 +379,7 @@ impl ObservabilityPage {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .rounded(px(2.))
+                            .rounded(px(3.))
                             .bg(crate::palette::heat_color(level, line_data.errors))
                             .border(border.unwrap_or(px(1.)))
                             .border_color(if border.is_some() {
@@ -388,13 +388,7 @@ impl ObservabilityPage {
                                 gpui_kit::transparent_black()
                             })
                             .when(border.is_some(), |this| {
-                                this.child(
-                                    div()
-                                        .size_full()
-                                        .rounded(px(1.))
-                                        .border_1()
-                                        .border_color(p.surface),
-                                )
+                                this.child(div().size_full().border_1().border_color(p.surface))
                             })
                             .cursor_pointer()
                             .tooltip(move |window, cx| {

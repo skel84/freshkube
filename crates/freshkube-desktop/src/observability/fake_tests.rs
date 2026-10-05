@@ -968,6 +968,24 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
             );
         }
         assert!(window.try_find("obs-live-increase-2").is_none());
+        // A frame is a data mark: 3 px corners, like a meter (DESIGN.md).
+        let scale = window.scale_factor();
+        let frame = window.find("obs-live-flame-0").bounds().scale(scale);
+        let corners: Vec<f32> = window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| {
+                let b = quad.bounds;
+                (b.left() - frame.left()).0.abs() < 1.
+                    && (b.top() - frame.top()).0.abs() < 1.
+                    && (b.right() - frame.right()).0.abs() < 1.
+            })
+            .map(|quad| quad.corner_radii.top_left.0 / scale)
+            .collect();
+        assert!(
+            corners.iter().any(|radius| (radius - 3.).abs() < 0.01),
+            "the frame's quads round at {corners:?}"
+        );
         window.click("obs-live-flame-2", cx);
         window.render_frame(cx);
         assert!(window.try_find("obs-live-frame-detail").is_some());
