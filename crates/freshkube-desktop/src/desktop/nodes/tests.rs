@@ -281,7 +281,22 @@ fn example_nodes_show_use_as_soon_as_the_page_shows(cx: &mut TestAppContext) {
                 row.name
             );
             assert!(cells.cpu.allocatable.is_some(), "{}", row.name);
-            assert!(!cells.cpu.stale, "{}", row.name);
+            let ready = row.kubernetes.as_ref().unwrap().is_ready();
+            assert_eq!(cells.cpu.stale, !ready, "{}", row.name);
+            if !ready {
+                assert!(
+                    cells.cpu.tooltip.contains("node is NotReady"),
+                    "{}",
+                    row.name
+                );
+            }
+            for cell in [&cells.cpu, &cells.memory] {
+                assert!(
+                    cell.used <= cell.allocatable,
+                    "{} uses more than it has",
+                    row.name
+                );
+            }
         }
     });
 }

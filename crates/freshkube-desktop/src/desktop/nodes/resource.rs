@@ -223,13 +223,18 @@ impl Nodes {
                 let expired = sample
                     .and_then(|sample| sample.sampled_at)
                     .is_some_and(|at| now.signed_duration_since(at).num_seconds() > 45);
+                // As on Pods: a NotReady node's kubelet isn't scraped, so its
+                // metrics are last known whatever the answer's freshness.
+                let not_ready = row.kubernetes.as_ref().is_some_and(|node| !node.is_ready());
                 (
                     row.key.clone(),
                     RowResources::new(
                         row,
                         sample,
-                        metrics.is_stale() || expired,
-                        if expired {
+                        metrics.is_stale() || expired || not_ready,
+                        if not_ready {
+                            "node is NotReady"
+                        } else if expired {
                             "metrics sample is older than 45 s"
                         } else {
                             reason

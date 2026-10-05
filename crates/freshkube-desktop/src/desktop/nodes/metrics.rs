@@ -212,18 +212,23 @@ impl Nodes {
             .filter_map(|row| {
                 let node = row.kubernetes.as_ref()?;
                 let requests = node.requests;
+                // -02 runs above its requests, -01 near its allocatable memory,
+                // the rest below their requests: every meter state shows.
                 let ratio = if node.name.contains("02") { 1.6 } else { 0.7 };
+                let allocatable = node
+                    .allocatable
+                    .get("memory")
+                    .and_then(|q| freshkube_core::resources::quantity(&q.0));
+                let memory = match allocatable {
+                    Some(allocatable) if node.name.contains("01") => Some(allocatable * 0.88),
+                    _ => requests.memory_bytes.map(|value| value * ratio),
+                };
                 Some(NodeUsage {
                     name: node.name.clone(),
                     sampled_at: None,
                     usage: freshkube_core::resources::Amounts {
                         cpu_millis: requests.cpu_millis.map(|value| (value * ratio).max(75.)),
-                        memory_bytes: row
-                            .talos
-                            .as_ref()
-                            .and_then(|node| node.memory.as_ref())
-                            .map(|memory| memory.used as f64)
-                            .or(requests.memory_bytes.map(|value| value * ratio)),
+                        memory_bytes: memory,
                     },
                 })
             })
