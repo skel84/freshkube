@@ -1,0 +1,64 @@
+name: Capture
+
+# Keep optional capture builds separate from the required CI check: adding a
+# label must not cancel or restart that workflow.
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled, synchronize]
+  workflow_dispatch:
+    inputs:
+      debug_binary:
+        description: Build an Intel macOS debug binary for local captures
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: '15.0'
+
+jobs:
+  debug_binary:
+    name: Debug binary (Intel macOS)
+    if: >-
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'capture') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'capture')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.debug_binary)
+    # A skipped job for an unrelated label never enters this concurrency group.
+    concurrency:
+      group: capture-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Name the artifact for the source head, rather than a PR merge ref.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - name: Confirm native architecture and identify source
+        id: source
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = x86_64-apple-darwin
+          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Install build tools
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app-x86_64-apple-darwin
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Build the debug executable
+        run: cargo build --locked --bin freshkube
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freshkube-debug-x86_64-apple-darwin-${{ steps.source.outputs.sha }}
+          path: target/debug/freshkube
+          if-no-files-found: error
+          retention-days: 3
