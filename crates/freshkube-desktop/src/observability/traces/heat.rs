@@ -97,8 +97,9 @@ pub(super) fn heat(heatmap: &api::Heatmap) -> Heat {
     let errors = lines.iter().take_while(|l| l.errors).count();
     lines[errors..].reverse();
     let time = |ms: i64| {
-        chrono::DateTime::from_timestamp_millis(ms)
-            .map_or_else(String::new, |t| t.format("%H:%M").to_string())
+        chrono::DateTime::from_timestamp_millis(ms).map_or_else(String::new, |t| {
+            t.with_timezone(&chrono::Local).format("%H:%M").to_string()
+        })
     };
     Heat {
         lines,
@@ -248,5 +249,17 @@ mod tests {
         );
         assert_eq!(heat.lines[1].levels[0], 0);
         assert_eq!(heat.lines[2].levels[0], 5);
+        // The axis reads in local time, as the request list does.
+        let local = |ms| {
+            chrono::DateTime::from_timestamp_millis(ms)
+                .unwrap()
+                .with_timezone(&chrono::Local)
+                .format("%H:%M")
+                .to_string()
+        };
+        assert_eq!(
+            (heat.start.clone(), heat.end.clone()),
+            (local(0), local(120 * 60_000))
+        );
     }
 }
