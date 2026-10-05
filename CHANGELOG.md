@@ -16,6 +16,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 - **Nodes looks like Pods:** the same page header and table styling, with a text filter, source freshness, matching health glyph counts and problems first. Healthy rows fold while problems exist; comfortable/compact rows, a Columns menu and 12 px cards keep the retained node pane.
 - **Nodes shows CPU and memory with Pods’ request/use meters** against node allocatable, retains stale metrics, and falls back to Talos memory when metrics-server is unavailable; load averages are an optional column.
+- **New status glyphs:** every status is a round glyph whose inside tells the state: a dot for OK, a half-filled ring for a warning, a disc with a bar for critical, a dashed ring for pending and a ring with a plus where an integration is needed. A pod whose container crashed, errored or ran out of memory shows a small skull; one that can't start, such as an image that won't pull, keeps the critical disc. Both count as failing.
 - **System services looks like Pods:** the same header, table and row heights, with comfortable and compact rows. Services group by health while any is unwell; the counts beside the filter (unhealthy, not reported, healthy) filter the list, and a refresh keeps your filter and place.
 - Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.
 - **Quieter column headers:** tables label their columns in sentence case (Name, Ready, Health check), not uppercase.

@@ -294,7 +294,7 @@ fn value(figure: &Figure<'_>, text_size: Rems, cx: &App) -> impl IntoElement {
 pub fn gauge(fraction: f32, tone: Option<Tone>, cx: &App) -> impl IntoElement {
     let p = palette(cx);
     let color = match tone {
-        Some(Tone::Crit) => p.crit,
+        Some(Tone::Crit | Tone::Died) => p.crit,
         Some(Tone::Warn) => p.warn,
         _ => p.accent,
     };

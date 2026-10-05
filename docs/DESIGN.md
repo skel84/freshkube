@@ -99,18 +99,18 @@ The user settled the open questions on these changes on 5 October 2026:
 
 ## Status and links
 
-Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette for every state, drawn 10 dp, whose inside carries the meaning. The app draws the dot, triangle and diamond until [change 13](#from-todays-app-to-desktop-grade) lands.
+Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette for every state, drawn 10 dp, whose inside carries the meaning. `ui::status_glyph` draws it ([change 13](#from-todays-app-to-desktop-grade)): each drawing is a single-colour SVG on a 16 grid in `crates/freshkube-ui/assets/glyphs/`, compiled in and painted as an alpha mask in the tone's colour, so a halo keeps its transparency and a cut-out shows what lies behind it.
 
 | State | Glyph |
 | --- | --- |
 | OK | Mint dot in a soft mint halo |
 | Warning / at risk | Amber ring, half filled |
-| Died | Coral K1 skull: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`) |
+| Died | Coral skull, `Tone::Died`: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`). Counted with critical. The 10 dp skull is the simplified drawing B: K1 with three teeth and no nose, which hold at 10 px where K1's nose and thin teeth blur. K1 itself is kept for a larger size, if one ever appears |
 | Critical / can't run | Coral disc with a bar cut out: an image that won't pull, a node down, an etcd alarm |
 | Pending / unknown | Dashed grey ring |
-| Completed | Grey tick in a faint ring |
+| Completed | Grey tick in a faint ring (not drawn yet: Pods shows a tick icon) |
 | Integration required | Lavender ring with a plus |
-| Log errors | Small blue dot |
+| Log errors | Small blue dot (not drawn yet) |
 
 Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. Prose links, breadcrumbs, selection and focus are blue. A chosen chip or outline toggle takes the primary outline (`ui::choice`); a chosen segment of a ghost segmented control on a `surface_2` track takes the accent tint (`ui::segment`), since Kit's own selected ghost colour matches that track. Dense cross-references use secondary text with dotted underlines and become blue on hover.
 
@@ -229,7 +229,7 @@ Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, 
   - `selected_key()` and `line_of(key)`: selection is by key, never by position, and `table::step(source, delta, cx)` and `table::reveal(source, strategy)` move to and show it;
   - `group(n)`, `sorting(column)` and `sort(..)`, `click(key, event)` (or `clickable() -> false` for rows that don't select), `empty()` as an element, `notes()` and `footer()`.
 
-  It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. A table scrolled sideways moves its group lines back by the scroll, and draws a row's pinned cells last, inside `(<prefix>-pinned, line)` (`<prefix>-pinned-header` for the header), over empty cells that keep their place, opaque in the row's state; both move while the frame is laid out, after the scroll is clamped, so they never trail it. Every cell is drawn once, so its id finds one element. Unscrolled, the rows draw as they did before pinning. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `ROW_GROUP` (the row's hover group), `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`. `ui::Tone::Integration` is the integration-required square, from the palette's `integration` token, in `status_glyph`, `status_mark`, tags and chips.
+  It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. A table scrolled sideways moves its group lines back by the scroll, and draws a row's pinned cells last, inside `(<prefix>-pinned, line)` (`<prefix>-pinned-header` for the header), over empty cells that keep their place, opaque in the row's state; both move while the frame is laid out, after the scroll is clamped, so they never trail it. Every cell is drawn once, so its id finds one element. Unscrolled, the rows draw as they did before pinning. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `ROW_GROUP` (the row's hover group), `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`. `ui::Tone::Integration` is the integration-required ring with a plus, from the palette's `integration` token, and `ui::Tone::Died` the skull in the critical colour, in `status_glyph`, `status_mark`, tags and chips. `status_mark` names its state to assistive technology with its tooltip; a bare `status_glyph` is decorative, named by what holds it.
 - `freshkube_ui::card` ([#62](https://github.com/skel84/freshkube/issues/62), moved from `monitoring/panel`): `CardHeader::new(id, title)` with `.unit(…)`, `.about(text)` (the info mark's tooltip), `.copy(text, hint)` (what a click on the mark copies) and `.stale(…)`; its parts are `<id>-title`, `-query` and `-stale`. `StatCard::new(header).render(body, cx)` and `ChartCard::new(header).render(body, cx)` draw the card with id `<id>`, filling its grid cell. A stat card's body is `figures(&[Figure], cx)`; each `Figure` borrows its name, value and note, with an optional `Tone`, gauge and `Spark` (whose last stretch takes the colour the caller gives). `gauge(fraction, tone, cx)` is the fill bar. The page derives its figures when its data changes; the chart's plot, cursor, legend and markers stay with the page.
 - Not in the crate yet: `Breadcrumb`, and the states, which stay `ui::empty_state` and `ui::warning_banner`.
 

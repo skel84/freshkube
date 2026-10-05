@@ -1240,6 +1240,55 @@ fn pods_show_problems_first_and_fold_healthy_ones(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// A pod's glyph by its printed status, on a ready node.
+fn pod_glyph(status: &str) -> crate::ui::Tone {
+    let cells = ["p", "0/1", status, "0", "", "10.0.0.1", "wk-1"].map(str::to_owned);
+    let pod = crate::resources::rows::pod_row(&example::pod_columns(), &cells, None, false);
+    super::cells::pod_tone(&pod, true)
+}
+
+#[test]
+fn a_container_that_ran_and_stopped_died_and_one_that_cannot_start_is_critical() {
+    use crate::ui::Tone;
+    for status in [
+        "CrashLoopBackOff",
+        "Init:CrashLoopBackOff",
+        "Error",
+        "OOMKilled",
+    ] {
+        assert_eq!(pod_glyph(status), Tone::Died, "{status}");
+    }
+    for status in ["ImagePullBackOff", "ErrImagePull", "Evicted"] {
+        assert_eq!(pod_glyph(status), Tone::Crit, "{status}");
+    }
+    // An unschedulable pod prints Pending: it waits, as before.
+    assert_eq!(pod_glyph("Pending"), Tone::Unknown);
+    assert_eq!(pod_glyph("Running"), Tone::Warn);
+}
+
+#[gpui_kit::test]
+fn a_pod_that_died_counts_with_the_failing_ones(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        let crashing = view.projection.row(&view.store, 0).unwrap();
+        let pod = crashing.pod.as_ref().unwrap();
+        assert_eq!(pod.status, "CrashLoopBackOff");
+        assert_eq!(super::cells::pod_tone(pod, true), crate::ui::Tone::Died);
+        // The chip and the group count it as failing, under the critical
+        // glyph.
+        assert_eq!(view.projection.tally().failing, 1);
+        assert_eq!(
+            window.find("resource-tally-failing").label(),
+            Some("1 failing")
+        );
+        assert!(window.find("resource-group-failing").visible());
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn opening_a_folded_pod_unfolds_the_healthy_ones(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
