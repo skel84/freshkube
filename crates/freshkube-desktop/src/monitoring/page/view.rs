@@ -73,20 +73,24 @@ impl MonitoringPage {
         header.render(cx)
     }
 
-    /// The context, or what stands in for one, then the board's count,
-    /// state and time.
+    /// The context, then the board's count, state and time. Example data and
+    /// "Not connected" are left to the source label, which already says so.
     fn render_meta(&self) -> Vec<AnyElement> {
-        let source: SharedString = match (&self.connection, &self.source) {
-            (Connection::Example, _) => "Example data".into(),
-            (_, Some(source)) => source.context.clone().into(),
-            (_, None) => "Not connected".into(),
+        let context = match (&self.connection, &self.source) {
+            (Connection::Example, _) | (_, None) => None,
+            (_, Some(source)) => Some(SharedString::from(source.context.clone())),
         };
-        let mut meta = vec![source.into_any_element()];
-        if let Some(board) = self.board.as_ref().filter(|board| board.error.is_none()) {
-            meta.extend([
-                " · ".into_any_element(),
-                board.meta.clone().into_any_element(),
-            ]);
+        let board = self
+            .board
+            .as_ref()
+            .filter(|board| board.error.is_none())
+            .map(|board| board.meta.clone());
+        let mut meta = Vec::new();
+        for part in context.into_iter().chain(board) {
+            if !meta.is_empty() {
+                meta.push(" · ".into_any_element());
+            }
+            meta.push(part.into_any_element());
         }
         meta
     }
