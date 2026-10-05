@@ -28,7 +28,7 @@ pub use data::{
 pub const ROW_HEIGHT: f32 = 34.;
 pub const COMPACT_ROW_HEIGHT: f32 = 26.;
 /// The header row's height.
-pub const HEADER_HEIGHT: f32 = 30.;
+pub const HEADER_HEIGHT: f32 = 26.;
 /// The hover group of a row, for cells that brighten with it.
 pub const ROW_GROUP: &str = "table-row";
 
