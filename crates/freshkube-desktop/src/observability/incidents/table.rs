@@ -17,7 +17,7 @@ const OPTIONAL: [ColumnKind; 4] = [
     ColumnKind::Duration,
     ColumnKind::Impact,
 ];
-/// The list ignores the time range; the meta line's tooltip says so.
+/// The list ignores the time range; the status bar's tooltip says so.
 const NOTE: &str =
     "Up to 100 recent incidents, in every state.\nThe time range doesn't filter them.";
 
@@ -27,6 +27,27 @@ pub(crate) struct IncidentCells<'a> {
 }
 
 impl ObservabilityPage {
+    /// What Incidents puts in the status bar.
+    pub(in crate::observability) fn incidents_read(
+        &self,
+    ) -> crate::observability::status::Read<'_> {
+        let count = if !self.fixture && self.live.incidents.data().is_none() {
+            if self.live.incidents.is_loading() {
+                "Loading incidents"
+            } else {
+                "No observation"
+            }
+        } else {
+            &self.incident_observations.sample
+        };
+        crate::observability::status::Read {
+            count,
+            stale: self.live.incidents.is_stale(),
+            time: self.read_time(self.live.incidents.last_successful()),
+            note: Some(NOTE),
+        }
+    }
+
     pub(in crate::observability) fn incidents_header(
         &self,
         window: &mut Window,
@@ -69,50 +90,18 @@ impl ObservabilityPage {
                 .aria_label("Filter incidents by key, title or application")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
-        let sample = if !self.fixture && self.live.incidents.data().is_none() {
-            if self.live.incidents.is_loading() {
-                "Loading incidents".into()
-            } else {
-                "No observation".into()
-            }
-        } else {
-            state.sample.clone()
-        };
-        let mut meta = vec![
-            " · ".into_any_element(),
-            div()
-                .id("obs-incidents-sample")
-                .child(sample)
-                .tooltip(|window, cx| Tooltip::new(NOTE).build(window, cx))
-                .into_any_element(),
-        ];
-        if self.live.incidents.is_stale() {
-            meta.push(" · stale".into_any_element());
-        }
-        if let Some(time) = self
-            .live
-            .incidents
-            .last_successful()
-            .or_else(|| self.live.range.to.filter(|_| self.fixture).map(Into::into))
-        {
-            meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
-        }
         let columns = self.incident_columns_items(cx);
         self.time_controls(
-            header
-                .filter(filter)
-                .chips(Some(chips))
-                .meta(meta)
-                .foldable(
-                    self.incident_columns_menu(columns.clone()),
-                    freshkube_ui::page::columns_fold(
-                        columns,
-                        self.hidden_incident_columns.len(),
-                        self.hidden_incident_columns
-                            .iter()
-                            .eq(std::collections::BTreeSet::from(super::HIDDEN_BY_DEFAULT).iter()),
-                    ),
+            header.filter(filter).chips(Some(chips)).foldable(
+                self.incident_columns_menu(columns.clone()),
+                freshkube_ui::page::columns_fold(
+                    columns,
+                    self.hidden_incident_columns.len(),
+                    self.hidden_incident_columns
+                        .iter()
+                        .eq(std::collections::BTreeSet::from(super::HIDDEN_BY_DEFAULT).iter()),
                 ),
+            ),
             cx,
         )
         .render(window, cx)

@@ -1,5 +1,6 @@
 use super::*;
 use crate::logs::TalosPanel;
+use freshkube_ui::status::Segment;
 
 impl Pilot {
     pub(in crate::desktop) fn render_status_bar(
@@ -7,11 +8,17 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let segment = self.page_segment(cx);
         let p = palette(cx);
         let compact = window.viewport_size().width < ui::dp_px(1080., window);
+        // Narrow, the shell's status gives a page's segment its room.
+        let glyph_only = compact && segment.is_some();
         let status = Self::status(&self.overview);
         let context = self.applied.context.clone().unwrap_or_default();
         let glyph = |tone: Tone| ui::status_glyph(tone, cx);
+        // The context the shell's status names, which a page's segment then
+        // leaves out.
+        let mut named = None;
         let left = if let Some(running) = Operations::current(cx) {
             let cancelling = running.cancel_requested();
             let line = match (&running.step, cancelling) {
@@ -46,7 +53,9 @@ impl Pilot {
                 )
                 .into_any_element()
         } else if self.kubernetes_only.is_some() {
-            self.render_kubernetes_status(cx)
+            let (status, names) = self.render_kubernetes_status(glyph_only, cx);
+            named = names.then(|| context.clone());
+            status
         } else if (self.page == Page::Nodes
             && self.node_workspace.open
             && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs)
@@ -83,6 +92,7 @@ impl Pilot {
             } else if self.config_loading
                 || (self.overview.is_loading() && self.overview.data().is_none())
             {
+                named = Some(context.clone());
                 (
                     Some(
                         Icon::new(IconName::RefreshCw)
@@ -98,6 +108,7 @@ impl Pilot {
                     "Showing the previous snapshot".to_owned(),
                 )
             } else if self.overview.data().is_some() {
+                named = Some(context.clone());
                 (glyph(Tone::Good), self.context_display.status.to_string())
             } else {
                 (
@@ -108,17 +119,11 @@ impl Pilot {
                         .unwrap_or_else(|| "Unavailable".into()),
                 )
             };
-            h_flex()
-                .id("overview-status")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(status)
-                .gap_2()
-                .min_w_0()
-                .children(indicator)
-                .child(div().min_w_0().truncate().child(text))
-                .into_any_element()
+            status_text("overview-status", status, indicator, text, glyph_only)
         };
+        let page = segment.and_then(|(id, segment)| {
+            freshkube_ui::status::segment(id, &segment, named.as_deref(), cx)
+        });
         let right = if self.kubernetes_only.is_some() {
             h_flex()
                 .flex_none()
@@ -181,15 +186,83 @@ impl Pilot {
             .h(dp(28.))
             .px_3()
             .text_size(dp(11.5))
-            .left(
-                div()
+            // The bar's centre takes only the room the right side leaves, so
+            // a long segment truncates instead of pushing the right side out;
+            // Kit's left region would shrink with it.
+            .child(
+                h_flex()
+                    .id("status-bar")
+                    .test_support()
                     .min_w_0()
-                    .when(compact, |this| this.max_w(dp(160.)))
-                    .child(left),
+                    .gap_3()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .when(page.is_some(), |this| this.flex_none().max_w(dp(360.)))
+                            .when(compact && page.is_none(), |this| this.max_w(dp(160.)))
+                            .child(left),
+                    )
+                    .children(page.map(|page| {
+                        h_flex()
+                            .min_w_0()
+                            .gap_3()
+                            .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))
+                            .child(page)
+                    })),
             )
             .right(right.child(self.fps.clone()))
             .into_any_element()
     }
+
+    /// The visible page's segment of the status bar, and its id. A page
+    /// derives its segment when its data changes, so this only reads it.
+    fn page_segment(&mut self, cx: &mut Context<Self>) -> Option<(&'static str, Segment)> {
+        match self.page {
+            Page::Resources => Some((
+                "resource-scope",
+                self.resources.update(cx, |page, _| page.status().clone()),
+            )),
+            Page::Observability => Some((
+                "obs-scope",
+                self.observability
+                    .update(cx, |page, _| page.status().clone()),
+            )),
+            Page::Nodes => Some(("nodes-scope", self.node_workspace.status.clone())),
+            Page::SystemServices if self.kubernetes_only.is_none() => Some((
+                "system-services-scope",
+                self.system_services.read(cx).status.clone(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// The shell's status: its glyph and text, or with `glyph_only` the glyph
+/// alone, with the text in its tooltip.
+pub(in crate::desktop) fn status_text(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    indicator: Option<AnyElement>,
+    text: String,
+    glyph_only: bool,
+) -> AnyElement {
+    let glyph_only = glyph_only && indicator.is_some();
+    h_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Status)
+        .aria_label(label)
+        .gap_2()
+        .min_w_0()
+        .children(indicator)
+        .map(|this| {
+            if glyph_only {
+                this.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+            } else {
+                this.child(div().min_w_0().truncate().child(text))
+            }
+        })
+        .into_any_element()
 }
 
 pub(super) fn settings_content(

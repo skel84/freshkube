@@ -1,5 +1,7 @@
 //! The Resources toolbar and Pods' bullet-meter legend.
 use super::*;
+use freshkube_ui::status::{Part, Segment};
+use freshkube_ui::ui::Tone;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use layout::ColumnSource;
 use std::rc::Rc;
@@ -28,10 +30,12 @@ impl ResourcesScreen {
                     })
                     .prefix(Icon::new(IconName::Search).size(dp(14.))),
             );
-        let mut header = header
-            .filter(filter)
-            .chips(self.pod_switch(cx))
-            .meta(self.meta());
+        let mut header = header.filter(filter).chips(self.pod_switch(cx));
+        // A page's line is in the status bar; the node pane's list keeps
+        // its own under its header.
+        if self.embedded {
+            header = header.meta([self.status.1.text(None).clone().into_any_element()]);
+        }
         if self.kind.namespaced && !self.embedded {
             let namespace = Select::new(&self.namespace_select)
                 .id(header.id("namespace"))
@@ -105,65 +109,112 @@ impl ResourcesScreen {
         })
     }
 
-    /// The meta line: the context, how many rows, the read's state and when
-    /// the rows last changed.
-    fn meta(&self) -> Vec<AnyElement> {
+    /// What the status bar shows of this list: the context, how many rows,
+    /// the read's state and when the rows last changed. It is derived
+    /// again only when one of those changes, so the shell can read it on
+    /// every frame.
+    pub(crate) fn status(&mut self) -> &Segment {
+        let inputs = self.status_inputs();
+        let key = &self.status.0;
+        let known = (
+            key.context
+                .as_ref()
+                .map(|(context, example)| (context.as_str(), *example)),
+            key.read,
+            key.total,
+            key.shown,
+            key.updated,
+        );
+        if known != inputs {
+            let (context, read, total, shown, updated) = inputs;
+            let key = StatusKey {
+                context: context.map(|(context, example)| (context.to_owned(), example)),
+                read,
+                total,
+                shown,
+                updated,
+            };
+            self.status = (key, self.derive_status());
+        }
+        &self.status.1
+    }
+
+    /// What the status line is derived from.
+    fn status_inputs(&self) -> StatusInputs<'_> {
+        (
+            self.source.as_ref().map(|source| {
+                (
+                    source.context.as_str(),
+                    matches!(source.access, KubeAccess::Example),
+                )
+            }),
+            self.read_label(),
+            self.store.len(),
+            self.shown(),
+            self.updated,
+        )
+    }
+
+    /// The read's state as the status bar words it, and its tone.
+    fn read_label(&self) -> (&'static str, Option<Tone>) {
         let example = self
             .source
             .as_ref()
             .is_some_and(|source| matches!(source.access, KubeAccess::Example));
-        let mut meta = Vec::new();
-        if self.lists_pods() && !self.embedded {
-            let source = match &self.source {
-                Some(_) if example => "Example data".to_owned(),
-                Some(source) => format!("{} · {} pods", source.context, self.store.len()),
-                None => "Not connected".into(),
-            };
-            let state = match self.store.read_state() {
-                ReadState::Loading => " · loading",
-                ReadState::Loaded => "",
-                ReadState::Stale(_) => " · reconnecting",
-                ReadState::Refused(_) => " · not permitted",
-                ReadState::Failed(_) => " · failed",
-                ReadState::Missing(_) => " · not served",
-            };
-            meta.extend([source.into_any_element(), state.into_any_element()]);
+        match self.store.read_state() {
+            ReadState::Loading => ("loading", None),
+            ReadState::Loaded if example => ("example data", None),
+            ReadState::Loaded => ("watching", None),
+            ReadState::Stale(_) => ("reconnecting", Some(Tone::Warn)),
+            ReadState::Refused(_) => ("not permitted", Some(Tone::Crit)),
+            ReadState::Failed(_) => ("failed", Some(Tone::Crit)),
+            ReadState::Missing(_) => ("not served", None),
+        }
+    }
+
+    /// How many rows the filter lets through. Folded healthy pods aren't
+    /// hidden by the filter.
+    fn shown(&self) -> usize {
+        if self.projection.grouping().is_some() {
+            self.projection.tally().total()
         } else {
-            let read = self.store.read_state();
-            let state = match read {
-                ReadState::Loading => "loading",
-                ReadState::Loaded if example => "example data",
-                ReadState::Loaded => "watching",
-                ReadState::Stale(_) => "reconnecting",
-                ReadState::Refused(_) => "not permitted",
-                ReadState::Failed(_) => "failed",
-                ReadState::Missing(_) => "not served",
-            };
-            let (total, shown) = (self.store.len(), self.projection.len());
-            // Folded healthy pods aren't hidden by the filter.
-            let shown = if self.projection.grouping().is_some() {
-                self.projection.tally().total()
+            self.projection.len()
+        }
+    }
+
+    fn derive_status(&self) -> Segment {
+        let time = self.updated.map(|time| Part::new(clock(time)));
+        let Some(source) = &self.source else {
+            return Segment::new(None::<SharedString>, ["Not connected"]);
+        };
+        let example = matches!(source.access, KubeAccess::Example);
+        let (state, tone) = self.read_label();
+        let state = tone.into_iter().fold(Part::new(state), Part::tone);
+        let (total, shown) = (self.store.len(), self.shown());
+        if self.lists_pods() && !self.embedded {
+            // Pods name their count and leave out a plain "watching".
+            let state = (!matches!(self.store.read_state(), ReadState::Loaded)).then_some(state);
+            let (context, lead) = if example {
+                (None, Part::new("Example data"))
             } else {
-                shown
+                (
+                    Some(source.context.clone()),
+                    Part::new(format!("{total} pods")),
+                )
             };
-            let Some(source) = &self.source else {
-                return vec!["Not connected".into_any_element()];
-            };
-            meta.push(format!("{} · ", source.context).into_any_element());
-            if read.shows_rows() {
-                let count = if shown == total {
-                    total.to_string()
-                } else {
-                    format!("{shown} of {total}")
-                };
-                meta.push(format!("{count} · ").into_any_element());
-            }
-            meta.push(state.into_any_element());
+            return Segment::new(context, std::iter::once(lead).chain(state).chain(time));
         }
-        if let Some(time) = self.updated {
-            meta.extend([" · ".into_any_element(), clock(time).into_any_element()]);
-        }
-        meta
+        let count = self.store.read_state().shows_rows().then(|| {
+            Part::new(if shown == total {
+                total.to_string()
+            } else {
+                format!("{shown} of {total}")
+            })
+        });
+        Segment::new(
+            Some(source.context.clone()),
+            count.into_iter().chain(Some(state)).chain(time),
+        )
     }
 
     /// Pods' columns as checked items: the Columns menu, and its folded form.
@@ -242,4 +293,22 @@ impl ResourcesScreen {
         )
         .into_any_element()
     }
+}
+
+type StatusInputs<'a> = (
+    Option<(&'a str, bool)>,
+    (&'static str, Option<Tone>),
+    usize,
+    usize,
+    Option<SystemTime>,
+);
+
+/// What the status line was last derived from.
+#[derive(Default)]
+pub(super) struct StatusKey {
+    context: Option<(String, bool)>,
+    read: (&'static str, Option<Tone>),
+    total: usize,
+    shown: usize,
+    updated: Option<SystemTime>,
 }

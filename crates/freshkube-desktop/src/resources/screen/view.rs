@@ -413,6 +413,7 @@ impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
         let _span = crate::perf::span("table.render");
+        self.status();
         // The table runs edge to edge; a state in its place keeps the inset.
         let list = self
             .placeholder(cx)

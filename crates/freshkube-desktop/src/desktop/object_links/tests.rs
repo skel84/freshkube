@@ -261,9 +261,14 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         assert_eq!(window.find("pod-logs-previous").checked(), Some(false));
         window.click("detail-tab-overview", cx);
         window.render_frame(cx);
-        // Recent events sit below the history; scroll down to them.
+        // Recent events sit below the history; scroll until the link is
+        // whole, since a click lands on its centre.
         for _ in 0..20 {
-            if window.find("pod-all-events").visible() {
+            let (link, pane) = (
+                window.find("pod-all-events").bounds(),
+                window.find("detail-overview").bounds(),
+            );
+            if link.bottom() <= pane.bottom() && link.top() >= pane.top() {
                 break;
             }
             window.scroll(

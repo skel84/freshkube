@@ -2,6 +2,8 @@
 use super::projection::Status;
 use super::*;
 use crate::ui::dp;
+use freshkube_ui::status::{Part, Segment};
+use freshkube_ui::ui::Tone;
 use freshkube_ui::{page, table};
 use gpui_kit::base::Selectable;
 use gpui_kit::{
@@ -88,12 +90,9 @@ impl Pilot {
             }),
             cx,
         );
-        let header = header
-            .filter(filter)
-            .meta([self.node_workspace.meta.clone().into_any_element()])
-            .chips(Some(
-                h_flex().gap(dp(8.)).flex_wrap().child(segment).child(chips),
-            ));
+        let header = header.filter(filter).chips(Some(
+            h_flex().gap(dp(8.)).flex_wrap().child(segment).child(chips),
+        ));
         let header = if self.node_workspace.view == NodeView::Table {
             let items = self.nodes_columns_items(cx);
             let hidden = &self.node_workspace.hidden_columns;
@@ -128,30 +127,30 @@ impl Pilot {
 
 impl Pilot {
     pub(super) fn rebuild_nodes_meta(&mut self) {
-        let source = if self.fixture {
-            "Example data"
-        } else {
-            self.applied.context.as_deref().unwrap_or("Not connected")
+        let (context, lead) = match (&self.applied.context, self.fixture) {
+            (_, true) => (None, Some(Part::new("Example data"))),
+            (Some(context), false) => (Some(context.clone()), None),
+            (None, false) => (None, Some(Part::new("Not connected"))),
         };
-        let mut parts = vec![source.to_owned()];
+        let mut parts: Vec<Part> = lead.into_iter().collect();
         if self.kubernetes_only.is_none() {
-            parts.push(format!("Talos · {}", source_status(&self.overview)));
+            parts.push(source_status("Talos", &self.overview));
         }
         let nodes = self.kubernetes_summary.data().map(|summary| &summary.nodes);
-        let state = match nodes {
-            Some(nodes) if nodes.is_current() => source_status(&self.kubernetes_summary),
-            Some(nodes) => format!(
-                "last known · {}",
+        parts.push(match nodes {
+            Some(nodes) if !nodes.is_current() => Part::new(format!(
+                "Kubernetes · last known · {}",
                 nodes.error().unwrap_or("awaiting current nodes")
-            ),
-            None => source_status(&self.kubernetes_summary),
-        };
-        parts.push(format!("Kubernetes · {state}"));
-        self.node_workspace.meta = parts.join(" · ").into();
+            ))
+            .tone(Tone::Warn),
+            _ => source_status("Kubernetes", &self.kubernetes_summary),
+        });
+        self.node_workspace.status = Segment::new(context, parts);
     }
 }
 
-fn source_status<T, I: Clone + Eq>(snapshot: &crate::state::Snapshot<T, I>) -> String {
+/// A source's state as the status bar words it: `Talos · current 14:02:11`.
+fn source_status<T, I: Clone + Eq>(name: &str, snapshot: &crate::state::Snapshot<T, I>) -> Part {
     let state = if snapshot.is_loading() {
         "loading"
     } else if snapshot.is_stale() {
@@ -161,7 +160,7 @@ fn source_status<T, I: Clone + Eq>(snapshot: &crate::state::Snapshot<T, I>) -> S
     } else {
         "unavailable"
     };
-    let mut text = state.to_owned();
+    let mut text = format!("{name} · {state}");
     if let Some(time) = snapshot.last_successful() {
         let time: chrono::DateTime<chrono::Local> = time.into();
         text.push_str(&format!(" {}", time.format("%H:%M:%S")));
@@ -169,5 +168,10 @@ fn source_status<T, I: Clone + Eq>(snapshot: &crate::state::Snapshot<T, I>) -> S
     if let Some(error) = snapshot.error() {
         text.push_str(&format!(" · {error}"));
     }
-    text
+    let part = Part::new(text);
+    if snapshot.is_stale() {
+        part.tone(Tone::Warn)
+    } else {
+        part
+    }
 }

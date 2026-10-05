@@ -3576,3 +3576,147 @@ fn at_the_default_window_pods_folds_nothing(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// The status bar's page segment, as its id's accessibility label, if the
+/// bar shows one.
+fn segment(window: &mut gpui_kit::Window, id: &'static str) -> Option<String> {
+    let element = window.try_find(id)?;
+    assert!(
+        element
+            .path()
+            .contains(&gpui_kit::ElementId::from("status-bar")),
+        "{id} is in the status bar"
+    );
+    element.label().map(str::to_owned)
+}
+
+#[gpui_kit::test]
+fn the_visible_page_fills_the_status_bar_and_its_reads_reach_it(cx: &mut TestAppContext) {
+    use crate::resources::model::ReadState;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Overview has no segment.
+        for id in [
+            "resource-scope",
+            "system-services-scope",
+            "nodes-scope",
+            "obs-scope",
+        ] {
+            assert!(window.try_find(id).is_none(), "{id} shows on Overview");
+        }
+        view.update(cx, |view, cx| view.navigate(Page::Resources, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let resources = cx.update(|cx| view.read(cx).resources.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let line = segment(window, "resource-scope").expect("Pods fill the status bar");
+        assert!(line.starts_with("Example data"), "{line}");
+        assert!(!line.contains("reconnecting"), "{line}");
+    })
+    .unwrap();
+
+    // A read that goes stale, then recovers, reaches the bar on the next
+    // frame with no other input: the page notifies, which asks for a frame,
+    // and the shell reads the page's segment while the page's own view
+    // stays cached.
+    let notices = Rc::new(Cell::new(0usize));
+    cx.update(|cx| {
+        let seen = notices.clone();
+        cx.observe(&resources, move |_, _| seen.set(seen.get() + 1))
+            .detach();
+    });
+    for (state, stale) in [
+        (ReadState::Stale("connection reset".into()), true),
+        (ReadState::Loaded, false),
+    ] {
+        let before = notices.get();
+        cx.update(|cx| resources.update(cx, |screen, cx| screen.deliver_read(state, cx)));
+        assert!(notices.get() > before, "the read asks for a frame");
+        cx.update_window(handle, |_, window, cx| {
+            draw(window, cx);
+            let line = segment(window, "resource-scope").unwrap();
+            assert_eq!(line.contains("reconnecting"), stale, "{line}");
+        })
+        .unwrap();
+    }
+
+    // Another page replaces the segment.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.navigate(Page::SystemServices, window, cx)
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("resource-scope").is_none());
+        let line = segment(window, "system-services-scope").expect("System services' segment");
+        assert!(line.contains("services on"), "{line}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_compact_status_bar_keeps_the_shells_glyph_and_gives_the_page_the_room(
+    cx: &mut TestAppContext,
+) {
+    for (width, compact) in [(1280., false), (1000., true)] {
+        let (_runtime, handle, view) = fixture(cx, width, 820.);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.navigate(Page::SystemServices, window, cx)
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let status = window.find("overview-status");
+            let label = status.label().unwrap_or_default().to_owned();
+            assert!(!label.is_empty(), "the shell's status keeps its label");
+            let glyph_only = status.bounds().size.width < crate::ui::dp_px(24., window);
+            assert_eq!(glyph_only, compact, "at {width}: {:?}", status.bounds());
+            let page = window.find("system-services-scope");
+            assert!(page.visible());
+            assert!(page.bounds().left() >= status.bounds().right());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn a_long_segment_truncates_and_leaves_the_right_side_whole(cx: &mut TestAppContext) {
+    // At 760 and 20 px text Nodes' line is wider than the bar can give it.
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    let mut widths = Vec::new();
+    for page in [Page::Overview, Page::Nodes] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // The right side's last item is the first a squeezed bar loses.
+            let rate = window.find("frame-rate").bounds();
+            assert!(rate.right() <= window.viewport_size().width, "{rate:?}");
+            widths.push(rate.size.width);
+            let fail = window.find("fixture-fail").bounds();
+            if page == Page::Nodes {
+                let scope = window.find("nodes-scope").bounds();
+                assert!(scope.right() <= fail.left(), "{scope:?} {fail:?}");
+            }
+        })
+        .unwrap();
+    }
+    assert_eq!(widths[0], widths[1], "the right side keeps its width");
+}
