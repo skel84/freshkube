@@ -2,10 +2,9 @@
 use super::*;
 pub(super) mod columns;
 pub(super) mod header;
-use application_columns::{ApplicationColumn, ColumnKind};
-use freshkube_ui::table::{
-    self, DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState,
-};
+use super::tables::{TableCells, TableKey};
+use application_columns::{ColumnKind, PageColumn};
+use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
 
 /// A fitted table stays bounded even when its outer page scrolls.
 const MAX_APPLICATION_LINES: usize = 16;
@@ -43,59 +42,39 @@ impl ObservabilityPage {
     }
 }
 
-impl TableSource for ObservabilityPage {
-    type Key = freshkube_core::coroot::AppId;
-    type Sort = ();
-    type Column = ApplicationColumn;
-    type Row<'a> = ApplicationCells<'a>;
-
-    fn table_state(&self) -> &TableState {
-        &self.application_table
-    }
-    fn columns(&self) -> &[ApplicationColumn] {
-        &self.application_columns
-    }
-    fn width(&self) -> f32 {
-        self.application_width
-    }
-    fn list_label(&self) -> String {
+/// Applications' answers to the page's `TableSource` (`tables.rs`).
+impl ObservabilityPage {
+    pub(in crate::observability) fn application_list_label(&self) -> String {
         "Applications grouped by namespace; choose a name or reported value to open its report"
             .into()
     }
-    fn sorting(&self, _: &ApplicationColumn) -> Option<((), Option<SortOrder>)> {
-        None
-    }
-    fn sort(&mut self, _: (), _: &mut Context<Self>) {}
-    fn clickable(&self) -> bool {
-        false
-    }
-    fn line_count(&self) -> usize {
-        self.matrix.len()
-    }
-    fn line(&self, line: usize, _: &App) -> Option<Line<Self::Key, ApplicationCells<'_>>> {
+    pub(in crate::observability) fn application_line(
+        &self,
+        line: usize,
+    ) -> Option<Line<TableKey, TableCells<'_>>> {
         let index = match self.matrix.get(line)? {
             MatrixRow::Group { .. } => return Some(Line::Group(line)),
             MatrixRow::App(index) => *index,
         };
         let app = self.applications.get(index)?;
         Some(Line::Row(TableRow {
-            key: app.id.clone(),
+            key: TableKey::Application(app.id.clone()),
             id: app.row_id.clone().into(),
             label: app.label.clone(),
             tooltip: None,
             marked: false,
             muted: false,
-            data: ApplicationCells { app },
+            data: TableCells::Application(ApplicationCells { app }),
         }))
     }
-    fn cell(
+    pub(in crate::observability) fn application_cell(
         &self,
-        row: &TableRow<Self::Key, ApplicationCells<'_>>,
+        cells: &ApplicationCells<'_>,
         style: &RowStyle,
-        column: &ApplicationColumn,
+        column: &PageColumn,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let app = row.data.app;
+        let app = cells.app;
         let p = style.p;
         let cell = table::cell(column).h_full().flex().items_center();
         match column.kind {
@@ -161,9 +140,14 @@ impl TableSource for ObservabilityPage {
                 )
                 .into_any_element()
             }
+            _ => cell.into_any_element(),
         }
     }
-    fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(in crate::observability) fn application_group(
+        &self,
+        group: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let MatrixRow::Group {
             id,
             label,
@@ -185,7 +169,10 @@ impl TableSource for ObservabilityPage {
             .into_any_element(),
         )
     }
-    fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(in crate::observability) fn application_empty(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.matrix.is_empty() {
             return None;
         }
@@ -223,7 +210,10 @@ impl TableSource for ObservabilityPage {
             .into_any_element(),
         )
     }
-    fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(in crate::observability) fn application_notes(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         if self.shown_apps >= self.counts[1] {
             return Vec::new();
         }
@@ -246,7 +236,11 @@ impl TableSource for ObservabilityPage {
             .into_any_element(),
         ]
     }
-    fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(in crate::observability) fn application_footer(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         const HINT: &str = "Glyphs show healthy, warning, critical or unknown. Healthy report values are plain; healthy checks without figures read ok; unknown, warning and critical reports carry a glyph. An em dash means no report.";
         if crate::screens::content_width(window) < 600. {
             return Some(

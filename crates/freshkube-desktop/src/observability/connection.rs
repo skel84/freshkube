@@ -192,7 +192,7 @@ impl ObservabilityPage {
     }
     pub(super) fn clear_observations(&mut self) {
         self.live.clear();
-        self.incident_observations = Default::default();
+        self.incident_observations = self.incident_observations.cleared();
         self.live_traces = Default::default();
         self.live_profiles = Default::default();
         if !self.fixture {
@@ -408,6 +408,7 @@ impl ObservabilityPage {
             if self.destination == Destination::Application {
                 self.prepare_report();
             }
+            self.answer_example_incidents();
             cx.notify();
             return;
         }
