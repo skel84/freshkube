@@ -142,7 +142,6 @@ impl ObservabilityPage {
     fn map_toolbar(&self, cx: &Context<Self>) -> Div {
         line()
             .flex_wrap()
-            .child(section("Service map"))
             .child(div().flex_1())
             .when(self.map_display.pages > 1, |this| {
                 this.child(

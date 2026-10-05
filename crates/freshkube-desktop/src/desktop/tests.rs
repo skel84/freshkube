@@ -3029,6 +3029,8 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
         window.render_frame(cx);
         window.click("section-observability", cx);
         assert_eq!(pilot.read(cx).page, Page::Observability);
+        window.render_frame(cx);
+        assert!(window.find("refresh").visible());
         window.click("nav-collapse", cx);
         assert!(pilot.read(cx).column_collapsed(window));
         window.click("nav-obs-traces", cx);
@@ -3036,7 +3038,11 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
             pilot.read(cx).observability.read(cx).destination(),
             crate::observability::Destination::Traces
         );
-        window.click("obs-time-24", cx);
+        window.click("obs-time", cx);
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("enter", cx);
         assert_eq!(pilot.read(cx).observability.read(cx).hours(), 24);
         window.press("secondary-b", cx);
         assert!(!pilot.read(cx).column_collapsed(window));
@@ -3415,4 +3421,25 @@ fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
         assert!(rows.comfortable.zip(rows.compact).is_some(), "{rows:#?}");
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn search_everything_keeps_one_width_on_every_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let mut widths = Vec::new();
+    for page in [Page::Resources, Page::Observability, Page::Overview] {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+            let width = window.find("search-everything").bounds().size.width;
+            widths.push((page, width / crate::ui::dp_px(1., window)));
+        })
+        .unwrap();
+    }
+    for (page, width) in &widths {
+        assert!(
+            (*width - 240.).abs() < 0.5,
+            "{page:?} shows Search everything as a {width} dp field, not the full one"
+        );
+    }
 }

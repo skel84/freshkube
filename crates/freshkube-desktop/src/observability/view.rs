@@ -1,27 +1,9 @@
 //! Shared Fog presentation, with normal Kit controls for interactive content.
 use super::*;
 
-pub(super) fn ink(status: Status, cx: &App) -> Hsla {
-    let p = palette(cx);
-    match status {
-        Status::Ok => p.good,
-        Status::Warning => p.warn_ink,
-        Status::Critical => p.crit_ink,
-        Status::Unknown | Status::Absent => p.muted,
-        Status::Integration => p.integration,
-        Status::LogError | Status::Info => p.accent,
-    }
-}
 pub(super) fn status(state: Status, cx: &App) -> AnyElement {
     let p = palette(cx);
     match state {
-        Status::Integration => div()
-            .size(dp(9.))
-            .border(px(1.5))
-            .border_color(p.integration)
-            .rounded(px(1.))
-            .flex_none()
-            .into_any_element(),
         Status::Absent => text("—").text_color(p.muted).into_any_element(),
         Status::LogError | Status::Info => div()
             .size(dp(8.))
@@ -29,16 +11,17 @@ pub(super) fn status(state: Status, cx: &App) -> AnyElement {
             .bg(p.accent)
             .flex_none()
             .into_any_element(),
-        _ => ui::status_glyph(
-            match state {
-                Status::Ok => Tone::Good,
-                Status::Warning => Tone::Warn,
-                Status::Critical => Tone::Crit,
-                _ => Tone::Unknown,
-            },
-            cx,
-        )
-        .unwrap(),
+        _ => div()
+            .children(ui::status_glyph(
+                match state {
+                    Status::Ok => Tone::Good,
+                    Status::Warning => Tone::Warn,
+                    Status::Critical => Tone::Crit,
+                    _ => Tone::Unknown,
+                },
+                cx,
+            ))
+            .into_any_element(),
     }
 }
 pub(super) fn text(value: impl Into<SharedString>) -> Div {
@@ -83,9 +66,6 @@ pub(super) fn action(id: impl Into<ElementId>, label: impl Into<SharedString>) -
         .small()
         .label(label)
 }
-pub(super) fn section(title: impl Into<SharedString>) -> Div {
-    h_flex().gap(dp(12.)).min_w_0().child(ui::page_title(title))
-}
 pub(super) fn pair(label: &'static str, value: impl Into<SharedString>, cx: &App) -> Div {
     line()
         .child(muted(label, cx).w(dp(112.)).flex_none())
@@ -96,31 +76,20 @@ impl ObservabilityPage {
     /// The one empty state before Coroot answers: what it adds, then the
     /// form or project picker that gets there.
     pub(super) fn render_unavailable(&self, cx: &Context<Self>) -> AnyElement {
-        let p = palette(cx);
         v_flex()
             .id("obs-integration-required")
             .test_support()
+            .role(Role::Status)
+            .aria_label("Coroot connection required")
             .gap(dp(16.))
-            .pt(dp(24.))
-            .child(
-                v_flex()
-                    .gap(dp(6.))
-                    .max_w(dp(560.))
-                    .child(line().child(status(Status::Integration, cx)).child(ui::page_title("Connect Coroot")))
-                    .child(text("Application health, service dependencies and report evidence, read from your Coroot server.").text_color(p.ink_2)),
-            )
+            .child(ui::empty_state(IconName::Waypoints, "Connect Coroot",
+                "Application health, service dependencies and report evidence, read from your Coroot server.",
+                None, vec![], cx).h_auto())
             .child(self.render_connection(cx))
-            .child(
-                line()
-                    .child(muted("Prometheus dashboards work without Coroot.", cx))
-                    .child(
-                        Button::new("obs-open-dashboards")
-                            .link()
-                            .small()
-                            .label("Open dashboards")
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::Dashboards))),
-                    ),
-            )
+            .child(line()
+                .child(muted("Prometheus dashboards work without Coroot.", cx))
+                .child(Button::new("obs-open-dashboards").ghost().small().label("Open dashboards")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::Dashboards)))))
             .into_any_element()
     }
     pub(super) fn breadcrumbs(
@@ -148,10 +117,6 @@ impl ObservabilityPage {
                 cx,
             ))
             .child(muted("/", cx))
-            .child(ui::page_title(
-                app.map_or("Select an application", |a| a.name())
-                    .to_string(),
-            ))
             .child(status(
                 self.selected_application()
                     .map_or(Status::Unknown, |a| a.status),
@@ -169,14 +134,8 @@ pub(super) fn app_label(id: &freshkube_core::coroot::AppId) -> String {
 }
 
 impl ObservabilityPage {
-    /// A live evidence page's title, its application picker and a way back
-    /// to the application's report.
-    pub(super) fn evidence_header(
-        &self,
-        title: &'static str,
-        id: &'static str,
-        cx: &Context<Self>,
-    ) -> Div {
+    /// A live evidence page's application picker and a way back to its report.
+    pub(super) fn evidence_header(&self, id: &'static str, cx: &Context<Self>) -> Div {
         // Kit's Select fills its parent, so a box sets its size in the row.
         let picker = div().w(dp(300.)).flex_none().child(
             Select::new(&self.app_select)
@@ -190,7 +149,6 @@ impl ObservabilityPage {
         );
         line()
             .flex_wrap()
-            .child(section(title))
             .child(picker)
             .when_some(self.selected_application(), |this, app| {
                 this.child(status(app.status, cx))

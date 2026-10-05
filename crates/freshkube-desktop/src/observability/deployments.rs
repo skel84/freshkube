@@ -4,7 +4,6 @@ impl ObservabilityPage {
     fn release_header(&self, cx: &Context<Self>) -> Div {
         line()
             .flex_wrap()
-            .child(section("Deployments"))
             .child(mono("payments / worker"))
             .child(div().flex_1())
             .child(
