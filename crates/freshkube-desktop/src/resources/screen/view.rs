@@ -204,6 +204,16 @@ impl ResourcesScreen {
     }
 
     fn table(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        // `FRESHKUBE_FIRST_FRAME=1` times the first Pods frame with rows,
+        // for comparison with the workbench (docs/WORKBENCH.md).
+        #[cfg(debug_assertions)]
+        {
+            use freshkube_probe::first_frame::FirstFrame;
+            static PODS: FirstFrame = FirstFrame::new("pods");
+            if self.lists_pods() && self.projection.len() > 0 && PODS.pending() {
+                window.on_next_frame(|_, _| PODS.mark());
+            }
+        }
         table::data_table(self, window, cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
