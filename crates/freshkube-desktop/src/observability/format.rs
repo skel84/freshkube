@@ -20,3 +20,10 @@ pub(super) fn duration(value: Duration) -> String {
         format!("{secs}s")
     }
 }
+/// A moment in the viewer's own time zone, day and minute.
+pub(super) fn local_time(value: chrono::DateTime<chrono::Utc>) -> String {
+    value
+        .with_timezone(&chrono::Local)
+        .format("%d %b %H:%M")
+        .to_string()
+}
