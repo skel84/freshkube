@@ -11,7 +11,6 @@ glyph crates/freshkube-desktop/src/desktop/shell/fog_column.rs
 radius crates/freshkube-desktop/src/desktop/shell/header.rs
 radius crates/freshkube-desktop/src/desktop/shell/mod.rs
 glyph crates/freshkube-desktop/src/desktop/shell/rail.rs
-list crates/freshkube-desktop/src/desktop/system_services/mod.rs
 radius crates/freshkube-desktop/src/forwards/indicator.rs
 glyph crates/freshkube-logs/src/view.rs
 list crates/freshkube-desktop/src/maintenance.rs
