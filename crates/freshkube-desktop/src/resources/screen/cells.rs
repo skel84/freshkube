@@ -13,7 +13,6 @@ use super::super::rows::{PodRow, PodState, RowOwner, died};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
-use crate::presentation::whole_percent;
 use freshkube_ui::table::ROW_GROUP;
 pub(super) use freshkube_ui::table::cell;
 
@@ -336,13 +335,6 @@ impl Resource {
             }
         }
     }
-
-    fn name(self) -> &'static str {
-        match self {
-            Resource::Cpu => "CPU",
-            Resource::Memory => "Memory",
-        }
-    }
 }
 
 /// A neutral value beside a Fog bullet meter. Stripes identify last-known use.
@@ -366,25 +358,20 @@ pub(super) fn usage(
             .child("—")
             .into_any_element();
     };
-    let text = |amount: Option<f64>| amount.map_or("none".to_owned(), |v| resource.format(v));
-    let percent = limit
-        .filter(|v| *v > 0.)
-        .map(|v| format!(" · {}% of limit", whole_percent(value / v * 100.)))
-        .unwrap_or_default();
-    let requested = match (request, limit.filter(|v| *v > 0.)) {
-        (Some(request), Some(limit)) => format!(
-            "{} ({:.0}%)",
-            resource.format(request),
-            request / limit * 100.
-        ),
-        _ => text(request),
+    let meter = match resource {
+        Resource::Cpu => crate::meters::Resource::Cpu,
+        Resource::Memory => crate::meters::Resource::Memory,
     };
-    let tip = format!(
-        "{} {} used{}{percent} · requested {requested} · limit {}",
-        resource.name(),
-        resource.format(value),
-        if stale { " (last known)" } else { "" },
-        text(limit),
+    let tip = crate::meters::tip(
+        &crate::meters::Reading {
+            resource: meter,
+            used: Some(value),
+            request,
+            end: limit,
+            kind: crate::meters::End::Limit,
+            stale,
+        },
+        |v| resource.format(v),
     );
     tooltip(
         cell(column)
@@ -404,15 +391,7 @@ pub(super) fn usage(
                     .child(resource.format(value)),
             )
             .child(crate::meters::bullet(
-                match resource {
-                    Resource::Cpu => crate::meters::Resource::Cpu,
-                    Resource::Memory => crate::meters::Resource::Memory,
-                },
-                value,
-                request,
-                limit,
-                stale,
-                p,
+                meter, value, request, limit, stale, p,
             )),
         move || tip.clone(),
     )
