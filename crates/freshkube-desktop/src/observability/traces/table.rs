@@ -36,6 +36,7 @@ impl ObservabilityPage {
             Input::new(&self.trace_query)
                 .id(header.id("filter"))
                 .small()
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .cleanable(true)
                 .aria_label("Filter requests by name, service or trace id")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -83,6 +84,7 @@ impl ObservabilityPage {
                     SharedString::from(format!("obs-trace-source-{kind}")),
                     name.clone(),
                 )
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .selected(*selected)
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.choose_trace_source(kind.clone(), cx)),
@@ -93,11 +95,13 @@ impl ObservabilityPage {
             header
                 .control(
                     action("obs-trace-all", "All requests")
+                        .h(dp(crate::ui::CONTROL_HEIGHT))
                         .selected(all)
                         .on_click(cx.listener(|this, _, _, cx| this.show_all_requests(cx))),
                 )
                 .control(
                     action("obs-trace-failed", "Failed requests")
+                        .h(dp(crate::ui::CONTROL_HEIGHT))
                         .selected(errors)
                         .on_click(cx.listener(|this, _, _, cx| this.show_failed_requests(cx))),
                 )
@@ -113,6 +117,7 @@ impl ObservabilityPage {
         Button::new("obs-columns")
             .outline()
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {

@@ -164,6 +164,7 @@ impl Pilot {
         Button::new(self.node_workspace.table.id("columns"))
             .outline()
             .small()
+            .h(crate::ui::dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {

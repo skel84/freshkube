@@ -1033,7 +1033,9 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                     controls.top() < title.bottom(),
                     "controls stay on the title row when there is room"
                 );
-            } else if text_size > 13. {
+            } else if width < 1280. {
+                // Stacked: at 1280 and 14 px the header has room since the
+                // title became the toolbar's label.
                 assert!(
                     controls.top() >= secondary.bottom(),
                     "narrow controls follow the categories"

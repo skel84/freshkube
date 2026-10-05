@@ -64,6 +64,7 @@ impl ObservabilityPage {
             Input::new(&self.incident_query)
                 .id(header.id("filter"))
                 .small()
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .cleanable(true)
                 .aria_label("Filter incidents by key, title or application")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -113,6 +114,7 @@ impl ObservabilityPage {
         Button::new("obs-columns")
             .outline()
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .label("Columns")
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {

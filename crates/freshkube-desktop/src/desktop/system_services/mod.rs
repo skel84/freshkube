@@ -6,7 +6,7 @@ mod tests;
 
 use crate::{
     presentation::{self, Health, NodeSummary},
-    screens::content_width,
+    screens::inset_width,
     ui::{self, dp},
 };
 use freshkube_ui::{page, table};
@@ -254,12 +254,13 @@ impl SystemServices {
         self.refilter(cx);
     }
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let narrow = content_width(window) < page::HEADER_NARROW;
+        let narrow = inset_width(window) < page::HEADER_NARROW;
         let header = page::PageHeader::new(PREFIX, "System services", narrow);
         let filter = div().child(
             Input::new(&self.filter)
                 .id("system-service-filter")
                 .small()
+                .h(dp(crate::ui::CONTROL_HEIGHT))
                 .cleanable(true)
                 .aria_label("Filter system services by node, service, state or message")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -295,6 +296,7 @@ impl SystemServices {
                 Button::new("system-service-node")
                     .outline()
                     .small()
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label(self.node.clone().unwrap_or_else(|| "All nodes".into()))
                     .dropdown_caret(true),
             )
@@ -327,7 +329,7 @@ impl SystemServices {
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         page::page("system-services-page")
-            .child(page::inset().child(self.render_header(window, cx)))
+            .child(page::toolbar(cx).child(self.render_header(window, cx)))
             .child(table::data_table(self, window, cx).flex_1().min_h_0())
     }
 }

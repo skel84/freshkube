@@ -12,7 +12,14 @@ impl ObservabilityPage {
         } else {
             self.destination.label()
         };
-        let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
+        // Applications runs edge to edge, with its header inset; the other
+        // destinations keep the padded frame.
+        let width = if self.destination == Destination::Applications {
+            crate::screens::inset_width(window)
+        } else {
+            crate::screens::content_width(window)
+        };
+        let narrow = width < page::HEADER_NARROW;
         PageHeader::new("obs", title.to_owned(), narrow)
     }
 
@@ -66,6 +73,7 @@ impl ObservabilityPage {
         let time = Button::new(header.id("time"))
             .outline()
             .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .icon(IconName::Clock)
             .label(if hours == 168 {
                 "7d".into()
@@ -94,6 +102,7 @@ impl ObservabilityPage {
         let refresh = Button::new(header.id("refresh"))
             .ghost()
             .small()
+            .size(dp(crate::ui::CONTROL_HEIGHT))
             .icon(IconName::RefreshCw)
             .accessibility_label(format!(
                 "Refresh {}",
@@ -118,6 +127,7 @@ impl ObservabilityPage {
             .as_ref()
             .map(|source| source.project().to_owned());
         action("obs-project", self.live.project_label.clone())
+            .h(dp(crate::ui::CONTROL_HEIGHT))
             .max_w(dp(170.))
             .overflow_hidden()
             .dropdown_caret(true)

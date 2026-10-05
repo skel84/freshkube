@@ -1,7 +1,7 @@
 //! Nodes' shared header, with cached source and freshness metadata.
 use super::projection::Status;
 use super::*;
-use crate::{screens::content_width, ui::dp};
+use crate::{screens::inset_width, ui::dp};
 use freshkube_ui::{page, table};
 use gpui_kit::base::Selectable;
 use gpui_kit::{
@@ -17,21 +17,20 @@ use gpui_kit::{
 
 impl Pilot {
     pub(super) fn nodes_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let header = page::PageHeader::new(
-            "nodes",
-            "Nodes",
-            content_width(window) < page::HEADER_NARROW,
-        );
+        let header =
+            page::PageHeader::new("nodes", "Nodes", inset_width(window) < page::HEADER_NARROW);
         let segment = ButtonGroup::new("nodes-view")
             .outline()
             .small()
             .child(
                 Button::new("nodes-view-cards")
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label("Cards")
                     .selected(self.node_workspace.view == NodeView::Cards),
             )
             .child(
                 Button::new("nodes-view-table")
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label("Table")
                     .selected(self.node_workspace.view == NodeView::Table),
             )
@@ -58,6 +57,7 @@ impl Pilot {
                 Input::new(&self.node_workspace.query)
                     .id(header.id("filter"))
                     .small()
+                    .h(dp(crate::ui::CONTROL_HEIGHT))
                     .cleanable(true)
                     .aria_label("Filter nodes by name, address or role")
                     .prefix(Icon::new(IconName::Search).size(dp(14.))),
@@ -105,6 +105,7 @@ impl Pilot {
                 Button::new("nodes-refresh")
                     .ghost()
                     .small()
+                    .size(dp(crate::ui::CONTROL_HEIGHT))
                     .icon(IconName::RefreshCw)
                     .accessibility_label("Refresh nodes")
                     .tooltip("Refresh nodes")

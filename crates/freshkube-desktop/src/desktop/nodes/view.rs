@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     logs::TalosPanel,
     palette::palette,
-    screens::content_width,
+    screens::page_width,
     ui::{MONO_FONT, dp, dp_px},
 };
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
@@ -30,7 +30,7 @@ impl Pilot {
         let mut edge = false;
         let body = if pane {
             let detail = self.render_node_pane(window, cx);
-            if self.node_workspace.expanded || content_width(window) < 900. {
+            if self.node_workspace.expanded || page_width(window) < 900. {
                 detail
             } else {
                 h_resizable("nodes-split")
@@ -102,7 +102,7 @@ impl Pilot {
                 }
             }))
             .when(!pane, |this| {
-                this.child(freshkube_ui::page::inset().child(self.nodes_header(window, cx)))
+                this.child(freshkube_ui::page::toolbar(cx).child(self.nodes_header(window, cx)))
             })
             .child(
                 div()
@@ -229,7 +229,7 @@ impl Pilot {
         let header = h_flex()
             .gap(dp(8.))
             .flex_wrap()
-            .when(content_width(window) < 900., |this| {
+            .when(page_width(window) < 900., |this| {
                 this.child(
                     Button::new("node-back")
                         .small()
