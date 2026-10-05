@@ -1,6 +1,7 @@
-//! The keyboard. A focused terminal takes every key except Command
-//! shortcuts, ahead of the app's bindings, so Escape, Tab, Control-Tab and the
-//! arrows reach the program. Keys are encoded from the terminal's modes
+//! The keyboard. A focused terminal takes keys ahead of the app's bindings,
+//! so Escape, Tab, Control-Tab and the arrows reach the program. Command
+//! shortcuts pass through on macOS; Ctrl-Shift shortcuts do on Linux and
+//! Windows. Keys are encoded from the terminal's modes
 //! (application cursor keys, bracketed paste). Typed text arrives through the
 //! platform input handler, so Option, dead keys and input methods compose
 //! characters before they are sent.
@@ -31,12 +32,28 @@ struct Terminals {
 
 impl Global for Terminals {}
 
+/// Display label for returning focus to the terminal's owner.
+pub fn leave_shortcut_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌘Esc"
+    } else {
+        "Ctrl+Shift+Q"
+    }
+}
+
 pub(super) fn register(view: WeakEntity<TerminalView>, cx: &mut App) {
     if !cx.has_global::<Terminals>() {
+        #[cfg(target_os = "macos")]
         cx.bind_keys([
             KeyBinding::new("secondary-c", CopySelection, Some(CONTEXT)),
             KeyBinding::new("secondary-v", PasteClipboard, Some(CONTEXT)),
             KeyBinding::new("secondary-escape", LeaveTerminal, Some(CONTEXT)),
+        ]);
+        #[cfg(not(target_os = "macos"))]
+        cx.bind_keys([
+            KeyBinding::new("ctrl-shift-c", CopySelection, Some(CONTEXT)),
+            KeyBinding::new("ctrl-shift-v", PasteClipboard, Some(CONTEXT)),
+            KeyBinding::new("ctrl-shift-q", LeaveTerminal, Some(CONTEXT)),
         ]);
         let interceptor = cx.intercept_keystrokes(intercept);
         cx.set_global(Terminals {
@@ -49,11 +66,16 @@ pub(super) fn register(view: WeakEntity<TerminalView>, cx: &mut App) {
     terminals.views.push(view);
 }
 
+fn is_shortcut(keystroke: &Keystroke) -> bool {
+    let modifiers = &keystroke.modifiers;
+    modifiers.platform || (cfg!(not(target_os = "macos")) && modifiers.control && modifiers.shift)
+}
+
 /// Runs before any binding: a key for a focused terminal goes to it, unless
-/// it is a Command shortcut or text the input handler will deliver.
+/// it is a platform shortcut or text the input handler will deliver.
 fn intercept(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     let keystroke = &event.keystroke;
-    if keystroke.modifiers.platform
+    if is_shortcut(keystroke)
         || types_text(keystroke)
         || !event
             .context_stack
@@ -98,7 +120,7 @@ fn types_text(keystroke: &Keystroke) -> bool {
 /// Keys that type text arrive as text instead (`types_text`).
 pub(super) fn encode_key(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
     let modifiers = &keystroke.modifiers;
-    if modifiers.platform {
+    if is_shortcut(keystroke) {
         return None;
     }
     // xterm's modifier parameter: 1 + Shift 1 + Alt 2 + Control 4.

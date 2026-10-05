@@ -10,7 +10,8 @@
 //!   theme's monospace font, so the text size scales it. A new size resizes
 //!   `Term` and is emitted, at most every `RESIZE_INTERVAL`.
 //! - **Keys** (`input.rs`) are encoded from the terminal's modes ahead of the
-//!   app's bindings; only Command shortcuts reach the app. Typed text comes
+//!   app's bindings; Command shortcuts on macOS and Ctrl-Shift shortcuts on
+//!   Linux/Windows reach the app. Typed text comes
 //!   through the platform input handler, so Option, dead keys and input
 //!   methods compose characters.
 //! - **Mouse** (`mouse.rs`): selection by dragging, words and lines by double
@@ -44,6 +45,7 @@ use gpui_kit::{
 use freshkube_probe::perf;
 use freshkube_ui::palette::terminal_colors;
 use freshkube_ui::ui::dp;
+pub use input::leave_shortcut_label;
 use listener::Listener;
 use snapshot::Snapshot;
 
@@ -96,7 +98,7 @@ pub enum TerminalEvent {
     Resize(TerminalSize),
     /// The title the program set, or `None` once it resets it.
     Title(Option<SharedString>),
-    /// Command-Escape: hand the keyboard back to the owner.
+    /// Command-Escape on macOS, Ctrl-Shift-Q elsewhere: hand focus back.
     Leave,
 }
 

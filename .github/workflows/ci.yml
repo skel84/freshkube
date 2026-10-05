@@ -34,8 +34,9 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
-# macOS is the only verified platform. GPUI's Linux and Windows builds need
-# their own system dependencies and checks before they are added here.
+# macOS runs the required checks and builds the release bundles here.
+# Linux/Windows compile, lint and terminal-key checks are advisory in platforms.yml;
+# they do not establish full runtime or packaging support on those platforms.
 jobs:
   changes:
     name: Changes

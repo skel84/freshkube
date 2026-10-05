@@ -77,7 +77,7 @@ pub(super) struct Status {
 /// What the pane hears from its shell.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ShellEvent {
-    /// Command-Escape in the terminal: hand the keyboard back.
+    /// The terminal's leave shortcut: hand the keyboard back.
     Leave,
 }
 
@@ -640,7 +640,10 @@ impl ShellView {
             ShellState::Running => (
                 Tone::Good,
                 "Running",
-                format!("{container} · ⌘Esc returns to the list"),
+                format!(
+                    "{container} · {} returns to the list",
+                    crate::terminal::leave_shortcut_label()
+                ),
             ),
             ShellState::Ended => (Tone::Unknown, "Ended", ended.unwrap_or_default()),
             ShellState::Failed => (Tone::Crit, "Failed", ended.unwrap_or_default()),

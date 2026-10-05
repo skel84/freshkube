@@ -1,0 +1,99 @@
+name: Platform checks
+
+# Advisory until Linux and Windows have a reviewed green baseline on main.
+# Keep failures separate from CI: releases promote that workflow's macOS bundles.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platforms-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.head_ref, github.event.pull_request.draft) || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+  RUST_BACKTRACE: 1
+
+jobs:
+  changes:
+    name: Platform changes
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Did the app change?
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        # Match ci.yml's app/docs filter; manual runs always check the branch.
+        run: |
+          if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$BASE" "$HEAD" > changed.txt
+          if grep -Ev '^(spikes|docs)/|\.md$' changed.txt > /dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Only spikes, docs or Markdown changed; skipping platform checks."
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  check:
+    name: Compile and lint (${{ matrix.platform }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-latest
+          - platform: Windows
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '36.2'
+          repo-token: ${{ github.token }}
+      - name: Install GPUI Linux dependencies
+        if: runner.os == 'Linux'
+        # GPUI Kit 0.7.0's script/install-linux.sh, plus Vulkan headers:
+        # https://github.com/longbridge/gpui-kit/blob/0c830f4d257e69fdd17200650533ab4ca9a40cc0/script/install-linux.sh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ clang pkg-config libfontconfig-dev libwayland-dev \
+            libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libssl-dev libzstd-dev libvulkan-dev vulkan-validationlayers libvulkan1
+      # No cache yet: the shared Actions cache is already over its size budget.
+      - name: Check every target
+        run: cargo check --workspace --all-targets --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Terminal keyboard UI tests
+        run: cargo test -p freshkube-terminal --lib keyboard --locked

@@ -387,7 +387,12 @@ fn escape_reaches_the_shell_and_command_escape_leaves_it(cx: &mut TestAppContext
         .unwrap()
     };
     assert!(terminal_focused(cx));
-    shell.step(cx, |window, cx| window.press("secondary-escape", cx));
+    let leave = if cfg!(target_os = "macos") {
+        "cmd-escape"
+    } else {
+        "ctrl-shift-q"
+    };
+    shell.step(cx, |window, cx| window.press(leave, cx));
     assert_eq!(*shell.emitted.borrow(), [DetailEvent::Leave]);
 
     // Command-Shift-] and [ still switch tabs from the terminal, and
