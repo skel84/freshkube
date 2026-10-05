@@ -31,6 +31,8 @@ impl Report {
 }
 impl From<api::Status> for Status {
     fn from(value: api::Status) -> Self {
+        // Coroot's five health states carry Unknown unchanged. Integration
+        // is a presentation tone on the filter, never a provider status.
         match value {
             api::Status::Ok => Self::Ok,
             api::Status::Unknown => Self::Unknown,
