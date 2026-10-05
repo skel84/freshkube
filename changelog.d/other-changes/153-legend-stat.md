@@ -1,1 +1,0 @@
-- **Monitoring legends and stat tags fit:** a legend under a unit in its title, such as GiB, shows every value in that unit (0.91, not 929 MiB), and its value columns size to the widest value instead of wrapping into the next row. A stat's tag, such as "above 500 ms", drops under a wide value instead of running past the card.

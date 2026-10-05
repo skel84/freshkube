@@ -1,1 +1,0 @@
-- **Linux and Windows checks:** advisory CI checks and lints the workspace on both platforms and tests the terminal keyboard. Copy, paste and leaving the terminal use Ctrl-Shift there, while plain Ctrl-C/V still reach the shell; macOS keeps its Command shortcuts.

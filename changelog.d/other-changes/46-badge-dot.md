@@ -1,1 +1,0 @@
-- **One corner dot for the rail and Observability:** the problem dots on the rail's areas and the incidents dot on Observability's collapsed column are now drawn by the shared `badge_dot`, so they look the same as before and follow the theme from one place.
