@@ -932,6 +932,7 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
             page.applications.last().unwrap().id.clone()
         })
     });
+    let asked = wanted.clone();
     for act in [
         &(|window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
             window.within("obs-profile-app").click("input", cx)
@@ -959,7 +960,15 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
     });
     cx.wait_for(handle, std::time::Duration::from_secs(5), profiled(&page))
         .await;
-    assert!(last_path(&server, "/profiling").contains("query=cpu"));
+    let path = last_path(&server, "/profiling");
+    assert!(path.contains("query=cpu"));
+    // The profile asked for is the page's application's.
+    assert_eq!(
+        cx.read(|cx| page.read(cx).selected_app.clone()),
+        Some(asked.clone())
+    );
+    let app = asked.as_str().replace(':', "%3A");
+    assert!(path.contains(&format!("/app/{app}/profiling")), "{path}");
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         for ix in 0..4 {
