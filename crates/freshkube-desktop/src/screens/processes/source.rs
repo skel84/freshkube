@@ -2,20 +2,19 @@
 //! the snapshot or the view settings change, and each row's cells.
 use super::*;
 use freshkube_ui::table::{
-    self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState, WIDEST,
-    WIDEST_FLEXIBLE, fit,
+    self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState, WIDEST, fit,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Field {
     Glyph,
     Pid,
+    Command,
     State,
     Cpu,
     CpuTime,
     Memory,
     Threads,
-    Command,
 }
 
 #[derive(Debug)]
@@ -131,6 +130,11 @@ impl Derived {
     }
 }
 
+/// The Command column's widest least width. It comes right after the PID,
+/// as Pods puts the name first, so what a process is shows without a
+/// sideways scroll in the node pane.
+const COMMAND_WIDTH: f32 = 200.;
+
 fn columns(rows: &[ProcessRow]) -> Vec<ProcessColumn> {
     let column = |field, label: &str, width| ProcessColumn {
         field,
@@ -141,6 +145,9 @@ fn columns(rows: &[ProcessRow]) -> Vec<ProcessColumn> {
         column(field, label, fit(label, rows.iter().map(text), WIDEST))
     };
     // The prefix and the command share the flexible column's least width.
+    // It stops at `COMMAND_WIDTH`, so the figures after it stay close; a
+    // longer command truncates, and the row's tooltip and the details hold
+    // it.
     let commands: Vec<SharedString> = rows
         .iter()
         .map(|row| format!("{}{}", row.prefix, row.command).into())
@@ -148,16 +155,16 @@ fn columns(rows: &[ProcessRow]) -> Vec<ProcessColumn> {
     vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
         fits(Field::Pid, "PID", |row| &row.pid_text),
+        column(
+            Field::Command,
+            "Command",
+            fit("Command", commands.iter(), COMMAND_WIDTH),
+        ),
         fits(Field::State, "State", |row| &row.state),
         fits(Field::Cpu, "CPU", |row| &row.cpu),
         fits(Field::CpuTime, "CPU time", |row| &row.cpu_time),
         fits(Field::Memory, "Memory", |row| &row.memory),
         fits(Field::Threads, "Threads", |row| &row.threads),
-        column(
-            Field::Command,
-            "Command",
-            fit("Command", commands.iter(), WIDEST_FLEXIBLE),
-        ),
     ]
 }
 

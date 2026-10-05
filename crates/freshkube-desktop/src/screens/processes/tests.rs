@@ -3,7 +3,9 @@ use std::sync::Arc;
 use freshkube_core::inspection::{ProcessSort, ProcessTree};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{App, AppContext, Entity, SharedString, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{
+    App, AppContext, Entity, Pixels, SharedString, Size, TestAppContext, WindowHandle, px, size,
+};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -35,6 +37,14 @@ fn mount(
     cx: &mut TestAppContext,
     node: &str,
 ) -> (Runtime, Entity<ProcessesScreen>, WindowHandle<Root>) {
+    mount_in(cx, node, size(px(1100.), px(760.)))
+}
+
+fn mount_in(
+    cx: &mut TestAppContext,
+    node: &str,
+    bounds: Size<Pixels>,
+) -> (Runtime, Entity<ProcessesScreen>, WindowHandle<Root>) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -46,7 +56,7 @@ fn mount(
     });
     let source = source(node);
     let mut screen = None;
-    let handle = cx.open_window(size(px(1100.), px(760.)), |window, cx| {
+    let handle = cx.open_window(bounds, |window, cx| {
         let view = cx.new(|cx| {
             let mut view = ProcessesScreen::new(runtime.handle().clone(), window, cx);
             view.set_source(Some(source), window, cx);
@@ -218,20 +228,20 @@ fn sortable_headers_sort_and_show_their_arrow(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        // Glyph, PID, State, CPU, CPU time, Memory, Threads, Command.
+        // Glyph, PID, Command, State, CPU, CPU time, Memory, Threads.
         let header = |window: &mut gpui_kit::Window, column: usize| {
             let header = window.find(("processes-sort", column));
             header.label().map(str::to_owned)
         };
-        assert_eq!(header(window, 3).as_deref(), Some("CPU, sorted descending"));
-        window.click(("processes-sort", 5usize), cx);
+        assert_eq!(header(window, 4).as_deref(), Some("CPU, sorted descending"));
+        window.click(("processes-sort", 6usize), cx);
         window.render_frame(cx);
         assert_eq!(screen.read(cx).sort, ProcessSort::ResidentMemory);
         assert_eq!(
-            header(window, 5).as_deref(),
+            header(window, 6).as_deref(),
             Some("Memory, sorted descending")
         );
-        assert_eq!(header(window, 3).as_deref(), Some("CPU"));
+        assert_eq!(header(window, 4).as_deref(), Some("CPU"));
         let memory: Vec<u64> = screen
             .read(cx)
             .loader
@@ -250,11 +260,31 @@ fn sortable_headers_sort_and_show_their_arrow(cx: &mut TestAppContext) {
             memory.windows(2).all(|pair| pair[0] >= pair[1]),
             "largest first"
         );
-        window.click(("processes-sort", 4usize), cx);
+        window.click(("processes-sort", 5usize), cx);
         assert_eq!(screen.read(cx).sort, ProcessSort::CpuTime);
-        // PID doesn't sort.
+        // PID and Command don't sort.
         window.click(("processes-sort", 1usize), cx);
+        window.click(("processes-sort", 2usize), cx);
         assert_eq!(screen.read(cx).sort, ProcessSort::CpuTime);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_command_shows_without_a_sideways_scroll(cx: &mut TestAppContext) {
+    // About as narrow as the node pane leaves the table at 1280 wide.
+    let (_runtime, _screen, handle) = mount_in(cx, "talos-cp-fra1-01", size(px(600.), px(760.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let view = window.find("processes-table-scroll").bounds();
+        // By its label: the header's ids number the columns.
+        let command = (0..8usize)
+            .filter_map(|column| window.try_find(("processes-sort", column)))
+            .find(|header| header.label() == Some("Command"))
+            .unwrap()
+            .bounds();
+        assert!(view.size.width < px(560.), "{view:?}");
+        assert!(command.right() <= view.right(), "{command:?} in {view:?}");
     })
     .unwrap();
 }
