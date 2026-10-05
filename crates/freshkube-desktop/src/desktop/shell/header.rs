@@ -44,10 +44,8 @@ impl Pilot {
                     .flex_shrink_0()
                     .child(self.render_search_field(window, cx))
                     .when(!minimal, |this| {
-                        this.when(self.page != Page::Observability, |this| {
-                            this.child(self.render_refresh(cx))
-                        })
-                        .child(self.render_appearance(cx))
+                        this.child(self.render_refresh(cx))
+                            .child(self.render_appearance(cx))
                     })
                     .child(self.render_settings(cx)),
             )
