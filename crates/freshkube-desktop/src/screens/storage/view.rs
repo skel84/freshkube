@@ -116,7 +116,7 @@ impl StorageScreen {
             )
             .child(details)
             .into_any_element();
-        crate::screens::split("storage-split", beside, table, Some(details))
+        crate::screens::split_narrow("storage-split", beside, table, Some(details))
     }
 
     fn disk_details(&self, cx: &App) -> AnyElement {

@@ -387,6 +387,8 @@ pub(crate) fn content_width(window: &Window) -> f32 {
 
 const SPLIT_WIDTH: f32 = 900.;
 const PANE_WIDTH: f32 = 460.;
+/// A detail with a few short fields, such as a disk's or a volume's.
+const NARROW_PANE_WIDTH: f32 = 340.;
 const PANE_MIN_WIDTH: f32 = 320.;
 const SPLIT_GAP: f32 = 14.;
 
@@ -401,6 +403,27 @@ pub(crate) fn beside(window: &Window) -> bool {
 pub(crate) fn split(
     id: &'static str,
     beside: bool,
+    table: AnyElement,
+    pane: Option<AnyElement>,
+) -> AnyElement {
+    split_at(id, beside, PANE_WIDTH, table, pane)
+}
+
+/// [`split`] with a narrower pane, for a detail of a few short fields, so
+/// the list keeps its columns beside it.
+pub(crate) fn split_narrow(
+    id: &'static str,
+    beside: bool,
+    table: AnyElement,
+    pane: Option<AnyElement>,
+) -> AnyElement {
+    split_at(id, beside, NARROW_PANE_WIDTH, table, pane)
+}
+
+fn split_at(
+    id: &'static str,
+    beside: bool,
+    pane_width: f32,
     table: AnyElement,
     pane: Option<AnyElement>,
 ) -> AnyElement {
@@ -421,7 +444,7 @@ pub(crate) fn split(
             div()
                 .when_else(
                     beside,
-                    |this| this.w(dp(PANE_WIDTH)).min_w(dp(PANE_MIN_WIDTH)).flex_none(),
+                    |this| this.w(dp(pane_width)).min_w(dp(PANE_MIN_WIDTH)).flex_none(),
                     |this| this.w_full(),
                 )
                 .child(pane)
