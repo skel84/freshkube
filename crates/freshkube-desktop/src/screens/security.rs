@@ -18,14 +18,18 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
+use freshkube_ui::page::{self, PageHeader};
+
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gated_page, header, mono, panel, partial_notice, stat,
+    gate, meta, mono, panel, partial_notice, refresh_control, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 
 const CONTEXT: &str = "TalosSecurity";
+/// The page header's id prefix.
+const PREFIX: &str = "security";
 const ROW_HEIGHT: f32 = 34.;
 /// Below this content width the details pane moves under the list.
 const SIDE_DETAILS: f32 = 920.;
@@ -391,6 +395,25 @@ fn missing(snapshot: &SecurityAuditSnapshot) -> Vec<String> {
     out
 }
 
+/// Where the audit read from, after the context the meta line names first:
+/// the Talos endpoints and the node whose volumes it read.
+fn identity_parts(identity: &SourceSnapshot<ClusterIdentity>) -> Vec<SharedString> {
+    let Some(identity) = identity.value() else {
+        return Vec::new();
+    };
+    let join = |values: &[String]| {
+        if values.is_empty() {
+            "none".to_owned()
+        } else {
+            values.join(", ")
+        }
+    };
+    vec![
+        format!("endpoints {}", join(&identity.endpoint_addresses)).into(),
+        format!("volume target {}", join(&identity.target_addresses)).into(),
+    ]
+}
+
 pub(crate) struct SecurityScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
@@ -399,6 +422,8 @@ pub(crate) struct SecurityScreen {
     selected: Option<String>,
     focus: FocusHandle,
     scroll: ScrollHandle,
+    /// The meta line's parts for the audit at a loader revision.
+    meta: Option<(u64, Vec<SharedString>)>,
 }
 
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
@@ -418,6 +443,7 @@ impl ScreenPanel for SecurityScreen {
             selected: None,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
+            meta: None,
         }
     }
 
@@ -511,46 +537,18 @@ impl SecurityScreen {
         cx.notify();
     }
 
-    fn identity_line(
-        &self,
-        identity: &SourceSnapshot<ClusterIdentity>,
-        cx: &App,
-    ) -> Option<Stateful<Div>> {
-        let identity = identity.value()?;
-        let p = palette(cx);
-        let join = |values: &[String]| {
-            if values.is_empty() {
-                "none".to_owned()
-            } else {
-                values.join(", ")
-            }
-        };
-        Some(
-            h_flex()
-                .id("security-identity")
-                .gap_x_5()
-                .gap_y_1()
-                .flex_wrap()
-                .text_size(dp(12.5))
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .child(div().text_color(p.muted).child("Context"))
-                        .child(mono(identity.context_name.clone())),
-                )
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .child(div().text_color(p.muted).child("Endpoints"))
-                        .child(mono(join(&identity.endpoint_addresses))),
-                )
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .child(div().text_color(p.muted).child("Volume target"))
-                        .child(mono(join(&identity.target_addresses))),
-                ),
-        )
+    /// Derives the meta line's parts again when a new audit arrives.
+    fn sync_meta(&mut self) {
+        let revision = self.loader.revision();
+        if self.meta.as_ref().is_some_and(|(at, _)| *at == revision) {
+            return;
+        }
+        let parts = self
+            .loader
+            .data()
+            .map(|snapshot| identity_parts(&snapshot.identity))
+            .unwrap_or_default();
+        self.meta = Some((revision, parts));
     }
 
     fn summary(&self, snapshot: &SecurityAuditSnapshot, cx: &App) -> Stateful<Div> {
@@ -731,25 +729,83 @@ impl SecurityScreen {
 
 impl Render for SecurityScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(page) = gated_page(
-            "security-page",
-            "Security",
-            Scope::Cluster,
+        self.sync_meta();
+        let header = self.render_header(window, cx);
+        let state = gate(
             self.source.as_ref(),
             &self.loader,
+            Scope::Cluster,
             "the security audit",
             cx,
-        ) {
-            return page;
-        }
-        let (Some(source), Some(snapshot)) = (self.source.clone(), self.loader.data()) else {
+        );
+        let body = match state {
+            Some(state) => page::inset()
+                .id("security-state")
+                .test_support()
+                .child(state)
+                .into_any_element(),
+            None => self.render_body(window, cx),
+        };
+        // The keys live on a wrapper drawn in every state; the page scrolls
+        // when the window is too short for the list's least height.
+        div()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
+            .child(
+                page::page("security-page")
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .child(page::toolbar(cx).child(header))
+                    .child(body),
+            )
+    }
+}
+
+impl SecurityScreen {
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "Security");
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh the security audit",
+            self.source.as_ref(),
+            &self.loader,
+            cx,
+        );
+        let parts = self
+            .meta
+            .as_ref()
+            .map(|(_, parts)| parts.clone())
+            .unwrap_or_default();
+        header
+            .control(refresh)
+            .meta(meta(
+                self.source.as_ref(),
+                Scope::Cluster,
+                &self.loader,
+                false,
+                parts,
+            ))
+            .render(window, cx)
+    }
+
+    /// The banners, the summary and the audit with the selection's details,
+    /// inset under the toolbar.
+    fn render_body(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(snapshot) = self.loader.data() else {
             return div().into_any_element();
         };
         let p = palette(cx);
         let all = items(snapshot);
         let selected_ix = self.selected_index(&all);
         let missing = missing(snapshot);
-        let identity = self.identity_line(&snapshot.identity, cx);
         let summary = self.summary(snapshot, cx);
 
         // Rows are grouped under section captions; remember where the
@@ -786,12 +842,6 @@ impl Render for SecurityScreen {
                     .aria_label(
                         "Certificates, RBAC role and volume encryption; arrows select an item",
                     )
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
-                    .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
-                    .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
                     .flex_1()
                     .min_h_0()
                     .pb_2()
@@ -845,25 +895,14 @@ impl Render for SecurityScreen {
                 )
         };
         v_flex()
-            .id("security-page")
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
+            .id("security-body")
+            .test_support()
+            .flex_1()
+            .px(dp(page::PANE_PADDING))
+            .py(dp(page::PANE_PADDING_Y))
             .gap(dp(14.))
-            .child(header(
-                "Security",
-                &source,
-                Scope::Cluster,
-                &self.loader,
-                cx,
-            ))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))
-            .children(identity)
             .child(summary)
             .child(split)
             .into_any_element()
@@ -1006,13 +1045,23 @@ mod ui_tests {
     use freshkube_core::security_lifecycle::SourceSnapshot;
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt;
-    use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+    use gpui_kit::{AppContext, Entity, TestAppContext, Window, WindowHandle, px, size};
     use tokio::runtime::{Builder, Runtime};
 
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
     use super::{ScreenPanel, ScreenSource, Section, SecurityScreen, Verdict, example, items};
     use crate::backend::Target;
+    use crate::desktop::layout_check;
+    use crate::desktop::tests::fixture as app;
     use crate::{fixture, presentation};
+
+    /// The page's frame reaches the body under the toolbar.
+    const SECURITY_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+        page: "security-page",
+        title: "security-title",
+        title_text: "Security",
+        content: "security-body",
+    };
 
     fn source(node: &str) -> ScreenSource {
         let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -1199,6 +1248,82 @@ mod ui_tests {
                 assert!(screen.loader.data().is_none());
                 assert!(screen.selected.is_none());
             });
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn security_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        for text in [None, Some(20.)] {
+            cx.update_window(handle, |_, window, cx| {
+                if let Some(text) = text {
+                    crate::text_size::set(text, cx);
+                }
+                window.press("secondary-8", cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                layout_check::assert_edge_frame(window, cx, &SECURITY_FRAME);
+                window.find("security-refresh");
+            })
+            .unwrap();
+        }
+    }
+
+    /// Where the audit read from joins the meta line, after the context.
+    #[gpui_kit::test]
+    fn the_endpoints_and_volume_target_are_meta_parts(cx: &mut TestAppContext) {
+        let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let parts = screen.read(cx).meta.clone().unwrap().1;
+            assert_eq!(parts.len(), 2, "{parts:?}");
+            assert!(parts[0].starts_with("endpoints "), "{parts:?}");
+            assert!(parts[1].starts_with("volume target "), "{parts:?}");
+            window.find("security-scope");
+        })
+        .unwrap();
+    }
+
+    /// The state in the body's place sits under the toolbar, which keeps the
+    /// title and Refresh.
+    fn under_the_toolbar(window: &Window, id: &'static str) {
+        let toolbar = window.find("security-toolbar").bounds();
+        window.find("security-title");
+        window.find("security-refresh");
+        let state = window.find(id).bounds();
+        assert!(
+            state.top() >= toolbar.bottom(),
+            "{id} {state:?} isn't under the toolbar {toolbar:?}"
+        );
+        assert!(window.try_find("security-body").is_none());
+    }
+
+    #[gpui_kit::test]
+    fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
+        let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            // A target that isn't responding.
+            under_the_toolbar(window, "screen-retry");
+            // A responding target whose audit failed.
+            screen.update(cx, |screen, cx| {
+                let source = source("talos-cp-fra1-01");
+                let target = source.target.clone();
+                screen.set_source(Some(source), window, cx);
+                screen.loader.resolve(target, Err("no audit".into()));
+            });
+            window.render_frame(cx);
+            under_the_toolbar(window, "screen-retry");
+            // No target.
+            screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+            window.render_frame(cx);
+            under_the_toolbar(window, "security-state");
+            assert!(window.try_find("screen-retry").is_none());
         })
         .unwrap();
     }
