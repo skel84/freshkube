@@ -3,7 +3,8 @@
 //!
 //! `assert_page_frame` checks any page's padding and title, `assert_table`
 //! checks one table's header and rows (a page may hold several), and
-//! `assert_table_page` checks a table page with both. A page names a few
+//! `assert_table_page` checks a table page with both, and that its table
+//! sits in no card. A page names a few
 //! elements by id; rows and group headers are found by their accessibility
 //! roles inside the list, so the checks need no access to the page's state.
 
@@ -85,8 +86,8 @@ pub(crate) struct TableLayout {
     pub title_text: Pixels,
 }
 
-/// Asserts DESIGN.md's table page: `assert_page_frame` on its frame, then
-/// `assert_table` on its table.
+/// Asserts DESIGN.md's table page: `assert_page_frame` on its frame,
+/// `assert_table` on its table, and `assert_bare` on the table.
 pub(crate) fn assert_table_page(
     window: &mut Window,
     cx: &mut App,
@@ -113,6 +114,7 @@ pub(crate) fn assert_table_page(
     let Some(header) = rows.header else {
         unreachable!("a table page's table has a header");
     };
+    assert_bare(window, page.table);
     TableLayout {
         header,
         row: rows.row,
@@ -122,6 +124,26 @@ pub(crate) fn assert_table_page(
         title_line: frame.title_line,
         title_text: frame.title_text,
     }
+}
+
+/// Asserts that no card, a rounded quad bordered on both sides, frames the
+/// element `table`: DESIGN.md's table pages draw their table bare.
+pub(crate) fn assert_bare(window: &Window, table: &'static str) {
+    let view = window.find(table).bounds().scale(window.scale_factor());
+    let card = window.painted_quads().into_iter().find(|quad| {
+        let (b, w) = (quad.bounds, quad.border_widths);
+        w.left.0 > 0.
+            && w.right.0 > 0.
+            && quad.corner_radii.top_left.0 > 0.
+            && b.left() <= view.left()
+            && b.right() >= view.right()
+            && b.top() <= view.top()
+            && b.bottom() >= view.bottom()
+    });
+    assert!(
+        card.is_none(),
+        "{table} sits in a card; DESIGN.md's table pages draw it bare: {card:#?}"
+    );
 }
 
 /// Asserts DESIGN.md's page frame: 26 dp side padding and a 20 dp title on a

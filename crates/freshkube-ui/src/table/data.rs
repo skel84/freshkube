@@ -5,10 +5,10 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Div, ElementId, Role, ScrollHandle, ScrollStrategy,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle, ScrollStrategy,
     SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 
@@ -262,11 +262,11 @@ fn step_line(
     Some(at)
 }
 
-/// How a table sits on its page: in its card or bare, filling its parent
+/// How a table sits on its page: bare or in its card, filling its parent
 /// or as tall as its rows.
 #[derive(Clone, Copy, Default)]
 pub struct DataTable {
-    bare: bool,
+    carded: bool,
     fit: Option<usize>,
 }
 
@@ -275,9 +275,11 @@ impl DataTable {
         Self::default()
     }
 
-    /// Without its card, for a table inside a card of its own.
-    pub fn bare(mut self) -> Self {
-        self.bare = true;
+    /// In a card of its own, for a table among cards on a scrolling page.
+    /// Without it the table is bare: on its pane's background, edge to
+    /// edge, with a hairline above and below.
+    pub fn carded(mut self) -> Self {
+        self.carded = true;
         self
     }
 
@@ -292,6 +294,12 @@ impl DataTable {
     pub fn render<S: TableSource>(self, source: &S, window: &Window, cx: &mut Context<S>) -> Div {
         let state = source.table_state();
         let ids = &state.ids;
+        // What the rows sit on, which pinned cells paint to stay opaque.
+        let fill = if self.carded {
+            palette(cx).surface
+        } else {
+            cx.theme().background
+        };
         let empty = source.empty(cx);
         let is_empty = empty.is_some();
         // A fitted list is as tall as its lines; an empty one as its state.
@@ -324,9 +332,9 @@ impl DataTable {
                     uniform_list(
                         ids.rows.clone(),
                         source.line_count(),
-                        cx.processor(|view: &mut S, range: Range<usize>, window, cx| {
+                        cx.processor(move |view: &mut S, range: Range<usize>, window, cx| {
                             range
-                                .filter_map(|line| render_line(view, line, window, cx))
+                                .filter_map(|line| render_line(view, line, fill, window, cx))
                                 .collect::<Vec<_>>()
                         }),
                     )
@@ -334,13 +342,18 @@ impl DataTable {
                     .size_full(),
                 ),
             });
-        let frame = if self.bare {
-            v_flex().min_w_0()
-        } else {
+        let frame = if self.carded {
             card(cx)
+        } else {
+            v_flex()
+                .min_w_0()
+                .bg(fill)
+                .border_t_1()
+                .border_b_1()
+                .border_color(palette(cx).line)
         };
         let fitted = self.fit.is_some();
-        // The empty state sits below the sideways scroll, in the card's
+        // The empty state sits below the sideways scroll, in the table's
         // width: inside it, a table scrolled right would hide it.
         let (inside, below) = if is_empty {
             (None, Some(list))
@@ -376,7 +389,7 @@ impl DataTable {
     }
 }
 
-/// The table in its card, filling the room its caller gives it.
+/// The bare table, filling the room its caller gives it.
 pub fn data_table<S: TableSource>(source: &S, window: &Window, cx: &mut Context<S>) -> Div {
     DataTable::new().render(source, window, cx)
 }
@@ -486,6 +499,7 @@ fn header_cell<S: TableSource>(
 fn render_line<S: TableSource>(
     source: &S,
     line: usize,
+    fill: Hsla,
     window: &Window,
     cx: &mut Context<S>,
 ) -> Option<AnyElement> {
@@ -570,7 +584,7 @@ fn render_line<S: TableSource>(
             .map(|column| source.cell(&row, &style, column, cx))
             .collect();
         // Opaque, so the cells passing under them don't show through: the
-        // card's background with the row's own over it, in each of its
+        // table's fill with the row's own over it, in each of its
         // states. They stay inside the row, so its hover, tooltip and click
         // reach them unchanged.
         let tint = |this: Div| {
@@ -588,7 +602,7 @@ fn render_line<S: TableSource>(
             .bottom_0()
             .left(px(-1.))
             .w(px(1.))
-            .bg(if selected { p.accent } else { p.surface })
+            .bg(if selected { p.accent } else { fill })
             .when(!selected, |this| this.child(tint(div().size_full())));
         element = element.relative().child(Pinned::overlay(
             &state.sideways,
@@ -601,7 +615,7 @@ fn render_line<S: TableSource>(
                 .bottom_0()
                 .left_0()
                 .w(dp(run))
-                .bg(p.surface)
+                .bg(fill)
                 .child(edge)
                 .child(tint(h_flex().size_full()).children(cells)),
             p.line,
@@ -624,9 +638,9 @@ mod tests {
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
-        AnyView, AnyWindowHandle, AppContext, Entity, InputEvent, IntoElement, MouseButton,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollDelta,
-        ScrollWheelEvent, StyleRefinement, TestAppContext, point, px, size,
+        AnyView, AnyWindowHandle, AppContext, Background, Entity, InputEvent, IntoElement,
+        MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
+        ScrollDelta, ScrollWheelEvent, StyleRefinement, TestAppContext, point, px, size,
     };
 
     use super::*;
@@ -696,6 +710,7 @@ mod tests {
         cell_clicks: Vec<SharedString>,
         hovered: Vec<SharedString>,
         sorts: Vec<SharedString>,
+        carded: bool,
     }
 
     impl Wide {
@@ -712,6 +727,14 @@ mod tests {
                 cell_clicks: Vec::new(),
                 hovered: Vec::new(),
                 sorts: Vec::new(),
+                carded: false,
+            }
+        }
+
+        fn carded(self) -> Self {
+            Self {
+                carded: true,
+                ..self
             }
         }
 
@@ -835,9 +858,14 @@ mod tests {
 
     impl Render for Wide {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let table = if self.carded {
+                DataTable::new().carded()
+            } else {
+                DataTable::new()
+            };
             v_flex()
                 .size_full()
-                .child(data_table(self, window, cx).flex_1().min_h_0())
+                .child(table.render(self, window, cx).flex_1().min_h_0())
         }
     }
 
@@ -963,6 +991,69 @@ mod tests {
             assert!(inset(window, "Column 0 1").abs() <= 1.5);
         })
         .unwrap();
+    }
+
+    /// Bare, the table draws no card: only a hairline above and below, on
+    /// the window's background, which its pinned cells paint too so they
+    /// stay opaque. Carded, it keeps the rounded card, and its pinned cells
+    /// paint the card's surface.
+    #[gpui_kit::test]
+    fn a_bare_table_draws_hairlines_and_its_pinned_cells_match_it(cx: &mut TestAppContext) {
+        for carded in [false, true] {
+            let wide = Wide::new(2, 4, true);
+            let wide = if carded { wide.carded() } else { wide };
+            let (handle, _) = open(cx, wide, 900.);
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                scroll_right(window, 100., cx);
+                let scale = window.scale_factor();
+                let view = window.find("wide-table-scroll").bounds().scale(scale);
+                let quads = window.painted_quads();
+                // What frames the table: a bordered quad around its scroll.
+                // GPUI splits a border into clipped strips that share its
+                // geometry, and paints the fill as a quad of its own.
+                let mut frames: Vec<_> = (quads.iter())
+                    .filter(|quad| {
+                        let (b, w) = (quad.bounds, quad.border_widths);
+                        (w.top.0 > 0. || w.left.0 > 0.)
+                            && b.left() <= view.left()
+                            && b.right() >= view.right()
+                            && b.top() <= view.top()
+                            && b.bottom() >= view.bottom()
+                    })
+                    .collect();
+                frames.dedup_by(|a, b| a.bounds == b.bounds && a.border_widths == b.border_widths);
+                assert_eq!(frames.len(), 1, "carded {carded}: {frames:#?}");
+                let frame = frames[0];
+                let (sides, corner) = (frame.border_widths, frame.corner_radii.top_left.0);
+                let fill = if carded {
+                    assert!(sides.left.0 > 0. && sides.right.0 > 0., "{frame:#?}");
+                    assert!((corner - 12. * scale).abs() < 0.5, "{frame:#?}");
+                    palette(cx).surface
+                } else {
+                    assert!(sides.top.0 > 0. && sides.bottom.0 > 0., "{frame:#?}");
+                    assert!(sides.left.0 == 0. && sides.right.0 == 0., "{frame:#?}");
+                    assert_eq!(corner, 0., "{frame:#?}");
+                    cx.theme().background
+                };
+                assert!(
+                    quads.iter().any(|quad| {
+                        quad.bounds == frame.bounds && quad.background == Background::from(fill)
+                    }),
+                    "carded {carded}: the table isn't filled with {fill:?}"
+                );
+                // The pinned run, 400 wide, paints the same fill.
+                let run = crate::ui::dp_px(400., window).scale(scale).0;
+                assert!(
+                    quads.iter().any(|quad| {
+                        quad.background == Background::from(fill)
+                            && (quad.bounds.size.width.0 - run).abs() < 1.
+                    }),
+                    "carded {carded}: no pinned run on the table's fill"
+                );
+            })
+            .unwrap();
+        }
     }
 
     /// Pinned columns wider than two thirds of the table's visible width

@@ -201,6 +201,7 @@ impl ObservabilityPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         DataTable::new()
+            .carded()
             .fit(if beside { MAX_LINES } else { STACKED_LINES })
             .render(self, window, cx)
             .id(self.incident_table.id("table"))
