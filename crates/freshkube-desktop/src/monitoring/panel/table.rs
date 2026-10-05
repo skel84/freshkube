@@ -108,6 +108,12 @@ impl TableView {
         self.all
     }
 
+    /// The list's id and the first row's, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn test_ids(&self) -> (SharedString, SharedString) {
+        (self.state.id("list"), self.ids[0].clone())
+    }
+
     /// Whether the rows lead with a severity glyph, for the page's tests.
     #[cfg(test)]
     pub(crate) fn leads_with_glyph(&self) -> bool {
