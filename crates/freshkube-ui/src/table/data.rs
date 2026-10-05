@@ -516,11 +516,16 @@ fn render_line<S: TableSource>(
     let state = source.table_state();
     let scrolled = state.scrolled();
     let row = match source.line(line, cx)? {
-        // A group's label stays in view: the whole group line moves back
-        // by the scroll, still as wide as the table.
+        // A group's line stays in view. In a table wider than its view
+        // the line is as wide as the view, so its details truncate before
+        // its actions; one that fits draws it as wide as the table.
         Line::Group(group) => {
             let group = source.group(group, cx)?;
-            return Some(if scrolled {
+            let view = state.sideways.bounds().size.width;
+            let overflows = view > px(0.) && ui::dp_px(source.width(), window) > view + px(0.5);
+            return Some(if overflows {
+                Pinned::new(&state.sideways, div().w(view).child(group)).into_any_element()
+            } else if scrolled {
                 Pinned::new(&state.sideways, group).into_any_element()
             } else {
                 group
@@ -860,7 +865,17 @@ mod tests {
         fn group(&self, _: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
             Some(
                 GroupRow::new("wide-group", Tone::Crit, "Failing", ROW_HEIGHT)
-                    .detail(vec![format!("{} rows", self.rows)])
+                    // Longer than the table is wide, as a node's group's can be.
+                    .detail(vec![
+                        format!("{} rows", self.rows),
+                        "a detail that runs on ".repeat(12),
+                    ])
+                    .action(
+                        div()
+                            .id("wide-group-action")
+                            .test_support()
+                            .child("Select all"),
+                    )
                     .render(cx)
                     .into_any_element(),
             )
@@ -1452,5 +1467,43 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    /// In a table wider than its view, a group's actions stay in view,
+    /// scrolled or not; in one that fits, its line is as wide as its rows
+    /// (#128).
+    #[gpui_kit::test]
+    fn group_actions_stay_in_view(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, Wide::new(2, 4, true), 900.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for scroll in [0., 100., 400.] {
+                scroll_right(window, scroll, cx);
+                window.render_frame(cx);
+                let viewport = window.find("wide-table-scroll").bounds();
+                let action = window.find("wide-group-action").bounds();
+                assert!(
+                    action.right() <= viewport.right() + px(0.5),
+                    "scrolled {scroll}: action ends at {:?}, view at {:?}",
+                    action.right(),
+                    viewport.right()
+                );
+                assert!(action.left() >= viewport.left());
+                assert!(inset(window, "wide-group").abs() <= 1.5);
+                let group = window.find("wide-group").bounds();
+                assert!((group.size.width - viewport.size.width).abs() <= px(1.5));
+            }
+        })
+        .unwrap();
+
+        let (handle, _) = open(cx, Wide::new(2, 4, true), 1400.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let group = window.find("wide-group").bounds();
+            let row = window.find("wide-row-1").bounds();
+            assert_eq!(group.left(), row.left());
+            assert_eq!(group.size.width, row.size.width);
+        })
+        .unwrap();
     }
 }

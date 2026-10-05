@@ -1,0 +1,1 @@
+- **Group actions stay in view:** when a table's columns are wider than its view, as Pods' are with the detail pane open, a group row's details now truncate before its actions, so Select all and Open node stay on screen instead of being cut off at the edge.
