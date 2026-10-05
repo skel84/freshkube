@@ -287,7 +287,9 @@ No new entities ([#5](https://github.com/skel84/freshkube/issues/5)), moves in t
 
 A page's components should be checked without starting the app. [#53](https://github.com/skel84/freshkube/issues/53) adds a workbench, [WORKBENCH.md](WORKBENCH.md), and then moves the service map's layout and drawing out of `observability/` so it can be built there. Steps (b) and (c) go ahead only if (a)'s rebuild and open times are clearly shorter than the app's.
 
-- (a) Done in `WORKBENCH_COMMIT`: `crates/freshkube-workbench` with a story list, a strip for theme, text size and width, and a DataTable story with its states and 2,000 rows. `scripts/smoke.sh start --story` opens a story. Measured on a busy M-series laptop, debug, three alternating runs each: WORKBENCH_NUMBERS.
+- (a) Done in `2225d55`: `crates/freshkube-workbench` with a story list, a strip for theme, text size and width, and a DataTable story with its states and 2,000 rows. `scripts/smoke.sh start --story` opens a story. Measured on 6 October on a laptop in use (Apple silicon, debug, three alternating runs each, one-minute load average in brackets):
+  - Rebuild after a one-line change in `freshkube-ui`'s `table/mod.rs`: `cargo build -p freshkube-workbench` 20.3 s (5.00), 30.2 s (3.79), 29.0 s (4.39); `cargo build` 32.6 s (4.51), 48.3 s (3.68), 48.7 s (4.64).
+  - Process start to the first frame with rows (`FRESHKUBE_FIRST_FRAME=1`): the DataTable story 269 ms (4.50), 275 ms (5.40), 267 ms (5.66); `--fixture` on Pods 505 ms (4.19), 486 ms (4.72), 642 ms (5.27).
 - (b) Move `layered()` and `curve()` from `observability/map.rs` into a `crates/freshkube-graph` `layout` module, unchanged in a move-only commit, then add tests and a graph story.
 - (c) A `GraphView<S: GraphSource>` in that crate, with the service map as its first source.
 

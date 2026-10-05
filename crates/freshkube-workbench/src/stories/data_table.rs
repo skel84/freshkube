@@ -362,11 +362,7 @@ impl DataTableStory {
                     cx,
                 )
                 .small()
-                .label(if count >= 1000 {
-                    format!("{},{:03} rows", count / 1000, count % 1000)
-                } else {
-                    format!("{count} rows")
-                })
+                .label(rows(count))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_count(count, cx)))
             }),
             cx,
@@ -379,9 +375,7 @@ impl DataTableStory {
             .meta([
                 div().child("Invented pods").into_any_element(),
                 div().text_color(p.faint).child(" · ").into_any_element(),
-                div()
-                    .child(format!("{} rows", self.pods.len()))
-                    .into_any_element(),
+                div().child(rows(self.pods.len())).into_any_element(),
             ])
             .render(window, cx)
     }
@@ -447,6 +441,15 @@ impl DataTableStory {
 impl Default for DataTableStory {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// `24 rows`, `2,000 rows`.
+fn rows(count: usize) -> String {
+    if count >= 1000 {
+        format!("{},{:03} rows", count / 1000, count % 1000)
+    } else {
+        format!("{count} rows")
     }
 }
 

@@ -87,13 +87,13 @@ start() {
       *) echo "smoke: unknown option $1" >&2; exit 2 ;;
     esac
   done
-  local args=("$@") bin=freshkube
+  local args=("$@") bin=freshkube package=freshkube
   if [[ -n $story ]]; then
     if [[ -n $page || ${#args[@]} -gt 0 ]]; then
       echo "smoke: --story takes no --page or APP_ARGS" >&2
       exit 2
     fi
-    bin=freshkube-workbench
+    bin=freshkube-workbench package=freshkube-workbench
   elif [[ ${#args[@]} -eq 0 ]]; then
     args=(--fixture)
   fi
@@ -105,9 +105,9 @@ start() {
       exit 1
     fi
   elif [[ $profile == release ]]; then
-    cargo build -q --release --manifest-path "$ROOT/Cargo.toml" --bin "$bin"
+    cargo build -q --release --manifest-path "$ROOT/Cargo.toml" -p "$package" --bin "$bin"
   else
-    cargo build -q --manifest-path "$ROOT/Cargo.toml" --bin "$bin"
+    cargo build -q --manifest-path "$ROOT/Cargo.toml" -p "$package" --bin "$bin"
   fi
   helper id 0 >/dev/null 2>&1 || true # build the helper before timing the window
   screen_acquire smoke $$
