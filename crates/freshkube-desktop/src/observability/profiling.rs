@@ -25,7 +25,6 @@ impl ObservabilityPage {
         let depth = base.map_or(0, |f| f.depth);
         let toolbar = line()
             .flex_wrap()
-            .child(section("Profiling"))
             .child(mono("argocd/argocd-application-controller"))
             .child(div().flex_1())
             .child(

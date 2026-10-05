@@ -112,7 +112,6 @@ impl ObservabilityPage {
     fn trace_toolbar(&self, cx: &Context<Self>) -> Div {
         line()
             .flex_wrap()
-            .child(section("Traces"))
             .child(mono("payments/api"))
             .child(muted("OpenTelemetry · example spans", cx))
             .child(div().flex_1())

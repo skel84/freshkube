@@ -43,13 +43,13 @@ Every request captures the opaque Coroot provider identity, project, optional cl
 
 Only the visible destination starts ordinary reads. Hiding, changing destination or replacing the source drops its jobs; there is no background Coroot refresh timer. A report requests REST and MCP evidence independently, so one unavailable source cannot erase the other.
 
-Refresh and reopening capture a new Last N hours interval. Destination/report navigation and **Retry this window** retain the displayed absolute UTC interval. Data from a different interval or source is cleared. A failed retry for the same interval can retain successful evidence, explicitly marked **Last known · stale**. Source failures, loading, successful empty results, application health and unsupported capabilities remain distinct.
+Refresh and reopening capture a new Last N hours interval. Destination/report navigation and **Retry** retain the captured absolute interval, shown with local dates and times. Data from a different interval or source is cleared. A failed retry for the same interval can retain successful evidence, marked **stale**, with the last successful local time and the read error. Source failures, loading, successful empty results, application health and unsupported capabilities remain distinct.
 
 ## Presentation and navigation
 
 | Surface | First-slice behavior |
 | --- | --- |
-| Applications | Coroot aggregate health, type, category and 12 named signal columns. Present empty healthy values say Healthy; present empty unknown values say Unknown; absent signals say Not reported. Coroot's status is never recalculated from strings or local thresholds. |
+| Applications | Coroot aggregate health, type, category and 12 named signal columns. Healthy checks without a figure read “ok”; empty unknown checks retain the outlined circle; absent signals show “—”. Full captions and compact values are measured when data or text size changes; wide tables scroll sideways. Failing upstreams show a count, with the original names and state retained in their tooltip and accessibility label. Coroot's status is never recalculated from strings or local thresholds. |
 | Signal/report mapping | Errors and latency → SLO; upstreams and network → Net; instances and restarts → Instances; disk usage and disk I/O → Storage; CPU, memory, DNS and logs use their named report. Dynamic report tabs also expose other report names returned by the source. |
 | Service map | Stable AppId nodes and directed endpoint-pair links, prepared layered layout (callers left of callees), source status and available request/latency/traffic metrics. Missing metrics say Not reported. Statistics derived by the library from rounded Coroot display values are identified as potentially rounded. |
 | Application reports | REST evidence, then only what MCP adds, in one card whose footer keeps each source's state and Retry: Coroot report statuses/issues, dependencies/clients, and available vitals, labeled chart summaries and log patterns. Dependency health and connection health remain separate. Summaries identify missing points and omitted series; complete histories are not implied. |
