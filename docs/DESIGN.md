@@ -29,7 +29,7 @@ Status tints use 14–16% opacity and light semantic text. Navy is for **solid**
 
 Figtree Regular, SemiBold, Bold and Black are embedded as static faces (GPUI loads the variable face only at its default weight); IBM Plex Mono Regular and SemiBold are embedded with their OFL licences. Base UI 13 px, tables 12.5 px, secondary 12 px. Captions 11 px, uppercase bold with 0.06em tracking; a table's column labels 11.5 px semibold, as given (`ui::column_label`). Section titles 14 px bold; screen titles 20 px black (900). Numeric columns use monospace/tabular figures. The user's text-size preference scales layout through `ui::dp`; 13 is the new default, and existing saved sizes remain valid.
 
-Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12 px gaps. Radii: cards 12 px, controls 8 px, rail buttons 10 px, meters 3 px, chips fully rounded. Shadows belong only to tooltips and popovers. The previous light palette remains available until a Fog light theme is designed.
+Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12 px gaps. Radii: cards 12 px, controls 8 px, rail buttons 10 px, meters and other data marks (flame frames, heat cells, legend swatches) 3 px, chips fully rounded. Shadows belong only to tooltips and popovers. The previous light palette remains available until a Fog light theme is designed.
 
 ## Platforms: desktop grade, adapted at the edges
 

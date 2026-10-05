@@ -132,7 +132,7 @@ impl ObservabilityPage {
                                                 .child(
                                                     div()
                                                         .size(dp(10.))
-                                                        .rounded(px(2.))
+                                                        .rounded(px(3.))
                                                         .bg(crate::palette::flame_color(delta)),
                                                 )
                                                 .child(muted(label, cx))

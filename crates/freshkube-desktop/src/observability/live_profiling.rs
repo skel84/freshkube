@@ -495,7 +495,7 @@ impl ObservabilityPage {
                     .w(relative(frame.width))
                     .h(dp(ROW - 2.))
                     .px(dp(4.))
-                    .rounded(px(2.))
+                    .rounded(px(3.))
                     .justify_start()
                     .bg(crate::palette::flame_color(if compared {
                         frame.delta

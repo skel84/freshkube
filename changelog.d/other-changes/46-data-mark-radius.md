@@ -1,0 +1,1 @@
+- **Flame graphs and the traces heatmap round at 3 px:** live flame frames, the flame legend's swatches and the heatmap's cells now use the meter radius, 3 px, instead of 2. A selected cell's inner ring is square.
