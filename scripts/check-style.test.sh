@@ -10,7 +10,8 @@ failures=0
 tree() {
   rm -rf "$work/tree"
   mkdir -p "$work/tree/scripts" "$work/tree/crates/freshkube-desktop/src/logs" \
-    "$work/tree/crates/freshkube-ui/src"
+    "$work/tree/crates/freshkube-ui/src" "$work/tree/crates/freshkube-logs/src" \
+    "$work/tree/crates/freshkube-terminal/src"
   cp "$here/check-style.sh" "$work/tree/scripts/"
   : >"$work/tree/scripts/style-allowlist.txt"
 }
@@ -81,8 +82,11 @@ echo "radius crates/freshkube-desktop/src/fixed.rs" >"$work/tree/scripts/style-a
 expect 1 "a listed file that is clean fails until its entry goes" "radius crates/freshkube-desktop/src/fixed.rs"
 
 tree
-page logs/view.rs <<'EOF'
+cat >"$work/tree/crates/freshkube-logs/src/view.rs" <<'EOF'
 fn rows() { let list = VirtualList::new(); uniform_list("log", 1, f); }
+EOF
+cat >"$work/tree/crates/freshkube-terminal/src/paint.rs" <<'EOF'
+fn rows() { uniform_list("grid", 1, f); }
 EOF
 cat >"$work/tree/crates/freshkube-ui/src/table.rs" <<'EOF'
 fn table() { uniform_list("rows", 1, f); div().rounded(px(6.)).text_size(dp(20.)); }
@@ -90,7 +94,13 @@ EOF
 page tests.rs <<'EOF'
 fn sample() { uniform_list("rows", 1, f); }
 EOF
-expect 0 "logs, freshkube-ui and tests are exempt"
+expect 0 "the log and terminal crates, freshkube-ui and tests are exempt"
+
+tree
+page logs/talos.rs <<'EOF'
+fn rows() { uniform_list("services", 1, f); }
+EOF
+expect 1 "desktop's log sources are pages like any other" "list crates/freshkube-desktop/src/logs/talos.rs:1:"
 
 mkdir -p "$work/tree/crates/freshkube-desktop/src/resources/screen"
 page resources/screen/view.rs <<'EOF'
