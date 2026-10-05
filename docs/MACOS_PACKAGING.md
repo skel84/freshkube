@@ -117,12 +117,11 @@ on a branch by hand, run
 `gh workflow run capture.yml --ref <branch> -f debug_binary=true`.
 
 The job uses stable Rust, protobuf and `Swatinem/rust-cache`, with a separate
-`capture-debug-x86_64` key for debug builds. Successful PR runs save a cache scoped
-to that PR, so its next push can reuse dependencies. Seed the cache for new PRs
-once on `main` with
-`gh workflow run capture.yml --ref main -f debug_binary=true`; PRs can restore
-the default branch's cache. Keep an eye on the repository's shared cache usage
-under **Actions → Caches** (10 GB budget).
+`capture-debug-x86_64` key for debug builds. Only runs on `main` save the cache;
+PRs and manual runs on other branches restore it without saving. Seed it once
+on `main` with `gh workflow run capture.yml --ref main -f debug_binary=true`.
+Keep an eye on the repository's shared cache usage under **Actions → Caches**
+(10 GB budget).
 
 The job runs
 `cargo build --locked --bin freshkube` and uploads `target/debug/freshkube` as

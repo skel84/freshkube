@@ -52,9 +52,9 @@ jobs:
         run: brew install protobuf
       - uses: Swatinem/rust-cache@v2
         with:
-          # PR caches are scoped to that PR; a manual main run seeds the
-          # default-branch cache that every new PR can restore.
+          # Seed main by hand; PRs restore it without filling the shared cache.
           key: capture-debug-x86_64
+          save-if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
       - name: Build the debug executable
         run: cargo build --locked --bin freshkube
       - uses: actions/upload-artifact@v4
