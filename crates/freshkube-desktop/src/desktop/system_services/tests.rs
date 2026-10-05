@@ -191,3 +191,30 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_row_actions_fit_at_1280_at_the_default_text_size_and_one_up(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
+    for size in [crate::ui::BASE_TEXT, 14.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(size, cx);
+            window.press("secondary-7", cx);
+            window.render_frame(cx);
+            let table = window.find("system-services-table-scroll").bounds();
+            // The baremetal node's long name is the widest; its rows truncate it.
+            for row in [
+                UNHEALTHY,
+                "system-service-talos-cp-fra1-03-baremetal-rack-b7-auditd",
+            ] {
+                for action in ["logs", "open"] {
+                    let bounds = window.within(row).find(action).bounds();
+                    assert!(
+                        bounds.left() >= table.left() && bounds.right() <= table.right(),
+                        "{row} {action} at {bounds:?} leaves the table at {table:?} at {size} px"
+                    );
+                }
+            }
+        })
+        .unwrap();
+    }
+}

@@ -44,6 +44,10 @@ fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>) -> f32 {
     (chars as f32 * 7.5 + 24.).clamp(64., 280.)
 }
 
+/// The Node column's widest: a longer name truncates, and the row's
+/// tooltip holds it, so the actions stay in view at 1280 one text size up.
+const NODE_WIDTH: f32 = 200.;
+
 /// The columns for these rows, and their total width.
 pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
     let column = |field, label: &str, width| Column {
@@ -56,7 +60,7 @@ pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
         column(
             Field::Node,
             "Node",
-            fit("Node", rows.iter().map(|row| &row.node)),
+            fit("Node", rows.iter().map(|row| &row.node)).min(NODE_WIDTH),
         ),
         column(
             Field::Service,
@@ -124,7 +128,7 @@ impl TableSource for SystemServices {
                 row.message
             )
             .into(),
-            tooltip: (!row.message.is_empty()).then(|| row.message.clone()),
+            tooltip: Some(row.tooltip.clone()),
             marked: false,
             muted: false,
             data: row,

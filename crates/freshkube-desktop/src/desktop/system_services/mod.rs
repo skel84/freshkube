@@ -34,6 +34,8 @@ pub(crate) struct ServiceRow {
     service: SharedString,
     state: SharedString,
     message: SharedString,
+    /// The full node name, which the column may truncate, and the message.
+    tooltip: SharedString,
     query: String,
     health: Health,
 }
@@ -147,30 +149,27 @@ impl SystemServices {
         self.rows = nodes
             .iter()
             .flat_map(|node| {
-                node.services.iter().map(|service| ServiceRow {
-                    id: format!("system-service-{}-{}", node.name, service.id).into(),
-                    node: node.name.clone().into(),
-                    service: service.id.clone().into(),
-                    state: service.state.clone().into(),
-                    message: service
+                node.services.iter().map(|service| {
+                    let message = service
                         .health
                         .as_ref()
-                        .map(|health| health.last_message.clone())
-                        .unwrap_or_default()
-                        .into(),
-                    query: format!(
-                        "{} {} {} {}",
-                        node.name,
-                        service.id,
-                        service.state,
-                        service
-                            .health
-                            .as_ref()
-                            .map(|health| health.last_message.as_str())
-                            .unwrap_or_default()
-                    )
-                    .to_lowercase(),
-                    health: presentation::service_health(service),
+                        .map(|health| health.last_message.as_str())
+                        .unwrap_or_default();
+                    ServiceRow {
+                        id: format!("system-service-{}-{}", node.name, service.id).into(),
+                        node: node.name.clone().into(),
+                        service: service.id.clone().into(),
+                        state: service.state.clone().into(),
+                        message: message.to_owned().into(),
+                        tooltip: if message.is_empty() {
+                            node.name.clone().into()
+                        } else {
+                            format!("{}\n{message}", node.name).into()
+                        },
+                        query: format!("{} {} {} {message}", node.name, service.id, service.state)
+                            .to_lowercase(),
+                        health: presentation::service_health(service),
+                    }
                 })
             })
             .collect();
