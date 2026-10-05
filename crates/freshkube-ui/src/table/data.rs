@@ -468,7 +468,7 @@ fn header_cell<S: TableSource>(
             .aria_label(label.clone())
             .flex()
             .items_center()
-            .child(ui::caption(label, cx))
+            .child(ui::column_label(label, cx))
             .into_any_element();
     };
     let order = order.map(|order| match order {
@@ -487,7 +487,7 @@ fn header_cell<S: TableSource>(
         .items_center()
         .gap_1()
         .cursor_pointer()
-        .child(ui::caption(label, cx))
+        .child(ui::column_label(label, cx))
         .children(order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)))
         .on_click(cx.listener(move |view, _, _, cx| view.sort(sort.clone(), cx)))
         .into_any_element()
