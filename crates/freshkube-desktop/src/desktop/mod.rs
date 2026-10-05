@@ -168,12 +168,19 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             #[cfg(any(debug_assertions, feature = "stress"))]
             let window_size =
                 startup::window_size(std::env::var("FRESHKUBE_WINDOW_SIZE").ok().as_deref());
+            // Debug fixture checks open maintenance mode on an invented node
+            // that stops at the review (`maintenance/example.rs`).
+            #[cfg(debug_assertions)]
+            let example_maintenance = options.is_fixture()
+                && std::env::var("FRESHKUBE_PAGE").as_deref() == Ok("maintenance");
+            #[cfg(not(debug_assertions))]
+            let example_maintenance = false;
             let window_options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(window_size, cx)),
                 window_min_size: Some(size(px(760.), px(560.))),
                 titlebar: Some(TitlebarOptions {
                     title: Some(
-                        if options.maintenance_endpoint().is_some() {
+                        if options.maintenance_endpoint().is_some() || example_maintenance {
                             "Freshkube (maintenance)"
                         } else {
                             "Freshkube"
@@ -189,6 +196,13 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             // Maintenance mode replaces the cluster shell: no talosconfig,
             // no cluster, only the insecure node workflow.
             let opened = match options.maintenance_endpoint().map(str::to_owned) {
+                #[cfg(debug_assertions)]
+                None if example_maintenance => {
+                    gpui_kit::open_window(window_options, cx, |window, cx| {
+                        cx.new(|cx| MaintenanceView::example(runtime, window, cx))
+                    })
+                    .map(|_| ())
+                }
                 Some(endpoint) => gpui_kit::open_window(window_options, cx, |window, cx| {
                     cx.new(|cx| MaintenanceView::new(endpoint, runtime, window, cx))
                 })

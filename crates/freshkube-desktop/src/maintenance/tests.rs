@@ -236,6 +236,20 @@ type Mounted = (
 );
 
 fn mount(cx: &mut TestAppContext, world: &World, endpoint: &str) -> Mounted {
+    let (endpoint, runner) = (endpoint.to_owned(), world.runner());
+    mount_with(cx, move |runtime, window, cx| {
+        MaintenanceView::with_runner(endpoint, runtime, runner, window, cx)
+    })
+}
+
+fn mount_with(
+    cx: &mut TestAppContext,
+    create: impl FnOnce(
+        tokio::runtime::Handle,
+        &mut gpui_kit::Window,
+        &mut gpui_kit::Context<MaintenanceView>,
+    ) -> MaintenanceView,
+) -> Mounted {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -245,15 +259,7 @@ fn mount(cx: &mut TestAppContext, world: &World, endpoint: &str) -> Mounted {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut view = None;
     let window = cx.open_window(size(px(1400.), px(2600.)), |window, cx| {
-        let created = cx.new(|cx| {
-            MaintenanceView::with_runner(
-                endpoint.to_owned(),
-                runtime.handle().clone(),
-                world.runner(),
-                window,
-                cx,
-            )
-        });
+        let created = cx.new(|cx| create(runtime.handle().clone(), window, cx));
         view = Some(created.clone());
         Root::new(created, window, cx)
     });
@@ -544,6 +550,73 @@ async fn apply_needs_an_explicit_confirmation_of_the_reviewed_yaml(cx: &mut Test
     cx.update(|cx| assert!(view.read(cx).review.is_none()));
     assert!(!present(cx, handle, "maint-review"));
     assert!(label(cx, handle, "maint-progress").contains("WaitingForTalos"));
+}
+
+#[gpui_kit::test]
+async fn the_review_draws_each_row_as_a_document_line(cx: &mut TestAppContext) {
+    let world = World::new("review-lines");
+    let (_runtime, handle, view) = mount(cx, &world, NODE);
+    reach_apply_confirmation(cx, handle, &view, &world).await;
+    // No line of the fake configuration is long enough to wrap.
+    let rows = World::yaml(MachineRole::ControlPlane, "/dev/sda")
+        .lines()
+        .count();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for ix in 0..rows {
+            let line = window.find(("maint-review-line", ix)).bounds();
+            assert_eq!(line.size.height, px(freshkube_ui::document::LINE_HEIGHT));
+        }
+        assert!(window.try_find(("maint-review-line", rows)).is_none());
+    })
+    .unwrap();
+}
+
+/// The debug fixture walks itself to the review and goes no further: apply,
+/// bootstrap and polling are refused before any runner is asked, and no
+/// confirmation opens.
+#[cfg(debug_assertions)]
+#[gpui_kit::test]
+async fn example_data_stops_at_the_review(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount_with(cx, MaintenanceView::example);
+    let watched = view.clone();
+    cx.wait_for(handle, WAIT, move |_, cx| watched.read(cx).review.is_some())
+        .await;
+    assert_eq!(phase(cx, &view), Some(BootstrapPhase::ConfigurationReady));
+    assert!(present(cx, handle, "maint-review"));
+
+    click(cx, handle, "maint-review-request");
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.confirm_apply(window, cx);
+            view.confirm_bootstrap(window, cx);
+            view.poll_now(window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(phase(cx, &view), Some(BootstrapPhase::ConfigurationReady));
+    assert!(!present(cx, handle, "confirm-dialog"));
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert_eq!(view.error.as_deref(), Some(super::STOPS_AT_REVIEW));
+        assert!(view.work.is_none());
+    });
+    assert!(slot_free(cx));
+    // The example node refuses to apply too, should anything get past the view.
+    let confirmation = cx.update(|cx| {
+        let view = view.read(cx);
+        let text = view.review.as_ref().unwrap().text.clone();
+        let session = view.session.as_ref().unwrap();
+        session
+            .request_reviewed_configuration_application(text)
+            .unwrap()
+            .1
+    });
+    assert!(matches!(
+        super::example::answer(MaintenanceAction::ApplyConfiguration(confirmation)),
+        MaintenanceEvent::Cancelled
+    ));
 }
 
 #[gpui_kit::test]

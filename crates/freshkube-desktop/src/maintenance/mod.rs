@@ -50,6 +50,8 @@ use crate::{
     ui::{self, MONO_FONT, Tone, dp},
 };
 
+#[cfg(debug_assertions)]
+mod example;
 mod review;
 mod view;
 
@@ -57,6 +59,10 @@ use review::Review;
 
 #[cfg(test)]
 mod tests;
+
+/// What the view says when example data is asked to change a node.
+const STOPS_AT_REVIEW: &str =
+    "Example data stops at the review: nothing is applied, bootstrapped or polled.";
 
 /// Cooperative cancellation handed to a runner; checked before each step.
 pub(crate) type Cancelled = Arc<dyn Fn() -> bool + Send + Sync>;
@@ -108,6 +114,8 @@ pub(crate) struct MaintenanceView {
     generation: u64,
     auto_poll: bool,
     review: Option<Review>,
+    /// Example data (debug builds): the session stops at the review.
+    example: bool,
     error: Option<String>,
     progress: ProgressLog,
     focus: FocusHandle,
@@ -185,8 +193,11 @@ impl MaintenanceView {
         // The operation slot's holder shows in the footer.
         let operations = Operations::global(cx);
         subscriptions.push(cx.observe(&operations, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.observe_window_appearance(window, |_, window, cx| {
-            gpui_kit::component::Theme::sync_system_appearance(Some(window), cx);
+        subscriptions.push(cx.observe_window_appearance(window, |view, window, cx| {
+            // Example data keeps the theme FRESHKUBE_THEME chose.
+            if !view.example {
+                gpui_kit::component::Theme::sync_system_appearance(Some(window), cx);
+            }
         }));
         window.on_window_should_close(cx, mutation::may_close);
         let tick = cx.spawn_in(window, async move |this, cx| {
@@ -212,6 +223,7 @@ impl MaintenanceView {
             generation: 0,
             auto_poll: false,
             review: None,
+            example: false,
             error: None,
             progress: ProgressLog::default(),
             focus: cx.focus_handle(),
@@ -228,6 +240,16 @@ impl MaintenanceView {
                 .context
                 .update(cx, |input, cx| input.set_value(context, window, cx));
         }
+    }
+
+    /// In example mode, refuses a step that would change a node or reach
+    /// one, and says why. Returns whether it refused.
+    fn example_stops(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.example {
+            self.error = Some(STOPS_AT_REVIEW.into());
+            cx.notify();
+        }
+        self.example
     }
 
     fn slot_busy(cx: &App) -> Option<SharedString> {
@@ -376,7 +398,7 @@ impl MaintenanceView {
     }
 
     fn prepare_apply(&mut self, cx: &mut Context<Self>) {
-        if self.work.is_some() {
+        if self.work.is_some() || self.example_stops(cx) {
             return;
         }
         let (Some(session), Some(review)) = (&self.session, &self.review) else {
@@ -424,6 +446,9 @@ impl MaintenanceView {
 
     /// Opens the destructive install confirmation.
     fn confirm_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.example_stops(cx) {
+            return;
+        }
         let (Some(fingerprint), Some(session)) = (self.apply_fingerprint(), &self.session) else {
             return;
         };
@@ -502,6 +527,9 @@ impl MaintenanceView {
     }
 
     fn confirm_bootstrap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.example_stops(cx) {
+            return;
+        }
         let (Some(fingerprint), Some(session)) = (self.bootstrap_fingerprint(), &self.session)
         else {
             return;
@@ -567,7 +595,7 @@ impl MaintenanceView {
     }
 
     fn poll_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.work.is_some() {
+        if self.work.is_some() || self.example_stops(cx) {
             return;
         }
         let Some(action) = self
@@ -677,6 +705,15 @@ impl MaintenanceView {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.work.is_some() {
+            return false;
+        }
+        // Every runner call passes here: example data never gets further
+        // than reading the node and generating its configuration.
+        let reaches_node = !matches!(
+            action,
+            MaintenanceAction::CollectInsecure { .. } | MaintenanceAction::GenerateConfiguration(_)
+        );
+        if reaches_node && self.example_stops(cx) {
             return false;
         }
         let mutation = is_mutation(&action);

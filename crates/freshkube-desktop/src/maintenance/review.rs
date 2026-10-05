@@ -2,23 +2,28 @@
 //! pane that shows them.
 use super::view::heading;
 use super::*;
+use freshkube_ui::document;
 
 /// Display width of one review row. Longer lines wrap into further rows; the
 /// reviewed text itself is never altered.
 const REVIEW_ROW_CHARS: usize = 96;
-const REVIEW_ROW_HEIGHT: f32 = 18.;
 
 /// The text frozen for review, split into display rows.
 pub(super) struct Review {
     pub(super) text: String,
     rows: Vec<Range<usize>>,
+    /// The row with the most characters, which sets the list's width.
+    widest: Option<usize>,
     scroll: UniformListScrollHandle,
 }
 
 impl Review {
     pub(super) fn new(text: String) -> Self {
+        let rows = review_rows(&text);
+        let widest = (0..rows.len()).max_by_key(|&ix| text[rows[ix].clone()].chars().count());
         Self {
-            rows: review_rows(&text),
+            rows,
+            widest,
             text,
             scroll: UniformListScrollHandle::new(),
         }
@@ -82,29 +87,25 @@ impl MaintenanceView {
                         .border_color(p.line)
                         .bg(p.surface_2)
                         .child(
-                            uniform_list(
+                            document::lines(
                                 "maint-review-lines",
                                 review.rows.len(),
-                                cx.processor(|view, range: Range<usize>, _, _| {
-                                    let Some(review) = &view.review else {
-                                        return Vec::new();
-                                    };
-                                    range
-                                        .filter_map(|ix| {
-                                            review.rows.get(ix).map(|row| {
-                                                div()
-                                                    .h(dp(REVIEW_ROW_HEIGHT))
-                                                    .px_3()
-                                                    .whitespace_nowrap()
-                                                    .font_family(MONO_FONT)
-                                                    .text_size(dp(12.))
-                                                    .child(review.text[row.clone()].to_owned())
-                                            })
-                                        })
-                                        .collect::<Vec<_>>()
-                                }),
+                                review.widest,
+                                &review.scroll,
+                                |view: &mut Self, ix, _, _| {
+                                    let review = view.review.as_ref()?;
+                                    let row = review.rows.get(ix)?;
+                                    Some(
+                                        document::line()
+                                            .id(("maint-review-line", ix))
+                                            .test_support()
+                                            .px_3()
+                                            .child(review.text[row.clone()].to_owned())
+                                            .into_any_element(),
+                                    )
+                                },
+                                cx,
                             )
-                            .track_scroll(&review.scroll)
                             .size_full(),
                         ),
                 ),
