@@ -90,12 +90,16 @@ pub fn card(cx: &App) -> Div {
 }
 
 /// The line under a page header: where the data comes from, how much of
-/// it, its state and when it last changed.
+/// it, its state and when it last changed. A line too long for the page
+/// wraps between its parts and keeps each whole.
 pub fn meta_line(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> {
     h_flex()
         .id(id)
         .test_support()
         .flex_none()
+        .flex_wrap()
+        .gap_y(dp(2.))
+        .whitespace_nowrap()
         .text_size(dp(11.))
         .text_color(palette(cx).muted)
 }
@@ -307,17 +311,19 @@ impl PageHeader {
             }));
         // The controls wrap among themselves when even a line of their own
         // is too narrow.
+        let has_controls = !self.controls.is_empty();
         let controls = h_flex()
             .flex_wrap()
             .items_center()
             .gap(dp(8.))
             .children(boxed(&self.prefix, self.controls));
         let toolbar = if narrow {
+            // Stacked, a part a page doesn't have takes no row.
             v_flex()
                 .w_full()
                 .child(row(leading.w_full()).id(toolbar_id).test_support())
                 .children(self.chips.map(row))
-                .child(row(controls.w_full()))
+                .when(has_controls, |this| this.child(row(controls.w_full())))
                 .into_any_element()
         } else {
             // The controls start at their own width and fill what's left of
@@ -818,6 +824,63 @@ mod tests {
                 assert!(slot.top() >= row.top() && slot.bottom() <= row.bottom());
             }
             assert!(placed.scope.top() >= placed.categories.bottom());
+        })
+        .unwrap();
+    }
+
+    /// A header with no controls and a meta line of `parts` like parts.
+    struct Bare {
+        parts: usize,
+    }
+
+    impl Render for Bare {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let meta = (0..self.parts)
+                .map(|ix| {
+                    div()
+                        .id(SharedString::from(format!("part-{ix}")))
+                        .test_support()
+                        .child(format!("part {ix} of the line ·"))
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
+            PageHeader::new("bare", "prod-fra", true)
+                .meta(meta)
+                .render(cx)
+                .w_full()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn narrow_a_header_without_controls_keeps_the_meta_under_the_title_and_wraps_it(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(480.), px(560.)), |window, cx| {
+            let view = cx.new(|_| Bare { parts: 12 });
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let row = window.find("bare-toolbar").bounds();
+            let scope = window.find("bare-scope").bounds();
+            assert_eq!(scope.top(), row.bottom(), "an empty row sits between");
+            let parts = (0..12)
+                .map(|ix| window.find(format!("part-{ix}")).bounds())
+                .collect::<Vec<_>>();
+            let one_line = parts[0].size.height;
+            for part in &parts {
+                assert!(part.right() <= px(480.), "{part:?} leaves the page");
+                // Whole: a part wraps as one, never inside itself.
+                assert_eq!(part.size.height, one_line);
+            }
+            assert!(parts[11].top() > parts[0].top(), "the line didn't wrap");
         })
         .unwrap();
     }
