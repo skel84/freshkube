@@ -1126,6 +1126,13 @@ fn applications_show_all_and_columns_keep_the_same_projection(cx: &mut TestAppCo
         window.render_frame(cx);
         let problems = page.read(cx).shown_apps;
         assert!(window.find("obs-applications-collapsed").visible());
+        let total = page.read(cx).counts[1];
+        assert!(total > problems);
+        assert_eq!(
+            window.find("obs-show-all").label(),
+            Some(format!("Show all {total}").as_str()),
+            "Show all names the count, as Pods' does"
+        );
         window.click("obs-show-all", cx);
         assert!(page.read(cx).shown_apps > problems);
         window.render_frame(cx);

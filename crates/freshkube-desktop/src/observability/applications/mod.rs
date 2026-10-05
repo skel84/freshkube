@@ -234,8 +234,8 @@ impl TableSource for ObservabilityPage {
                 self.counts[1],
                 Button::new("obs-show-all")
                     .ghost()
-                    .small()
-                    .label("Show all")
+                    .xsmall()
+                    .label(format!("Show all {}", self.counts[1]))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.filter = Filter::All;
                         this.project_filters();
