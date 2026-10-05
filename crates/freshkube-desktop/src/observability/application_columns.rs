@@ -11,8 +11,8 @@ pub(super) enum ColumnKind {
 }
 
 #[derive(Clone)]
-pub(super) struct ApplicationColumn {
-    pub kind: ColumnKind,
+pub(crate) struct ApplicationColumn {
+    pub(super) kind: ColumnKind,
     label: SharedString,
     width: f32,
 }

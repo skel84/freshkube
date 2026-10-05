@@ -1,188 +1,282 @@
+//! Applications' shared table; its projection is prepared when observations or filters change.
 use super::*;
-const MATRIX_WIDTH: f32 = 1040.;
+use application_columns::{ApplicationColumn, ColumnKind};
+use freshkube_ui::table::{
+    self, DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState,
+};
+
+/// A fitted table stays bounded even when its outer page scrolls.
+const MAX_APPLICATION_LINES: usize = 16;
+
+/// The public table contract borrows the page's private presentation model.
+pub(crate) struct ApplicationCells<'a> {
+    app: &'a Application,
+}
+
 impl ObservabilityPage {
     pub(super) fn render_applications(
         &self,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = palette(cx);
-        let header = h_flex()
-            .h(dp(30.))
-            .px(dp(8.))
-            .bg(p.surface_2)
-            .child(div().w(dp(22.)).flex_none())
-            .child(ui::caption("Application", cx).flex_1().min_w(dp(178.)))
-            .child(ui::caption("Type", cx).w(dp(54.)).flex_none())
-            .children(Report::ALL.into_iter().map(|report| {
-                ui::caption(report.label(), cx)
-                    .w(dp(report.column_width()))
-                    .px(dp(4.))
-                    .overflow_hidden()
-                    .flex_none()
-            }));
-        let list = uniform_list(
-            "obs-applications-list",
-            self.matrix.len(),
-            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
-                range.map(|ix| this.matrix_row(ix, cx)).collect()
-            }),
-        )
-        .h(dp(590.))
-        .w_full();
-        let table = v_flex()
-            .id("obs-matrix")
+        DataTable::new()
+            .fit(MAX_APPLICATION_LINES)
+            .render(self, window, cx)
+            .id(self.application_table.id("table"))
             .test_support()
             .w_full()
-            .min_w(dp(MATRIX_WIDTH))
-            .bg(p.surface)
-            .rounded(px(12.))
-            .border_1()
-            .border_color(p.line)
-            .child(header)
-            .when_else(
-                self.matrix.is_empty(),
-                |this| {
-                    this.child(
-                        body()
-                            .child(text(if self.applications.is_empty() {
-                                "No applications were returned"
-                            } else {
-                                "No applications match these filters"
-                            }))
-                            .child(muted(
-                                "Clear the search or choose All to see every application.",
-                                cx,
-                            )),
-                    )
-                },
-                |this| this.child(list),
-            )
-            .child(
-                line()
-                    .px(dp(14.))
-                    .py(dp(10.))
-                    .border_t_1()
-                    .border_color(p.line)
-                    .child(muted(
-                        "● healthy · ○ unknown · — not reported · Coroot supplies each check",
-                        cx,
-                    )),
-            );
-        v_flex()
-            .gap(dp(12.))
-            .child(
-                div()
-                    .id("obs-matrix-horizontal")
-                    .w_full()
-                    .overflow_x_scroll()
-                    .child(table),
-            )
+            .flex_none()
             .into_any_element()
     }
-    fn matrix_row(&self, index: usize, cx: &Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        match &self.matrix[index] {
-            MatrixRow::Group { label, summary, .. } => line()
-                .w_full()
-                .h(dp(34.))
-                .px(dp(14.))
-                .bg(cx.theme().background)
-                .border_b_1()
-                .border_color(p.line)
-                .child(text(label.clone()).font_weight(ui::HEADING_WEIGHT))
-                .child(muted(summary.clone(), cx))
+
+    fn clear_application_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter = Filter::All;
+        self.namespace = None;
+        self.active_categories = Rc::new(self.categories.iter().cloned().collect());
+        self.query_text.clear();
+        self.query
+            .update(cx, |query, cx| query.set_value("", window, cx));
+        self.project();
+        cx.notify();
+    }
+}
+
+impl TableSource for ObservabilityPage {
+    type Key = freshkube_core::coroot::AppId;
+    type Sort = ();
+    type Column = ApplicationColumn;
+    type Row<'a> = ApplicationCells<'a>;
+
+    fn table_state(&self) -> &TableState {
+        &self.application_table
+    }
+    fn columns(&self) -> &[ApplicationColumn] {
+        &self.application_columns
+    }
+    fn width(&self) -> f32 {
+        self.application_width
+    }
+    fn list_label(&self) -> String {
+        "Applications grouped by namespace; choose a name or reported value to open its report"
+            .into()
+    }
+    fn sorting(&self, _: &ApplicationColumn) -> Option<((), Option<SortOrder>)> {
+        None
+    }
+    fn sort(&mut self, _: (), _: &mut Context<Self>) {}
+    fn clickable(&self) -> bool {
+        false
+    }
+    fn line_count(&self) -> usize {
+        self.matrix.len()
+    }
+    fn line(&self, line: usize, _: &App) -> Option<Line<Self::Key, ApplicationCells<'_>>> {
+        let index = match self.matrix.get(line)? {
+            MatrixRow::Group { .. } => return Some(Line::Group(line)),
+            MatrixRow::App(index) => *index,
+        };
+        let app = self.applications.get(index)?;
+        Some(Line::Row(TableRow {
+            key: app.id.clone(),
+            id: app.row_id.clone().into(),
+            label: app.label.clone(),
+            tooltip: Some(app.label.clone()),
+            marked: false,
+            muted: false,
+            data: ApplicationCells { app },
+        }))
+    }
+    fn cell(
+        &self,
+        row: &TableRow<Self::Key, ApplicationCells<'_>>,
+        style: &RowStyle,
+        column: &ApplicationColumn,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let app = row.data.app;
+        let p = style.p;
+        let cell = table::cell(column).h_full().flex().items_center();
+        match column.kind {
+            ColumnKind::Glyph => cell
+                .children(ui::status_glyph(app.status.tone(), cx))
                 .into_any_element(),
-            MatrixRow::App(index) => {
-                let index = *index;
-                let app = &self.applications[index];
+            ColumnKind::Name => {
                 let app_id = app.id.clone();
-                line()
-                    .id(app.row_id.clone())
-                    .test_support()
-                    .w_full()
-                    .h(dp(34.))
-                    .gap_0()
-                    .px(dp(8.))
-                    .border_b_1()
-                    .border_color(p.line)
-                    .child(div().w(dp(22.)).flex_none().child(status(app.status, cx)))
-                    .child(
-                        Button::new(app.name_id.clone())
-                            .ghost()
-                            .group("fog-control")
-                            .small()
-                            .flex_1()
-                            .min_w(dp(178.))
-                            .justify_start()
-                            .px_0()
-                            .overflow_hidden()
-                            .tooltip(app.label.clone())
-                            .accessibility_label(app.label.clone())
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .gap_0()
-                                    .child(
-                                        mono(app.namespace_prefix.clone())
-                                            .max_w(relative(0.45))
-                                            .flex_none()
-                                            .truncate()
-                                            .text_color(p.muted)
-                                            .group_hover("fog-control", |style| {
-                                                style.text_color(p.ink_2)
-                                            }),
-                                    )
-                                    .child(mono(app.name.clone()).flex_1().truncate()),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_app(app_id.clone(), Report::Errors, cx)
-                            })),
-                    )
-                    .child(
-                        text(app.language.clone())
-                            .text_size(dp(12.))
-                            .w(dp(54.))
-                            .flex_none(),
-                    )
-                    .children(Report::ALL.into_iter().map(|report| {
-                        let check = app.check(report);
-                        let app_id = app.id.clone();
-                        let problem = !matches!(check.status, Status::Ok | Status::Unknown);
-                        Button::new(check.element_id.clone())
-                            .ghost()
-                            .group("fog-control")
-                            .small()
-                            .w(dp(report.column_width()))
-                            .px(dp(4.))
-                            .gap(dp(4.))
-                            .justify_start()
-                            .font_family(MONO_FONT)
-                            .text_size(dp(12.))
-                            .text_color(if problem {
-                                ink(check.status, cx)
-                            } else {
-                                p.muted
-                            })
-                            .child(status(check.status, cx))
-                            .when(!check.value.is_empty(), |button| {
-                                button.child(
-                                    text(check.value.clone())
-                                        .truncate()
-                                        .group_hover("fog-control", |style| {
-                                            style.text_color(p.ink_2)
-                                        }),
-                                )
-                            })
-                            .tooltip(check.tooltip.clone())
-                            .accessibility_label(check.label.clone())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_app(app_id.clone(), report, cx)
-                            }))
-                    }))
-                    .into_any_element()
+                cell.child(
+                    Button::new(app.name_id.clone())
+                        .ghost()
+                        .small()
+                        .h_full()
+                        .w_full()
+                        .min_w_0()
+                        .justify_start()
+                        .px_0()
+                        .font_family(MONO_FONT)
+                        .text_size(dp(12.5))
+                        .text_color(p.ink)
+                        .child(mono(app.name.clone()).truncate())
+                        .tooltip(app.label.clone())
+                        .accessibility_label(app.label.clone())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_app(app_id.clone(), Report::Errors, cx)
+                        })),
+                )
+                .into_any_element()
+            }
+            ColumnKind::Type => cell
+                .child(text(app.language.clone()).text_color(p.ink_2))
+                .into_any_element(),
+            ColumnKind::Report(report) => {
+                let check = app.check(report);
+                let app_id = app.id.clone();
+                let problem = check.status.report_tone();
+                let color = match problem {
+                    Some(Tone::Crit) => p.crit_ink,
+                    Some(Tone::Warn) => p.warn_ink,
+                    _ if check.value.as_ref() == "—" => p.muted,
+                    _ => p.ink_2,
+                };
+                cell.child(
+                    Button::new(check.element_id.clone())
+                        .ghost()
+                        .small()
+                        .h_full()
+                        .w_full()
+                        .min_w_0()
+                        .px_0()
+                        .gap(dp(4.))
+                        .justify_start()
+                        .font_family(MONO_FONT)
+                        .text_size(dp(12.))
+                        .text_color(color)
+                        .children(problem.and_then(|tone| ui::status_glyph(tone, cx)))
+                        .child(text(check.value.clone()))
+                        .tooltip(check.tooltip.clone())
+                        .accessibility_label(check.label.clone())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_app(app_id.clone(), report, cx)
+                        })),
+                )
+                .into_any_element()
             }
         }
+    }
+    fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let MatrixRow::Group {
+            id,
+            label,
+            status,
+            summary,
+        } = self.matrix.get(group)?
+        else {
+            return None;
+        };
+        Some(
+            table::GroupRow::new(
+                id.clone(),
+                status.tone(),
+                label.clone(),
+                self.application_table.row_height(),
+            )
+            .detail(vec![summary.clone()])
+            .render(cx)
+            .into_any_element(),
+        )
+    }
+    fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.matrix.is_empty() {
+            return None;
+        }
+        let no_apps = self.applications.is_empty();
+        let actions =
+            if no_apps {
+                Vec::new()
+            } else {
+                vec![
+                    action("obs-clear-filters", "Clear filters")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.clear_application_filters(window, cx)
+                        }))
+                        .into_any_element(),
+                ]
+            };
+        Some(
+            ui::empty_state(
+                IconName::LayoutGrid,
+                if no_apps {
+                    "No applications were returned"
+                } else {
+                    "No applications match these filters"
+                },
+                if no_apps {
+                    "Coroot has no applications in this observation window."
+                } else {
+                    "Clear the search, namespace and category filters to see every application."
+                },
+                None,
+                actions,
+                cx,
+            )
+            .h_auto()
+            .into_any_element(),
+        )
+    }
+    fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.shown_apps >= self.counts[1] {
+            return Vec::new();
+        }
+        vec![
+            table::showing_bar(
+                self.application_table.id("collapsed"),
+                self.shown_apps,
+                self.counts[1],
+                Button::new("obs-show-all")
+                    .ghost()
+                    .small()
+                    .label("Show all")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.filter = Filter::All;
+                        this.project();
+                        cx.notify();
+                    })),
+                cx,
+            )
+            .into_any_element(),
+        ]
+    }
+    fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        const HINT: &str = "Glyphs show healthy, warning, critical, unknown or integration required. Healthy report values are plain; warning and critical reports carry a glyph. An em dash means no report.";
+        if crate::screens::content_width(window) < 600. {
+            return Some(
+                table::legend_line(
+                    self.application_table.id("legend"),
+                    "Health glyphs · Plain values · — no report",
+                    HINT,
+                    cx,
+                )
+                .test_support()
+                .into_any_element(),
+            );
+        }
+        let mut items: Vec<_> = [
+            (Tone::Good, "Healthy"),
+            (Tone::Warn, "Warning"),
+            (Tone::Crit, "Critical"),
+            (Tone::Unknown, "Unknown"),
+            (Tone::Integration, "Integration required"),
+        ]
+        .into_iter()
+        .map(|(tone, label)| {
+            table::legend_item(ui::status_glyph(tone, cx).unwrap(), label).into_any_element()
+        })
+        .collect();
+        items.push(table::legend_item(text("12%"), "Reported value").into_any_element());
+        items.push(table::legend_item(text("—"), "No report").into_any_element());
+        Some(
+            table::legend(items, cx)
+                .id(self.application_table.id("legend"))
+                .test_support()
+                .into_any_element(),
+        )
     }
 }

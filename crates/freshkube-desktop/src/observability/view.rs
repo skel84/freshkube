@@ -15,13 +15,7 @@ pub(super) fn ink(status: Status, cx: &App) -> Hsla {
 pub(super) fn status(state: Status, cx: &App) -> AnyElement {
     let p = palette(cx);
     match state {
-        Status::Integration => div()
-            .size(dp(9.))
-            .border(px(1.5))
-            .border_color(p.integration)
-            .rounded(px(1.))
-            .flex_none()
-            .into_any_element(),
+        Status::Integration => ui::status_glyph(Tone::Integration, cx).unwrap(),
         Status::Absent => text("—").text_color(p.muted).into_any_element(),
         Status::LogError | Status::Info => div()
             .size(dp(8.))

@@ -79,7 +79,7 @@ fn mount_with(
 }
 #[gpui_kit::test]
 fn applications_filter_and_cells_open_the_selected_report(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
+    let (_runtime, handle, page) = mount_size(cx, true, 1800., 900.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("obs-filter-all", cx);
@@ -129,7 +129,7 @@ fn live_mode_never_contains_example_applications(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.find("obs-integration-required").visible());
-            assert!(window.try_find("obs-matrix").is_none());
+            assert!(window.try_find("obs-applications-table").is_none());
             assert!(page.read(cx).applications.is_empty());
         })
         .unwrap();
@@ -758,7 +758,7 @@ fn application_report_values_preserve_missing_and_healthy_states_without_glyphs(
 
 #[gpui_kit::test]
 fn application_cells_expose_missing_unknown_and_healthy_values(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
+    let (_runtime, handle, page) = mount_size(cx, true, 1800., 900.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("obs-filter", cx);
@@ -785,6 +785,191 @@ fn application_cells_expose_missing_unknown_and_healthy_values(cx: &mut TestAppC
                 Some(label)
             );
         }
+        let p = crate::palette::palette(cx);
+        let healthy: gpui_kit::Background = p.good.into();
+        let side = crate::ui::dp_px(8., window).scale(window.scale_factor()).0;
+        for report in [Report::Cpu, Report::Errors, Report::DiskIo] {
+            let bounds = window
+                .find(worker.check(report).element_id.clone())
+                .bounds()
+                .scale(window.scale_factor());
+            assert!(
+                !window.painted_quads().iter().any(|quad| {
+                    bounds.contains(&quad.bounds.center())
+                        && (quad.bounds.size.width.0 - side).abs() < 0.5
+                        && (quad.bounds.size.height.0 - side).abs() < 0.5
+                        && (quad.background == healthy || quad.border_color == p.unk_ink)
+                }),
+                "healthy and unreported cells must not paint status dots: {report:?}"
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn integration_tally_paints_the_lavender_square_and_filters_apps(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            let mut apps = example::applications();
+            let unknown = apps
+                .iter_mut()
+                .find(|app| app.id == example::id("payments/checkout"))
+                .unwrap();
+            unknown.status = freshkube_core::coroot::Status::Unknown;
+            page.apply_applications(&apps);
+        });
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let chip = window.find("obs-tally-integration");
+        assert_eq!(chip.label(), Some("1 Integration"));
+        let chip_bounds = chip.bounds().scale(window.scale_factor());
+        let integration = crate::palette::palette(cx).integration;
+        let glyphs: Vec<_> = window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| {
+                quad.border_color == integration && chip_bounds.contains(&quad.bounds.center())
+            })
+            .collect();
+        assert_eq!(glyphs.len(), 1, "Integration needs its lavender outline");
+        let glyph = &glyphs[0];
+        let side = crate::ui::dp_px(9., window).scale(window.scale_factor()).0;
+        assert!((glyph.bounds.size.width.0 - side).abs() < 0.5);
+        assert!((glyph.bounds.size.height.0 - side).abs() < 0.5);
+        assert!(
+            glyph.corner_radii.top_left.0 < side / 3.,
+            "an integration square must not become the unknown circle"
+        );
+        window.click("obs-tally-integration", cx);
+        assert_eq!(page.read(cx).filter, super::Filter::Integration);
+        assert_eq!(page.read(cx).shown_apps, 1);
+        window.click("obs-tally-integration", cx);
+        assert_eq!(page.read(cx).filter, super::Filter::All);
+        assert!(page.read(cx).shown_apps > 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{TablePage, assert_table_page};
+    let (_runtime, handle, _page) = mount(cx, true);
+    let table = TablePage {
+        page: "obs-frame",
+        title: "obs-title",
+        title_text: "Applications",
+        table: "obs-applications-table-scroll",
+        list: "obs-applications-list",
+        density: "obs-density",
+    };
+    for text_size in [14., 20.] {
+        cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let layout = assert_table_page(window, cx, &table);
+            assert!(
+                layout.group.is_some(),
+                "namespace groups use the selected row density: {layout:#?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn applications_show_all_and_columns_keep_the_same_projection(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount_size(cx, true, 1800., 900.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let problems = page.read(cx).shown_apps;
+        assert!(window.find("obs-applications-collapsed").visible());
+        window.click("obs-show-all", cx);
+        assert!(page.read(cx).shown_apps > problems);
+        window.render_frame(cx);
+        assert!(window.try_find("obs-applications-collapsed").is_none());
+        let shown = page.read(cx).shown_apps;
+        let width = page.read(cx).application_width;
+        window.click("obs-columns", cx);
+        window.press("down", cx);
+        window.press("enter", cx);
+        assert!(
+            page.read(cx)
+                .hidden_application_columns
+                .contains(&super::application_columns::ColumnKind::Type)
+        );
+        assert!(page.read(cx).application_width < width);
+        assert_eq!(page.read(cx).shown_apps, shown);
+        window.render_frame(cx);
+        let table_id = gpui_kit::ElementId::from("obs-applications-table");
+        assert!(
+            !gpui_kit::base::test_support::snapshots(window)
+                .iter()
+                .any(|element| {
+                    element.path().contains(&table_id)
+                        && element.role() == Some(gpui_kit::Role::ColumnHeader)
+                        && element.label() == Some("Type")
+                })
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn applications_empty_filter_has_a_clear_action_and_empty_observations_do_not(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-filter", cx);
+        window.input("no-such-application", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-applications-empty").visible());
+        assert_eq!(page.read(cx).shown_apps, 0);
+        window.click("obs-clear-filters", cx);
+        assert!(page.read(cx).shown_apps > 0);
+        assert!(page.read(cx).query_text.is_empty());
+        assert_eq!(page.read(cx).filter, super::Filter::All);
+        page.update(cx, |page, _| page.apply_applications(&[]));
+        window.render_frame(cx);
+        assert!(window.find("obs-applications-empty").visible());
+        assert!(window.try_find("obs-clear-filters").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn applications_table_fits_short_results_and_caps_long_results(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount_size(cx, true, 1800., 900.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let short = page.read(cx).matrix.len();
+        assert!(short < 16);
+        assert_eq!(
+            window.find("obs-applications-list").bounds().size.height,
+            crate::ui::dp_px(short as f32 * 34., window)
+        );
+        window.click("obs-show-all", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).matrix.len() > 16);
+        assert_eq!(
+            window.find("obs-applications-list").bounds().size.height,
+            crate::ui::dp_px(16. * 34., window)
+        );
+        window.click("obs-density", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("obs-applications-list").bounds().size.height,
+            crate::ui::dp_px(16. * 26., window)
+        );
     })
     .unwrap();
 }

@@ -41,6 +41,15 @@ impl From<api::Status> for Status {
     }
 }
 impl Status {
+    pub(super) fn tone(self) -> Tone {
+        match self {
+            Self::Ok => Tone::Good,
+            Self::Critical => Tone::Crit,
+            Self::Warning | Self::LogError => Tone::Warn,
+            Self::Integration => Tone::Integration,
+            _ => Tone::Unknown,
+        }
+    }
     pub(super) fn report_tone(self) -> Option<Tone> {
         match self {
             Self::Critical => Some(Tone::Crit),
@@ -110,10 +119,6 @@ pub(super) fn applications(raw: &[api::Application]) -> Vec<Application> {
                 key: app.id.short(),
                 namespace: app.id.namespace().unwrap_or("Outside Kubernetes").into(),
                 name: app.id.name().into(),
-                namespace_prefix: format!(
-                    "{}/",
-                    app.id.namespace().unwrap_or("Outside Kubernetes")
-                ),
                 language: app.app_type.clone(),
                 category: app.category.clone(),
                 status: app.status.into(),

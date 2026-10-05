@@ -36,8 +36,8 @@ impl ObservabilityPage {
                         match filter {
                             Filter::Critical => Tone::Crit,
                             Filter::Warning => Tone::Warn,
-                            Filter::Integration => Tone::Unknown, // TODO: shared Tone::Integration in components follow-up.
-                            Filter::Logs => Tone::Accent,
+                            Filter::Integration => Tone::Integration,
+                            Filter::Logs => Tone::Warn,
                             _ => Tone::Good,
                         },
                         self.counts[ix],

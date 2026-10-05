@@ -3011,6 +3011,8 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
         window.render_frame(cx);
         window.click("section-observability", cx);
         assert_eq!(pilot.read(cx).page, Page::Observability);
+        window.render_frame(cx);
+        assert!(window.find("refresh").visible());
         window.click("nav-collapse", cx);
         assert!(pilot.read(cx).column_collapsed(window));
         window.click("nav-obs-traces", cx);

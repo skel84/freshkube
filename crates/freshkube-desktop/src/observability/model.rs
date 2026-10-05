@@ -125,18 +125,6 @@ impl Report {
             _ => "0",
         }
     }
-    pub(super) fn column_width(self) -> f32 {
-        match self {
-            Self::Upstreams => 84.,
-            Self::Instances => 68.,
-            Self::Restarts => 66.,
-            Self::Latency => 62.,
-            Self::Cpu | Self::Dns => 50.,
-            Self::Memory => 72.,
-            Self::Net => 80.,
-            Self::Errors | Self::Disk | Self::DiskIo | Self::Logs => 58.,
-        }
-    }
     pub(super) fn index(self) -> usize {
         Self::ALL.iter().position(|r| *r == self).unwrap_or(0)
     }
@@ -166,7 +154,6 @@ pub(super) struct Application {
     pub label: gpui_kit::SharedString,
     pub key: String,
     pub namespace: String,
-    pub namespace_prefix: String,
     pub name: String,
     pub language: String,
     pub category: String,
