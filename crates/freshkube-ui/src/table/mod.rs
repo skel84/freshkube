@@ -35,6 +35,23 @@ pub const ROW_GROUP: &str = "table-row";
 pub const CELL_PAD: f32 = 10.;
 /// The width of a row's glyph column, whose glyph sits at its centre.
 pub const GLYPH_WIDTH: f32 = 34.;
+/// The widest a fixed column grows from its text.
+pub const WIDEST: f32 = 280.;
+/// The widest the flexible column's least width grows; it takes any room
+/// left over beyond that.
+pub const WIDEST_FLEXIBLE: f32 = 440.;
+
+/// DESIGN.md's widths, derived when the data changes: 7.5 a character of
+/// the longest text or the label, plus 24, at least 64 and at most `most`
+/// ([`WIDEST`] or [`WIDEST_FLEXIBLE`]).
+pub fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>, most: f32) -> f32 {
+    let chars = texts
+        .map(|text| text.chars().count())
+        .chain([label.chars().count()])
+        .max()
+        .unwrap_or_default();
+    (chars as f32 * 7.5 + 24.).clamp(64., most)
+}
 
 /// What the table needs to know of a column.
 pub trait TableColumn {
@@ -327,4 +344,27 @@ pub fn status_chips(
         .text_size(dp(12.))
         .text_color(palette(cx).muted)
         .children(chips)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_follows_the_longest_text_between_its_bounds() {
+        let texts: Vec<SharedString> = vec!["ab".into(), "abcdefghijkl".into()];
+        assert_eq!(fit("Size", texts.iter(), WIDEST), 12. * 7.5 + 24.);
+        // A short column keeps the least width; the label counts too.
+        assert_eq!(fit("PID", [].iter(), WIDEST), 64.);
+        assert_eq!(fit("Transport", [].iter(), WIDEST), 9. * 7.5 + 24.);
+        let long: SharedString = "x".repeat(100).into();
+        assert_eq!(fit("Model", [&long].into_iter(), WIDEST), WIDEST);
+        assert_eq!(
+            fit("Model", [&long].into_iter(), WIDEST_FLEXIBLE),
+            WIDEST_FLEXIBLE
+        );
+        // Characters, not bytes.
+        let tree: SharedString = "├─ │  ".into();
+        assert_eq!(fit("", [&tree].into_iter(), WIDEST), 6. * 7.5 + 24.);
+    }
 }

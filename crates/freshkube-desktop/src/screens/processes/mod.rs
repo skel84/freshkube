@@ -5,8 +5,6 @@
 //! data, `set_source` that drops data only when the target changes, example
 //! data for `--fixture`, the shared `gated_page` / `header` helpers, and
 //! element ids plus roles so UI tests can drive it.
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -30,51 +28,21 @@ use talos_rs::{CpuStat, ProcessInfo, ProcessState};
 use tokio::runtime::Handle;
 
 use super::{
-    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page_mode, header_mode, mono, panel, partial_notice,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
+    gated_page_mode, header_mode, mono, panel, partial_notice,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use example::example;
+use freshkube_ui::table::{self, DataTable, TableState};
+use source::Derived;
 
 const CONTEXT: &str = "TalosProcesses";
-const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
 /// Below this content width the details pane moves under the list.
 const SIDE_DETAILS: f32 = 900.;
 const LIST_MIN_HEIGHT: f32 = 200.;
 const DETAILS_HEIGHT: f32 = 220.;
-
-const COLUMNS: [Column; 7] = [
-    Column {
-        label: "PID",
-        width: Some(64.),
-    },
-    Column {
-        label: "State",
-        width: Some(64.),
-    },
-    Column {
-        label: "CPU",
-        width: Some(64.),
-    },
-    Column {
-        label: "CPU time",
-        width: Some(80.),
-    },
-    Column {
-        label: "Memory",
-        width: Some(84.),
-    },
-    Column {
-        label: "Threads",
-        width: Some(84.),
-    },
-    Column {
-        label: "Command",
-        width: None,
-    },
-];
 
 actions!(
     talos_processes,
@@ -117,14 +85,6 @@ impl StateFilter {
     }
 }
 
-/// The display rows for one snapshot and one set of view settings. The
-/// snapshot is held, so pointer identity can't be reused by a newer one.
-struct CachedRows {
-    snapshot: Arc<ProcessInspectionSnapshot>,
-    settings: RowSettings,
-    rows: Rc<Vec<ProcessDisplayRow>>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct RowSettings {
     sort: ProcessSort,
@@ -145,8 +105,9 @@ pub(crate) struct ProcessesScreen {
     copied: Option<i32>,
     query: Entity<InputState>,
     focus: FocusHandle,
-    scroll: UniformListScrollHandle,
-    rows: RefCell<Option<CachedRows>>,
+    table: TableState,
+    /// The rows, derived when the snapshot or the view settings change.
+    derived: Option<Derived>,
     _subscription: Subscription,
     /// Caret and selection changes redraw the filter; this view is cached, so
     /// it has to hear about them.
@@ -203,8 +164,8 @@ impl ScreenPanel for ProcessesScreen {
             _query_observer: cx.observe(&query, |_, _, cx| cx.notify()),
             query,
             focus: cx.focus_handle(),
-            scroll: UniformListScrollHandle::new(),
-            rows: RefCell::new(None),
+            table: TableState::new("processes"),
+            derived: None,
             _subscription: subscription,
         }
     }
@@ -288,37 +249,6 @@ impl ProcessesScreen {
         }
     }
 
-    /// Display rows, recomputed only when the snapshot or the view settings
-    /// change; rendering, the list processor and navigation share them.
-    fn rows(&self, cx: &App) -> Rc<Vec<ProcessDisplayRow>> {
-        let Some(snapshot) = self.loader.data() else {
-            return Rc::default();
-        };
-        let settings = self.settings(cx);
-        let mut cache = self.rows.borrow_mut();
-        if let Some(cached) = cache
-            .as_ref()
-            .filter(|cached| Arc::ptr_eq(&cached.snapshot, snapshot) && cached.settings == settings)
-        {
-            return cached.rows.clone();
-        }
-        crate::desktop::probe::hit("processes.rows");
-        let rows = Rc::new(snapshot.display_rows(&ProcessView {
-            sort: settings.sort,
-            filter: freshkube_core::inspection::ProcessFilter {
-                text: settings.text.clone(),
-                state: settings.state.state(),
-            },
-            tree: settings.tree,
-        }));
-        *cache = Some(CachedRows {
-            snapshot: snapshot.clone(),
-            settings,
-            rows: rows.clone(),
-        });
-        rows
-    }
-
     fn selected_entry(&self) -> Option<&ProcessSnapshotEntry> {
         let pid = self.selected?;
         self.loader
@@ -329,35 +259,24 @@ impl ProcessesScreen {
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let rows = self.rows(cx);
-        let Some(snapshot) = self.loader.data() else {
+        self.sync_rows(cx);
+        let Some(pid) = table::step(&*self, delta, cx) else {
             return;
         };
-        if rows.is_empty() {
-            return;
-        }
-        let current = rows.iter().position(|row| {
-            Some(snapshot.processes[row.process_index].process.pid) == self.selected
-        });
-        let next = match current {
-            Some(ix) => ix.saturating_add_signed(delta).min(rows.len() - 1),
-            None if delta < 0 => rows.len() - 1,
-            None => 0,
-        };
-        self.selected = Some(snapshot.processes[rows[next].process_index].process.pid);
-        self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        self.selected = Some(pid);
+        table::reveal(&*self, ScrollStrategy::Nearest);
         cx.notify();
     }
 
     fn set_sort(&mut self, sort: ProcessSort, cx: &mut Context<Self>) {
         self.sort = sort;
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
     fn set_state_filter(&mut self, filter: StateFilter, cx: &mut Context<Self>) {
         self.state_filter = filter;
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -368,7 +287,7 @@ impl ProcessesScreen {
             (_, Some(pid)) => ProcessTree::Subtree { root_pid: pid },
             (tree, None) => tree,
         };
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -378,7 +297,7 @@ impl ProcessesScreen {
             ProcessTree::Full => ProcessTree::Flat,
             _ => ProcessTree::Full,
         };
-        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.table.reveal(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -410,6 +329,7 @@ impl ProcessesScreen {
 }
 
 mod example;
+mod source;
 mod view;
 
 #[cfg(test)]

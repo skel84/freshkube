@@ -1,4 +1,4 @@
-//! The Processes page: summary, toolbar, list and details.
+//! The Processes page: summary, toolbar, table and details.
 use super::*;
 
 impl ProcessesScreen {
@@ -143,123 +143,6 @@ impl ProcessesScreen {
             )
     }
 
-    /// Column headers; CPU, CPU time and Memory sort the list when clicked.
-    fn head(&self, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let current = self.sort;
-        h_flex()
-            .py(dp(7.))
-            .border_b_1()
-            .border_color(p.line)
-            .children(COLUMNS.iter().enumerate().map(|(ix, column)| {
-                let sort = match ix {
-                    2 => Some((ProcessSort::CpuPercent, "sort-cpu")),
-                    3 => Some((ProcessSort::CpuTime, "sort-cpu-time")),
-                    4 => Some((ProcessSort::ResidentMemory, "sort-memory")),
-                    _ => None,
-                };
-                let label = ui::caption(column.label, cx);
-                match sort {
-                    None => cell(*column).child(label).into_any_element(),
-                    Some((sort, id)) => {
-                        let active = sort == current;
-                        cell(*column)
-                            .child(
-                                h_flex()
-                                    .id(id)
-                                    .test_support()
-                                    .role(Role::ColumnHeader)
-                                    .aria_selected(active)
-                                    .aria_label(format!("Sort by {}", column.label))
-                                    .justify_end()
-                                    .gap_1()
-                                    .cursor_pointer()
-                                    .when(active, |this| this.text_color(p.accent))
-                                    .child(label)
-                                    .when(active, |this| {
-                                        this.child(
-                                            Icon::new(IconName::ArrowDown)
-                                                .size(dp(11.))
-                                                .text_color(p.accent),
-                                        )
-                                    })
-                                    .on_click(
-                                        cx.listener(move |view, _, _, cx| view.set_sort(sort, cx)),
-                                    ),
-                            )
-                            .into_any_element()
-                    }
-                }
-            }))
-    }
-
-    fn render_row(
-        &self,
-        ix: usize,
-        row: &ProcessDisplayRow,
-        snapshot: &ProcessInspectionSnapshot,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let entry = &snapshot.processes[row.process_index];
-        let process = &entry.process;
-        let pid = process.pid;
-        let selected = self.selected == Some(pid);
-        let alarming = matches!(
-            process.state,
-            ProcessState::Zombie | ProcessState::DiskSleep
-        );
-        let cpu = entry.cpu_percent_display().unwrap_or_else(|| "—".into());
-        let prefix = tree_prefix(row);
-        let values = [
-            pid.to_string(),
-            process.state.short().to_owned(),
-            cpu.clone(),
-            process.cpu_time_human(),
-            entry.resident_memory_display(),
-            process.threads.to_string(),
-        ];
-        h_flex()
-            .id(("process", ix))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(format!(
-                "{} · PID {pid} · {} · CPU {cpu} · {}",
-                process.command,
-                process.state.description(),
-                entry.resident_memory_display()
-            ))
-            .w_full()
-            .h(dp(ROW_HEIGHT))
-            .font_family(MONO_FONT)
-            .text_size(dp(12.))
-            .cursor_pointer()
-            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-            .children(values.into_iter().zip(COLUMNS).enumerate().map(
-                |(column_ix, (value, column))| {
-                    cell(column)
-                        .when(column_ix == 1 && alarming && !selected, |this| {
-                            this.text_color(p.warn_ink)
-                        })
-                        .when(column_ix != 1, |this| this.text_right())
-                        .child(value)
-                },
-            ))
-            .child(
-                cell(COLUMNS[6])
-                    .child(div().text_color(p.faint).child(prefix))
-                    .flex()
-                    .child(div().truncate().child(process.display_command().to_owned())),
-            )
-            .on_click(cx.listener(move |view, _, window, cx| {
-                view.selected = Some(pid);
-                window.focus(&view.focus, cx);
-                cx.notify();
-            }))
-    }
-
     fn details(&self, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let Some(entry) = self.selected_entry() else {
@@ -388,21 +271,6 @@ impl ProcessesScreen {
     }
 }
 
-/// Box-drawing connectors for a tree row; roots have none.
-fn tree_prefix(row: &ProcessDisplayRow) -> String {
-    if row.depth == 0 {
-        return String::new();
-    }
-    let mut prefix: String = row
-        .ancestors_have_siblings
-        .iter()
-        .skip(1)
-        .map(|continues| if *continues { "│  " } else { "   " })
-        .collect();
-    prefix.push_str(if row.is_last { "└─ " } else { "├─ " });
-    prefix
-}
-
 impl Render for ProcessesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("processes");
@@ -418,14 +286,10 @@ impl Render for ProcessesScreen {
         ) {
             return page;
         }
+        self.sync_rows(cx);
         let (Some(source), Some(snapshot)) = (self.source.clone(), self.loader.data()) else {
             return div().into_any_element();
         };
-        let p = palette(cx);
-        let rows = self.rows(cx);
-        // Selection survives refreshes by PID; it's dropped only when the
-        // process is gone, so the details pane never shows another process.
-        let row_count = rows.len();
         let counts = snapshot.state_counts;
         let total = snapshot.processes.len();
         let summary = self.summary(snapshot, cx);
@@ -436,107 +300,66 @@ impl Render for ProcessesScreen {
                 format!("{}: {message}", source.label())
             })
             .collect();
-        let empty = if total == 0 {
-            "This node didn't report any processes."
-        } else {
-            "No processes match these filters."
-        };
-        let list = panel(cx)
+        // The keys live on a wrapper drawn in every state, so `/` and Escape
+        // still work while the filters hide every row. Selection survives
+        // refreshes by PID; the details say when the process is gone.
+        let list = div()
+            .id("processes-table")
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|view, _: &NextProcess, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousProcess, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstProcess, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastProcess, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &CopyCommand, _, cx| view.copy_command(cx)))
+            .on_action(cx.listener(|view, _: &ToggleSubtree, _, cx| view.toggle_subtree(cx)))
+            .on_action(cx.listener(|view, _: &ToggleTree, _, cx| view.toggle_tree(cx)))
+            .on_action(cx.listener(|view, _: &SortByCpu, _, cx| {
+                let sort = if view.sort == ProcessSort::CpuPercent {
+                    ProcessSort::CpuTime
+                } else {
+                    ProcessSort::CpuPercent
+                };
+                view.set_sort(sort, cx);
+            }))
+            .on_action(cx.listener(|view, _: &SortByMemory, _, cx| {
+                view.set_sort(ProcessSort::ResidentMemory, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ToggleZombies, _, cx| {
+                let next = if view.state_filter == StateFilter::Zombie {
+                    StateFilter::All
+                } else {
+                    StateFilter::Zombie
+                };
+                view.set_state_filter(next, cx);
+            }))
+            .on_action(cx.listener(|view, _: &ToggleDiskWait, _, cx| {
+                let next = if view.state_filter == StateFilter::DiskWait {
+                    StateFilter::All
+                } else {
+                    StateFilter::DiskWait
+                };
+                view.set_state_filter(next, cx);
+            }))
+            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+                let focus = view.query.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+            }))
+            .on_action(
+                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
+            )
+            .flex()
+            .flex_col()
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .child(self.head(cx))
             .child(
-                div()
-                    .id("process-list")
-                    .test_support()
-                    .role(Role::ListBox)
-                    .aria_label(
-                        "Processes on the target node; arrows select, T shows the subtree, Command or Control C copies the command",
-                    )
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|view, _: &NextProcess, _, cx| view.step(1, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousProcess, _, cx| view.step(-1, cx)))
-                    .on_action(cx.listener(|view, _: &FirstProcess, _, cx| view.step(isize::MIN, cx)))
-                    .on_action(cx.listener(|view, _: &LastProcess, _, cx| view.step(isize::MAX, cx)))
-                    .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
-                    .on_action(cx.listener(|view, _: &CopyCommand, _, cx| view.copy_command(cx)))
-                    .on_action(cx.listener(|view, _: &ToggleSubtree, _, cx| view.toggle_subtree(cx)))
-                    .on_action(cx.listener(|view, _: &ToggleTree, _, cx| view.toggle_tree(cx)))
-                    .on_action(cx.listener(|view, _: &SortByCpu, _, cx| {
-                        let sort = if view.sort == ProcessSort::CpuPercent {
-                            ProcessSort::CpuTime
-                        } else {
-                            ProcessSort::CpuPercent
-                        };
-                        view.set_sort(sort, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &SortByMemory, _, cx| {
-                        view.set_sort(ProcessSort::ResidentMemory, cx)
-                    }))
-                    .on_action(cx.listener(|view, _: &ToggleZombies, _, cx| {
-                        let next = if view.state_filter == StateFilter::Zombie {
-                            StateFilter::All
-                        } else {
-                            StateFilter::Zombie
-                        };
-                        view.set_state_filter(next, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &ToggleDiskWait, _, cx| {
-                        let next = if view.state_filter == StateFilter::DiskWait {
-                            StateFilter::All
-                        } else {
-                            StateFilter::DiskWait
-                        };
-                        view.set_state_filter(next, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
-                        let focus = view.query.read(cx).focus_handle(cx);
-                        window.focus(&focus, cx);
-                    }))
-                    .on_action(cx.listener(|view, _: &ClearFilter, window, cx| {
-                        view.clear_filter(window, cx)
-                    }))
+                DataTable::new()
+                    .carded()
+                    .render(self, window, cx)
                     .flex_1()
-                    .min_h_0()
-                    .map(|this| {
-                        if row_count == 0 {
-                            this.child(
-                                div()
-                                    .px_3()
-                                    .py_3p5()
-                                    .text_size(dp(12.5))
-                                    .text_color(p.muted)
-                                    .child(empty),
-                            )
-                            .into_any_element()
-                        } else {
-                            this.child(
-                                uniform_list(
-                                    "process-rows",
-                                    row_count,
-                                    cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
-                                        let rows = view.rows(cx);
-                                        let Some(snapshot) = view.loader.data() else {
-                                            return Vec::new();
-                                        };
-                                        range
-                                            .filter_map(|ix| {
-                                                rows.get(ix).map(|row| {
-                                                    view.render_row(ix, row, snapshot, cx)
-                                                })
-                                            })
-                                            .collect::<Vec<_>>()
-                                    }),
-                                )
-                                .track_scroll(&self.scroll)
-                                .size_full(),
-                            )
-                            .into_any_element()
-                        }
-                    }),
+                    .min_h_0(),
             );
         let details = self.details(cx);
         let wide = content_width(window) >= SIDE_DETAILS;

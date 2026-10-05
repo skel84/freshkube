@@ -17,7 +17,8 @@ A list that can outgrow a screen renders only the rows a frame can show. Fixed-h
 | List | Size | Rendering | Status |
 | --- | --- | --- | --- |
 | Resources page (Kubernetes kinds) | up to thousands of rows | `uniform_list` | Fine |
-| Processes, Network and Workloads tables | hundreds to thousands | `uniform_list` | Fine |
+| Processes (a node's processes) | hundreds to thousands | the shared `DataTable`, a `uniform_list`; rows, columns and widths derived when a sample arrives or the sort, filters or tree change | Fine |
+| Network and Workloads tables | hundreds to thousands | `uniform_list` | Fine |
 | Storage (a node's disks and volumes) | tens of rows | the shared `DataTable`, a `uniform_list`; rows, columns and widths derived when the node answers | Fine |
 | Log views (`LogView`: Talos logs and pod logs) | up to 8 MiB of lines, tens of thousands | `VirtualList` with measured heights | Fine. A wrapped resize or a flood of lines lays out only the rows on screen ([below](#wrapped-rows-during-a-resize)); 10,000 lines a second keep up ([PERFORMANCE.md](PERFORMANCE.md#logs-keep-up-with-a-flood)) |
 | Detail pane YAML | thousands of lines for a large object | `uniform_list` of unwrapped lines, as wide as the longest line. A line draws at most 2,000 characters, and search marks at most 10,000 matches | Fine. Wrapping would need the measured approach below |

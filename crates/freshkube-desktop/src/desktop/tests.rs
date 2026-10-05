@@ -857,12 +857,14 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Nodes);
         assert_eq!(window.find("node-tab-processes").checked(), Some(true));
-        assert!(window.find("process-list").visible());
-        assert!(window.find(("process", 0usize)).visible());
+        assert!(window.find("processes-list").visible());
+        // Rows are keyed by PID. Init leads the first sample, which has no
+        // CPU deltas to sort by yet.
+        assert!(window.find(("process", 1usize)).visible());
         // Navigating focuses the list, so arrow keys work without a click.
         window.press("down", cx);
         window.render_frame(cx);
-        assert_eq!(window.find(("process", 0usize)).selected(), Some(true));
+        assert_eq!(window.find(("process", 1usize)).selected(), Some(true));
         // A node switch reaches the visible screen as a new target.
         pick_target(window, cx, 4);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
@@ -870,7 +872,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         assert!(window.find("partial-notice").visible());
         // The retained screen scrolls under the node header in a short pane.
         for _ in 0..10 {
-            if window.find("process-list").visible() {
+            if window.find("processes-list").visible() {
                 break;
             }
             window.scroll(
@@ -880,7 +882,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
             );
             window.render_frame(cx);
         }
-        assert!(window.find("process-list").visible());
+        assert!(window.find("processes-list").visible());
         for tab in [
             super::nodes::NodeTab::Storage,
             super::nodes::NodeTab::Network,
