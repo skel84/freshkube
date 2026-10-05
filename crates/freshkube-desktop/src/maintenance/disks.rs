@@ -25,7 +25,7 @@ enum Field {
     Action,
 }
 
-pub(super) struct Column {
+pub(crate) struct Column {
     field: Field,
     label: SharedString,
     width: f32,
@@ -50,7 +50,7 @@ impl TableColumn for Column {
     }
 }
 
-pub(super) struct DiskRow {
+pub(crate) struct DiskRow {
     path: SharedString,
     id: SharedString,
     size: SharedString,
