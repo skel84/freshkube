@@ -88,8 +88,6 @@ gpui_kit::assets::icon_assets!(
         Puzzle,
         Radar,
         // The resource table.
-        Rows2,
-        Rows4,
         SquareCheck,
         Logs,
         Flame,

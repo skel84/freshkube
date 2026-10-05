@@ -92,7 +92,7 @@ impl Pilot {
                         row.group.id(),
                         row.group.tone(),
                         row.group.label(),
-                        table::COMPACT_ROW_HEIGHT,
+                        table::ROW_HEIGHT,
                     )
                     .detail(detail.into_iter().collect())
                     .render(cx)
@@ -168,7 +168,7 @@ impl Pilot {
             .role(Role::ListBoxOption)
             .aria_label(row.name.clone())
             .w_full()
-            .h(dp(table::COMPACT_ROW_HEIGHT))
+            .h(dp(table::ROW_HEIGHT))
             .px_3()
             .gap(dp(10.))
             .border_b_1()

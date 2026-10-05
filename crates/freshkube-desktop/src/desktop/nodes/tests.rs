@@ -817,7 +817,6 @@ fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut Test
                     title_text: "Nodes",
                     table: "nodes-table-scroll",
                     list: "nodes-list",
-                    density: "nodes-density",
                 },
             );
             assert_eq!(pilot.read(cx).selected_node, before);
@@ -828,21 +827,17 @@ fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut Test
 }
 
 #[gpui_kit::test]
-fn nodes_columns_and_density_preserve_row_identity(cx: &mut TestAppContext) {
+fn nodes_columns_preserve_row_identity(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        let before = window.find("node-talos-cp-fra1-01").bounds().size.height;
-        window.click("nodes-density", cx);
-        window.render_frame(cx);
         assert_eq!(
             window.find("node-talos-cp-fra1-01").bounds().size.height,
             crate::ui::dp_px(26., window)
         );
-        assert!(window.find("node-talos-cp-fra1-01").bounds().size.height < before);
         window.click("nodes-columns", cx);
         window.render_frame(cx);
         let nodes = &pilot.read(cx).node_workspace;
@@ -1035,7 +1030,6 @@ fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppCont
                 title_text: "Nodes",
                 table: "nodes-table-scroll",
                 list: "nodes-list",
-                density: "nodes-density",
             },
         );
         for id in [
@@ -1046,7 +1040,6 @@ fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppCont
             "nodes-tally-warning",
             "nodes-tally-unknown",
             "nodes-tally-healthy",
-            "nodes-density",
             "nodes-columns",
             "nodes-refresh",
         ] {
@@ -1460,43 +1453,37 @@ fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expande
                     window.click("nodes-healthy-toggle", cx);
                     window.render_frame(cx);
                 }
-                for compact in [false, true] {
-                    if pilot.read(cx).node_workspace.table.compact != compact {
-                        window.click("nodes-density", cx);
-                        window.render_frame(cx);
+                let viewport = window.find("nodes-table-scroll").bounds();
+                let last = window.find(("nodes-sort", 8usize)).bounds();
+                assert!(last.right() <= viewport.right() + px(1.),
+                    "Services overflows at text {text}, expanded={expanded}: {last:?} in {viewport:?}");
+                let nodes = &pilot.read(cx).node_workspace;
+                assert!(crate::ui::dp_px(nodes.table_width, window) <= viewport.size.width,
+                    "column width {} exceeds viewport {:?}", nodes.table_width, viewport);
+                let name = window.find(("nodes-sort", 1usize)).bounds();
+                for row in nodes.rows.iter() {
+                    let resources = nodes.resource_cells.get(&row.key).unwrap();
+                    for (label, value) in [("CPU", resources.cpu.text.as_ref()), ("Memory", resources.memory.text.as_ref())] {
+                        let column = nodes.columns.iter().find(|column| column.label() == label).unwrap();
+                        assert_eq!(column.width(), 124.);
+                        let run = TextRun {len: value.len(), font: font(crate::ui::MONO_FONT),
+                            color: Default::default(), background_color: None, underline: None, strikethrough: None};
+                        let shaped = window.text_system().shape_line(SharedString::from(value.to_owned()),
+                            crate::ui::dp_px(12.5, window), &[run], None).width;
+                        assert!(shaped <= crate::ui::dp_px(48., window),
+                            "{label} truncates {value} at text {text}");
                     }
-                    let viewport = window.find("nodes-table-scroll").bounds();
-                    let last = window.find(("nodes-sort", 8usize)).bounds();
-                    assert!(last.right() <= viewport.right() + px(1.),
-                        "Services overflows at text {text}, expanded={expanded}, compact={compact}: {last:?} in {viewport:?}");
-                    let nodes = &pilot.read(cx).node_workspace;
-                    assert!(crate::ui::dp_px(nodes.table_width, window) <= viewport.size.width,
-                        "column width {} exceeds viewport {:?}", nodes.table_width, viewport);
-                    let name = window.find(("nodes-sort", 1usize)).bounds();
-                    for row in nodes.rows.iter() {
-                        let resources = nodes.resource_cells.get(&row.key).unwrap();
-                        for (label, value) in [("CPU", resources.cpu.text.as_ref()), ("Memory", resources.memory.text.as_ref())] {
-                            let column = nodes.columns.iter().find(|column| column.label() == label).unwrap();
-                            assert_eq!(column.width(), 124.);
-                            let run = TextRun {len: value.len(), font: font(crate::ui::MONO_FONT),
-                                color: Default::default(), background_color: None, underline: None, strikethrough: None};
-                            let shaped = window.text_system().shape_line(SharedString::from(value.to_owned()),
-                                crate::ui::dp_px(12.5, window), &[run], None).width;
-                            assert!(shaped <= crate::ui::dp_px(48., window),
-                                "{label} truncates {value} at text {text}");
-                        }
-                        if row.name.len() <= 16 {
-                            assert!(crate::ui::dp_px(row.name.len() as f32 * 7.5 + 24., window) <= name.size.width);
-                        }
+                    if row.name.len() <= 16 {
+                        assert!(crate::ui::dp_px(row.name.len() as f32 * 7.5 + 24., window) <= name.size.width);
                     }
-                    let row = nodes.rows.iter().find(|row| row.name == "talos-wk-fra1-02").unwrap();
-                    let status = window.find((row.id.clone(), super::table::Field::Services as usize));
-                    assert!(status.visible());
-                    assert_eq!(status.role(), Some(gpui_kit::Role::Status));
-                    assert_eq!(status.label(), Some(row.service_status.label.as_ref()));
-                    assert!(status.bounds().right() <= viewport.right() + px(1.));
-                    assert_eq!(row.table_load.split('·').count(), 3);
                 }
+                let row = nodes.rows.iter().find(|row| row.name == "talos-wk-fra1-02").unwrap();
+                let status = window.find((row.id.clone(), super::table::Field::Services as usize));
+                assert!(status.visible());
+                assert_eq!(status.role(), Some(gpui_kit::Role::Status));
+                assert_eq!(status.label(), Some(row.service_status.label.as_ref()));
+                assert!(status.bounds().right() <= viewport.right() + px(1.));
+                assert_eq!(row.table_load.split('·').count(), 3);
             }
         }
     }).unwrap();

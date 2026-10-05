@@ -321,7 +321,7 @@ impl TableSource for Pilot {
             status.group_id(),
             status.tone(),
             status.label(),
-            self.node_workspace.table.row_height(),
+            table::ROW_HEIGHT,
         )
         .detail(detail);
         let row = if status == projection::Status::Healthy

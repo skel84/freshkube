@@ -189,8 +189,8 @@ impl PageHeader {
         self
     }
 
-    /// One control at the right, in order: source or namespace, density,
-    /// columns, time range, refresh.
+    /// One control at the right, in order: source or namespace, columns,
+    /// time range, refresh.
     pub fn control(mut self, control: impl IntoElement) -> Self {
         self.controls.push(control.into_any_element());
         self

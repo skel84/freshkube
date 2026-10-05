@@ -23,10 +23,9 @@ pub use data::{
     step,
 };
 
-/// Comfortable rows, and the compact ones the density toggle picks. Group
-/// rows take the same height, so the list stays uniform.
-pub const ROW_HEIGHT: f32 = 34.;
-pub const COMPACT_ROW_HEIGHT: f32 = 26.;
+/// Every table's row height. Group rows take the same height, so the list
+/// stays uniform; the text size scales it for anyone who wants it larger.
+pub const ROW_HEIGHT: f32 = 26.;
 /// The header row's height.
 pub const HEADER_HEIGHT: f32 = 26.;
 /// The hover group of a row, for cells that brighten with it.
@@ -48,7 +47,7 @@ pub trait TableColumn {
 
 /// A cell's frame: padded, truncated, at its column's width.
 pub fn cell(column: &impl TableColumn) -> Div {
-    let cell = div().px_3().min_w_0().whitespace_nowrap().truncate();
+    let cell = div().px(dp(10.)).min_w_0().whitespace_nowrap().truncate();
     if column.flexible() {
         cell.flex_1().min_w(dp(column.width()))
     } else {
