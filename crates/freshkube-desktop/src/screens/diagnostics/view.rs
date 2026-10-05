@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::page::{self, PageHeader};
 
 impl DiagnosticsScreen {
     fn summary(&self, snapshot: &DiagnosticSnapshot, cx: &App) -> impl IntoElement + use<> {
@@ -344,18 +345,66 @@ impl DiagnosticsScreen {
 
 impl Render for DiagnosticsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(page) = gated_page_mode(
-            "diagnostics-page",
-            "Diagnostics",
-            Scope::Node,
+        let header = self.render_header(window, cx);
+        let state = gate(
             self.source.as_ref(),
             &self.loader,
+            Scope::Node,
             "the diagnostics",
-            self.embedded,
             cx,
-        ) {
-            return page;
-        }
+        );
+        let body = match state {
+            Some(state) => page::inset()
+                .id("diagnostics-state")
+                .test_support()
+                .child(state)
+                .into_any_element(),
+            None => self.render_body(window, cx),
+        };
+        // The keys live on the page, drawn in every state; the page scrolls
+        // when the window is too short for the list's least height.
+        page::page("diagnostics-page")
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .on_action(cx.listener(|view, _: &NextCheck, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousCheck, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstCheck, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastCheck, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &ToggleProblems, _, cx| {
+                view.set_only_problems(!view.only_problems, cx)
+            }))
+            .child(page::toolbar(cx).child(header))
+            .child(body)
+    }
+}
+
+impl DiagnosticsScreen {
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "Diagnostics");
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh diagnostics",
+            self.source.as_ref(),
+            &self.loader,
+            cx,
+        );
+        header
+            .control(refresh)
+            .meta(meta(
+                self.source.as_ref(),
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                [],
+            ))
+            .render(window, cx)
+    }
+
+    /// The banners, the summary, the filter and the checks with the
+    /// selection's details, inset under the toolbar.
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (Some(source), Some(snapshot)) = (self.source.clone(), self.loader.data().cloned())
         else {
             return div().into_any_element();
@@ -429,15 +478,6 @@ impl Render for DiagnosticsScreen {
                     .test_support()
                     .role(Role::ListBox)
                     .aria_label("Diagnostic checks; arrows select a check, P shows only problems")
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|view, _: &NextCheck, _, cx| view.step(1, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousCheck, _, cx| view.step(-1, cx)))
-                    .on_action(cx.listener(|view, _: &FirstCheck, _, cx| view.step(isize::MIN, cx)))
-                    .on_action(cx.listener(|view, _: &LastCheck, _, cx| view.step(isize::MAX, cx)))
-                    .on_action(cx.listener(|view, _: &ToggleProblems, _, cx| {
-                        view.set_only_problems(!view.only_problems, cx)
-                    }))
                     .flex_1()
                     .min_h_0()
                     .pb_2()
@@ -495,23 +535,12 @@ impl Render for DiagnosticsScreen {
                 )
         };
         v_flex()
-            .id("diagnostics-page")
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
+            .id("diagnostics-body")
+            .test_support()
+            .flex_1()
+            .px(dp(page::PANE_PADDING))
+            .py(dp(page::PANE_PADDING_Y))
             .gap(dp(14.))
-            .child(crate::screens::header_mode(
-                "Diagnostics",
-                &source,
-                Scope::Node,
-                &self.loader,
-                self.embedded,
-                cx,
-            ))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing, cx))
             .child(summary)

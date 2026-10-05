@@ -6,13 +6,25 @@ use freshkube_core::diagnostic_runner::{
 use freshkube_core::diagnostics::{CheckCategory, CheckStatus, CniType};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{AppContext, Entity, TestAppContext, Window, WindowHandle, px, size};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{DiagnosticsScreen, ScreenPanel, ScreenSource, example, log_service};
 use crate::backend::Target;
+use crate::desktop::layout_check;
+use crate::desktop::nodes::NodeTab;
+use crate::desktop::tests::{fixture as app, open_node_tab};
 use crate::{fixture, presentation};
+
+/// The page's frame reaches the body under the toolbar, which keeps its
+/// cards and list inset until they move to a table.
+const DIAGNOSTICS_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "diagnostics-page",
+    title: "diagnostics-title",
+    title_text: "Diagnostics",
+    content: "diagnostics-body",
+};
 
 fn source(context: &str, node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster(context, 1));
@@ -523,4 +535,64 @@ fn a_fix_is_refused_while_another_operation_runs(cx: &mut TestAppContext) {
     })
     .unwrap();
     operations.update(cx, |operations, cx| operations.finish(ticket, cx));
+}
+
+#[gpui_kit::test]
+fn diagnostics_has_the_edge_frame_at_both_text_sizes(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            open_node_tab(window, cx, NodeTab::Diagnostics);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            layout_check::assert_edge_frame(window, cx, &DIAGNOSTICS_FRAME);
+        })
+        .unwrap();
+    }
+}
+
+/// The state in the list's place sits under the toolbar, which keeps the
+/// title and Refresh.
+fn under_the_toolbar(window: &Window, id: &'static str) {
+    let toolbar = window.find("diagnostics-toolbar").bounds();
+    window.find("diagnostics-title");
+    window.find("diagnostics-refresh");
+    let state = window.find(id).bounds();
+    assert!(
+        state.top() >= toolbar.bottom(),
+        "{id} {state:?} isn't under the toolbar {toolbar:?}"
+    );
+    assert!(window.try_find("diagnostic-list").is_none());
+}
+
+#[gpui_kit::test]
+fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-03");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // A node that isn't responding.
+        under_the_toolbar(window, "screen-retry");
+        // A responding node whose read failed.
+        screen.update(cx, |screen, cx| {
+            let source = source("prod-fra", "talos-wk-fra1-02");
+            let target = source.target.clone();
+            screen.set_source(Some(source), window, cx);
+            screen.loader.resolve(target, Err("the API refused".into()));
+        });
+        window.render_frame(cx);
+        under_the_toolbar(window, "screen-retry");
+        // No node.
+        screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+        window.render_frame(cx);
+        under_the_toolbar(window, "diagnostics-state");
+        assert!(window.try_find("screen-retry").is_none());
+    })
+    .unwrap();
 }

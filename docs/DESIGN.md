@@ -168,7 +168,7 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 
 | Type | Example | Body |
 | --- | --- | --- |
-| Table page | Pods, every Resources kind | `PageHeader`, then any banner, then one bare `DataTable`, with a hairline above and below. A detail pane opens beside it (content ≥ 900 wide: 460 default, 320 minimum, 14 gap) or below it (190 list, 380 pane). |
+| Table page | Pods, every Resources kind | `PageHeader`, then any banner, then one bare `DataTable`, with a hairline above and below. A detail pane opens beside it (content ≥ 900 wide: 460 default, 340 for a detail of a few short fields such as Storage's, 320 minimum, 14 gap) or below it (190 list, 380 pane). |
 | Dashboard | Monitoring | `PageHeader` with a `Breadcrumb`, a row of variable chips, then a grid of `StatCard` and `ChartCard` with 8 between them. Section rows are 36 high, with a chevron and a 14 bold title. |
 | Canvas | Service map, flame graph, heatmap | The page draws its own picture inside a card, with explicit bounds, under the same header, padding, status glyphs and states. It never draws its own title or toolbar. |
 | Detail pane | The pod pane | A card: kind caption, 13.5 monospace title, a state tag, actions (xsmall outline), then 32-high tabs with a 2 px accent underline on the chosen one and muted text on the rest. |

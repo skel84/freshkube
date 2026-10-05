@@ -3,15 +3,26 @@ use std::sync::Arc;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent,
-    Size, TestAppContext, TouchPhase, Window, WindowHandle, point, px, size,
+    AnyWindowHandle, AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point, ScrollDelta,
+    ScrollWheelEvent, Size, TestAppContext, TouchPhase, Window, WindowHandle, point, px, size,
 };
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use super::{ScreenPanel, ScreenSource, StorageScreen, ViewMode};
+use super::{ScreenPanel, ScreenSource, StorageScreen, ViewMode, example};
 use crate::backend::Target;
+use crate::desktop::layout_check;
+use crate::desktop::nodes::NodeTab;
+use crate::desktop::tests::{fixture as app, open_node_tab};
 use crate::{fixture, presentation};
+
+/// The page's frame reaches the split of the table and its details.
+const STORAGE_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "storage-page",
+    title: "storage-title",
+    title_text: "Storage",
+    content: "storage-split",
+};
 
 #[test]
 fn read_only_is_expected_on_loop_devices_and_flagged_on_disks() {
@@ -324,7 +335,7 @@ fn wheel(window: &mut Window, position: Point<Pixels>, x: f32, y: f32, cx: &mut 
 /// its own. A plain wheel at the same place still scrolls the page.
 #[gpui_kit::test]
 fn a_sideways_wheel_over_the_disks_leaves_the_page_where_it_was(cx: &mut TestAppContext) {
-    let (_runtime, _screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(640.), px(480.)));
+    let (_runtime, _screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(640.), px(360.)));
     cx.update_window(handle.into(), |_, window, cx| {
         crate::text_size::set(20., cx);
         window.render_frame(cx);
@@ -346,4 +357,123 @@ fn a_sideways_wheel_over_the_disks_leaves_the_page_where_it_was(cx: &mut TestApp
         assert!(fell > px(10.), "the page didn't scroll: {fell:?}");
     })
     .unwrap();
+}
+
+#[test]
+fn the_meta_line_counts_disks_volumes_and_those_not_ready() {
+    let data = example(&source("talos-wk-fra1-02")).unwrap();
+    assert_eq!(
+        data.summary,
+        ["3 disks", "2.3 TB", "5 volumes", "1 not ready"]
+    );
+    assert_eq!(data.disks_label, "Disks 3");
+    let data = super::StorageData::new(Err("no talosctl".into()), Ok(Vec::new()));
+    assert_eq!(data.summary, ["disks unknown", "0 volumes"]);
+    assert_eq!(data.disks_label, "Disks ?");
+}
+
+#[gpui_kit::test]
+fn storage_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            open_node_tab(window, cx, NodeTab::Storage);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            layout_check::assert_edge_frame(window, cx, &STORAGE_FRAME);
+            layout_check::assert_table(
+                window,
+                cx,
+                &layout_check::Table {
+                    table: Some("storage-disks-table-scroll"),
+                    list: "storage-disks-list",
+                },
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// The state in the table's place sits under the toolbar, which keeps the
+/// title and Refresh.
+fn under_the_toolbar(window: &Window, id: &'static str) {
+    let toolbar = window.find("storage-toolbar").bounds();
+    window.find("storage-title");
+    window.find("storage-refresh");
+    let state = window.find(id).bounds();
+    assert!(
+        state.top() >= toolbar.bottom(),
+        "{id} {state:?} isn't under the toolbar {toolbar:?}"
+    );
+    assert!(window.try_find("storage-table").is_none());
+}
+
+#[gpui_kit::test]
+fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // A node that isn't responding.
+        under_the_toolbar(window, "screen-retry");
+        // A responding node whose read failed.
+        screen.update(cx, |screen, cx| {
+            let source = source("talos-wk-fra1-02");
+            let target = source.target.clone();
+            screen.set_source(Some(source), window, cx);
+            screen.loader.resolve(target, Err("talosctl failed".into()));
+        });
+        window.render_frame(cx);
+        under_the_toolbar(window, "screen-retry");
+        // No node.
+        screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+        window.render_frame(cx);
+        under_the_toolbar(window, "storage-state");
+        assert!(window.try_find("screen-retry").is_none());
+    })
+    .unwrap();
+}
+
+/// Draws until the header stops asking for another frame to place its
+/// parts.
+fn settle(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+    for _ in 0..4 {
+        cx.run_until_parked();
+        let asked = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.simulate_next_frame(cx)
+            })
+            .unwrap();
+        if asked == 0 {
+            return;
+        }
+    }
+    panic!("the header keeps moving");
+}
+
+#[gpui_kit::test]
+fn the_folded_segment_switches_sides_as_the_segment_does(cx: &mut TestAppContext) {
+    // The title, Refresh and "…" fit; the segment doesn't.
+    let (_runtime, screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(260.), px(600.)));
+    settle(handle.into(), cx);
+    for (item, mode) in [(1usize, ViewMode::Volumes), (0, ViewMode::Disks)] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert!(window.try_find("storage-view").is_none(), "not folded");
+            window.find("storage-refresh");
+            window.click("storage-more", cx);
+            window.render_frame(cx);
+            window.within("popup-menu").click(item, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        assert_eq!(screen.read_with(cx, |screen, _| screen.mode), mode);
+        settle(handle.into(), cx);
+    }
 }

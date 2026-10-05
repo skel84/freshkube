@@ -27,8 +27,8 @@ use tokio::runtime::Handle;
 
 use super::{
     Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page_mode, mono, panel, partial_notice, stat, table_head,
-    table_width,
+    failure_banner, field, gate, meta, mono, panel, partial_notice, refresh_control, stat,
+    table_head, table_width,
 };
 use crate::actions;
 use crate::backend::spawn_job;
@@ -38,6 +38,8 @@ use crate::ui::{self, Tone, dp};
 use std::time::Duration;
 
 const CONTEXT: &str = "TalosDiagnostics";
+/// The ids of the page's header: `diagnostics-title`, `diagnostics-toolbar`, ….
+const PREFIX: &str = "diagnostics";
 const ROW_HEIGHT: f32 = 34.;
 /// Below this content width the details pane moves under the list.
 const SIDE_DETAILS: f32 = 920.;

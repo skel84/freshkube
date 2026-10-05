@@ -7,12 +7,12 @@
 //! and the missing one is named as unknown rather than shown as empty or failed.
 use std::time::Duration;
 
-use freshkube_core::format_bytes;
+use freshkube_core::{format_bytes, pluralize};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Selectable, Sizable,
     button::{Button, ButtonGroup},
-    h_flex, v_flex,
+    h_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -23,8 +23,8 @@ use talos_rs::{
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gated_page_mode, header_mode, mono, panel, partial_notice, stat,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
+    panel, partial_notice, refresh_control,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -33,10 +33,8 @@ use source::{DiskRow, Listing, VolumeRow};
 
 const CONTEXT: &str = "TalosStorage";
 const PAGE_ROWS: isize = 20;
-/// Below this content width the details pane moves under the list.
-const SIDE_DETAILS: f32 = 900.;
-const LIST_MIN_HEIGHT: f32 = 200.;
-const DETAILS_HEIGHT: f32 = 220.;
+/// The ids of the page's header: `storage-title`, `storage-toolbar`, ….
+const PREFIX: &str = "storage";
 /// Each talosctl query gets this long before it counts as unavailable.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -69,6 +67,12 @@ struct StorageData {
     /// What each table says instead of rows: unknown, or none reported.
     no_disks: Option<SharedString>,
     no_volumes: Option<SharedString>,
+    /// The meta line's counts: disks and their total size, volumes, and
+    /// those not ready.
+    summary: Vec<SharedString>,
+    /// The segment's labels, "Disks 3" and "Volumes 5".
+    disks_label: SharedString,
+    volumes_label: SharedString,
 }
 
 impl StorageData {
@@ -78,13 +82,51 @@ impl StorageData {
     ) -> Self {
         let no_disks = source::no_rows(&disks, "disks");
         let no_volumes = source::no_rows(&volumes, "volumes");
+        let summary = summary(&disks, &volumes);
+        let count = |len: Option<usize>| len.map_or("?".to_owned(), |len| len.to_string());
+        let disks_label = format!("Disks {}", count(disks.as_ref().ok().map(Vec::len))).into();
+        let volumes_label =
+            format!("Volumes {}", count(volumes.as_ref().ok().map(Vec::len))).into();
         Self {
             disks: disks.map(source::disk_listing),
             volumes: volumes.map(source::volume_listing),
             no_disks,
             no_volumes,
+            summary,
+            disks_label,
+            volumes_label,
         }
     }
+}
+
+/// "3 disks · 2.3 TB", "5 volumes" and "1 not ready"; a side that failed
+/// says it is unknown rather than counting none.
+fn summary(
+    disks: &Result<Vec<DiskInfo>, String>,
+    volumes: &Result<Vec<VolumeStatus>, String>,
+) -> Vec<SharedString> {
+    let mut parts = Vec::new();
+    match disks {
+        Ok(disks) => {
+            parts.push(pluralize(disks.len(), "disk", "disks"));
+            parts.push(format_bytes(disks.iter().map(|disk| disk.size).sum()));
+        }
+        Err(_) => parts.push("disks unknown".into()),
+    }
+    match volumes {
+        Ok(volumes) => {
+            parts.push(pluralize(volumes.len(), "volume", "volumes"));
+            let not_ready = volumes
+                .iter()
+                .filter(|volume| volume.phase != "ready")
+                .count();
+            if not_ready > 0 {
+                parts.push(format!("{not_ready} not ready"));
+            }
+        }
+        Err(_) => parts.push("volumes unknown".into()),
+    }
+    parts.into_iter().map(Into::into).collect()
 }
 
 pub(crate) struct StorageScreen {
