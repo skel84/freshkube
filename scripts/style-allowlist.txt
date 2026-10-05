@@ -6,5 +6,4 @@ list crates/freshkube-desktop/src/desktop/nodes/cards.rs
 radius crates/freshkube-desktop/src/monitoring/panel/cursor.rs
 radius crates/freshkube-desktop/src/monitoring/panel/legend.rs
 list crates/freshkube-desktop/src/observability/map.rs
-list crates/freshkube-desktop/src/screens/network/view.rs
 list crates/freshkube-desktop/src/screens/workloads/mod.rs
