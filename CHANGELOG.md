@@ -13,6 +13,8 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ### Other changes
 
+- Nodes shares Pods’ page header and table styling, with readiness glyph counts, comfortable/compact rows, a Columns menu and 12 px cards.
+
 - Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.
 
 ## 0.5.0 (2026-10-04)

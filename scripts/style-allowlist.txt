@@ -3,7 +3,6 @@
 # shared components, remove its entries in the same change. The check fails
 # when an entry is no longer needed, and when a file not listed breaks a rule.
 list crates/freshkube-desktop/src/desktop/nodes/cards.rs
-title crates/freshkube-desktop/src/desktop/nodes/view.rs
 radius crates/freshkube-desktop/src/desktop/overview/mod.rs
 title crates/freshkube-desktop/src/desktop/overview/mod.rs
 radius crates/freshkube-desktop/src/desktop/services.rs

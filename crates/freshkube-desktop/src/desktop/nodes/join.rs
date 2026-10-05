@@ -13,7 +13,7 @@ use freshkube_core::{
 };
 use std::collections::BTreeSet;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct NodeKey {
     pub(crate) kubernetes: Option<String>,
     pub(crate) talos: Option<String>,

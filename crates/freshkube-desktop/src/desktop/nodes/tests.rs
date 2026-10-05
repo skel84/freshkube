@@ -291,7 +291,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
         window.click("node-expand", cx);
         window.render_frame(cx);
         assert!(pilot.read(cx).node_workspace.expanded);
-        assert!(window.try_find("joined-nodes-list").is_none());
+        assert!(window.try_find("nodes-rows").is_none());
         window.click("node-expand", cx);
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.selected, selected);
@@ -326,7 +326,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_narrow_back(cx: &mut TestAppC
         });
         window.render_frame(cx);
         assert!(window.find("node-back").visible());
-        assert!(window.try_find("joined-nodes-list").is_none());
+        assert!(window.try_find("nodes-rows").is_none());
         assert!(window.find("node-tab-pods").visible());
         assert!(window.try_find("node-tab-processes").is_none());
         window.click("node-tab-yaml", cx);
@@ -436,6 +436,266 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
         );
         assert_eq!(read.node_workspace.rows.len(), 1);
         assert_eq!(read.node_workspace.rows[0].name, "talos-home");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn header_chips_filter_readiness_without_changing_the_talos_target(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let target = pilot.read(cx).selected_node.clone();
+        let nodes = &pilot.read(cx).node_workspace;
+        let not_ready = nodes
+            .rows
+            .iter()
+            .filter(|row| row.ready == "NotReady")
+            .count();
+        let ready = nodes.rows.iter().filter(|row| row.ready == "Ready").count();
+        let unknown = nodes.rows.len() - ready - not_ready;
+        assert_eq!(
+            window.find("nodes-chip-not-ready").label(),
+            Some(format!("{not_ready} not ready nodes").as_str())
+        );
+        assert_eq!(
+            window.find("nodes-chip-ready").label(),
+            Some(format!("{ready} ready nodes").as_str())
+        );
+        assert_eq!(
+            window.find("nodes-chip-unknown").label(),
+            Some(format!("{unknown} nodes with unknown readiness").as_str())
+        );
+        window.click("nodes-chip-not-ready", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.lines.len(), not_ready);
+        assert!(
+            nodes
+                .lines
+                .iter()
+                .all(|ix| nodes.rows[*ix].ready == "NotReady")
+        );
+        assert_eq!(pilot.read(cx).selected_node, target);
+        assert!(!nodes.open);
+        window.click("nodes-chip-not-ready", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.lines.len(), nodes.rows.len());
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.view, super::NodeView::Cards);
+        assert!(window.find("nodes-title").visible());
+        assert_eq!(pilot.read(cx).selected_node, target);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, TablePage};
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let before = pilot.read(cx).selected_node.clone();
+        for text in [14., 20.] {
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            layout_check::assert_table_page(
+                window,
+                cx,
+                &TablePage {
+                    page: "nodes-page",
+                    title: "nodes-title",
+                    title_text: "Nodes",
+                    table: "nodes-table-scroll",
+                    list: "nodes-list",
+                    density: "nodes-density",
+                },
+            );
+            assert_eq!(pilot.read(cx).selected_node, before);
+            assert!(!pilot.read(cx).node_workspace.open);
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn nodes_columns_and_density_preserve_row_identity(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let before = window.find("node-talos-cp-fra1-01").bounds().size.height;
+        window.click("nodes-density", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("node-talos-cp-fra1-01").bounds().size.height,
+            crate::ui::dp_px(26., window)
+        );
+        assert!(window.find("node-talos-cp-fra1-01").bounds().size.height < before);
+        window.click("nodes-columns", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(6usize, cx);
+        window.render_frame(cx);
+        assert!(window.try_find("node-table-services").is_none());
+        window.click("node-talos-cp-fra1-01", cx);
+        window.render_frame(cx);
+        let key = pilot.read(cx).node_workspace.selected.clone();
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-cp-fra1-01")
+        );
+        window.click("node-close", cx);
+        window.render_frame(cx);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("node-talos-cp-fra1-01").selected(), Some(true));
+        window.click("nodes-view-table", cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.selected, key);
+        assert_eq!(window.find("node-talos-cp-fra1-01").selected(), Some(true));
+        assert!(window.try_find("node-table-services").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let target = pilot.read(cx).selected_node.clone();
+        window.click("nodes-chip-not-ready", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        window.press("down", cx);
+        window.render_frame(cx);
+        let row = pilot.read(cx).node_workspace.row().unwrap();
+        assert_eq!(row.ready, "NotReady");
+        assert_eq!(pilot.read(cx).selected_node, target);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-wk-fra1-02")
+        );
+        window.click("node-tab-processes", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| pilot.step_joined_node(1, window, cx));
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-wk-fra1-03")
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn readiness_chips_treat_stale_and_absent_kubernetes_as_unknown() {
+    use super::header::Status;
+    let (talos, kube) = projection_sources();
+    let stale = join::join(
+        std::slice::from_ref(&talos),
+        std::slice::from_ref(&kube),
+        true,
+        false,
+    );
+    assert_eq!(Status::of(&stale[0]), Status::Unknown);
+    let absent = join::join(std::slice::from_ref(&talos), &[], true, true);
+    assert_eq!(Status::of(&absent[0]), Status::Unknown);
+    let current = join::join(&[talos], &[kube], true, true);
+    assert_eq!(Status::of(&current[0]), Status::NotReady);
+}
+
+#[gpui_kit::test]
+fn nodes_empty_states_keep_the_shared_header_and_keyboard_context(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.node_workspace.rows = std::sync::Arc::new(Vec::new());
+            pilot.node_workspace.empty = Some((
+                "Waiting for nodes".into(),
+                "The cluster summaries have not answered yet.".into(),
+            ));
+            pilot.node_workspace.rebuild_lines();
+            window.focus(&pilot.node_focus, cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("nodes-title").visible());
+        assert!(window.find("nodes-empty").visible());
+        window.press("down", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.open);
+        for title in ["No nodes reported", "Nodes unavailable"] {
+            pilot.update(cx, |pilot, cx| {
+                pilot.node_workspace.empty = Some((title.into(), "Read result".into()));
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(window.find("nodes-empty").visible());
+            assert!(window.find("nodes-refresh").visible());
+        }
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert!(window.find("nodes-title").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, TablePage};
+    let (_runtime, handle, _pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        layout_check::assert_table_page(
+            window,
+            cx,
+            &TablePage {
+                page: "nodes-page",
+                title: "nodes-title",
+                title_text: "Nodes",
+                table: "nodes-table-scroll",
+                list: "nodes-list",
+                density: "nodes-density",
+            },
+        );
+        for id in [
+            "nodes-view-cards",
+            "nodes-view-table",
+            "nodes-chip-not-ready",
+            "nodes-chip-unknown",
+            "nodes-chip-ready",
+            "nodes-density",
+            "nodes-columns",
+            "nodes-refresh",
+        ] {
+            let control = window.find(id);
+            assert!(control.visible(), "{id} is clipped");
+            assert!(
+                control.bounds().right() <= window.find("nodes-page").bounds().right(),
+                "{id} extends beyond the page"
+            );
+        }
     })
     .unwrap();
 }

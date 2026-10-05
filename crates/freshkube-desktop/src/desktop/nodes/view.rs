@@ -9,7 +9,7 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::{
     assets::IconName,
     component::{
-        button::{Button, ButtonGroup},
+        button::Button,
         h_flex,
         resizable::{h_resizable, resizable_panel},
         v_flex,
@@ -45,14 +45,15 @@ impl Pilot {
                     )
                     .into_any_element()
             }
+        } else if self.node_workspace.view == NodeView::Table {
+            freshkube_ui::table::data_table(self, window, cx)
+                .size_full()
+                .min_h_0()
+                .into_any_element()
         } else {
             self.joined_node_list(false, window, cx)
         };
-        v_flex()
-            .id("nodes-page")
-            .test_support()
-            .size_full()
-            .min_h_0()
+        freshkube_ui::page::page("nodes-page")
             .key_context("NodeWorkspace")
             .track_focus(&self.node_focus)
             .on_action(cx.listener(|view, _: &super::super::NextNode, window, cx| {
@@ -83,47 +84,21 @@ impl Pilot {
                 view.step_node_tab(-1, window, cx)
             }))
             .on_action(cx.listener(|view, _: &OpenNode, window, cx| {
+                use freshkube_ui::table::{Line, TableSource};
                 if let Some(key) = view
                     .node_workspace
                     .selected
                     .clone()
-                    .or_else(|| view.node_workspace.rows.first().map(|row| row.key.clone()))
+                    .filter(|key| view.line_of(key).is_some())
+                    .or_else(|| match view.line(0, cx) {
+                        Some(Line::Row(row)) => Some(row.key),
+                        _ => None,
+                    })
                 {
                     view.open_node(key, window, cx);
                 }
             }))
-            .p(dp(18.))
-            .gap(dp(14.))
-            .when(!pane, |this| {
-                this.child(
-                    h_flex()
-                        .gap(dp(10.))
-                        .child(div().flex_1().text_size(dp(26.)).child("Nodes"))
-                        .child(
-                            ButtonGroup::new("nodes-view")
-                                .outline()
-                                .small()
-                                .child(
-                                    Button::new("nodes-view-cards")
-                                        .label("Cards")
-                                        .selected(self.node_workspace.view == NodeView::Cards),
-                                )
-                                .child(
-                                    Button::new("nodes-view-table")
-                                        .label("Table")
-                                        .selected(self.node_workspace.view == NodeView::Table),
-                                )
-                                .on_click(cx.listener(|view, choice: &Vec<usize>, _, cx| {
-                                    view.node_workspace.view = if choice.first() == Some(&0) {
-                                        NodeView::Cards
-                                    } else {
-                                        NodeView::Table
-                                    };
-                                    cx.notify();
-                                })),
-                        ),
-                )
-            })
+            .when(!pane, |this| this.child(self.nodes_header(window, cx)))
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
     }
@@ -195,13 +170,11 @@ impl Pilot {
                 )
             })
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .font_family(MONO_FONT)
-                    .text_size(dp(20.))
-                    .truncate()
-                    .child(row.name.clone()),
+                div().flex_1().min_w_0().child(
+                    ui::page_title(row.name.clone())
+                        .font_family(MONO_FONT)
+                        .truncate(),
+                ),
             )
             .child(ui::tag(row.tone, None, row.ready, cx))
             .child(

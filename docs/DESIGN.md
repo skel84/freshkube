@@ -130,6 +130,8 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 | `StatCard` | A muted 12 bold title, then one figure (22, weight 900) or a wrap of named figures (18, each at least 96 wide, 20 × 8 apart), each with an optional tag, gauge or sparkline. | Card; header 28 with 14 left padding; body 14 × 10. |
 | `ChartCard` | A 13 bold title, the unit, an info mark with the query, the stale mark at the right; the plot, then its legend. | Card; header 32 with 12 left padding; plot padded 12, at least 64 high. |
 
+The Nodes card grid and compact two-line pane list are a scoped virtualization exception in `desktop/nodes/cards.rs`; when a second page needs a virtualized card grid, it becomes a `freshkube-ui` component.
+
 ### States
 
 | State | Where | How it looks |

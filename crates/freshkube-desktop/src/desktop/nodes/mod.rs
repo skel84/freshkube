@@ -1,6 +1,8 @@
 //! Machines from both summaries, with one retained pane for their details.
 mod cards;
+mod header;
 mod join;
+mod table;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -73,6 +75,14 @@ impl NodeTab {
 pub(super) struct Nodes {
     pub(super) rows: Arc<Vec<NodeRow>>,
     empty: Option<(SharedString, SharedString)>,
+    lines: Vec<usize>,
+    counts: [usize; 3],
+    filter: Option<header::Status>,
+    table: freshkube_ui::table::TableState,
+    all_columns: Vec<table::Column>,
+    columns: Vec<table::Column>,
+    hidden_columns: std::collections::BTreeSet<table::Field>,
+    table_width: f32,
     pub(super) selected: Option<NodeKey>,
     pub(super) open: bool,
     pub(super) expanded: bool,
@@ -100,6 +110,14 @@ impl Nodes {
                 "Waiting for nodes".into(),
                 "The cluster summaries have not answered yet.".into(),
             )),
+            lines: Vec::new(),
+            counts: [0; 3],
+            filter: None,
+            table: freshkube_ui::table::TableState::new("nodes"),
+            all_columns: Vec::new(),
+            columns: Vec::new(),
+            hidden_columns: std::collections::BTreeSet::new(),
+            table_width: 0.,
             selected: None,
             open: false,
             expanded: false,
@@ -225,6 +243,9 @@ impl Pilot {
         } else {
             None
         };
+        self.node_workspace.rebuild_lines();
+        self.node_workspace
+            .rebuild_columns(self.kubernetes_only.is_none());
         self.node_workspace.sync_tabs();
         self.overview_display = crate::presentation::overview::Overview::build(
             &self.node_workspace.rows,
@@ -377,27 +398,42 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.node_workspace.rows.len();
-        if count == 0 {
-            return;
-        }
-        let index = self
-            .node_workspace
-            .rows
-            .iter()
-            .position(|row| Some(&row.key) == self.node_workspace.selected.as_ref());
-        let next = index
-            .map(|index| index.saturating_add_signed(delta).min(count - 1))
-            .unwrap_or(0);
-        let key = self.node_workspace.rows[next].key.clone();
-        self.node_workspace
-            .scroll
-            .scroll_to_item(next, ScrollStrategy::Nearest);
+        use freshkube_ui::table::{self, TableSource};
+        let key = if self.node_workspace.selected.is_none() {
+            self.line(0, cx).and_then(|line| match line {
+                table::Line::Row(row) => Some(row.key),
+                _ => None,
+            })
+        } else {
+            table::step(self, delta, cx)
+        };
+        let Some(key) = key else { return };
         if self.node_workspace.open {
             self.open_node(key, window, cx);
         } else {
             self.node_workspace.selected = Some(key);
             cx.notify();
+        }
+        if self.node_workspace.open || self.node_workspace.view == NodeView::Cards {
+            if let Some(line) = self.line_of(
+                self.node_workspace
+                    .selected
+                    .as_ref()
+                    .expect("selected node"),
+            ) {
+                let columns = if self.node_workspace.open {
+                    1
+                } else {
+                    ((crate::screens::content_width(window) + 14.) / 330.)
+                        .floor()
+                        .clamp(1., 3.) as usize
+                };
+                self.node_workspace
+                    .scroll
+                    .scroll_to_item(line / columns, ScrollStrategy::Nearest);
+            }
+        } else {
+            table::reveal(self, ScrollStrategy::Nearest);
         }
     }
 
