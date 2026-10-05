@@ -353,11 +353,16 @@ impl Pilot {
                         }),
                 )
             });
+        // Logs' controls and list don't fit under the pane's header in a
+        // short window, so the pane scrolls; the other tabs scroll inside.
+        let short = tab == NodeTab::Logs && freshkube_ui::page::is_short(window);
         v_flex()
             .id("node-pane")
             .test_support()
             .size_full()
             .min_h_0()
+            .track_scroll(&self.node_workspace.pane_scroll)
+            .when(short, |this| this.overflow_y_scroll())
             .gap(dp(12.))
             .pl(dp(12.))
             .child(header)
@@ -375,7 +380,17 @@ impl Pilot {
                     ),
             )
             .child(tabs)
-            .child(div().flex_1().min_h_0().child(body))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    // The tab body takes the smallest height that isn't
+                    // short, so Logs lays out as in that window.
+                    .when(short, |this| {
+                        this.min_h(dp(freshkube_ui::page::SHORT_HEIGHT))
+                    })
+                    .child(body),
+            )
             .into_any_element()
     }
 }
