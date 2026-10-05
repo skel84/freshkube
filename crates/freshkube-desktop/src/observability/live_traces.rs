@@ -347,14 +347,18 @@ fn waterfall(trace_id: &str, spans: &[api::Span]) -> Waterfall {
 
 impl ObservabilityPage {
     pub(super) fn read_traces(&mut self, cx: &mut Context<Self>) {
-        let (Some(provider), Some(source), Some(app)) = (
-            self.live.provider.clone(),
-            self.live.source.clone(),
-            self.selected_app.clone(),
-        ) else {
+        let Some(app) = self.selected_app.clone() else {
             return;
         };
         self.live_traces.reset_for(&app);
+        if self.fixture {
+            self.answer_example_traces();
+            return;
+        }
+        let (Some(provider), Some(source)) = (self.live.provider.clone(), self.live.source.clone())
+        else {
+            return;
+        };
         let (trace_source, selection) = (
             self.live_traces.source.clone(),
             self.live_traces.selection.clone(),
@@ -396,7 +400,27 @@ impl ObservabilityPage {
         self.read_trace(cx);
     }
 
+    /// Example mode answers the list and its trace at once, through the
+    /// same preparation as Coroot's answers.
+    fn answer_example_traces(&mut self) {
+        let (Some(from), Some(to)) = (self.live.range.from, self.live.range.to) else {
+            return;
+        };
+        let traces = &mut self.live_traces;
+        let tracing = example::tracing(&traces.source, &traces.selection, from, to);
+        traces.prepare_list(&tracing);
+        if let Some(trace) = traces.trace.clone()
+            && traces.waterfall.is_none()
+        {
+            traces.prepare_trace(&trace, &example::trace(&trace));
+        }
+    }
+
     fn read_trace(&mut self, cx: &mut Context<Self>) {
+        if self.fixture {
+            self.answer_example_traces();
+            return;
+        }
         let (Some(provider), Some(source), Some(app), Some(trace)) = (
             self.live.provider.clone(),
             self.live.source.clone(),
@@ -526,7 +550,7 @@ impl ObservabilityPage {
                 ))
                 .into_any_element();
         }
-        if self.live.tracing.data().is_none() {
+        if !self.fixture && self.live.tracing.data().is_none() {
             return page.into_any_element();
         }
         page = page.child(self.trace_controls(cx));

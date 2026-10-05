@@ -40,7 +40,6 @@ mod settings;
 mod tables;
 #[cfg(test)]
 mod tests;
-mod traces;
 mod view;
 use model::Application;
 pub(crate) use model::Destination;
@@ -136,14 +135,8 @@ pub(crate) struct ObservabilityPage {
     report_snapshot: Option<reports::ReportSnapshot>,
     threshold: Entity<InputState>,
     thresholds: BTreeMap<(String, Report), String>,
-    trace_error: usize,
-    trace_span: usize,
-    bucket: Option<(usize, usize)>,
-    trace_errors_only: bool,
-    trace_snapshot: traces::TraceSnapshot,
     charts: [Chart; 3],
     focus: FocusHandle,
-    heat_focus: FocusHandle,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -157,12 +150,6 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.bind_keys([
-            KeyBinding::new("left", traces::EarlierBucket, Some("ObservabilityHeatmap")),
-            KeyBinding::new("right", traces::LaterBucket, Some("ObservabilityHeatmap")),
-            KeyBinding::new("up", traces::HigherBucket, Some("ObservabilityHeatmap")),
-            KeyBinding::new("down", traces::LowerBucket, Some("ObservabilityHeatmap")),
-        ]);
         let url =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://coroot.example.com"));
         let secret = cx.new(|cx| InputState::new(window, cx).masked(true));
@@ -323,18 +310,12 @@ impl ObservabilityPage {
             report_snapshot: None,
             threshold,
             thresholds: BTreeMap::new(),
-            trace_error: 0,
-            trace_span: 0,
-            bucket: None,
-            trace_errors_only: false,
-            trace_snapshot: traces::TraceSnapshot::new(3, 0, false),
             charts: [
                 example::chart("Failed TCP connections", "per second", 3, true, false),
                 example::chart("Successful connections", "per second", 3, false, true),
                 example::chart("CPU usage", "% of limit", 3, false, true),
             ],
             focus: cx.focus_handle().tab_stop(true),
-            heat_focus: cx.focus_handle().tab_stop(true),
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         };
@@ -371,8 +352,6 @@ impl ObservabilityPage {
     pub(crate) fn set_range(&mut self, hours: u32, cx: &mut Context<Self>) {
         self.hours = hours;
         self.range_changed(cx);
-        self.bucket = None;
-        self.prepare_trace();
         self.rebuild_charts();
         self.prepare_report();
         cx.notify();

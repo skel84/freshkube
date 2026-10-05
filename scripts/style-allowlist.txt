@@ -21,7 +21,6 @@ radius crates/freshkube-desktop/src/observability/live_profiling.rs
 radius crates/freshkube-desktop/src/observability/live_traces.rs
 list crates/freshkube-desktop/src/observability/map.rs
 radius crates/freshkube-desktop/src/observability/profiling.rs
-radius crates/freshkube-desktop/src/observability/traces.rs
 glyph crates/freshkube-desktop/src/observability/view.rs
 radius crates/freshkube-desktop/src/resources/pane/cross_links/cause.rs
 radius crates/freshkube-desktop/src/resources/pane/overview/view.rs

@@ -409,6 +409,9 @@ impl ObservabilityPage {
                 self.prepare_report();
             }
             self.answer_example_incidents();
+            if self.destination == Destination::Traces {
+                self.read_traces(cx);
+            }
             cx.notify();
             return;
         }
