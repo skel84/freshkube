@@ -796,4 +796,29 @@ mod tests {
         );
         assert_eq!(controls.last().unwrap().right(), px(1800.));
     }
+
+    #[gpui_kit::test]
+    fn the_header_is_a_toolbar_row_with_a_label_and_rows_under_it(cx: &mut TestAppContext) {
+        // At 13 px a dp is a pixel; 1800 wide leaves the controls beside
+        // the title, the categories on a row of their own under it.
+        let handle = open(cx, 1800., 13.);
+        let placed = settle(cx, handle);
+        cx.update_window(handle, |_, window, _| {
+            let row = window.find("app-toolbar").bounds();
+            assert_eq!(row.size.height, px(TOOLBAR_HEIGHT));
+            assert!((placed.title.center().y - row.center().y).abs() < px(0.5));
+            assert!((placed.controls.center().y - row.center().y).abs() < px(0.5));
+            // The categories take a second row of the same height.
+            assert_eq!(
+                placed.categories.top(),
+                row.bottom() + (px(TOOLBAR_HEIGHT) - px(20.)) / 2.
+            );
+            for ix in 0..CONTROLS.len() {
+                let slot = window.find(format!("app-slot-{ix}")).bounds();
+                assert!(slot.top() >= row.top() && slot.bottom() <= row.bottom());
+            }
+            assert!(placed.scope.top() >= placed.categories.bottom());
+        })
+        .unwrap();
+    }
 }
