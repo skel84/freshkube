@@ -125,18 +125,6 @@ impl Report {
             _ => "0",
         }
     }
-    pub(super) fn column_width(self) -> f32 {
-        match self {
-            Self::Upstreams => 84.,
-            Self::Instances => 68.,
-            Self::Restarts => 66.,
-            Self::Latency => 62.,
-            Self::Cpu | Self::Dns => 50.,
-            Self::Memory => 72.,
-            Self::Net => 80.,
-            Self::Errors | Self::Disk | Self::DiskIo | Self::Logs => 58.,
-        }
-    }
     pub(super) fn index(self) -> usize {
         Self::ALL.iter().position(|r| *r == self).unwrap_or(0)
     }
@@ -147,7 +135,6 @@ pub(super) enum Status {
     Warning,
     Critical,
     Unknown,
-    Integration,
     LogError,
     Info,
     Absent,
@@ -155,16 +142,17 @@ pub(super) enum Status {
 #[derive(Clone)]
 pub(super) struct Check {
     pub status: Status,
-    pub value: String,
-    pub tooltip: String,
+    pub value: gpui_kit::SharedString,
+    pub label: gpui_kit::SharedString,
+    pub tooltip: gpui_kit::SharedString,
     pub element_id: gpui_kit::SharedString,
 }
 #[derive(Clone)]
 pub(super) struct Application {
     pub id: AppId,
+    pub label: gpui_kit::SharedString,
     pub key: String,
     pub namespace: String,
-    pub namespace_prefix: String,
     pub name: String,
     pub language: String,
     pub category: String,
@@ -173,6 +161,13 @@ pub(super) struct Application {
     pub search: String,
     pub row_id: gpui_kit::SharedString,
     pub name_id: gpui_kit::SharedString,
+}
+
+#[derive(Clone)]
+pub(super) struct CategoryChoice {
+    pub name: String,
+    pub id: gpui_kit::SharedString,
+    pub label: gpui_kit::SharedString,
 }
 impl Application {
     pub fn check(&self, report: Report) -> &Check {
@@ -187,7 +182,7 @@ pub(super) enum Filter {
     Critical,
     Warning,
     Logs,
-    Integration,
+    Unknown,
     Ok,
 }
 impl Filter {
@@ -197,7 +192,7 @@ impl Filter {
         Self::Critical,
         Self::Warning,
         Self::Logs,
-        Self::Integration,
+        Self::Unknown,
         Self::Ok,
     ];
     pub(super) fn label(self) -> &'static str {
@@ -207,7 +202,7 @@ impl Filter {
             Self::Critical => "Critical",
             Self::Warning => "Warning",
             Self::Logs => "Errors in logs",
-            Self::Integration => "Unknown",
+            Self::Unknown => "Unknown",
             Self::Ok => "OK",
         }
     }
@@ -218,7 +213,7 @@ impl Filter {
             Self::Critical => "critical",
             Self::Warning => "warning",
             Self::Logs => "logs",
-            Self::Integration => "integration",
+            Self::Unknown => "unknown",
             Self::Ok => "ok",
         }
     }
@@ -235,14 +230,19 @@ impl Filter {
                 app.check(Report::Logs).status,
                 Status::Warning | Status::Critical | Status::LogError
             ),
-            Self::Integration => app.status == Status::Unknown,
+            Self::Unknown => app.status == Status::Unknown,
             Self::Ok => app.status == Status::Ok,
         }
     }
 }
 #[derive(Clone)]
 pub(super) enum MatrixRow {
-    Group { label: String, summary: String },
+    Group {
+        id: gpui_kit::SharedString,
+        label: String,
+        status: Status,
+        summary: String,
+    },
     App(usize),
 }
 #[derive(Clone)]

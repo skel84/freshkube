@@ -132,7 +132,7 @@ These use Coroot's concepts in Fog's visual language. Applications, the service 
 
 | Screen | Interaction |
 | --- | --- |
-| H1 Applications | Shared fixture/live projection, stable AppIds, 12 check columns including separate disk usage and I/O. Problems first, grouped by Coroot category, with text/namespace/category/status filters. A cell shows its glyph alone unless Coroot supplied a figure, so healthy, unknown and not reported stay distinct without truncated words; the tooltip carries the full state. |
+| H1 Applications | Shared fixture/live projection, stable AppIds, 12 check columns including separate disk usage and I/O. Problems first, grouped by namespace, with text/namespace/category/status filters. Healthy figures are plain, and a healthy check without a figure reads “ok”. Warning, critical and unknown reports carry the shared glyph. Missing reports show an em dash. The accessible label and tooltip name the full state. |
 | H2 Service map | Layered left to right: a node's column is its longest chain of callers, tall columns wrap at eight, each column is ordered by its callers' rows, and unconnected nodes share a last column. Curved links end in arrowheads; width follows traffic and problem links are dashed. The layout uses every link between the page's nodes, so the problem filter never moves a box. The Connections inspector sits beside the map only when the whole map fits, otherwise below it; the map scrolls inside its card. Link selection survives reorder; nodes open application reports. |
 | H3 Application | Report tabs carry each report's glyph. One evidence card lists the REST report first and, under *More checks from Coroot*, only what its MCP endpoint adds; each source's freshness, error and Retry sit in the card's footer. Rows give a title, the source's own words and only the reported figures, with units (ms, s, rps). Dependencies and clients link to their report. Explicitly mapped subjects open Kubernetes objects through the shell guard; complete histories and live mutations are unavailable. |
 | H4 Incident | Two incidents, SLO compliance and 1h/5m burn, root cause, cause chain, previewed fixes and ruled-out evidence. Burn threshold 14.4×. |
@@ -140,7 +140,7 @@ These use Coroot's concepts in Fog's visual language. Applications, the service 
 | H6 Profiling | Comparison toggle, CPU history, biggest increases, function search and a flame graph with zoom/reset. |
 | H7 Traces | Latency/error heatmap with SLO line, selectable buckets and error causes, matching sample waterfalls and span inspection. |
 
-The later fixture histories end at 15:00, with the worker deployment at 12:52 and node event at 14:48; header ranges regenerate that bounded example history. Live Refresh/reopen captures the current time interval, while report navigation and retries retain the displayed UTC interval. Applications are virtualized; maps and report evidence have explicit bounds. Hiding cancels ordinary requests, and changed provider/access/project/range generations reject old results.
+The later fixture histories end at 15:00, with the worker deployment at 12:52 and node event at 14:48; header ranges regenerate that bounded example history. Live Refresh/reopen captures the current time interval, while report navigation and Retry retain the captured absolute interval, shown with local dates and times. Applications are virtualized; maps and report evidence have explicit bounds. Hiding cancels ordinary requests, and changed provider/access/project/range generations reject old results.
 
 Debug entry points:
 
@@ -237,7 +237,7 @@ Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, 
 
 - **Padding:** 26 on every page (`PAGE_PADDING`), with 22 / 18 / 14 as above.
 - **Card radius:** 12 px, including Monitoring's cards and Overview's.
-- **Time range:** one picker in the page header's right group, before refresh, as Monitoring's: an outline small button with a clock, the range and a caret, opening a checked menu. The shell's 1h / 3h / 24h / 7d chips go when Observability migrates.
+- **Time range:** one picker in the page header's right group, before refresh, as Monitoring's: an outline small button with a clock, the range and a caret, opening a checked menu. Observability uses this picker; its shell time chips are removed.
 - **Refresh:** one per page, the page header's ghost icon button, tooltip `Refresh pods`. A page with auto-refresh puts its interval menu beside it.
 - **Group rows:** the row height (34 or 26), not a separate 28, so every list stays a uniform list.
 - **Headers on other Resources kinds:** they keep today's header (title with an inline scope line, Refresh with a label) through the extraction, which changes nothing visible, and take `PageHeader`'s form in their own change.

@@ -17,15 +17,12 @@ glyph crates/freshkube-desktop/src/monitoring/page/view.rs
 title crates/freshkube-desktop/src/monitoring/page/view.rs
 radius crates/freshkube-desktop/src/monitoring/panel/cursor.rs
 radius crates/freshkube-desktop/src/monitoring/panel/legend.rs
-glyph crates/freshkube-desktop/src/observability/applications.rs
-list crates/freshkube-desktop/src/observability/applications.rs
 radius crates/freshkube-desktop/src/observability/live_profiling.rs
 radius crates/freshkube-desktop/src/observability/live_traces.rs
 list crates/freshkube-desktop/src/observability/map.rs
 radius crates/freshkube-desktop/src/observability/profiling.rs
 radius crates/freshkube-desktop/src/observability/traces.rs
 glyph crates/freshkube-desktop/src/observability/view.rs
-radius crates/freshkube-desktop/src/observability/view.rs
 radius crates/freshkube-desktop/src/resources/pane/cross_links/cause.rs
 radius crates/freshkube-desktop/src/resources/pane/overview/view.rs
 glyph crates/freshkube-desktop/src/resources/pane/view.rs

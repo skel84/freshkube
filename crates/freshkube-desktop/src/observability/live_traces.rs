@@ -517,7 +517,7 @@ impl ObservabilityPage {
             .id("obs-live-traces")
             .test_support()
             .gap(dp(12.))
-            .child(self.evidence_header("Traces", "obs-trace-app", cx));
+            .child(self.evidence_header("obs-trace-app", cx));
         if self.selected_app.is_none() {
             return page
                 .child(muted(
