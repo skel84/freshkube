@@ -18,12 +18,11 @@ impl Render for ObservabilityPage {
                 Destination::ServiceMap => self.render_map(window, cx),
                 Destination::Application => self.render_report(window, cx),
                 Destination::Incidents => self.render_incidents(window, cx),
-                Destination::Traces if !self.fixture => self.render_live_traces(window, cx),
+                Destination::Traces => self.render_live_traces(window, cx),
                 Destination::Profiling if !self.fixture => self.render_live_profiling(cx),
                 _ if !self.fixture => self.render_limited(cx),
                 Destination::Deployments => self.render_deployments(window, cx),
                 Destination::Profiling => self.render_profiling(cx),
-                Destination::Traces => self.render_traces(window, cx),
             }
         };
         v_flex()
@@ -51,6 +50,7 @@ impl Render for ObservabilityPage {
                             .child(match self.destination {
                                 Destination::Applications => self.applications_header(window, cx),
                                 Destination::Incidents => self.incidents_header(window, cx),
+                                Destination::Traces => self.traces_header(window, cx),
                                 _ => self
                                     .source_controls(self.page_header(window), cx)
                                     .render(cx),

@@ -191,9 +191,7 @@ mod ui_tests {
 
     #[gpui_kit::test]
     fn incidents_use_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
-        use crate::desktop::layout_check::{
-            Density, PageFrame, Table, assert_page_frame, assert_table,
-        };
+        use crate::desktop::layout_check::{PageFrame, Table, assert_page_frame, assert_table};
         let (_runtime, handle, _page) = open_example(cx, 1260.);
         // The detail pane shares the table's line, so the frame's right
         // padding is measured from the split.
@@ -206,7 +204,6 @@ mod ui_tests {
         let table = Table {
             table: Some("obs-incidents-table-scroll"),
             list: "obs-incidents-list",
-            density: Density::Toggle("obs-density"),
         };
         for text_size in [crate::ui::BASE_TEXT, 20.] {
             cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
@@ -215,7 +212,7 @@ mod ui_tests {
             cx.update_window(handle, |_, window, cx| {
                 assert_page_frame(window, cx, &frame);
                 let rows = assert_table(window, cx, &table);
-                assert!(rows.header.is_some() && rows.compact.is_some(), "{rows:#?}");
+                assert!(rows.header.is_some(), "{rows:#?}");
             })
             .unwrap();
         }

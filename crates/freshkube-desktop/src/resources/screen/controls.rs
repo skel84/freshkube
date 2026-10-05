@@ -46,20 +46,6 @@ impl ResourcesScreen {
             .menu_width(dp(260.))
             .search_placeholder("Find a namespace")
             .accessibility_label("Namespace");
-        let density = Button::new(header.id("density"))
-            .outline()
-            .small()
-            .icon(if self.table.compact {
-                IconName::Rows4
-            } else {
-                IconName::Rows2
-            })
-            .tooltip(if self.table.compact {
-                "Compact · 26px rows. Switch to comfortable"
-            } else {
-                "Comfortable · 34px rows. Switch to compact"
-            })
-            .on_click(cx.listener(|view, _, _, cx| view.toggle_density(cx)));
         let refresh = Button::new(header.id("refresh"))
             .ghost()
             .small()
@@ -70,7 +56,6 @@ impl ResourcesScreen {
             .filter(filter)
             .chips(self.pod_switch(cx))
             .control(namespace)
-            .control(density)
             .control(div().flex_none().child(self.columns_menu(cx)))
             .control(refresh)
             .meta(meta)

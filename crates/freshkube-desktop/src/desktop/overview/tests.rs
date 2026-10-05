@@ -610,7 +610,7 @@ fn assert_actions_inside_rows(window: &gpui_kit::Window, width: f32, text: f32) 
 
 #[gpui_kit::test]
 fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
-    use crate::desktop::layout_check::{self, Density, Table};
+    use crate::desktop::layout_check::{self, Table};
     use crate::presentation::attention::AttentionGroup;
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1600.);
     cx.update_window(handle, |_, window, cx| {
@@ -642,7 +642,6 @@ fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
             &Table {
                 table: None,
                 list: "needs-attention-rows",
-                density: Density::Compact,
             },
         );
         window.find("needs-attention-title");
@@ -695,7 +694,7 @@ fn needs_attention_shows_eight_then_fifty_and_says_how_many_are_left(cx: &mut Te
 
 #[gpui_kit::test]
 fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
-    use crate::desktop::layout_check::{self, Density, Table};
+    use crate::desktop::layout_check::{self, Table};
     use crate::presentation::attention::{self, AttentionGroup};
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1600.);
     cx.update_window(handle, |_, window, cx| {
@@ -742,7 +741,6 @@ fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
             &Table {
                 table: None,
                 list: "needs-attention-rows",
-                density: Density::Compact,
             },
         );
     })

@@ -12,8 +12,8 @@ use gpui_kit::{
     SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 
-use super::pinned::{Pinned, scrolled_by};
-use super::{COMPACT_ROW_HEIGHT, HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
+use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
+use super::{HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
 use crate::page::card;
 use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, dp};
@@ -85,8 +85,6 @@ impl TableIds {
 /// What a table keeps between frames, owned by the page's entity.
 pub struct TableState {
     pub scroll: UniformListScrollHandle,
-    /// Compact rows, from the density toggle; comfortable by default.
-    pub compact: bool,
     /// The sideways scroll, which group labels and pinned columns undo.
     sideways: ScrollHandle,
     ids: TableIds,
@@ -98,7 +96,6 @@ impl TableState {
     pub fn new(prefix: &str) -> Self {
         Self {
             scroll: UniformListScrollHandle::new(),
-            compact: false,
             sideways: ScrollHandle::new(),
             ids: TableIds::new(prefix),
         }
@@ -107,14 +104,6 @@ impl TableState {
     /// `<prefix>-<part>`, for the parts the page draws around the table.
     pub fn id(&self, part: &str) -> SharedString {
         format!("{}-{part}", self.ids.prefix).into()
-    }
-
-    pub fn row_height(&self) -> f32 {
-        if self.compact {
-            COMPACT_ROW_HEIGHT
-        } else {
-            ROW_HEIGHT
-        }
     }
 
     /// Scrolls a line into view.
@@ -126,6 +115,12 @@ impl TableState {
     /// and the rows draw as if pinning didn't exist.
     fn scrolled(&self) -> bool {
         scrolled_by(&self.sideways).is_some()
+    }
+
+    /// Whether a pinned run `run` dp wide stays at the left edge, from the
+    /// scroll's last frame; `Watch` draws again if this one disagrees.
+    fn pins(&self, run: f32, window: &Window) -> bool {
+        pins(&self.sideways, run, window)
     }
 }
 
@@ -303,7 +298,7 @@ impl DataTable {
         let list_height = self
             .fit
             .filter(|_| empty.is_none())
-            .map(|max| source.line_count().min(max) as f32 * state.row_height());
+            .map(|max| source.line_count().min(max) as f32 * ROW_HEIGHT);
         let list = div()
             .id(ids.list.clone())
             .test_support()
@@ -329,9 +324,9 @@ impl DataTable {
                     uniform_list(
                         ids.rows.clone(),
                         source.line_count(),
-                        cx.processor(|view: &mut S, range: Range<usize>, _, cx| {
+                        cx.processor(|view: &mut S, range: Range<usize>, window, cx| {
                             range
-                                .filter_map(|line| render_line(view, line, cx))
+                                .filter_map(|line| render_line(view, line, window, cx))
                                 .collect::<Vec<_>>()
                         }),
                     )
@@ -372,7 +367,7 @@ impl DataTable {
                             .when(!fitted && !is_empty, |this| this.h_full())
                             .w_full()
                             .min_w(dp(source.width()))
-                            .child(header(source, cx))
+                            .child(header(source, window, cx))
                             .children(inside),
                     ),
             )
@@ -386,15 +381,12 @@ pub fn data_table<S: TableSource>(source: &S, window: &Window, cx: &mut Context<
     DataTable::new().render(source, window, cx)
 }
 
-fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
+fn header<S: TableSource>(source: &S, window: &Window, cx: &mut Context<S>) -> AnyElement {
     let p = palette(cx);
     let state = source.table_state();
     let columns = source.columns();
-    let (pinned, width) = if state.scrolled() {
-        pinned_run(columns)
-    } else {
-        (0, 0.)
-    };
+    let (count, run) = pinned_run(columns);
+    let pinned = count > 0 && state.pins(run, window);
     let header = h_flex()
         .w_full()
         .h(dp(HEADER_HEIGHT))
@@ -403,24 +395,27 @@ fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
         .border_b_1()
         .border_color(p.line)
         .children(columns.iter().enumerate().map(|(ix, column)| {
-            // A pinned cell's place is kept by an empty one of its width.
-            if ix < pinned {
+            // A pinned cell's place is kept by an empty one of its width,
+            // and the cells after it are clipped where they pass under it.
+            if !pinned {
+                header_cell(source, ix, column, cx)
+            } else if ix < count {
                 cell(column).into_any_element()
             } else {
-                header_cell(source, ix, column, cx)
+                let cell = header_cell(source, ix, column, cx);
+                Passing::new(&state.sideways, run, px(0.), cell).into_any_element()
             }
         }));
-    if pinned == 0 {
-        return header;
+    if count == 0 || !state.scrolled() {
+        return header.into_any_element();
     }
-    let cells: Vec<_> = (columns.iter().enumerate().take(pinned))
-        .map(|(ix, column)| header_cell(source, ix, column, cx))
-        .collect();
-    // Drawn before a resize could clamp the scroll to its left edge; if it
-    // did, the table draws again unpinned, a flexible column at its width.
-    header.relative().child(
-        Pinned::overlay(
+    let header = if pinned {
+        let cells: Vec<_> = (columns.iter().enumerate().take(count))
+            .map(|(ix, column)| header_cell(source, ix, column, cx))
+            .collect();
+        header.relative().child(Pinned::overlay(
             &state.sideways,
+            run,
             h_flex()
                 .id(state.id("pinned-header"))
                 .test_support()
@@ -428,13 +423,17 @@ fn header<S: TableSource>(source: &S, cx: &mut Context<S>) -> Div {
                 .top_0()
                 .bottom_0()
                 .left_0()
-                .w(dp(width))
+                .w(dp(run))
                 .bg(p.surface_2)
                 .children(cells),
             p.line,
-        )
-        .settle(cx.entity_id()),
-    )
+        ))
+    } else {
+        header
+    };
+    // Built from the scroll's last frame; if this frame's differs, as after
+    // a resize, the table draws again to match it.
+    Watch::new(&state.sideways, run, pinned, cx.entity_id(), header).into_any_element()
 }
 
 fn header_cell<S: TableSource>(
@@ -484,7 +483,12 @@ fn header_cell<S: TableSource>(
 }
 
 /// One line of the list: a group's header or a row.
-fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> Option<AnyElement> {
+fn render_line<S: TableSource>(
+    source: &S,
+    line: usize,
+    window: &Window,
+    cx: &mut Context<S>,
+) -> Option<AnyElement> {
     // Rows draw while the list lays out, after the sideways scroll has
     // clamped its offset, so this is the offset the frame paints with.
     let state = source.table_state();
@@ -518,7 +522,7 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
         .aria_selected(selected)
         .aria_label(row.label.clone())
         .w_full()
-        .h(dp(source.table_state().row_height()))
+        .h(dp(ROW_HEIGHT))
         .border_1()
         .border_color(if selected {
             p.accent
@@ -545,22 +549,24 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
             this.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         });
     let columns = source.columns();
-    let (pinned, width) = if scrolled {
-        pinned_run(columns)
-    } else {
-        (0, 0.)
-    };
+    let (count, run) = pinned_run(columns);
+    let pinned = count > 0 && state.pins(run, window);
     for (ix, column) in columns.iter().enumerate() {
         // A pinned cell's place is kept by an empty one of its width; the
-        // cell itself draws last, over the cells that pass under it.
-        element = element.child(if ix < pinned {
+        // cell itself draws last, over the cells that pass under it, which
+        // are clipped there so they don't take its hover or clicks. Inside
+        // the row's border, the run starts a pixel in.
+        element = element.child(if !pinned {
+            source.cell(&row, &style, column, cx)
+        } else if ix < count {
             cell(column).into_any_element()
         } else {
-            source.cell(&row, &style, column, cx)
+            let cell = source.cell(&row, &style, column, cx);
+            Passing::new(&state.sideways, run, px(1.), cell).into_any_element()
         });
     }
-    if pinned > 0 {
-        let cells: Vec<_> = (columns.iter().take(pinned))
+    if pinned {
+        let cells: Vec<_> = (columns.iter().take(count))
             .map(|column| source.cell(&row, &style, column, cx))
             .collect();
         // Opaque, so the cells passing under them don't show through: the
@@ -586,6 +592,7 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
             .when(!selected, |this| this.child(tint(div().size_full())));
         element = element.relative().child(Pinned::overlay(
             &state.sideways,
+            run,
             div()
                 .id((state.ids.pinned.clone(), line))
                 .test_support()
@@ -593,7 +600,7 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
                 .top_0()
                 .bottom_0()
                 .left_0()
-                .w(dp(width))
+                .w(dp(run))
                 .bg(p.surface)
                 .child(edge)
                 .child(tint(h_flex().size_full()).children(cells)),
@@ -617,8 +624,9 @@ mod tests {
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
-        AnyView, AnyWindowHandle, AppContext, Entity, InputEvent, IntoElement, MouseMoveEvent,
-        Render, ScrollDelta, ScrollWheelEvent, StyleRefinement, TestAppContext, point, px, size,
+        AnyView, AnyWindowHandle, AppContext, Entity, InputEvent, IntoElement, MouseButton,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollDelta,
+        ScrollWheelEvent, StyleRefinement, TestAppContext, point, px, size,
     };
 
     use super::*;
@@ -682,6 +690,12 @@ mod tests {
         rows: usize,
         grouped: bool,
         selected: Option<usize>,
+        /// Cells and headers that take clicks and record them, as
+        /// Applications' report buttons do.
+        interactive: bool,
+        cell_clicks: Vec<SharedString>,
+        hovered: Vec<SharedString>,
+        sorts: Vec<SharedString>,
     }
 
     impl Wide {
@@ -694,6 +708,17 @@ mod tests {
                 rows,
                 grouped,
                 selected: None,
+                interactive: false,
+                cell_clicks: Vec::new(),
+                hovered: Vec::new(),
+                sorts: Vec::new(),
+            }
+        }
+
+        fn interactive(self) -> Self {
+            Self {
+                interactive: true,
+                ..self
             }
         }
 
@@ -704,7 +729,7 @@ mod tests {
 
     impl TableSource for Wide {
         type Key = usize;
-        type Sort = ();
+        type Sort = SharedString;
         type Column = Column;
         type Row<'a> = ();
 
@@ -724,11 +749,13 @@ mod tests {
             "Wide rows".into()
         }
 
-        fn sorting(&self, _: &Column) -> Option<((), Option<SortOrder>)> {
-            None
+        fn sorting(&self, column: &Column) -> Option<(SharedString, Option<SortOrder>)> {
+            self.interactive.then(|| (column.0.clone(), None))
         }
 
-        fn sort(&mut self, _: (), _: &mut Context<Self>) {}
+        fn sort(&mut self, column: SharedString, _: &mut Context<Self>) {
+            self.sorts.push(column);
+        }
 
         fn line_count(&self) -> usize {
             self.rows + self.first_row()
@@ -756,12 +783,26 @@ mod tests {
             row: &TableRow<usize, ()>,
             _: &RowStyle,
             column: &Column,
-            _: &mut Context<Self>,
+            cx: &mut Context<Self>,
         ) -> AnyElement {
+            let label = SharedString::from(format!("{} {}", column.0, row.key));
+            let (click, hover) = (label.clone(), label.clone());
             cell(column)
-                .id(SharedString::from(format!("{} {}", column.0, row.key)))
+                .id(label.clone())
                 .test_support()
-                .child(format!("{} {}", column.0, row.key))
+                .child(label)
+                .when(self.interactive, |this| {
+                    this.on_click(
+                        cx.listener(move |wide, _, _, _| wide.cell_clicks.push(click.clone())),
+                    )
+                    .on_hover(cx.listener(
+                        move |wide, hovered: &bool, _, _| {
+                            if *hovered {
+                                wide.hovered.push(hover.clone())
+                            }
+                        },
+                    ))
+                })
                 .into_any_element()
         }
 
@@ -925,8 +966,8 @@ mod tests {
     }
 
     /// Pinned columns wider than two thirds of the table's visible width
-    /// scroll with the rest, so they never cover it; the group's label
-    /// still stays.
+    /// scroll with the rest, built as if unpinned, so they never cover it;
+    /// the group's label still stays.
     #[gpui_kit::test]
     fn pinned_columns_too_wide_for_the_table_scroll(cx: &mut TestAppContext) {
         let (handle, _) = open(cx, Wide::new(2, 4, true), 560.);
@@ -934,11 +975,83 @@ mod tests {
             window.render_frame(cx);
             scroll_right(window, 500., cx);
             assert!(inset(window, "wide-group").abs() <= 1.5);
-            assert!((inset(window, ("wide-pinned", 1usize)) + 499.).abs() <= 1.5);
+            assert!(window.try_find(("wide-pinned", 1usize)).is_none());
+            assert!(window.try_find("wide-pinned-header").is_none());
             assert!((inset(window, "Column 0 1") + 499.).abs() <= 1.5);
             assert!((inset(window, ("wide-sort", 0usize)) + 500.).abs() <= 1.5);
         })
         .unwrap();
+    }
+
+    /// Over the pinned run, only the row and the pinned cells take the
+    /// mouse: the cells passing under it are clipped there, so they neither
+    /// hover nor take a click, in the rows and in the header. Right of the
+    /// run they take both as before.
+    #[gpui_kit::test]
+    fn cells_passing_under_the_pinned_run_dont_take_the_mouse(cx: &mut TestAppContext) {
+        let (handle, wide) = open(cx, Wide::new(2, 4, false).interactive(), 900.);
+        // Scrolled 100, Column 2 runs from 300 to 500, its first 100 under
+        // the pinned Column 1, which runs from 200 to 400.
+        let under_the_run = point(px(150.), px(5.));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            scroll_right(window, 100., cx);
+            assert!(window.find("wide-pinned-header").visible());
+            window
+                .within(("wide-pinned", 1usize))
+                .click_at("Column 1 1", under_the_run, cx);
+            window
+                .within("wide-pinned-header")
+                .click_at(("wide-sort", 1usize), under_the_run, cx);
+        })
+        .unwrap();
+        cx.read(|cx| {
+            let wide = wide.read(cx);
+            assert_eq!(wide.selected, Some(1));
+            assert_eq!(wide.cell_clicks, ["Column 1 1"]);
+            assert!(!wide.hovered.iter().any(|label| label == "Column 2 1"));
+            assert_eq!(wide.sorts, ["Column 1"]);
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.click_at("Column 2 1", point(px(150.), px(5.)), cx);
+            window.click_at(("wide-sort", 2usize), point(px(150.), px(5.)), cx);
+        })
+        .unwrap();
+        cx.read(|cx| {
+            let wide = wide.read(cx);
+            assert_eq!(wide.cell_clicks, ["Column 1 1", "Column 2 1"]);
+            assert!(wide.hovered.iter().any(|label| label == "Column 2 1"));
+            assert_eq!(wide.sorts, ["Column 1", "Column 2"]);
+        });
+    }
+
+    /// Moves the pointer to `position` and presses and releases there,
+    /// through the window's own dispatch, without drawing a frame.
+    fn press(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
+        let events = [
+            MouseMoveEvent {
+                position,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            MouseDownEvent {
+                position,
+                button: MouseButton::Left,
+                click_count: 1,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            MouseUpEvent {
+                position,
+                button: MouseButton::Left,
+                click_count: 1,
+                ..Default::default()
+            }
+            .to_platform_input(),
+        ];
+        for event in events {
+            window.dispatch_event(event, cx);
+        }
     }
 
     /// A page that keeps its table in a cached view, as the Resources pane
@@ -963,10 +1076,12 @@ mod tests {
             crate::text_size::install(None, cx);
             cx.set_reduce_motion(true);
         });
+        let mut wide = None;
         let handle: AnyWindowHandle = cx
             .open_window(size(px(900.), px(400.)), |window, cx| {
-                let wide = cx.new(|_| Wide::new(2, 4, true));
-                let page = cx.new(|_| CachedTable(wide));
+                let table = cx.new(|_| Wide::new(2, 4, true).interactive());
+                wide = Some(table.clone());
+                let page = cx.new(|_| CachedTable(table));
                 Root::new(page, window, cx)
             })
             .into();
@@ -1007,10 +1122,22 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        cx.update_window(handle, |_, window, _| {
+        // The cells passing under the run were clipped on that same frame:
+        // a press over Column 1, where Column 2 passes under it, reaches
+        // only the pinned cell.
+        cx.update_window(handle, |_, window, cx| {
             assert!(pinned_inset(window, Some(1), "Column 0 1").abs() <= 1.5);
+            let viewport = window.find("wide-table-scroll").bounds();
+            let row = window.find("wide-row-1").bounds();
+            press(
+                window,
+                point(viewport.left() + px(350.), row.center().y),
+                cx,
+            );
         })
         .unwrap();
+        let wide = wide.unwrap();
+        cx.read(|cx| assert_eq!(wide.read(cx).cell_clicks, ["Column 1 1"]));
     }
 
     /// A table without pinned columns still keeps its group labels in view,

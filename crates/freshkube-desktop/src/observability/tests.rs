@@ -212,27 +212,6 @@ fn map_selection_survives_reordering_and_clears_on_removal(cx: &mut TestAppConte
     }).unwrap();
 }
 #[gpui_kit::test]
-fn heatmap_selection_and_error_filters_change_the_trace_view(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
-    cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Traces, cx)));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("obs-bucket-0-18", cx);
-        assert_eq!(page.read(cx).bucket, Some((0, 18)));
-        window.press("right", cx);
-        assert_eq!(page.read(cx).bucket, Some((0, 19)));
-        window.click("obs-trace-errors", cx);
-        assert!(page.read(cx).trace_errors_only);
-        window.render_frame(cx);
-        assert!(window.try_find("obs-span-0").is_none());
-        window.click("obs-trace-clear", cx);
-        assert!(page.read(cx).bucket.is_none());
-        assert!(!page.read(cx).trace_errors_only);
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
 fn threshold_edits_validate_and_remain_local(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
     cx.update(|cx| {
@@ -287,8 +266,8 @@ fn rollback_preview_does_not_change_a_release(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn ranges_reports_and_trace_causes_have_independent_data(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
+fn ranges_reports_and_traces_have_independent_data(cx: &mut TestAppContext) {
+    let (_runtime, _handle, page) = mount(cx, true);
     cx.update(|cx| {
         page.update(cx, |page, cx| {
             let prior = page.charts[0].series[0].values.clone();
@@ -297,24 +276,18 @@ fn ranges_reports_and_trace_causes_have_independent_data(cx: &mut TestAppContext
             page.open_app(example::id("payments/api"), Report::Latency, cx);
             assert_eq!(page.selected_application().unwrap().key, "payments/api");
             page.open(Destination::Traces, cx);
+            let trace = page.live_traces.trace.clone();
+            assert!(trace.is_some());
+            let charts = page.charts[0].series[0].values.clone();
+            page.set_range(6, cx);
+            assert_ne!(
+                page.live_traces.trace, trace,
+                "another window answers its own requests"
+            );
+            assert!(page.live_traces.trace.is_some());
+            assert_ne!(charts, page.charts[0].series[0].values);
         })
     });
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("obs-error-cause-2", cx);
-        assert_eq!(page.read(cx).trace_error, 2);
-        assert_eq!(page.read(cx).trace_snapshot.spans[1].0, "oauth2-proxy");
-        window.click("obs-bucket-7-18", cx);
-        assert_eq!(page.read(cx).trace_error, 3);
-        assert!(
-            page.read(cx)
-                .trace_snapshot
-                .spans
-                .iter()
-                .all(|span| !span.4)
-        );
-    })
-    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -960,7 +933,6 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
             "obs-source",
             "obs-project",
             "obs-namespace",
-            "obs-density",
             "obs-columns",
             "obs-time",
             "obs-refresh",
@@ -1026,7 +998,6 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 "obs-category-monitoring",
                 "obs-more-categories",
                 "obs-namespace",
-                "obs-density",
                 "obs-columns",
                 "obs-time",
                 "obs-refresh",
@@ -1045,7 +1016,7 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
                 );
                 if matches!(
                     id,
-                    "obs-namespace" | "obs-density" | "obs-columns" | "obs-time" | "obs-refresh"
+                    "obs-namespace" | "obs-columns" | "obs-time" | "obs-refresh"
                 ) {
                     if let Some(prior) = previous {
                         let prior: gpui_kit::Bounds<gpui_kit::Pixels> = prior;
@@ -1093,7 +1064,6 @@ fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAp
         title_text: "Applications",
         table: "obs-applications-table-scroll",
         list: "obs-applications-list",
-        density: "obs-density",
     };
     for text_size in [crate::ui::BASE_TEXT, 20.] {
         cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
@@ -1103,7 +1073,7 @@ fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAp
             let layout = assert_table_page(window, cx, &table);
             assert!(
                 layout.group.is_some(),
-                "namespace groups use the selected row density: {layout:#?}"
+                "namespace groups take the row height: {layout:#?}"
             );
         })
         .unwrap();
@@ -1192,17 +1162,11 @@ fn applications_table_fits_short_results_and_caps_long_results(cx: &mut TestAppC
         assert!(short < 16);
         assert_eq!(
             window.find("obs-applications-list").bounds().size.height,
-            crate::ui::dp_px(short as f32 * 34., window)
+            crate::ui::dp_px(short as f32 * 26., window)
         );
         window.click("obs-show-all", cx);
         window.render_frame(cx);
         assert!(page.read(cx).matrix.len() > 16);
-        assert_eq!(
-            window.find("obs-applications-list").bounds().size.height,
-            crate::ui::dp_px(16. * 34., window)
-        );
-        window.click("obs-density", cx);
-        window.render_frame(cx);
         assert_eq!(
             window.find("obs-applications-list").bounds().size.height,
             crate::ui::dp_px(16. * 26., window)

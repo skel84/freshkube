@@ -28,7 +28,6 @@ mod frame;
 mod header;
 mod incidents;
 mod live_profiling;
-mod live_traces;
 mod map;
 mod model;
 mod plots;
@@ -113,7 +112,11 @@ pub(crate) struct ObservabilityPage {
     hidden_incident_columns: std::collections::BTreeSet<tables::ColumnKind>,
     /// The Incidents filter; its text is projected into the list.
     incident_query: Entity<InputState>,
-    live_traces: live_traces::Traces,
+    live_traces: traces::Traces,
+    trace_table: freshkube_ui::table::TableState,
+    hidden_trace_columns: std::collections::BTreeSet<tables::ColumnKind>,
+    /// The Traces filter; its text is projected into the request list.
+    trace_query: Entity<InputState>,
     live_profiles: live_profiling::Profiles,
     /// The applications' picker entries, by label.
     app_choices: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
@@ -136,14 +139,8 @@ pub(crate) struct ObservabilityPage {
     report_snapshot: Option<reports::ReportSnapshot>,
     threshold: Entity<InputState>,
     thresholds: BTreeMap<(String, Report), String>,
-    trace_error: usize,
-    trace_span: usize,
-    bucket: Option<(usize, usize)>,
-    trace_errors_only: bool,
-    trace_snapshot: traces::TraceSnapshot,
     charts: [Chart; 3],
     focus: FocusHandle,
-    heat_focus: FocusHandle,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -157,12 +154,6 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.bind_keys([
-            KeyBinding::new("left", traces::EarlierBucket, Some("ObservabilityHeatmap")),
-            KeyBinding::new("right", traces::LaterBucket, Some("ObservabilityHeatmap")),
-            KeyBinding::new("up", traces::HigherBucket, Some("ObservabilityHeatmap")),
-            KeyBinding::new("down", traces::LowerBucket, Some("ObservabilityHeatmap")),
-        ]);
         let url =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://coroot.example.com"));
         let secret = cx.new(|cx| InputState::new(window, cx).masked(true));
@@ -170,6 +161,7 @@ impl ObservabilityPage {
         let flame_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a function…"));
         let incident_query =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter incidents…"));
+        let trace_query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter requests…"));
         let threshold = cx.new(|cx| InputState::new(window, cx).placeholder("Threshold"));
         let app_select = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
@@ -184,6 +176,7 @@ impl ObservabilityPage {
                 if this.application_metrics.sync(cx) {
                     this.prepare_application_columns();
                     this.prepare_incident_columns();
+                    this.prepare_trace_columns();
                     cx.notify();
                 }
             }),
@@ -232,6 +225,12 @@ impl ObservabilityPage {
             cx.subscribe(&incident_query, |this, input, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.filter_incidents(input.read(cx).value().to_lowercase());
+                    cx.notify();
+                }
+            }),
+            cx.subscribe(&trace_query, |this, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.filter_traces(input.read(cx).value().to_lowercase());
                     cx.notify();
                 }
             }),
@@ -303,6 +302,9 @@ impl ObservabilityPage {
             hidden_incident_columns: incidents::HIDDEN_BY_DEFAULT.into(),
             incident_query,
             live_traces: Default::default(),
+            trace_table: freshkube_ui::table::TableState::new("obs-traces"),
+            hidden_trace_columns: Default::default(),
+            trace_query,
             live_profiles: Default::default(),
             app_choices: Rc::new([]),
             app_select,
@@ -323,18 +325,12 @@ impl ObservabilityPage {
             report_snapshot: None,
             threshold,
             thresholds: BTreeMap::new(),
-            trace_error: 0,
-            trace_span: 0,
-            bucket: None,
-            trace_errors_only: false,
-            trace_snapshot: traces::TraceSnapshot::new(3, 0, false),
             charts: [
                 example::chart("Failed TCP connections", "per second", 3, true, false),
                 example::chart("Successful connections", "per second", 3, false, true),
                 example::chart("CPU usage", "% of limit", 3, false, true),
             ],
             focus: cx.focus_handle().tab_stop(true),
-            heat_focus: cx.focus_handle().tab_stop(true),
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         };
@@ -371,8 +367,6 @@ impl ObservabilityPage {
     pub(crate) fn set_range(&mut self, hours: u32, cx: &mut Context<Self>) {
         self.hours = hours;
         self.range_changed(cx);
-        self.bucket = None;
-        self.prepare_trace();
         self.rebuild_charts();
         self.prepare_report();
         cx.notify();
