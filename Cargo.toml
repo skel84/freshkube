@@ -101,6 +101,10 @@ color-eyre.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# Keep source-line backtraces in development, matching CI.
+[profile.dev]
+debug = "line-tables-only"
+
 # Unoptimised GPUI draws a frame roughly 14x slower. Optimise dependencies in
 # dev builds; workspace crates stay unoptimised so they rebuild quickly. Line
 # tables keep dependency backtraces readable without full debug info on disk.
