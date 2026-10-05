@@ -67,6 +67,23 @@ impl DiskRow {
     fn usable(&self) -> bool {
         !self.readonly && !self.cdrom
     }
+
+    /// Why the disk can't be chosen, as tags. Optical drives are read-only
+    /// by design, as Storage says, so only a real disk that can't be
+    /// written warns.
+    fn flags(&self) -> impl Iterator<Item = (Tone, &'static str)> {
+        let read_only = if self.cdrom {
+            Tone::Outline
+        } else {
+            Tone::Warn
+        };
+        [
+            self.readonly.then_some((read_only, "Read-only")),
+            self.cdrom.then_some((Tone::Outline, "Optical")),
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 /// The table's rows and columns, and the chosen disk's path.
@@ -253,12 +270,10 @@ impl TableSource for MaintenanceView {
                 .items_center()
                 .gap_1()
                 .font_family(cx.theme().font_family.clone())
-                .when(row.readonly, |this| {
-                    this.child(ui::tag(Tone::Warn, None, "Read-only", cx))
-                })
-                .when(row.cdrom, |this| {
-                    this.child(ui::tag(Tone::Warn, None, "Optical", cx))
-                })
+                .children(
+                    row.flags()
+                        .map(|(tone, label)| ui::tag(tone, None, label, cx)),
+                )
                 .when(self.disks.selected.as_ref() == Some(&row.path), |this| {
                     this.child(ui::tag(
                         Tone::Accent,
@@ -310,5 +325,35 @@ impl TableSource for MaintenanceView {
             .rows
             .is_empty()
             .then(|| "Talos reported no disks.".into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(readonly: bool, cdrom: bool) -> DiskRow {
+        DiskRow {
+            path: "/dev/sr0".into(),
+            id: "sr0".into(),
+            size: "1.0 GB".into(),
+            model: "Example".into(),
+            serial: "EXAMPLE".into(),
+            readonly,
+            cdrom,
+            label: "Disk".into(),
+        }
+    }
+
+    #[test]
+    fn only_a_real_disk_that_cant_be_written_warns() {
+        let flags = |readonly, cdrom| row(readonly, cdrom).flags().collect::<Vec<_>>();
+        assert_eq!(flags(false, false), []);
+        assert_eq!(flags(true, false), [(Tone::Warn, "Read-only")]);
+        assert_eq!(flags(false, true), [(Tone::Outline, "Optical")]);
+        assert_eq!(
+            flags(true, true),
+            [(Tone::Outline, "Read-only"), (Tone::Outline, "Optical")]
+        );
     }
 }
