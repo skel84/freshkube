@@ -105,11 +105,16 @@ impl LifecycleScreen {
                 },
             ))
             .child(value(COLUMNS[4], config.0, config.1))
-            .child(cell(COLUMNS[5]).text_right().child(format!(
-                "{} · {}",
-                presence(row.in_discovery),
-                presence(row.in_kubernetes)
-            )))
+            .child(
+                cell(COLUMNS[5])
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(dp(6.))
+                    .children(ui::status_glyph(presence(row.in_discovery), cx))
+                    .child(div().text_color(p.muted).child("·"))
+                    .children(ui::status_glyph(presence(row.in_kubernetes), cx)),
+            )
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.select(Item::Node(name.clone()), window, cx);
             }))

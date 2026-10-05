@@ -23,7 +23,7 @@ fn chip(
         .h(dp(28.))
         .px(dp(11.))
         .gap(dp(6.))
-        .rounded(px(6.))
+        .rounded(px(8.))
         .border_1()
         .text_size(dp(12.5))
         .cursor_pointer()
@@ -317,10 +317,15 @@ impl OperationsScreen {
             .when(under_cursor, |this| {
                 this.border_l_2().border_color(p.accent)
             })
-            .child(cell(COLUMNS[0]).child(match order {
-                Some(k) => format!("✓ {}", k + 1),
-                None => "·".to_owned(),
-            }))
+            .child(match order {
+                Some(k) => cell(COLUMNS[0])
+                    .flex()
+                    .items_center()
+                    .gap(dp(4.))
+                    .child(Icon::new(IconName::Check).size(dp(14.)))
+                    .child((k + 1).to_string()),
+                None => cell(COLUMNS[0]).child("·"),
+            })
             .child(cell(COLUMNS[1]).child(node.target.name.clone()))
             .child(cell(COLUMNS[2]).child(node.target.address.clone()))
             .child(cell(COLUMNS[3]).child(node.role.label()))

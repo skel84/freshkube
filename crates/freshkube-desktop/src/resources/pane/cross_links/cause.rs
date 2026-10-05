@@ -307,7 +307,7 @@ impl DetailPane {
                             .overflow_y_scroll()
                             .px_2()
                             .py_1p5()
-                            .rounded(px(6.))
+                            .rounded(px(8.))
                             .bg(p.surface)
                             .font_family(MONO_FONT)
                             .text_size(dp(12.))
@@ -366,7 +366,7 @@ impl DetailPane {
                     .left(relative(*start))
                     .w(relative(*width))
                     .min_w(px(3.))
-                    .rounded(px(2.))
+                    .rounded(px(3.))
                     .bg(fill(*tone))
             }))
             .children(timeline.next.map(|at| {
