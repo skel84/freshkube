@@ -2,7 +2,10 @@
 //! derived when the node's answer arrives, and each row's cells. The showing
 //! table follows the view mode, and each keeps its own scroll and selection.
 use super::*;
-use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState};
+use table::{
+    Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState, WIDEST,
+    WIDEST_FLEXIBLE, fit,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Field {
@@ -46,22 +49,6 @@ impl TableColumn for Column {
         matches!(self.field, Field::Glyph | Field::Device | Field::Volume)
     }
 }
-
-/// DESIGN.md's widths: 7.5 a character plus 24, at least 64 and at most
-/// `most`.
-fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>, most: f32) -> f32 {
-    let chars = texts
-        .map(|text| text.chars().count())
-        .chain([label.len()])
-        .max()
-        .unwrap_or_default();
-    (chars as f32 * 7.5 + 24.).clamp(64., most)
-}
-
-/// The widest a fixed column grows; the flexible one's least width stops
-/// at `WIDEST_FLEXIBLE`.
-const WIDEST: f32 = 280.;
-const WIDEST_FLEXIBLE: f32 = 440.;
 
 fn column(field: Field, label: &str, width: f32) -> Column {
     Column {

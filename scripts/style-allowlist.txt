@@ -13,5 +13,4 @@ radius crates/freshkube-desktop/src/observability/traces/heat.rs
 list crates/freshkube-desktop/src/observability/map.rs
 radius crates/freshkube-desktop/src/observability/profiling.rs
 list crates/freshkube-desktop/src/screens/network/view.rs
-list crates/freshkube-desktop/src/screens/processes/mod.rs
 list crates/freshkube-desktop/src/screens/workloads/mod.rs
