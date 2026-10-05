@@ -1,157 +1,10 @@
+//! How Diagnostics draws: the header with its status chips, the checks and
+//! the selection's details.
 use super::*;
 use freshkube_ui::page::{self, PageHeader};
+use table::DataTable;
 
 impl DiagnosticsScreen {
-    fn summary(&self, snapshot: &DiagnosticSnapshot, cx: &App) -> impl IntoElement + use<> {
-        let count = |status: CheckStatus| {
-            snapshot
-                .checks
-                .iter()
-                .filter(|check| check.status == status)
-                .count()
-        };
-        let (pass, warn, fail, unknown) = (
-            count(CheckStatus::Pass),
-            count(CheckStatus::Warn),
-            count(CheckStatus::Fail),
-            count(CheckStatus::Unknown) + count(CheckStatus::Checking),
-        );
-        let cni = snapshot
-            .cni
-            .cni_type
-            .as_ref()
-            .map_or("unknown", CniType::name);
-        let addons = addons_label(&snapshot.addons);
-        h_flex()
-            .id("diagnostic-summary")
-            .test_support()
-            .aria_label(format!(
-                "{pass} passing, {warn} warnings, {fail} failing, {unknown} unknown; CNI {cni}; addons {addons}"
-            ))
-            .gap_2p5()
-            .flex_wrap()
-            .child(stat("Passing", pass.to_string(), cx))
-            .child(stat("Warnings", warn.to_string(), cx))
-            .child(stat("Failing", fail.to_string(), cx))
-            .child(stat("Unknown", unknown.to_string(), cx))
-            .child(stat("CNI", cni, cx))
-            .child(stat("Addons", addons, cx))
-    }
-
-    fn toolbar(&self, shown: usize, total: usize, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        h_flex()
-            .gap_3()
-            .items_center()
-            .flex_wrap()
-            .child(
-                div()
-                    .text_size(dp(12.5))
-                    .text_color(p.muted)
-                    .child(format!("{shown} of {total} checks")),
-            )
-            .child(div().flex_1())
-            .child(
-                Button::new("diagnostic-filter")
-                    .outline()
-                    .small()
-                    .icon(IconName::ListFilter)
-                    .label("Only problems")
-                    .selected(self.only_problems)
-                    .on_click(cx.listener(|view, _, _, cx| {
-                        view.set_only_problems(!view.only_problems, cx)
-                    })),
-            )
-    }
-
-    fn render_row(
-        &self,
-        ix: usize,
-        check: &DiagnosticCheck,
-        selected: bool,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let (tone, status) = status_tone(&check.status);
-        let key = key(check);
-        let columns: &[Column] = if compact {
-            &COMPACT_COLUMNS
-        } else {
-            &FULL_COLUMNS
-        };
-        let row = h_flex()
-            .id(("diagnostic-check", ix))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(format!("{} · {} · {}", check.name, status, check.message))
-            .w_full()
-            .h(dp(ROW_HEIGHT))
-            .flex_none()
-            .text_size(dp(12.5))
-            .cursor_pointer()
-            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-            .child(cell(columns[0]).child(ui::tag(tone, None, status, cx)));
-        let row = if compact {
-            row.child(
-                cell(columns[1])
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(check.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .ml_2()
-                            .when(!selected, |this| this.text_color(p.muted))
-                            .child(check.message.clone()),
-                    ),
-            )
-        } else {
-            row.child(
-                cell(columns[1])
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(check.name.clone()),
-            )
-            .child(
-                cell(columns[2])
-                    .when(!selected, |this| this.text_color(p.muted))
-                    .child(check.message.clone()),
-            )
-        };
-        row.on_click(cx.listener(move |view, _, window, cx| {
-            view.selected = Some(key.clone());
-            window.focus(&view.focus, cx);
-            cx.notify();
-        }))
-    }
-
-    fn section_head(title: String, category: CheckCategory, cx: &App) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        h_flex()
-            .id(SharedString::from(format!(
-                "diagnostic-section-{}",
-                section_slug(category)
-            )))
-            .test_support()
-            .aria_label(title.clone())
-            .flex_none()
-            .gap_2()
-            .px_3()
-            .pt_3()
-            .pb_1()
-            .border_b_1()
-            .border_color(p.line)
-            .child(
-                Icon::new(section_icon(category))
-                    .size(dp(13.))
-                    .text_color(p.muted),
-            )
-            .child(ui::caption(&title, cx))
-    }
-
     fn details(
         &self,
         check: Option<&DiagnosticCheck>,
@@ -345,6 +198,7 @@ impl DiagnosticsScreen {
 
 impl Render for DiagnosticsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync();
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -353,19 +207,45 @@ impl Render for DiagnosticsScreen {
             "the diagnostics",
             cx,
         );
-        let body = match state {
-            Some(state) => page::inset()
-                .id("diagnostics-state")
-                .test_support()
-                .child(state)
-                .into_any_element(),
-            None => self.render_body(window, cx),
+        let page = page::page("diagnostics-page")
+            .h_auto()
+            .flex_none()
+            .child(page::toolbar(cx).child(header));
+        let page = match (state, self.loader.data()) {
+            (Some(state), _) => page.child(
+                page::inset()
+                    .id("diagnostics-state")
+                    .test_support()
+                    .child(state),
+            ),
+            (None, Some(snapshot)) => {
+                let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
+                    .map(IntoElement::into_any_element)
+                    .into_iter()
+                    .chain(partial_notice(missing(snapshot), cx))
+                    .collect();
+                page.when(!banners.is_empty(), |page| {
+                    page.child(
+                        page::inset()
+                            .flex()
+                            .flex_col()
+                            .gap(dp(page::PANE_PADDING_Y))
+                            .children(banners),
+                    )
+                })
+                .child(self.render_split(window, cx))
+            }
+            (None, None) => page,
         };
-        // The keys live on the page, drawn in every state; the page scrolls
-        // when the window is too short for the list's least height.
-        page::page("diagnostics-page")
+        // The keys live on a wrapper drawn in every state, so the page keeps
+        // them while a state or an empty filter shows; the page scrolls when
+        // the details stack under the table.
+        div()
+            .id("diagnostics-scroll")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
+            .size_full()
+            .min_h_0()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .on_action(cx.listener(|view, _: &NextCheck, _, cx| view.step(1, cx)))
@@ -373,16 +253,37 @@ impl Render for DiagnosticsScreen {
             .on_action(cx.listener(|view, _: &FirstCheck, _, cx| view.step(isize::MIN, cx)))
             .on_action(cx.listener(|view, _: &LastCheck, _, cx| view.step(isize::MAX, cx)))
             .on_action(cx.listener(|view, _: &ToggleProblems, _, cx| {
-                view.set_only_problems(!view.only_problems, cx)
+                view.show(view.shown.toggle_problems(), cx)
             }))
-            .child(page::toolbar(cx).child(header))
-            .child(body)
+            .child(page)
     }
 }
 
 impl DiagnosticsScreen {
+    /// The toolbar: the title, the status chips and Refresh; the CNI and
+    /// the addons go in the meta line.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let header = PageHeader::new(PREFIX, "Diagnostics");
+        let chips = self.derived.as_ref().map(|derived| {
+            let shown = self.shown;
+            table::status_chips(
+                header.id("tally"),
+                TALLIES.iter().zip(derived.counts).map(|(&tally, count)| {
+                    table::status_chip(
+                        header.id(&format!("tally-{}", tally.what())),
+                        tally.tone(),
+                        count,
+                        tally.what(),
+                        shown.chosen(tally),
+                        cx,
+                    )
+                    .on_click(
+                        cx.listener(move |view, _, _, cx| view.show(view.shown.press(tally), cx)),
+                    )
+                }),
+                cx,
+            )
+        });
         let refresh = refresh_control(
             header.id("refresh"),
             "Refresh diagnostics",
@@ -390,163 +291,53 @@ impl DiagnosticsScreen {
             &self.loader,
             cx,
         );
+        let parts = self
+            .derived
+            .as_ref()
+            .map(|derived| derived.meta.clone())
+            .unwrap_or_default();
         header
+            .chips(chips)
             .control(refresh)
             .meta(meta(
                 self.source.as_ref(),
                 Scope::Node,
                 &self.loader,
                 self.embedded,
-                [],
+                parts,
             ))
             .render(window, cx)
     }
 
-    /// The banners, the summary, the filter and the checks with the
-    /// selection's details, inset under the toolbar.
-    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let (Some(source), Some(snapshot)) = (self.source.clone(), self.loader.data().cloned())
-        else {
-            return div().into_any_element();
-        };
-        let p = palette(cx);
-        let all = visible_checks(&snapshot, self.only_problems);
-        let keys: Vec<String> = all.iter().map(|check| key(check)).collect();
-        let selected_ix = self.selected_index(&keys);
-        let missing = missing(&snapshot);
-        let summary = self.summary(&snapshot, cx);
-        let toolbar = self.toolbar(all.len(), snapshot.checks.len(), cx);
-
-        let width = content_width(window);
-        let wide = width >= SIDE_DETAILS;
-        // The list gets what the side details leave; fold the result column
-        // into the check's cell before anything would be clipped.
-        let list_width = if wide {
-            width - (DETAILS_WIDTH + 14.)
-        } else {
-            width
-        };
-        let compact = list_width < table_width(&FULL_COLUMNS);
-        let columns: &[Column] = if compact {
-            &COMPACT_COLUMNS
-        } else {
-            &FULL_COLUMNS
-        };
-
-        // Rows are grouped under section captions; remember where the
-        // selected row lands among the children so it can scroll into view.
-        let mut children: Vec<AnyElement> = Vec::new();
-        let mut selected_child = None;
-        let mut section = None;
-        for (ix, check) in all.iter().enumerate() {
-            if section != Some(check.category) {
-                section = Some(check.category);
-                children.push(
-                    Self::section_head(
-                        section_title(check.category, &snapshot),
-                        check.category,
-                        cx,
-                    )
-                    .into_any_element(),
-                );
-            }
-            if selected_ix == Some(ix) {
-                selected_child = Some(children.len());
-            }
-            children.push(
-                self.render_row(ix, check, selected_ix == Some(ix), compact, cx)
-                    .into_any_element(),
-            );
-        }
-        if let Some(child) = selected_child {
-            self.scroll.scroll_to_item(child);
-        }
-
-        let empty = if self.only_problems {
-            "No warnings or failures."
-        } else {
-            "The diagnostics reported nothing."
-        };
-        let list = panel(cx)
-            .flex_1()
-            .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .child(table_head(columns, cx))
+    /// The checks, with the selection's details beside them on a wide page
+    /// and below them on a narrow one.
+    fn render_split(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let beside = crate::screens::beside(window);
+        let table = div()
+            .id("diagnostic-table")
+            .w_full()
             .child(
-                v_flex()
-                    .id("diagnostic-list")
-                    .test_support()
-                    .role(Role::ListBox)
-                    .aria_label("Diagnostic checks; arrows select a check, P shows only problems")
-                    .flex_1()
-                    .min_h_0()
-                    .pb_2()
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&self.scroll)
-                    .when(all.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .px_3()
-                                .py_3p5()
-                                .text_size(dp(12.5))
-                                .text_color(p.muted)
-                                .child(empty),
-                        )
-                    })
-                    .children(children),
-            );
-        let details = self.details(
-            selected_ix.map(|ix| all[ix]),
-            &snapshot,
-            &source.target.address,
-            cx,
-        );
-        let split = if wide {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT))
-                .items_stretch()
-                .gap(dp(14.))
-                .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
-                .child(
-                    div()
-                        .id("diagnostic-details")
-                        .w(dp(DETAILS_WIDTH))
-                        .flex_none()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .child(details),
-                )
-        } else {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
-                .child(
-                    v_flex().size_full().gap(dp(14.)).child(list).child(
-                        div()
-                            .id("diagnostic-details")
-                            .h(dp(DETAILS_HEIGHT))
-                            .flex_none()
-                            .overflow_y_scroll()
-                            .restrict_scroll_to_axis()
-                            .child(details),
-                    ),
-                )
+                DataTable::new()
+                    .fit(table::TableSource::line_count(self).max(1))
+                    .render(self, window, cx)
+                    .w_full()
+                    .flex_none(),
+            )
+            .into_any_element();
+        let (Some(source), Some(snapshot)) = (self.source.as_ref(), self.loader.data()) else {
+            return table;
         };
-        v_flex()
-            .id("diagnostics-body")
-            .test_support()
-            .flex_1()
-            .px(dp(page::PANE_PADDING))
-            .py(dp(page::PANE_PADDING_Y))
-            .gap(dp(14.))
-            .children(failure_banner(&self.loader, cx))
-            .children(partial_notice(missing, cx))
-            .child(summary)
-            .child(toolbar)
-            .child(split)
-            .into_any_element()
+        let details = self.details(self.selected_check(), snapshot, &source.target.address, cx);
+        let details = div()
+            .id("diagnostic-details")
+            .when_else(
+                beside,
+                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
+                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
+            )
+            .child(details)
+            .into_any_element();
+        crate::screens::split("diagnostics-split", beside, table, Some(details))
     }
 }
 

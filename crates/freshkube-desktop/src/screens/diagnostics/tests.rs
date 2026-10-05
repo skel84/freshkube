@@ -10,6 +10,7 @@ use gpui_kit::{AppContext, Entity, TestAppContext, Window, WindowHandle, px, siz
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
+use super::source::{Shown, Tally};
 use super::{DiagnosticsScreen, ScreenPanel, ScreenSource, example, log_service};
 use crate::backend::Target;
 use crate::desktop::layout_check;
@@ -17,13 +18,11 @@ use crate::desktop::nodes::NodeTab;
 use crate::desktop::tests::{fixture as app, open_node_tab};
 use crate::{fixture, presentation};
 
-/// The page's frame reaches the body under the toolbar, which keeps its
-/// cards and list inset until they move to a table.
 const DIAGNOSTICS_FRAME: layout_check::PageFrame = layout_check::PageFrame {
     page: "diagnostics-page",
     title: "diagnostics-title",
     title_text: "Diagnostics",
-    content: "diagnostics-body",
+    content: "diagnostics-split",
 };
 
 fn source(context: &str, node: &str) -> ScreenSource {
@@ -122,7 +121,7 @@ fn keyboard_selection_updates_the_details(cx: &mut TestAppContext) {
             window.find(("diagnostic-check", 0usize)).selected(),
             Some(true)
         );
-        window.find("diagnostic-summary");
+        window.find("diagnostics-tally");
     })
     .unwrap();
 }
@@ -205,32 +204,34 @@ fn unavailable_kubernetes_keeps_talos_checks(cx: &mut TestAppContext) {
             .map(str::to_owned)
             .unwrap();
         assert!(notice.contains("Kubernetes"), "{notice}");
-        assert!(
-            window
-                .find("diagnostic-summary")
-                .label()
-                .unwrap()
-                .contains("addons unknown")
-        );
+        let meta = screen.read(cx).derived.as_ref().unwrap().meta.clone();
+        assert!(meta.iter().any(|part| part == "addons unknown"), "{meta:?}");
     })
     .unwrap();
 }
 
+fn problems(screen: &DiagnosticsScreen) -> usize {
+    screen
+        .loader
+        .data()
+        .unwrap()
+        .checks
+        .iter()
+        .filter(|check| matches!(check.status, CheckStatus::Warn | CheckStatus::Fail))
+        .count()
+}
+
 #[gpui_kit::test]
-fn only_problems_filter_narrows_the_list(cx: &mut TestAppContext) {
+fn p_shows_only_the_problems(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let all = screen.read(cx).visible().len();
-        let problems = screen
-            .read(cx)
-            .visible()
-            .iter()
-            .filter(|check| matches!(check.status, CheckStatus::Warn | CheckStatus::Fail))
-            .count();
+        let problems = problems(screen.read(cx));
         assert!(problems >= 2 && problems < all);
         assert!(window.try_find(("diagnostic-check", all - 1)).is_some());
-        window.click("diagnostic-filter", cx);
+        window.click(("diagnostic-check", 0usize), cx);
+        window.press("p", cx);
         window.render_frame(cx);
         let shown = screen.read(cx).visible();
         assert_eq!(shown.len(), problems);
@@ -245,9 +246,89 @@ fn only_problems_filter_narrows_the_list(cx: &mut TestAppContext) {
                 .try_find(("diagnostic-check", problems - 1))
                 .is_some()
         );
-        window.click("diagnostic-filter", cx);
+        // Both problem chips show as chosen.
+        let shown = screen.read(cx).shown;
+        assert_eq!(shown, Shown::Problems);
+        for (tally, chosen) in [
+            (Tally::Failing, true),
+            (Tally::Warnings, true),
+            (Tally::Unknown, false),
+            (Tally::Passing, false),
+        ] {
+            assert_eq!(shown.chosen(tally), chosen, "{tally:?}");
+        }
+        window.press("p", cx);
         window.render_frame(cx);
         assert_eq!(screen.read(cx).visible().len(), all);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_chips_count_every_status_and_filter_to_one(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let checks = screen.read(cx).loader.data().unwrap().checks.clone();
+        let all = checks.len();
+        for (tally, chip, what) in [
+            (Tally::Failing, "diagnostics-tally-failing", "failing"),
+            (Tally::Warnings, "diagnostics-tally-warnings", "warnings"),
+            (Tally::Unknown, "diagnostics-tally-unknown", "unknown"),
+            (Tally::Passing, "diagnostics-tally-passing", "passing"),
+        ] {
+            let count = checks
+                .iter()
+                .filter(|check| Tally::of(&check.status) == tally)
+                .count();
+            assert!(count > 0, "the example has no {what} check");
+            assert_eq!(
+                window.find(chip).label(),
+                Some(format!("{count} {what}").as_str())
+            );
+            window.click(chip, cx);
+            window.render_frame(cx);
+            assert_eq!(screen.read(cx).shown, Shown::Only(tally));
+            let shown = screen.read(cx).visible();
+            assert_eq!(shown.len(), count, "{what}");
+            assert!(shown.iter().all(|check| Tally::of(&check.status) == tally));
+            // The details follow the first listed check.
+            assert_eq!(
+                window.find("diagnostic-detail-title").label(),
+                Some(shown[0].name.as_str())
+            );
+            // Pressing it again clears the filter.
+            window.click(chip, cx);
+            window.render_frame(cx);
+            assert_eq!(screen.read(cx).visible().len(), all);
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn categories_head_their_checks_with_the_worst_status(cx: &mut TestAppContext) {
+    let (_runtime, _screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let services = window
+            .find("diagnostic-section-services")
+            .label()
+            .map(str::to_owned)
+            .unwrap();
+        assert!(services.starts_with("Services · "), "{services}");
+        assert!(services.contains("1 failing"), "{services}");
+        let cni = window
+            .find("diagnostic-section-cni")
+            .label()
+            .map(str::to_owned)
+            .unwrap();
+        assert!(cni.starts_with("CNI (Flannel) · "), "{cni}");
+        // Groups come in the TUI's order, above their rows.
+        let system = window.find("diagnostic-section-system").bounds();
+        let first = window.find(("diagnostic-check", 0usize)).bounds();
+        assert!(system.bottom() <= first.top());
+        assert!(system.top() < window.find("diagnostic-section-kubernetes").bounds().top());
     })
     .unwrap();
 }
@@ -288,12 +369,12 @@ fn changing_target_drops_old_data(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| {
             screen.selected = Some("system:memory".into());
-            screen.only_problems = true;
+            screen.shown = Shown::Problems;
             assert!(screen.loader.data().is_some());
             screen.set_source(Some(source("prod-fra", "talos-wk-fra1-02")), window, cx);
             assert!(screen.loader.data().is_none());
             assert!(screen.selected.is_none());
-            assert!(!screen.only_problems);
+            assert_eq!(screen.shown, Shown::All);
         });
     })
     .unwrap();
@@ -553,6 +634,14 @@ fn diagnostics_has_the_edge_frame_at_both_text_sizes(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             layout_check::assert_edge_frame(window, cx, &DIAGNOSTICS_FRAME);
+            layout_check::assert_table(
+                window,
+                cx,
+                &layout_check::Table {
+                    table: Some("diagnostic-table-scroll"),
+                    list: "diagnostic-list",
+                },
+            );
         })
         .unwrap();
     }
