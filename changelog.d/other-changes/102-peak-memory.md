@@ -1,0 +1,1 @@
+- **Peak memory agrees with itself:** Overview's card, and the Nodes dot it puts on the rail, turn yellow at 85% and red at 95%, the same thresholds as its bar and its High or Critical word. It used to turn red at 90%, so a node at 92% showed red over the word High.

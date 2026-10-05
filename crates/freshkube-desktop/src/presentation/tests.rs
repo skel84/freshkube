@@ -88,6 +88,53 @@ fn etcd_card_shows_remaining_tolerance_and_warns_when_none_remains() {
     }
 }
 #[test]
+fn peak_memory_card_takes_the_memory_levels_tone_and_word() {
+    use crate::ui::Tone;
+    let cluster = crate::fixture::cluster("prod-fra", 1);
+    for (percent, tone, word) in [
+        (84., Tone::Good, None),
+        (85., Tone::Warn, Some("High")),
+        (90., Tone::Warn, Some("High")),
+        (94.9, Tone::Warn, Some("High")),
+        (95., Tone::Crit, Some("Critical")),
+    ] {
+        let node = NodeSummary {
+            name: "talos-cp-1".into(),
+            address: "192.0.2.1".into(),
+            role: Role::ControlPlane,
+            etcd_member: true,
+            responding: true,
+            version: None,
+            cores: Some(4),
+            memory: Some(Memory {
+                used: (percent * 10.) as u64,
+                total: 1000,
+            }),
+            load: None,
+            services: Vec::new(),
+        };
+        let overview = overview::Overview::build(&[], &[node], None, Some(&cluster), true, false);
+        let card = overview
+            .cards
+            .iter()
+            .find(|card| card.id == "tile-memory")
+            .unwrap();
+        assert_eq!(card.tone, tone, "{percent}");
+        assert_eq!(
+            card.meter.map(|(_, level)| level),
+            Some(memory_level(percent))
+        );
+        assert_eq!(
+            card.detail.as_ref(),
+            match word {
+                Some(word) => format!("talos-cp-1 · {word}"),
+                None => "talos-cp-1".into(),
+            },
+            "{percent}"
+        );
+    }
+}
+#[test]
 fn load_history_is_bounded_and_forgets_departed_nodes() {
     let node = |name: &str, load: Option<f64>| NodeSummary {
         name: name.into(),
