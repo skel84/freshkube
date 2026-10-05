@@ -32,7 +32,12 @@ impl ObservabilityPage {
     fn clear_application_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.filter = Filter::All;
         self.namespace = None;
-        self.active_categories = Rc::new(self.categories.iter().cloned().collect());
+        self.active_categories = Rc::new(
+            self.categories
+                .iter()
+                .map(|choice| choice.name.clone())
+                .collect(),
+        );
         self.query_text.clear();
         self.query
             .update(cx, |query, cx| query.set_value("", window, cx));

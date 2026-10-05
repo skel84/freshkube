@@ -74,7 +74,7 @@ pub(crate) struct ObservabilityPage {
     /// What the connection remembers between launches; none in fixture
     /// mode or without a preferences folder.
     memory: Option<remember::Memory>,
-    categories: std::rc::Rc<Vec<String>>,
+    categories: std::rc::Rc<Vec<CategoryChoice>>,
     namespaces: std::rc::Rc<Vec<String>>,
     cluster_ids: Vec<String>,
     destination: Destination,

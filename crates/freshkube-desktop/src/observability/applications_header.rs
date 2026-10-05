@@ -60,17 +60,17 @@ impl ObservabilityPage {
         let categories = line()
             .flex_wrap()
             .children(self.categories.iter().take(6).map(|category| {
-                let category = category.clone();
-                Button::new(SharedString::from(format!("obs-category-{category}")))
+                let name = category.name.clone();
+                Button::new(category.id.clone())
                     .ghost()
                     .small()
-                    .label(category.clone())
-                    .selected(self.active_categories.contains(&category))
-                    .accessibility_label(format!("Category: {category}"))
+                    .label(name.clone())
+                    .selected(self.active_categories.contains(&name))
+                    .accessibility_label(category.label.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let active = Rc::make_mut(&mut this.active_categories);
-                        if !active.remove(&category) {
-                            active.insert(category.clone());
+                        if !active.remove(&name) {
+                            active.insert(name.clone());
                         }
                         this.project();
                         cx.notify();
@@ -237,8 +237,12 @@ impl ObservabilityPage {
                         .checked(active.len() == categories.len())
                         .on_click(move |_, _, cx| {
                             _ = all_owner.update(cx, |this, cx| {
-                                this.active_categories =
-                                    Rc::new(all_categories.iter().cloned().collect());
+                                this.active_categories = Rc::new(
+                                    all_categories
+                                        .iter()
+                                        .map(|choice| choice.name.clone())
+                                        .collect(),
+                                );
                                 this.project();
                                 cx.notify();
                             });
@@ -246,7 +250,7 @@ impl ObservabilityPage {
                 );
                 for category in categories.iter().skip(6).take(94) {
                     let owner = owner.clone();
-                    let category = category.clone();
+                    let category = category.name.clone();
                     menu = menu.item(
                         PopupMenuItem::new(category.clone())
                             .checked(active.contains(&category))

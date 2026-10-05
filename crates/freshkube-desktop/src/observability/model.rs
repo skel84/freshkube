@@ -163,6 +163,13 @@ pub(super) struct Application {
     pub row_id: gpui_kit::SharedString,
     pub name_id: gpui_kit::SharedString,
 }
+
+#[derive(Clone)]
+pub(super) struct CategoryChoice {
+    pub name: String,
+    pub id: gpui_kit::SharedString,
+    pub label: gpui_kit::SharedString,
+}
 impl Application {
     pub fn check(&self, report: Report) -> &Check {
         &self.checks[report.index()]

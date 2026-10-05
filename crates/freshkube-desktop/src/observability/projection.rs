@@ -198,6 +198,11 @@ impl ObservabilityPage {
             .map(|a| a.category.clone())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
+            .map(|name| CategoryChoice {
+                id: format!("obs-category-{name}").into(),
+                label: format!("Category: {name}").into(),
+                name,
+            })
             .collect::<Vec<_>>()
             .into();
         self.namespaces = self
