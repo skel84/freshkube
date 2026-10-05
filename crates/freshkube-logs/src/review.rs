@@ -182,14 +182,13 @@ impl LogReview {
             .map_or(0, |counts| counts.iter().sum())
     }
 
-    /// Retained lines per level among the given services.
-    pub(super) fn level_counts<'a>(
-        &self,
-        showing: impl IntoIterator<Item = &'a ServiceId>,
-    ) -> [usize; 5] {
+    /// Retained lines per level among the services the filter shows: all of
+    /// them when there is no service filter, as with a pod's one stream.
+    pub(super) fn level_counts(&self) -> [usize; 5] {
+        let shown = self.logs.buffer().filters().services.as_ref();
         let mut totals = [0; 5];
-        for service in showing {
-            if let Some(counts) = self.counts.get(service) {
+        for (service, counts) in &self.counts {
+            if shown.is_none_or(|shown| shown.contains(service)) {
                 for (total, count) in totals.iter_mut().zip(counts) {
                     *total += count;
                 }
@@ -429,8 +428,25 @@ mod model_tests {
             review.copy_text(false).unwrap(),
             "GET / 200\nGET /health 200"
         );
-        let web = ServiceId::from("web");
-        assert_eq!(review.level_counts([&web]).iter().sum::<usize>(), 2);
+        assert_eq!(review.level_counts().iter().sum::<usize>(), 2);
+    }
+
+    /// Without a service filter every service counts, as a pod's one stream
+    /// needs; with one, only the services it shows.
+    #[test]
+    fn level_counts_follow_the_service_filter() {
+        let mut review = LogReview::new("node");
+        review.append([
+            LogEvent::new("apid", "error first"),
+            LogEvent::new("apid", "info second"),
+            LogEvent::new("kubelet", "warning third"),
+        ]);
+        let [error, warning, info, ..] = review.level_counts();
+        assert_eq!((error, warning, info), (1, 1, 1));
+        review.set_service_filter(BTreeSet::from([ServiceId::from("kubelet")]));
+        assert_eq!(review.level_counts(), [0, 1, 0, 0, 0]);
+        review.set_service_filter(BTreeSet::new());
+        assert_eq!(review.level_counts(), [0; 5]);
     }
 
     #[test]

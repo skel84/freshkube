@@ -155,6 +155,48 @@ fn the_log_waits_for_the_pod_then_reads_its_tail_and_follows_it(cx: &mut TestApp
     .unwrap();
 }
 
+/// A pod's one stream sets no service filter, so the level chips count
+/// every line it has read, and keep counting as it writes on (#80).
+#[gpui_kit::test]
+fn the_level_chips_count_every_line_of_the_pods_stream(cx: &mut TestAppContext) {
+    use freshkube_core::LogLevel;
+    let (_runtime, view, handle) = mount(cx);
+    let identity = running_pod();
+    let by_level = |view: &Entity<PodLogView>, cx: &App| {
+        let mut counts = [0; 5];
+        for entry in view.read(cx).retained().iter().filter(|e| !e.is_marker()) {
+            counts[match entry.level {
+                LogLevel::Error => 0,
+                LogLevel::Warning => 1,
+                LogLevel::Info => 2,
+                LogLevel::Debug => 3,
+                LogLevel::Unknown => 4,
+            }] += 1;
+        }
+        counts
+    };
+    cx.update_window(handle, |_, window, cx| {
+        show(&view, &identity, cx);
+        window.render_frame(cx);
+        let counts = view.read(cx).level_counts();
+        assert_eq!(counts, by_level(&view, cx));
+        assert_eq!(counts.iter().sum::<usize>(), lines(&view, cx));
+        assert!(counts[2] > 0, "{counts:?}");
+    })
+    .unwrap();
+    cx.executor().advance_clock(EXAMPLE_INTERVAL * 2);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).level_counts(), by_level(&view, cx));
+        assert_eq!(
+            view.read(cx).level_counts().iter().sum::<usize>(),
+            lines(&view, cx)
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_container_that_has_not_started_says_so_with_nothing_to_show(cx: &mut TestAppContext) {
     let (_runtime, view, handle) = mount(cx);
