@@ -904,25 +904,16 @@ fn unknown_tally_uses_the_same_circle_as_unknown_rows_and_filters_apps(cx: &mut 
         window.render_frame(cx);
         let chip = window.find("obs-tally-unknown");
         assert_eq!(chip.label(), Some("1 Unknown"));
+        // The chip and the unknown rows both draw `ui::status_glyph(Tone::Unknown)`,
+        // the dashed ring whose drawing and size freshkube-ui's tests check. The
+        // glyph is a sprite, so the chip paints no outline of its own.
         let chip_bounds = chip.bounds().scale(window.scale_factor());
         let unknown = crate::palette::palette(cx).unk_ink;
-        let mut glyphs: Vec<_> = window
-            .painted_quads()
-            .into_iter()
-            .filter(|quad| {
-                quad.border_color == unknown && chip_bounds.contains(&quad.bounds.center())
-            })
-            .collect();
-        // GPUI splits an outline into clipped strips that share its geometry.
-        glyphs.dedup_by(|a, b| a.bounds == b.bounds && a.corner_radii == b.corner_radii);
-        assert_eq!(glyphs.len(), 1, "Unknown needs its outlined circle");
-        let glyph = &glyphs[0];
-        let side = crate::ui::dp_px(8., window).scale(window.scale_factor()).0;
-        assert!((glyph.bounds.size.width.0 - side).abs() < 0.5);
-        assert!((glyph.bounds.size.height.0 - side).abs() < 0.5);
         assert!(
-            glyph.corner_radii.top_left.0 >= side / 2.,
-            "unknown must keep its circular glyph"
+            !window.painted_quads().into_iter().any(|quad| {
+                quad.border_color == unknown && chip_bounds.contains(&quad.bounds.center())
+            }),
+            "the Unknown chip draws the shared glyph, not an outline of its own"
         );
         window.click("obs-tally-unknown", cx);
         assert_eq!(page.read(cx).filter, super::Filter::Unknown);

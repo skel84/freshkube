@@ -310,7 +310,7 @@ fn value_ink(figure: &Figure<'_>, p: &crate::palette::Palette) -> Hsla {
         None => p.ink,
         Some(Tone::Good) => p.good_ink,
         Some(Tone::Warn) => p.warn_ink,
-        Some(Tone::Crit) => p.crit_ink,
+        Some(Tone::Crit | Tone::Died) => p.crit_ink,
         Some(_) => p.muted,
     }
 }
@@ -319,7 +319,7 @@ fn value_ink(figure: &Figure<'_>, p: &crate::palette::Palette) -> Hsla {
 /// a last-known reading.
 fn gauge_fill(tone: Option<Tone>, p: &crate::palette::Palette) -> Hsla {
     match tone {
-        Some(Tone::Crit) => p.crit,
+        Some(Tone::Crit | Tone::Died) => p.crit,
         Some(Tone::Warn) => p.warn,
         Some(Tone::Unknown) => p.unk,
         _ => p.accent,
@@ -361,7 +361,7 @@ fn segments(parts: &[Tone], cx: &App) -> impl IntoElement {
             div().flex_1().h_full().bg(match tone {
                 Tone::Good => p.good,
                 Tone::Warn => p.warn,
-                Tone::Crit => p.crit,
+                Tone::Crit | Tone::Died => p.crit,
                 _ => p.unk,
             })
         }))

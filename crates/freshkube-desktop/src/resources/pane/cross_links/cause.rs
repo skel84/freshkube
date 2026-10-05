@@ -13,6 +13,7 @@ use gpui_kit::component::{
 use super::*;
 use crate::palette::palette;
 use crate::resources::model::format_age;
+use crate::resources::rows::died;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 
 /// The card above everything else when the status says something is wrong.
@@ -86,6 +87,7 @@ impl CauseCard {
         now: DateTime<Utc>,
     ) -> Self {
         let (title, tone) = match diagnosis.severity {
+            Severity::Failing if died(&diagnosis.state) => ("Why it's failing", Tone::Died),
             Severity::Failing => ("Why it's failing", Tone::Crit),
             Severity::Waiting => ("Why it's waiting", Tone::Unknown),
             Severity::NotReady => ("Why it isn't ready", Tone::Warn),
@@ -237,7 +239,7 @@ impl DetailPane {
     pub(super) fn cause_card(&self, card: &CauseCard, cx: &Context<Self>) -> AnyElement {
         let p = palette(cx);
         let (ink, soft, line) = match card.tone {
-            Tone::Crit => (p.crit_ink, p.crit_soft, p.crit),
+            Tone::Crit | Tone::Died => (p.crit_ink, p.crit_soft, p.crit),
             Tone::Warn => (p.warn_ink, p.warn_soft, p.warn_line),
             _ => (p.unk_ink, p.unk_soft, p.line_strong),
         };

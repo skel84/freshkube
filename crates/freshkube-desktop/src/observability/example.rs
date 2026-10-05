@@ -542,3 +542,149 @@ pub(super) fn chart(
         event,
     }
 }
+
+/// Example incidents, newest problem first, as Coroot's incident list
+/// answers them; dated back from the observation window's end.
+pub(super) fn incidents(to: chrono::DateTime<chrono::Utc>) -> Vec<api::Incident> {
+    ["INC-12", "INC-13", "INC-11"]
+        .into_iter()
+        .filter_map(|key| incident_view(key, to))
+        .map(|view| view.incident().clone())
+        .collect()
+}
+
+/// One example incident with its objectives, as Coroot's incident view
+/// answers it.
+pub(super) fn incident_view(
+    key: &str,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Option<api::IncidentView> {
+    use serde_json::json;
+    let at = |minutes: i64| (to - chrono::Duration::minutes(minutes)).to_rfc3339();
+    let rate = |severity: &str, long: f64, short: f64| {
+        json!({
+            "severity": severity,
+            "long_window_seconds": 3600,
+            "short_window_seconds": 300,
+            "long_window_burn_rate": long,
+            "short_window_burn_rate": short,
+            "threshold": 14.4,
+        })
+    };
+    let availability = |compliance: &str, violated: bool| {
+        json!({
+            "objective": "99% of requests should not fail",
+            "compliance": compliance,
+            "violated": violated,
+        })
+    };
+    let latency = |compliance: &str, violated: bool| {
+        json!({
+            "objective": "99% of requests should be served faster than 500ms",
+            "compliance": compliance,
+            "violated": violated,
+            "latency_threshold_seconds": 0.5,
+        })
+    };
+    let value = match key {
+        "INC-12" => json!({
+            "incident": {
+                "key": key,
+                "app": id("payments/api").as_str(),
+                "cluster": "Fictional cluster",
+                "severity": "critical",
+                "state": "open",
+                "opened_at": at(122),
+                "duration_seconds": 122 * 60,
+                "impact_percent": 2.8,
+                "description": "Serving errors",
+                "rca": {
+                    "status": "OK",
+                    "summary": "Settlement calls from payments/api fail while payments/worker restarts.",
+                    "root_cause": "Release 1.8.2 of payments/worker changed DATABASE_URL to port 5432. The ledger-db Service exposes only 6432 (pgbouncer). The worker exits on connection refused and the API's settlement calls fail.",
+                    "immediate_fixes": "Roll back payments/worker to 1.8.1, or set DATABASE_URL to ledger-db:6432.",
+                    "propagation": [
+                        {
+                            "app_id": id(WORKER).as_str(),
+                            "status": "critical",
+                            "issues": ["Exits on start · connection refused by ledger-db:5432"],
+                        },
+                        {
+                            "app_id": id("payments/ledger-db").as_str(),
+                            "status": "warning",
+                            "issues": ["Refused connections on 5432"],
+                        },
+                    ],
+                },
+                "slo": {
+                    "availability_impact_percent": 2.8,
+                    "latency_impact_percent": 0.4,
+                    "availability_burn_rates": [rate("critical", 18.4, 21.0)],
+                    "latency_burn_rates": [rate("ok", 0.4, 0.6)],
+                },
+            },
+            "availability": availability("97.2%", true),
+            "latency": latency("99.6%", false),
+        }),
+        "INC-13" => json!({
+            "incident": {
+                "key": key,
+                "app": id("platform/keycloak").as_str(),
+                "cluster": "Fictional cluster",
+                "severity": "warning",
+                "state": "open",
+                "opened_at": at(10),
+                "duration_seconds": 10 * 60,
+                "impact_percent": 0.3,
+                "description": "Lost an instance",
+                "rca": {
+                    "status": "OK",
+                    "root_cause": "talos-wk-fra1-03 stopped reporting. One keycloak instance is no longer ready; the remaining instance continues serving requests. The worker release happened earlier and is unrelated.",
+                    "propagation": [
+                        {
+                            "app_id": id("platform/oauth2-proxy").as_str(),
+                            "status": "warning",
+                            "issues": ["Requests reach the remaining instance"],
+                        },
+                    ],
+                },
+                "slo": {
+                    "availability_impact_percent": 0.3,
+                    "latency_impact_percent": null,
+                    "availability_burn_rates": [rate("warning", 6.2, 15.1)],
+                    "latency_burn_rates": [],
+                },
+            },
+            "availability": availability("99.7%", true),
+            "latency": latency("99.4%", false),
+        }),
+        "INC-11" => json!({
+            "incident": {
+                "key": key,
+                "app": id("payments/checkout").as_str(),
+                "cluster": "Fictional cluster",
+                "severity": "warning",
+                "state": "resolved",
+                "opened_at": at(170),
+                "resolved_at": at(140),
+                "duration_seconds": 30 * 60,
+                "impact_percent": 0.6,
+                "description": "Latency above objective",
+                "rca": {
+                    "status": "OK",
+                    "summary": "Checkout slowed while ledger-db ran its nightly vacuum; latency recovered when it finished.",
+                },
+                "slo": {
+                    "availability_impact_percent": null,
+                    "latency_impact_percent": 0.6,
+                    "availability_burn_rates": [],
+                    "latency_burn_rates": [rate("warning", 2.1, 0.8)],
+                },
+            },
+            "availability": availability("99.9%", false),
+            "latency": latency("98.4%", true),
+        }),
+        _ => return None,
+    };
+    Some(serde_json::from_value(value).expect("example incident"))
+}

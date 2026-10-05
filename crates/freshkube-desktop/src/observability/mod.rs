@@ -27,7 +27,6 @@ mod format;
 mod frame;
 mod header;
 mod incidents;
-mod live_incidents;
 mod live_profiling;
 mod live_traces;
 mod map;
@@ -38,6 +37,7 @@ mod projection;
 mod remember;
 mod reports;
 mod settings;
+mod tables;
 #[cfg(test)]
 mod tests;
 mod traces;
@@ -80,7 +80,7 @@ pub(crate) struct ObservabilityPage {
     applications: Vec<Application>,
     matrix: Vec<MatrixRow>,
     application_table: freshkube_ui::table::TableState,
-    application_columns: Vec<application_columns::ApplicationColumn>,
+    application_columns: Vec<tables::PageColumn>,
     application_metrics: application_columns::ApplicationMetrics,
     hidden_application_columns: std::collections::BTreeSet<application_columns::ColumnKind>,
     application_width: f32,
@@ -108,9 +108,11 @@ pub(crate) struct ObservabilityPage {
     map_scroll: UniformListScrollHandle,
     map_display: map::MapDisplay,
     map_problems: bool,
-    incident: usize,
-    incident_muted: bool,
-    incident_observations: live_incidents::Incidents,
+    incident_observations: incidents::Incidents,
+    incident_table: freshkube_ui::table::TableState,
+    hidden_incident_columns: std::collections::BTreeSet<tables::ColumnKind>,
+    /// The Incidents filter; its text is projected into the list.
+    incident_query: Entity<InputState>,
     live_traces: live_traces::Traces,
     live_profiles: live_profiling::Profiles,
     /// The applications' picker entries, by label.
@@ -166,6 +168,8 @@ impl ObservabilityPage {
         let secret = cx.new(|cx| InputState::new(window, cx).masked(true));
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter applications…"));
         let flame_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a function…"));
+        let incident_query =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter incidents…"));
         let threshold = cx.new(|cx| InputState::new(window, cx).placeholder("Threshold"));
         let app_select = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
@@ -179,6 +183,7 @@ impl ObservabilityPage {
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
                 if this.application_metrics.sync(cx) {
                     this.prepare_application_columns();
+                    this.prepare_incident_columns();
                     cx.notify();
                 }
             }),
@@ -221,6 +226,12 @@ impl ObservabilityPage {
                 if matches!(event, InputEvent::Change) {
                     this.query_text = query.read(cx).value().to_lowercase();
                     this.project_filters();
+                    cx.notify();
+                }
+            }),
+            cx.subscribe(&incident_query, |this, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.filter_incidents(input.read(cx).value().to_lowercase());
                     cx.notify();
                 }
             }),
@@ -287,9 +298,10 @@ impl ObservabilityPage {
             map_scroll: UniformListScrollHandle::new(),
             map_display: Default::default(),
             map_problems: false,
-            incident: 0,
-            incident_muted: false,
             incident_observations: Default::default(),
+            incident_table: freshkube_ui::table::TableState::new("obs-incidents"),
+            hidden_incident_columns: incidents::HIDDEN_BY_DEFAULT.into(),
+            incident_query,
             live_traces: Default::default(),
             live_profiles: Default::default(),
             app_choices: Rc::new([]),
@@ -330,6 +342,7 @@ impl ObservabilityPage {
         this.flame_matches = vec![true; this.frames.len()];
         if fixture {
             this.apply_applications(&example::applications());
+            this.answer_example_incidents();
         }
         this.fill_from_memory(window, cx);
         this.project();
@@ -402,11 +415,6 @@ impl ObservabilityPage {
         self.report_snapshot = None;
         self.open(Destination::Application, cx);
     }
-    fn open_named(&mut self, key: &str, report: Report, cx: &mut Context<Self>) {
-        if let Some(app) = self.applications.iter().find(|app| app.key == key) {
-            self.open_app(app.id.clone(), report, cx);
-        }
-    }
     fn edit_threshold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.fixture {
             return;
@@ -473,8 +481,8 @@ impl ObservabilityPage {
         }
         window.open_alert_dialog(cx,move |dialog,_,cx| dialog.ok_text("Close preview").title(format!("Preview: {action}"))
             .child(v_flex().gap(dp(12.)).child(ui::tag(Tone::Accent,None,"Example data",cx))
-                .child(if action == "Correct DATABASE_URL" { "Deployment payments/worker · proposed environment change" } else { "Deployment payments/worker · revision 14 → 13" })
-                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child(if action == "Correct DATABASE_URL" { "DATABASE_URL: ledger-db:5432 → ledger-db:6432" } else { "image: worker:1.8.2 → worker:1.8.1\nDATABASE_URL: ledger-db:5432 → ledger-db:6432" }))
+                .child("Deployment payments/worker · revision 14 → 13")
+                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child("image: worker:1.8.2 → worker:1.8.1\nDATABASE_URL: ledger-db:5432 → ledger-db:6432"))
                 .child("Expected result: the worker connects to the Service on port 6432. The next revision must be observed before recovery is confirmed.")
                 .child("This preview does not change a cluster.")));
     }

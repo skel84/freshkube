@@ -105,7 +105,7 @@ impl GroupRow {
     pub fn render(self, cx: &App) -> Observed<Stateful<Div>> {
         let p = palette(cx);
         let color = match self.tone {
-            Tone::Crit => p.crit_ink,
+            Tone::Crit | Tone::Died => p.crit_ink,
             Tone::Warn => p.warn_ink,
             Tone::Good => p.good_ink,
             _ => p.muted,
