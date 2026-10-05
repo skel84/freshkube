@@ -9,6 +9,7 @@ publish = false
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-probe.workspace = true
+freshkube-terminal.workspace = true
 freshkube-ui.workspace = true
 talos-rs.workspace = true
 tokio.workspace = true
@@ -20,8 +21,6 @@ k8s-openapi.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
-# The terminal emulator behind the pod shell (Apache-2.0; see NOTICE).
-alacritty_terminal = { version = "=0.26.0", default-features = false }
 # Where preferences live on each platform.
 dirs = "6"
 # Keys the user asks to remember: Keychain, Credential Manager or Secret Service.
@@ -37,6 +36,7 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 # examples get the dev-dependencies, and with them GPUI's test support.
 stress = [
     "freshkube-probe/stress",
+    "freshkube-terminal/stress",
     "dep:bytes",
     "dep:http-body-util",
     "dep:hyper",
@@ -55,3 +55,5 @@ gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 tempfile = "3"
 # Render probes count in tests (`probe::count`).
 freshkube-probe = { workspace = true, features = ["counting"] }
+# The shell tests read the terminal's screen (`screen_text`, `ended`).
+freshkube-terminal = { workspace = true, features = ["testing"] }

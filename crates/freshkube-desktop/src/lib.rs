@@ -157,12 +157,13 @@ mod secrets;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
-mod terminal;
 mod ui;
 
 use freshkube_probe::perf;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
 use freshkube_ui::{meters, palette, text_size, theme};
+// The pod shell's terminal view, by its old path.
+use freshkube_terminal as terminal;
 
 /// Where the app keeps its preferences: `preferences.json` in
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`
