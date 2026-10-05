@@ -133,6 +133,72 @@ fn a_hidden_page_reads_nothing_and_showing_answers_the_panels_in_view(cx: &mut T
 }
 
 #[gpui_kit::test]
+fn the_page_takes_the_shared_frame_and_its_last_panel_ends_at_the_padding(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{PageFrame, assert_page_frame_from};
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let slots = slot_count(cx, &page);
+    cx.update_window(handle, |_, window, cx| {
+        // The header leads with the breadcrumb's "Dashboards".
+        assert_page_frame_from(
+            window,
+            cx,
+            &PageFrame {
+                page: "monitoring-page",
+                title: "monitoring-title",
+                title_text: "Cluster",
+                content: "monitoring-grid",
+            },
+            "monitoring-dashboards",
+        );
+        // The grid draws the gap between panels, so the rightmost one ends
+        // where the grid does, not a gap short of it.
+        let grid = window.find("monitoring-grid").bounds();
+        let right = (0..slots)
+            .filter_map(|index| {
+                window.try_find(SharedString::from(format!("monitoring-panel-{index}")))
+            })
+            .map(|panel| panel.bounds().right())
+            .fold(
+                px(0.),
+                |right, edge| if edge > right { edge } else { right },
+            );
+        assert!(
+            (right - grid.right()).abs() < px(0.5),
+            "the last panel ends at {right:?}, the grid at {:?}",
+            grid.right()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_meta_line_counts_the_panels_and_says_when_they_answered(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    assert!(shown(cx, handle, "monitoring-scope"));
+    let slots = slot_count(cx, &page);
+    let time = super::board::clock(NOW).unwrap();
+    let meta = |cx: &mut TestAppContext| -> SharedString {
+        cx.read(|cx| page.read(cx).board.as_ref().unwrap().meta.clone())
+    };
+    assert_eq!(meta(cx), format!("{slots} panels · {time}").as_str());
+
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            let board = page.board.as_mut().unwrap();
+            board.slots[0].failed = true;
+            assert!(board.derive_meta(), "a failure changes the meta line");
+            assert!(!board.derive_meta(), "nothing changed the second time");
+        })
+    });
+    assert_eq!(
+        meta(cx),
+        format!("{slots} panels · 1 failed · {time}").as_str()
+    );
+}
+
+#[gpui_kit::test]
 fn without_a_source_the_page_says_it_is_not_connected(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, None);
     show(cx, handle, &page);
