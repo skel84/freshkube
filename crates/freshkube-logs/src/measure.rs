@@ -178,8 +178,8 @@ impl<S: LogSource> LogView<S> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Size<Pixels> {
-        crate::desktop::probe::hit("logs.measure");
-        let _span = crate::perf::span("logs.measure_row");
+        freshkube_probe::probe::hit("logs.measure");
+        let _span = freshkube_probe::perf::span("logs.measure_row");
         let available = size(
             if key.wrapped {
                 AvailableSpace::Definite(key.width)

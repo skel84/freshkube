@@ -17,7 +17,7 @@ use gpui_kit::{
     px,
 };
 
-use super::{PodLogPanel, PodLogView, StreamState, TAILS, role_heading};
+use super::{PodLogView, Stream, StreamState, TAILS, role_heading};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 

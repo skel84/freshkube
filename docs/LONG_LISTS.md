@@ -63,7 +63,7 @@ During a drag, every frame goes through `rebuild_sizes` and then lays out only t
 
 ### Implementation
 
-It lives on the shared `LogView` in `crates/freshkube-desktop/src/logs/measure.rs`, so every log source, Talos services and later pod logs, gets it. Rows are still laid out exactly as the list draws them (`render_row(ix, true, cx).layout_as_root(..)`); the change limits when that runs. Nothing estimates heights from character counts, for the reason in rule 3.
+It lives on the shared `LogView` in `crates/freshkube-logs/src/measure.rs`, so every log source, Talos services and later pod logs, gets it. Rows are still laid out exactly as the list draws them (`render_row(ix, true, cx).layout_as_root(..)`); the change limits when that runs. Nothing estimates heights from character counts, for the reason in rule 3.
 
 | Piece | What it does |
 | --- | --- |
@@ -92,7 +92,7 @@ Most of the risk is in the scroll anchor. Keep these rules:
 
 ### Test
 
-`live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards` in `logs/tests.rs` covers the behavior, with a `settle` helper that advances the fake clock past `RESIZE_SETTLE` and delivers frames until no row is estimated. GPUI's test text system gives every character a fixed advance, so wrapping is real, and row 90 of the test fixture, a long line, really changes height with width.
+`live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards` in `freshkube-logs`'s `tests.rs` covers the behavior, with a `settle` helper that advances the fake clock past `RESIZE_SETTLE` and delivers frames until no row is estimated. GPUI's test text system gives every character a fixed advance, so wrapping is real, and row 90 of the test fixture, a long line, really changes height with width.
 
 The test reviews from the top so row 90 is off screen, then checks four things:
 

@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gpui_kit::{Context, Window, component::VirtualListScrollHandle, px};
 
-use freshkube_core::logs::{LogEntry, LogEvent, ServiceId};
+use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::review::{LogReview, MAX_SELECTED_LINES};
 use super::{Columns, HIDDEN_APPLY_INTERVAL, LogSource, LogView, ReviewAnchor};
@@ -100,6 +100,9 @@ impl<S: LogSource> LogView<S> {
         cx.notify();
     }
 
+    /// Holds the review position, by line, across a change the source
+    /// makes next: Talos captures it before a new catalog changes which
+    /// services are shown.
     pub fn capture_anchor(&mut self) {
         if self.following
             || self.review.visible.is_empty()
@@ -120,7 +123,8 @@ impl<S: LogSource> LogView<S> {
         }
     }
 
-    /// Bumped on every reset; row element ids carry it.
+    /// Bumped on every reset; row element ids carry it, and the Talos
+    /// example target takes it as its epoch.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -140,13 +144,15 @@ impl<S: LogSource> LogView<S> {
         &self.showing
     }
 
-    /// Shows exactly these sources' lines.
+    /// Shows exactly these sources' lines. It doesn't notify; the caller
+    /// does, once its own change is made.
     pub fn set_shown(&mut self, shown: BTreeSet<ServiceId>) {
         self.showing = shown;
         self.review.set_service_filter(self.showing.clone());
     }
 
     /// The notice under the toolbar, such as why an action did nothing.
+    /// It doesn't notify; the caller does.
     pub fn set_feedback(&mut self, feedback: Option<String>) {
         self.feedback = feedback;
     }
@@ -163,9 +169,9 @@ impl<S: LogSource> LogView<S> {
         self.pending_reveal = self.last_row_id();
     }
 
-    /// Every retained line, oldest first, whatever the filters.
-    pub fn retained(&self) -> &[LogEntry] {
-        self.review.logs.buffer().entries()
+    /// Whether any line is retained, whatever the filters.
+    pub fn has_lines(&self) -> bool {
+        !self.review.logs.buffer().entries().is_empty()
     }
 
     /// Retained lines from `service`.
@@ -174,18 +180,10 @@ impl<S: LogSource> LogView<S> {
     }
 
     /// The identity the next line will get. It only grows, so it counts
-    /// arrivals whatever retention dropped.
+    /// arrivals whatever retention dropped; the Talos example stream
+    /// numbers its lines from it.
     pub fn next_line_id(&self) -> u64 {
         self.review.next_id
-    }
-
-    /// Lines applied to the review, and lines held back while hidden.
-    #[cfg(test)]
-    pub(crate) fn applied_and_held(&self) -> (usize, usize) {
-        (
-            self.review.logs.buffer().entries().len(),
-            self.backlog.len(),
-        )
     }
 
     /// The review's part of a status line: counts, matches, selection,

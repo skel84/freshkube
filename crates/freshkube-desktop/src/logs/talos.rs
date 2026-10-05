@@ -122,7 +122,7 @@ impl LogSource for TalosLogs {
             "Select a connected node to view its logs."
         } else if view.source().services.is_empty() {
             "This node didn't report a service catalog."
-        } else if view.retained().is_empty() {
+        } else if !view.has_lines() {
             "Choose services above, then start collecting."
         } else {
             "No retained lines pass the service and level filters."
@@ -149,8 +149,6 @@ pub(crate) trait TalosPanel: Sized + 'static {
 
     fn open_service(&mut self, service: String, _: &mut Window, cx: &mut Context<Self>);
 
-    fn stop(&mut self, cx: &mut Context<Self>);
-
     fn set_fixture(&mut self, events: Vec<LogEvent>, window: &mut Window, cx: &mut Context<Self>);
 
     /// Delivers one stream batch to the fixture target like a collection
@@ -160,17 +158,6 @@ pub(crate) trait TalosPanel: Sized + 'static {
 
     #[cfg(test)]
     fn set_fixture_failures(&mut self, failures: Vec<(ServiceId, String)>, cx: &mut Context<Self>);
-
-    /// Hands a batch from the current stream to the view: its lines from
-    /// services still collected, and its failures. A batch from an earlier
-    /// stream or another node is dropped, and `false` ends its delivery.
-    fn apply_batch(
-        &mut self,
-        target: &Target,
-        revision: u64,
-        batch: Vec<StreamEvent>,
-        cx: &mut Context<Self>,
-    ) -> bool;
 
     /// Replaces the synthetic backlog with the given node's full catalog.
     fn set_fixture_catalog(
@@ -273,17 +260,6 @@ impl TalosPanel for LogPanel {
         }
     }
 
-    fn stop(&mut self, cx: &mut Context<Self>) {
-        // Lines received before stopping still belong to the review.
-        self.flush_backlog(cx);
-        let source = self.source_mut();
-        source.stream_revision += 1;
-        source.job = None;
-        source.delivery = None;
-        source.collection_active = false;
-        cx.notify();
-    }
-
     fn set_fixture(&mut self, events: Vec<LogEvent>, window: &mut Window, cx: &mut Context<Self>) {
         self.stop(cx);
         self.source_mut().target = None;
@@ -335,34 +311,6 @@ impl TalosPanel for LogPanel {
             self.source_mut().errors = failures.into_iter().take(16).collect();
             cx.notify();
         }
-    }
-
-    fn apply_batch(
-        &mut self,
-        target: &Target,
-        revision: u64,
-        batch: Vec<StreamEvent>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.source().stream_revision != revision
-            || self.source().active_target() != Some(target)
-        {
-            return false;
-        }
-        let mut lines = Vec::new();
-        for event in batch {
-            if &event.target != target || !self.source().collecting.contains(&event.service) {
-                continue;
-            }
-            match event.result {
-                Ok(line) => lines.push(LogEvent::new(event.service, line)),
-                Err(error) => {
-                    self.source_mut().errors.insert(event.service, error);
-                }
-            }
-        }
-        self.ingest(lines, cx);
-        true
     }
 
     fn set_fixture_catalog(
@@ -424,8 +372,22 @@ impl TalosPanel for LogPanel {
     }
 }
 
-/// The page's collection and its controls, used only here.
-trait Collection: Sized + 'static {
+/// The page's stream, its collection and its controls: used only in
+/// `logs/`, whose tests deliver batches as a collection job would.
+pub(super) trait Collection: Sized + 'static {
+    fn stop(&mut self, cx: &mut Context<Self>);
+
+    /// Hands a batch from the current stream to the view: its lines from
+    /// services still collected, and its failures. A batch from an earlier
+    /// stream or another node is dropped, and `false` ends its delivery.
+    fn apply_batch(
+        &mut self,
+        target: &Target,
+        revision: u64,
+        batch: Vec<StreamEvent>,
+        cx: &mut Context<Self>,
+    ) -> bool;
+
     fn start(&mut self, cx: &mut Context<Self>);
 
     fn start_from_now(&mut self, cx: &mut Context<Self>);
@@ -451,8 +413,47 @@ trait Collection: Sized + 'static {
 }
 
 impl Collection for LogPanel {
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        // Lines received before stopping still belong to the review.
+        self.flush_backlog(cx);
+        let source = self.source_mut();
+        source.stream_revision += 1;
+        source.job = None;
+        source.delivery = None;
+        source.collection_active = false;
+        cx.notify();
+    }
+
+    fn apply_batch(
+        &mut self,
+        target: &Target,
+        revision: u64,
+        batch: Vec<StreamEvent>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.source().stream_revision != revision
+            || self.source().active_target() != Some(target)
+        {
+            return false;
+        }
+        let mut lines = Vec::new();
+        for event in batch {
+            if &event.target != target || !self.source().collecting.contains(&event.service) {
+                continue;
+            }
+            match event.result {
+                Ok(line) => lines.push(LogEvent::new(event.service, line)),
+                Err(error) => {
+                    self.source_mut().errors.insert(event.service, error);
+                }
+            }
+        }
+        self.ingest(lines, cx);
+        true
+    }
+
     fn start(&mut self, cx: &mut Context<Self>) {
-        let may_replay = self.source().fixture_target.is_none() && !self.retained().is_empty();
+        let may_replay = self.source().fixture_target.is_none() && self.has_lines();
         self.start_with_tail(self.source().tail, cx);
         if may_replay && self.source().collection_active {
             self.set_feedback(Some("Collection restarted with the configured tail; previously retained lines may appear again".into()));
@@ -592,7 +593,7 @@ impl Collection for LogPanel {
     fn render_header(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let p = palette(cx);
         let (node, address) = self
-            .source
+            .source()
             .active_target()
             .map(|target| (target.node.clone(), target.address.clone()))
             .unwrap_or_else(|| ("no node".into(), String::new()));

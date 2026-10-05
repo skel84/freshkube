@@ -1,0 +1,25 @@
+[package]
+name = "freshkube-logs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "A GPUI log view: retention, search, selection, copy, filters, follow, wrap and measured rows, fed by a LogSource"
+
+[dependencies]
+gpui-kit = "=0.7.0"
+# Log lines, their levels and retention (`freshkube_core::logs`).
+freshkube-core.workspace = true
+freshkube-probe.workspace = true
+freshkube-ui.workspace = true
+
+[features]
+# Read-outs for tests in crates that embed the view (`applied_and_held`,
+# `retained`, `following`, …); turned on from dev-dependencies.
+testing = []
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+tokio.workspace = true
+# Render probes count in tests (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }

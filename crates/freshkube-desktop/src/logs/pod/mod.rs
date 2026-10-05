@@ -394,7 +394,7 @@ impl LogSource for PodLogs {
     }
 
     fn empty_message(view: &PodLogView) -> SharedString {
-        if view.retained().is_empty() {
+        if !view.has_lines() {
             view.source().empty.clone()
         } else {
             "No retained lines pass the level filter.".into()
@@ -449,29 +449,6 @@ pub(crate) trait PodLogPanel: Sized + 'static {
     /// Whether a stream is open or about to be, for the pane's tests.
     #[cfg(test)]
     fn streaming(&self) -> bool;
-
-    fn choose_container(&mut self, name: String, cx: &mut Context<Self>);
-
-    fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>);
-
-    fn set_previous(&mut self, previous: bool, cx: &mut Context<Self>);
-
-    fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>);
-
-    /// The user stops the stream; what was read stays.
-    fn stop(&mut self, cx: &mut Context<Self>);
-
-    /// Reads on from the last line, after Stop or a failure.
-    fn resume(&mut self, cx: &mut Context<Self>);
-
-    /// Applies updates from `stream`, if it is still the current one.
-    /// Returns false when it isn't, which ends its delivery.
-    fn apply_updates(
-        &mut self,
-        stream: u64,
-        updates: Vec<PodLogUpdate>,
-        cx: &mut Context<Self>,
-    ) -> bool;
 }
 
 impl PodLogPanel for PodLogView {
@@ -589,7 +566,52 @@ impl PodLogPanel for PodLogView {
     fn streaming(&self) -> bool {
         self.source().running()
     }
+}
 
+/// Opening, reopening and stopping the chosen log, and the choices that
+/// reopen it: used only by the Logs tab's own controls and tests.
+trait Stream: Sized + 'static {
+    fn choose_container(&mut self, name: String, cx: &mut Context<Self>);
+
+    fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>);
+
+    fn set_previous(&mut self, previous: bool, cx: &mut Context<Self>);
+
+    fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>);
+
+    /// The user stops the stream; what was read stays.
+    fn stop(&mut self, cx: &mut Context<Self>);
+
+    /// Reads on from the last line, after Stop or a failure.
+    fn resume(&mut self, cx: &mut Context<Self>);
+
+    /// Applies updates from `stream`, if it is still the current one.
+    /// Returns false when it isn't, which ends its delivery.
+    fn apply_updates(
+        &mut self,
+        stream: u64,
+        updates: Vec<PodLogUpdate>,
+        cx: &mut Context<Self>,
+    ) -> bool;
+
+    /// Starts a fresh view of the chosen log, once it is wanted.
+    fn restart(&mut self, cx: &mut Context<Self>);
+
+    /// Opens the chosen log: from the tail with a fresh view, or from the
+    /// last line read.
+    fn start(&mut self, fresh: bool, cx: &mut Context<Self>);
+
+    /// Example data reads at once; a running example container writes on.
+    fn start_example(
+        &mut self,
+        pod: &ResourceIdentity,
+        container: &str,
+        reading_on: bool,
+        cx: &mut Context<Self>,
+    );
+}
+
+impl Stream for PodLogView {
     fn choose_container(&mut self, name: String, cx: &mut Context<Self>) {
         if self.source().container.as_ref() == Some(&name)
             || self.source().containers.get(&name).is_none()
@@ -709,28 +731,7 @@ impl PodLogPanel for PodLogView {
         cx.notify();
         true
     }
-}
 
-/// Opening and reopening the chosen log, used only here.
-trait Stream: Sized + 'static {
-    /// Starts a fresh view of the chosen log, once it is wanted.
-    fn restart(&mut self, cx: &mut Context<Self>);
-
-    /// Opens the chosen log: from the tail with a fresh view, or from the
-    /// last line read.
-    fn start(&mut self, fresh: bool, cx: &mut Context<Self>);
-
-    /// Example data reads at once; a running example container writes on.
-    fn start_example(
-        &mut self,
-        pod: &ResourceIdentity,
-        container: &str,
-        reading_on: bool,
-        cx: &mut Context<Self>,
-    );
-}
-
-impl Stream for PodLogView {
     fn restart(&mut self, cx: &mut Context<Self>) {
         if self.source().wanted && self.source().known {
             self.start(true, cx);

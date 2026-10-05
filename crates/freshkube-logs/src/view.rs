@@ -22,8 +22,8 @@ use super::{
     FirstLine, FocusSearch, LastLine, LeaveSearch, LogSource, LogView, ManualReviewScroll,
     NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine, SEARCH_CONTEXT, SelectAll,
 };
-use crate::palette::palette;
-use crate::ui::{self, dp};
+use freshkube_ui::palette::palette;
+use freshkube_ui::ui::{self, dp};
 
 impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
@@ -436,10 +436,10 @@ fn redraw_next_frame<V: 'static>(view: gpui_kit::WeakEntity<V>, window: &Window)
 
 impl<S: LogSource> Render for LogView<S> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::desktop::probe::hit("logs");
-        let _span = crate::perf::span("logs.render");
+        freshkube_probe::probe::hit("logs");
+        let _span = freshkube_probe::perf::span("logs.render");
         self.apply_manual_review(cx);
-        let measuring = crate::perf::span("logs.measure");
+        let measuring = freshkube_probe::perf::span("logs.measure");
         self.measure_rows(window, cx);
         drop(measuring);
         if self.following {
@@ -467,7 +467,7 @@ impl<S: LogSource> Render for LogView<S> {
         let panel_width = self
             .width
             .map_or(window.bounds().size.width, |width| width + px(2.));
-        let chrome = crate::perf::span("logs.chrome");
+        let chrome = freshkube_probe::perf::span("logs.chrome");
         let notices_cap = (chrome_budget * 0.25).min(chrome_budget);
         let notices_height = if self.has_notices() {
             let mut notices = self.render_notices(cx).into_any_element();
