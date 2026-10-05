@@ -106,6 +106,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **etcd without a leader no longer crashes the app:** when members answer but none reports a
   leader, as after a lost quorum, the etcd page crashed; it now shows the leader as not reported.
 - **Memory percentages round down:** Attention, Nodes, the Peak memory card and pod meter tooltips now show memory as a whole percent rounded down, so a node at 94.6 % reads 94 % on its warning row instead of 95 %, the critical threshold.
+- **Network tables:** the node's interfaces, connections, listeners and KubeSpan peers use the shared table, with glyphs on interfaces that have errors or drops, half-open or closing sockets and peers. Narrow windows scroll the columns sideways instead of dropping them.
 
 ## 0.4.0 (2026-10-04)
 
