@@ -76,6 +76,7 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                 .id(view.element_id("legend"))
                 .min_h_0()
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .gap(dp(2.))
                 .px(dp(12.))
                 .pt(dp(4.))

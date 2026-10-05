@@ -290,6 +290,7 @@ impl Pilot {
                             .w(dp(360.))
                             .max_h(dp(400.))
                             .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
                             .gap_1()
                             .child(ui::caption("Change context · ⌥↑ ⌥↓", cx))
                             .children(view.contexts.iter().enumerate().map(|(ix, name)| {

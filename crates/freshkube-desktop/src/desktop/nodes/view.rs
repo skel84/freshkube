@@ -64,7 +64,9 @@ impl Pilot {
         };
         freshkube_ui::page::page("nodes-page")
             .track_scroll(&self.node_workspace.page_scroll)
-            .when(short, |this| this.overflow_y_scroll())
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
             .key_context("NodeWorkspace")
             .track_focus(&self.node_focus)
             .on_action(cx.listener(|view, _: &super::super::NextNode, window, cx| {
@@ -189,6 +191,7 @@ impl Pilot {
             NodeTab::Overview => div()
                 .id("node-overview")
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .p(dp(16.))
                 .child(
                     v_flex()

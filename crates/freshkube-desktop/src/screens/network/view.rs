@@ -406,6 +406,7 @@ impl NetworkScreen {
                         .w(dp(340.))
                         .flex_none()
                         .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
                         .child(details),
                 )
         } else {
@@ -421,6 +422,7 @@ impl NetworkScreen {
                             .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
                             .child(details),
                     ),
                 )
@@ -1353,6 +1355,7 @@ impl Render for NetworkScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .px(dp(crate::desktop::PAGE_PADDING))
             .pt(dp(22.))
             .pb(dp(18.))

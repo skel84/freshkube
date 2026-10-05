@@ -17,7 +17,11 @@ mod cards;
 
 impl Pilot {
     pub(super) fn page_scroll(&self, id: &'static str) -> Stateful<Div> {
-        div().id(id).size_full().overflow_y_scroll()
+        div()
+            .id(id)
+            .size_full()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
     }
 
     pub(super) fn page_body(&self) -> Div {

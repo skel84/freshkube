@@ -335,7 +335,9 @@ impl Render for SystemServices {
         let short = page::is_short(window);
         page::page("system-services-page")
             .track_scroll(&self.page_scroll)
-            .when(short, |this| this.overflow_y_scroll())
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
             .child(page::toolbar(cx).child(self.render_header(window, cx)))
             .child(
                 table::data_table(self, window, cx)

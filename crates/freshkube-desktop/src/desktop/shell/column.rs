@@ -82,6 +82,7 @@ impl Pilot {
             .aria_label(self.area.label())
             .size_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .track_scroll(&self.column_scroll)
             .on_scroll_wheel(cx.listener(|view, _, _, _| view.column_reveal = None))
             .px(dp(10.))

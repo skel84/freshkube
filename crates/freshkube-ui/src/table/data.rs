@@ -417,14 +417,15 @@ fn header<S: TableSource>(source: &S, window: &Window, cx: &mut Context<S>) -> A
         .border_color(p.line)
         .children(columns.iter().enumerate().map(|(ix, column)| {
             // A pinned cell's place is kept by an empty one of its width,
-            // and the cells after it are clipped where they pass under it.
+            // and the cells after it are clipped where they pass under it,
+            // their labels kept beside it while their columns show.
             if !pinned {
                 header_cell(source, ix, column, cx)
             } else if ix < count {
                 cell(column).into_any_element()
             } else {
                 let cell = header_cell(source, ix, column, cx);
-                Passing::new(&state.sideways, run, px(0.), cell).into_any_element()
+                Passing::sticky(&state.sideways, run, cell).into_any_element()
             }
         }));
     if count == 0 || !state.scrolled() {
@@ -1236,7 +1237,9 @@ mod tests {
         });
         cx.update_window(handle, |_, window, cx| {
             window.click_at("Column 2 1", point(px(150.), px(5.)), cx);
-            window.click_at(("wide-sort", 2usize), point(px(150.), px(5.)), cx);
+            // The header's cell has moved beside the run, so its visible
+            // part starts at its own left.
+            window.click_at(("wide-sort", 2usize), point(px(50.), px(5.)), cx);
         })
         .unwrap();
         cx.read(|cx| {
@@ -1245,6 +1248,35 @@ mod tests {
             assert!(wide.hovered.iter().any(|label| label == "Column 2 1"));
             assert_eq!(wide.sorts, ["Column 1", "Column 2"]);
         });
+    }
+
+    /// A column passing under the pinned run keeps its label beside the run
+    /// while any of it shows, clipped to its own place, though its rows'
+    /// cells pass under as before. A short label would otherwise vanish
+    /// while a long cell's tail still shows, leaving the column unnamed.
+    #[gpui_kit::test]
+    fn a_passing_column_keeps_its_label_beside_the_run(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, Wide::new(2, 4, false).interactive(), 900.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // Column 2 runs from 300 to 500, its first 100 under the run.
+            scroll_right(window, 100., cx);
+            let label = inset(window, ("wide-sort", 2usize));
+            assert!(
+                (label - 400.).abs() <= 1.5,
+                "label at {label}, under the run"
+            );
+            assert!((inset(window, "Column 2 1") - 300.).abs() <= 1.5);
+            // A column right of the run stays where it is.
+            assert!((inset(window, ("wide-sort", 3usize)) - 500.).abs() <= 1.5);
+            // Back at the left edge, the label returns to its column.
+            scroll_right(window, -100., cx);
+            assert!((inset(window, ("wide-sort", 2usize)) - 400.).abs() <= 1.5);
+            scroll_right(window, 50., cx);
+            let label = inset(window, ("wide-sort", 2usize));
+            assert!((label - 400.).abs() <= 1.5, "label at {label}");
+        })
+        .unwrap();
     }
 
     /// Moves the pointer to `position` and presses and releases there,

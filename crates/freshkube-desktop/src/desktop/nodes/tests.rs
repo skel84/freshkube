@@ -1111,14 +1111,18 @@ fn a_sideways_scroll_keeps_each_node_name_in_view_once(cx: &mut TestAppContext) 
         };
         let names: Vec<_> = shown.iter().map(|(row, _)| left(window, row)).collect();
         let header = window.find(("nodes-sort", 1usize)).bounds().left();
-        let role = window.find(("nodes-sort", 2usize)).bounds().left();
+        // Column 2 starts at the pinned run's edge, where its label stays
+        // once scrolled; column 3 starts clear of the scroll's 120.
+        let edge = window.find(("nodes-sort", 2usize)).bounds().left();
+        let role = window.find(("nodes-sort", 3usize)).bounds().left();
+        assert!(role - edge > px(120.), "{:?}", role - edge);
         window.scroll(
             "nodes-table-scroll",
             ScrollDelta::Pixels(point(px(-120.), px(0.))),
             cx,
         );
         window.render_frame(cx);
-        let moved = role - window.find(("nodes-sort", 2usize)).bounds().left();
+        let moved = role - window.find(("nodes-sort", 3usize)).bounds().left();
         assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
         // `find` fails on an id that resolves twice.
         assert!((window.find(("nodes-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));

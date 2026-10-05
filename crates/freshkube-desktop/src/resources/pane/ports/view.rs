@@ -162,6 +162,7 @@ impl Render for PortsView {
             .test_support()
             .size_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .px_3()
             .py_2()
             .text_size(dp(12.5))

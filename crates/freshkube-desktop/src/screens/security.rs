@@ -796,6 +796,7 @@ impl Render for SecurityScreen {
                     .min_h_0()
                     .pb_2()
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .track_scroll(&self.scroll)
                     .when(all.is_empty(), |this| {
                         this.child(
@@ -824,6 +825,7 @@ impl Render for SecurityScreen {
                         .w(dp(380.))
                         .flex_none()
                         .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
                         .child(details),
                 )
         } else {
@@ -837,6 +839,7 @@ impl Render for SecurityScreen {
                             .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
                             .child(details),
                     ),
                 )
@@ -846,6 +849,7 @@ impl Render for SecurityScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .px(dp(crate::desktop::PAGE_PADDING))
             .pt(dp(22.))
             .pb(dp(18.))

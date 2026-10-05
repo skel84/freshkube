@@ -235,6 +235,7 @@ pub(super) fn settings_content(
         // Short windows scroll the panel instead of clipping it.
         .max_h(window.viewport_size().height - ui::dp_px(96., window))
         .overflow_y_scroll()
+        .restrict_scroll_to_axis()
         .p_1()
         .gap_3p5()
         .child(h_flex().justify_between().child(ui::caption("Settings", cx)).child(hint(concat!("Freshkube v", env!("CARGO_PKG_VERSION")))))

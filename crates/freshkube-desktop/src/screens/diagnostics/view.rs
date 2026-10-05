@@ -442,6 +442,7 @@ impl Render for DiagnosticsScreen {
                     .min_h_0()
                     .pb_2()
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .track_scroll(&self.scroll)
                     .when(all.is_empty(), |this| {
                         this.child(
@@ -474,6 +475,7 @@ impl Render for DiagnosticsScreen {
                         .w(dp(DETAILS_WIDTH))
                         .flex_none()
                         .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
                         .child(details),
                 )
         } else {
@@ -487,6 +489,7 @@ impl Render for DiagnosticsScreen {
                             .h(dp(DETAILS_HEIGHT))
                             .flex_none()
                             .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
                             .child(details),
                     ),
                 )
@@ -496,6 +499,7 @@ impl Render for DiagnosticsScreen {
             .size_full()
             .min_h_0()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .px(dp(crate::desktop::PAGE_PADDING))
             .pt(dp(22.))
             .pb(dp(18.))
