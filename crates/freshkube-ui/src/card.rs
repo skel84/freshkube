@@ -478,7 +478,10 @@ mod tests {
                 ..tinted
             };
             assert_eq!(value_ink(&unknown, &p), p.muted);
-            let toneless = Figure { tone: None, ..tinted };
+            let toneless = Figure {
+                tone: None,
+                ..tinted
+            };
             assert_eq!(value_ink(&toneless, &p), p.ink);
             // A last-known gauge is grey, not the accent of a good one.
             assert_eq!(gauge_fill(Some(Tone::Unknown), &p), p.unk);
@@ -499,8 +502,20 @@ mod tests {
             let bare = figure(&value);
             let cards = [
                 ("bare", bare),
-                ("detail", Figure { detail: Some(&line), ..bare }),
-                ("segments", Figure { segments: Some(&parts), ..bare }),
+                (
+                    "detail",
+                    Figure {
+                        detail: Some(&line),
+                        ..bare
+                    },
+                ),
+                (
+                    "segments",
+                    Figure {
+                        segments: Some(&parts),
+                        ..bare
+                    },
+                ),
             ];
             v_flex()
                 .w(px(320.))
