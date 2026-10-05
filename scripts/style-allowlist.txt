@@ -3,10 +3,8 @@
 # shared components, remove its entries in the same change. The check fails
 # when an entry is no longer needed, and when a file not listed breaks a rule.
 list crates/freshkube-desktop/src/desktop/nodes/cards.rs
-glyph crates/freshkube-desktop/src/desktop/shell/fog_column.rs
 radius crates/freshkube-desktop/src/desktop/shell/header.rs
 radius crates/freshkube-desktop/src/desktop/shell/mod.rs
-glyph crates/freshkube-desktop/src/desktop/shell/rail.rs
 glyph crates/freshkube-logs/src/view.rs
 list crates/freshkube-desktop/src/maintenance.rs
 glyph crates/freshkube-desktop/src/monitoring/page/view.rs

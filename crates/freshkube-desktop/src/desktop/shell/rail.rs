@@ -102,7 +102,13 @@ impl Pilot {
         let active = self.area == area;
         let mark = self.rail_marks.0.get(&area).cloned();
         let why = mark.as_ref().map(|(_, why)| why.clone());
-        let dot = mark.map(|(tone, _)| if tone == Tone::Crit { p.crit } else { p.warn });
+        let tone = mark.map(|(tone, _)| {
+            if tone == Tone::Crit {
+                Tone::Crit
+            } else {
+                Tone::Warn
+            }
+        });
         h_flex()
             .id(area.id())
             .test_support()
@@ -123,16 +129,11 @@ impl Pilot {
             } else {
                 p.muted
             }))
-            .children(dot.map(|color| {
-                div()
+            .children(tone.map(|tone| {
+                ui::badge_dot(tone, Some(cx.theme().sidebar), cx)
                     .absolute()
                     .top(dp(8.))
                     .right(dp(8.))
-                    .size(dp(9.))
-                    .rounded_full()
-                    .bg(color)
-                    .border_2()
-                    .border_color(cx.theme().sidebar)
             }))
             // Built on hover, so the rail formats nothing while drawing.
             .tooltip(move |window, cx| {
