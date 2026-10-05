@@ -15,6 +15,7 @@
 # APP_ARGS default to --fixture. For a live check, pass the context the user
 # chose (`-- --config … --context … --kubeconfig …`); only look and navigate,
 # never press Operations or maintenance actions.
+# FRESHKUBE_SMOKE_BINARY selects a saved executable without rebuilding it.
 #
 # The terminal running this needs Screen Recording and Accessibility in
 # System Settings → Privacy & Security, and the screen must be unlocked:
@@ -85,7 +86,14 @@ start() {
   done
   local args=("$@")
   [[ ${#args[@]} -eq 0 ]] && args=(--fixture)
-  if [[ $profile == release ]]; then
+  local binary=${FRESHKUBE_SMOKE_BINARY:-$TARGET/$profile/freshkube}
+  if [[ -n ${FRESHKUBE_SMOKE_BINARY:-} ]]; then
+    [[ $binary == /* ]] || binary=$PWD/$binary
+    if [[ ! -f $binary || ! -x $binary ]]; then
+      echo "smoke: FRESHKUBE_SMOKE_BINARY must name an executable file: $binary" >&2
+      exit 1
+    fi
+  elif [[ $profile == release ]]; then
     cargo build -q --release --manifest-path "$ROOT/Cargo.toml" --bin freshkube
   else
     cargo build -q --manifest-path "$ROOT/Cargo.toml" --bin freshkube
@@ -95,14 +103,14 @@ start() {
   stop_app
   # A new build asks Keychain for a remembered Coroot key; only the user can
   # answer, so call them with a sound on a live run.
-  local binary=$TARGET/$profile/freshkube stamp=$OUT/launched-$profile
+  local stamp=$OUT/launched-$profile
   if [[ ${args[0]} != --fixture && $binary -nt $stamp ]]; then
     afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 &
     echo "smoke: a new build; it may ask Keychain for the Coroot key, which the user answers" >&2
   fi
   touch "$stamp"
   FRESHKUBE_PAGE=$page FRESHKUBE_THEME=$theme FRESHKUBE_WINDOW_SIZE=$size \
-    nohup "$TARGET/$profile/freshkube" "${args[@]}" >"$OUT/app.log" 2>&1 &
+    nohup "$binary" "${args[@]}" >"$OUT/app.log" 2>&1 &
   echo $! >"$PIDFILE"
   screen_owner_pid "$(cat "$PIDFILE")"
   for _ in {1..300}; do
