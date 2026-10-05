@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{ItemKey, RowRef, ScreenPanel, ScreenSource, WorkloadData, WorkloadsScreen};
 use crate::backend::Target;
-use crate::{fixture, presentation};
+use crate::{fixture, presentation, ui::Tone};
 
 fn source(node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -187,6 +187,40 @@ fn example_reflects_the_degraded_worker(cx: &mut TestAppContext) {
         assert_eq!(flannel.node.as_deref(), Some("talos-wk-fra1-02"));
         window.find("workload-summary");
         assert!(window.try_find("screen-retry").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn pods_whose_container_died_draw_the_skull(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let screen = screen.read(cx);
+        let data = screen.loader.data().expect("workloads load");
+        let tones: Vec<_> = screen
+            .rows(cx)
+            .iter()
+            .filter(|row| matches!(row, RowRef::Pod(..)))
+            .map(|row| {
+                let view = screen.describe(*row, data);
+                (view.name, view.tone)
+            })
+            .collect();
+        let tone = |prefix: &str| {
+            tones
+                .iter()
+                .find(|(name, _)| name.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix} row in {tones:?}"))
+                .1
+        };
+        // CrashLoopBackOff and OOMKilled ran and stopped.
+        assert_eq!(tone("kube-flannel-"), Tone::Died);
+        assert_eq!(tone("api-"), Tone::Died);
+        // An image it can't pull is still critical: nothing ran.
+        assert_eq!(tone("worker-5c7b8d6f4-hq8r2"), Tone::Crit);
+        assert_eq!(tone("worker-5c7b8d6f4-zl4vn"), Tone::Crit);
+        assert_eq!(tone("kube-proxy-"), Tone::Warn);
     })
     .unwrap();
 }

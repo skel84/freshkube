@@ -146,6 +146,7 @@ impl RowRef {
 /// Text for one row, whatever its kind.
 struct RowView {
     health: HealthState,
+    tone: Tone,
     nested: bool,
     chevron: Option<IconName>,
     name: String,
@@ -178,6 +179,16 @@ fn health_tone(health: HealthState) -> Tone {
         HealthState::Degraded => Tone::Warn,
         HealthState::Pending => Tone::Unknown,
         HealthState::Healthy => Tone::Good,
+    }
+}
+
+/// A pod's tone: the skull when a container ran and stopped, otherwise its
+/// severity's.
+fn pod_tone(issue: &PodIssue) -> Tone {
+    if issue.died() {
+        Tone::Died
+    } else {
+        health_tone(issue.severity())
     }
 }
 
@@ -466,6 +477,7 @@ impl WorkloadsScreen {
                 let issues = issues_in(namespace);
                 RowView {
                     health: namespace.health,
+                    tone: health_tone(namespace.health),
                     nested: false,
                     chevron: Some(if self.collapsed.contains(&namespace.name) {
                         IconName::ChevronRight
@@ -486,6 +498,7 @@ impl WorkloadsScreen {
                 let workload = &namespaces[ns].workloads[ix];
                 RowView {
                     health: workload.health,
+                    tone: health_tone(workload.health),
                     nested: true,
                     chevron: None,
                     name: workload.name.clone(),
@@ -498,6 +511,7 @@ impl WorkloadsScreen {
                 let pod = &namespaces[ns].problem_pods[ix];
                 RowView {
                     health: pod.issue.severity(),
+                    tone: pod_tone(&pod.issue),
                     nested: true,
                     chevron: None,
                     name: pod.name.clone(),
@@ -673,7 +687,7 @@ impl WorkloadsScreen {
         let selected = self.selected.as_ref() == Some(&key);
         let view = self.describe(row, data);
         let is_namespace = matches!(row, RowRef::Namespace(_));
-        let tone = health_tone(view.health);
+        let tone = view.tone;
         let label = health_label(view.health);
         let aria = format!(
             "{} {} · {label} · {} · {}",
@@ -770,8 +784,7 @@ impl WorkloadsScreen {
         };
         let namespaces = &data.snapshot.namespaces;
         let gone = || hint("The selected item is no longer reported by the cluster.");
-        let title = |name: String, health: HealthState, cx: &App| {
-            let tone = health_tone(health);
+        let title = |name: String, health: HealthState, tone: Tone, cx: &App| {
             h_flex()
                 .id("workload-detail-title")
                 .test_support()
@@ -801,7 +814,12 @@ impl WorkloadsScreen {
                 panel(cx)
                     .p_4()
                     .gap_2p5()
-                    .child(title(namespace.name.clone(), namespace.health, cx))
+                    .child(title(
+                        namespace.name.clone(),
+                        namespace.health,
+                        health_tone(namespace.health),
+                        cx,
+                    ))
                     .child(field("Kind", mono("Namespace"), cx))
                     .child(field(
                         "Workloads",
@@ -848,7 +866,12 @@ impl WorkloadsScreen {
                 panel(cx)
                     .p_4()
                     .gap_2p5()
-                    .child(title(workload.name.clone(), workload.health, cx))
+                    .child(title(
+                        workload.name.clone(),
+                        workload.health,
+                        health_tone(workload.health),
+                        cx,
+                    ))
                     .child(field("Namespace", mono(workload.namespace.clone()), cx))
                     .child(field("Kind", mono(workload.kind.label()), cx))
                     .child(field(
@@ -894,7 +917,12 @@ impl WorkloadsScreen {
                 panel(cx)
                     .p_4()
                     .gap_2p5()
-                    .child(title(pod.name.clone(), pod.issue.severity(), cx))
+                    .child(title(
+                        pod.name.clone(),
+                        pod.issue.severity(),
+                        pod_tone(&pod.issue),
+                        cx,
+                    ))
                     .child(field("Namespace", mono(pod.namespace.clone()), cx))
                     .child(field("Kind", mono("Pod"), cx))
                     .child(field(
