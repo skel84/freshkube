@@ -1200,6 +1200,11 @@ fn application_namespace_select_searches_and_applies_the_chosen_namespace(cx: &m
         window.render_frame(cx);
         window.press("down", cx);
         window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         assert_eq!(page.read(cx).namespace.as_deref(), Some("cache"));
         assert_eq!(page.read(cx).shown_apps, 1);
     })
