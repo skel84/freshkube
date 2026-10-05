@@ -8,8 +8,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Pixels, SharedString, Stateful, TestSupportExt, Window,
-    canvas, div, px,
+    AnyElement, App, ClickEvent, Div, ElementId, Pixels, SharedString, Stateful, TestSupportExt,
+    Window, canvas, div, px,
 };
 
 use crate::palette::palette;
@@ -105,7 +105,44 @@ pub struct PageHeader {
     controls: Vec<AnyElement>,
     secondary: Option<AnyElement>,
     meta: Vec<AnyElement>,
+    parent: Option<Parent>,
     narrow: bool,
+}
+
+/// A breadcrumb's parent: the collection the page sits in.
+struct Parent {
+    id: SharedString,
+    label: SharedString,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+}
+
+/// The title, after its breadcrumb when it has one.
+fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App) -> AnyElement {
+    let title = page_title(text).id(id).test_support();
+    let Some(parent) = parent else {
+        return title.into_any_element();
+    };
+    let p = palette(cx);
+    let accent = p.accent;
+    let on_click = parent.on_click;
+    h_flex()
+        .gap(dp(8.))
+        .min_w_0()
+        .child(
+            div()
+                .id(parent.id)
+                .flex_none()
+                .text_size(dp(12.5))
+                .text_color(p.muted)
+                .cursor_pointer()
+                .hover(move |style| style.text_color(accent))
+                .on_click(move |event, window, cx| on_click(event, window, cx))
+                .child(parent.label)
+                .test_support(),
+        )
+        .child(div().flex_none().text_color(p.faint).child("/"))
+        .child(title.min_w(dp(120.)).truncate())
+        .into_any_element()
 }
 
 /// Where a header with a secondary row puts its controls.
@@ -191,6 +228,7 @@ impl PageHeader {
             controls: Vec::new(),
             secondary: None,
             meta: Vec::new(),
+            parent: None,
             narrow,
         }
     }
@@ -227,6 +265,24 @@ impl PageHeader {
         self
     }
 
+    /// A breadcrumb before the title, for a page inside a collection (a
+    /// dashboard, an application report): the parent as a link back to it,
+    /// with the id `<prefix>-<part>`, then a faint `/`. The title keeps its
+    /// id and truncates, at least 120 wide.
+    pub fn parent(
+        mut self,
+        part: &str,
+        label: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.parent = Some(Parent {
+            id: self.id(part),
+            label: label.into(),
+            on_click: Box::new(on_click),
+        });
+        self
+    }
+
     /// The meta line's parts: source, count, state, time.
     pub fn meta(mut self, parts: impl IntoIterator<Item = AnyElement>) -> Self {
         self.meta.extend(parts);
@@ -243,7 +299,7 @@ impl PageHeader {
         let leading = h_flex()
             .gap(dp(8.))
             .min_w_0()
-            .child(page_title(self.title).id(title_id).test_support())
+            .child(title(self.parent, self.title, title_id, cx))
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
@@ -318,7 +374,7 @@ impl PageHeader {
         let (title_id, scope_id) = (self.title_id, self.scope_id);
         let leading = h_flex()
             .gap(gap)
-            .child(page_title(self.title).id(title_id).test_support())
+            .child(title(self.parent, self.title, title_id, cx))
             .children(self.filter.map(|filter| {
                 filter
                     .when_else(
