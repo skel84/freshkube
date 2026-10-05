@@ -129,8 +129,8 @@ impl Mounted {
 fn mount(cx: &mut TestAppContext) -> Mounted {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        crate::theme::install(cx);
-        crate::text_size::install(None, cx);
+        freshkube_ui::theme::install(cx);
+        freshkube_ui::text_size::install(None, cx);
         Theme::change(ThemeMode::Light, None, cx);
         cx.set_reduce_motion(true);
         cx.bind_keys([
@@ -176,7 +176,7 @@ fn mount(cx: &mut TestAppContext) -> Mounted {
 #[gpui_kit::test]
 fn bytes_draw_on_the_grid_and_rebuild_rows_once_per_cycle(cx: &mut TestAppContext) {
     let terminal = mount(cx);
-    let snapshots = crate::desktop::probe::count("terminal.snapshot");
+    let snapshots = freshkube_probe::probe::count("terminal.snapshot");
     cx.update(|cx| {
         terminal.view.update(cx, |view, cx| {
             for chunk in [&b"hello "[..], b"\x1b[1;31mworld\x1b[0m", b"\r\nnext line"] {
@@ -186,7 +186,7 @@ fn bytes_draw_on_the_grid_and_rebuild_rows_once_per_cycle(cx: &mut TestAppContex
     });
     terminal.frame(cx);
     assert_eq!(
-        crate::desktop::probe::count("terminal.snapshot"),
+        freshkube_probe::probe::count("terminal.snapshot"),
         snapshots + 1
     );
     let screen = terminal.screen(cx);
@@ -205,7 +205,7 @@ fn bytes_draw_on_the_grid_and_rebuild_rows_once_per_cycle(cx: &mut TestAppContex
     terminal.frame(cx);
     terminal.frame(cx);
     assert_eq!(
-        crate::desktop::probe::count("terminal.snapshot"),
+        freshkube_probe::probe::count("terminal.snapshot"),
         snapshots + 1
     );
 }
@@ -420,7 +420,7 @@ fn a_larger_text_size_makes_larger_cells(cx: &mut TestAppContext) {
     let terminal = mount(cx);
     let before = terminal.size(cx);
     let cell = cx.read(|cx| terminal.view.read(cx).geometry.cell);
-    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.update(|cx| freshkube_ui::text_size::set(20., cx));
     terminal.frame(cx);
     cx.executor().advance_clock(RESIZE_INTERVAL);
     terminal.frame(cx);

@@ -1,0 +1,26 @@
+[package]
+name = "freshkube-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "A terminal view for GPUI: an alacritty_terminal grid its owner feeds bytes"
+
+[dependencies]
+gpui-kit = "=0.7.0"
+freshkube-probe.workspace = true
+freshkube-ui.workspace = true
+# The terminal emulator (Apache-2.0; see NOTICE).
+alacritty_terminal = { version = "=0.26.0", default-features = false }
+
+[features]
+# Synthetic streams (`streams`) for the `stress` binary.
+stress = []
+# Read-outs for tests in crates that embed the view (`screen_text`, `ended`);
+# turned on from dev-dependencies.
+testing = []
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+# Render probes count in tests (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }

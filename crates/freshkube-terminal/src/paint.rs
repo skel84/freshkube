@@ -15,8 +15,8 @@ use gpui_kit::{
 
 use super::snapshot::{Run, Snapshot};
 use super::{Geometry, LINE_HEIGHT, TerminalSize, TerminalView};
-use crate::perf;
-use crate::ui::dp_px;
+use freshkube_probe::perf;
+use freshkube_ui::ui::dp_px;
 
 /// The faces a terminal draws with, all from the theme's monospace family.
 #[derive(Clone)]

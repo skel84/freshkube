@@ -20,7 +20,7 @@ pub(crate) fn plain(from: usize, lines: usize) -> Vec<u8> {
 
 /// Lines with 256-colour and truecolour SGR every few words, like `ls
 /// --color` or a coloured logger.
-pub(crate) fn coloured(from: usize, lines: usize) -> Vec<u8> {
+pub fn coloured(from: usize, lines: usize) -> Vec<u8> {
     let mut out = String::new();
     for i in from..from + lines {
         let _ = write!(
@@ -36,7 +36,7 @@ pub(crate) fn coloured(from: usize, lines: usize) -> Vec<u8> {
 
 /// A `top`-like frame on the alternate screen: home the cursor and rewrite
 /// every row with absolute moves and colours.
-pub(crate) fn top_frame(frame: usize, columns: usize, rows: usize) -> Vec<u8> {
+pub fn top_frame(frame: usize, columns: usize, rows: usize) -> Vec<u8> {
     let mut out = String::new();
     if frame == 0 {
         out.push_str("\x1b[?1049h\x1b[?25l");
@@ -88,7 +88,7 @@ pub(crate) fn unicode(lines: usize) -> Vec<u8> {
 /// One screen to look at: the sixteen colours as text and as backgrounds,
 /// each style, a 256-colour ramp and wide characters, then a prompt.
 #[cfg(feature = "stress")]
-pub(crate) fn sample() -> Vec<u8> {
+pub fn sample() -> Vec<u8> {
     let mut out = String::new();
     for (row, base) in [(0, 30), (1, 90)] {
         for colour in 0..8 {

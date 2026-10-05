@@ -2511,13 +2511,13 @@ dependencies = [
 name = "freshkube-desktop"
 version = "0.5.0"
 dependencies = [
- "alacritty_terminal",
  "bytes",
  "chrono",
  "color-eyre",
  "dirs 6.0.0",
  "freshkube-core",
  "freshkube-probe",
+ "freshkube-terminal",
  "freshkube-ui",
  "futures",
  "gpui-kit",
@@ -2541,6 +2541,16 @@ name = "freshkube-probe"
 version = "0.5.0"
 dependencies = [
  "chrono",
+]
+
+[[package]]
+name = "freshkube-terminal"
+version = "0.5.0"
+dependencies = [
+ "alacritty_terminal",
+ "freshkube-probe",
+ "freshkube-ui",
+ "gpui-kit",
 ]
 
 [[package]]
