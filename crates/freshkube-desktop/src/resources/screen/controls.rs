@@ -193,8 +193,7 @@ impl ResourcesScreen {
         let (total, shown) = (self.store.len(), self.shown());
         if self.lists_pods() && !self.embedded {
             // Pods name their count and leave out a plain "watching".
-            let state =
-                Some(state).filter(|_| !matches!(self.store.read_state(), ReadState::Loaded));
+            let state = (!matches!(self.store.read_state(), ReadState::Loaded)).then_some(state);
             let (context, lead) = if example {
                 (None, Part::new("Example data"))
             } else {
