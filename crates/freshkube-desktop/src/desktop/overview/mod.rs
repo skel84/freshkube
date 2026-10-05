@@ -212,7 +212,7 @@ impl Pilot {
             .collect::<Vec<_>>();
         let attention = self.render_attention(None, cx);
         // The shared frame, at its content's height inside the scrolling page.
-        let body = freshkube_ui::page::page("overview-frame")
+        let body = freshkube_ui::page::padded("overview-frame")
             .h_auto()
             .children(self.stale_banner(cx))
             .child(header)

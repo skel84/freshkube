@@ -3412,7 +3412,7 @@ fn pods_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
 /// without column captions) checks its frame and its table apart.
 #[gpui_kit::test]
 fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
-    use super::layout_check::{PageFrame, Table, assert_page_frame, assert_table};
+    use super::layout_check::{PageFrame, Table, assert_edge_frame, assert_table};
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
@@ -3427,7 +3427,7 @@ fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
             title_text: PODS.title_text,
             content: PODS.table,
         };
-        assert_page_frame(window, cx, &frame);
+        assert_edge_frame(window, cx, &frame);
         let rows = assert_table(
             window,
             cx,

@@ -8,10 +8,20 @@ impl Render for ObservabilityPage {
         let p = palette(cx);
         let unavailable =
             !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());
+        // Applications is a table page, edge to edge; the other destinations
+        // are pages of cards and canvases, which keep the padded frame.
+        let edge = self.destination == Destination::Applications;
+        let state = |state: AnyElement| {
+            if edge {
+                freshkube_ui::page::inset().child(state).into_any_element()
+            } else {
+                state
+            }
+        };
         let content = if unavailable {
-            self.render_unavailable(cx)
+            state(self.render_unavailable(cx))
         } else if let Some(placeholder) = self.read_placeholder(cx) {
-            placeholder
+            state(placeholder)
         } else {
             match self.destination {
                 Destination::Applications => self.render_applications(window, cx),
@@ -23,6 +33,31 @@ impl Render for ObservabilityPage {
                 _ if !self.fixture => self.render_limited(cx),
                 Destination::Deployments => self.render_deployments(window, cx),
                 Destination::Profiling => self.render_profiling(cx),
+            }
+        };
+        let header = match self.destination {
+            Destination::Applications => self.applications_header(window, cx),
+            Destination::Incidents => self.incidents_header(window, cx),
+            Destination::Traces => self.traces_header(window, cx),
+            _ => self
+                .source_controls(self.page_header(window), cx)
+                .render(cx),
+        };
+        let frame = if edge {
+            freshkube_ui::page::page("obs-frame")
+        } else {
+            freshkube_ui::page::padded("obs-frame")
+        };
+        // On the edge-to-edge frame, what isn't the table sits in an inset;
+        // one after the header needs no space above.
+        let inset = |element: AnyElement, after: bool| {
+            if edge {
+                freshkube_ui::page::inset()
+                    .when(after, |this| this.pt_0())
+                    .child(element)
+                    .into_any_element()
+            } else {
+                element
             }
         };
         v_flex()
@@ -44,22 +79,17 @@ impl Render for ObservabilityPage {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .child(
-                        freshkube_ui::page::page("obs-frame")
+                        frame
                             .h_auto()
                             .flex_none()
-                            .child(match self.destination {
-                                Destination::Applications => self.applications_header(window, cx),
-                                Destination::Incidents => self.incidents_header(window, cx),
-                                Destination::Traces => self.traces_header(window, cx),
-                                _ => self
-                                    .source_controls(self.page_header(window), cx)
-                                    .render(cx),
-                            })
+                            .child(inset(header.into_any_element(), false))
                             .when(!self.fixture && !unavailable, |this| {
                                 this.when(self.settings_open, |this| {
-                                    this.child(self.render_connection(cx))
+                                    this.child(inset(self.render_connection(cx), true))
                                 })
-                                .child(self.render_read_state(cx))
+                                .children(
+                                    self.render_read_state(cx).map(|state| inset(state, true)),
+                                )
                             })
                             .child(content),
                     ),

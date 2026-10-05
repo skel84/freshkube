@@ -285,7 +285,9 @@ fn minimum_node_table_can_reveal_its_rightmost_column(cx: &mut TestAppContext) {
         let column = window.find(("nodes-sort", 8usize));
         assert!(column.bounds().left() < before);
         assert!(column.visible());
-        assert!(column.bounds().right() <= window.viewport_size().width);
+        // The table runs to the window's edge, and layout rounding can put
+        // the last cell's padding a pixel past it.
+        assert!(column.bounds().right() <= window.viewport_size().width + gpui_kit::px(1.5));
     })
     .unwrap();
 }

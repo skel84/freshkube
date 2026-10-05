@@ -1,5 +1,6 @@
-//! The page frame every page shares: its padding, the card its body sits
-//! in and `PageHeader` (docs/DESIGN.md#components).
+//! The page frame every page shares: edge to edge, or padded for a page of
+//! cards; the card a body sits in; and `PageHeader`
+//! (docs/DESIGN.md#components).
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -14,21 +15,43 @@ use gpui_kit::{
 use crate::palette::palette;
 use crate::ui::{dp, page_title};
 
-/// Left and right padding of every page.
+/// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
-/// Padding above the header and below the body.
+/// Padding above a padded page's header and below its body.
 pub const PAGE_TOP: f32 = 22.;
 pub const PAGE_BOTTOM: f32 = 18.;
-/// Between the header, any banners and the body.
+/// Between a padded page's header, any banners and the body.
 pub const PAGE_GAP: f32 = 14.;
+/// Around the content of a [`page`]'s panes: its header, a banner, a grid.
+pub const PANE_PADDING: f32 = 12.;
+/// Above and below that content.
+pub const PANE_PADDING_Y: f32 = 10.;
 /// Below this content width the header stacks its parts.
 pub const HEADER_NARROW: f32 = 920.;
 /// The header's filter beside the title, when it fits.
 const FILTER_WIDTH: f32 = 150.;
 
-/// A page's frame: padding and the gap between its parts. The caller adds
-/// scrolling.
+/// A page's frame, without margins: its header, any banners and its panes
+/// stack edge to edge, and the caller puts what isn't a pane, such as the
+/// header, in an [`inset`]. The caller adds scrolling.
 pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
+    v_flex().id(id).test_support().size_full().min_h_0()
+}
+
+/// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above
+/// and below.
+pub fn inset() -> Div {
+    div()
+        .flex_none()
+        .min_w_0()
+        .px(dp(PANE_PADDING))
+        .py(dp(PANE_PADDING_Y))
+}
+
+/// The frame of a page of cards, which keeps its margins until it moves to
+/// [`page`]: padding and the gap between its parts. The caller adds
+/// scrolling.
+pub fn padded(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex()
         .id(id)
         .test_support()

@@ -25,6 +25,9 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let pane = self.node_workspace.open;
+        // Only the table runs edge to edge; the cards, a state and the pane
+        // keep the inset.
+        let mut edge = false;
         let body = if pane {
             let detail = self.render_node_pane(window, cx);
             if self.node_workspace.expanded || content_width(window) < 900. {
@@ -48,6 +51,7 @@ impl Pilot {
         } else if let Some(state) = self.nodes_state(cx) {
             state
         } else if self.node_workspace.view == NodeView::Table {
+            edge = true;
             freshkube_ui::table::data_table(self, window, cx)
                 .size_full()
                 .min_h_0()
@@ -97,8 +101,19 @@ impl Pilot {
                     view.open_node(key, window, cx);
                 }
             }))
-            .when(!pane, |this| this.child(self.nodes_header(window, cx)))
-            .child(div().flex_1().min_h_0().child(body))
+            .when(!pane, |this| {
+                this.child(freshkube_ui::page::inset().child(self.nodes_header(window, cx)))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .when(!edge, |this| {
+                        this.px(dp(freshkube_ui::page::PANE_PADDING))
+                            .py(dp(freshkube_ui::page::PANE_PADDING_Y))
+                    })
+                    .child(body),
+            )
             .into_any_element()
     }
 

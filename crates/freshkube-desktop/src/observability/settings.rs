@@ -255,9 +255,9 @@ impl ObservabilityPage {
                 .into_any_element(),
         )
     }
-    pub(super) fn render_read_state(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn render_read_state(&self, cx: &Context<Self>) -> Option<AnyElement> {
         if self.fixture {
-            return div().into_any_element();
+            return None;
         }
         let (loading, stale, error) = match self.destination {
             Destination::Applications => (
@@ -285,7 +285,7 @@ impl ObservabilityPage {
                 self.live.profiling.is_stale(),
                 self.live.profiling.error(),
             ),
-            _ => return div().into_any_element(),
+            _ => return None,
         };
         if stale {
             let last = match self.destination {
@@ -304,29 +304,33 @@ impl ObservabilityPage {
                 )
                 .into()
             });
-            return ui::warning_banner(
-                lead,
-                error.unwrap_or("This observation is out of date."),
-                Some(
-                    action("obs-retry", "Retry")
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
-                        .into_any_element(),
-                ),
-                cx,
-            )
-            .id("obs-stale")
-            .test_support()
-            .role(Role::Status)
-            .into_any_element();
-        }
-        if loading {
-            return text("Reading Coroot…")
-                .id("obs-refreshing")
+            return Some(
+                ui::warning_banner(
+                    lead,
+                    error.unwrap_or("This observation is out of date."),
+                    Some(
+                        action("obs-retry", "Retry")
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
+                            .into_any_element(),
+                    ),
+                    cx,
+                )
+                .id("obs-stale")
                 .test_support()
                 .role(Role::Status)
-                .into_any_element();
+                .into_any_element(),
+            );
         }
-        div().into_any_element()
+        if loading {
+            return Some(
+                text("Reading Coroot…")
+                    .id("obs-refreshing")
+                    .test_support()
+                    .role(Role::Status)
+                    .into_any_element(),
+            );
+        }
+        None
     }
     pub(super) fn render_limited(&self, cx: &Context<Self>) -> AnyElement {
         v_flex().id("obs-capability-limited").test_support().gap(dp(12.))
