@@ -574,7 +574,7 @@ fn alert_table(cx: &mut TestAppContext, count: usize) -> (AnyWindowHandle, Entit
             query: "A".into(),
             field: None,
             labels: [
-                ("alertname".into(), format!("alert-{n}").into()),
+                ("alertname".into(), format!("alert-{n}")),
                 (
                     "severity".into(),
                     if n % 2 == 0 { "critical" } else { "info" }.into(),
@@ -626,7 +626,8 @@ fn a_long_table_shows_its_first_rows_until_show_all(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn past_the_cap_the_table_says_how_many_it_left_out(cx: &mut TestAppContext) {
-    let max = crate::monitoring::derive::MAX_ROWS;
+    // derive's MAX_ROWS, which its tests pin at 1,000.
+    let max = 1_000;
     let (handle, panel) = alert_table(cx, max + 5);
     let table = cx.read(|cx| panel.read(cx).table()).expect("a table view");
     cx.update_window(handle, |_, window, cx| {

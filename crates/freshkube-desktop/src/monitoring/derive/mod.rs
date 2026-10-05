@@ -25,7 +25,7 @@ use freshkube_core::monitoring::model::{
 use gpui_kit::SharedString;
 
 pub(crate) use chart::{Axis, Chart, ChartSeries, LegendMode, LegendRow};
-pub(crate) use summary::{BarRow, FOLDED_ROWS, MAX_ROWS, RowKey, Stat, TableData, TableRow};
+pub(crate) use summary::{BarRow, FOLDED_ROWS, RowKey, Stat, TableData, TableRow};
 pub(crate) use ticks::fitting;
 
 /// A panel's display data.
