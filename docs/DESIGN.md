@@ -2,7 +2,7 @@
 
 Fog is the design direction chosen on 3 October 2026: calm grey content, a blue-slate frame, dense tables and pastel semantic colour. Figtree carries the interface; IBM Plex Mono carries resource names, numbers and code. Colour identifies status, selection or resource type. The visual language must remain distinct from Aptakube, Lens and Rubick.
 
-The reference is the user's **Freshkube holistic layout-selection.pdf** (1280×880 fictional window comps). G7/G7c, G8 and H1–H7 are canonical. G2b/G3b only introduced bullet meters and quieter links; G–G6 are earlier palette studies. H and G7–G8 win over G2b/G3b, which win over G–G6. The written rules win when a mock disagrees; the comps were not pixel-QA'd. This supersedes the earlier Console direction.
+The reference is the user's **Freshkube holistic layout-selection.pdf** (1280×880 fictional window comps), exported from the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1), which holds every board named here and is private to its owner until shared. G7/G7c, G8 and H1–H7 are canonical. G2b/G3b only introduced bullet meters and quieter links; G–G6 are earlier palette studies. H and G7–G8 win over G2b/G3b, which win over G–G6. The written rules win when a mock disagrees; the comps were not pixel-QA'd. This supersedes the earlier Console direction.
 
 ## Tokens and type
 
@@ -58,7 +58,7 @@ What differs, handled by one platform module and never by a screen:
 
 Bind keys with `secondary-` and show the platform's label (`⌘K`, `Ctrl+K`). A focused terminal takes every key without the modifier above, so on Windows and Linux its shortcuts can't use plain Ctrl, which the shell needs. The bundled faces keep the same metrics on every platform. [#81](https://github.com/skel84/freshkube/issues/81) adds Linux and Windows checks to CI and fixes the terminal's copy and paste keys there first.
 
-The comps are P1d, P4d and P4w on the canvas, also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`; [PLATFORM.md](PLATFORM.md#desktop-grade) compares them with P1 and P4.
+The comps are P1d, P4d and P4w on the [canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1), also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`; [PLATFORM.md](PLATFORM.md#desktop-grade) compares them with P1 and P4.
 
 ## Frame
 
