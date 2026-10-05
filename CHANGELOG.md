@@ -26,6 +26,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Pinned cells take their own clicks:** in a table scrolled sideways, a click, hover or tooltip on a pinned name or header no longer reaches the cell passing under it, so clicking the pinned Name header sorts by name alone.
 - **Wide tables keep their bearings:** scrolled sideways, a table's group rows keep their label in view, and Pods, every other Resources kind and System services keep each row's status and name at the left edge.
 - **Overview's cards share Monitoring's card:** each figure takes its tone's colour above its detail, with a meter of the cluster's nodes (in large clusters, a run per state, problems first, so one failing node still shows) or Peak memory's bar in the card's colour. A card waiting for its first answer shows a skeleton, and one showing the last known answer has the stale mark with the reason. Tab reaches each card, and Enter or Space opens it.
+- **Slimmer table headers:** a table's header row is 26 high, down from 30, closer to a desktop app's.
 
 ## 0.5.0 (2026-10-04)
 
