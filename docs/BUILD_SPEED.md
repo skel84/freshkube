@@ -199,6 +199,43 @@ identifies these as expensive, first consider moving non-generic body work behin
 small typed adapters, retaining domain keys and existing entities. Do not trade
 away list virtualization, caching or identity for an unmeasured compile saving.
 
+Do not infer an exponentially nested widget type from a long builder chain:
+pinned GPUI's `ParentElement::child` converts its argument to `AnyElement` before
+storing it (`gpui-pre` 0.3.7, `src/element.rs`). Entity/listener/source
+instantiations still deserve measurement, but generic syntax and source lines
+alone do not establish their compile cost.
+
+## Dependency and profile candidates
+
+The manifests deliberately keep GPUI test support in dev-dependencies. Tests
+enable `gpui-kit/test-support`, probe counting, log/terminal test readers and
+core's Tokio test utilities. Resolver 2 keeps these out of ordinary builds. A
+first test build therefore has additional feature variants to compile; a second
+ordinary build should reuse its own variants. This distinction needs fingerprint
+evidence before calling it cache thrashing. [Cargo feature resolution](https://doc.rust-lang.org/cargo/reference/features.html#feature-resolver-version-2)
+
+`talos-rs/build.rs` writes generated protobufs into `OUT_DIR` and declares
+`proto/`, `PROTOC` and `PROTOC_INCLUDE` as rerun inputs. Source inspection shows no
+timestamp or generated file written into the source tree. Repeated fingerprint
+logs will test whether this correctly remains fresh after unrelated edits.
+
+One cold-build hypothesis is redundant TLS provider compilation. The direct
+`tokio-rustls = "0.26"` dependency enables its AWS-LC default; workspace Rustls
+also enables ring, which `core/resources/connection.rs` and
+`cluster_overview.rs` explicitly install. This is not yet proof that AWS-LC can
+be removed: inspect all activating feature paths and TLS consumers, measure its
+critical-path contribution, and validate connections before a separate change.
+Similarly, the lockfile's two resvg versions come from GPUI and Component;
+resolving that duplication is an upstream compatibility task, not a blind lockfile
+edit.
+
+Codegen-unit, incremental and alternate-backend experiments must preserve the
+required optimized dependency profile. Changing code generation can affect
+runtime performance and needs before/after stress measurements before adoption.
+Debug line tables trade variable/type inspection for source-line backtraces;
+`debug = 0` also loses that line information. Explicit `split-debuginfo =
+"unpacked"` already matches the macOS commands emitted by this checkout. [Rust codegen options](https://doc.rust-lang.org/rustc/codegen-options/index.html)
+
 ## Candidates to rank after measurement
 
 1. **Configuration:** compare workspace line tables with full debug info, while
@@ -215,6 +252,44 @@ away list virtualization, caching or identity for an unmeasured compile saving.
 5. **Tools:** measure the already-installed Apple and LLVM linkers; keep sccache,
    nextest, nightly profiling and alternative codegen as unmeasured follow-ups
    unless the lead authorizes installation and the required runtime checks.
+
+### Cache experiment scope
+
+The lead has relayed approval to install sccache after the cold build, with a
+private cache and shell-only `RUSTC_WRAPPER`; stop its server at the end. This
+experiment must distinguish three cases: ordinary local workspace builds keep
+incremental compilation; new worktrees may reuse eligible dependency compiles;
+CI already disables incremental and may reuse unchanged workspace libraries.
+The last case does not make a changed desktop library or linked test executable
+a cache hit.
+
+The current sccache release is 0.18.0. Its Rust parser excludes incremental
+invocations and system-linker crate types. Cargo's unit-test invocations normally
+omit an `rlib` crate type, so test harness codegen/linking needs separate evidence,
+not a cache promise. The parser accepts metadata-only library compilation even
+though the Rust caveats document still says `link` is required; verify actual
+hit/miss reasons with the installed release before counting clippy savings.
+[sccache 0.18.0 Rust parser](https://github.com/mozilla/sccache/blob/v0.18.0/src/compiler/rust.rs)
+
+Its GitHub Actions backend is supported through `SCCACHE_GHA_ENABLED=on` and
+runner-provided cache credentials; read-only cache mode is available. No remote
+backend or CI cache is modified in this local experiment. Rank a CI trial on
+observed cacheable units and unchanged-code hits, including transfer/setup time;
+do not subtract the entire test-compile step from CI time.
+[sccache GitHub Actions backend](https://github.com/mozilla/sccache/blob/v0.18.0/docs/GHA.md)
+
+Keep each worktree's writable target separate. A read-only dependency seed would
+need a verified compiler/profile/target/feature key and must exclude workspace
+artifacts and stale build-script paths. Copying or hard-linking a complete target
+tree is not an acceptable shortcut around the stale-workspace failure documented
+in `AGENTS.md`. A content-addressed compiler cache is the candidate to measure.
+
+Nightly has conditional approval only: if repeated one-line desktop timings put
+codegen at roughly one-third or more, compare an isolated nightly's LLVM and
+workspace-only Cranelift backends. Keep Homebrew Cargo, global PATH and global
+configuration untouched; retain dependency LLVM optimization; test panic/test
+support and remove the isolated toolchain afterward. If the measured share is
+smaller, record that bound and skip the installation.
 
 ## Technical references
 
