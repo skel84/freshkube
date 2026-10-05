@@ -1,9 +1,11 @@
-//! Measures a table page from the bounds its last frame painted, so a page
-//! that drifts from DESIGN.md's table page fails a test instead of a review.
+//! Measures a page from the bounds its last frame painted, so a page that
+//! drifts from DESIGN.md fails a test instead of a review.
 //!
-//! A page names a few elements by id; rows and group headers are found by
-//! their accessibility roles inside the list, so the check needs no access to
-//! the page's state and works the same on every table page.
+//! `assert_page_frame` checks any page's padding and title, `assert_table`
+//! checks one table's header and rows (a page may hold several), and
+//! `assert_table_page` checks a table page with both. A page names a few
+//! elements by id; rows and group headers are found by their accessibility
+//! roles inside the list, so the checks need no access to the page's state.
 
 use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::test::TestWindowExt;
@@ -19,24 +21,77 @@ pub(crate) const COMPACT_ROW_HEIGHT: f32 = 26.;
 pub(crate) const TITLE_TEXT: f32 = 20.;
 pub(crate) const TITLE_LINE: f32 = 28.;
 
-/// The elements a table page names for the check.
-pub(crate) struct TablePage {
+/// The elements a page names for the frame check.
+pub(crate) struct PageFrame {
     /// The page's root; its edges are where the page padding starts.
     pub page: &'static str,
     /// The page title, drawn by `ui::page_title`, and the text it shows.
     pub title: &'static str,
     pub title_text: &'static str,
-    /// The table's frame: the column header is drawn at its top.
-    pub table: &'static str,
+    /// The widest element under the header, whose right edge is where the
+    /// right padding starts: a table page's table, a dashboard's grid.
+    pub content: &'static str,
+}
+
+/// How a table chooses its row height.
+pub(crate) enum Density {
+    /// The control that switches between comfortable and compact rows.
+    Toggle(&'static str),
+    /// The table has no switch and always draws this density.
+    Comfortable,
+    Compact,
+}
+
+/// The elements a table names for the row check. A page may hold several,
+/// such as a dashboard's table panels or a list beside a detail.
+pub(crate) struct Table {
+    /// The table's frame, with the column header drawn at its top, or `None`
+    /// for a list without column captions.
+    pub table: Option<&'static str>,
     /// The list under the column header, holding rows (`Role::ListBoxOption`)
     /// and group headers (`Role::Heading`).
     pub list: &'static str,
-    /// The control that switches between comfortable and compact rows.
+    pub density: Density,
+}
+
+/// The elements a table page names for the check: its frame and its table.
+pub(crate) struct TablePage {
+    pub page: &'static str,
+    pub title: &'static str,
+    pub title_text: &'static str,
+    pub table: &'static str,
+    pub list: &'static str,
     pub density: &'static str,
 }
 
-/// What a table page drew, in pixels.
+/// What a page's frame drew, in pixels.
 #[derive(Debug)]
+pub(crate) struct FrameLayout {
+    pub padding_left: Pixels,
+    pub padding_right: Pixels,
+    pub title_line: Pixels,
+    pub title_text: Pixels,
+}
+
+/// What a table drew, in pixels. A density the table doesn't offer is `None`.
+#[derive(Debug)]
+pub(crate) struct TableRows {
+    pub header: Option<Pixels>,
+    pub comfortable: Option<Lines>,
+    pub compact: Option<Lines>,
+}
+
+/// One density's row and, when the list showed one, group header.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Lines {
+    pub row: Pixels,
+    pub group: Option<Pixels>,
+}
+
+/// What a table page drew, in pixels, for a caller's own assertions and
+/// failure messages.
+#[derive(Debug)]
+#[allow(dead_code, reason = "each caller reads the measurements it needs")]
 pub(crate) struct TableLayout {
     pub header: Pixels,
     pub row: Pixels,
@@ -50,61 +105,82 @@ pub(crate) struct TableLayout {
     pub title_text: Pixels,
 }
 
-/// Measures `page` at both densities, leaves it at the density it had, and
-/// asserts DESIGN.md's sizes: a 30 dp column header, 34 and 26 dp rows, group
-/// headers at the row height (a `uniform_list` needs uniform lines), 26 dp
-/// side padding and a 20 dp title on a 28 dp line.
+/// Asserts DESIGN.md's table page: `assert_page_frame` on its frame, then
+/// `assert_table` on its table at both densities, leaving the density it had.
 pub(crate) fn assert_table_page(
     window: &mut Window,
     cx: &mut App,
     page: &TablePage,
 ) -> TableLayout {
-    window.render_frame(cx);
-    let first = measure(window, page);
-    window.click(page.density, cx);
-    window.render_frame(cx);
-    let second = measure(window, page);
-    window.click(page.density, cx);
-    window.render_frame(cx);
-    // Whichever density the page showed first, order them.
-    let (comfortable, compact) = if first.row >= second.row {
-        (first, second)
-    } else {
-        (second, first)
+    let frame = assert_page_frame(
+        window,
+        cx,
+        &PageFrame {
+            page: page.page,
+            title: page.title,
+            title_text: page.title_text,
+            content: page.table,
+        },
+    );
+    let rows = assert_table(
+        window,
+        cx,
+        &Table {
+            table: Some(page.table),
+            list: page.list,
+            density: Density::Toggle(page.density),
+        },
+    );
+    let (Some(header), Some(comfortable), Some(compact)) =
+        (rows.header, rows.comfortable, rows.compact)
+    else {
+        unreachable!("a toggled table with a header measures both densities");
     };
-    let layout = TableLayout {
-        header: comfortable.header,
+    TableLayout {
+        header,
         row: comfortable.row,
         compact_row: compact.row,
         group: comfortable.group.zip(compact.group),
-        padding_left: comfortable.padding_left,
-        padding_right: comfortable.padding_right,
-        title_line: comfortable.title_line,
-        title_text: title_text(window, page, comfortable.title_width),
+        padding_left: frame.padding_left,
+        padding_right: frame.padding_right,
+        title_line: frame.title_line,
+        title_text: frame.title_text,
+    }
+}
+
+/// Asserts DESIGN.md's page frame: 26 dp side padding and a 20 dp title on a
+/// 28 dp line.
+pub(crate) fn assert_page_frame(
+    window: &mut Window,
+    cx: &mut App,
+    frame: &PageFrame,
+) -> FrameLayout {
+    window.render_frame(cx);
+    let root = window.find(frame.page).bounds();
+    let title = window.find(frame.title).bounds();
+    let content = window.find(frame.content).bounds();
+    let layout = FrameLayout {
+        padding_left: title.left() - root.left(),
+        padding_right: root.right() - content.right(),
+        title_line: title.size.height,
+        title_text: title_text(window, frame.title_text, title.size.width),
     };
     let dp = |n: f32| dp_px(n, window);
     let close = |what: &str, actual: Pixels, expected: f32| {
         assert!(
             (actual - dp(expected)).abs() < px(0.5),
             "{}: {what} is {actual:?}, DESIGN.md says {expected} dp ({:?}); {layout:#?}",
-            page.page,
+            frame.page,
             dp(expected),
         );
     };
-    close("column header", layout.header, HEADER_HEIGHT);
-    close("comfortable row", layout.row, ROW_HEIGHT);
-    close("compact row", layout.compact_row, COMPACT_ROW_HEIGHT);
-    if let Some((group, compact_group)) = layout.group {
-        close("comfortable group header", group, ROW_HEIGHT);
-        close("compact group header", compact_group, COMPACT_ROW_HEIGHT);
-    }
     close("left padding", layout.padding_left, PAGE_PADDING);
-    // The table's panel draws a hairline border inside the padding.
+    // A panel draws a hairline border inside the padding.
     assert!(
         layout.padding_right >= dp(PAGE_PADDING) - px(0.5)
             && layout.padding_right <= dp(PAGE_PADDING) + px(1.5),
         "{}: right padding is {:?}, DESIGN.md says {PAGE_PADDING} dp; {layout:#?}",
-        page.page,
+        frame.page,
         layout.padding_right,
     );
     close("title line", layout.title_line, TITLE_LINE);
@@ -112,39 +188,76 @@ pub(crate) fn assert_table_page(
     layout
 }
 
-/// One density's measurements.
-struct Measured {
-    header: Pixels,
-    row: Pixels,
-    group: Option<Pixels>,
-    padding_left: Pixels,
-    padding_right: Pixels,
-    title_line: Pixels,
-    title_width: Pixels,
+/// Asserts DESIGN.md's table: a 30 dp column header, and 34 and 26 dp rows
+/// with group headers at the row height (a `uniform_list` needs uniform
+/// lines). A toggled table is measured at both densities and left at the one
+/// it had.
+pub(crate) fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> TableRows {
+    window.render_frame(cx);
+    let header = table
+        .table
+        .map(|frame| window.find(table.list).bounds().top() - window.find(frame).bounds().top());
+    let first = measure(window, table.list);
+    let (comfortable, compact) = match table.density {
+        Density::Toggle(control) => {
+            window.click(control, cx);
+            window.render_frame(cx);
+            let second = measure(window, table.list);
+            window.click(control, cx);
+            window.render_frame(cx);
+            // Whichever density the table showed first, order them.
+            if first.row >= second.row {
+                (Some(first), Some(second))
+            } else {
+                (Some(second), Some(first))
+            }
+        }
+        Density::Comfortable => (Some(first), None),
+        Density::Compact => (None, Some(first)),
+    };
+    let rows = TableRows {
+        header,
+        comfortable,
+        compact,
+    };
+    let dp = |n: f32| dp_px(n, window);
+    let close = |what: &str, actual: Pixels, expected: f32| {
+        assert!(
+            (actual - dp(expected)).abs() < px(0.5),
+            "{}: {what} is {actual:?}, DESIGN.md says {expected} dp ({:?}); {rows:#?}",
+            table.list,
+            dp(expected),
+        );
+    };
+    if let Some(header) = rows.header {
+        close("column header", header, HEADER_HEIGHT);
+    }
+    for (name, lines, height) in [
+        ("comfortable", rows.comfortable, ROW_HEIGHT),
+        ("compact", rows.compact, COMPACT_ROW_HEIGHT),
+    ] {
+        let Some(lines) = lines else { continue };
+        close(&format!("{name} row"), lines.row, height);
+        if let Some(group) = lines.group {
+            close(&format!("{name} group header"), group, height);
+        }
+    }
+    rows
 }
 
-fn measure(window: &Window, page: &TablePage) -> Measured {
-    let root = window.find(page.page).bounds();
-    let title = window.find(page.title).bounds();
-    let table = window.find(page.table).bounds();
-    let list = window.find(page.list).bounds();
-    let lines = lines(window, page.list);
+fn measure(window: &Window, list: &'static str) -> Lines {
+    let lines = lines(window, list);
     let row = lines
         .iter()
         .find(|line| line.role() == Some(Role::ListBoxOption))
-        .unwrap_or_else(|| panic!("{}: {} shows no rows", page.page, page.list));
+        .unwrap_or_else(|| panic!("{list} shows no rows"));
     let group = lines
         .iter()
         .find(|line| line.role() == Some(Role::Heading))
         .map(|group| group.bounds().size.height);
-    Measured {
-        header: list.top() - table.top(),
+    Lines {
         row: row.bounds().size.height,
         group,
-        padding_left: title.left() - root.left(),
-        padding_right: root.right() - table.right(),
-        title_line: title.size.height,
-        title_width: title.size.width,
     }
 }
 
@@ -165,9 +278,9 @@ fn lines(window: &Window, list: &str) -> Vec<ElementSnapshot> {
 
 /// The title's font size, from its drawn width and the width its text shapes
 /// to at a known size. Headless text advances in proportion to the size.
-fn title_text(window: &Window, page: &TablePage, width: Pixels) -> Pixels {
+fn title_text(window: &Window, text: &str, width: Pixels) -> Pixels {
     let reference = px(100.);
-    reference * (width / shaped_width(window, page.title_text, reference))
+    reference * (width / shaped_width(window, text, reference))
 }
 
 fn shaped_width(window: &Window, text: &str, size: Pixels) -> Pixels {

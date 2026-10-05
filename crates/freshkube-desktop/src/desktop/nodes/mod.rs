@@ -235,6 +235,9 @@ impl Pilot {
             self.fixture,
             self.kubernetes_only.is_some(),
         );
+        if self.overview.is_stale() {
+            self.overview_display = std::mem::take(&mut self.overview_display).talos_stale();
+        }
         self.rail_marks = crate::desktop::shell::RailMarks::from_cards(
             &self.overview_display.cards,
             self.fixture,

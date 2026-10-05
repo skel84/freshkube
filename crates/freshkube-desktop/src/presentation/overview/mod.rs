@@ -382,10 +382,14 @@ impl Overview {
                     counts.unknown
                 )
                 .into(),
+                // Services without a health check always report unknown, so
+                // only a card with no health result at all is unknown.
                 tone: if counts.unhealthy > 0 {
                     Tone::Warn
-                } else {
+                } else if counts.healthy > 0 {
                     Tone::Good
+                } else {
+                    Tone::Unknown
                 },
                 segments: vec![],
                 meter: None,
@@ -418,10 +422,10 @@ impl Overview {
                     })
                     .unwrap_or("No memory data reported".into())
                     .into(),
-                tone: if peak.is_some_and(|(_, percent)| *percent >= 90.) {
-                    Tone::Crit
-                } else {
-                    Tone::Good
+                tone: match peak {
+                    None => Tone::Unknown,
+                    Some((_, percent)) if *percent >= 90. => Tone::Crit,
+                    Some(_) => Tone::Good,
                 },
                 segments: vec![],
                 meter: peak.map(|(_, percent)| (*percent, super::memory_level(*percent))),
@@ -512,4 +516,19 @@ impl Overview {
         }
         result
     }
+
+    /// When the Talos snapshot is stale, the cards drawn from it show their
+    /// last known figures as unknown rather than as good or bad now.
+    pub(crate) fn talos_stale(mut self) -> Self {
+        for card in &mut self.cards {
+            if TALOS_CARDS.contains(&card.id) && card.tone != Tone::Unknown {
+                card.tone = Tone::Unknown;
+                card.detail = format!("Last known · {}", card.detail).into();
+            }
+        }
+        self
+    }
 }
+
+/// The cards whose evidence is the Talos snapshot alone.
+const TALOS_CARDS: [&str; 3] = ["tile-etcd", "tile-services", "tile-memory"];
