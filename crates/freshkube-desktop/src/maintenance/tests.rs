@@ -901,3 +901,40 @@ async fn the_install_disks_are_the_shared_table_and_only_a_button_chooses(cx: &m
         assert_eq!(view.line_of(selected), Some(0));
     });
 }
+
+/// When the disk table is wider than its card, it scrolls sideways under
+/// the device, its flags and its button, which stay in view.
+#[gpui_kit::test]
+async fn a_disk_button_stays_in_view_when_the_table_scrolls(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    let world = World::new("disk-scroll");
+    let (_runtime, handle, view) = mount(cx, &world, NODE);
+    inspect(cx, handle, &view, &world).await;
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let before = window.find(("maint-disk-select", 0usize)).bounds();
+        window.scroll(
+            "maint-disks-table-scroll",
+            ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let table = window.find("maint-disks-table-scroll").bounds();
+        let columns = crate::ui::dp_px(view.read(cx).disks.width, window);
+        assert!(
+            columns > table.size.width,
+            "the columns ({columns:?}) fit the table {table:?}: nothing scrolled"
+        );
+        let button = window.find(("maint-disk-select", 0usize)).bounds();
+        assert!(
+            (button.left() - before.left()).abs() < px(0.5),
+            "the button moved from {before:?} to {button:?}"
+        );
+        assert!(
+            button.left() >= table.left() && button.right() <= table.right(),
+            "the button {button:?} is outside its table {table:?}"
+        );
+    })
+    .unwrap();
+}
