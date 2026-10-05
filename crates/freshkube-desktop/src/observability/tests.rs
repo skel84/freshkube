@@ -856,6 +856,60 @@ fn integration_tally_paints_the_lavender_square_and_filters_apps(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut TestAppContext) {
+    use freshkube_core::coroot as api;
+    let (_runtime, handle, page) = mount_size(cx, true, 760., 560.);
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            page.fixture = false;
+            page.live.visible = false;
+            let provider = api::Provider::new(
+                "https://coroot-header-geometry.invalid",
+                api::Credentials::None,
+            )
+            .unwrap();
+            let project = api::ProjectInfo {
+                id: "geometry".into(),
+                name: "Project with a long display name".into(),
+            };
+            page.live.source = Some(provider.source(&project));
+            page.live.provider = Some(provider);
+            page.live.project_label = project.name.clone();
+            page.live.project_labels = vec![project.name.clone()];
+            page.live.projects = vec![project];
+        });
+    });
+    cx.update_window(handle, |_, _, cx| crate::text_size::set(20., cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let frame = window.find("obs-frame").bounds();
+        let padding = crate::ui::dp_px(freshkube_ui::page::PAGE_PADDING, window);
+        for id in [
+            "obs-source",
+            "obs-project",
+            "obs-namespace",
+            "obs-density",
+            "obs-columns",
+            "obs-time",
+            "obs-refresh",
+        ] {
+            let control = window.find(id);
+            let bounds = control.bounds();
+            assert!(control.visible(), "{id} must remain visible");
+            assert!(bounds.size.width > px(1.), "{id} must retain its width");
+            assert!(
+                bounds.left() >= frame.left() + padding - px(0.5)
+                    && bounds.right() <= frame.right() - padding + px(0.5),
+                "{id} must stay within the page padding: {bounds:?}; frame {frame:?}"
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
     use crate::desktop::layout_check::{TablePage, assert_table_page};
     let (_runtime, handle, _page) = mount(cx, true);
