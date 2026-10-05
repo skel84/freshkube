@@ -39,7 +39,9 @@ approved build later overlapped it. At approximately 09:42 UTC the lead reported
 stopping a Docker VM that had been consuming about four cores. Consequently this
 cold sample has changing contention; do not compare it with later quiet runs to
 claim an optimization. The load history and compiler-process samples are retained
-with the local measurement records.
+with the local measurement records. Sampling from 09:19 UTC captured loads
+3.74–24.83; 60 of 184 samples were at or above 10. This run is excluded from
+controlled comparisons; the later edited-build sessions must meet the load gate.
 
 Nightly, sccache, nextest, cargo-llvm-lines, cargo-bloat and sold are not installed.
 No tool has been installed for this research. Stable Cargo's timing report
@@ -233,11 +235,43 @@ Monitoring's 9,812 lines comprise page 4,067, panel 2,620, derivation 1,857, his
 concrete: page/history imports `KubeAccess`/`KubeSource`, while the Resources pane
 embeds `HistoryView`. A split needs an access seam that preserves connection
 identity and request ownership. Observability's 10,383 lines already emit typed
-navigation events; remaining seams include shared chart colors, content width,
-secrets, snapshot state and instrumentation. These are better starting boundaries
+navigation events; remaining seams include `KubeSource`, backend request helpers,
+shared chart colors, content width, secrets and snapshot state. These are better starting boundaries
 than a crate per page. The two modules contain 96 test attributes (61 monitoring,
 35 observability); moving their tests can make their focused commands independent
 of the rest of desktop, even if a full app rebuild remains expensive.
+
+### Ranked structural steps
+
+The ranking below is by boundary readiness and usefulness for focused agent work;
+none is a measured full-app speedup. The lead is holding #53 step 3 until
+Monitoring's page migration lands; these are proposals only. File splitting within
+desktop does not create an independently compilable target.
+
+| Priority | Boundary | Code and tests | Work required / expected benefit |
+| --- | --- | --- | --- |
+| 1 | Stage the planned Monitoring crate with `panel/`, `derive/`, and `colors.rs` | 4,776 lines: 2,620 + 1,857 + 299; 35 test attributes, including 8 GPUI tests; paths touched in 11 recent commits | These modules have no Resources access, secrets, backend or page/history dependency. Retarget UI and probe/perf aliases, export a small typed panel/event API, and retain test instrumentation. Chart edits gain an isolated test target without first resolving the page's access cycle. |
+| 2 | Observability page and its owned requests | 10,383 lines, 35 test attributes | Preserve typed navigation events. Its `set_source` only reads `KubeSource.id`, so pass that existing identity rather than the whole Resources access object. Share request cancellation/snapshot and secret-store contracts without moving ownership away from the page. Move the tests with their owner. |
+| 3 | Finish Monitoring page/history/store extraction | Remaining 5,026 lines after step 1; 26 further test attributes | Resolve the real `KubeAccess` client/reconnect seam, Talos target input and secret-store contracts. Keep page/history cancellation and existing entities. This completes the 9,812-line capability boundary. |
+
+The first step can use `freshkube-monitoring` from the outset; it does not require
+an extra permanent crate for every chart helper. Before Observability becomes a
+separate crate, place the chart palette it shares at a stable lower boundary so
+unrelated Monitoring page edits do not also invalidate Observability. Keep model
+conversions out of `freshkube-ui`, whose independence from core is intentional.
+
+Panel probes currently include `cfg(test)` calls through `desktop::probe`.
+Moving the files blindly would remove those probes when desktop tests link the
+new crate as a dependency. Follow the existing probe counting/testing feature
+pattern and compare the test list and render/stress results. This is a small
+seam-first extraction, not a promised move-only PR.
+
+Keep the shell (16,930 lines) and Resources browser (18,321) together for now.
+They are the highest-churn areas but also hold navigation, access, selection and
+user-started session wiring. A crate per page or a new `dyn` layer would increase
+the interface work without evidence of a faster edit loop. Core's Coroot boundary
+is only 1,935 lines and still maps objects through Resources kinds; extracting it
+is lower priority than isolating the desktop features above.
 
 `ScreenHandle` already erases views into `AnyView` and lifecycle closures.
 `TableSource` is `Sized`, has associated row/key/column types and takes
@@ -344,7 +378,9 @@ codegen at roughly one-third or more, compare an isolated nightly's LLVM and
 workspace-only Cranelift backends. Keep Homebrew Cargo, global PATH and global
 configuration untouched; retain dependency LLVM optimization; test panic/test
 support and remove the isolated toolchain afterward. If the measured share is
-smaller, record that bound and skip the installation.
+smaller, record that bound and skip the installation. Upstream still lists panic
+unwinding as unsupported on macOS, so a faster `build` would not establish a
+usable test loop. [Cranelift support](https://github.com/rust-lang/rustc_codegen_cranelift#not-yet-supported)
 
 ## Technical references
 
