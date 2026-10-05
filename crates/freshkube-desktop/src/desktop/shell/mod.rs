@@ -460,7 +460,7 @@ impl Pilot {
             .py_1()
             .px_2()
             .gap_2p5()
-            .rounded(px(7.))
+            .rounded(px(8.))
             .cursor_pointer()
             .text_color(if current { p.ink } else { p.ink_2 })
             .when(current, |this| this.bg(p.accent_soft))

@@ -240,7 +240,7 @@ impl Pilot {
                                 div()
                                     .size(dp(26.))
                                     .flex_none()
-                                    .rounded(px(7.))
+                                    .rounded(px(8.))
                                     .bg(cx.theme().primary)
                                     .text_color(cx.theme().primary_foreground)
                                     .font_weight(ui::TITLE_WEIGHT)
