@@ -98,7 +98,7 @@ fn resource_cells_keep_request_use_allocatable_and_stale_inputs_for_shared_meter
             cells
                 .cpu
                 .tooltip
-                .contains("requested 1.0 · allocatable 4.0")
+                .contains("requested 1.0 (25%) · allocatable 4.0")
         );
         assert!(
             cells
@@ -109,6 +109,17 @@ fn resource_cells_keep_request_use_allocatable_and_stale_inputs_for_shared_meter
         assert_eq!(
             cells.cpu.tooltip.contains("last known metrics.k8s.io"),
             stale
+        );
+        assert_eq!(
+            cells
+                .cpu
+                .tooltip
+                .contains("· at least 85% of allocatable ·"),
+            used == 3400.
+        );
+        assert_eq!(
+            cells.cpu.tooltip.contains("· above request ·"),
+            used == 1500.
         );
         assert_eq!(cells.memory.text, "2.0Gi");
     }
@@ -138,12 +149,7 @@ fn missing_node_metrics_fall_back_to_talos_memory_without_inventing_allocatable(
     assert_eq!(cells.memory.allocatable, None);
     assert!(cells.memory.tooltip.contains("Talos memory fallback"));
     assert!(cells.memory.tooltip.contains("physical total"));
-    assert!(
-        cells
-            .memory
-            .tooltip
-            .contains("allocatable unavailable (end unknown)")
-    );
+    assert!(cells.memory.tooltip.contains("allocatable unknown"));
     let stale = super::resource::RowResources::new(&row, None, false, "denied", false);
     assert!(stale.memory.stale);
     assert!(stale.memory.tooltip.contains("last known Talos memory"));

@@ -1,7 +1,7 @@
 //! Cached per-node resource facts. Rendering reads these cells without joining
 //! metrics, parsing quantities or formatting labels on a frame.
 use freshkube_core::resources::{NodeUsage, cpu_millis, quantity};
-use freshkube_ui::meters::Resource;
+use freshkube_ui::meters::{self, Resource};
 use gpui_kit::{
     component::{h_flex, tooltip::Tooltip},
     prelude::*,
@@ -44,9 +44,9 @@ impl RowResources {
         talos_current: bool,
     ) -> Self {
         let cell = |resource| {
-            let (label, parse): (&str, fn(&str) -> Option<f64>) = match resource {
-                Resource::Cpu => ("CPU", cpu_millis),
-                Resource::Memory => ("Memory", quantity),
+            let parse: fn(&str) -> Option<f64> = match resource {
+                Resource::Cpu => cpu_millis,
+                Resource::Memory => quantity,
             };
             let select = |amounts: freshkube_core::resources::Amounts| match resource {
                 Resource::Cpu => amounts.cpu_millis,
@@ -84,19 +84,19 @@ impl RowResources {
                 } else {
                     metrics_stale
                 };
-            let display = |amount: Option<f64>| {
-                amount
-                    .map(|v| value(resource, v))
-                    .unwrap_or_else(|| "unknown".into())
-            };
-            let mut tooltip = format!(
-                "{label}: used {} · requested {} · allocatable {}",
-                display(used),
-                display(request),
-                display(allocatable)
+            let mut tooltip = meters::tip(
+                &meters::Reading {
+                    resource,
+                    used,
+                    request,
+                    end: allocatable,
+                    kind: meters::End::Allocatable,
+                    stale,
+                },
+                |v| value(resource, v),
             );
             if matches!(resource, Resource::Cpu) {
-                tooltip.push_str(" (cores / millicores)");
+                tooltip.push_str(" · in cores / millicores");
             }
             if let Some(memory) = fallback {
                 tooltip.push_str(&format!(" · Talos memory fallback (physical total {}) · metrics.k8s.io unavailable: {reason}", value(Resource::Memory, memory.total as f64)));
@@ -135,9 +135,6 @@ impl RowResources {
                     }
                 }
                 None => tooltip.push_str(" · Kubernetes node and pod requests unavailable"),
-            }
-            if allocatable.is_none() {
-                tooltip.push_str(" · allocatable unavailable (end unknown)");
             }
             if matches!(resource, Resource::Cpu) {
                 tooltip.push_str(&format!(" · load averages: {} (not CPU use)", row.load));
