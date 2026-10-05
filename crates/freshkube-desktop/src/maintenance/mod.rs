@@ -50,11 +50,13 @@ use crate::{
     ui::{self, MONO_FONT, Tone, dp},
 };
 
+mod disks;
 #[cfg(debug_assertions)]
 mod example;
 mod review;
 mod view;
 
+use disks::Disks;
 use review::Review;
 
 #[cfg(test)]
@@ -114,6 +116,8 @@ pub(crate) struct MaintenanceView {
     generation: u64,
     auto_poll: bool,
     review: Option<Review>,
+    /// The install disks' table, derived when the session changes.
+    disks: Disks,
     /// Example data (debug builds): the session stops at the review.
     example: bool,
     error: Option<String>,
@@ -223,6 +227,7 @@ impl MaintenanceView {
             generation: 0,
             auto_poll: false,
             review: None,
+            disks: Disks::default(),
             example: false,
             error: None,
             progress: ProgressLog::default(),
@@ -273,6 +278,7 @@ impl MaintenanceView {
             Ok(next) => {
                 self.progress.record(next.progress_line());
                 self.session = Some(next);
+                self.disks.sync(self.session.as_ref());
             }
             Err(error) => self.error = Some(error.to_string()),
         }
@@ -411,6 +417,7 @@ impl MaintenanceView {
                 self.error = None;
                 self.progress.record(next.progress_line());
                 self.session = Some(next);
+                self.disks.sync(self.session.as_ref());
             }
             Err(error) => self.error = Some(error.to_string()),
         }
@@ -651,6 +658,7 @@ impl MaintenanceView {
             return;
         }
         self.session = None;
+        self.disks.sync(None);
         self.review = None;
         self.error = None;
         self.auto_poll = false;
@@ -749,6 +757,7 @@ impl MaintenanceView {
         if let Some(next) = next {
             self.progress.record(next.progress_line());
             self.session = Some(next);
+            self.disks.sync(self.session.as_ref());
         }
         self.error = None;
         self.generation += 1;

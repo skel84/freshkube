@@ -852,3 +852,52 @@ async fn changing_the_form_after_connecting_is_not_possible(cx: &mut TestAppCont
     assert!(target.is_none());
     let _ = InstallTarget::select(&World::disks(), "/dev/sda").unwrap();
 }
+
+/// The install disks are the shared table at both text sizes. A row click
+/// chooses nothing; only a disk's button does, and the chosen disk is then
+/// the table's selected row.
+#[gpui_kit::test]
+async fn the_install_disks_are_the_shared_table_and_only_a_button_chooses(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{Table, assert_table};
+    use freshkube_ui::table::TableSource;
+    let world = World::new("disk-table");
+    let (_runtime, handle, view) = mount(cx, &world, NODE);
+    inspect(cx, handle, &view, &world).await;
+    let table = Table {
+        table: Some("maint-disks-table-scroll"),
+        list: "maint-disks-list",
+    };
+    for text_size in [13., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            window.render_frame(cx);
+            let rows = assert_table(window, cx, &table);
+            assert!(rows.header.is_some(), "{text_size}: {rows:#?}");
+        })
+        .unwrap();
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("maint-disk", 0usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        phase(cx, &view),
+        Some(BootstrapPhase::SelectingInstallTarget)
+    );
+    cx.update(|cx| assert!(view.read(cx).selected_key().is_none()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("maint-disk-select", 0usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(phase(cx, &view), Some(BootstrapPhase::Configuring));
+    cx.update(|cx| {
+        let view = view.read(cx);
+        let selected = view.selected_key().expect("the chosen disk is selected");
+        assert_eq!(selected.as_ref(), "/dev/sda");
+        assert_eq!(view.line_of(selected), Some(0));
+    });
+}
