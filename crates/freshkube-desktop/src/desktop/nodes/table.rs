@@ -236,24 +236,10 @@ impl TableSource for Pilot {
                 .child(row.name.clone())
                 .into_any_element(),
             Field::Kubernetes => table::cell(column).child(row.ready).into_any_element(),
-            Field::Services => {
-                let cell = table::cell(column)
-                    .text_color(style.p.muted)
-                    .child(row.services.clone());
-                // One column-lane marker preserves the existing horizontal-scroll check.
-                if self
-                    .node_workspace
-                    .lines
-                    .first()
-                    .is_some_and(|ix| self.node_workspace.rows[*ix].key == row.key)
-                {
-                    cell.id("node-table-services")
-                        .test_support()
-                        .into_any_element()
-                } else {
-                    cell.into_any_element()
-                }
-            }
+            Field::Services => table::cell(column)
+                .text_color(style.p.muted)
+                .child(row.services.clone())
+                .into_any_element(),
             field => {
                 let value: SharedString = match field {
                     Field::Role => row.role.label().into(),
