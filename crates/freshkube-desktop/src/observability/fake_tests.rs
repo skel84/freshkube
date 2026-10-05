@@ -1128,3 +1128,93 @@ async fn traces_and_profiling_first_read_failures_show_retry_and_recover(cx: &mu
         }
     }
 }
+
+#[gpui_kit::test]
+async fn heatmap_arrows_read_nothing_until_enter(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            let app = page.applications[0].id.clone();
+            page.open_app(app, Report::Cpu, cx);
+        });
+        window.render_frame(cx);
+        window.click("obs-app-traces", cx);
+    })
+    .unwrap();
+    traced(cx, handle, &page).await;
+    let cursor = |window: &mut gpui_kit::Window| {
+        window
+            .try_find("obs-heatmap-cursor")
+            .map(|caption| caption.label().unwrap_or_default().to_string())
+    };
+    let before = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                cursor(window),
+                None,
+                "no cursor until the heatmap has focus"
+            );
+            // Tab reaches the heatmap; its cursor starts on the latest failures.
+            let focus = page.read(cx).heat_focus.clone();
+            window.focus(&focus, cx);
+            window.render_frame(cx);
+            let label = cursor(window).expect("a focused heatmap shows its cursor");
+            assert!(label.starts_with("Failed requests · "), "{label}");
+            assert!(label.ends_with(" · no failures"), "{label}");
+            assert_eq!(
+                window.find("obs-live-bucket-0-2").label().as_deref(),
+                Some(label.as_str())
+            );
+            server.requests.load(Ordering::SeqCst)
+        })
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        // Moves clamp at the edges and read nothing.
+        window.press("up", cx);
+        window.press("right", cx);
+        window.press("left", cx);
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("home", cx);
+        window.press("right", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            page.read(cx).live_traces.selection,
+            api::TraceSelection::Recent
+        );
+        let label = cursor(window).unwrap();
+        assert!(label.starts_with("Up to 5ms · "), "{label}");
+        assert_eq!(
+            window.find("obs-live-bucket-2-1").label().as_deref(),
+            Some(label.as_str())
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(server.requests.load(Ordering::SeqCst), before);
+    // Enter lists the cell's requests: one read.
+    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    traced(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        let api::TraceSelection::Latency { above, up_to, .. } =
+            page.read(cx).live_traces.selection.clone()
+        else {
+            panic!("a latency cell");
+        };
+        assert_eq!((above.as_str(), up_to.as_str()), ("0", "0.005"));
+        assert!(server.requests.load(Ordering::SeqCst) > before);
+        // Escape leaves the heatmap for the page.
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(!page.read(cx).heat_focus.is_focused(window));
+        assert!(page.read(cx).focus.is_focused(window));
+        assert_eq!(cursor(window), None);
+    })
+    .unwrap();
+}
