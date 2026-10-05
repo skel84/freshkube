@@ -26,7 +26,7 @@ mod fake_tests;
 mod format;
 mod frame;
 mod header;
-mod live_incidents;
+mod incidents;
 mod live_profiling;
 mod live_traces;
 mod map;
@@ -108,7 +108,7 @@ pub(crate) struct ObservabilityPage {
     map_scroll: UniformListScrollHandle,
     map_display: map::MapDisplay,
     map_problems: bool,
-    incident_observations: live_incidents::Incidents,
+    incident_observations: incidents::Incidents,
     live_traces: live_traces::Traces,
     live_profiles: live_profiling::Profiles,
     /// The applications' picker entries, by label.
