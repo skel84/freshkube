@@ -2,7 +2,7 @@
 
 Freshkube today is a cluster browser with Talos inside it. This file proposes a different front door: a platform-engineering tool for teams that run on Kubernetes, which follows a change from the commit to the pods that run it, across every cluster the delivery passes through. Browsing Kubernetes objects stays, as the layer every link lands on, but it is no longer the first thing the app shows.
 
-It records the direction taken with the user, the stack it was shaped on, the screens, the model behind them and an order of work. Nothing here is built. The [roadmap](ROADMAP.md) decides when a step starts; the future ideas it extends are [F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation) (ownership and Argo CD), [F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes) (reviewed changes and their outcomes) and [F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) (simultaneous clusters). The writes follow the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md). [#42](https://github.com/skel84/freshkube/issues/42) tracks the work; the spike is [#43](https://github.com/skel84/freshkube/issues/43) and the session registry [#44](https://github.com/skel84/freshkube/issues/44).
+It records the direction taken with the user, the stack it was shaped on, the screens, the model behind them and an order of work. Nothing here is built. The [roadmap](ROADMAP.md) decides when a step starts; the future ideas it extends are [F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation) (ownership and Argo CD), [F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes) (reviewed changes and their outcomes) and [F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) (simultaneous clusters). The writes follow the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md). [#42](https://github.com/skel84/freshkube/issues/42) tracks the work; the spike is [#158](https://github.com/skel84/freshkube/issues/158) and the session registry [#44](https://github.com/skel84/freshkube/issues/44).
 
 The mocks are static HTML pages with example data, in [`platform/`](platform/). Each screen below links its page. The same boards live on the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1): P1–P7 in the Platform section, and P1d, P4d, P4w, R (the app today) and the Native pass boards N1, N1c and N2 in the Desktop grade section. The canvas is private to its owner until shared. The mocks show intent, not pixels: where a mock and this file differ, this file wins.
 
@@ -11,8 +11,8 @@ The mocks are static HTML pages with example data, in [`platform/`](platform/). 
 Taken with the user on 4 October 2026.
 
 - **The product is about applications and changes, not resource kinds.** It answers "what is shipping, what is waiting for me, what broke, and why" across clusters. The Kubernetes browser becomes Explore, reached through ⌘K and through links from every other screen.
-- **One chain, end to end.** GitHub → Tekton Pipelines as Code → Tekton pipelines → supply-chain checks (Tekton Chains, Conforma, Konflux where present) → Harbor → Kargo → Argo CD → Argo Rollouts → pods. All of it is in use at the user's work.
-- **Clusters have roles.** A core cluster runs Argo CD, Kargo, VictoriaMetrics and Coroot. A CI/CD cluster runs Tekton and Harbor. Each environment has its own workload cluster. The app holds all of them at once.
+- **One chain, end to end.** GitHub → Tekton Pipelines as Code → Tekton pipelines → supply-chain checks (Tekton Chains, Conforma, Konflux where present) → Harbor → Kargo → Argo CD → Argo Rollouts → pods. This common open-source delivery stack is the reference the design is shaped on; a team that runs only part of it sees the hops it has.
+- **Clusters have roles.** A typical layout keeps delivery and observability (Argo CD, Kargo, metrics, Coroot) on a core cluster, builds and the registry (Tekton, Harbor) on a CI/CD cluster, and one workload cluster per environment. Other layouts work too: the workspace says which cluster holds what. The app holds all of them at once.
 - **Two starting points.** Platform engineers look across every team; developers look at their own apps. Home has both, one switch apart.
 - **Approval early.** Promoting freight and stepping or aborting a rollout come with the first delivery slice, not after it. They are explicit actions behind a confirmation that shows what will happen, the evidence and who the user acts as.
 - **Desktop grade is the look.** Chosen by the user on 5 October 2026 over the look of P1–P7 ([below](#desktop-grade)). P1–P7 stay as the reference for what each screen holds and how the screens connect; [DESIGN.md](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges) holds the look.
@@ -129,7 +129,7 @@ None of the screens above work with one connection, and today the app holds one 
 - **A workspace is a named, saved set of clusters with roles**, in `workspace.json` beside the preferences, as `monitoring.json` is. Each entry names a context explicitly. Nothing falls back to the kubeconfig's current context, and a missing context is reported, not replaced.
 - **Each cluster keeps its own access session**, built on `AccessIdentity`. Rows, links and actions carry the cluster they came from, so a same-named object in two clusters can't be confused, and a link opens the object in the cluster that holds it.
 - **Environments are found from Argo CD.** An Application's destination server is matched against the servers in the kubeconfig contexts. One match is used; several, or none, ask the user. A destination given by cluster name refers to a cluster Secret, which the app doesn't read, so it is mapped by hand once.
-- **Observe sources belong to the workspace.** VictoriaMetrics and Coroot in the core cluster describe workloads in the environment clusters. Monitoring today looks for Prometheus inside the context it shows; it needs to look in the workspace's core cluster too.
+- **Observe sources belong to the workspace.** Metrics and Coroot in the core cluster describe workloads in the environment clusters. Monitoring today looks for Prometheus inside the context it shows; it needs to look in the workspace's core cluster too.
 - **Reads stay bounded and visible.** Hidden pages still contact nothing. Home and the rail's problem marks need a small background observation in each cluster, like today's Kubernetes summary: Stages and Freight in core, recent PipelineRuns by label in CI/CD, Rollouts in each environment. Each is a compact reflector with its own budget, coalesced as the summary is, and its coverage shows when a cluster can't be reached. A cluster that doesn't answer is not a cluster with no changes.
 
 ## Writes
@@ -166,7 +166,7 @@ What is missing:
 5. **Cost.** [#22](https://github.com/skel84/freshkube/issues/22) (main-thread burst cost) is open, and six clusters multiply the summary sessions. Measure with `scripts/stress.sh` before and after the registry, and give each cluster a watch budget.
 6. **Navigation.** `Page` and `Area` describe one cluster's pages. An application with tabs across clusters needs another routing level, and links carry the cluster.
 
-Before step 1, a read-only spike ([#43](https://github.com/skel84/freshkube/issues/43)) against the real core and CI/CD clusters joins Freight, Stages, Argo CD Applications, Rollouts, PipelineRuns and pod digests in core, with no UI. It records the CRD versions, the RBAC the user's identity gets, how promotion and rollout steps are requested, and the answers to the open questions below. Screens beyond these mocks wait for it.
+Before step 1, a read-only spike ([#158](https://github.com/skel84/freshkube/issues/158)) against a live setup that runs this stack joins Freight, Stages, Argo CD Applications, Rollouts, PipelineRuns and pod digests in core, with no UI. It records the CRD versions, the RBAC the user's identity gets, how promotion and rollout steps are requested, and the answers to the open questions below. Screens beyond these mocks wait for it.
 
 ## Order of work
 
@@ -186,9 +186,9 @@ Steps 5–7 can move in any order once step 3 lands. Explore, Infrastructure and
 ## Open questions
 
 - **Teams.** How does the app know which applications are "mine": Kargo Project RBAC, GitHub team membership, a label, or a list the user keeps?
-- **Konflux.** Is Konflux running in full, with Applications, Components, Snapshots and Releases, or are Tekton, Chains and Conforma used on their own? The supply-chain hop reads different objects in each case.
-- **Tekton Results.** Is it installed? Without it, a pruned PipelineRun's logs are gone, and the change page should say so.
-- **Approve or promote.** Kargo separates approving freight for a Stage from promoting it. Is the user's prod gated by manual approval, by manual promotion, or both?
+- **Konflux.** Some teams run Konflux in full, with Applications, Components, Snapshots and Releases; others use Tekton, Chains and Conforma on their own. The supply-chain hop reads different objects in each case, so how does it tell which it has?
+- **Tekton Results.** It may not be installed. Without it, a pruned PipelineRun's logs are gone, and the change page should say so.
+- **Approve or promote.** Kargo separates approving freight for a Stage from promoting it. A prod Stage may be gated by manual approval, by manual promotion, or both; how does the app show which?
 - **Argo CD diffs.** F04 links out to Argo CD's UI for diffs. Is that enough, or does the change page need a native desired-against-live diff?
 - **Harbor replication.** Production may pull from a replicated registry. Is the digest the same there, and can the robot account read both?
 - **The name and the site.** The sk8s.app headline ("Your cluster, problems first") describes today's product. It waits for this direction to settle.
