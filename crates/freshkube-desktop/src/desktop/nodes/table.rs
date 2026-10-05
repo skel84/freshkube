@@ -3,7 +3,7 @@ use super::*;
 use freshkube_ui::table::{
     self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
-use gpui_kit::{component::v_flex, prelude::*};
+use gpui_kit::prelude::*;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -52,6 +52,10 @@ impl Column {
         };
         let width = if field == Field::Glyph {
             34.
+        } else if field == Field::Load {
+            192.
+        } else if field == Field::Memory {
+            152.
         } else {
             let chars = rows
                 .iter()
@@ -134,6 +138,12 @@ impl Nodes {
 }
 
 impl Pilot {
+    pub(in crate::desktop) fn sync_nodes_source_mode(&mut self) {
+        self.node_workspace
+            .rebuild_columns(self.kubernetes_only.is_none());
+        self.rebuild_nodes_meta();
+    }
+
     pub(super) fn nodes_columns_menu(&self, cx: &Context<Self>) -> AnyElement {
         use gpui_kit::component::{
             Sizable,
@@ -196,16 +206,25 @@ impl TableSource for Pilot {
     fn sort(&mut self, _: (), _: &mut Context<Self>) {}
     fn line_count(&self) -> usize {
         if self.node_workspace.open {
+            // The compact pane switcher deliberately keeps the full roster. Main-list
+            // filters remain retained and resume when the pane closes.
             self.node_workspace.rows.len()
-        } else {
+        } else if self.node_workspace.view == NodeView::Cards {
             self.node_workspace.lines.len()
+        } else {
+            self.node_workspace.items.len()
         }
     }
     fn line(&self, line: usize, _: &App) -> Option<Line<NodeKey, &NodeRow>> {
         let ix = if self.node_workspace.open {
             line
-        } else {
+        } else if self.node_workspace.view == NodeView::Cards {
             *self.node_workspace.lines.get(line)?
+        } else {
+            match self.node_workspace.items.get(line)? {
+                projection::Item::Group(status) => return Some(Line::Group(status.index())),
+                projection::Item::Row(ix) => *ix,
+            }
         };
         let row = self.node_workspace.rows.get(ix)?;
         Some(Line::Row(TableRow {
@@ -256,8 +275,46 @@ impl TableSource for Pilot {
             }
         }
     }
-    fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
-        None
+    fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let status = *projection::Status::ALL.get(group)?;
+        let count = self.node_workspace.group_counts[status.index()];
+        let collapsed =
+            status == projection::Status::Healthy && self.node_workspace.healthy_collapsed();
+        let mut detail = vec![format!("{count} nodes")];
+        if collapsed {
+            detail.push("collapsed".into());
+        }
+        let row = table::GroupRow::new(
+            status.group_id(),
+            status.tone(),
+            status.label(),
+            self.node_workspace.table.row_height(),
+        )
+        .detail(detail);
+        let row = if status == projection::Status::Healthy
+            && self.node_workspace.counts[..status.index()]
+                .iter()
+                .any(|count| *count > 0)
+        {
+            use gpui_kit::component::{
+                Sizable,
+                button::{Button, ButtonVariants},
+            };
+            row.action(
+                Button::new("nodes-healthy-toggle")
+                    .ghost()
+                    .xsmall()
+                    .label(if collapsed { "Expand" } else { "Collapse" })
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.node_workspace.healthy_open = !view.node_workspace.healthy_open;
+                        view.node_workspace.rebuild_lines();
+                        cx.notify();
+                    })),
+            )
+        } else {
+            row
+        };
+        Some(row.render(cx).into_any_element())
     }
     fn selected_key(&self) -> Option<&NodeKey> {
         self.node_workspace.selected.as_ref()
@@ -268,11 +325,15 @@ impl TableSource for Pilot {
                 .rows
                 .iter()
                 .position(|row| &row.key == key)
-        } else {
+        } else if self.node_workspace.view == NodeView::Cards {
             self.node_workspace
                 .lines
                 .iter()
                 .position(|ix| &self.node_workspace.rows[*ix].key == key)
+        } else {
+            self.node_workspace.items.iter().position(|item| {
+                matches!(item, projection::Item::Row(ix) if &self.node_workspace.rows[*ix].key == key)
+            })
         }
     }
     fn click(
@@ -285,18 +346,14 @@ impl TableSource for Pilot {
         self.open_node(key.clone(), window, cx);
     }
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        if let Some((title, hint)) = &self.node_workspace.empty {
-            Some(
-                v_flex()
-                    .gap(ui::dp(6.))
-                    .child(title.clone())
-                    .child(hint.clone())
-                    .into_any_element(),
-            )
-        } else if self.node_workspace.lines.is_empty() {
+        if self.node_workspace.lines.is_empty() {
             Some(
                 div()
-                    .child("No nodes match this readiness filter")
+                    .id("nodes-empty-message")
+                    .test_support()
+                    .role(gpui_kit::Role::Status)
+                    .aria_label("No matching nodes")
+                    .child("No nodes match these filters")
                     .into_any_element(),
             )
         } else {

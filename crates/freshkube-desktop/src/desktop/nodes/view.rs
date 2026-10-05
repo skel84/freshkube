@@ -9,7 +9,7 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::{
     assets::IconName,
     component::{
-        button::Button,
+        button::{Button, ButtonVariants},
         h_flex,
         resizable::{h_resizable, resizable_panel},
         v_flex,
@@ -45,6 +45,8 @@ impl Pilot {
                     )
                     .into_any_element()
             }
+        } else if let Some(state) = self.nodes_state(cx) {
+            state
         } else if self.node_workspace.view == NodeView::Table {
             freshkube_ui::table::data_table(self, window, cx)
                 .size_full()
@@ -84,16 +86,13 @@ impl Pilot {
                 view.step_node_tab(-1, window, cx)
             }))
             .on_action(cx.listener(|view, _: &OpenNode, window, cx| {
-                use freshkube_ui::table::{Line, TableSource};
+                use freshkube_ui::table::{self, TableSource};
                 if let Some(key) = view
                     .node_workspace
                     .selected
                     .clone()
                     .filter(|key| view.line_of(key).is_some())
-                    .or_else(|| match view.line(0, cx) {
-                        Some(Line::Row(row)) => Some(row.key),
-                        _ => None,
-                    })
+                    .or_else(|| table::step(view, 1, cx))
                 {
                     view.open_node(key, window, cx);
                 }
@@ -101,6 +100,60 @@ impl Pilot {
             .when(!pane, |this| this.child(self.nodes_header(window, cx)))
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
+    }
+
+    fn nodes_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let state = self.node_workspace.empty.as_ref()?;
+        let (id, label, element) = match state {
+            Empty::Loading => (
+                "nodes-loading",
+                "Waiting for nodes".to_owned(),
+                freshkube_ui::page::card(cx)
+                    .p_3()
+                    .gap_3()
+                    .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
+            ),
+            Empty::Failed(reason) => (
+                "nodes-failed",
+                format!("Nodes unavailable · {reason}"),
+                ui::empty_state(
+                    IconName::CircleDashed,
+                    "Nodes unavailable",
+                    "The cluster summaries could not report nodes. Retry reads them again.",
+                    Some(reason.to_string()),
+                    vec![
+                        Button::new("nodes-retry")
+                            .primary()
+                            .label("Retry")
+                            .on_click(
+                                cx.listener(|view, _, window, cx| view.refresh_now(window, cx)),
+                            )
+                            .into_any_element(),
+                    ],
+                    cx,
+                ),
+            ),
+            Empty::Loaded => (
+                "nodes-empty",
+                "No nodes reported".to_owned(),
+                ui::empty_state(
+                    IconName::Server,
+                    "No nodes reported",
+                    "No nodes were reported for this context.",
+                    None,
+                    Vec::new(),
+                    cx,
+                ),
+            ),
+        };
+        Some(
+            element
+                .id(id)
+                .test_support()
+                .role(gpui_kit::Role::Status)
+                .aria_label(label)
+                .into_any_element(),
+        )
     }
 
     fn render_node_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -171,9 +224,14 @@ impl Pilot {
             })
             .child(
                 div().flex_1().min_w_0().child(
-                    ui::page_title(row.name.clone())
+                    div()
+                        .id("node-pane-title")
+                        .test_support()
+                        .aria_label(row.name.clone())
                         .font_family(MONO_FONT)
-                        .truncate(),
+                        .text_size(dp(13.5))
+                        .truncate()
+                        .child(row.name.clone()),
                 ),
             )
             .child(ui::tag(row.tone, None, row.ready, cx))

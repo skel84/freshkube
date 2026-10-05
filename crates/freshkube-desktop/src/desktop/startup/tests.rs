@@ -250,6 +250,7 @@ fn card_contents_align_and_long_node_names_keep_to_one_row(cx: &mut TestAppConte
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
         let name = "talos-cp-fra1-03-baremetal-rack-b7";
         let id = format!("node-{name}");
         assert_eq!(window.find(id.clone()).label(), Some(name));

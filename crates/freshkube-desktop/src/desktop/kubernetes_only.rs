@@ -431,6 +431,7 @@ impl Pilot {
         };
         self.contexts.clear();
         self.applied.context = None;
+        self.sync_nodes_source_mode();
         if let Some(path) = kube.explicit {
             self.inspect_kubeconfig_file(path, window, cx);
         }

@@ -12,6 +12,10 @@ use gpui_kit::{
     prelude::*,
 };
 
+pub(super) fn card_columns(window: &Window) -> usize {
+    ((content_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
+}
+
 impl Pilot {
     pub(super) fn joined_node_list(
         &self,
@@ -19,22 +23,7 @@ impl Pilot {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if let Some((title, message)) = &self.node_workspace.empty {
-            return ui::empty_state(
-                IconName::Server,
-                title.clone(),
-                message.clone(),
-                None,
-                Vec::new(),
-                cx,
-            )
-            .into_any_element();
-        }
-        let columns = if compact {
-            1
-        } else {
-            ((content_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
-        };
+        let columns = if compact { 1 } else { card_columns(window) };
         let count = if compact {
             self.node_workspace.rows.len()
         } else {
@@ -44,15 +33,19 @@ impl Pilot {
             return ui::empty_state(
                 IconName::Server,
                 "No matching nodes",
-                "No nodes match this readiness filter.",
+                "No nodes match these filters.",
                 None,
                 Vec::new(),
                 cx,
             )
+            .id("nodes-empty")
+            .test_support()
+            .role(gpui_kit::Role::Status)
+            .aria_label("No matching nodes")
             .into_any_element();
         }
-        uniform_list(
-            "nodes-rows",
+        let list = uniform_list(
+            "nodes-cards-list",
             count.div_ceil(columns),
             cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
                 range
@@ -77,8 +70,15 @@ impl Pilot {
             }),
         )
         .track_scroll(&self.node_workspace.scroll)
-        .size_full()
-        .into_any_element()
+        .size_full();
+        div()
+            .id("nodes-cards")
+            .test_support()
+            .role(gpui_kit::Role::ListBox)
+            .size_full()
+            .min_h_0()
+            .child(list)
+            .into_any_element()
     }
 
     fn joined_node_row(&self, row: &NodeRow, compact: bool, cx: &mut Context<Self>) -> AnyElement {
