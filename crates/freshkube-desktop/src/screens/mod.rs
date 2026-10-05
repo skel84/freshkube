@@ -364,12 +364,25 @@ impl<T: Send + 'static> Loader<T> {
     }
 }
 
-/// Width available to page content in `dp` (pixels at the default text
-/// size), for choosing between side-by-side and stacked layouts: a larger
-/// text size leaves less room, as a narrower window would.
-pub(crate) fn content_width(window: &Window) -> f32 {
+/// The width of a page in `dp` (pixels at the default text size): the
+/// window less the rail and column. A page without margins has all of it,
+/// so its breakpoints compare this; a larger text size leaves less room, as
+/// a narrower window would.
+pub(crate) fn page_width(window: &Window) -> f32 {
     let viewport = window.viewport_size().width / dp_px(1., window);
-    (viewport - CHROME_WIDTH.get() - PAGE_PADDING * 2.).max(240.)
+    (viewport - CHROME_WIDTH.get()).max(240.)
+}
+
+/// The width inside a page's [`inset`](freshkube_ui::page::inset), such as
+/// its header's, in `dp`.
+pub(crate) fn inset_width(window: &Window) -> f32 {
+    (page_width(window) - freshkube_ui::page::PANE_PADDING * 2.).max(240.)
+}
+
+/// The width inside a [padded](freshkube_ui::page::padded) page's margins in
+/// `dp`, for choosing between side-by-side and stacked layouts there.
+pub(crate) fn content_width(window: &Window) -> f32 {
+    (page_width(window) - PAGE_PADDING * 2.).max(240.)
 }
 
 const SPLIT_WIDTH: f32 = 900.;

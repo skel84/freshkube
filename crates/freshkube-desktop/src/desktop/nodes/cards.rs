@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     palette::palette,
-    screens::content_width,
+    screens::inset_width,
     ui::{MONO_FONT, dp},
 };
 use gpui_kit::component::Sizable;
@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 
 pub(super) fn card_columns(window: &Window) -> usize {
-    ((content_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
+    ((inset_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
 }
 
 impl Pilot {

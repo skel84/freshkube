@@ -148,11 +148,19 @@ Keep an eye on the repository's shared cache usage under **Actions → Caches**
 (10 GB budget).
 
 The job runs
-`cargo build --locked --bin freshkube` and uploads `target/debug/freshkube` as
+`cargo build --locked --bin freshkube --features capture-embed` and uploads `target/debug/freshkube` as
 `freshkube-debug-x86_64-apple-darwin-<short-sha>`, kept for **3 days**. The SHA is
 the checked-out PR head (or the selected revision for a manual run). Release
 bundles ignore the debug page, kind, theme, window-size and text-size overrides;
 use this debug artifact when a capture needs them.
+
+`capture-embed` embeds GPUI Kit's icons in the debug executable. Without it,
+`rust-embed` reads them from the build machine's Cargo registry at runtime, so
+a downloaded binary draws no Kit icons on another Mac. Normal local debug
+builds keep their existing asset loading; this feature is enabled only for
+portable capture binaries. Its optional `rust-embed` dependency is pinned to
+the version resolved for `gpui-kit-assets`, so their features unify; keep the
+pin aligned when updating that dependency.
 
 After the Capture run succeeds, download the artifact for the revision you want.
 GitHub's artifact archive strips executable permissions, so restore them before

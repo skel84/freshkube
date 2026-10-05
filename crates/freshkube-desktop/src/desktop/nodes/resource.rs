@@ -251,7 +251,7 @@ impl Pilot {
     pub(super) fn nodes_meter_legend(&self, window: &Window, cx: &App) -> AnyElement {
         use freshkube_ui::table;
         let id = self.node_workspace.table.id("meter-legend");
-        if crate::screens::content_width(window) < 760. {
+        if crate::screens::page_width(window) < 760. {
             return table::legend_line(id, "Meters: request · use · allocatable ⓘ", "Band = non-terminated pods' requests · line = current use · end = node allocatable. Brighter = above request; amber = at least 85% of allocatable; stripes = last known data.", cx).into_any_element();
         }
         let p = crate::palette::palette(cx);

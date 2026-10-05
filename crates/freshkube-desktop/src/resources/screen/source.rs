@@ -246,7 +246,7 @@ impl TableSource for ResourcesScreen {
 
     fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.lists_pods()
-            .then(|| self.meter_legend(content_width(window) < 600., cx))
+            .then(|| self.meter_legend(page_width(window) < 600., cx))
     }
 }
 

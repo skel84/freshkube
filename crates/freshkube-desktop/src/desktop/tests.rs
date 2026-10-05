@@ -3471,3 +3471,34 @@ fn search_everything_keeps_one_width_on_every_page(cx: &mut TestAppContext) {
         );
     }
 }
+
+#[gpui_kit::test]
+fn pods_toolbar_fits_one_row_from_where_the_header_stops_stacking(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 2400., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+        let bounds = |id: String| window.find(id).bounds();
+        let title = bounds("resource-title".into());
+        // The example pods show the failing and healthy chips.
+        let chips = bounds("resource-tally-healthy".into());
+        let first = bounds("resource-slot-0".into());
+        let last = (1..)
+            .map_while(|ix| window.try_find(format!("resource-slot-{ix}")))
+            .last()
+            .map_or(first, |slot| slot.bounds());
+        let gap = crate::ui::dp_px(8., window);
+        let one_row = (chips.right() - title.left()) + gap + (last.right() - first.left());
+        let one_row = one_row / crate::ui::dp_px(1., window);
+        // The other two chips, not ready and waiting, take about 150 more.
+        assert!(
+            one_row + 150. <= freshkube_ui::page::HEADER_NARROW,
+            "Pods' toolbar needs {one_row} dp on one row"
+        );
+        assert!(
+            freshkube_ui::page::HEADER_NARROW - one_row <= 200.,
+            "HEADER_NARROW stacks a header that fits: Pods' needs {one_row} dp"
+        );
+    })
+    .unwrap();
+}

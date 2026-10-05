@@ -25,21 +25,33 @@ impl Render for EtcdScreen {
             "the etcd status",
             cx,
         );
-        // The table runs edge to edge; the header, banners and a state in
-        // the table's place sit in an inset, a banner with no space above.
-        let banner = |banner: AnyElement| page::inset().pt_0().child(banner);
+        // The table runs edge to edge under the toolbar; the banners and a
+        // state in the table's place sit in an inset between them.
         let page = page::page("etcd-page")
             .h_auto()
             .flex_none()
-            .child(page::inset().child(header));
+            .child(page::toolbar(cx).child(header));
         let page = match state {
-            Some(state) => page.child(page::inset().pt_0().child(state)),
-            None => page
-                .children(failure_banner(&self.loader, cx).map(|it| banner(it.into_any_element())))
-                .children(partial_notice(self.derived.missing.clone(), cx).map(banner))
-                .children(self.render_quorum_banner(cx).map(banner))
-                .children(self.render_alarm_banner(cx).map(banner))
-                .child(self.render_members(window, cx)),
+            Some(state) => page.child(page::inset().child(state)),
+            None => {
+                let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
+                    .map(IntoElement::into_any_element)
+                    .into_iter()
+                    .chain(partial_notice(self.derived.missing.clone(), cx))
+                    .chain(self.render_quorum_banner(cx))
+                    .chain(self.render_alarm_banner(cx))
+                    .collect();
+                page.when(!banners.is_empty(), |page| {
+                    page.child(
+                        page::inset()
+                            .flex()
+                            .flex_col()
+                            .gap(dp(page::PANE_PADDING_Y))
+                            .children(banners),
+                    )
+                })
+                .child(self.render_members(window, cx))
+            }
         };
         // The keys live on a wrapper drawn in every state, so they work
         // while the table is replaced by a state.
@@ -87,6 +99,7 @@ impl EtcdScreen {
         let refresh = Button::new(header.id("refresh"))
             .ghost()
             .small()
+            .size(dp(ui::CONTROL_HEIGHT))
             .icon(IconName::RefreshCw)
             .accessibility_label("Refresh etcd")
             .tooltip("Refresh etcd")

@@ -358,7 +358,7 @@ fn a_nodes_memory_level_picks_its_group() {
     for (used, status, problems) in [
         (849, super::projection::Status::Healthy, vec![]),
         (850, super::projection::Status::Warning, vec!["Memory 85%"]),
-        (949, super::projection::Status::Warning, vec!["Memory 95%"]),
+        (949, super::projection::Status::Warning, vec!["Memory 94%"]),
         (950, super::projection::Status::Failing, vec!["Memory 95%"]),
     ] {
         talos.memory = Some(presentation::Memory { used, total: 1000 });

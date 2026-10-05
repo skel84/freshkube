@@ -104,6 +104,13 @@ pub(crate) fn memory_level(percent: f64) -> MemoryLevel {
     }
 }
 
+/// A percentage as the whole number to show, rounded down so a value just
+/// under a threshold never reads as the threshold: 94.6 % shows as 94, not
+/// as the 95 % that would mean critical.
+pub(crate) fn whole_percent(percent: f64) -> u64 {
+    percent.floor().max(0.) as u64
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Memory {
     pub(crate) used: u64,
