@@ -19,7 +19,7 @@ use super::board::Board;
 use super::connection::{Connection, Missing};
 use super::layout::{NARROW, ROW_HEADER};
 use super::markers::MarkerToggle;
-use super::{MonitoringPage, Viewport};
+use super::{MonitoringEvent, MonitoringPage, Viewport};
 use crate::monitoring::panel::marker_glyph;
 use crate::monitoring::store::Choice;
 use crate::palette::palette;
@@ -41,7 +41,7 @@ impl Render for MonitoringPage {
 }
 
 impl MonitoringPage {
-    /// The dashboard's title; where the data comes from, the time picker,
+    /// "Dashboards / title"; where the data comes from, the time picker,
     /// refresh and auto-refresh; then the meta line.
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title = self.board.as_ref().map_or_else(
@@ -49,8 +49,13 @@ impl MonitoringPage {
             |board| board.title.clone(),
         );
         let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
-        let mut header =
-            PageHeader::new("monitoring", title, narrow).control(self.render_status(cx));
+        let mut header = PageHeader::new("monitoring", title, narrow)
+            .parent(
+                "dashboards",
+                "Dashboards",
+                cx.listener(|_, _, _, cx| cx.emit(MonitoringEvent::Dashboards)),
+            )
+            .control(self.render_status(cx));
         if let Some(board) = self.board.as_ref().filter(|board| board.error.is_none()) {
             header = header.control(self.render_time(board, cx));
         }

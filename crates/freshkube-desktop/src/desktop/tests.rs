@@ -3063,6 +3063,31 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
+fn monitoring_breadcrumb_opens_a_collapsed_dashboards_column(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Monitoring, window, cx));
+        window.render_frame(cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+        window.click("monitoring-dashboards", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+        window.render_frame(cx);
+        // An open column stays open.
+        window.click("monitoring-dashboards", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut TestAppContext) {
     use crate::observability::Destination;
     // At 20 px text a 560 high window can't show every destination.

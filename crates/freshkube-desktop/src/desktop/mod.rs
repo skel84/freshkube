@@ -628,14 +628,22 @@ impl Pilot {
                 }
             },
         ));
-        subscriptions.push(cx.subscribe_in(
-            &monitoring,
-            window,
-            |this, _, event, _, cx| match event {
-                MonitoringEvent::Catalog => cx.notify(),
-                MonitoringEvent::History => this.push_history(cx),
-            },
-        ));
+        subscriptions.push(
+            cx.subscribe_in(
+                &monitoring,
+                window,
+                |this, _, event, window, cx| match event {
+                    MonitoringEvent::Catalog => cx.notify(),
+                    MonitoringEvent::History => this.push_history(cx),
+                    // The column lists the dashboards; an open one stays open.
+                    MonitoringEvent::Dashboards => {
+                        if this.column_collapsed(window) {
+                            this.toggle_column(window, cx);
+                        }
+                    }
+                },
+            ),
+        );
         subscriptions.extend([
             cx.observe(&custom, |_, _, cx| cx.notify()),
             // A kind that stopped being served may have taken its group's
