@@ -346,9 +346,26 @@ pub fn gauge(fraction: f32, tone: Option<Tone>, cx: &App) -> impl IntoElement {
         )
 }
 
-/// One part per item in its tone, on a gauge's track.
+/// Above this many parts, a meter draws a run per tone: one piece each would
+/// fall under 4 dp on a 156 dp track, and its gaps would push some out.
+const MOST_PIECES: usize = 24;
+
+/// One part per item in its tone, on a gauge's track. Past `MOST_PIECES`, a
+/// run per tone, problems first, each as wide as its share and at least
+/// 4 dp, so a single failing item still shows.
 fn segments(parts: &[Tone], cx: &App) -> impl IntoElement {
     let p = palette(cx);
+    let fill = |tone: Tone| match tone {
+        Tone::Good => p.good,
+        Tone::Warn => p.warn,
+        Tone::Crit | Tone::Died => p.crit,
+        _ => p.unk,
+    };
+    let pieces: Vec<(Tone, usize)> = if parts.len() > MOST_PIECES {
+        segment_runs(parts)
+    } else {
+        parts.iter().map(|tone| (*tone, 1)).collect()
+    };
     h_flex()
         .flex_none()
         .w_full()
@@ -357,14 +374,41 @@ fn segments(parts: &[Tone], cx: &App) -> impl IntoElement {
         .gap(px(2.))
         .rounded(px(3.))
         .overflow_hidden()
-        .children(parts.iter().map(|tone| {
-            div().flex_1().h_full().bg(match tone {
-                Tone::Good => p.good,
-                Tone::Warn => p.warn,
-                Tone::Crit | Tone::Died => p.crit,
-                _ => p.unk,
-            })
-        }))
+        .children(
+            pieces
+                .into_iter()
+                .enumerate()
+                .map(|(index, (tone, count))| {
+                    div()
+                        .id(("segment", index))
+                        .test_support()
+                        .flex_basis(px(0.))
+                        .flex_grow(count as f32)
+                        .min_w(dp(4.))
+                        .h_full()
+                        .bg(fill(tone))
+                }),
+        )
+}
+
+/// How many parts of each tone, in the order critical, warning, unknown,
+/// good; a tone with no parts is left out.
+fn segment_runs(parts: &[Tone]) -> Vec<(Tone, usize)> {
+    let rank = |tone: &Tone| match tone {
+        Tone::Crit | Tone::Died => 0,
+        Tone::Warn => 1,
+        Tone::Good => 3,
+        _ => 2,
+    };
+    let mut counts = [0; 4];
+    for tone in parts {
+        counts[rank(tone)] += 1;
+    }
+    [Tone::Crit, Tone::Warn, Tone::Unknown, Tone::Good]
+        .into_iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 0)
+        .collect()
 }
 
 /// A figure's muted line, wrapping.
@@ -487,6 +531,99 @@ mod tests {
             assert_eq!(gauge_fill(Some(Tone::Unknown), &p), p.unk);
             assert_eq!(gauge_fill(Some(Tone::Good), &p), p.accent);
         });
+    }
+
+    #[test]
+    fn runs_put_problems_first_and_leave_out_missing_tones() {
+        use Tone::*;
+        // A container that died counts as critical.
+        let parts = [Good, Crit, Good, Integration, Warn, Good, Died, Crit];
+        assert_eq!(
+            segment_runs(&parts),
+            vec![(Crit, 3), (Warn, 1), (Unknown, 1), (Good, 3)]
+        );
+        assert_eq!(segment_runs(&[Good, Good]), vec![(Good, 2)]);
+        assert!(segment_runs(&[]).is_empty());
+    }
+
+    /// A meter of `parts` alone on a 320 wide card.
+    struct Meter(Vec<Tone>);
+
+    impl Render for Meter {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let value = SharedString::from("Nodes");
+            div()
+                .w(px(320.))
+                .child(StatCard::new(CardHeader::new("meter", "Nodes")).render(
+                    figures(
+                        &[Figure {
+                            segments: Some(&self.0),
+                            ..figure(&value)
+                        }],
+                        cx,
+                    ),
+                    cx,
+                ))
+        }
+    }
+
+    fn meter(parts: Vec<Tone>, cx: &mut TestAppContext) -> gpui_kit::WindowHandle<Root> {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        cx.open_window(size(px(400.), px(300.)), |window, cx| {
+            let view = cx.new(|_| Meter(parts));
+            Root::new(view, window, cx)
+        })
+    }
+
+    #[gpui_kit::test]
+    fn a_few_parts_draw_a_piece_each(cx: &mut TestAppContext) {
+        let handle = meter(vec![Tone::Good, Tone::Warn, Tone::Crit], cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let meter = window.within("meter");
+            let widths: Vec<_> = (0usize..3)
+                .map(|index| meter.find(("segment", index)).bounds().size.width)
+                .collect();
+            // Equal shares, give or take the pixel each is rounded to.
+            assert!(
+                widths
+                    .iter()
+                    .all(|width| (*width - widths[0]).abs() <= px(1.)),
+                "{widths:?}"
+            );
+            assert!(meter.find(("segment", 2usize)).visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn many_parts_draw_a_run_per_tone_with_one_failure_showing(cx: &mut TestAppContext) {
+        let mut parts = vec![Tone::Good; 199];
+        parts.insert(120, Tone::Crit);
+        let handle = meter(parts, cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let meter = window.within("meter");
+            let crit = meter.find(("segment", 0usize)).bounds();
+            let good = meter.find(("segment", 1usize)).bounds();
+            assert!(
+                crit.size.width >= dp_px(4., window) - px(0.5),
+                "the one failure stays visible: {crit:?}"
+            );
+            assert!(crit.right() <= good.left(), "problems come first");
+            let card = window.find("meter").bounds();
+            assert!(good.right() <= card.right(), "nothing is clipped: {good:?}");
+            assert!(
+                good.size.width > crit.size.width * 10.,
+                "a run is as wide as its share: {good:?}"
+            );
+        })
+        .unwrap();
     }
 
     /// Four cards in a column: a bare figure, one with a detail line, one
