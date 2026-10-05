@@ -3683,3 +3683,33 @@ fn a_compact_status_bar_keeps_the_shells_glyph_and_gives_the_page_the_room(
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn a_long_segment_truncates_and_leaves_the_right_side_whole(cx: &mut TestAppContext) {
+    // At 760 and 20 px text Nodes' line is wider than the bar can give it.
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    let mut widths = Vec::new();
+    for page in [Page::Overview, Page::Nodes] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // The right side's last item is the first a squeezed bar loses.
+            let rate = window.find("frame-rate").bounds();
+            assert!(rate.right() <= window.viewport_size().width, "{rate:?}");
+            widths.push(rate.size.width);
+            let fail = window.find("fixture-fail").bounds();
+            if page == Page::Nodes {
+                let scope = window.find("nodes-scope").bounds();
+                assert!(scope.right() <= fail.left(), "{scope:?} {fail:?}");
+            }
+        })
+        .unwrap();
+    }
+    assert_eq!(widths[0], widths[1], "the right side keeps its width");
+}

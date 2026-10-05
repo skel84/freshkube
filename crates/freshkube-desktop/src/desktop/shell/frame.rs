@@ -186,7 +186,10 @@ impl Pilot {
             .h(dp(28.))
             .px_3()
             .text_size(dp(11.5))
-            .left(
+            // The bar's centre takes only the room the right side leaves, so
+            // a long segment truncates instead of pushing the right side out;
+            // Kit's left region would shrink with it.
+            .child(
                 h_flex()
                     .id("status-bar")
                     .test_support()
