@@ -57,7 +57,7 @@ jobs:
           key: capture-debug-x86_64
           save-if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
       - name: Build the debug executable
-        run: cargo build --locked --bin freshkube
+        run: cargo build --locked --bin freshkube --features capture-embed
       - uses: actions/upload-artifact@v4
         with:
           name: freshkube-debug-x86_64-apple-darwin-${{ steps.source.outputs.sha }}
