@@ -1,0 +1,1 @@
+- **Native platform CI:** advisory Linux and Windows checks also run weekly on main. Linux reuses a dependency cache saved only from main, while PR runs restore without adding copies; Windows stays uncached to preserve the shared cache budget. Failed native checks still need resolution before review approval.
