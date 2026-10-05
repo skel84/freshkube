@@ -126,104 +126,165 @@ pub(super) fn waterfall(trace_id: &str, spans: &[api::Span]) -> Waterfall {
 }
 
 impl ObservabilityPage {
-    pub(super) fn live_waterfall(&self, cx: &Context<Self>) -> AnyElement {
+    /// The selected request's trace in a detail pane: a heading with the
+    /// read's state, then the waterfall and the selected span.
+    pub(super) fn live_waterfall(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let traces = &self.live_traces;
+        let read = &self.live.trace;
+        let read_tag = if read.is_loading() {
+            Some((Tone::Unknown, "Reading"))
+        } else if read.is_stale() {
+            Some((Tone::Warn, "Stale"))
+        } else if read.error().is_some() {
+            Some((Tone::Crit, "Failed"))
+        } else {
+            None
+        };
+        let pane = freshkube_ui::page::card(cx)
+            .id("obs-trace-detail")
+            .test_support()
+            .child(self.trace_heading(read_tag, cx))
+            .when_some(read.error(), |pane, e| {
+                pane.child(
+                    body()
+                        .pt_0()
+                        .child(text(e.to_string()).text_color(p.crit_ink))
+                        .child(
+                            action("obs-trace-retry", "Retry trace")
+                                .on_click(cx.listener(|this, _, _, cx| this.read_trace(cx))),
+                        ),
+                )
+            });
         let Some(fall) = &traces.waterfall else {
-            let message = if traces.trace.is_none() {
-                "Select a request to see its trace.".to_string()
-            } else if let Some(error) = self.live.trace.error() {
-                error.to_string()
-            } else {
-                "Reading the trace…".to_string()
-            };
-            return card("Trace", cx)
-                .child(body().pt_0().child(muted(message, cx)))
+            let note = (traces.trace.is_none()).then_some("Select a request to see its trace.");
+            return pane
+                .children(note.map(|note| body().pt_0().child(muted(note, cx))))
                 .into_any_element();
         };
         let selected = fall.rows.get(traces.span);
-        card(fall.title.clone(), cx)
-            .id("obs-live-waterfall")
-            .test_support()
-            .child(
-                body()
-                    .pt_0()
-                    .child(
-                        line()
-                            .flex_wrap()
-                            .child(muted(fall.summary.clone(), cx))
-                            .child(div().flex_1())
-                            .child(muted(format!("trace {}", fall.trace_id), cx)),
-                    )
-                    .child(
-                        line()
-                            .justify_between()
-                            .child(muted("0 ms", cx))
-                            .child(muted(fall.total.clone(), cx)),
-                    )
-                    .children(fall.rows.iter().enumerate().map(|(ix, row)| {
-                        Button::new(SharedString::from(format!("obs-live-trace-span-{ix}")))
-                            .ghost()
-                            .group("fog-control")
-                            .selected(traces.span == ix)
-                            .w_full()
-                            .h(dp(28.))
-                            .justify_start()
-                            .px_0()
-                            .gap(dp(8.))
-                            .child(
-                                mono(row.name.clone())
-                                    .pl(dp(row.depth.min(12) as f32 * 10.))
-                                    .w(dp(220.))
-                                    .flex_none()
-                                    .truncate(),
-                            )
-                            .child(
-                                div().flex_1().relative().h(dp(10.)).child(
-                                    div()
-                                        .absolute()
-                                        .left(relative(row.start.min(0.996)))
-                                        .w(relative(row.width.min(1. - row.start).max(0.004)))
-                                        .h_full()
-                                        .rounded(px(3.))
-                                        .bg(if row.error { p.crit } else { p.accent }),
-                                ),
-                            )
-                            .child(
-                                mono(row.duration.clone())
-                                    .w(dp(72.))
-                                    .flex_none()
-                                    .text_right(),
-                            )
-                            .tooltip(format!("{} · {}", row.service, row.name))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.live_traces.span = ix;
-                                cx.notify();
-                            }))
-                    }))
-                    .when_some(selected, |this, row| {
-                        this.child(
-                            v_flex()
-                                .id("obs-live-span-detail")
-                                .test_support()
-                                .mt(dp(8.))
-                                .pt(dp(12.))
-                                .border_t_1()
-                                .border_color(p.line)
-                                .gap(dp(6.))
-                                .child(
-                                    line()
-                                        .child(mono(row.service.clone()))
-                                        .child(muted(row.duration.clone(), cx)),
-                                )
-                                .child(text(row.name.clone()).whitespace_normal())
-                                .children(row.detail.iter().map(|detail| {
-                                    mono(detail.clone()).text_color(p.muted).whitespace_normal()
-                                })),
+        pane.child(
+            body()
+                .id("obs-live-waterfall")
+                .test_support()
+                .pt_0()
+                .child(
+                    line()
+                        .flex_wrap()
+                        .child(muted(fall.summary.clone(), cx))
+                        .child(div().flex_1())
+                        .child(muted(format!("trace {}", fall.trace_id), cx)),
+                )
+                .child(
+                    line()
+                        .justify_between()
+                        .child(muted("0 ms", cx))
+                        .child(muted(fall.total.clone(), cx)),
+                )
+                .children(fall.rows.iter().enumerate().map(|(ix, row)| {
+                    Button::new(SharedString::from(format!("obs-live-trace-span-{ix}")))
+                        .ghost()
+                        .group("fog-control")
+                        .selected(traces.span == ix)
+                        .w_full()
+                        .h(dp(28.))
+                        .justify_start()
+                        .px_0()
+                        .gap(dp(8.))
+                        .child(
+                            mono(row.name.clone())
+                                .pl(dp(row.depth.min(12) as f32 * 10.))
+                                .w(dp(180.))
+                                .flex_none()
+                                .truncate(),
                         )
-                    }),
+                        .child(
+                            div().flex_1().relative().h(dp(10.)).child(
+                                div()
+                                    .absolute()
+                                    .left(relative(row.start.min(0.996)))
+                                    .w(relative(row.width.min(1. - row.start).max(0.004)))
+                                    .h_full()
+                                    .rounded(px(3.))
+                                    .bg(if row.error { p.crit } else { p.accent }),
+                            ),
+                        )
+                        .child(
+                            mono(row.duration.clone())
+                                .w(dp(72.))
+                                .flex_none()
+                                .text_right(),
+                        )
+                        .tooltip(format!("{} · {}", row.service, row.name))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.live_traces.span = ix;
+                            cx.notify();
+                        }))
+                }))
+                .when_some(selected, |this, row| {
+                    this.child(
+                        v_flex()
+                            .id("obs-live-span-detail")
+                            .test_support()
+                            .mt(dp(8.))
+                            .pt(dp(12.))
+                            .border_t_1()
+                            .border_color(p.line)
+                            .gap(dp(6.))
+                            .child(
+                                line()
+                                    .child(mono(row.service.clone()))
+                                    .child(muted(row.duration.clone(), cx)),
+                            )
+                            .child(text(row.name.clone()).whitespace_normal())
+                            .children(row.detail.iter().map(|detail| {
+                                mono(detail.clone()).text_color(p.muted).whitespace_normal()
+                            })),
+                    )
+                }),
+        )
+        .into_any_element()
+    }
+}
+
+impl ObservabilityPage {
+    fn trace_heading(&self, read: Option<(Tone, &'static str)>, cx: &Context<Self>) -> Div {
+        let title = self
+            .live_traces
+            .waterfall
+            .as_ref()
+            .map_or_else(String::new, |fall| fall.title.clone());
+        h_flex()
+            .items_start()
+            .gap(dp(8.))
+            .px(dp(14.))
+            .pt(dp(12.))
+            .pb(dp(8.))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(dp(2.))
+                    .child(ui::caption("Trace", cx))
+                    .child(
+                        div()
+                            .id("obs-trace-title")
+                            .test_support()
+                            .font_family(MONO_FONT)
+                            .text_size(dp(13.5))
+                            .truncate()
+                            .child(title),
+                    ),
             )
-            .into_any_element()
+            .children(read.map(|(tone, text)| {
+                div()
+                    .id("obs-trace-read")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(text)
+                    .mt(dp(14.))
+                    .child(ui::tag(tone, None, text, cx))
+            }))
     }
 }
 

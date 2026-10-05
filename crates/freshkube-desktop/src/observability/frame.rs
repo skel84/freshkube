@@ -50,6 +50,7 @@ impl Render for ObservabilityPage {
                             .child(match self.destination {
                                 Destination::Applications => self.applications_header(window, cx),
                                 Destination::Incidents => self.incidents_header(window, cx),
+                                Destination::Traces => self.traces_header(window, cx),
                                 _ => self
                                     .source_controls(self.page_header(window), cx)
                                     .render(cx),

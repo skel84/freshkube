@@ -212,66 +212,6 @@ fn map_selection_survives_reordering_and_clears_on_removal(cx: &mut TestAppConte
     }).unwrap();
 }
 #[gpui_kit::test]
-fn heatmap_selection_and_error_filters_change_the_trace_view(cx: &mut TestAppContext) {
-    use freshkube_core::coroot::TraceSelection;
-    let (_runtime, handle, page) = mount(cx, true);
-    cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Traces, cx)));
-    // Example ids name the request: x0–x2 failed, x3 healthy.
-    let trace = |cx: &mut gpui_kit::App| page.read(cx).live_traces.trace.clone();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        // Example traces answer through the live list, which opens the
-        // first failed request.
-        assert!(window.find("obs-live-heatmap").visible());
-        assert!(window.find("obs-live-span-0").visible());
-        assert!(window.find("obs-live-waterfall").visible());
-        assert!(trace(cx).unwrap().starts_with("x0"));
-
-        // Failures begin two hours before the window's end.
-        window.click("obs-live-bucket-0-0", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("obs-live-span-0").is_none());
-        assert!(trace(cx).is_none());
-        window.click("obs-live-bucket-0-35", cx);
-        window.render_frame(cx);
-        assert!(matches!(
-            page.read(cx).live_traces.selection,
-            TraceSelection::Errors { .. }
-        ));
-        assert!(!trace(cx).unwrap().starts_with("x3"));
-
-        // Slowest first: >5s, 5s, 2.5s, 1s, 500ms. The empty rows list nothing.
-        window.click("obs-live-bucket-2-10", cx);
-        window.render_frame(cx);
-        assert!(trace(cx).is_none());
-        window.click("obs-live-bucket-5-10", cx);
-        window.render_frame(cx);
-        let TraceSelection::Latency { above, up_to, .. } =
-            page.read(cx).live_traces.selection.clone()
-        else {
-            panic!("a latency cell");
-        };
-        assert_eq!((above.as_str(), up_to.as_str()), ("0.25", "0.5"));
-        assert!(trace(cx).unwrap().starts_with("x3"));
-        let first = trace(cx);
-        window.click("obs-live-span-1", cx);
-        window.render_frame(cx);
-        assert_ne!(trace(cx), first);
-        assert!(window.find("obs-live-trace-span-1").visible());
-
-        window.click("obs-trace-failed", cx);
-        assert!(!trace(cx).unwrap().starts_with("x3"));
-        window.click("obs-trace-all", cx);
-        assert_eq!(page.read(cx).live_traces.selection, TraceSelection::Recent);
-        window.click("obs-trace-source-agent", cx);
-        assert_eq!(page.read(cx).live_traces.source, "agent");
-        window.render_frame(cx);
-        assert!(window.find("obs-live-span-0").visible());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
 fn threshold_edits_validate_and_remain_local(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
     cx.update(|cx| {

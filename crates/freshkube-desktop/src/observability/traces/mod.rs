@@ -4,8 +4,13 @@
 use super::*;
 use freshkube_core::coroot as api;
 mod heat;
+mod table;
+#[cfg(test)]
+mod tests;
 mod waterfall;
+use super::tables::{PageColumn, TableKey};
 use heat::{Heat, heat};
+pub(super) use table::SpanCells;
 use waterfall::{Waterfall, waterfall};
 
 #[derive(Default)]
@@ -15,33 +20,52 @@ pub(super) struct Traces {
     pub(super) selection: api::TraceSelection,
     /// The selected heatmap cell, in display rows and columns.
     cell: Option<(usize, usize)>,
+    /// The trace the waterfall shows.
     pub(super) trace: Option<String>,
+    /// The listed span chosen, by trace and span id; its trace is `trace`.
+    selected: Option<TableKey>,
     app: Option<api::AppId>,
     span: usize,
     heat: Option<Heat>,
     sources: Vec<(String, String, bool)>,
     note: String,
     rows: Vec<SpanRow>,
+    /// Indexes into `rows` the filter leaves, in Coroot's order.
+    shown: Vec<usize>,
+    /// Lowercase filter text.
+    query: String,
     count: String,
+    /// Coroot stopped at its limit, so more spans match.
+    limited: bool,
+    columns: Vec<PageColumn>,
+    width: f32,
     waterfall: Option<Waterfall>,
 }
 
 struct SpanRow {
+    key: TableKey,
+    id: SharedString,
     trace_id: String,
-    service: String,
-    name: String,
-    when: String,
-    duration: String,
+    service: SharedString,
+    name: SharedString,
+    started: SharedString,
+    duration: SharedString,
     error: bool,
-    message: String,
+    /// The whole row in words, with a failure's message, for its tooltip
+    /// and accessibility label.
+    label: SharedString,
+    /// Lowercase name, service and trace id, for the filter.
+    search: String,
 }
 
 impl Traces {
-    /// A new application or window: start from its latest spans.
+    /// A new application or window: start from its latest spans. The filter
+    /// stays, since its field still shows it.
     pub(super) fn reset(&mut self) {
         *self = Self {
             source: std::mem::take(&mut self.source),
             app: self.app.take(),
+            query: std::mem::take(&mut self.query),
             ..Self::default()
         };
     }
@@ -64,47 +88,79 @@ impl Traces {
             .map(|s| (s.kind.clone(), s.name.clone(), s.selected))
             .collect();
         self.heat = tracing.heatmap.as_ref().map(heat);
-        self.rows = tracing
-            .spans
-            .iter()
-            .map(|span| SpanRow {
-                trace_id: span.trace_id.clone(),
-                service: span.service.clone(),
-                name: span.name.clone(),
-                when: span
-                    .started_at()
-                    .map_or_else(String::new, |t| t.format("%H:%M:%S").to_string()),
-                duration: millis(span.duration),
-                error: span.status.error,
-                message: span.status.message.clone(),
-            })
-            .collect();
+        self.rows = tracing.spans.iter().map(span_row).collect();
+        self.limited = tracing.limited;
         self.count = match (self.rows.len(), tracing.limited) {
             (0, _) => "No spans match".into(),
-            (n, true) => format!("Latest {n} spans · more match, select a cell to narrow"),
+            (n, true) => format!("Latest {n} spans · more match"),
             (1, false) => "1 span".into(),
             (n, false) => format!("{n} spans"),
         };
-        if self
-            .trace
+        self.project();
+        if !self
+            .selected
             .as_ref()
-            .is_some_and(|id| self.rows.iter().any(|r| &r.trace_id == id))
+            .is_some_and(|key| self.rows.iter().any(|r| &r.key == key))
         {
+            self.selected = None;
+        }
+        if let Some(id) = &self.trace
+            && let Some(row) = self.rows.iter().find(|r| &r.trace_id == id)
+        {
+            self.selected.get_or_insert_with(|| row.key.clone());
             return None;
         }
         self.waterfall = None;
-        self.trace = self
+        let row = self.rows.iter().find(|r| r.error).or(self.rows.first());
+        self.selected = row.map(|r| r.key.clone());
+        self.trace = row.map(|r| r.trace_id.clone());
+        self.trace.clone()
+    }
+
+    /// The rows the filter leaves.
+    fn project(&mut self) {
+        self.shown = self
             .rows
             .iter()
-            .find(|r| r.error)
-            .or(self.rows.first())
-            .map(|r| r.trace_id.clone());
-        self.trace.clone()
+            .enumerate()
+            .filter(|(_, row)| row.search.contains(&self.query))
+            .map(|(ix, _)| ix)
+            .collect();
     }
 
     fn prepare_trace(&mut self, trace_id: &str, spans: &[api::Span]) {
         self.waterfall = Some(waterfall(trace_id, spans));
         self.span = 0;
+    }
+}
+
+fn span_row(span: &api::Span) -> SpanRow {
+    let started = span.started_at().map_or_else(String::new, |t| {
+        t.with_timezone(&chrono::Local)
+            .format("%H:%M:%S")
+            .to_string()
+    });
+    let duration = millis(span.duration);
+    let failed = match (span.status.error, span.status.message.as_str()) {
+        (false, _) => String::new(),
+        (true, "") => " · failed".into(),
+        (true, message) => format!(" · failed: {message}"),
+    };
+    SpanRow {
+        key: TableKey::Span(span.trace_id.clone(), span.id.clone()),
+        id: format!("obs-live-span-{}-{}", span.trace_id, span.id).into(),
+        label: format!(
+            "{} · {} · {started} · {duration}{failed}",
+            span.name, span.service
+        )
+        .into(),
+        search: format!("{} {} {}", span.name, span.service, span.trace_id).to_lowercase(),
+        trace_id: span.trace_id.clone(),
+        service: span.service.clone().into(),
+        name: span.name.clone().into(),
+        started: started.into(),
+        duration: duration.into(),
+        error: span.status.error,
     }
 }
 
@@ -160,6 +216,7 @@ impl ObservabilityPage {
                         .tracing
                         .data()
                         .and_then(|tracing| this.live_traces.prepare_list(tracing));
+                    this.prepare_trace_columns();
                     if opened.is_some() {
                         this.read_trace(cx);
                     }
@@ -180,6 +237,8 @@ impl ObservabilityPage {
         let traces = &mut self.live_traces;
         let tracing = example::tracing(&traces.source, &traces.selection, from, to);
         traces.prepare_list(&tracing);
+        self.prepare_trace_columns();
+        let traces = &mut self.live_traces;
         if let Some(trace) = traces.trace.clone()
             && traces.waterfall.is_none()
         {
@@ -269,17 +328,28 @@ impl ObservabilityPage {
         cx.notify();
     }
 
-    fn open_trace(&mut self, trace_id: String, cx: &mut Context<Self>) {
-        if self.live_traces.trace.as_ref() == Some(&trace_id) {
+    /// A listed span: select it, and open its trace unless it shows.
+    pub(super) fn open_span(&mut self, key: TableKey, cx: &mut Context<Self>) {
+        let traces = &mut self.live_traces;
+        let TableKey::Span(trace_id, _) = &key else {
+            return;
+        };
+        if traces.selected.as_ref() == Some(&key) || !traces.rows.iter().any(|r| r.key == key) {
             return;
         }
-        self.live_traces.trace = Some(trace_id);
-        self.live_traces.waterfall = None;
-        self.read_trace(cx);
+        let trace_id = trace_id.clone();
+        traces.selected = Some(key);
+        if traces.trace.as_ref() != Some(&trace_id) {
+            traces.trace = Some(trace_id);
+            traces.waterfall = None;
+            self.read_trace(cx);
+        }
         cx.notify();
     }
 
-    pub(super) fn render_live_traces(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
+    /// The application, Coroot's note and heatmap, then the requests with
+    /// their trace beside them on a wide page and below on a narrow one.
+    pub(super) fn render_live_traces(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let traces = &self.live_traces;
         let mut page = v_flex()
             .id("obs-live-traces")
@@ -297,128 +367,16 @@ impl ObservabilityPage {
         if !self.fixture && self.live.tracing.data().is_none() {
             return page.into_any_element();
         }
-        page = page.child(self.trace_controls(cx));
         if !traces.note.is_empty() {
             page = page.child(muted(traces.note.clone(), cx).whitespace_normal());
         }
         if let Some(heat) = &traces.heat {
             page = page.child(self.live_heatmap(heat, cx));
         }
-        let stacked = crate::screens::content_width(window) < 900.;
-        page.child(
-            h_flex()
-                .items_start()
-                .flex_wrap()
-                .gap(dp(12.))
-                .child(
-                    div()
-                        .when_else(
-                            stacked,
-                            |this| this.w_full(),
-                            |this| this.flex_1().min_w(dp(300.)),
-                        )
-                        .child(self.span_list(cx)),
-                )
-                .child(
-                    div()
-                        .when_else(
-                            stacked,
-                            |this| this.w_full(),
-                            |this| this.flex_1().min_w(dp(420.)),
-                        )
-                        .child(self.live_waterfall(cx)),
-                ),
-        )
-        .into_any_element()
-    }
-
-    fn trace_controls(&self, cx: &Context<Self>) -> Div {
-        let traces = &self.live_traces;
-        let errors =
-            matches!(traces.selection, api::TraceSelection::Errors { .. }) && traces.cell.is_none();
-        let all = traces.selection == api::TraceSelection::Recent;
-        line()
-            .flex_wrap()
-            .children(traces.sources.iter().map(|(kind, name, selected)| {
-                let kind = kind.clone();
-                action(
-                    SharedString::from(format!("obs-trace-source-{kind}")),
-                    name.clone(),
-                )
-                .selected(*selected)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.choose_trace_source(kind.clone(), cx)),
-                )
-            }))
-            .child(div().flex_1())
-            .child(
-                action("obs-trace-all", "All requests")
-                    .selected(all)
-                    .on_click(cx.listener(|this, _, _, cx| this.show_all_requests(cx))),
-            )
-            .child(
-                action("obs-trace-failed", "Failed requests")
-                    .selected(errors)
-                    .on_click(cx.listener(|this, _, _, cx| this.show_failed_requests(cx))),
-            )
-    }
-
-    fn span_list(&self, cx: &Context<Self>) -> Div {
-        let p = palette(cx);
-        let traces = &self.live_traces;
-        card("Requests", cx).child(
-            body()
-                .pt_0()
-                .child(muted(traces.count.clone(), cx))
-                .children(traces.rows.iter().enumerate().take(100).map(|(ix, row)| {
-                    let trace_id = row.trace_id.clone();
-                    Button::new(SharedString::from(format!("obs-live-span-{ix}")))
-                        .ghost()
-                        .group("fog-control")
-                        .selected(traces.trace.as_ref() == Some(&row.trace_id))
-                        .w_full()
-                        .h(dp(44.))
-                        .justify_start()
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .items_start()
-                                .gap(dp(3.))
-                                .child(
-                                    line()
-                                        .w_full()
-                                        .child(mono(row.name.clone()).truncate().flex_1())
-                                        .child(mono(row.duration.clone()).flex_none()),
-                                )
-                                .child(
-                                    line()
-                                        .w_full()
-                                        .child(
-                                            muted(format!("{} · {}", row.when, row.service), cx)
-                                                .truncate()
-                                                .flex_none(),
-                                        )
-                                        .when(row.error, |this| {
-                                            this.child(
-                                                text(if row.message.is_empty() {
-                                                    "failed".to_string()
-                                                } else {
-                                                    row.message.clone()
-                                                })
-                                                .text_size(dp(12.))
-                                                .text_color(p.crit_ink)
-                                                .truncate(),
-                                            )
-                                        }),
-                                ),
-                        )
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                this.open_trace(trace_id.clone(), cx)
-                            }),
-                        )
-                })),
-        )
+        let beside = view::beside(window);
+        let table = self.render_trace_table(beside, window, cx);
+        let pane = self.live_waterfall(cx);
+        page.child(view::split("obs-traces-split", beside, table, Some(pane)))
+            .into_any_element()
     }
 }

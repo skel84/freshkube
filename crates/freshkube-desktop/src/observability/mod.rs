@@ -113,6 +113,10 @@ pub(crate) struct ObservabilityPage {
     /// The Incidents filter; its text is projected into the list.
     incident_query: Entity<InputState>,
     live_traces: traces::Traces,
+    trace_table: freshkube_ui::table::TableState,
+    hidden_trace_columns: std::collections::BTreeSet<tables::ColumnKind>,
+    /// The Traces filter; its text is projected into the request list.
+    trace_query: Entity<InputState>,
     live_profiles: live_profiling::Profiles,
     /// The applications' picker entries, by label.
     app_choices: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
@@ -157,6 +161,7 @@ impl ObservabilityPage {
         let flame_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a function…"));
         let incident_query =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter incidents…"));
+        let trace_query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter requests…"));
         let threshold = cx.new(|cx| InputState::new(window, cx).placeholder("Threshold"));
         let app_select = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
@@ -171,6 +176,7 @@ impl ObservabilityPage {
                 if this.application_metrics.sync(cx) {
                     this.prepare_application_columns();
                     this.prepare_incident_columns();
+                    this.prepare_trace_columns();
                     cx.notify();
                 }
             }),
@@ -219,6 +225,12 @@ impl ObservabilityPage {
             cx.subscribe(&incident_query, |this, input, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.filter_incidents(input.read(cx).value().to_lowercase());
+                    cx.notify();
+                }
+            }),
+            cx.subscribe(&trace_query, |this, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.filter_traces(input.read(cx).value().to_lowercase());
                     cx.notify();
                 }
             }),
@@ -290,6 +302,9 @@ impl ObservabilityPage {
             hidden_incident_columns: incidents::HIDDEN_BY_DEFAULT.into(),
             incident_query,
             live_traces: Default::default(),
+            trace_table: freshkube_ui::table::TableState::new("obs-traces"),
+            hidden_trace_columns: Default::default(),
+            trace_query,
             live_profiles: Default::default(),
             app_choices: Rc::new([]),
             app_select,
