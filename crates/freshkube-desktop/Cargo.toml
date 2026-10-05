@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [lib]
-# This library has no doctests.
+# This library has no doctests; re-enable them if an example is added.
 doctest = false
 
 [dependencies]
