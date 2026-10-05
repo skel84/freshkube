@@ -330,7 +330,8 @@ impl TableSource for MaintenanceView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Not `super::*`: maintenance's glob of gpui_kit brings its `test`.
+    use super::{DiskRow, Tone};
 
     fn row(readonly: bool, cdrom: bool) -> DiskRow {
         DiskRow {
