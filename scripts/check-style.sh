@@ -56,7 +56,7 @@ offences() {
       print "$rule $file:$n: $line\n";
     };
     # Logs, YAML and the terminal measure rows of their own.
-    my $own_rows = $file =~ m{/src/(logs|terminal)/|/resources/pane/yaml\.rs$};
+    my $own_rows = $file =~ m{/src/logs/|^crates/freshkube-terminal/|/resources/pane/yaml\.rs$};
     unless ($own_rows) {
       while ($text =~ /\b(uniform_list\s*\(|VirtualList\b)/g) {
         $report->("list", $-[0]);

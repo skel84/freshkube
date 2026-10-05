@@ -11,7 +11,7 @@ use alacritty_terminal::grid::Dimensions;
 use gpui_kit::{ClipboardItem, Context};
 
 use super::{TerminalEvent, TerminalView};
-use crate::palette::terminal_colors;
+use freshkube_ui::palette::terminal_colors;
 
 #[derive(Clone, Default)]
 pub(super) struct Listener(Rc<RefCell<Vec<Event>>>);
