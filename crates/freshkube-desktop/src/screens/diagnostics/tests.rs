@@ -647,6 +647,44 @@ fn diagnostics_has_the_edge_frame_at_both_text_sizes(cx: &mut TestAppContext) {
     }
 }
 
+/// In the node pane at 1280 one text size up, the details beside the table
+/// leave room for every column, so Result truncates rather than scrolling
+/// out of view.
+#[gpui_kit::test]
+fn the_columns_fit_beside_the_details(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = app(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(14., cx);
+        open_node_tab(window, cx, NodeTab::Diagnostics);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let list = window.find("diagnostic-list").bounds();
+        let details = window.find("diagnostic-details").bounds();
+        assert!(
+            details.left() >= list.right(),
+            "the details aren't beside the table"
+        );
+        let result = window.find(("diagnostic-sort", 2usize)).bounds();
+        assert!(
+            result.right() <= list.right() + px(1.),
+            "Result {result:?} runs past the list {list:?}"
+        );
+        layout_check::assert_table(
+            window,
+            cx,
+            &layout_check::Table {
+                table: Some("diagnostic-table-scroll"),
+                list: "diagnostic-list",
+            },
+        );
+    })
+    .unwrap();
+}
+
 /// The state in the list's place sits under the toolbar, which keeps the
 /// title and Refresh.
 fn under_the_toolbar(window: &Window, id: &'static str) {

@@ -152,7 +152,7 @@ const CHECK_WIDTH: f32 = 200.;
 /// The Result column's least width. It truncates there rather than push
 /// the table wider than the list, and the row's tooltip and the details
 /// hold the whole result.
-const RESULT_WIDTH: f32 = 200.;
+const RESULT_WIDTH: f32 = 160.;
 
 /// A check and what its row shows.
 #[derive(Debug)]

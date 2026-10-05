@@ -330,6 +330,7 @@ impl DiagnosticsScreen {
         let details = self.details(self.selected_check(), snapshot, &source.target.address, cx);
         let details = div()
             .id("diagnostic-details")
+            .test_support()
             .when_else(
                 beside,
                 |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
@@ -337,7 +338,7 @@ impl DiagnosticsScreen {
             )
             .child(details)
             .into_any_element();
-        crate::screens::split("diagnostics-split", beside, table, Some(details))
+        crate::screens::split_narrow("diagnostics-split", beside, table, Some(details))
     }
 }
 
