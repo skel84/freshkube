@@ -81,6 +81,9 @@ pub fn derive(
         for node in &mut nodes {
             node.pods_current = pods.is_current();
             node.pods_observed = pods.loaded().is_some();
+            if !node.pods_observed {
+                node.requests = crate::resources::Amounts::default();
+            }
         }
         nodes
     });
@@ -188,9 +191,16 @@ pub fn derive(
 
 pub(super) fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary> {
     let mut counts = BTreeMap::new();
+    let mut requests = BTreeMap::new();
     for pod in pods {
         if let Some(name) = pod.spec.as_ref().and_then(|spec| spec.node_name.as_deref()) {
             *counts.entry(name).or_insert(0) += 1;
+            if super::requests::active(pod) {
+                super::requests::add(
+                    requests.entry(name).or_insert(super::requests::ZERO),
+                    super::requests::of(pod),
+                );
+            }
         }
     }
     nodes
@@ -202,6 +212,10 @@ pub(super) fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary
             NodeSummary {
                 uid: node.metadata.uid.clone().unwrap_or_default(),
                 pods: counts.get(name.as_str()).copied().unwrap_or_default(),
+                requests: requests
+                    .get(name.as_str())
+                    .copied()
+                    .unwrap_or(super::requests::ZERO),
                 pods_current: true,
                 pods_observed: true,
                 name,
@@ -239,6 +253,7 @@ pub(super) fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary
                     .map(|info| info.kubelet_version)
                     .unwrap_or_default(),
                 capacity: status.capacity.unwrap_or_default(),
+                allocatable: status.allocatable.unwrap_or_default(),
                 taints: spec
                     .taints
                     .unwrap_or_default()

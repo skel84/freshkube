@@ -32,6 +32,70 @@ fn sync<K: SummaryResource>(session: &Session, objects: Vec<K>) {
 }
 
 #[test]
+fn node_requests_reduce_only_assigned_active_pods_with_allocatable_and_freshness() {
+    use crate::resources::Amounts;
+    use k8s_openapi::api::core::v1::Node;
+    let session = session();
+    let node: Node = serde_json::from_value(
+        json!({"metadata":{"name":"node","uid":"node-uid","resourceVersion":"1"},
+        "status":{"capacity":{"cpu":"8"},"allocatable":{"cpu":"7500m","memory":"30Gi"}}}),
+    )
+    .unwrap();
+    sync(&session, vec![node]);
+    assert_eq!(
+        session.derive(now()).summary.nodes.loaded().unwrap()[0].requests,
+        Amounts::default()
+    );
+    let mut pods = Vec::new();
+    for (ix, phase) in ["Running", "Pending", "Succeeded", "Failed"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut object = pod(&format!("pod-{ix}"), &format!("uid-{ix}"), "1");
+        object.status.as_mut().unwrap().phase = Some(phase.into());
+        object.spec.as_mut().unwrap().containers[0].resources = Some(
+            serde_json::from_value(json!({"requests":{"cpu":"250m","memory":"64Mi"}})).unwrap(),
+        );
+        let retained = object.retain();
+        assert!(retained.bytes < 4 * 1024);
+        assert!(retained.validate(Source::Pods).is_ok());
+        pods.push(object);
+    }
+    let mut unassigned = pod("unassigned", "unassigned", "1");
+    unassigned.spec.as_mut().unwrap().node_name = None;
+    pods.push(unassigned);
+    sync(&session, pods);
+    let snapshot = session.derive(now());
+    let node = &snapshot.summary.nodes.loaded().unwrap()[0];
+    assert_eq!(node.pods, 4);
+    assert_eq!(
+        node.requests,
+        Amounts {
+            cpu_millis: Some(500.),
+            memory_bytes: Some(128. * 1024. * 1024.)
+        }
+    );
+    assert_eq!(node.allocatable["cpu"].0, "7500m");
+    assert_eq!(node.capacity["cpu"].0, "8");
+    assert!(node.pods_current);
+    session.fail(
+        0,
+        Source::Pods,
+        ObservationFailure::Read(FailureKind::Forbidden),
+    );
+    let stale = session.derive(now());
+    let stale_node = &stale.summary.nodes.loaded().unwrap()[0];
+    assert_eq!(stale_node.requests, node.requests);
+    assert!(!stale_node.pods_current);
+    assert!(stale_node.pods_observed);
+    sync::<Pod>(&session, vec![]);
+    assert_eq!(
+        session.derive(now()).summary.nodes.loaded().unwrap()[0].requests,
+        super::requests::ZERO
+    );
+}
+
+#[test]
 fn initial_and_replacement_pages_do_not_establish_absence() {
     let session = session();
     session.apply::<Pod>(0, Event::Init, now()).unwrap();

@@ -229,6 +229,8 @@ mod tests {
             addresses: Vec::new(),
             kubelet_version: String::new(),
             capacity: Default::default(),
+            allocatable: Default::default(),
+            requests: Default::default(),
             taints: Vec::new(),
             pods: 0,
             pods_current: true,
