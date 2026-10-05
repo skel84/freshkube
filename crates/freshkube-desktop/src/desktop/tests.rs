@@ -3344,7 +3344,6 @@ const PODS: super::layout_check::TablePage = super::layout_check::TablePage {
     title_text: "Pods",
     table: "resource-table-scroll",
     list: "resource-list",
-    density: "resource-density",
 };
 
 #[gpui_kit::test]
@@ -3370,10 +3369,10 @@ fn pods_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
 }
 
 /// A page whose table isn't the whole page (a dashboard's table panel, a list
-/// with no density switch) checks its frame and its table apart.
+/// without column captions) checks its frame and its table apart.
 #[gpui_kit::test]
 fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
-    use super::layout_check::{Density, PageFrame, Table, assert_page_frame, assert_table};
+    use super::layout_check::{PageFrame, Table, assert_page_frame, assert_table};
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
@@ -3389,24 +3388,15 @@ fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
             content: PODS.table,
         };
         assert_page_frame(window, cx, &frame);
-        // Each fixed density measures once, at that density's sizes.
-        for density in [Density::Comfortable, Density::Compact] {
-            let rows = assert_table(
-                window,
-                cx,
-                &Table {
-                    table: Some(PODS.table),
-                    list: PODS.list,
-                    density,
-                },
-            );
-            assert!(rows.header.is_some(), "{rows:#?}");
-            assert!(
-                rows.comfortable.is_some() != rows.compact.is_some(),
-                "{rows:#?}"
-            );
-            window.click(PODS.density, cx);
-        }
+        let rows = assert_table(
+            window,
+            cx,
+            &Table {
+                table: Some(PODS.table),
+                list: PODS.list,
+            },
+        );
+        assert!(rows.header.is_some(), "{rows:#?}");
         // A list without column captions skips the header.
         let rows = assert_table(
             window,
@@ -3414,11 +3404,9 @@ fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
             &Table {
                 table: None,
                 list: PODS.list,
-                density: Density::Toggle(PODS.density),
             },
         );
         assert!(rows.header.is_none(), "{rows:#?}");
-        assert!(rows.comfortable.zip(rows.compact).is_some(), "{rows:#?}");
     })
     .unwrap();
 }

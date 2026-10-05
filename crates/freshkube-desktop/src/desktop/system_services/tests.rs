@@ -7,7 +7,6 @@ const SYSTEM_SERVICES: layout_check::TablePage = layout_check::TablePage {
     title_text: "System services",
     table: "system-services-table-scroll",
     list: "system-services-list",
-    density: "system-services-density",
 };
 
 const UNHEALTHY: &str = "system-service-talos-wk-fra1-02-kubelet";
@@ -100,7 +99,6 @@ fn narrow_window_keeps_the_header_and_scrolls_the_table(cx: &mut TestAppContext)
             "system-service-filter",
             "system-services-tally",
             "system-service-node",
-            "system-services-density",
         ] {
             let bounds = window.find(id).bounds();
             assert!(

@@ -95,30 +95,8 @@ impl Pilot {
             .chips(Some(
                 h_flex().gap(dp(8.)).flex_wrap().child(segment).child(chips),
             ));
-        let density_id = header.id("density");
         let header = if self.node_workspace.view == NodeView::Table {
-            header
-                .control(
-                    Button::new(density_id)
-                        .outline()
-                        .small()
-                        .icon(if self.node_workspace.table.compact {
-                            IconName::Rows4
-                        } else {
-                            IconName::Rows2
-                        })
-                        .accessibility_label("Toggle node row density")
-                        .tooltip(if self.node_workspace.table.compact {
-                            "Compact · 26px rows. Switch to comfortable"
-                        } else {
-                            "Comfortable · 34px rows. Switch to compact"
-                        })
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            view.node_workspace.table.compact = !view.node_workspace.table.compact;
-                            cx.notify();
-                        })),
-                )
-                .control(self.nodes_columns_menu(cx))
+            header.control(self.nodes_columns_menu(cx))
         } else {
             header
         };

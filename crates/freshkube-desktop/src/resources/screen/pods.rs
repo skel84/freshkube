@@ -1,5 +1,5 @@
 //! What the pods list adds to the table: problems first, grouped by cause,
-//! pods' use from metrics-server, marked rows and the row density.
+//! pods' use from metrics-server and marked rows.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -46,10 +46,6 @@ pub(super) type NotReady = BTreeMap<String, Option<i64>>;
 impl ResourcesScreen {
     pub(super) fn lists_pods(&self) -> bool {
         self.kind.key() == "pods"
-    }
-
-    pub(super) fn row_height(&self) -> f32 {
-        self.table.row_height()
     }
 
     /// Problems first applies to the pods page; a node's pods list all.
@@ -100,11 +96,6 @@ impl ResourcesScreen {
     pub(super) fn toggle_healthy(&mut self, cx: &mut Context<Self>) {
         self.healthy_open = !self.healthy_open;
         self.regroup();
-        cx.notify();
-    }
-
-    pub(super) fn toggle_density(&mut self, cx: &mut Context<Self>) {
-        self.table.compact = !self.table.compact;
         cx.notify();
     }
 

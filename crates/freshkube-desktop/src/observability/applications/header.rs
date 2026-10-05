@@ -129,7 +129,6 @@ impl ObservabilityPage {
                 .secondary(categories)
                 .meta(meta)
                 .control(self.namespace_picker(cx))
-                .control(self.application_density(cx))
                 .control(self.application_columns_menu(cx)),
             cx,
         )
@@ -168,27 +167,6 @@ impl ObservabilityPage {
             }
             state.set_selected_value(&current, window, cx);
         });
-    }
-
-    fn application_density(&self, cx: &Context<Self>) -> Button {
-        Button::new("obs-density")
-            .outline()
-            .small()
-            .icon(if self.application_table.compact {
-                IconName::Rows4
-            } else {
-                IconName::Rows2
-            })
-            .accessibility_label("Application table density")
-            .tooltip(if self.application_table.compact {
-                "Compact · 26px rows. Switch to comfortable"
-            } else {
-                "Comfortable · 34px rows. Switch to compact"
-            })
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.application_table.compact = !this.application_table.compact;
-                cx.notify();
-            }))
     }
 
     fn application_columns_menu(&self, cx: &Context<Self>) -> AnyElement {

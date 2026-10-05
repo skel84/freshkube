@@ -1432,30 +1432,6 @@ fn l_opens_the_selected_pod_on_its_logs(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn density_switches_between_comfortable_and_compact_rows(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let first = row_id(&identity_at(&screen, 0, cx));
-        let comfortable = window.find(first.clone()).bounds().size.height;
-        window.click("resource-density", cx);
-        window.render_frame(cx);
-        let compact = window.find(first.clone()).bounds().size.height;
-        assert!(
-            (compact / comfortable - 26. / 34.).abs() < 0.01,
-            "{compact:?}"
-        );
-        window.click("resource-density", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find(first).bounds().size.height, comfortable);
-    })
-    .unwrap();
-}
-
-/// Scrolled sideways, a pod's glyph and name stay at the table's left edge
-/// while the other columns pass under them, and each id still finds one
-/// element: the name is moved, never copied.
-#[gpui_kit::test]
 fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 640.);
     cx.update_window(handle, |_, window, cx| {
@@ -1566,7 +1542,7 @@ fn fog_glyph_filters_and_column_choices_change_the_table(cx: &mut TestAppContext
     let before = cx
         .update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            for control in ["resource-density", "resource-columns", "resource-refresh"] {
+            for control in ["resource-columns", "resource-refresh"] {
                 assert!(window.find(control).visible(), "{control}");
                 assert!(
                     window.find(control).bounds().bottom()

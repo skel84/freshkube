@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
-use super::{COMPACT_ROW_HEIGHT, HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
+use super::{HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
 use crate::page::card;
 use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, dp};
@@ -85,8 +85,6 @@ impl TableIds {
 /// What a table keeps between frames, owned by the page's entity.
 pub struct TableState {
     pub scroll: UniformListScrollHandle,
-    /// Compact rows, from the density toggle; comfortable by default.
-    pub compact: bool,
     /// The sideways scroll, which group labels and pinned columns undo.
     sideways: ScrollHandle,
     ids: TableIds,
@@ -98,7 +96,6 @@ impl TableState {
     pub fn new(prefix: &str) -> Self {
         Self {
             scroll: UniformListScrollHandle::new(),
-            compact: false,
             sideways: ScrollHandle::new(),
             ids: TableIds::new(prefix),
         }
@@ -107,14 +104,6 @@ impl TableState {
     /// `<prefix>-<part>`, for the parts the page draws around the table.
     pub fn id(&self, part: &str) -> SharedString {
         format!("{}-{part}", self.ids.prefix).into()
-    }
-
-    pub fn row_height(&self) -> f32 {
-        if self.compact {
-            COMPACT_ROW_HEIGHT
-        } else {
-            ROW_HEIGHT
-        }
     }
 
     /// Scrolls a line into view.
@@ -309,7 +298,7 @@ impl DataTable {
         let list_height = self
             .fit
             .filter(|_| empty.is_none())
-            .map(|max| source.line_count().min(max) as f32 * state.row_height());
+            .map(|max| source.line_count().min(max) as f32 * ROW_HEIGHT);
         let list = div()
             .id(ids.list.clone())
             .test_support()
@@ -533,7 +522,7 @@ fn render_line<S: TableSource>(
         .aria_selected(selected)
         .aria_label(row.label.clone())
         .w_full()
-        .h(dp(source.table_state().row_height()))
+        .h(dp(ROW_HEIGHT))
         .border_1()
         .border_color(if selected {
             p.accent

@@ -101,33 +101,10 @@ impl ObservabilityPage {
                 .filter(filter)
                 .chips(Some(chips))
                 .meta(meta)
-                .control(self.incident_density(cx))
                 .control(self.incident_columns_menu(cx)),
             cx,
         )
         .render(cx)
-    }
-
-    fn incident_density(&self, cx: &Context<Self>) -> Button {
-        let compact = self.incident_table.compact;
-        Button::new("obs-density")
-            .outline()
-            .small()
-            .icon(if compact {
-                IconName::Rows4
-            } else {
-                IconName::Rows2
-            })
-            .accessibility_label("Incident table density")
-            .tooltip(if compact {
-                "Compact · 26px rows. Switch to comfortable"
-            } else {
-                "Comfortable · 34px rows. Switch to compact"
-            })
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.incident_table.compact = !this.incident_table.compact;
-                cx.notify();
-            }))
     }
 
     fn incident_columns_menu(&self, cx: &Context<Self>) -> AnyElement {

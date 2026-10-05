@@ -223,7 +223,7 @@ pub(crate) struct ResourcesScreen {
     /// When the last batch landed.
     updated: Option<SystemTime>,
     focus: FocusHandle,
-    /// The table's scroll and density.
+    /// The table's scrolls.
     table: table::TableState,
     page_scroll: ScrollHandle,
     watch: Option<(OwnedJob, Task<()>)>,
@@ -238,7 +238,6 @@ pub(crate) struct ResourcesScreen {
     /// The healthy pods show under the problems.
     healthy_open: bool,
     not_ready: NotReady,
-    /// Compact rows, from the density toggle; comfortable by default.
     /// Rows marked with X or a group's Select all, by identity.
     marked: BTreeSet<ResourceIdentity>,
     /// Reads pods' use while the pods list shows.
