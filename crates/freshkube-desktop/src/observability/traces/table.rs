@@ -178,7 +178,7 @@ impl ObservabilityPage {
                     kind,
                     label: label(kind).into(),
                     width: match kind {
-                        ColumnKind::Glyph => 34.,
+                        ColumnKind::Glyph => table::GLYPH_WIDTH,
                         ColumnKind::Name => 140.,
                         ColumnKind::Service => measured.clamp(96., 220.),
                         _ => measured.max(56.),
@@ -263,7 +263,7 @@ impl ObservabilityPage {
                 .child(text(value.clone()).truncate())
         };
         match column.kind {
-            ColumnKind::Glyph => cell.children(ui::status_glyph(
+            ColumnKind::Glyph => table::glyph_cell(column).children(ui::status_glyph(
                 if row.error { Tone::Crit } else { Tone::Good },
                 cx,
             )),

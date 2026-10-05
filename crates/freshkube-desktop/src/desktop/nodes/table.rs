@@ -60,7 +60,7 @@ impl Column {
         // IBM Plex Mono has a 0.6 em advance: 12.5 dp rows need 7.5 dp per
         // character. Name is the flexible column; long names have a row tooltip.
         let width = match field {
-            Field::Glyph => 34.,
+            Field::Glyph => table::GLYPH_WIDTH,
             Field::Name => 160.,
             Field::Load => 160.,
             Field::Cpu | Field::Memory => 124.,
@@ -254,7 +254,7 @@ impl TableSource for Pilot {
     ) -> AnyElement {
         let row = line.data;
         match column.field {
-            Field::Glyph => table::cell(column)
+            Field::Glyph => table::glyph_cell(column)
                 .children(ui::status_glyph(row.tone, cx))
                 .into_any_element(),
             Field::Name => table::cell(column)

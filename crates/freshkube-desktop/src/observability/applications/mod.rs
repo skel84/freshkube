@@ -78,7 +78,7 @@ impl ObservabilityPage {
         let p = style.p;
         let cell = table::cell(column).h_full().flex().items_center();
         match column.kind {
-            ColumnKind::Glyph => cell
+            ColumnKind::Glyph => table::glyph_cell(column)
                 .children(ui::status_glyph(app.status.tone(), cx))
                 .into_any_element(),
             ColumnKind::Name => {
