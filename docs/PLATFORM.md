@@ -11,8 +11,8 @@ The mocks are static HTML pages with example data, in [`platform/`](platform/). 
 Taken with the user on 4 October 2026.
 
 - **The product is about applications and changes, not resource kinds.** It answers "what is shipping, what is waiting for me, what broke, and why" across clusters. The Kubernetes browser becomes Explore, reached through ⌘K and through links from every other screen.
-- **One chain, end to end.** GitHub → Tekton Pipelines as Code → Tekton pipelines → supply-chain checks (Tekton Chains, Conforma, Konflux where present) → Harbor → Kargo → Argo CD → Argo Rollouts → pods. All of it is in use at the user's work.
-- **Clusters have roles.** A core cluster runs Argo CD, Kargo, VictoriaMetrics and Coroot. A CI/CD cluster runs Tekton and Harbor. Each environment has its own workload cluster. The app holds all of them at once.
+- **One chain, end to end.** GitHub → Tekton Pipelines as Code → Tekton pipelines → supply-chain checks (Tekton Chains, Conforma, Konflux where present) → Harbor → Kargo → Argo CD → Argo Rollouts → pods. This common open-source delivery stack is the reference the design is shaped on; a team that runs only part of it sees the hops it has.
+- **Clusters have roles.** A typical layout keeps delivery and observability (Argo CD, Kargo, metrics, Coroot) on a core cluster, builds and the registry (Tekton, Harbor) on a CI/CD cluster, and one workload cluster per environment. Other layouts work too: the workspace says which cluster holds what. The app holds all of them at once.
 - **Two starting points.** Platform engineers look across every team; developers look at their own apps. Home has both, one switch apart.
 - **Approval early.** Promoting freight and stepping or aborting a rollout come with the first delivery slice, not after it. They are explicit actions behind a confirmation that shows what will happen, the evidence and who the user acts as.
 - **Desktop grade is the look.** Chosen by the user on 5 October 2026 over the look of P1–P7 ([below](#desktop-grade)). P1–P7 stay as the reference for what each screen holds and how the screens connect; [DESIGN.md](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges) holds the look.
@@ -166,7 +166,7 @@ What is missing:
 5. **Cost.** [#22](https://github.com/skel84/freshkube/issues/22) (main-thread burst cost) is open, and six clusters multiply the summary sessions. Measure with `scripts/stress.sh` before and after the registry, and give each cluster a watch budget.
 6. **Navigation.** `Page` and `Area` describe one cluster's pages. An application with tabs across clusters needs another routing level, and links carry the cluster.
 
-Before step 1, a read-only spike ([#43](https://github.com/skel84/freshkube/issues/43)) against the real core and CI/CD clusters joins Freight, Stages, Argo CD Applications, Rollouts, PipelineRuns and pod digests in core, with no UI. It records the CRD versions, the RBAC the user's identity gets, how promotion and rollout steps are requested, and the answers to the open questions below. Screens beyond these mocks wait for it.
+Before step 1, a read-only spike ([#43](https://github.com/skel84/freshkube/issues/43)) against real clusters that run this stack joins Freight, Stages, Argo CD Applications, Rollouts, PipelineRuns and pod digests in core, with no UI. It records the CRD versions, the RBAC the user's identity gets, how promotion and rollout steps are requested, and the answers to the open questions below. Screens beyond these mocks wait for it.
 
 ## Order of work
 
@@ -186,9 +186,9 @@ Steps 5–7 can move in any order once step 3 lands. Explore, Infrastructure and
 ## Open questions
 
 - **Teams.** How does the app know which applications are "mine": Kargo Project RBAC, GitHub team membership, a label, or a list the user keeps?
-- **Konflux.** Is Konflux running in full, with Applications, Components, Snapshots and Releases, or are Tekton, Chains and Conforma used on their own? The supply-chain hop reads different objects in each case.
-- **Tekton Results.** Is it installed? Without it, a pruned PipelineRun's logs are gone, and the change page should say so.
-- **Approve or promote.** Kargo separates approving freight for a Stage from promoting it. Is the user's prod gated by manual approval, by manual promotion, or both?
+- **Konflux.** Some teams run Konflux in full, with Applications, Components, Snapshots and Releases; others use Tekton, Chains and Conforma on their own. The supply-chain hop reads different objects in each case, so how does it tell which it has?
+- **Tekton Results.** It may not be installed. Without it, a pruned PipelineRun's logs are gone, and the change page should say so.
+- **Approve or promote.** Kargo separates approving freight for a Stage from promoting it. A prod Stage may be gated by manual approval, by manual promotion, or both; how does the app show which?
 - **Argo CD diffs.** F04 links out to Argo CD's UI for diffs. Is that enough, or does the change page need a native desired-against-live diff?
 - **Harbor replication.** Production may pull from a replicated registry. Is the digest the same there, and can the robot account read both?
 - **The name and the site.** The sk8s.app headline ("Your cluster, problems first") describes today's product. It waits for this direction to settle.
