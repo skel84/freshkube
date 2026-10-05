@@ -1,7 +1,8 @@
 //! Measures a page from the bounds its last frame painted, so a page that
 //! drifts from DESIGN.md fails a test instead of a review.
 //!
-//! `assert_page_frame` checks a padded page's padding and title,
+//! `assert_page_frame` checks a padded page's padding and title (and
+//! `assert_page_frame_from` one whose header leads with a breadcrumb),
 //! `assert_edge_frame` an edge-to-edge page's inset and title,
 //! `assert_table` checks one table's header and rows (a page may hold
 //! several), and `assert_table_page` checks a table page with the edge
@@ -155,12 +156,25 @@ pub(crate) fn assert_page_frame(
     cx: &mut App,
     frame: &PageFrame,
 ) -> FrameLayout {
+    assert_page_frame_from(window, cx, frame, frame.title)
+}
+
+/// [`assert_page_frame`] for a header that leads with something before the
+/// title, such as a breadcrumb's parent: the left padding is measured from
+/// `lead`, and the title keeps its size and line checks.
+pub(crate) fn assert_page_frame_from(
+    window: &mut Window,
+    cx: &mut App,
+    frame: &PageFrame,
+    lead: &str,
+) -> FrameLayout {
     window.render_frame(cx);
     let root = window.find(frame.page).bounds();
+    let lead = window.find(SharedString::from(lead.to_owned())).bounds();
     let title = window.find(frame.title).bounds();
     let content = window.find(frame.content).bounds();
     let layout = FrameLayout {
-        padding_left: title.left() - root.left(),
+        padding_left: lead.left() - root.left(),
         padding_right: root.right() - content.right(),
         title_line: title.size.height,
         title_text: title_text(window, frame.title_text, title.size.width),

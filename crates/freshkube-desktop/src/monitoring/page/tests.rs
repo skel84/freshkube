@@ -134,12 +134,13 @@ fn a_hidden_page_reads_nothing_and_showing_answers_the_panels_in_view(cx: &mut T
 
 #[gpui_kit::test]
 fn the_page_takes_the_shared_frame_and_its_last_panel_ends_at_the_padding(cx: &mut TestAppContext) {
-    use crate::desktop::layout_check::{PageFrame, assert_page_frame};
+    use crate::desktop::layout_check::{PageFrame, assert_page_frame_from};
     let (_runtime, handle, page) = mount(cx, Some(example_source()));
     show(cx, handle, &page);
     let slots = slot_count(cx, &page);
     cx.update_window(handle, |_, window, cx| {
-        assert_page_frame(
+        // The header leads with the breadcrumb's "Dashboards".
+        assert_page_frame_from(
             window,
             cx,
             &PageFrame {
@@ -148,6 +149,7 @@ fn the_page_takes_the_shared_frame_and_its_last_panel_ends_at_the_padding(cx: &m
                 title_text: "Cluster",
                 content: "monitoring-grid",
             },
+            "monitoring-dashboards",
         );
         // The grid draws the gap between panels, so the rightmost one ends
         // where the grid does, not a gap short of it.
