@@ -287,6 +287,28 @@ storing it (`gpui-pre` 0.3.7, `src/element.rs`). Entity/listener/source
 instantiations still deserve measurement, but generic syntax and source lines
 alone do not establish their compile cost.
 
+## First loop experiment: avoid duplicate desktop variants
+
+The second-opinion review with buildtalk prioritizes the local loop before another
+crate split. Desktop enables GPUI test support and component testing features only
+through dev-dependencies. An ordinary library, a library with test features,
+a test harness and a clippy metadata pass are potentially distinct compilation
+work. Desktop currently has no fenced library doctests; the only fences in its
+Rust files are shell examples in the stress binary.
+
+First compare `cargo test -p freshkube-desktop --no-run` with
+`cargo test -p freshkube-desktop --lib --no-run`, with feature variants warmed and
+a separate one-line edit for each sample. `doctest = false` is a candidate only:
+the workspace app test still needs the ordinary desktop library, so this setting
+cannot be assumed to remove that compile from a workspace test.
+
+Also compare actual inner loops in alternating A/B/A/B order: A runs build,
+workspace tests and workspace clippy; B runs desktop library tests and desktop
+clippy. Record each step and the whole loop, including reuse between commands.
+These scopes differ deliberately: targeted iteration still ends with the required
+whole-workspace verification before a PR. A test-name filter reduces execution;
+`--lib` selects a Cargo target. Neither promises faster compiler work until measured.
+
 ## Dependency and profile candidates
 
 The manifests deliberately keep GPUI test support in dev-dependencies. Tests
