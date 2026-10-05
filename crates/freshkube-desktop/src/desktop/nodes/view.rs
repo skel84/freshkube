@@ -253,6 +253,8 @@ impl Pilot {
                 Button::new("node-close")
                     .small()
                     .icon(IconName::X)
+                    .tooltip("Close node pane")
+                    .accessibility_label("Close node pane")
                     .on_click(cx.listener(|view, _, window, cx| view.close_node(window, cx))),
             );
         let tabs = h_flex()
