@@ -863,7 +863,7 @@ async fn traces_list_requests_open_a_trace_and_narrow_to_a_cell(cx: &mut TestApp
         window.render_frame(cx);
         // Failed requests first, then slowest: errors, >5s, 5ms.
         assert!(window.try_find("obs-live-bucket-2-2").is_some());
-        assert!(window.try_find("obs-live-span-0").is_some());
+        assert!(window.try_find("obs-live-span-t1-root").is_some());
         assert!(window.try_find("obs-live-trace-span-1").is_some());
         assert!(window.try_find("obs-live-trace-span-2").is_none());
         window.click("obs-live-trace-span-1", cx);

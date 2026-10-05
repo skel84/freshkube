@@ -48,10 +48,11 @@ impl ApplicationMetrics {
         ) / scale
     }
 
+    /// A column caption as `ui::column_label` draws it.
     pub(in crate::observability) fn caption(&self, label: &str) -> f32 {
         let mut face = font(self.family.clone());
-        face.weight = ui::HEADING_WEIGHT;
-        self.measure(label.to_uppercase().into(), face, 11.)
+        face.weight = FontWeight::SEMIBOLD;
+        self.measure(label.to_owned().into(), face, 11.5)
     }
 
     pub(in crate::observability) fn value(&self, value: SharedString, size: f32) -> f32 {

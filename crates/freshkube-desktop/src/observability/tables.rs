@@ -8,19 +8,23 @@ use freshkube_ui::table::{
 };
 use gpui_kit::ClickEvent;
 use incidents::IncidentCells;
+use traces::SpanCells;
 
 /// A row's identity in whichever list it belongs to.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum TableKey {
     Application(freshkube_core::coroot::AppId),
     /// An incident's key and its application, as Coroot names it.
     Incident(String, freshkube_core::coroot::AppId),
+    /// A listed span's trace and span ids.
+    Span(String, String),
 }
 
 /// A row's data, borrowed from the page for one frame.
 pub(crate) enum TableCells<'a> {
     Application(ApplicationCells<'a>),
     Incident(IncidentCells<'a>),
+    Span(SpanCells<'a>),
 }
 
 /// What a column shows. Each list uses its own kinds; Glyph is shared.
@@ -36,6 +40,8 @@ pub(in crate::observability) enum ColumnKind {
     Opened,
     Duration,
     Impact,
+    Service,
+    Started,
 }
 
 /// One of a list's columns, measured when its data or Columns change.
@@ -63,12 +69,14 @@ impl TableColumn for PageColumn {
 enum Shown {
     Applications,
     Incidents,
+    Traces,
 }
 
 impl ObservabilityPage {
     fn shown_table(&self) -> Shown {
         match self.destination {
             Destination::Incidents => Shown::Incidents,
+            Destination::Traces => Shown::Traces,
             _ => Shown::Applications,
         }
     }
@@ -84,24 +92,28 @@ impl TableSource for ObservabilityPage {
         match self.shown_table() {
             Shown::Applications => &self.application_table,
             Shown::Incidents => &self.incident_table,
+            Shown::Traces => &self.trace_table,
         }
     }
     fn columns(&self) -> &[PageColumn] {
         match self.shown_table() {
             Shown::Applications => &self.application_columns,
             Shown::Incidents => self.incident_columns(),
+            Shown::Traces => self.trace_columns(),
         }
     }
     fn width(&self) -> f32 {
         match self.shown_table() {
             Shown::Applications => self.application_width,
             Shown::Incidents => self.incident_width(),
+            Shown::Traces => self.trace_width(),
         }
     }
     fn list_label(&self) -> String {
         match self.shown_table() {
             Shown::Applications => self.application_list_label(),
             Shown::Incidents => self.incident_list_label(),
+            Shown::Traces => self.trace_list_label(),
         }
     }
     fn sorting(&self, _: &PageColumn) -> Option<((), Option<SortOrder>)> {
@@ -112,35 +124,41 @@ impl TableSource for ObservabilityPage {
         match self.shown_table() {
             Shown::Applications => None,
             Shown::Incidents => self.incident_selected_key(),
+            Shown::Traces => self.trace_selected_key(),
         }
     }
     fn line_of(&self, key: &TableKey) -> Option<usize> {
         match self.shown_table() {
             Shown::Applications => None,
             Shown::Incidents => self.incident_line_of(key),
+            Shown::Traces => self.trace_line_of(key),
         }
     }
     fn clickable(&self) -> bool {
         match self.shown_table() {
             Shown::Applications => false,
-            Shown::Incidents => true,
+            Shown::Incidents | Shown::Traces => true,
         }
     }
     fn click(&mut self, key: &TableKey, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if let TableKey::Incident(key, app) = key {
-            self.select_incident(key.clone(), app.clone(), cx);
+        match key {
+            TableKey::Incident(key, app) => self.select_incident(key.clone(), app.clone(), cx),
+            TableKey::Span(..) => self.open_span(key.clone(), cx),
+            TableKey::Application(_) => {}
         }
     }
     fn line_count(&self) -> usize {
         match self.shown_table() {
             Shown::Applications => self.matrix.len(),
             Shown::Incidents => self.incident_line_count(),
+            Shown::Traces => self.trace_line_count(),
         }
     }
     fn line(&self, line: usize, _: &App) -> Option<Line<TableKey, TableCells<'_>>> {
         match self.shown_table() {
             Shown::Applications => self.application_line(line),
             Shown::Incidents => self.incident_line(line),
+            Shown::Traces => self.trace_line(line),
         }
     }
     fn cell(
@@ -153,30 +171,33 @@ impl TableSource for ObservabilityPage {
         match &row.data {
             TableCells::Application(cells) => self.application_cell(cells, style, column, cx),
             TableCells::Incident(cells) => self.incident_cell(cells, style, column, cx),
+            TableCells::Span(cells) => self.span_cell(cells, style, column, cx),
         }
     }
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_group(group, cx),
-            Shown::Incidents => None,
+            Shown::Incidents | Shown::Traces => None,
         }
     }
     fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_empty(cx),
             Shown::Incidents => self.incident_empty(cx),
+            Shown::Traces => self.trace_empty(cx),
         }
     }
     fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_notes(cx),
             Shown::Incidents => self.incident_notes(cx),
+            Shown::Traces => self.trace_notes(cx),
         }
     }
     fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_footer(window, cx),
-            Shown::Incidents => None,
+            Shown::Incidents | Shown::Traces => None,
         }
     }
 }

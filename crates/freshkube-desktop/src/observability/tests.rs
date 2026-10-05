@@ -212,27 +212,6 @@ fn map_selection_survives_reordering_and_clears_on_removal(cx: &mut TestAppConte
     }).unwrap();
 }
 #[gpui_kit::test]
-fn heatmap_selection_and_error_filters_change_the_trace_view(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
-    cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Traces, cx)));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("obs-bucket-0-18", cx);
-        assert_eq!(page.read(cx).bucket, Some((0, 18)));
-        window.press("right", cx);
-        assert_eq!(page.read(cx).bucket, Some((0, 19)));
-        window.click("obs-trace-errors", cx);
-        assert!(page.read(cx).trace_errors_only);
-        window.render_frame(cx);
-        assert!(window.try_find("obs-span-0").is_none());
-        window.click("obs-trace-clear", cx);
-        assert!(page.read(cx).bucket.is_none());
-        assert!(!page.read(cx).trace_errors_only);
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
 fn threshold_edits_validate_and_remain_local(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
     cx.update(|cx| {
@@ -287,8 +266,8 @@ fn rollback_preview_does_not_change_a_release(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn ranges_reports_and_trace_causes_have_independent_data(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
+fn ranges_reports_and_traces_have_independent_data(cx: &mut TestAppContext) {
+    let (_runtime, _handle, page) = mount(cx, true);
     cx.update(|cx| {
         page.update(cx, |page, cx| {
             let prior = page.charts[0].series[0].values.clone();
@@ -297,24 +276,18 @@ fn ranges_reports_and_trace_causes_have_independent_data(cx: &mut TestAppContext
             page.open_app(example::id("payments/api"), Report::Latency, cx);
             assert_eq!(page.selected_application().unwrap().key, "payments/api");
             page.open(Destination::Traces, cx);
+            let trace = page.live_traces.trace.clone();
+            assert!(trace.is_some());
+            let charts = page.charts[0].series[0].values.clone();
+            page.set_range(6, cx);
+            assert_ne!(
+                page.live_traces.trace, trace,
+                "another window answers its own requests"
+            );
+            assert!(page.live_traces.trace.is_some());
+            assert_ne!(charts, page.charts[0].series[0].values);
         })
     });
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("obs-error-cause-2", cx);
-        assert_eq!(page.read(cx).trace_error, 2);
-        assert_eq!(page.read(cx).trace_snapshot.spans[1].0, "oauth2-proxy");
-        window.click("obs-bucket-7-18", cx);
-        assert_eq!(page.read(cx).trace_error, 3);
-        assert!(
-            page.read(cx)
-                .trace_snapshot
-                .spans
-                .iter()
-                .all(|span| !span.4)
-        );
-    })
-    .unwrap();
 }
 
 #[gpui_kit::test]
