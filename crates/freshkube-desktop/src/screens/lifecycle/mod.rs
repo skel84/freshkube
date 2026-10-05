@@ -25,45 +25,17 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gated_page, header, mono, panel, partial_notice, stat, table_head,
-    table_width,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
+    gated_page, header, mono, panel, partial_notice, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::table::TableState;
 
 const CONTEXT: &str = "TalosLifecycle";
-const ROW_HEIGHT: f32 = 30.;
 /// The details pane, when it sits beside the lists.
 const DETAILS_WIDTH: f32 = 340.;
 const GAP: f32 = 14.;
-
-const COLUMNS: [Column; 6] = [
-    Column {
-        label: "Node",
-        width: None,
-    },
-    Column {
-        label: "Role",
-        width: Some(120.),
-    },
-    Column {
-        label: "Talos",
-        width: Some(116.),
-    },
-    Column {
-        label: "Kubelet",
-        width: Some(116.),
-    },
-    Column {
-        label: "Config",
-        width: Some(108.),
-    },
-    Column {
-        label: "Discovery · K8s",
-        width: Some(132.),
-    },
-];
 
 actions!(
     talos_lifecycle,
@@ -101,6 +73,7 @@ pub(crate) struct LifecycleScreen {
     _observation: gpui_kit::Subscription,
     loader: Loader<LifecycleView>,
     selected: Option<Item>,
+    table: TableState,
     focus: FocusHandle,
 }
 
@@ -122,6 +95,7 @@ impl ScreenPanel for LifecycleScreen {
             _observation: cx.observe_self(Self::sync_shared_nodes),
             loader: Loader::default(),
             selected: None,
+            table: TableState::new("lifecycle"),
             focus: cx.focus_handle(),
         }
     }
@@ -314,7 +288,7 @@ enum Drift {
 }
 
 #[derive(Clone, Debug)]
-struct NodeRow {
+pub(crate) struct NodeRow {
     name: String,
     address: Option<String>,
     role: Option<String>,
@@ -329,6 +303,9 @@ struct NodeRow {
     in_kubernetes: Option<bool>,
     /// Newest kubelet version seen cluster-wide is newer than this node's.
     kubelet_behind: bool,
+    /// The table's row id and accessibility label, derived with the row.
+    element_id: SharedString,
+    label: SharedString,
 }
 
 impl NodeRow {
@@ -417,6 +394,8 @@ fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
                 in_discovery: discovery.map(|roster| discovery_has(roster, &node.name, address)),
                 in_kubernetes,
                 kubelet_behind: false,
+                element_id: SharedString::default(),
+                label: SharedString::default(),
             }
         })
         .collect();
@@ -450,6 +429,9 @@ fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
                 .and_then(|version| kubelet_skew(version, newest))
                 .is_some();
         }
+    }
+    for row in &mut rows {
+        row.derive();
     }
     rows
 }
@@ -866,6 +848,7 @@ impl LifecycleScreen {
 }
 
 mod example;
+mod table;
 mod view;
 use example::example;
 
@@ -876,6 +859,8 @@ mod ui_tests;
 #[derive(Clone, Debug, Default)]
 struct LifecycleDisplay {
     rows: Vec<NodeRow>,
+    columns: Vec<table::Column>,
+    width: f32,
     alerts: Vec<AlertRow>,
     missing: Vec<String>,
     summary_labels: [String; 3],
@@ -883,6 +868,7 @@ struct LifecycleDisplay {
 impl LifecycleView {
     fn prepare(mut self) -> Self {
         self.display.rows = node_rows(&self);
+        (self.display.columns, self.display.width) = table::columns(&self.display.rows);
         self.display.alerts = alert_rows(&self, &self.display.rows);
         self.display.missing = unavailable_sources(&self, &self.display.rows);
         fn distinct(values: impl Iterator<Item = String>) -> String {
