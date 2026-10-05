@@ -26,6 +26,9 @@ use gpui_kit::{
 pub(crate) use join::{NodeKey, NodeRow};
 use std::{sync::Arc, time::Duration};
 
+/// The columns the table hides until the user shows them.
+const DEFAULT_HIDDEN: [table::Field; 1] = [table::Field::Load];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum NodeTab {
     #[default]
@@ -181,7 +184,7 @@ impl Nodes {
             all_columns: Vec::new(),
             menu_columns: Arc::new(Vec::new()),
             columns: Vec::new(),
-            hidden_columns: std::collections::BTreeSet::from([table::Field::Load]),
+            hidden_columns: std::collections::BTreeSet::from(DEFAULT_HIDDEN),
             table_width: 0.,
             metrics: metrics::Metrics::new(runtime.clone()),
             resource_cells: Default::default(),

@@ -1670,6 +1670,9 @@ fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
                 "not folded"
             );
             assert!(window.try_find("resource-refresh").is_none());
+            // Every folded control at its default: no dot.
+            assert!(window.try_find("resource-more-dot").is_none());
+            assert_eq!(window.find("resource-more").label(), Some("More"));
             let names = &screen.read(cx).namespaces;
             // All namespaces comes first.
             names.iter().position(|name| name == "payments").unwrap() + 1
@@ -1711,6 +1714,12 @@ fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
             view.namespace_select.read(cx).selected_value(),
             Some(&Some("payments".to_owned()))
         );
+        // The "…" says the folded picker narrows the list.
+        window.find("resource-more-dot");
+        assert_eq!(
+            window.find("resource-more").label(),
+            Some("More · Namespace payments")
+        );
     })
     .unwrap();
     // A column from the menu hides as the Columns menu hides it.
@@ -1731,4 +1740,34 @@ fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
         screen.read_with(cx, |screen, _| screen.hidden_columns.len()),
         hidden
     );
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(
+            window.find("resource-more").label(),
+            Some("More · Namespace payments · 1 column hidden")
+        );
+    })
+    .unwrap();
+    // Both back to their defaults: All namespaces, every column.
+    for (control, item) in [(0usize, 0usize), (1, 0)] {
+        cx.update_window(handle, |_, window, cx| {
+            window.click("resource-more", cx);
+            window.render_frame(cx);
+            window.within("popup-menu").click(control, cx);
+            window.render_frame(cx);
+            window
+                .within("submenu")
+                .within("popup-menu")
+                .click(item, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).namespace, None);
+        assert!(window.try_find("resource-more-dot").is_none());
+        assert_eq!(window.find("resource-more").label(), Some("More"));
+    })
+    .unwrap();
 }

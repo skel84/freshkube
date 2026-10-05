@@ -41,16 +41,24 @@ impl ResourcesScreen {
                 .menu_width(dp(260.))
                 .search_placeholder("Find a namespace")
                 .accessibility_label("Namespace");
+            let picked = self.namespace.clone();
+            let value = picked.clone().unwrap_or_else(|| "All namespaces".into());
             header = header.foldable(
                 namespace,
-                page::submenu("Namespace", self.namespace_items(cx)),
+                page::Fold::from(page::submenu_value(
+                    "Namespace",
+                    value,
+                    self.namespace_items(cx),
+                ))
+                .changed(picked.map(|name| format!("Namespace {name}").into())),
             );
         }
         if self.lists_pods() && !self.embedded {
             let items = self.columns_items(cx);
+            let hidden = self.hidden_columns.len();
             header = header.foldable(
                 div().flex_none().child(self.columns_menu(items.clone())),
-                page::submenu("Columns", items),
+                page::columns_fold(items, hidden, hidden == 0),
             );
         }
         let refresh = page::handler(cx, |view: &mut Self, window, cx| view.refresh(window, cx));

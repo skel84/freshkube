@@ -267,6 +267,7 @@ fn the_folded_node_picker_picks_a_node_as_the_picker_does(cx: &mut TestAppContex
         );
         let services = view.read(cx).system_services.clone();
         let first = services.read(cx).nodes[0].clone();
+        assert!(window.try_find("system-services-more-dot").is_none());
         window.click("system-services-more", cx);
         window.render_frame(cx);
         window.within("popup-menu").click(0usize, cx);
@@ -278,6 +279,12 @@ fn the_folded_node_picker_picks_a_node_as_the_picker_does(cx: &mut TestAppContex
             .click(1usize, cx);
         window.render_frame(cx);
         assert_eq!(services.read(cx).node.as_deref(), Some(first.as_str()));
+        // The "…" says the folded picker narrows the list.
+        window.find("system-services-more-dot");
+        assert_eq!(
+            window.find("system-services-more").label(),
+            Some(format!("More · Node {first}").as_str())
+        );
     })
     .unwrap();
 }

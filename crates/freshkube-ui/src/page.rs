@@ -5,7 +5,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 
 use crate::palette::palette;
-use crate::ui::{CONTROL_HEIGHT, dp, toolbar_label};
+use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, toolbar_label};
 
 /// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
@@ -182,6 +182,88 @@ pub fn submenu(label: impl Into<SharedString>, items: MenuItems) -> MenuItems {
     })
 }
 
+/// The most of a value [`submenu_value`] shows after its label.
+const VALUE_CHARS: usize = 24;
+
+/// The folded form of a control that picks a value, such as a namespace:
+/// `label · value`, the value cut to 24 characters with "…", over `items`.
+/// A cut value shows whole, greyed, at the top of the submenu.
+pub fn submenu_value(
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+    items: MenuItems,
+) -> MenuItems {
+    let value = value.into();
+    let (label, cut) = value_label(&label.into(), &value);
+    submenu(
+        label,
+        if cut {
+            Rc::new(move |menu, window, cx| {
+                let menu = menu
+                    .item(PopupMenuItem::new(value.clone()).disabled(true))
+                    .separator();
+                items(menu, window, cx)
+            })
+        } else {
+            items
+        },
+    )
+}
+
+/// The folded form of a Columns menu: `Columns · N hidden` while any is
+/// hidden, noted while the hidden set isn't the page's default.
+pub fn columns_fold(items: MenuItems, hidden: usize, at_default: bool) -> Fold {
+    let items = match hidden {
+        0 => submenu("Columns", items),
+        n => submenu_value("Columns", format!("{n} hidden"), items),
+    };
+    Fold::from(items).changed((!at_default).then(|| hidden_note(hidden)))
+}
+
+/// `2 columns hidden`, as the "…" tooltip lists it.
+fn hidden_note(hidden: usize) -> SharedString {
+    match hidden {
+        0 => "no columns hidden".into(),
+        1 => "1 column hidden".into(),
+        n => format!("{n} columns hidden").into(),
+    }
+}
+
+/// `label · value`, and whether the value was cut to [`VALUE_CHARS`].
+fn value_label(label: &str, value: &str) -> (SharedString, bool) {
+    match value.char_indices().nth(VALUE_CHARS - 1) {
+        Some((end, _)) if value.chars().count() > VALUE_CHARS => {
+            (format!("{label} · {}…", &value[..end]).into(), true)
+        }
+        _ => (format!("{label} · {value}").into(), false),
+    }
+}
+
+/// A control's folded form, and a short note while the control isn't at
+/// its default, such as `Namespace payments`. While the control is folded,
+/// a note puts a dot on the "…" button and joins its tooltip.
+pub struct Fold {
+    items: MenuItems,
+    changed: Option<SharedString>,
+}
+
+impl Fold {
+    /// The note, or `None` while the control is at its default.
+    pub fn changed(mut self, note: Option<SharedString>) -> Self {
+        self.changed = note;
+        self
+    }
+}
+
+impl From<MenuItems> for Fold {
+    fn from(items: MenuItems) -> Self {
+        Self {
+            items,
+            changed: None,
+        }
+    }
+}
+
 /// A page's header, a toolbar: the title as its leading label, the filter
 /// and the status chips, then the controls at the right, each
 /// [`CONTROL_HEIGHT`] high, on a row [`TOOLBAR_HEIGHT`] high, with the meta
@@ -217,7 +299,7 @@ pub struct PageHeader {
 /// A control, with its menu form if it folds.
 struct Control {
     element: AnyElement,
-    fold: Option<MenuItems>,
+    fold: Option<Fold>,
 }
 
 /// What a click on a breadcrumb's parent does.
@@ -466,11 +548,12 @@ impl PageHeader {
     /// A control at the right that folds into the "…" menu when the row is
     /// full, where it shows as `items`: built with [`item`] from the
     /// button's own [`Handler`], or with [`submenu`] from the items its own
-    /// menu shows.
-    pub fn foldable(mut self, control: impl IntoElement, items: MenuItems) -> Self {
+    /// menu shows. A [`Fold`] adds what the control is set to while it
+    /// isn't at its default.
+    pub fn foldable(mut self, control: impl IntoElement, fold: impl Into<Fold>) -> Self {
         self.controls.push(Control {
             element: control.into_any_element(),
-            fold: Some(items),
+            fold: Some(fold.into()),
         });
         self
     }
@@ -511,8 +594,12 @@ impl PageHeader {
         let state = fit.read(cx).clone();
         let placement = state.placement.get();
         let gap = dp(8.);
-        let (toolbar_id, controls_id, more_id) =
-            (self.id("toolbar"), self.id("controls"), self.id("more"));
+        let (toolbar_id, controls_id, more_id, dot_id) = (
+            self.id("toolbar"),
+            self.id("controls"),
+            self.id("more"),
+            self.id("more-dot"),
+        );
         let (secondary_id, title_id, scope_id) =
             (self.id("secondary"), self.title_id, self.scope_id);
         let has_filter = self.filter.is_some();
@@ -577,9 +664,13 @@ impl PageHeader {
         let mut shown = Vec::new();
         let mut slots = Vec::new();
         let mut forms = Vec::new();
+        let mut notes = Vec::new();
         for (ix, control) in self.controls.into_iter().enumerate() {
             if folded.contains(&ix) {
-                forms.extend(control.fold);
+                if let Some(fold) = control.fold {
+                    forms.push(fold.items);
+                    notes.extend(fold.changed);
+                }
                 continue;
             }
             shown.push(ix);
@@ -592,18 +683,43 @@ impl PageHeader {
             );
         }
         let more = (!forms.is_empty()).then(|| {
-            Button::new(more_id)
-                .ghost()
-                .small()
-                .size(dp(CONTROL_HEIGHT))
-                .icon(IconName::Ellipsis)
-                .tooltip("More")
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, window, cx| {
-                    for form in &forms {
-                        menu = form(menu, window, cx);
-                    }
-                    menu
-                })
+            let dot = (!notes.is_empty()).then(|| {
+                badge_dot(Tone::Accent, Some(cx.theme().background), cx)
+                    .id(dot_id)
+                    .test_support()
+                    .absolute()
+                    .top(dp(-2.))
+                    .right(dp(-2.))
+            });
+            // What the folded controls are set to, when any isn't at its
+            // default: "More · Namespace payments · 2 columns hidden".
+            let tip: SharedString = std::iter::once(SharedString::from("More"))
+                .chain(notes)
+                .collect::<Vec<_>>()
+                .join(" · ")
+                .into();
+            div()
+                .relative()
+                .flex_none()
+                .child(
+                    Button::new(more_id)
+                        .ghost()
+                        .small()
+                        .size(dp(CONTROL_HEIGHT))
+                        .icon(IconName::Ellipsis)
+                        .accessibility_label(tip.clone())
+                        .tooltip(tip)
+                        .dropdown_menu_with_anchor(
+                            Anchor::TopRight,
+                            move |mut menu, window, cx| {
+                                for form in &forms {
+                                    menu = form(menu, window, cx);
+                                }
+                                menu
+                            },
+                        ),
+                )
+                .children(dot)
         });
         let controls = {
             let state = state.clone();
@@ -771,6 +887,8 @@ mod tests {
         pressed: Rc<Cell<usize>>,
         /// A long title after a breadcrumb, which truncates on a full row.
         breadcrumb: bool,
+        /// Whether each control is off its default: then it has a note.
+        changed: Rc<Cell<bool>>,
     }
 
     impl Render for Fitted {
@@ -798,7 +916,11 @@ mod tests {
                 } else {
                     let pressed = self.pressed.clone();
                     let handler: Handler = Rc::new(move |_, _| pressed.set(pressed.get() + ix));
-                    header.foldable(control, item(format!("Control {ix}"), handler))
+                    let note = self.changed.get().then(|| format!("note {ix}").into());
+                    header.foldable(
+                        control,
+                        Fold::from(item(format!("Control {ix}"), handler)).changed(note),
+                    )
                 };
             }
             header.render(window, cx).w_full()
@@ -846,11 +968,22 @@ mod tests {
         width: f32,
         breadcrumb: bool,
     ) -> (AnyWindowHandle, Rc<Cell<usize>>) {
+        another_with(cx, width, breadcrumb, Rc::default())
+    }
+
+    /// The same, its controls off their defaults while `changed` is set.
+    fn another_with(
+        cx: &mut TestAppContext,
+        width: f32,
+        breadcrumb: bool,
+        changed: Rc<Cell<bool>>,
+    ) -> (AnyWindowHandle, Rc<Cell<usize>>) {
         let pressed = Rc::new(Cell::new(0));
         let handle = cx.open_window(size(px(width), px(560.)), |window, cx| {
             let view = cx.new(|_| Fitted {
                 pressed: pressed.clone(),
                 breadcrumb,
+                changed: changed.clone(),
             });
             Root::new(view, window, cx)
         });
@@ -1040,6 +1173,75 @@ mod tests {
         })
         .unwrap();
         assert_eq!(pressed.get(), *folded.last().unwrap());
+    }
+
+    #[test]
+    fn a_value_shows_after_its_label_and_a_long_one_is_cut() {
+        assert_eq!(
+            value_label("Namespace", "payments"),
+            ("Namespace · payments".into(), false)
+        );
+        let exact = "a".repeat(VALUE_CHARS);
+        assert_eq!(
+            value_label("Node", &exact),
+            (format!("Node · {exact}").into(), false)
+        );
+        // Characters, not bytes: 30 accented ones keep 23 and the "…".
+        let long = "é".repeat(30);
+        let (label, cut) = value_label("Namespace", &long);
+        assert!(cut);
+        assert_eq!(label, format!("Namespace · {}…", "é".repeat(23)));
+    }
+
+    #[test]
+    fn hidden_columns_read_as_a_count() {
+        assert_eq!(hidden_note(0), "no columns hidden");
+        assert_eq!(hidden_note(1), "1 column hidden");
+        assert_eq!(hidden_note(3), "3 columns hidden");
+    }
+
+    #[gpui_kit::test]
+    fn a_folded_control_off_its_default_marks_the_menu_and_says_why(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx, 760., 20.);
+        cx.update_window(handle, |_, window, _| window.remove_window())
+            .unwrap();
+        // At 1000 the chips go below and only the last controls fold.
+        let changed = Rc::new(Cell::new(false));
+        let (handle, _) = another_with(cx, 1000., false, changed.clone());
+        let quiet = settle(cx, handle);
+        assert!(quiet.more.is_some());
+        cx.update_window(handle, |_, window, _| {
+            assert!(window.try_find("app-more-dot").is_none());
+            assert_eq!(window.find("app-more").label(), Some("More"));
+        })
+        .unwrap();
+        // Every control has a note; only the folded ones' join the menu's.
+        changed.set(true);
+        let placed = settle(cx, handle);
+        let notes: Vec<String> = (1..CONTROLS.len())
+            .filter(|ix| placed.shown.iter().all(|(shown, _)| shown != ix))
+            .map(|ix| format!("note {ix}"))
+            .collect();
+        // Control 1 shows on the row: its note stays out of the menu's.
+        assert!(placed.shown.iter().any(|(shown, _)| *shown == 1));
+        assert!(!notes.is_empty() && !notes.contains(&"note 1".to_string()));
+        let tip = format!("More · {}", notes.join(" · "));
+        cx.update_window(handle, |_, window, _| {
+            let more = window.find("app-more").bounds();
+            let dot = window.find("app-more-dot").bounds();
+            // At the button's top right corner.
+            assert!(dot.right() > more.right() - px(4.) && dot.top() < more.top() + px(4.));
+            assert_eq!(window.find("app-more").label(), Some(tip.as_str()));
+        })
+        .unwrap();
+        // Wide, nothing folds: no menu, so no dot.
+        cx.simulate_window_resize(handle, size(px(1800.), px(560.)));
+        let wide = settle(cx, handle);
+        assert!(wide.more.is_none());
+        cx.update_window(handle, |_, window, _| {
+            assert!(window.try_find("app-more-dot").is_none());
+        })
+        .unwrap();
     }
 
     /// A header with no controls and a meta line of `parts` like parts.

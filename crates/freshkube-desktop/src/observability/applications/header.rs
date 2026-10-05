@@ -132,17 +132,37 @@ impl ObservabilityPage {
                 .chips(Some(line().flex_wrap().child(segment).child(chips)))
                 .secondary(categories)
                 .meta(meta)
-                .foldable(
-                    self.namespace_picker(cx),
-                    freshkube_ui::page::submenu("Namespace", self.namespace_items(cx)),
-                )
+                .foldable(self.namespace_picker(cx), self.namespace_fold(cx))
                 .foldable(
                     self.application_columns_menu(columns.clone()),
-                    freshkube_ui::page::submenu("Columns", columns),
+                    freshkube_ui::page::columns_fold(
+                        columns,
+                        self.hidden_application_columns.len(),
+                        self.hidden_application_columns.is_empty(),
+                    ),
                 ),
             cx,
         )
         .render(window, cx)
+    }
+
+    /// The namespace picker's folded form: the namespace shown, noted while
+    /// one is picked.
+    fn namespace_fold(&self, cx: &Context<Self>) -> freshkube_ui::page::Fold {
+        let value = self
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "All namespaces".into());
+        freshkube_ui::page::Fold::from(freshkube_ui::page::submenu_value(
+            "Namespace",
+            value,
+            self.namespace_items(cx),
+        ))
+        .changed(
+            self.namespace
+                .as_ref()
+                .map(|name| format!("Namespace {name}").into()),
+        )
     }
 
     /// Applies a namespace from the picker or its folded form.
