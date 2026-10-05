@@ -268,6 +268,10 @@ pub(crate) struct Loader<T> {
     state: Snapshot<T, Target>,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
+    /// Rises whenever what [`data`](Self::data) or [`error`](Self::error)
+    /// return may have changed, so a screen derives its display data again
+    /// only then.
+    revision: u64,
 }
 
 impl<T> Default for Loader<T> {
@@ -276,6 +280,7 @@ impl<T> Default for Loader<T> {
             state: Snapshot::default(),
             job: None,
             task: None,
+            revision: 0,
         }
     }
 }
@@ -283,7 +288,13 @@ impl<T> Default for Loader<T> {
 impl<T: Send + 'static> Loader<T> {
     /// Forgets data and cancels in-flight work, e.g. when the target changes.
     pub(crate) fn reset(&mut self) {
+        let revision = self.revision + 1;
         *self = Self::default();
+        self.revision = revision;
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Runs `work` on Tokio for `identity`. The result lands only if this is
@@ -301,6 +312,7 @@ impl<T: Send + 'static> Loader<T> {
         cx: &mut Context<V>,
     ) {
         let request = self.state.begin(identity);
+        self.revision += 1;
         let (job, receiver) = backend::spawn_job(
             runtime,
             SCREEN_DEADLINE,
@@ -315,6 +327,7 @@ impl<T: Send + 'static> Loader<T> {
                 let loader = slot(view);
                 if loader.state.apply(&request, result) {
                     loader.job = None;
+                    loader.revision += 1;
                 }
                 cx.notify();
             });
@@ -327,6 +340,7 @@ impl<T: Send + 'static> Loader<T> {
         self.task = None;
         let request = self.state.begin(identity);
         self.state.apply(&request, result);
+        self.revision += 1;
     }
 
     pub(crate) fn data(&self) -> Option<&T> {

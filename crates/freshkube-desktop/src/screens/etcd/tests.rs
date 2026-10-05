@@ -3,14 +3,74 @@ use std::sync::Arc;
 use freshkube_core::inspection::{InspectionSource, InspectionUnavailable, assemble_etcd_health};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{AppContext, Entity, SharedString, TestAppContext, WindowHandle, px, size};
 use talos_rs::{EtcdAlarm, EtcdAlarmType, EtcdMemberInfo, EtcdMemberStatus};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use super::{EtcdScreen, MemberRole, ScreenPanel, ScreenSource, quorum_view};
+use super::{
+    EtcdHealthSnapshot, EtcdScreen, MemberRole, MemberState, ScreenPanel, ScreenSource, alarm_tone,
+    quorum_banner, quorum_view,
+};
 use crate::backend::Target;
+use crate::desktop::{layout_check, tests::fixture as app};
+use crate::ui::Tone;
 use crate::{fixture, presentation};
+
+/// The page's frame reaches the split, whose details pane is always drawn
+/// beside or below the table, so the table is checked on its own.
+const ETCD_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "etcd-page",
+    title: "etcd-title",
+    title_text: "etcd",
+    content: "etcd-split",
+};
+
+const ETCD_PAGE: layout_check::TablePage = layout_check::TablePage {
+    page: "etcd-page",
+    title: "etcd-title",
+    title_text: "etcd",
+    table: "etcd-table-scroll",
+    list: "etcd-list",
+};
+
+const ETCD_TABLE: layout_check::Table = layout_check::Table {
+    table: Some("etcd-table-scroll"),
+    list: "etcd-list",
+};
+
+/// The row of the member at `ix` in the roster: rows are named by member.
+fn row(screen: &Entity<EtcdScreen>, ix: usize, cx: &gpui_kit::App) -> SharedString {
+    format!("etcd-member-{:x}", screen.read(cx).members()[ix].info.id).into()
+}
+
+fn role(id: u64) -> SharedString {
+    format!("etcd-role-{id:x}").into()
+}
+
+fn snapshot(members: u64, answered: impl IntoIterator<Item = (u64, u64)>) -> EtcdHealthSnapshot {
+    assemble_etcd_health(
+        freshkube_core::inspection::InspectionTarget::new("cp-1", "10.0.0.1"),
+        (1..=members)
+            .map(|id| info(id, &format!("cp-{id}")))
+            .collect(),
+        answered
+            .into_iter()
+            .map(|(id, leader)| status(id, leader))
+            .collect(),
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+/// Shows `snapshot` as the screen's answer for its own target.
+fn answer(screen: &Entity<EtcdScreen>, snapshot: EtcdHealthSnapshot, cx: &mut gpui_kit::App) {
+    let target = source("talos-cp-fra1-01").target;
+    screen.update(cx, |screen, cx| {
+        screen.loader.resolve(target, Ok(snapshot));
+        cx.notify();
+    });
+}
 
 fn source(node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -85,11 +145,12 @@ fn keyboard_selects_members_and_updates_details(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(screen.read(cx).members().len(), 3);
-        window.click(("etcd-member", 0usize), cx);
-        assert_eq!(window.find(("etcd-member", 0usize)).selected(), Some(true));
+        let rows: Vec<SharedString> = (0..3).map(|ix| row(&screen, ix, cx)).collect();
+        window.click(rows[0].clone(), cx);
+        assert_eq!(window.find(rows[0].clone()).selected(), Some(true));
         window.press("down", cx);
-        assert_eq!(window.find(("etcd-member", 1usize)).selected(), Some(true));
-        assert_eq!(window.find(("etcd-member", 0usize)).selected(), Some(false));
+        assert_eq!(window.find(rows[1].clone()).selected(), Some(true));
+        assert_eq!(window.find(rows[0].clone()).selected(), Some(false));
         let name = screen
             .read(cx)
             .selected_member()
@@ -105,7 +166,7 @@ fn keyboard_selects_members_and_updates_details(cx: &mut TestAppContext) {
                 .is_some_and(|label| label.contains(&name))
         );
         window.press("end", cx);
-        assert_eq!(window.find(("etcd-member", 2usize)).selected(), Some(true));
+        assert_eq!(window.find(rows[2].clone()).selected(), Some(true));
         assert!(
             window
                 .find("etcd-details")
@@ -113,7 +174,10 @@ fn keyboard_selects_members_and_updates_details(cx: &mut TestAppContext) {
                 .is_some_and(|label| label.contains("talos-cp-fra1-03-baremetal-rack-b7"))
         );
         window.press("home", cx);
-        assert_eq!(window.find(("etcd-member", 0usize)).selected(), Some(true));
+        assert_eq!(window.find(rows[0].clone()).selected(), Some(true));
+        window.press("escape", cx);
+        assert_eq!(window.find(rows[0].clone()).selected(), Some(false));
+        assert!(window.try_find("etcd-details").is_none());
     })
     .unwrap();
 }
@@ -123,10 +187,15 @@ fn leader_is_marked_and_quorum_is_healthy(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-02");
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.find(("etcd-leader", 0usize));
-        assert!(window.try_find(("etcd-leader", 1usize)).is_none());
-        assert_eq!(window.find(("etcd-role", 0usize)).label(), Some("Leader"));
-        assert_eq!(window.find(("etcd-role", 1usize)).label(), Some("Follower"));
+        let ids: Vec<u64> = screen
+            .read(cx)
+            .members()
+            .iter()
+            .map(|m| m.info.id)
+            .collect();
+        assert_eq!(window.find(role(ids[0])).label(), Some("Leader"));
+        assert_eq!(window.find(role(ids[1])).label(), Some("Follower"));
+        assert_eq!(window.find(role(ids[2])).label(), Some("Follower"));
         let label = window.find("etcd-quorum").label().unwrap().to_owned();
         assert!(
             label.contains("tolerates 1 additional member failure"),
@@ -135,7 +204,12 @@ fn leader_is_marked_and_quorum_is_healthy(cx: &mut TestAppContext) {
         assert!(window.try_find("partial-notice").is_none());
         let snapshot = screen.read(cx).loader.data().unwrap().clone();
         assert!(snapshot.quorum.has_quorum());
-        window.find("etcd-alarms");
+        // A calm quorum and no alarms: no banners, the meta says so.
+        assert!(window.try_find("etcd-quorum-banner").is_none());
+        assert!(window.try_find("etcd-alarms").is_none());
+        window.find("etcd-scope");
+        let meta = &screen.read(cx).derived.meta_after;
+        assert!(meta.iter().any(|part| part == "no alarms"), "{meta:?}");
     })
     .unwrap();
 }
@@ -157,15 +231,8 @@ fn silent_member_is_not_reported_rather_than_failed(cx: &mut TestAppContext) {
             cx.notify();
         });
         window.render_frame(cx);
-        assert_eq!(
-            window.find(("etcd-role", 2usize)).label(),
-            Some("Not reported")
-        );
-        let row = window
-            .find(("etcd-member", 2usize))
-            .label()
-            .unwrap()
-            .to_owned();
+        assert_eq!(window.find(role(3)).label(), Some("Not reported"));
+        let row = window.find("etcd-member-3").label().unwrap().to_owned();
         assert!(!row.to_lowercase().contains("fail"), "{row}");
         assert!(!row.to_lowercase().contains("down"), "{row}");
         window.find("partial-notice");
@@ -176,7 +243,14 @@ fn silent_member_is_not_reported_rather_than_failed(cx: &mut TestAppContext) {
             quorum.contains("tolerates 0 additional member failures"),
             "{quorum}"
         );
-        window.click(("etcd-member", 2usize), cx);
+        // A leader and no failure to spare: at risk, a warning, not critical.
+        assert!(
+            window
+                .find("etcd-quorum-banner")
+                .label()
+                .is_some_and(|label| label.starts_with("Quorum at risk")),
+        );
+        window.click("etcd-member-3", cx);
         window.render_frame(cx);
         assert_eq!(
             screen.read(cx).selected_member().map(MemberRole::of),
@@ -285,4 +359,250 @@ fn silent_target_offers_retry_without_data(cx: &mut TestAppContext) {
         assert!(window.try_find("etcd-list").is_none());
     })
     .unwrap();
+}
+
+#[test]
+fn quorum_banners_come_from_the_members_answers() {
+    let banner = |members, answered: &[(u64, u64)]| {
+        quorum_banner(&snapshot(members, answered.iter().copied()))
+            .map(|banner| (banner.tone, banner.lead, banner.body))
+    };
+    // Members answered and none reports a leader: lost, critical.
+    let (tone, lead, body) = banner(3, &[(1, 0), (2, 0), (3, 0)]).unwrap();
+    assert_eq!((tone, lead), (Tone::Crit, "No quorum"));
+    assert!(body.starts_with("3 of 3 voting members answered"), "{body}");
+    // A leader and no failure to spare.
+    let (tone, lead, body) = banner(3, &[(1, 1), (2, 1)]).unwrap();
+    assert_eq!((tone, lead), (Tone::Warn, "Quorum at risk"));
+    assert!(
+        body.contains("2 of 3") && body.contains("needs 2") && body.contains("one more failure"),
+        "{body}"
+    );
+    let (tone, lead, _) = banner(2, &[(1, 1), (2, 1)]).unwrap();
+    assert_eq!((tone, lead), (Tone::Warn, "Quorum at risk"));
+    // Too few answered to confirm, but a leader is reported: never critical.
+    let (tone, lead, body) = banner(5, &[(1, 1), (2, 1)]).unwrap();
+    assert_eq!((tone, lead), (Tone::Warn, "Quorum unconfirmed"));
+    assert!(
+        body.contains("2 of 5") && body.contains("needs 3"),
+        "{body}"
+    );
+    // Calm: a failure to spare, or one member by design.
+    assert!(banner(3, &[(1, 1), (2, 1), (3, 1)]).is_none());
+    assert!(banner(5, &[(1, 1), (2, 1), (3, 1), (4, 1)]).is_none());
+    assert!(banner(1, &[(1, 1)]).is_none());
+
+    // The summary agrees with the banner: lost when the banner says so, and
+    // a single member calm.
+    let summary = |members, answered: &[(u64, u64)]| {
+        let view = quorum_view(&snapshot(members, answered.iter().copied()));
+        (view.tone, view.label)
+    };
+    assert_eq!(
+        summary(3, &[(1, 0), (2, 0), (3, 0)]),
+        (Tone::Crit, "No quorum")
+    );
+    assert_eq!(summary(1, &[(1, 1)]), (Tone::Good, "Quorum"));
+    assert_eq!(summary(2, &[(1, 1), (2, 1)]), (Tone::Warn, "Quorum"));
+    assert_eq!(
+        summary(3, &[(1, 1), (2, 1), (3, 1)]),
+        (Tone::Good, "Quorum")
+    );
+    // Nothing answered: not reported, which the partial notice says.
+    assert!(banner(3, &[]).is_none());
+}
+
+#[gpui_kit::test]
+fn a_lost_quorum_shows_a_critical_banner(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        answer(&screen, snapshot(3, [(1, 0), (2, 0), (3, 0)]), cx);
+        window.render_frame(cx);
+        let label = window
+            .find("etcd-quorum-banner")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(label.starts_with("No quorum"), "{label}");
+        // No member shows green under it: each answers, but follows no
+        // leader, so its glyph warns and its role says so.
+        for id in 1..=3u64 {
+            let glyph = SharedString::from(format!("etcd-member-health-{id:x}"));
+            assert_eq!(window.find(glyph).label(), Some("No leader"));
+            let role = SharedString::from(format!("etcd-role-{id:x}"));
+            assert_eq!(window.find(role).label(), Some("No leader"));
+        }
+        assert_eq!(
+            window.find("etcd-tally-without-a-leader").label(),
+            Some("3 without a leader")
+        );
+        assert_eq!(window.find("etcd-tally-healthy").label(), Some("0 healthy"));
+        assert!(
+            screen
+                .read(cx)
+                .derived
+                .rows
+                .iter()
+                .all(|row| row.state.tone() == Tone::Warn)
+        );
+        // A recovered answer takes the banner away.
+        answer(&screen, snapshot(3, [(1, 1), (2, 1), (3, 1)]), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("etcd-quorum-banner").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_alarm_banner_shows_three_and_counts_the_rest(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        let alarms = (1..=5)
+            .map(|id| EtcdAlarm {
+                node: format!("cp-{id}"),
+                member_id: id,
+                alarm_type: EtcdAlarmType::NoSpace,
+            })
+            .collect();
+        let snapshot = assemble_etcd_health(
+            freshkube_core::inspection::InspectionTarget::new("cp-1", "10.0.0.1"),
+            (1..=5).map(|id| info(id, &format!("cp-{id}"))).collect(),
+            (1..=5).map(|id| status(id, 1)).collect(),
+            alarms,
+            Vec::new(),
+        );
+        answer(&screen, snapshot, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("etcd-alarms").label(), Some("etcd alarms"));
+        // NOSPACE refuses writes: the banner is as critical as its rows.
+        assert_eq!(screen.read(cx).derived.alarm_tone, Tone::Crit);
+        assert_eq!(
+            window.find("etcd-tally-with-issues").label(),
+            Some("5 with issues")
+        );
+        for ix in 0..3usize {
+            window.find(("etcd-alarm", ix));
+        }
+        assert!(window.try_find(("etcd-alarm", 3usize)).is_none());
+        window.find("etcd-alarm-more");
+        // Each member's own alarm stays in its details.
+        window.click("etcd-member-5", cx);
+        window.render_frame(cx);
+        window.find("etcd-details");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn status_chips_filter_the_members_and_clear(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        answer(&screen, snapshot(3, [(1, 1), (2, 1)]), cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("etcd-tally-not-reported")
+                .label()
+                .is_some_and(|label| label.starts_with('1')),
+        );
+        window.click("etcd-tally-not-reported", cx);
+        window.render_frame(cx);
+        window.find("etcd-member-3");
+        assert!(window.try_find("etcd-member-1").is_none());
+        window.click("etcd-tally-not-reported", cx);
+        window.render_frame(cx);
+        window.find("etcd-member-1");
+        window.find("etcd-member-3");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn etcd_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = app(cx, 1280., 880.);
+    for size in [None, Some(20.)] {
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(size) = size {
+                crate::text_size::set(size, cx);
+            }
+            window.press("secondary-6", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // At rest the table is the page's; with a member selected the
+            // split of table and details runs edge to edge in its place.
+            layout_check::assert_table_page(window, cx, &ETCD_PAGE);
+            window.press("down", cx);
+            layout_check::assert_edge_frame(window, cx, &ETCD_FRAME);
+            layout_check::assert_table(window, cx, &ETCD_TABLE);
+            window.press("escape", cx);
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn the_details_sit_beside_the_table_when_wide_and_below_when_narrow(cx: &mut TestAppContext) {
+    for (width, height, text, beside) in [(1280., 880., None, true), (760., 560., Some(20.), false)]
+    {
+        let (_runtime, handle, _view) = app(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            window.press("secondary-6", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // At rest the table has the page; a selection opens the details.
+            assert!(window.try_find("etcd-details").is_none());
+            window.press("down", cx);
+            window.render_frame(cx);
+            let table = window.find("etcd-table-scroll").bounds();
+            let details = window.find("etcd-details").bounds();
+            if beside {
+                assert!(details.left() >= table.right(), "{table:?} {details:?}");
+            } else {
+                assert!(details.top() >= table.bottom(), "{table:?} {details:?}");
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn every_etcd_alarm_is_critical() {
+    // NOSPACE stops writes and CORRUPT is data corruption; a kind this app
+    // doesn't know counts its member as having issues, so it matches.
+    for alarm in [
+        EtcdAlarmType::NoSpace,
+        EtcdAlarmType::Corrupt,
+        EtcdAlarmType::Unknown(9),
+    ] {
+        assert_eq!(alarm_tone(&alarm), Tone::Crit, "{alarm:?}");
+    }
+}
+
+#[test]
+fn a_member_without_a_leader_warns_and_never_reads_healthy() {
+    let lost = snapshot(3, [(1, 0), (2, 0), (3, 0)]);
+    for member in &lost.members {
+        assert_eq!(MemberState::of(member), MemberState::NoLeader);
+        assert_eq!(MemberRole::of(member), MemberRole::NoLeader);
+    }
+    let led = snapshot(3, [(1, 1), (2, 1), (3, 1)]);
+    let states: Vec<_> = led.members.iter().map(MemberState::of).collect();
+    assert_eq!(states, [MemberState::Healthy; 3]);
+    // A member that answered nothing stays not reported, not leaderless.
+    let silent = snapshot(3, [(1, 1), (2, 1)]);
+    assert_eq!(
+        MemberState::of(&silent.members[2]),
+        MemberState::NotReported
+    );
 }

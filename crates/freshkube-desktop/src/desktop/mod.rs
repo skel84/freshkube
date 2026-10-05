@@ -17,7 +17,7 @@ mod startup;
 mod system_services;
 mod target;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod view;
 
 use crate::{

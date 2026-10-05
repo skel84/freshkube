@@ -9,7 +9,7 @@ use gpui_kit::{
 use std::cell::Cell;
 use std::rc::Rc;
 
-pub(super) fn fixture(
+pub(crate) fn fixture(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
