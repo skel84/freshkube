@@ -369,6 +369,64 @@ fn groups_put_failing_then_warnings_then_last_known_evidence() {
 }
 
 #[test]
+fn pod_tones_agree_with_the_pods_page() {
+    use freshkube_core::workloads::PodIssue;
+    for issue in [
+        PodIssue::CrashLoopBackOff,
+        PodIssue::ImagePullBackOff,
+        PodIssue::ErrImagePull,
+        PodIssue::Pending,
+        PodIssue::OOMKilled,
+        PodIssue::Error,
+        PodIssue::HighRestarts(6),
+        PodIssue::Unknown("ContainerCreating".into()),
+    ] {
+        let tone = pod_issue_tone(&issue);
+        // The Pods page draws the skull from the printed status, which
+        // carries the same reason.
+        assert_eq!(
+            tone == Tone::Died,
+            crate::resources::rows::died(issue.label()),
+            "{issue:?}"
+        );
+        let expected = match issue {
+            PodIssue::CrashLoopBackOff | PodIssue::OOMKilled | PodIssue::Error => Tone::Died,
+            PodIssue::ImagePullBackOff | PodIssue::ErrImagePull => Tone::Crit,
+            _ => Tone::Warn,
+        };
+        assert_eq!(tone, expected, "{issue:?}");
+    }
+}
+
+#[test]
+fn a_crash_looping_pod_draws_the_skull_among_the_failing() {
+    let summary = example::summary("prod-fra", now().timestamp());
+    let attention = build(&[], Some(&summary), None, now());
+    let crashing: Vec<_> = attention
+        .rows
+        .iter()
+        .filter(|row| row.kind == "Pod" && row.reason.as_ref() == "CrashLoopBackOff")
+        .collect();
+    assert!(!crashing.is_empty(), "the example has a crash-looping pod");
+    for row in crashing {
+        assert_eq!(row.tone, Tone::Died, "{}", row.name);
+        assert_eq!(row.group, AttentionGroup::Failing, "{}", row.name);
+    }
+}
+
+#[test]
+fn died_counts_as_failing() {
+    let attention = finish(vec![
+        row("warn", "c", Tone::Warn, None, "n"),
+        row("died", "a", Tone::Died, None, "n"),
+        row("crit", "b", Tone::Crit, None, "n"),
+    ]);
+    let ids: Vec<_> = attention.rows.iter().map(|row| row.id.as_ref()).collect();
+    assert_eq!(ids, ["died", "crit", "warn"]);
+    assert_eq!(attention.details, ["2 problems", "1 problem", "0 problems"]);
+}
+
+#[test]
 fn group_counts_include_rows_past_the_cap() {
     let mut rows = Vec::new();
     for ix in 0..60 {

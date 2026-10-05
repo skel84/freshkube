@@ -5,6 +5,33 @@ use super::*;
 /// The column's children before its first row: the area's caption.
 const FIRST_ROW: usize = 1;
 
+/// Scrolls a column's `item` into view. Scrolling needs the column's size,
+/// which the first frame of a window doesn't know yet; then this asks for
+/// another frame and returns false.
+pub(super) fn reveal_item(scroll: &ScrollHandle, item: Option<usize>, window: &mut Window) -> bool {
+    if scroll.bounds().size.height <= px(0.) {
+        window.request_animation_frame();
+        return false;
+    }
+    if let Some(item) = item {
+        scroll.scroll_to_item(item);
+    }
+    true
+}
+
+/// A column's scrolling list with Kit's scrollbar over it, shown on hover.
+pub(super) fn with_scrollbar(
+    list: impl IntoElement,
+    scroll: &ScrollHandle,
+    id: &'static str,
+) -> Div {
+    div().relative().child(list).child(
+        Scrollbar::vertical(scroll)
+            .id(id)
+            .mode(ScrollbarMode::Hover),
+    )
+}
+
 impl Pilot {
     pub(in crate::desktop) fn render_column(
         &mut self,
@@ -17,10 +44,10 @@ impl Pilot {
             return None;
         }
         if self.column_collapsed(window) {
-            return Some(self.render_collapsed_column(cx));
+            return Some(self.render_collapsed_column(window, cx));
         }
         if self.area == Area::Observability {
-            return Some(self.render_observability_column(false, cx));
+            return Some(self.render_observability_column(false, window, cx));
         }
         let p = palette(cx);
         let current = (self.page == Page::Resources).then(|| self.resource_kind.key());
@@ -37,21 +64,17 @@ impl Pilot {
             Area::Monitoring => (self.monitoring_rows(cx), None, true),
             _ => (self.control_plane_rows(cx), None, true),
         };
-        // Scrolling needs the column's size, which the first frame of a
-        // window doesn't know yet; the reveal waits a frame then.
-        if self.column_reveal.is_some() {
-            if self.column_scroll.bounds().size.height > px(0.) {
-                if let Some(row) = reveal {
-                    self.column_scroll.scroll_to_item(FIRST_ROW + row);
-                }
-                // Rows still being discovered will grow the column; it is
-                // revealed again once they arrive.
-                if settled {
-                    self.column_reveal = None;
-                }
-            } else {
-                window.request_animation_frame();
-            }
+        // Rows still being discovered will grow the column; it is revealed
+        // again once they arrive.
+        if self.column_reveal.is_some()
+            && reveal_item(
+                &self.column_scroll,
+                reveal.map(|row| FIRST_ROW + row),
+                window,
+            )
+            && settled
+        {
+            self.column_reveal = None;
         }
         let column = v_flex()
             .id("nav-column")
@@ -89,20 +112,13 @@ impl Pilot {
                 this.child(self.render_namespaces(cx))
             });
         Some(
-            div()
-                .relative()
+            with_scrollbar(column, &self.column_scroll, "nav-column-scrollbar")
                 .w(dp(COLUMN_WIDTH))
                 .flex_none()
                 .h_full()
                 .bg(cx.theme().background)
                 .border_r_1()
                 .border_color(p.line)
-                .child(column)
-                .child(
-                    Scrollbar::vertical(&self.column_scroll)
-                        .id("nav-column-scrollbar")
-                        .mode(ScrollbarMode::Hover),
-                )
                 .into_any_element(),
         )
     }

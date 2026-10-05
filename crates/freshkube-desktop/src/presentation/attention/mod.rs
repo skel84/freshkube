@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use freshkube_core::{
     cluster_overview::ClusterOverview,
     kubernetes_summary::KubernetesSummary,
-    workloads::{HealthState, WorkloadKind},
+    workloads::{HealthState, PodIssue, WorkloadKind},
 };
 use gpui_kit::SharedString;
 use std::collections::BTreeMap;
@@ -40,7 +40,7 @@ pub(crate) enum AttentionGroup {
 impl AttentionGroup {
     fn of(tone: Tone) -> Self {
         match tone {
-            Tone::Crit => Self::Failing,
+            Tone::Crit | Tone::Died => Self::Failing,
             Tone::Warn => Self::Warning,
             _ => Self::Unknown,
         }
@@ -277,11 +277,7 @@ fn append_services(row: &NodeRow, rows: &mut Vec<AttentionRow>) {
 fn append_pods(summary: &KubernetesSummary, rows: &mut Vec<AttentionRow>) {
     if let Some(pods) = summary.pods.loaded() {
         for pod in &pods.issues {
-            let tone = if pod.issue.severity() == HealthState::Failing {
-                Tone::Crit
-            } else {
-                Tone::Warn
-            };
+            let tone = pod_issue_tone(&pod.issue);
             rows.push(AttentionRow {
                 id: format!("attention-pod-{}-{}", pod.namespace, pod.name).into(),
                 kind: "Pod",
@@ -302,6 +298,19 @@ fn append_pods(summary: &KubernetesSummary, rows: &mut Vec<AttentionRow>) {
                 since: pod.created_at,
             });
         }
+    }
+}
+
+/// A pod's tone: the skull when a container ran and stopped, critical when
+/// it otherwise fails, such as an image it can't pull, and a warning
+/// otherwise.
+fn pod_issue_tone(issue: &PodIssue) -> Tone {
+    if issue.died() {
+        Tone::Died
+    } else if issue.severity() == HealthState::Failing {
+        Tone::Crit
+    } else {
+        Tone::Warn
     }
 }
 
