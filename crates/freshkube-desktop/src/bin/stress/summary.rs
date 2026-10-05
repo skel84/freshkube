@@ -380,6 +380,21 @@ pub(super) fn watch(
     stream_response(receiver, "application/json")
 }
 
+/// metrics.k8s.io use for every stress node, spread so some pass 85% of
+/// allocatable, sampled now as metrics-server would report it.
+pub(super) fn node_metrics() -> Response<Body> {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let items: Vec<Value> = (0..100)
+        .map(|ix| {
+            json!({"metadata":{"name":format!("worker-{ix}")},"timestamp":timestamp,"window":"15s",
+                "usage":{"cpu":format!("{}m", 300 + ix * 137 % 7000),"memory":format!("{}Mi", 2048 + ix * 997 % 28000)}})
+        })
+        .collect();
+    json_response(
+        json!({"apiVersion":"metrics.k8s.io/v1beta1","kind":"NodeMetricsList","metadata":{},"items":items}),
+    )
+}
+
 pub(super) fn summary_list(
     world: &World,
     path: &str,
@@ -396,7 +411,7 @@ pub(super) fn summary_list(
     let (kind, mut items): (&str,Vec<Value>) = match path {
         "/apis/apps/v1/deployments" => ("Deployment",(0..if large {2000} else {20}).map(|ix|json!({"metadata":meta(format!("deploy-{ix}"),Some(format!("ns-{:02}",ix%NAMESPACES))),"status":{"replicas":3,"readyReplicas":if ix%10==0 {0} else {3},"availableReplicas":if ix%10==0 {0} else {3}}})).collect()),
         "/apis/apps/v1/statefulsets" => ("StatefulSet",vec![]), "/apis/apps/v1/daemonsets" => ("DaemonSet",vec![]),
-        "/api/v1/nodes" => ("Node",(0..100).map(|ix|json!({"metadata":meta(format!("worker-{ix}"),None),"status":{"conditions":[{"type":"Ready","status":if ix%10==0 {"False"} else {"True"}}]}})).collect()),
+        "/api/v1/nodes" => ("Node",(0..100).map(|ix|json!({"metadata":meta(format!("worker-{ix}"),None),"status":{"conditions":[{"type":"Ready","status":if ix%10==0 {"False"} else {"True"}}],"capacity":{"cpu":"8","memory":"32Gi","pods":"110"},"allocatable":{"cpu":"7500m","memory":"30Gi","pods":"110"}}})).collect()),
         "/api/v1/namespaces" => ("Namespace",(0..NAMESPACES).map(|ix|json!({"metadata":meta(format!("ns-{ix:02}"),None)})).collect()),
         "/api/v1/persistentvolumeclaims" => ("PersistentVolumeClaim",vec![]), "/api/v1/persistentvolumes" => ("PersistentVolume",vec![]),
         "/api/v1/events" => ("Event",(0..if large {5000} else {0}).map(|ix|json!({"metadata":meta(format!("warning-{ix}"),Some(format!("ns-{:02}",ix%NAMESPACES))),"involvedObject":{"kind":"Pod","name":format!("pod-{ix}"),"namespace":format!("ns-{:02}",ix%NAMESPACES)},"type":"Warning","reason":"BackOff","message":"Example warning","lastTimestamp":world.created.to_rfc3339()})).collect()),
@@ -453,6 +468,32 @@ mod tests {
 
     async fn value(response: Response<Body>) -> Value {
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn node_metrics_cover_every_node_within_allocatable() {
+        let world = World::new(Scenario::Summary);
+        let nodes = value(summary_list(&world, "/api/v1/nodes", &|_| None).unwrap()).await;
+        let metrics = value(node_metrics()).await;
+        let names = |list: &Value, at: &str| -> Vec<String> {
+            list["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item.pointer(at).unwrap().as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(
+            names(&metrics, "/metadata/name"),
+            names(&nodes, "/metadata/name")
+        );
+        let cpu: Vec<usize> = names(&metrics, "/usage/cpu")
+            .iter()
+            .map(|cpu| cpu.trim_end_matches('m').parse().unwrap())
+            .collect();
+        assert!(cpu.iter().all(|cpu| *cpu < 7500));
+        assert!(cpu.iter().any(|cpu| *cpu * 100 >= 7500 * 85));
+        assert_eq!(nodes["items"][0]["status"]["allocatable"]["cpu"], "7500m");
     }
 
     #[tokio::test]

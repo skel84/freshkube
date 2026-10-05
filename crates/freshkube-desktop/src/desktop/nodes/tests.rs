@@ -5,7 +5,7 @@ use crate::{
     resources::example,
     ui::Tone,
 };
-use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+use gpui_kit::{AppContext, Focusable, TestAppContext, test::TestWindowExt};
 
 fn projection_sources() -> (
     presentation::NodeSummary,
@@ -54,6 +54,300 @@ fn projection_sources() -> (
     kube.taints = vec!["dedicated=infra:NoSchedule".into()];
     kube.pods = 7;
     (talos, kube)
+}
+
+#[test]
+fn resource_cells_keep_request_use_allocatable_and_stale_inputs_for_shared_meters() {
+    use freshkube_core::resources::{Amounts, NodeUsage};
+    let (talos, mut kube) = projection_sources();
+    kube.allocatable =
+        serde_json::from_value(serde_json::json!({"cpu":"4","memory":"8Gi"})).unwrap();
+    kube.requests = Amounts {
+        cpu_millis: Some(1000.),
+        memory_bytes: Some(1024. * 1024. * 1024.),
+    };
+    let row = join::join(&[talos], &[kube], true, true).remove(0);
+    for (used, stale) in [(500., false), (1500., false), (3400., false), (3500., true)] {
+        let sample = NodeUsage {
+            name: row.name.to_string(),
+            usage: Amounts {
+                cpu_millis: Some(used),
+                memory_bytes: Some(2. * 1024. * 1024. * 1024.),
+            },
+            sampled_at: None,
+        };
+        let cells =
+            super::resource::RowResources::new(&row, Some(&sample), stale, "read failed", true);
+        assert_eq!(cells.cpu.used, Some(used));
+        assert_eq!(cells.cpu.request, Some(1000.));
+        assert_eq!(cells.cpu.allocatable, Some(4000.));
+        assert_eq!(cells.cpu.stale, stale);
+        assert_eq!(
+            cells.cpu.text,
+            if used < 1000. {
+                "500m"
+            } else if used == 1500. {
+                "1.5"
+            } else if used == 3400. {
+                "3.4"
+            } else {
+                "3.5"
+            }
+        );
+        assert!(
+            cells
+                .cpu
+                .tooltip
+                .contains("requested 1.0 · allocatable 4.0")
+        );
+        assert!(
+            cells
+                .cpu
+                .tooltip
+                .contains("load averages: 1.00 · 2.00 · 3.00 (not CPU use)")
+        );
+        assert_eq!(
+            cells.cpu.tooltip.contains("last known metrics.k8s.io"),
+            stale
+        );
+        assert_eq!(cells.memory.text, "2.0Gi");
+    }
+}
+
+#[test]
+fn missing_node_metrics_fall_back_to_talos_memory_without_inventing_allocatable() {
+    let (mut talos, mut kube) = projection_sources();
+    talos.memory = Some(presentation::Memory {
+        used: 3 * 1024 * 1024 * 1024,
+        total: 4 * 1024 * 1024 * 1024,
+    });
+    kube.allocatable.clear();
+    let row = join::join(&[talos], &[kube], true, true).remove(0);
+    let cells = super::resource::RowResources::new(
+        &row,
+        None,
+        false,
+        "metrics-server isn't installed",
+        true,
+    );
+    assert_eq!(cells.cpu.used, None);
+    assert_eq!(cells.cpu.text, "—");
+    assert!(cells.cpu.tooltip.contains("metrics-server isn't installed"));
+    assert_eq!(cells.memory.used, Some(3. * 1024. * 1024. * 1024.));
+    assert_eq!(cells.memory.text, "3.0Gi");
+    assert_eq!(cells.memory.allocatable, None);
+    assert!(cells.memory.tooltip.contains("Talos memory fallback"));
+    assert!(cells.memory.tooltip.contains("physical total"));
+    assert!(
+        cells
+            .memory
+            .tooltip
+            .contains("allocatable unavailable (end unknown)")
+    );
+    let stale = super::resource::RowResources::new(&row, None, false, "denied", false);
+    assert!(stale.memory.stale);
+    assert!(stale.memory.tooltip.contains("last known Talos memory"));
+}
+
+#[gpui_kit::test]
+fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut TestAppContext) {
+    use freshkube_core::resources::{Amounts, NodeUsage};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            assert!(!pilot.node_workspace.metrics.visible);
+            assert!(pilot.node_workspace.metrics.delivery.is_none());
+            assert!(pilot.node_workspace.metrics.job.is_none());
+            pilot.navigate(Page::Nodes, window, cx);
+            let metrics = &mut pilot.node_workspace.metrics;
+            assert!(metrics.visible);
+            assert!(metrics.delivery.is_some());
+            let generation = metrics.generation;
+            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            assert!(metrics.apply(
+                generation,
+                &request,
+                Ok(vec![
+                    NodeUsage {
+                        name: "talos-wk-fra1-02".into(),
+                        usage: Amounts {
+                            cpu_millis: Some(250.),
+                            memory_bytes: Some(1048576.)
+                        },
+                        sampled_at: None
+                    },
+                    NodeUsage {
+                        name: "old-source".into(),
+                        usage: Amounts::default(),
+                        sampled_at: None
+                    }
+                ])
+            ));
+            assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
+            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            assert!(metrics.apply(generation, &request, Err("denied".into())));
+            assert_eq!(
+                metrics.snapshot.data().unwrap()["talos-wk-fra1-02"]
+                    .usage
+                    .cpu_millis,
+                Some(250.)
+            );
+            pilot.node_workspace.rebuild_resource_cells();
+            let row = pilot
+                .node_workspace
+                .rows
+                .iter()
+                .find(|row| row.name == "talos-wk-fra1-02")
+                .unwrap();
+            let cells = &pilot.node_workspace.resource_cells[&row.key];
+            assert!(cells.cpu.stale);
+            assert_eq!(cells.memory.used, Some(1048576.)); // Last metrics outrank a new fallback.
+            assert!(cells.memory.tooltip.contains("last known metrics.k8s.io"));
+            let request = pilot
+                .node_workspace
+                .metrics
+                .snapshot
+                .begin(pilot.node_workspace.metrics.source.clone().unwrap());
+            pilot.navigate(Page::Overview, window, cx);
+            assert!(pilot.node_workspace.metrics.delivery.is_none());
+            assert!(pilot.node_workspace.metrics.job.is_none());
+            assert!(
+                !pilot
+                    .node_workspace
+                    .metrics
+                    .apply(generation, &request, Ok(vec![]))
+            );
+            pilot.navigate(Page::Nodes, window, cx);
+            let metrics = &mut pilot.node_workspace.metrics;
+            let generation = metrics.generation;
+            let token = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            assert!(metrics.apply(
+                generation,
+                &token,
+                Ok(vec![NodeUsage {
+                    name: "old-source".into(),
+                    usage: Amounts::default(),
+                    sampled_at: None
+                }])
+            ));
+            assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
+            let old_id = metrics.source.clone();
+            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            pilot.applied.context = Some("different".into());
+            pilot.push_source(window, cx);
+            assert!(
+                !pilot
+                    .node_workspace
+                    .metrics
+                    .apply(generation, &request, Ok(vec![]))
+            );
+            assert_ne!(pilot.node_workspace.metrics.source, old_id);
+            assert!(
+                !pilot
+                    .node_workspace
+                    .metrics
+                    .snapshot
+                    .data()
+                    .unwrap()
+                    .contains_key("old-source")
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn example_nodes_show_use_as_soon_as_the_page_shows(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Nodes, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    pilot.read_with(cx, |pilot, _| {
+        let nodes = &pilot.node_workspace;
+        let joined: Vec<_> = nodes
+            .rows
+            .iter()
+            .filter(|row| row.kubernetes.is_some())
+            .collect();
+        assert!(!joined.is_empty());
+        for row in joined {
+            let cells = &nodes.resource_cells[&row.key];
+            assert!(cells.cpu.used.is_some(), "{} has no CPU use", row.name);
+            assert!(
+                cells.memory.used.is_some(),
+                "{} has no memory use",
+                row.name
+            );
+            assert!(cells.cpu.allocatable.is_some(), "{}", row.name);
+            let ready = row.kubernetes.as_ref().unwrap().is_ready();
+            assert_eq!(cells.cpu.stale, !ready, "{}", row.name);
+            if !ready {
+                assert!(
+                    cells.cpu.tooltip.contains("node is NotReady"),
+                    "{}",
+                    row.name
+                );
+            }
+            for cell in [&cells.cpu, &cells.memory] {
+                assert!(
+                    cell.used <= cell.allocatable,
+                    "{} uses more than it has",
+                    row.name
+                );
+            }
+        }
+    });
+}
+
+#[gpui_kit::test]
+fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContext) {
+    let (runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.executor().allow_parking();
+    for replace_context in [false, true] {
+        let (job, receiver) = crate::backend::spawn_job(
+            &runtime.handle().clone(),
+            std::time::Duration::from_secs(60),
+            "timeout".into(),
+            std::future::pending::<Result<(), String>>(),
+        );
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.navigate(Page::Nodes, window, cx);
+                pilot.node_workspace.metrics.job = Some(job);
+                if replace_context {
+                    pilot.applied.context = Some("replacement".into());
+                    pilot.push_source(window, cx);
+                } else {
+                    pilot.navigate(Page::Overview, window, cx);
+                }
+                assert!(pilot.node_workspace.metrics.job.is_none());
+                if !replace_context {
+                    assert!(pilot.node_workspace.metrics.delivery.is_none());
+                }
+            });
+        })
+        .unwrap();
+        assert!(
+            runtime.block_on(receiver).is_err(),
+            "the workspace must abort the pending job"
+        );
+    }
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
+    })
+    .unwrap();
+    let before = pilot.read_with(cx, |pilot, _| pilot.node_workspace.metrics.generation);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(45));
+    cx.run_until_parked();
+    pilot.read_with(cx, |pilot, _| {
+        let metrics = &pilot.node_workspace.metrics;
+        assert_eq!(metrics.generation, before);
+        assert!(metrics.job.is_none());
+        assert!(metrics.delivery.is_none());
+    });
 }
 
 #[test]
@@ -291,7 +585,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
         window.click("node-expand", cx);
         window.render_frame(cx);
         assert!(pilot.read(cx).node_workspace.expanded);
-        assert!(window.try_find("joined-nodes-list").is_none());
+        assert!(window.try_find("nodes-cards").is_none());
         window.click("node-expand", cx);
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.selected, selected);
@@ -326,7 +620,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_narrow_back(cx: &mut TestAppC
         });
         window.render_frame(cx);
         assert!(window.find("node-back").visible());
-        assert!(window.try_find("joined-nodes-list").is_none());
+        assert!(window.try_find("nodes-cards").is_none());
         assert!(window.find("node-tab-pods").visible());
         assert!(window.try_find("node-tab-processes").is_none());
         window.click("node-tab-yaml", cx);
@@ -366,6 +660,7 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
         window.click("node-talos-cp-fra1-01", cx);
         window.render_frame(cx);
         window.press("secondary-shift-enter", cx);
@@ -438,4 +733,771 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
         assert_eq!(read.node_workspace.rows[0].name, "talos-home");
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn header_chips_filter_health_without_changing_the_talos_target(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let target = pilot.read(cx).selected_node.clone();
+        let nodes = &pilot.read(cx).node_workspace;
+        let not_ready = nodes
+            .rows
+            .iter()
+            .filter(|row| row.ready == "NotReady")
+            .count();
+        let ready = nodes
+            .rows
+            .iter()
+            .filter(|row| row.tone == Tone::Good)
+            .count();
+        let unknown = nodes
+            .rows
+            .iter()
+            .filter(|row| row.tone == Tone::Unknown)
+            .count();
+        assert_eq!(
+            window.find("nodes-tally-failing").label(),
+            Some(format!("{not_ready} failing nodes").as_str())
+        );
+        assert_eq!(
+            window.find("nodes-tally-healthy").label(),
+            Some(format!("{ready} healthy nodes").as_str())
+        );
+        assert_eq!(
+            window.find("nodes-tally-unknown").label(),
+            Some(format!("{unknown} unknown nodes").as_str())
+        );
+        window.click("nodes-tally-failing", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.lines.len(), not_ready);
+        assert!(
+            nodes
+                .lines
+                .iter()
+                .all(|ix| nodes.rows[*ix].ready == "NotReady")
+        );
+        assert_eq!(pilot.read(cx).selected_node, target);
+        assert!(!nodes.open);
+        window.click("nodes-tally-failing", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.lines.len(), nodes.rows.len());
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.view, super::NodeView::Cards);
+        assert!(window.find("nodes-title").visible());
+        assert_eq!(pilot.read(cx).selected_node, target);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, TablePage};
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let before = pilot.read(cx).selected_node.clone();
+        for text in [14., 20.] {
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            layout_check::assert_table_page(
+                window,
+                cx,
+                &TablePage {
+                    page: "nodes-page",
+                    title: "nodes-title",
+                    title_text: "Nodes",
+                    table: "nodes-table-scroll",
+                    list: "nodes-list",
+                    density: "nodes-density",
+                },
+            );
+            assert_eq!(pilot.read(cx).selected_node, before);
+            assert!(!pilot.read(cx).node_workspace.open);
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn nodes_columns_and_density_preserve_row_identity(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        let before = window.find("node-talos-cp-fra1-01").bounds().size.height;
+        window.click("nodes-density", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("node-talos-cp-fra1-01").bounds().size.height,
+            crate::ui::dp_px(26., window)
+        );
+        assert!(window.find("node-talos-cp-fra1-01").bounds().size.height < before);
+        window.click("nodes-columns", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        let before_columns = nodes.columns.len();
+        let services_menu = nodes
+            .menu_columns
+            .iter()
+            .position(|(field, _)| *field == super::table::Field::Services)
+            .unwrap();
+        assert!(window.try_find(("nodes-sort", 8usize)).is_some());
+        window.within("popup-menu").click(services_menu, cx);
+        window.render_frame(cx);
+        assert!(window.try_find(("nodes-sort", 8usize)).is_none());
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .hidden_columns
+                .contains(&super::table::Field::Services)
+        );
+        assert_eq!(
+            pilot.read(cx).node_workspace.columns.len(),
+            before_columns - 1
+        );
+        window.click("node-talos-cp-fra1-01", cx);
+        window.render_frame(cx);
+        let key = pilot.read(cx).node_workspace.selected.clone();
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-cp-fra1-01")
+        );
+        window.click("node-close", cx);
+        window.render_frame(cx);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("node-talos-cp-fra1-01").selected(), Some(true));
+        window.click("nodes-view-table", cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.selected, key);
+        assert_eq!(window.find("node-talos-cp-fra1-01").selected(), Some(true));
+        assert!(window.try_find(("nodes-sort", 8usize)).is_none());
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .hidden_columns
+                .contains(&super::table::Field::Services)
+        );
+        assert_eq!(
+            pilot.read(cx).node_workspace.columns.len(),
+            before_columns - 1
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut TestAppContext) {
+    use freshkube_ui::table::TableSource;
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let target = pilot.read(cx).selected_node.clone();
+        window.click("nodes-tally-failing", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        window.press("down", cx);
+        window.render_frame(cx);
+        let row = pilot.read(cx).node_workspace.row().unwrap();
+        assert_eq!(row.ready, "NotReady");
+        assert_eq!(pilot.read(cx).selected_node, target);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        // The retained pane switcher explicitly keeps the complete roster, while the
+        // main table's filter stays retained for returning to it.
+        assert_eq!(pilot.read(cx).line_count(), 6);
+        assert_eq!(pilot.read(cx).node_workspace.lines.len(), 2);
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-wk-fra1-02")
+        );
+        window.click("node-tab-processes", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| pilot.step_joined_node(1, window, cx));
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-wk-fra1-03")
+        );
+        window.click("node-close", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            pilot.read(cx).node_workspace.filter,
+            Some(super::projection::Status::Failing)
+        );
+        assert_eq!(pilot.read(cx).node_workspace.lines.len(), 2);
+        assert!(window.find("node-talos-wk-fra1-03").visible());
+    })
+    .unwrap();
+}
+
+#[test]
+fn health_tally_treats_stale_and_absent_sources_as_unknown() {
+    use super::projection::Status;
+    let (talos, kube) = projection_sources();
+    let mut stale = join::join(
+        std::slice::from_ref(&talos),
+        std::slice::from_ref(&kube),
+        true,
+        false,
+    );
+    stale[0].tone = super::projection::assessed_tone(&stale[0], true);
+    assert_eq!(Status::of(&stale[0]), Status::Unknown);
+    let mut absent = join::join(std::slice::from_ref(&talos), &[], true, true);
+    absent[0].tone = super::projection::assessed_tone(&absent[0], true);
+    assert_eq!(Status::of(&absent[0]), Status::Unknown);
+    let current = join::join(&[talos], &[kube], true, true);
+    assert_eq!(Status::of(&current[0]), Status::Failing);
+}
+
+#[gpui_kit::test]
+fn nodes_empty_states_keep_the_shared_header_and_keyboard_context(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.node_workspace.rows = std::sync::Arc::new(Vec::new());
+            pilot.node_workspace.empty = Some(super::Empty::Loading);
+            pilot.node_workspace.rebuild_lines();
+            window.focus(&pilot.node_focus, cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("nodes-title").visible());
+        assert!(window.find("nodes-loading").visible());
+        assert!(window.try_find("nodes-table-scroll").is_none());
+        window.press("down", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.open);
+        for (state, id, title) in [
+            (super::Empty::Loaded, "nodes-empty", "No nodes reported"),
+            (
+                super::Empty::Failed("Read result".into()),
+                "nodes-failed",
+                "Nodes unavailable · Read result",
+            ),
+        ] {
+            pilot.update(cx, |pilot, cx| {
+                pilot.node_workspace.empty = Some(state.clone());
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(window.find(id).visible());
+            assert_eq!(window.find(id).label(), Some(title));
+            assert!(window.try_find("nodes-table-scroll").is_none());
+            assert!(window.find("nodes-refresh").visible());
+            if id == "nodes-failed" {
+                assert!(window.find("nodes-retry").visible());
+            }
+        }
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert!(window.find("nodes-title").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn minimum_nodes_table_keeps_shared_padding_and_scaled_rows(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{self, TablePage};
+    let (_runtime, handle, _pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        layout_check::assert_table_page(
+            window,
+            cx,
+            &TablePage {
+                page: "nodes-page",
+                title: "nodes-title",
+                title_text: "Nodes",
+                table: "nodes-table-scroll",
+                list: "nodes-list",
+                density: "nodes-density",
+            },
+        );
+        for id in [
+            "nodes-view-cards",
+            "nodes-view-table",
+            "nodes-filter",
+            "nodes-tally-failing",
+            "nodes-tally-warning",
+            "nodes-tally-unknown",
+            "nodes-tally-healthy",
+            "nodes-density",
+            "nodes-columns",
+            "nodes-refresh",
+        ] {
+            let control = window.find(id);
+            assert!(control.visible(), "{id} is clipped");
+            assert!(
+                control.bounds().right() <= window.find("nodes-page").bounds().right(),
+                "{id} extends beyond the page"
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[test]
+fn incomplete_assessments_are_unknown_and_ready_service_or_memory_problems_warn() {
+    let (mut talos, mut kube) = projection_sources();
+    kube.conditions[0].status = "True".into();
+    let warning = join::join(
+        std::slice::from_ref(&talos),
+        std::slice::from_ref(&kube),
+        true,
+        true,
+    )
+    .remove(0);
+    assert_eq!(warning.ready, "Ready");
+    assert_eq!(super::projection::assessed_tone(&warning, true), Tone::Warn);
+    assert_eq!(
+        super::projection::assessed_tone(&warning, false),
+        Tone::Unknown
+    );
+    let kube_only = join::join(&[], std::slice::from_ref(&kube), false, true).remove(0);
+    assert_eq!(
+        super::projection::assessed_tone(&kube_only, false),
+        Tone::Unknown
+    );
+    talos.services.clear();
+    talos.memory.as_mut().unwrap().used = 100;
+    let healthy = join::join(&[talos], std::slice::from_ref(&kube), true, true).remove(0);
+    assert_eq!(super::projection::assessed_tone(&healthy, true), Tone::Good);
+    kube.conditions[0].status = "False".into();
+    let failing = join::join(&[], &[kube], false, true).remove(0);
+    assert_eq!(
+        super::projection::assessed_tone(&failing, false),
+        Tone::Crit
+    );
+}
+
+#[gpui_kit::test]
+fn groups_tallies_and_glyphs_agree_and_arrows_skip_folded_healthy_rows(cx: &mut TestAppContext) {
+    use super::projection::{Item, Status};
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.counts, [2, 1, 0, 3]);
+        assert_eq!(nodes.group_counts, nodes.counts);
+        assert_eq!(nodes.items.first(), Some(&Item::Group(Status::Failing)));
+        assert!(nodes.healthy_collapsed());
+        assert_eq!(
+            window.find("nodes-tally-warning").label(),
+            Some("1 warning nodes")
+        );
+        assert_eq!(
+            window.find("nodes-group-warning").label(),
+            Some("Warning · 1 node")
+        );
+        assert_eq!(
+            window.find("nodes-group-failing").label(),
+            Some("Failing · 2 nodes")
+        );
+        assert!(window.try_find("node-talos-cp-fra1-01").is_none());
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        for name in ["talos-wk-fra1-02", "talos-wk-fra1-03", "talos-wk-fra1-01"] {
+            window.press("down", cx);
+            window.render_frame(cx);
+            let nodes = &pilot.read(cx).node_workspace;
+            assert_eq!(nodes.row().unwrap().name, name);
+            assert!(nodes.row().unwrap().tone != Tone::Good);
+            assert!(window.find(nodes.row().unwrap().id.clone()).visible());
+        }
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            pilot.read(cx).node_workspace.row().unwrap().name,
+            "talos-wk-fra1-01"
+        );
+        window.press("up", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            pilot.read(cx).node_workspace.row().unwrap().name,
+            "talos-wk-fra1-03"
+        );
+        window.click("nodes-tally-warning", cx);
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.lines.len(), 1);
+        assert_eq!(nodes.rows[nodes.lines[0]].tone, Tone::Warn);
+        assert_eq!(nodes.group_counts, [0, 1, 0, 0]);
+        assert_eq!(nodes.counts, [2, 1, 0, 3]);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let target = pilot.read_with(cx, |pilot, _| pilot.selected_node.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        assert!(window.find("nodes-filter").visible());
+        assert!(window.find("nodes-scope").visible());
+        assert!(pilot.read(cx).node_workspace.meta.contains("Example data"));
+        assert!(pilot.read(cx).node_workspace.meta.contains("Talos"));
+        assert!(pilot.read(cx).node_workspace.meta.contains("Kubernetes"));
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        window.focus(
+            &pilot
+                .read(cx)
+                .node_workspace
+                .query
+                .read(cx)
+                .focus_handle(cx),
+            cx,
+        );
+        window.input("not-an-observed-node", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.lines.len(), 0);
+        assert_eq!(pilot.read(cx).node_workspace.counts, [0; 4]);
+        assert_eq!(
+            window.find("nodes-empty").label(),
+            Some("No matching nodes")
+        );
+        assert!(window.try_find("nodes-cards").is_none());
+        assert_eq!(pilot.read(cx).selected_node, target);
+        assert!(pilot.read(cx).node_workspace.selected.is_none());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.query_text.is_empty());
+        assert!(window.find("nodes-cards").visible());
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        window.focus(
+            &pilot
+                .read(cx)
+                .node_workspace
+                .query
+                .read(cx)
+                .focus_handle(cx),
+            cx,
+        );
+        window.input("WoRkEr", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert_eq!(nodes.lines.len(), 3);
+        assert_eq!(nodes.counts, [2, 1, 0, 0]);
+        assert!(
+            nodes
+                .lines
+                .iter()
+                .all(|ix| nodes.rows[*ix].role == presentation::Role::Worker)
+        );
+        assert_eq!(pilot.read(cx).selected_node, target);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut TestAppContext) {
+    use super::table::Field;
+    use freshkube_ui::table::TableColumn;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, _, cx| {
+        pilot.update(cx, |pilot, _| {
+            let widths = |pilot: &super::Pilot| {
+                pilot
+                    .node_workspace
+                    .all_columns
+                    .iter()
+                    .filter(|column| matches!(column.label().as_ref(), "CPU" | "Memory" | "Load"))
+                    .map(TableColumn::width)
+                    .collect::<Vec<_>>()
+            };
+            let before = widths(pilot);
+            pilot.node_workspace.hidden_columns.insert(Field::Services);
+            pilot.node_workspace.show_columns();
+            for node in &mut pilot.nodes {
+                node.load = Some([12345.67; 3]);
+                if let Some(memory) = node.memory.as_mut() {
+                    memory.used = memory.total;
+                }
+            }
+            pilot.rebuild_joined_nodes();
+            assert_eq!(widths(pilot), before);
+            assert!(
+                pilot
+                    .node_workspace
+                    .hidden_columns
+                    .contains(&Field::Services)
+            );
+            assert_eq!(
+                pilot.node_workspace.columns.len(),
+                pilot.node_workspace.all_columns.len() - 2
+            );
+            assert!(
+                !pilot
+                    .node_workspace
+                    .columns
+                    .iter()
+                    .any(|column| column.label() == "Services")
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn leaving_kubernetes_only_restores_talos_columns_without_waiting_for_a_summary(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::table::TableColumn;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.kubernetes_only = Some(crate::desktop::kubernetes_only::KubernetesOnly::new(
+                None, None,
+            ));
+            pilot.rebuild_joined_nodes();
+            let labels = |pilot: &super::Pilot| {
+                pilot
+                    .node_workspace
+                    .columns
+                    .iter()
+                    .map(|column| column.label().to_string())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                labels(pilot),
+                ["", "Name", "Role", "Kubernetes", "CPU", "Memory", "Pods"]
+            );
+            pilot.leave_kubernetes_only(window, cx);
+            assert_eq!(
+                labels(pilot),
+                [
+                    "",
+                    "Name",
+                    "Role",
+                    "Kubernetes",
+                    "Talos",
+                    "CPU",
+                    "Memory",
+                    "Pods",
+                    "Services"
+                ]
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn opening_a_folded_healthy_node_from_overview_expands_and_reveals_it_on_return(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::table::TableSource;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        let key = pilot
+            .read(cx)
+            .node_workspace
+            .rows
+            .iter()
+            .find(|row| row.name == "talos-cp-fra1-01")
+            .unwrap()
+            .key
+            .clone();
+        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        assert!(pilot.read(cx).line_of(&key).is_none());
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_destination(
+                crate::presentation::attention::Destination::Node(key.clone(), NodeTab::Overview),
+                window,
+                cx,
+            )
+        });
+        window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.healthy_collapsed());
+        assert_eq!(pilot.read(cx).node_workspace.selected.as_ref(), Some(&key));
+        // Simulate a newer summary folding its now-healthy selected row while the pane is open.
+        pilot.update(cx, |pilot, _| {
+            pilot.node_workspace.healthy_open = false;
+            pilot.node_workspace.rebuild_lines();
+            pilot
+                .node_workspace
+                .table
+                .reveal(0, gpui_kit::ScrollStrategy::Top);
+        });
+        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.open);
+        assert!(!pilot.read(cx).node_workspace.healthy_collapsed());
+        assert_eq!(pilot.read(cx).node_workspace.selected.as_ref(), Some(&key));
+        assert!(pilot.read(cx).line_of(&key).is_some());
+        assert!(window.find("node-talos-cp-fra1-01").visible());
+        assert_eq!(
+            pilot.read(cx).selected_node.as_deref(),
+            Some("talos-cp-fra1-01")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn node_logs_startup_opens_a_folded_node_without_a_table_click(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+        });
+        window.render_frame(cx);
+        let view = pilot.read(cx);
+        assert_eq!(view.page, Page::Nodes);
+        assert!(view.node_workspace.open);
+        assert_eq!(view.node_workspace.tab, NodeTab::Logs);
+        assert_eq!(view.node_workspace.row().unwrap().name, "talos-cp-fra1-01");
+        assert!(!view.node_workspace.healthy_collapsed());
+        assert!(window.find("logs-viewport").visible());
+        window.click("node-close", cx);
+        window.render_frame(cx);
+        assert!(window.find("node-talos-cp-fra1-01").visible());
+    })
+    .unwrap();
+}
+
+#[test]
+fn service_status_uses_health_facts_and_keeps_unknown_and_stale_honest() {
+    let (mut talos, kube) = projection_sources();
+    let row = join::join(&[talos.clone()], std::slice::from_ref(&kube), true, true).remove(0);
+    // Kubernetes NotReady makes the node failing; a service problem is a warning.
+    assert_eq!(row.tone, Tone::Crit);
+    assert_eq!(row.service_status.tone, Tone::Warn);
+    assert_eq!(row.service_status.count, "1");
+    assert_eq!(
+        row.service_status.label,
+        "System services: 0 healthy, 1 unhealthy, 0 unknown"
+    );
+    talos.services[0].health.as_mut().unwrap().healthy = true;
+    let mut row = join::join(&[talos.clone()], &[kube], true, true).remove(0);
+    // Display text is not a health source.
+    row.services = "99 unhealthy".into();
+    assert_eq!(row.service_status.tone, Tone::Good);
+    assert_eq!(row.service_status.count, "1");
+    assert_eq!(
+        row.service_status.label,
+        "System services: 1 healthy, 0 unhealthy, 0 unknown"
+    );
+    let stale = join::ServiceStatus::new(Some(&talos), false);
+    assert_eq!(stale.tone, Tone::Unknown);
+    assert_eq!(stale.count, "—");
+    assert_eq!(
+        stale.label,
+        "System services: 1 healthy, 0 unhealthy, 0 unknown · last known"
+    );
+    talos.services[0].health = None;
+    let unknown = join::ServiceStatus::new(Some(&talos), true);
+    assert_eq!(unknown.tone, Tone::Unknown);
+    assert_eq!(unknown.count, "1");
+    assert_eq!(
+        unknown.label,
+        "System services: 0 healthy, 0 unhealthy, 1 unknown"
+    );
+    talos.services.clear();
+    let empty = join::ServiceStatus::new(Some(&talos), true);
+    assert_eq!(empty.tone, Tone::Unknown);
+    assert_eq!(empty.count, "—");
+    talos.responding = false;
+    for source in [Some(&talos), None] {
+        let absent = join::ServiceStatus::new(source, true);
+        assert_eq!(absent.tone, Tone::Unknown);
+        assert_eq!(absent.count, "—");
+        assert_eq!(absent.label, "System services unavailable");
+    }
+}
+
+#[gpui_kit::test]
+fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expanded(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::table::TableColumn;
+    use gpui_kit::{SharedString, TextRun, font, px};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
+        for text in [13., 14.] {
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            for expanded in [false, true] {
+                if pilot.read(cx).node_workspace.healthy_collapsed() == expanded {
+                    window.click("nodes-healthy-toggle", cx);
+                    window.render_frame(cx);
+                }
+                for compact in [false, true] {
+                    if pilot.read(cx).node_workspace.table.compact != compact {
+                        window.click("nodes-density", cx);
+                        window.render_frame(cx);
+                    }
+                    let viewport = window.find("nodes-table-scroll").bounds();
+                    let last = window.find(("nodes-sort", 8usize)).bounds();
+                    assert!(last.right() <= viewport.right() + px(1.),
+                        "Services overflows at text {text}, expanded={expanded}, compact={compact}: {last:?} in {viewport:?}");
+                    let nodes = &pilot.read(cx).node_workspace;
+                    assert!(crate::ui::dp_px(nodes.table_width, window) <= viewport.size.width,
+                        "column width {} exceeds viewport {:?}", nodes.table_width, viewport);
+                    let name = window.find(("nodes-sort", 1usize)).bounds();
+                    for row in nodes.rows.iter() {
+                        let resources = nodes.resource_cells.get(&row.key).unwrap();
+                        for (label, value) in [("CPU", resources.cpu.text.as_ref()), ("Memory", resources.memory.text.as_ref())] {
+                            let column = nodes.columns.iter().find(|column| column.label() == label).unwrap();
+                            assert_eq!(column.width(), 124.);
+                            let run = TextRun {len: value.len(), font: font(crate::ui::MONO_FONT),
+                                color: Default::default(), background_color: None, underline: None, strikethrough: None};
+                            let shaped = window.text_system().shape_line(SharedString::from(value.to_owned()),
+                                crate::ui::dp_px(12.5, window), &[run], None).width;
+                            assert!(shaped <= crate::ui::dp_px(48., window),
+                                "{label} truncates {value} at text {text}");
+                        }
+                        if row.name.len() <= 16 {
+                            assert!(crate::ui::dp_px(row.name.len() as f32 * 7.5 + 24., window) <= name.size.width);
+                        }
+                    }
+                    let row = nodes.rows.iter().find(|row| row.name == "talos-wk-fra1-02").unwrap();
+                    let status = window.find((row.id.clone(), super::table::Field::Services as usize));
+                    assert!(status.visible());
+                    assert_eq!(status.role(), Some(gpui_kit::Role::Status));
+                    assert_eq!(status.label(), Some(row.service_status.label.as_ref()));
+                    assert!(status.bounds().right() <= viewport.right() + px(1.));
+                    assert_eq!(row.table_load.split('·').count(), 3);
+                }
+            }
+        }
+    }).unwrap();
 }

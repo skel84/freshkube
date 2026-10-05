@@ -55,6 +55,17 @@ fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entity<Pilot> {
         .unwrap()
 }
 
+/// Test setup that needs a healthy table row follows the actual group control.
+/// Folding itself is exercised separately by Nodes' projection/entry-point tests.
+pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    let pilot = root_pilot(window, cx);
+    let nodes = &pilot.read(cx).node_workspace;
+    if nodes.healthy_collapsed() && nodes.view == NodeView::Table && !nodes.open {
+        window.click("nodes-healthy-toggle", cx);
+        window.render_frame(cx);
+    }
+}
+
 /// Choose through the Nodes page, then return to the previously visible view.
 fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
     let view = root_pilot(window, cx);
@@ -66,6 +77,7 @@ fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize)
         window.click("node-close", cx);
         window.render_frame(cx);
     }
+    expand_healthy_nodes(window, cx);
     let id = view.read(cx).node_workspace.rows[ix].id.clone();
     window.click(id, cx);
     window.render_frame(cx);
@@ -87,6 +99,7 @@ fn open_node_tab(
     let name = view.read(cx).selected_node.clone().unwrap();
     area(window, cx, "nav-nodes");
     if !view.read(cx).node_workspace.open {
+        expand_healthy_nodes(window, cx);
         let id = view
             .read(cx)
             .node_workspace
@@ -231,6 +244,7 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
+        expand_healthy_nodes(window, cx);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(FIRST_NODE));
         window
             .within("nodes-page")
@@ -586,6 +600,7 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
+        expand_healthy_nodes(window, cx);
         window.click("nodes-view-table", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).node_workspace.view, NodeView::Table);

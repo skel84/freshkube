@@ -2,8 +2,7 @@
 # One "rule file" per line. This list only shrinks: when a page moves onto the
 # shared components, remove its entries in the same change. The check fails
 # when an entry is no longer needed, and when a file not listed breaks a rule.
-list crates/freshkube-desktop/src/desktop/nodes/view.rs
-title crates/freshkube-desktop/src/desktop/nodes/view.rs
+list crates/freshkube-desktop/src/desktop/nodes/cards.rs
 radius crates/freshkube-desktop/src/desktop/overview/mod.rs
 title crates/freshkube-desktop/src/desktop/overview/mod.rs
 radius crates/freshkube-desktop/src/desktop/services.rs

@@ -12,6 +12,7 @@ mod derive;
 mod driver;
 mod observation;
 mod project;
+mod requests;
 mod retained;
 mod session;
 pub use collect::collect_kubernetes_summary;
@@ -122,6 +123,10 @@ pub struct NodeSummary {
     pub addresses: Vec<(String, String)>,
     pub kubelet_version: String,
     pub capacity: BTreeMap<String, Quantity>,
+    pub allocatable: BTreeMap<String, Quantity>,
+    /// Effective requests of assigned, non-terminated pods. Unknown until Pods
+    /// has been observed; `pods_current` describes this value's freshness too.
+    pub requests: crate::resources::Amounts,
     pub taints: Vec<String>,
     pub pods: usize,
     pub pods_current: bool,

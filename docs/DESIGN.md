@@ -120,7 +120,7 @@ Pods start on Problems when problems exist, grouped by cause, with healthy rows 
 
 The status is a glyph, replaced by a checkbox on a marked row. Ready and restarts share a cell (`0/1 ↻14`). Owner prefixes are muted (`deploy/`, `sts/`). Namespace prefixes are muted; random suffixes are faint. Remove a common node prefix only when detected and keep the full name in its tooltip. Sort arrows, a blue focus outline, ↑↓, Enter, X and L keep their existing behavior.
 
-Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities.
+Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities. Every per-row CPU and memory value uses these shared resource meters.
 
 ## G8: pod detail
 
@@ -191,6 +191,8 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 | `Legend` | The table's footer: what its marks mean, with live examples (meters, stripes). | Top hairline, 12 × 7 padding, 12 gap, 11 muted, wrapping. Under 600 content width it becomes one 26-high line ending in ⓘ, with the full legend as its tooltip. Id `<page>-meter-legend`. |
 | `StatCard` | A muted 12 bold title, then one figure (22, weight 900) or a wrap of named figures (18, each at least 96 wide, 20 × 8 apart), each with an optional tag, gauge or sparkline. | Card; header 28 with 14 left padding; body 14 × 10. |
 | `ChartCard` | A 13 bold title, the unit, an info mark with the query, the stale mark at the right; the plot, then its legend. | Card; header 32 with 12 left padding; plot padded 12, at least 64 high. |
+
+The Nodes card grid and compact two-line pane list are a scoped virtualization exception in `desktop/nodes/cards.rs`; when a second page needs a virtualized card grid, it becomes a `freshkube-ui` component.
 
 ### States
 

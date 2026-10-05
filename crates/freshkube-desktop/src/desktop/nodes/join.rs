@@ -13,7 +13,7 @@ use freshkube_core::{
 };
 use std::collections::BTreeSet;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct NodeKey {
     pub(crate) kubernetes: Option<String>,
     pub(crate) talos: Option<String>,
@@ -37,13 +37,66 @@ pub(crate) struct NodeRow {
     pub(crate) talos_state: SharedString,
     pub(crate) address: SharedString,
     pub(crate) load: SharedString,
+    pub(crate) table_load: SharedString,
     pub(crate) memory: SharedString,
     pub(crate) pods: SharedString,
     pub(crate) services: SharedString,
+    pub(crate) service_status: ServiceStatus,
     pub(crate) note: SharedString,
     pub(crate) chips: Vec<SharedString>,
     pub(crate) facts: Vec<(SharedString, SharedString)>,
     pub(crate) problems: Vec<SharedString>,
+}
+
+/// Compact table presentation, derived from the same service health facts as the assessment.
+#[derive(Clone, Debug)]
+pub(crate) struct ServiceStatus {
+    pub(crate) tone: Tone,
+    pub(crate) count: SharedString,
+    pub(crate) label: SharedString,
+}
+
+#[cfg(test)]
+impl Default for ServiceStatus {
+    fn default() -> Self {
+        Self::new(None, false)
+    }
+}
+
+impl ServiceStatus {
+    pub(super) fn new(talos: Option<&TalosNode>, current: bool) -> Self {
+        let Some(node) = talos.filter(|node| node.responding) else {
+            return Self {
+                tone: Tone::Unknown,
+                count: "—".into(),
+                label: "System services unavailable".into(),
+            };
+        };
+        let counts = node.health_counts();
+        let (tone, count) = if !current {
+            (Tone::Unknown, "—".into())
+        } else if counts.unhealthy > 0 {
+            (Tone::Warn, counts.unhealthy.to_string())
+        } else if counts.unknown > 0 {
+            (Tone::Unknown, counts.unknown.to_string())
+        } else if counts.healthy > 0 {
+            (Tone::Good, counts.healthy.to_string())
+        } else {
+            (Tone::Unknown, "—".into())
+        };
+        Self {
+            tone,
+            count: count.into(),
+            label: format!(
+                "System services: {} healthy, {} unhealthy, {} unknown{}",
+                counts.healthy,
+                counts.unhealthy,
+                counts.unknown,
+                if current { "" } else { " · last known" },
+            )
+            .into(),
+        }
+    }
 }
 
 pub(crate) fn join(
@@ -185,6 +238,12 @@ fn row(
         ),
         address: node_address(talos, kubernetes).into(),
         load: load_text(talos),
+        table_load: talos
+            .and_then(|node| node.load)
+            .map(|load| format!("{:.2}·{:.2}·{:.2}", load[0], load[1], load[2]))
+            .unwrap_or_else(|| "—".into())
+            .into(),
+        service_status: ServiceStatus::new(talos, talos_available),
         memory,
         pods: pod_count.into(),
         services: match assessment.talos() {
