@@ -351,6 +351,29 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
 }
 
 #[test]
+fn a_nodes_memory_level_picks_its_group() {
+    let (mut talos, mut kube) = projection_sources();
+    kube.conditions[0].status = "True".into();
+    talos.services.clear();
+    for (used, status, problems) in [
+        (849, super::projection::Status::Healthy, vec![]),
+        (850, super::projection::Status::Warning, vec!["Memory 85%"]),
+        (949, super::projection::Status::Warning, vec!["Memory 95%"]),
+        (950, super::projection::Status::Failing, vec!["Memory 95%"]),
+    ] {
+        talos.memory = Some(presentation::Memory { used, total: 1000 });
+        let row = join::join(&[talos.clone()], &[kube.clone()], true, true).remove(0);
+        assert_eq!(super::projection::Status::of(&row), status, "used {used}");
+        let shown: Vec<&str> = row
+            .problems
+            .iter()
+            .map(|problem| problem.as_ref())
+            .collect();
+        assert_eq!(shown, problems, "used {used}");
+    }
+}
+
+#[test]
 fn joined_row_preserves_display_contract_and_problem_order() {
     let (mut talos, kube) = projection_sources();
     talos.responding = false;
@@ -504,7 +527,9 @@ fn compact_note_tracks_health_priority_then_role() {
     talos.services[0].health.as_mut().unwrap().unknown = true;
     assert_eq!(project(&talos).note, "90% · 10.0 KB");
     assert!(!project(&talos).service_problem);
-    talos.memory.as_mut().unwrap().used -= 1;
+    // Just under the memory level's High.
+    let memory = talos.memory.as_mut().unwrap();
+    memory.used = memory.total * 85 / 100 - 1;
     assert_eq!(project(&talos).note, "cp");
     assert_eq!(project(&talos).tone, Tone::Good);
 }

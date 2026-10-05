@@ -1,0 +1,1 @@
+- **A node's memory warns where its meter does:** a Nodes row now warns from 85% memory and fails from 95%, the thresholds where Overview's Peak memory card says High and Critical. Overview's attention list and the node pane follow. It used to warn only from 90% and never fail, so a node at 87% sat among the healthy ones while Overview called it High.

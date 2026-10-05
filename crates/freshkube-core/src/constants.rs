@@ -12,15 +12,13 @@ pub const MAX_LOG_ENTRIES: usize = 5000;
 /// Maximum packet capture size (40 MB)
 pub const MAX_CAPTURE_SIZE: usize = 40 * 1024 * 1024;
 
-/// Node memory use (percent of total) at which memory is shown as high
+/// Node memory use (percent of total) at which memory is shown as high and a
+/// node's health warns
 pub const MEMORY_WARNING_PERCENT: f64 = 85.0;
 
-/// Node memory use (percent of total) at which memory is shown as critical
+/// Node memory use (percent of total) at which memory is shown as critical and
+/// a node's health fails
 pub const MEMORY_CRITICAL_PERCENT: f64 = 95.0;
-
-/// Combined node health warns at 90% memory use, independently of the memory
-/// meter's high/critical thresholds above.
-pub const NODE_MEMORY_WARNING_PERCENT: f64 = 90.0;
 
 // =============================================================================
 // Addon Detection CRDs

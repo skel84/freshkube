@@ -145,7 +145,7 @@ Core gets `kubernetes_summary.rs`. It provides `collect_kubernetes_summary(clien
   - When one side can't be read at all, every row says so in that side's column ("Talos unavailable", "Kubernetes unavailable"). Rows still come from the other side.
   - The row's id is `node-<name>`, using the Kubernetes name when there is one.
   - **Order:** control planes first, then by name. The order is fixed when the rows are built.
-  - **Tone:** the worst of Kubernetes NotReady (crit), no Talos response (crit), an unhealthy system service (warn) and memory at 90% or more (warn). Cordoned shows as a muted tag.
+  - **Tone:** the worst of Kubernetes NotReady (crit), no Talos response (crit), an unhealthy system service (warn) and memory at 85% or more (warn; crit from 95%, the memory level's High and Critical). Cordoned shows as a muted tag.
 - **Columns** (screen 02): Name, Role, Kubernetes (Ready, NotReady or a dash), Talos (version or "No response"), Load, Memory, Pods, System services.
   - The Cards/Table toggle moves here from today's Overview. Its cards keep the load sparkline and memory bar, and their buttons become Open.
   - In Kubernetes-only mode the Talos columns are hidden.
