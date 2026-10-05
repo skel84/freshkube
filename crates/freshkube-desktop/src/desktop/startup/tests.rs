@@ -250,6 +250,7 @@ fn card_contents_align_and_long_node_names_keep_to_one_row(cx: &mut TestAppConte
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
         let name = "talos-cp-fra1-03-baremetal-rack-b7";
         let id = format!("node-{name}");
         assert_eq!(window.find(id.clone()).label(), Some(name));
@@ -274,14 +275,14 @@ fn minimum_node_table_can_reveal_its_rightmost_column(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let before = window.find("node-table-services").bounds().left();
+        let before = window.find(("nodes-sort", 8usize)).bounds().left();
         window.scroll(
             "nodes-table-scroll",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(-1800.), gpui_kit::px(0.))),
             cx,
         );
         window.render_frame(cx);
-        let column = window.find("node-table-services");
+        let column = window.find(("nodes-sort", 8usize));
         assert!(column.bounds().left() < before);
         assert!(column.visible());
         assert!(column.bounds().right() <= window.viewport_size().width);

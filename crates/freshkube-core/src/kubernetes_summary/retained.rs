@@ -17,6 +17,7 @@ pub(super) struct PodFacts {
     pub phase: String,
     pub restarts: i32,
     pub issue: Option<PodIssue>,
+    pub requests: crate::resources::Amounts,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +128,7 @@ impl SummaryResource for Pod {
                 .unwrap_or_else(|| "Unknown".into()),
             restarts,
             issue,
+            requests: super::requests::of(self),
         };
         let bytes = facts.node.as_ref().map_or(0, String::capacity)
             + facts.phase.capacity()
@@ -172,6 +174,7 @@ impl SummaryResource for Node {
             + node
                 .capacity
                 .iter()
+                .chain(node.allocatable.iter())
                 .map(|(k, v)| {
                     size_of::<(
                         String,

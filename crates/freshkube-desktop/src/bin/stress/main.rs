@@ -400,6 +400,7 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
             };
             prometheus(processes, rest, &query)
         }
+        ["apis", "metrics.k8s.io", "v1beta1", "nodes"] => summary::node_metrics(),
         ["api", "v1", "services"] if watching => idle_stream(),
         ["api", "v1", "services"] => json_response(service_list()),
         ["api", "v1", "namespaces"] if watching => idle_stream(),

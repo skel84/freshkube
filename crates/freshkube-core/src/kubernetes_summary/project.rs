@@ -40,6 +40,7 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         .map(|n| n.name.clone())
         .collect();
     let mut pod_counts = BTreeMap::new();
+    let mut requests = BTreeMap::new();
     let mut pods = PodSummary::default();
     let mut snapshot = WorkloadSnapshot::default();
     let mut namespaces: BTreeMap<String, NamespaceSummary> = BTreeMap::new();
@@ -55,6 +56,14 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         *pods.phases.entry(pod.phase.clone()).or_default() += 1;
         if let Some(node) = &pod.node {
             *pod_counts.entry(node.clone()).or_insert(0) += 1;
+            if !matches!(pod.phase.as_str(), "Succeeded" | "Failed") {
+                super::requests::add(
+                    requests
+                        .entry(node.clone())
+                        .or_insert(super::requests::ZERO),
+                    pod.requests,
+                );
+            }
             if not_ready.contains(node) {
                 pods.on_not_ready += 1;
             }
@@ -111,6 +120,14 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         node.pods = pod_counts.get(&node.name).copied().unwrap_or_default();
         node.pods_current = observations[&Source::Pods].is_current();
         node.pods_observed = observations[&Source::Pods].has_data();
+        node.requests = if node.pods_observed {
+            requests
+                .get(&node.name)
+                .copied()
+                .unwrap_or(super::requests::ZERO)
+        } else {
+            crate::resources::Amounts::default()
+        };
     }
     for source in [
         Source::Deployments,

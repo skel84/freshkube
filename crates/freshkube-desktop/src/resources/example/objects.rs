@@ -484,7 +484,7 @@ pub(super) fn node_yaml(row: &ResourceRow, created: i64) -> String {
         ),
     );
     yaml.push_str(&format!(
-        "spec:\n  podCIDR: 10.244.0.0/24\nstatus:\n  addresses:\n  - type: InternalIP\n    address: {}\n  - type: Hostname\n    address: {name}\n  capacity:\n    cpu: '8'\n    memory: 32856156Ki\n    pods: '110'\n  conditions:\n",
+        "spec:\n  podCIDR: 10.244.0.0/24\nstatus:\n  addresses:\n  - type: InternalIP\n    address: {}\n  - type: Hostname\n    address: {name}\n  capacity:\n    cpu: '8'\n    memory: 32856156Ki\n    pods: '110'\n  allocatable:\n    cpu: '7500m'\n    memory: 30Gi\n    pods: '110'\n  conditions:\n",
         row.cells[5]
     ));
     for (condition, healthy, reason) in [
