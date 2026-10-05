@@ -165,7 +165,7 @@ impl ScreenPanel for ProcessesScreen {
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
         ]);
         let query = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Filter by command, path or arguments")
+            InputState::new(window, cx).placeholder("Filter  /")
         });
         let subscription = cx.subscribe_in(&query, window, |this, _, event, window, cx| {
             match event {

@@ -523,3 +523,36 @@ fn the_folded_controls_act_as_their_controls(cx: &mut TestAppContext) {
         ProcessTree::Flat
     );
 }
+
+#[gpui_kit::test]
+fn the_filter_keeps_pods_width_at_1280_and_text_size_14(cx: &mut TestAppContext) {
+    use crate::desktop::tests::settle_header;
+    let (_runtime, handle, view) = app(cx, 1280., 880.);
+    let pods = cx
+        .update_window(handle, |_, window, cx| {
+            crate::text_size::set(14., cx);
+            view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+            settle_header(window, cx);
+            window.find("resource-filter").bounds().size.width
+        })
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        open_node_tab(window, cx, NodeTab::Processes);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        settle_header(window, cx);
+        let filter = window.find("process-filter").bounds();
+        assert!(
+            (filter.size.width - pods).abs() < px(0.5),
+            "the filter is {filter:?}, Pods' is {pods:?} wide"
+        );
+        // Tree sits after it, or has folded into "…".
+        if let Some(tree) = window.try_find("process-tree") {
+            assert!(tree.bounds().left() >= filter.right());
+        }
+    })
+    .unwrap();
+}
