@@ -413,7 +413,7 @@ fn glyphs_say_what_the_collector_classified(cx: &mut TestAppContext) {
                 "Failing",
             ),
         ] {
-            assert_eq!(window.find(id).label().as_deref(), Some(label), "{id}");
+            assert_eq!(window.find(id).label(), Some(label), "{id}");
         }
     })
     .unwrap();
