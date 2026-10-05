@@ -3404,3 +3404,24 @@ fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn search_everything_keeps_one_width_on_every_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let mut widths = Vec::new();
+    for page in [Page::Resources, Page::Observability, Page::Overview] {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+            let width = window.find("search-everything").bounds().size.width;
+            widths.push((page, width / crate::ui::dp_px(1., window)));
+        })
+        .unwrap();
+    }
+    for (page, width) in &widths {
+        assert!(
+            (*width - 240.).abs() < 0.5,
+            "{page:?} shows Search everything as a {width} dp field, not the full one"
+        );
+    }
+}

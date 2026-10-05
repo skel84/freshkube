@@ -9,6 +9,10 @@ const SEARCH_KEY: &str = if cfg!(target_os = "macos") {
     "Ctrl K"
 };
 
+/// Below this window width, in dp, Search everything shrinks to its icon.
+/// Every page uses the same width: none adds controls to the header.
+const SEARCH_FIELD_MIN_WIDTH: f32 = 1180.;
+
 impl Pilot {
     pub(in crate::desktop) fn render_header(
         &mut self,
@@ -302,12 +306,7 @@ impl Pilot {
     /// Opens Search everything; it shrinks to its icon in a narrow window.
     fn render_search_field(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let narrow = window.viewport_size().width / ui::dp_px(1., window)
-            < if self.page == Page::Observability {
-                1450.
-            } else {
-                1180.
-            };
+        let narrow = window.viewport_size().width / ui::dp_px(1., window) < SEARCH_FIELD_MIN_WIDTH;
         h_flex()
             .id("search-everything")
             .test_support()
