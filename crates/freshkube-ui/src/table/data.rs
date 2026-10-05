@@ -9,7 +9,7 @@ use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, Role, ScrollHandle, ScrollStrategy,
-    SharedString, TestSupportExt, UniformListScrollHandle, Window, div, uniform_list,
+    SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 
 use super::pinned::{Pinned, scrolled_by};
@@ -567,14 +567,23 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
         // card's background with the row's own over it, in each of its
         // states. They stay inside the row, so its hover, tooltip and click
         // reach them unchanged.
-        let shade = h_flex()
-            .size_full()
-            .when(marked && !selected, |this| this.bg(p.hover))
-            .when(selected, |this| this.bg(p.accent_soft))
-            .when(clickable && !selected, |this| {
-                this.group_hover(ROW_GROUP, |style| style.bg(p.hover))
-            })
-            .children(cells);
+        let tint = |this: Div| {
+            this.when(marked && !selected, |this| this.bg(p.hover))
+                .when(selected, |this| this.bg(p.accent_soft))
+                .when(clickable && !selected, |this| {
+                    this.group_hover(ROW_GROUP, |style| style.bg(p.hover))
+                })
+        };
+        // The row's left border, transparent unless it is selected, would
+        // let the passing cells show through; this edge covers it.
+        let edge = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(-1.))
+            .w(px(1.))
+            .bg(if selected { p.accent } else { p.surface })
+            .when(!selected, |this| this.child(tint(div().size_full())));
         element = element.relative().child(Pinned::overlay(
             &state.sideways,
             div()
@@ -586,7 +595,8 @@ fn render_line<S: TableSource>(source: &S, line: usize, cx: &mut Context<S>) -> 
                 .left_0()
                 .w(dp(width))
                 .bg(p.surface)
-                .child(shade),
+                .child(edge)
+                .child(tint(h_flex().size_full()).children(cells)),
             p.line,
         ));
     }
