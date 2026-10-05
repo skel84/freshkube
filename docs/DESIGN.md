@@ -156,7 +156,8 @@ Each state's element has role status and an id `<page>-<state>`.
   - `group(n)`, `sorting(column)` and `sort(..)`, `click(key, event)` (or `clickable() -> false` for rows that don't select), `empty()` as an element, `notes()` and `footer()`.
 
   It is generic, not `dyn`, so 20,000 rows cost what hand-written ones did. The pieces are `ROW_HEIGHT`, `COMPACT_ROW_HEIGHT`, `HEADER_HEIGHT`, `ROW_GROUP` (the row's hover group), `cell(column)`, `GroupRow`, `selection_bar`, `showing_bar`, `legend`, `legend_item`, `legend_line`, `status_chip` and `status_chips`. `ui::Tone::Integration` is the integration-required square, from the palette's `integration` token, in `status_glyph`, `status_mark`, tags and chips.
-- Not in the crate yet: `StatCard` and `ChartCard`, which [#62](https://github.com/skel84/freshkube/issues/62) moves from `monitoring/panel`; `Breadcrumb`; and the states, which stay `ui::empty_state` and `ui::warning_banner`.
+- `freshkube_ui::card` ([#62](https://github.com/skel84/freshkube/issues/62), moved from `monitoring/panel`): `CardHeader::new(id, title)` with `.unit(…)`, `.about(text)` (the info mark's tooltip), `.copy(text, hint)` (what a click on the mark copies) and `.stale(…)`; its parts are `<id>-title`, `-query` and `-stale`. `StatCard::new(header).render(body, cx)` and `ChartCard::new(header).render(body, cx)` draw the card with id `<id>`, filling its grid cell. A stat card's body is `figures(&[Figure], cx)`; each `Figure` borrows its name, value and note, with an optional `Tone`, gauge and `Spark` (whose last stretch takes the colour the caller gives). `gauge(fraction, tone, cx)` is the fill bar. The page derives its figures when its data changes; the chart's plot, cursor, legend and markers stay with the page.
+- Not in the crate yet: `Breadcrumb`, and the states, which stay `ui::empty_state` and `ui::warning_banner`.
 
 ### Settled values
 
