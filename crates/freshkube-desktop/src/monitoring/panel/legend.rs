@@ -60,7 +60,7 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
         .text_color(p.muted)
         .children(legend.headings.iter().enumerate().map(|(index, heading)| {
             div()
-                .when(index > 0, |this| this.w(dp(36.)).text_right())
+                .when(index > 0, |this| this.w(dp(legend.column)).text_right())
                 .child(heading.clone())
         }));
     let mut rows = Vec::new();
@@ -134,6 +134,7 @@ fn table_row(
                 h_flex()
                     .flex_none()
                     .gap(dp(4.))
+                    .whitespace_nowrap()
                     .font_family(ui::MONO_FONT)
                     .text_size(dp(12.))
                     .text_color(p.ink)
@@ -144,7 +145,8 @@ fn table_row(
         .children(values.map(|value| {
             div()
                 .flex_none()
-                .w(dp(44.))
+                .w(dp(chart.legend.column))
+                .whitespace_nowrap()
                 .text_right()
                 .font_family(ui::MONO_FONT)
                 .text_size(dp(12.))

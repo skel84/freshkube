@@ -190,6 +190,35 @@ fn hidden_legends_stay_hidden() {
 }
 
 #[test]
+fn legend_values_take_the_titles_unit_and_one_column_width() {
+    const GIB: f64 = 1024. * 1024. * 1024.;
+    let spec = timeseries(json!({"unit": "bytes"}), json!({}));
+    let names = ["a", "b", "c", "d", "e"];
+    let levels = [6. * GIB, 3. * GIB, 0.5 * GIB, 929. / 1024. * GIB, 2. * GIB];
+    let all = names
+        .iter()
+        .zip(levels)
+        .map(|(name, level)| series(name, &[level; 7]))
+        .collect();
+    let data = derive(&spec, frame(all), window());
+    assert_eq!(data.unit.as_deref(), Some("GiB"));
+    let chart = chart_of(&data);
+    assert_eq!(chart.legend.mode, LegendMode::Table);
+    // Under a GiB title, 512 MiB reads 0.5 and no value names a second unit.
+    assert_eq!(chart.legend.rows[2].values, ["0.5", "0.5"]);
+    assert_eq!(chart.legend.rows[3].values, ["0.907", "0.907"]);
+    let values = chart.legend.rows.iter().flat_map(|row| &row.values);
+    assert!(
+        values.clone().all(|value| !value.contains(' ')),
+        "{:?}",
+        chart.legend
+    );
+    // One width for every value column, room for the widest value.
+    let widest = values.map(|value| value.chars().count()).max().unwrap();
+    assert!(chart.legend.column >= widest as f32 * 7.);
+}
+
+#[test]
 fn a_second_unit_goes_to_the_right_axis() {
     let spec = panel(json!({
         "type": "timeseries",

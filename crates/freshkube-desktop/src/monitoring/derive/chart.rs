@@ -10,6 +10,7 @@ use freshkube_core::monitoring::model::{
         TimeSeriesOptions,
     },
     time::TimeWindow,
+    units,
 };
 use gpui_kit::SharedString;
 
@@ -19,6 +20,12 @@ use crate::monitoring::colors::{self, Ink, Tier};
 
 /// Legend rows drawn at most; the rest are counted.
 pub(crate) const LEGEND_ROWS: usize = 30;
+
+/// One character's advance in the legend's 12 dp mono values, a little
+/// generous, so a column sized by its widest value never wraps.
+const MONO_ADVANCE: f32 = 7.4;
+/// The narrowest value column, as wide as a short heading such as "max".
+const VALUE_COLUMN: f32 = 36.;
 
 /// Opacity of an unstacked area, and of stacked bands.
 const AREA: f32 = colors::AREA_OPACITY;
@@ -118,6 +125,9 @@ pub(crate) struct Legend {
     pub rows: Vec<LegendRow>,
     /// Series left out past [`LEGEND_ROWS`].
     pub more: usize,
+    /// The width in dp of each value column after the first, and of its
+    /// heading: one width for every row, from the widest value.
+    pub column: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +137,8 @@ pub(crate) struct LegendRow {
     pub values: Vec<SharedString>,
     /// When the last value is older than the window's end, its time.
     pub stale: Option<SharedString>,
+    /// The values before formatting, for showing them in the title's unit.
+    raw: Vec<f64>,
 }
 
 pub(super) fn chart(
@@ -257,7 +269,8 @@ pub(super) fn chart(
     let (thresholds, bands) = thresholds(&shown, &right, options, &axes);
     let mut legend = legend(&shown, options, times);
     let mut axes = axes;
-    let unit = take_unit(&mut axes, &mut legend);
+    let unit = take_unit(&mut axes, &mut legend, &shown);
+    legend.column = column_width(&legend);
     PanelData {
         body: Body::Chart(Rc::new(Chart {
             xs,
@@ -508,14 +521,18 @@ fn legend(shown: &[Shown], options: &TimeSeriesOptions, times: &[f64]) -> Legend
         .take(LEGEND_ROWS)
         .map(|&i| {
             let series = &shown[i];
-            let values = calcs
+            let raw: Vec<f64> = calcs
                 .iter()
-                .map(|calc| format(&series.field, calc.reduce(&series.values)).into())
+                .map(|calc| calc.reduce(&series.values))
                 .collect();
             LegendRow {
                 series: i,
                 name: series.name.clone().into(),
-                values,
+                values: raw
+                    .iter()
+                    .map(|value| format(&series.field, *value).into())
+                    .collect(),
+                raw,
                 stale: (calcs.first() == Some(&Calc::LastNotNull))
                     .then(|| stale(&series.values, times))
                     .flatten(),
@@ -527,7 +544,23 @@ fn legend(shown: &[Shown], options: &TimeSeriesOptions, times: &[f64]) -> Legend
         headings,
         rows,
         more: listed.len().saturating_sub(LEGEND_ROWS),
+        column: VALUE_COLUMN,
     }
+}
+
+/// The value columns' width: the widest value or heading after the first,
+/// in mono characters.
+fn column_width(legend: &Legend) -> f32 {
+    let values = legend.rows.iter().flat_map(|row| row.values.iter().skip(1));
+    let chars = legend
+        .headings
+        .iter()
+        .skip(1)
+        .chain(values)
+        .map(|text| text.chars().count())
+        .max()
+        .unwrap_or(0);
+    (chars as f32 * MONO_ADVANCE).max(VALUE_COLUMN)
 }
 
 /// The time of the last value, when the series stopped before the end.
@@ -541,8 +574,14 @@ fn stale(values: &[f64], times: &[f64]) -> Option<SharedString> {
 
 /// Moves a unit every left-axis label shares, such as "ms", from the labels
 /// and the legend to the title, as the mock's latency panel shows it. A zero
-/// takes no part: the formatter may name it in another unit ("0 s").
-fn take_unit(axes: &mut [Option<Axis>; 2], legend: &mut Legend) -> Option<SharedString> {
+/// takes no part: the formatter may name it in another unit ("0 s"). A legend
+/// value the formatter scaled into another unit, such as 929 MiB under GiB,
+/// is shown in the title's unit, so no value names a second one.
+fn take_unit(
+    axes: &mut [Option<Axis>; 2],
+    legend: &mut Legend,
+    shown: &[Shown],
+) -> Option<SharedString> {
     if axes[1].is_some() {
         return None;
     }
@@ -563,13 +602,32 @@ fn take_unit(axes: &mut [Option<Axis>; 2], legend: &mut Legend) -> Option<Shared
         }
     }
     for row in &mut legend.rows {
-        for value in &mut row.values {
-            if let Some(number) = strip(value) {
+        let field = &shown[row.series].field;
+        for (value, raw) in row.values.iter_mut().zip(&row.raw) {
+            if let Some(number) = strip(value).or_else(|| in_unit(field, *raw, strip)) {
                 *value = number.into();
             }
         }
     }
     Some(unit.into())
+}
+
+/// `value` as a plain number in the title's unit. One of that unit is the
+/// power of 1000 or 1024 that `field` formats as "1" once `strip` takes the
+/// unit off; a unit that isn't one, such as minutes, leaves the value alone.
+fn in_unit(
+    field: &FieldSpec,
+    value: f64,
+    strip: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if !value.is_finite() {
+        return None;
+    }
+    let one = [1000_f64, 1024.]
+        .into_iter()
+        .flat_map(|step| (-3..=6).map(move |power| step.powi(power)))
+        .find(|one| strip(&field.format(*one)).as_deref() == Some("1"))?;
+    Some(units::format(value / one, Some("none"), field.decimals))
 }
 
 /// A label's number and the word after it, as "250 ms".

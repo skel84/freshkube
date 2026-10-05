@@ -240,7 +240,7 @@ pub fn figures(figures: &[Figure<'_>], cx: &App) -> AnyElement {
             .gap(dp(4.))
             .px(dp(14.))
             .pb(dp(10.))
-            .child(value(figure, dp(22.), cx))
+            .child(value(figure, 0, dp(22.), cx))
             .children(figure.gauge.map(|fill| gauge(fill, figure.tone, cx)))
             .children(figure.segments.map(|parts| segments(parts, cx)))
             .children(figure.spark.map(|spark| sparkline(spark, cx)))
@@ -256,7 +256,7 @@ pub fn figures(figures: &[Figure<'_>], cx: &App) -> AnyElement {
         .gap_y(dp(8.))
         .px(dp(14.))
         .pb(dp(10.))
-        .children(figures.iter().map(|figure| {
+        .children(figures.iter().enumerate().map(|(index, figure)| {
             v_flex()
                 .min_w(dp(96.))
                 .gap(dp(2.))
@@ -269,7 +269,7 @@ pub fn figures(figures: &[Figure<'_>], cx: &App) -> AnyElement {
                         .text_color(p.muted)
                         .child(name.clone())
                 }))
-                .child(value(figure, dp(18.), cx))
+                .child(value(figure, index, dp(18.), cx))
                 .children(figure.gauge.map(|fill| gauge(fill, figure.tone, cx)))
                 .children(figure.segments.map(|parts| segments(parts, cx)))
                 .children(figure.spark.map(|spark| sparkline(spark, cx)))
@@ -278,11 +278,15 @@ pub fn figures(figures: &[Figure<'_>], cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn value(figure: &Figure<'_>, text_size: Rems, cx: &App) -> impl IntoElement {
+/// The figure and its note; the note drops under a figure too wide to
+/// leave it room, rather than running past the card.
+fn value(figure: &Figure<'_>, index: usize, text_size: Rems, cx: &App) -> impl IntoElement {
     let p = palette(cx);
     let ink = value_ink(figure, &p);
     h_flex()
-        .gap(dp(8.))
+        .flex_wrap()
+        .gap_x(dp(8.))
+        .gap_y(dp(4.))
         .child(
             div()
                 .text_size(text_size)
@@ -293,13 +297,11 @@ fn value(figure: &Figure<'_>, text_size: Rems, cx: &App) -> impl IntoElement {
         )
         .children(figure.note.cloned().map(|note| {
             match figure.tone {
-                Some(tone) => ui::tag(tone, None, note, cx).into_any_element(),
-                None => div()
-                    .text_size(dp(12.))
-                    .text_color(p.muted)
-                    .child(note)
-                    .into_any_element(),
+                Some(tone) => ui::tag(tone, None, note, cx),
+                None => div().text_size(dp(12.)).text_color(p.muted).child(note),
             }
+            .id(("note", index))
+            .test_support()
         }))
 }
 
@@ -621,6 +623,58 @@ mod tests {
             assert!(
                 good.size.width > crit.size.width * 10.,
                 "a run is as wide as its share: {good:?}"
+            );
+        })
+        .unwrap();
+    }
+
+    /// A wide figure with a tag on a narrow card, as a latency stat with
+    /// its threshold note.
+    struct Tagged;
+
+    impl Render for Tagged {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let value = SharedString::from("985 ms");
+            let note = SharedString::from("above 500 ms");
+            div()
+                .w(px(170.))
+                .child(StatCard::new(CardHeader::new("latency", "API p99")).render(
+                    figures(
+                        &[Figure {
+                            note: Some(&note),
+                            tone: Some(Tone::Warn),
+                            ..figure(&value)
+                        }],
+                        cx,
+                    ),
+                    cx,
+                ))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_note_without_room_drops_under_its_figure(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
+            let view = cx.new(|_| Tagged);
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let card = window.find("latency").bounds();
+            let note = window.within("latency").find(("note", 0usize)).bounds();
+            assert!(
+                note.right() <= card.right(),
+                "the note isn't clipped: {note:?} in {card:?}"
+            );
+            assert!(
+                note.left() - card.left() < dp_px(30., window),
+                "it starts a line: {note:?}"
             );
         })
         .unwrap();
