@@ -4,7 +4,7 @@ Freshkube today is a cluster browser with Talos inside it. This file proposes a 
 
 It records the direction taken with the user, the stack it was shaped on, the screens, the model behind them and an order of work. Nothing here is built. The [roadmap](ROADMAP.md) decides when a step starts; the future ideas it extends are [F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation) (ownership and Argo CD), [F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes) (reviewed changes and their outcomes) and [F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) (simultaneous clusters). The writes follow the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md). [#42](https://github.com/skel84/freshkube/issues/42) tracks the work; the spike is [#43](https://github.com/skel84/freshkube/issues/43) and the session registry [#44](https://github.com/skel84/freshkube/issues/44).
 
-The mocks are static HTML pages with example data, in [`platform/`](platform/). Each screen below links its page. The same boards live on the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1) as P1–P7, P1d, P4d and P4w, beside the earlier directions; the canvas is private to its owner until shared. They show intent, not pixels: where a mock and this file differ, this file wins.
+The mocks are static HTML pages with example data, in [`platform/`](platform/). Each screen below links its page. The same boards live on the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1) as P1–P7, P1d, P4d and P4w, with R, the app today, beside them; the canvas is private to its owner until shared. They show intent, not pixels: where a mock and this file differ, this file wins.
 
 ## Decisions
 
@@ -114,6 +114,8 @@ The screens above read like a web dashboard: hero headings, cards with their own
 ![checkout, Delivery, desktop grade](platform/app-delivery-desktop.png)
 
 [HTML mock](platform/app-delivery-desktop.html). Freight as rows and stages as columns; the column headers are the pipeline. Each cell says what that freight is in that stage: running now, was there, ready, rolling out or blocked. Selecting the ready cell enables Promote in the toolbar and fills the inspector; Next step and Abort stay disabled until a rollout is selected.
+
+For reference, [the app today](platform/today-pods.png): Pods in example mode, captured from a debug build of `a1b6b24` at the same size. It is already denser than P1–P7, with a compact toolbar, grouped rows and a status bar; its uppercase column headers and the card around its table are what desktop grade would change.
 
 [The same on Windows](platform/app-delivery-windows.html) ([screenshot](platform/app-delivery-windows.png)): a menu button and caption buttons instead of traffic lights, Ctrl labels, and the default button first.
 
