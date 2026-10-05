@@ -193,8 +193,11 @@ impl MaintenanceView {
         // The operation slot's holder shows in the footer.
         let operations = Operations::global(cx);
         subscriptions.push(cx.observe(&operations, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.observe_window_appearance(window, |_, window, cx| {
-            gpui_kit::component::Theme::sync_system_appearance(Some(window), cx);
+        subscriptions.push(cx.observe_window_appearance(window, |view, window, cx| {
+            // Example data keeps the theme FRESHKUBE_THEME chose.
+            if !view.example {
+                gpui_kit::component::Theme::sync_system_appearance(Some(window), cx);
+            }
         }));
         window.on_window_should_close(cx, mutation::may_close);
         let tick = cx.spawn_in(window, async move |this, cx| {

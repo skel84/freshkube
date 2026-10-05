@@ -29,10 +29,17 @@ impl MaintenanceView {
         .join("freshkube-maintenance-example");
         _ = std::fs::remove_dir_all(&output);
         // The shell applies FRESHKUBE_THEME; maintenance mode replaces it.
-        match std::env::var("FRESHKUBE_THEME").as_deref() {
-            Ok("light") => Theme::change(ThemeMode::Light, Some(window), cx),
-            Ok("dark") => Theme::change(ThemeMode::Dark, Some(window), cx),
-            _ => {}
+        // Deferred, as the shell does, so the window's first appearance
+        // doesn't override it.
+        let mode = match std::env::var("FRESHKUBE_THEME").as_deref() {
+            Ok("light") => Some(ThemeMode::Light),
+            Ok("dark") => Some(ThemeMode::Dark),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            cx.defer_in(window, move |_, window, cx| {
+                Theme::change(mode, Some(window), cx)
+            });
         }
         let mut view = Self::with_runner(NODE.into(), runtime, runner(), window, cx);
         view.example = true;
