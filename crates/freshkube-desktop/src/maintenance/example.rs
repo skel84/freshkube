@@ -20,10 +20,13 @@ const DISK: &str = "/dev/nvme0n1";
 impl MaintenanceView {
     /// The view on the example node, walking itself to the review.
     pub(crate) fn example(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let output = std::env::temp_dir().join(format!(
-            "freshkube-maintenance-example-{}",
-            std::process::id()
-        ));
+        // A fixed path, so captures show nothing of the machine they ran on.
+        let output = if cfg!(unix) {
+            std::path::PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        }
+        .join("freshkube-maintenance-example");
         _ = std::fs::remove_dir_all(&output);
         // The shell applies FRESHKUBE_THEME; maintenance mode replaces it.
         match std::env::var("FRESHKUBE_THEME").as_deref() {
