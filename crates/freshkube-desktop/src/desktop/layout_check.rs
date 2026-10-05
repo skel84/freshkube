@@ -1,10 +1,11 @@
 //! Measures a page from the bounds its last frame painted, so a page that
 //! drifts from DESIGN.md fails a test instead of a review.
 //!
-//! `assert_page_frame` checks any page's padding and title, `assert_table`
-//! checks one table's header and rows (a page may hold several), and
-//! `assert_table_page` checks a table page with both, and that its table
-//! sits in no card. A page names a few
+//! `assert_page_frame` checks a padded page's padding and title,
+//! `assert_edge_frame` an edge-to-edge page's inset and title,
+//! `assert_table` checks one table's header and rows (a page may hold
+//! several), and `assert_table_page` checks a table page with the edge
+//! frame and its table, and that the table sits in no card. A page names a few
 //! elements by id; rows and group headers are found by their accessibility
 //! roles inside the list, so the checks need no access to the page's state.
 
@@ -14,6 +15,7 @@ use gpui_kit::{App, ElementId, Pixels, Role, SharedString, TextRun, Window, font
 
 use super::PAGE_PADDING;
 use crate::ui::dp_px;
+use freshkube_ui::page::PANE_PADDING;
 
 /// DESIGN.md's table page, in dp.
 pub(crate) const HEADER_HEIGHT: f32 = 26.;
@@ -86,14 +88,14 @@ pub(crate) struct TableLayout {
     pub title_text: Pixels,
 }
 
-/// Asserts DESIGN.md's table page: `assert_page_frame` on its frame,
+/// Asserts DESIGN.md's table page: `assert_edge_frame` on its frame,
 /// `assert_table` on its table, and `assert_bare` on the table.
 pub(crate) fn assert_table_page(
     window: &mut Window,
     cx: &mut App,
     page: &TablePage,
 ) -> TableLayout {
-    let frame = assert_page_frame(
+    let frame = assert_edge_frame(
         window,
         cx,
         &PageFrame {
@@ -146,8 +148,8 @@ pub(crate) fn assert_bare(window: &Window, table: &'static str) {
     );
 }
 
-/// Asserts DESIGN.md's page frame: 26 dp side padding and a 20 dp title on a
-/// 28 dp line.
+/// Asserts DESIGN.md's padded frame, a page of cards': 26 dp side padding and
+/// a 20 dp title on a 28 dp line.
 pub(crate) fn assert_page_frame(
     window: &mut Window,
     cx: &mut App,
@@ -181,6 +183,47 @@ pub(crate) fn assert_page_frame(
         frame.page,
         layout.padding_right,
     );
+    close("title line", layout.title_line, TITLE_LINE);
+    close("title text", layout.title_text, TITLE_TEXT);
+    layout
+}
+
+/// Asserts DESIGN.md's frame without margins: the content, a table page's
+/// table, runs from edge to edge of the page, and the title sits
+/// `PANE_PADDING` in from its left edge, 20 dp text on a 28 dp line. The
+/// layout's paddings are the title's inset and the space right of the
+/// content.
+pub(crate) fn assert_edge_frame(
+    window: &mut Window,
+    cx: &mut App,
+    frame: &PageFrame,
+) -> FrameLayout {
+    window.render_frame(cx);
+    let root = window.find(frame.page).bounds();
+    let title = window.find(frame.title).bounds();
+    let content = window.find(frame.content).bounds();
+    let layout = FrameLayout {
+        padding_left: title.left() - root.left(),
+        padding_right: root.right() - content.right(),
+        title_line: title.size.height,
+        title_text: title_text(window, frame.title_text, title.size.width),
+    };
+    let dp = |n: f32| dp_px(n, window);
+    let close = |what: &str, actual: Pixels, expected: f32| {
+        assert!(
+            (actual - dp(expected)).abs() < px(0.5),
+            "{}: {what} is {actual:?}, DESIGN.md says {expected} dp ({:?}); {layout:#?}",
+            frame.page,
+            dp(expected),
+        );
+    };
+    close("title inset", layout.padding_left, PANE_PADDING);
+    close(
+        "space left of the content",
+        content.left() - root.left(),
+        0.,
+    );
+    close("space right of the content", layout.padding_right, 0.);
     close("title line", layout.title_line, TITLE_LINE);
     close("title text", layout.title_text, TITLE_TEXT);
     layout

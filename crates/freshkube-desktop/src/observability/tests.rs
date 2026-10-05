@@ -928,7 +928,7 @@ fn applications_live_header_controls_fit_a_narrow_page_at_large_text(cx: &mut Te
     cx.update_window(handle, |_, window, cx| {
         settle_header(window, cx);
         let frame = window.find("obs-frame").bounds();
-        let padding = crate::ui::dp_px(freshkube_ui::page::PAGE_PADDING, window);
+        let padding = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
         for id in [
             "obs-source",
             "obs-project",
@@ -970,7 +970,7 @@ fn applications_secondary_header_fits_actual_desktop_widths(cx: &mut TestAppCont
             let secondary = window.find("obs-secondary").bounds();
             let controls = window.find("obs-controls").bounds();
             let scope = window.find("obs-scope").bounds();
-            let padding = crate::ui::dp_px(freshkube_ui::page::PAGE_PADDING, window);
+            let padding = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
             assert!(
                 secondary.top() >= title.bottom(),
                 "categories belong below the title"

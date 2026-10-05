@@ -565,8 +565,14 @@ impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
         let _span = crate::perf::span("table.render");
+        // The table runs edge to edge; a state in its place keeps the inset.
         let list = self
             .placeholder(cx)
+            .map(|state| {
+                (page::inset().flex().flex_col().flex_1().min_h_0())
+                    .child(state)
+                    .into_any_element()
+            })
             .unwrap_or_else(|| self.table(window, cx));
         let list = self.keyed(list, cx);
         let short = content_width(window) < SPLIT_WIDTH
@@ -589,6 +595,8 @@ impl Render for ResourcesScreen {
                             .size_range(dp_px(PANE_MIN_WIDTH, window)..Pixels::MAX)
                             .flex_none()
                             .pl(dp(SPLIT_GAP))
+                            .pr(dp(page::PANE_PADDING))
+                            .py(dp(page::PANE_PADDING_Y))
                             .child(pane),
                     )
             } else {
@@ -605,6 +613,8 @@ impl Render for ResourcesScreen {
                             .size(dp_px(PANE_HEIGHT, window))
                             .size_range(dp_px(PANE_MIN_HEIGHT, window)..Pixels::MAX)
                             .pt(dp(SPLIT_GAP))
+                            .px(dp(page::PANE_PADDING))
+                            .pb(dp(page::PANE_PADDING_Y))
                             .child(pane),
                     )
             };
@@ -628,8 +638,11 @@ impl Render for ResourcesScreen {
         page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| this.overflow_y_scroll())
-            .child(self.header(window, cx))
-            .children(self.stale_banner(cx))
+            .child(page::inset().child(self.header(window, cx)))
+            .children(
+                self.stale_banner(cx)
+                    .map(|banner| page::inset().pt_0().child(banner)),
+            )
             .child(body)
     }
 }

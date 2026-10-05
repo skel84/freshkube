@@ -327,7 +327,7 @@ impl SystemServices {
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         page::page("system-services-page")
-            .child(self.render_header(window, cx))
+            .child(page::inset().child(self.render_header(window, cx)))
             .child(table::data_table(self, window, cx).flex_1().min_h_0())
     }
 }
