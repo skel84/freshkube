@@ -23,7 +23,7 @@ use super::{
     NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine, SEARCH_CONTEXT, SelectAll,
 };
 use freshkube_ui::palette::palette;
-use freshkube_ui::ui::{self, dp};
+use freshkube_ui::ui::{self, Tone, dp};
 
 impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
@@ -211,15 +211,16 @@ impl<S: LogSource> LogView<S> {
         let counts = self.review.level_counts();
         h_flex().gap_1().flex_wrap().children(
             [
-                ("error", "Error", LogLevel::Error, Some(p.accent)),
-                ("warning", "Warn", LogLevel::Warning, Some(p.warn)),
-                ("info", "Info", LogLevel::Info, None),
-                ("debug", "Debug", LogLevel::Debug, None),
-                ("unknown", "Unknown", LogLevel::Unknown, None),
+                ("error", "Error", LogLevel::Error),
+                ("warning", "Warn", LogLevel::Warning),
+                ("info", "Info", LogLevel::Info),
+                ("debug", "Debug", LogLevel::Debug),
+                ("unknown", "Unknown", LogLevel::Unknown),
             ]
             .into_iter()
             .enumerate()
-            .map(|(ix, (id, label, level, dot))| {
+            .map(|(ix, (id, label, level))| {
+                let tone = level_tone(&level);
                 let active = self.review.logs.buffer().filters().levels.accepts(&level);
                 Toggle::new(SharedString::from(format!("level-{id}")))
                     .outline()
@@ -230,9 +231,7 @@ impl<S: LogSource> LogView<S> {
                         h_flex()
                             .gap(dp(5.))
                             .px(dp(3.))
-                            .when_some(dot, |this, color| {
-                                this.child(div().size(dp(7.)).rounded_full().bg(color))
-                            })
+                            .children(tone.and_then(|tone| ui::status_glyph(tone, cx)))
                             .child(label)
                             .child(
                                 div()
@@ -622,5 +621,16 @@ impl<S: LogSource> Render for LogView<S> {
                 )
             })
             .child(viewport)
+    }
+}
+
+/// The glyph beside a level's toggle. An application's errors aren't the
+/// cluster's health, so they take the information dot, as Observability's
+/// do; warnings take the warning glyph, and the other levels none.
+pub(crate) fn level_tone(level: &LogLevel) -> Option<Tone> {
+    match level {
+        LogLevel::Error => Some(Tone::Info),
+        LogLevel::Warning => Some(Tone::Warn),
+        _ => None,
     }
 }

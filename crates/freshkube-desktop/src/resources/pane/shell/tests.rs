@@ -166,6 +166,10 @@ fn nothing_runs_until_start_which_opens_the_default_container(cx: &mut TestAppCo
         assert_eq!(window.find("terminal").focused(), Some(true));
         assert!(window.find("detail-shell-running").visible());
         assert_eq!(
+            window.find("detail-shell-running").label(),
+            Some("A shell runs")
+        );
+        assert_eq!(
             shell.pane.read(cx).running_shell(cx).as_deref(),
             Some(pod.identity.name.as_str())
         );
