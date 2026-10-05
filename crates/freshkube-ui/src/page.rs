@@ -60,8 +60,9 @@ pub fn meta_line(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> 
 /// controls at the right, with the meta line below. Its ids derive from the
 /// page's prefix: it draws `<prefix>-title` and `<prefix>-scope`, and
 /// [`id`](Self::id) names the parts the caller builds. It lays them out on
-/// one row when the content is at least [`HEADER_NARROW`] wide and stacked
-/// otherwise.
+/// one row when the content is at least [`HEADER_NARROW`] wide, wrapping the
+/// controls below when they don't fit, and stacked otherwise, where the
+/// controls wrap among themselves.
 pub struct PageHeader {
     prefix: SharedString,
     title: SharedString,
@@ -140,22 +141,33 @@ impl PageHeader {
                     )
                     .min_w_0()
             }));
-        let controls = h_flex().flex_none().gap(dp(8.)).children(self.controls);
+        // Each control sits in a box of its own size: a control whose root
+        // fills its parent, such as a select, would otherwise take a whole
+        // line of a wrapping row. The controls wrap among themselves when
+        // even a line of their own is too narrow.
+        let controls = h_flex().flex_wrap().gap(dp(8.)).children(
+            self.controls
+                .into_iter()
+                .map(|control| div().flex_none().child(control)),
+        );
         let toolbar = if narrow {
             v_flex()
                 .w_full()
                 .gap(dp(8.))
                 .child(leading.w_full())
                 .children(self.chips)
-                .child(controls)
+                .child(controls.w_full())
         } else {
+            // The controls start at their own width and fill what's left of
+            // the line, at its right; when they don't fit beside the title
+            // and chips they take a line of their own.
             h_flex()
                 .w_full()
+                .flex_wrap()
                 .gap(dp(8.))
                 .child(leading)
                 .children(self.chips)
-                .child(div().flex_1())
-                .child(controls)
+                .child(controls.flex_grow_1().max_w_full().justify_end())
         };
         let meta = (!self.meta.is_empty()).then(|| meta_line(scope_id, cx).children(self.meta));
         v_flex()
@@ -164,5 +176,130 @@ impl PageHeader {
             .gap(dp(8.))
             .child(toolbar)
             .children(meta)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{
+        AppContext, Bounds, Context, IntoElement, Pixels, Render, TestAppContext, Window, px, size,
+    };
+
+    use super::*;
+
+    /// Applications' controls, each filling its parent around a fixed-width
+    /// part, as a select does.
+    const CONTROLS: [f32; 7] = [160., 160., 132., 20., 80., 100., 20.];
+
+    struct Header {
+        narrow: bool,
+    }
+
+    impl Render for Header {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = PageHeader::new("app", "Applications", self.narrow);
+            let controls = CONTROLS
+                .iter()
+                .enumerate()
+                .map(|(ix, width)| {
+                    div()
+                        .id(header.id(&format!("control-{ix}")))
+                        .test_support()
+                        .size_full()
+                        .child(div().w(dp(*width)).h(dp(20.)))
+                })
+                .collect::<Vec<_>>();
+            controls
+                .into_iter()
+                .fold(header, PageHeader::control)
+                .render(cx)
+                .w_full()
+        }
+    }
+
+    /// The title and controls the header drew at `width` × 560 and 20 px text.
+    fn draw(
+        cx: &mut TestAppContext,
+        width: f32,
+        narrow: bool,
+    ) -> (Bounds<Pixels>, Vec<Bounds<Pixels>>) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(width), px(560.)), |window, cx| {
+            let view = cx.new(|_| Header { narrow });
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let title = window.find("app-title").bounds();
+            let controls = (0..CONTROLS.len())
+                .map(|ix| window.find(format!("app-control-{ix}")).bounds())
+                .collect();
+            (title, controls)
+        })
+        .unwrap()
+    }
+
+    /// Every control inside the page at its own width: one that fills its
+    /// parent doesn't take the line.
+    fn assert_inside(width: f32, controls: &[Bounds<Pixels>]) {
+        let scale = controls[0].size.width / CONTROLS[0];
+        assert!(
+            scale > px(1.),
+            "the controls are drawn larger than at 14 px"
+        );
+        for (control, own) in controls.iter().zip(CONTROLS) {
+            assert!(
+                control.left() >= px(0.) && control.right() <= px(width),
+                "{width}: {control:?}"
+            );
+            assert!(
+                (control.size.width - scale * own).abs() < px(0.5),
+                "{width}: {control:?}"
+            );
+        }
+    }
+
+    #[gpui_kit::test]
+    fn narrow_controls_wrap_inside_the_page(cx: &mut TestAppContext) {
+        let (title, controls) = draw(cx, 760., true);
+        assert_inside(760., &controls);
+        assert!(controls[0].top() > title.bottom());
+        assert!(
+            controls
+                .iter()
+                .any(|control| control.top() > controls[0].bottom())
+        );
+    }
+
+    #[gpui_kit::test]
+    fn wide_controls_wrap_below_the_title_at_the_right(cx: &mut TestAppContext) {
+        let (title, controls) = draw(cx, 1000., false);
+        assert_inside(1000., &controls);
+        assert!(
+            controls
+                .iter()
+                .all(|control| control.top() > title.bottom())
+        );
+        assert_eq!(controls.last().unwrap().right(), px(1000.));
+    }
+
+    #[gpui_kit::test]
+    fn wide_controls_stay_beside_the_title_when_they_fit(cx: &mut TestAppContext) {
+        let (title, controls) = draw(cx, 1800., false);
+        assert_inside(1800., &controls);
+        assert!(
+            controls
+                .iter()
+                .all(|control| control.top() < title.bottom())
+        );
+        assert_eq!(controls.last().unwrap().right(), px(1800.));
     }
 }
