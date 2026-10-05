@@ -24,6 +24,10 @@ fn system_services_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
             }
             window.press("secondary-7", cx);
             window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
             assert_eq!(view.read(cx).page, Page::SystemServices);
             // The unhealthy kubelet puts the rows under a header per health.
             let layout = layout_check::assert_table_page(window, cx, &SYSTEM_SERVICES);
