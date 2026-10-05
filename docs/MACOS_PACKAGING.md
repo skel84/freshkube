@@ -73,6 +73,10 @@ cancels its previous run. The checks build the workspace crates with line tables
 only, rather than full debug info, which keeps backtraces readable and the test
 binaries quicker to link.
 
+Changelog fragments have a separate Ubuntu job on every run, including
+Markdown-only changes and draft PRs. It runs `scripts/changelog.test.sh` and
+`scripts/changelog.sh check` without a Rust build or a macOS runner.
+
 Both the checks and bundle jobs install protobuf before building. They generate
 the Talos client in their own Cargo output directory; no checked-in generated
 Rust or regeneration maintenance command is required. Schema changes trigger
@@ -115,7 +119,9 @@ compiles again. [Release](../.github/workflows/release.yml) runs when a tag
 `v*` is pushed:
 
 1. It checks that the tag is `v` plus the `workspace.package` version in
-   `Cargo.toml`, and that the tagged commit is on `main`.
+   `Cargo.toml`, and that the tagged commit is on `main`. It also runs
+   `scripts/changelog.sh check --empty`: any pending fragment stops the release
+   with an instruction to collect the notes before tagging.
 2. It finds the successful CI run of that commit on `main` and downloads both
    bundles. Without one (still running, failed, skipped or expired) it stops and
    says so; it never builds a replacement.
@@ -127,8 +133,12 @@ compiles again. [Release](../.github/workflows/release.yml) runs when a tag
 
 To release:
 
-1. Open a pull request that sets the version in `Cargo.toml` (and `Cargo.lock`)
-   and renames the changelog's Unreleased section to `## <version> (<date>)`.
+1. Open a pull request that runs `scripts/changelog.sh collect` **before**
+   renaming the changelog's Unreleased section to `## <version> (<date>)`, and
+   sets the version in `Cargo.toml` (and `Cargo.lock`). Commit the collected
+   changelog and deleted fragments together; leave a new `## Unreleased`
+   heading for the next release. Feature PRs add [fragments](../changelog.d/README.md)
+   instead of editing Unreleased directly.
 2. Merge it, and wait for CI on `main` to finish both bundles.
 3. Tag the merge commit and push the tag:
    `git tag -a v<version> -m "Freshkube <version>" <commit>` then
