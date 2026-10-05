@@ -321,7 +321,9 @@ impl Pilot {
             self.kubernetes_only.is_some(),
         );
         if self.overview.is_stale() {
-            self.overview_display = std::mem::take(&mut self.overview_display).talos_stale();
+            let reason = self.overview.error().unwrap_or("The refresh failed.");
+            self.overview_display =
+                std::mem::take(&mut self.overview_display).talos_stale(reason.to_owned().into());
         }
         self.rail_marks = crate::desktop::shell::RailMarks::from_cards(
             &self.overview_display.cards,
