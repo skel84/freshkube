@@ -6,7 +6,7 @@ mod tests;
 
 use crate::{
     presentation::{self, Health, NodeSummary},
-    screens::content_width,
+    screens::inset_width,
     ui::{self, dp},
 };
 use freshkube_ui::{page, table};
@@ -254,7 +254,7 @@ impl SystemServices {
         self.refilter(cx);
     }
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let narrow = content_width(window) < page::HEADER_NARROW;
+        let narrow = inset_width(window) < page::HEADER_NARROW;
         let header = page::PageHeader::new(PREFIX, "System services", narrow);
         let filter = div().child(
             Input::new(&self.filter)

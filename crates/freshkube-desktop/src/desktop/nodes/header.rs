@@ -1,7 +1,7 @@
 //! Nodes' shared header, with cached source and freshness metadata.
 use super::projection::Status;
 use super::*;
-use crate::{screens::content_width, ui::dp};
+use crate::{screens::inset_width, ui::dp};
 use freshkube_ui::{page, table};
 use gpui_kit::base::Selectable;
 use gpui_kit::{
@@ -17,11 +17,8 @@ use gpui_kit::{
 
 impl Pilot {
     pub(super) fn nodes_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let header = page::PageHeader::new(
-            "nodes",
-            "Nodes",
-            content_width(window) < page::HEADER_NARROW,
-        );
+        let header =
+            page::PageHeader::new("nodes", "Nodes", inset_width(window) < page::HEADER_NARROW);
         let segment = ButtonGroup::new("nodes-view")
             .outline()
             .small()

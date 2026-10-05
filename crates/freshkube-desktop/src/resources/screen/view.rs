@@ -64,7 +64,7 @@ impl ResourcesScreen {
             } else {
                 0.
             };
-        let stacked = content_width(window) < one_row;
+        let stacked = inset_width(window) < one_row;
         let namespace = (self.kind.namespaced && !self.embedded).then(|| {
             div()
                 .when_else(
@@ -575,13 +575,13 @@ impl Render for ResourcesScreen {
             })
             .unwrap_or_else(|| self.table(window, cx));
         let list = self.keyed(list, cx);
-        let short = content_width(window) < SPLIT_WIDTH
-            && window.viewport_size().height < dp_px(620., window);
+        let short =
+            page_width(window) < SPLIT_WIDTH && window.viewport_size().height < dp_px(620., window);
         let body = if self.detail.read(cx).target_identity().is_some() {
             // Cached: list updates and age ticks don't redraw the pane.
             let pane =
                 AnyView::from(self.detail.clone()).cached(StyleRefinement::default().size_full());
-            let split = if content_width(window) >= SPLIT_WIDTH {
+            let split = if page_width(window) >= SPLIT_WIDTH {
                 h_resizable("resource-split")
                     .with_state(&self.split)
                     .child(

@@ -5,7 +5,7 @@ use layout::ColumnSource;
 
 impl ResourcesScreen {
     pub(super) fn pods_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let narrow = content_width(window) < page::HEADER_NARROW;
+        let narrow = inset_width(window) < page::HEADER_NARROW;
         let header = page::PageHeader::new("resource", self.title(), narrow);
         let filter = div()
             .key_context(FILTER_CONTEXT)

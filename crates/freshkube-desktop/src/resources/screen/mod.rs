@@ -37,7 +37,7 @@ use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
 use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
-use crate::screens::{SCREEN_DEADLINE, content_width, mono};
+use crate::screens::{SCREEN_DEADLINE, inset_width, mono, page_width};
 use crate::ui::{self, clock, dp, dp_px};
 use freshkube_ui::{page, table};
 use layout::TableLayout;

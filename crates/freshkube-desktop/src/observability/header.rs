@@ -12,7 +12,14 @@ impl ObservabilityPage {
         } else {
             self.destination.label()
         };
-        let narrow = crate::screens::content_width(window) < page::HEADER_NARROW;
+        // Applications runs edge to edge, with its header inset; the other
+        // destinations keep the padded frame.
+        let width = if self.destination == Destination::Applications {
+            crate::screens::inset_width(window)
+        } else {
+            crate::screens::content_width(window)
+        };
+        let narrow = width < page::HEADER_NARROW;
         PageHeader::new("obs", title.to_owned(), narrow)
     }
 
