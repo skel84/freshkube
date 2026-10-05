@@ -232,6 +232,107 @@ fn kubernetes_only_cards_and_refused_parts_keep_the_other_counts() {
     assert!(display.subtitle.contains("Kubernetes v1.32.3"));
 }
 
+#[test]
+fn services_and_memory_cards_without_evidence_are_unknown() {
+    use crate::{
+        desktop::{Area, shell::RailMarks},
+        fixture,
+        presentation::{node_summaries, overview::Overview},
+        ui::Tone,
+    };
+    use freshkube_core::cluster_overview::ClusterOverview;
+    // No node answered: nothing counted, nothing measured.
+    let silent = ClusterOverview {
+        endpoints: vec!["192.0.2.1".into()],
+        ..Default::default()
+    };
+    let silent = Overview::build(
+        &[],
+        &node_summaries(&silent),
+        None,
+        Some(&silent),
+        false,
+        false,
+    );
+    // The Talos overview hasn't arrived.
+    let waiting = Overview::build(&[], &[], None, None, false, false);
+    // Nodes answered, but none of their services reports health.
+    let cluster = fixture::cluster("prod-fra", 0);
+    let mut nodes = node_summaries(&cluster);
+    for service in nodes.iter_mut().flat_map(|node| &mut node.services) {
+        service.health = None;
+    }
+    let unreported = Overview::build(&[], &nodes, None, Some(&cluster), false, false);
+    for (case, overview, ids) in [
+        ("silent", &silent, &["tile-services", "tile-memory"][..]),
+        ("waiting", &waiting, &["tile-services", "tile-memory"][..]),
+        ("unreported", &unreported, &["tile-services"][..]),
+    ] {
+        for id in ids {
+            let card = overview.cards.iter().find(|card| card.id == *id).unwrap();
+            assert_eq!(card.tone, Tone::Unknown, "{case}: {id}");
+        }
+        // An unknown card leaves its area without a dot, as a good one does.
+        let marks = RailMarks::from_cards(&overview.cards, false);
+        assert_eq!(marks.tone(Area::ControlPlane), None, "{case}");
+        if case != "unreported" {
+            assert_eq!(marks.tone(Area::Nodes), None, "{case}");
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext) {
+    use crate::{desktop::Area, ui::Tone};
+    const TALOS_CARDS: [&str; 3] = ["tile-etcd", "tile-services", "tile-memory"];
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tone = |pilot: &crate::desktop::Pilot, id: &str| {
+            let card = pilot
+                .overview_display
+                .cards
+                .iter()
+                .find(|card| card.id == id)
+                .unwrap();
+            (card.tone, card.detail.to_string())
+        };
+        // The example cluster has an unhealthy service, so Control plane has
+        // a dot, and a healthy etcd.
+        let before: Vec<_> = TALOS_CARDS
+            .iter()
+            .map(|id| tone(pilot.read(cx), id))
+            .collect();
+        assert_eq!(tone(pilot.read(cx), "tile-services").0, Tone::Warn);
+        assert_eq!(tone(pilot.read(cx), "tile-etcd").0, Tone::Good);
+        assert_eq!(
+            pilot.read(cx).rail_marks.tone(Area::ControlPlane),
+            Some(Tone::Warn)
+        );
+        window.click("fixture-fail", cx);
+        window.render_frame(cx);
+        for id in TALOS_CARDS {
+            let (tone, detail) = tone(pilot.read(cx), id);
+            assert_eq!(tone, Tone::Unknown, "{id}");
+            assert!(detail.starts_with("Last known · "), "{id}: {detail}");
+        }
+        assert_eq!(pilot.read(cx).rail_marks.tone(Area::ControlPlane), None);
+        // A refresh that answers brings back the good cards, the warning and its dot.
+        window.click("refresh", cx);
+        window.render_frame(cx);
+        let after: Vec<_> = TALOS_CARDS
+            .iter()
+            .map(|id| tone(pilot.read(cx), id))
+            .collect();
+        assert_eq!(after, before);
+        assert_eq!(
+            pilot.read(cx).rail_marks.tone(Area::ControlPlane),
+            Some(Tone::Warn)
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn object_frontdoor_asks_before_navigation_and_cancel_keeps_the_shell(cx: &mut TestAppContext) {
     use crate::resources::{example, model::ObjectRef};

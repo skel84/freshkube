@@ -1287,6 +1287,7 @@ impl Pilot {
             &request,
             Err("Example: the Talos API didn't answer within 10 s".into()),
         );
+        self.rebuild_joined_nodes();
         cx.notify();
     }
 
