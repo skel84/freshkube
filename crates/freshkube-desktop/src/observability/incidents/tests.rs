@@ -8,11 +8,65 @@ fn selection_survives_reorder_and_clears_removed_identity() {
     let mut state = Incidents::default();
     assert!(state.prepare_list(&[incident("a"), incident("b")]));
     assert!(!state.prepare_list(&[incident("b"), incident("a")]));
-    assert_eq!(state.selected.as_ref().unwrap().0, "a");
+    assert_eq!(state.selected().unwrap().0, "a");
     assert!(state.prepare_list(&[incident("b")]));
-    assert_eq!(state.selected.as_ref().unwrap().0, "b");
+    assert_eq!(state.selected().unwrap().0, "b");
     assert!(state.prepare_list(&[]));
     assert!(state.selected.is_none());
+}
+#[test]
+fn opened_and_ended_times_read_in_local_time() {
+    let mut value = serde_json::to_value(incident("a")).unwrap();
+    value["opened_at"] = serde_json::json!("2026-10-05T08:30:00Z");
+    value["resolved_at"] = serde_json::json!("2026-10-05T09:00:00Z");
+    let value: Incident = serde_json::from_value(value).unwrap();
+    let local = |t: &str| {
+        t.parse::<chrono::DateTime<chrono::Utc>>()
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%d %b %H:%M")
+            .to_string()
+    };
+    let mut state = Incidents::default();
+    state.prepare_list(std::slice::from_ref(&value));
+    assert_eq!(
+        state.rows[0].opened.to_string(),
+        local("2026-10-05T08:30:00Z")
+    );
+    let view: IncidentView = serde_json::from_value(serde_json::json!({"incident":value})).unwrap();
+    let summary = detail(&view).summary;
+    assert!(summary.contains(&format!("Started {}", local("2026-10-05T08:30:00Z"))));
+    assert!(summary.contains(&format!("Ended {}", local("2026-10-05T09:00:00Z"))));
+    assert!(!summary.contains("UTC"));
+}
+#[test]
+fn chips_and_filter_project_rows_without_moving_the_selection() {
+    let mut resolved = serde_json::to_value(incident("b")).unwrap();
+    resolved["state"] = serde_json::json!("resolved");
+    resolved["description"] = serde_json::json!("Latency above objective");
+    let resolved: Incident = serde_json::from_value(resolved).unwrap();
+    let mut state = Incidents::default();
+    state.prepare_list(&[incident("a"), resolved]);
+    assert_eq!(state.counts, [1, 1]);
+    assert_eq!(state.shown, [0, 1]);
+    state.state_filter = Some(freshkube_core::coroot::IncidentState::Resolved);
+    state.project();
+    assert_eq!(state.shown, [1]);
+    assert_eq!(
+        state.selected().unwrap().0,
+        "a",
+        "a hidden row stays selected"
+    );
+    state.state_filter = None;
+    state.query = "latency".into();
+    state.project();
+    assert_eq!(state.shown, [1]);
+    state.query = "ns/api".into();
+    state.project();
+    assert_eq!(state.shown, [0, 1], "the filter reads the application too");
+    let state = state.cleared();
+    assert!(state.rows.is_empty() && state.selected.is_none());
+    assert_eq!(state.query, "ns/api", "the filter field still shows it");
 }
 #[test]
 fn missing_evidence_stays_unknown_and_reported_zero_is_preserved() {
@@ -33,7 +87,7 @@ fn missing_evidence_stays_unknown_and_reported_zero_is_preserved() {
 }
 
 mod ui_tests {
-    use super::super::{PAGE_SIZE, detail};
+    use super::super::detail;
     use crate::observability::{Destination, Status, connection::Subject, tests::mount_size};
     use freshkube_core::coroot as api;
     use gpui_kit::test::TestWindowExt;
@@ -59,6 +113,7 @@ mod ui_tests {
                 page.destination = Destination::Incidents;
                 let start = std::time::Instant::now();
                 page.incident_observations.prepare_list(&rows);
+                page.prepare_incident_columns();
                 page.incident_observations.detail = Some(detail(&view));
                 page.incident_observations.prepare_related();
                 eprintln!(
@@ -94,11 +149,8 @@ mod ui_tests {
             window.render_frame(cx);
             assert!(window.try_find("obs-live-incident-k0").is_some());
             assert!(
-                window
-                    .try_find(gpui_kit::SharedString::from(format!(
-                        "obs-live-incident-k{PAGE_SIZE}"
-                    )))
-                    .is_none()
+                window.try_find("obs-live-incident-k99").is_none(),
+                "rows past the table's view are not drawn"
             );
             assert!(
                 window
@@ -107,6 +159,10 @@ mod ui_tests {
             );
             let bounds = window.find("obs-incident-detail").bounds();
             assert!(bounds.right() <= window.viewport_size().width);
+            assert!(
+                bounds.top() >= window.find("obs-incidents-table").bounds().bottom(),
+                "a narrow page puts the detail below the table"
+            );
             let start = std::time::Instant::now();
             for _ in 0..10 {
                 window.render_frame(cx);
@@ -115,6 +171,121 @@ mod ui_tests {
                 "Incidents: ten bounded headless frames {:?}",
                 start.elapsed()
             );
+        })
+        .unwrap();
+    }
+
+    fn open_example(
+        cx: &mut TestAppContext,
+        width: f32,
+    ) -> (
+        tokio::runtime::Runtime,
+        gpui_kit::AnyWindowHandle,
+        gpui_kit::Entity<crate::observability::ObservabilityPage>,
+    ) {
+        let (runtime, handle, page) = mount_size(cx, true, width, 900.);
+        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Incidents, cx)));
+        cx.run_until_parked();
+        (runtime, handle, page)
+    }
+
+    #[gpui_kit::test]
+    fn incidents_use_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
+        use crate::desktop::layout_check::{
+            Density, PageFrame, Table, assert_page_frame, assert_table,
+        };
+        let (_runtime, handle, _page) = open_example(cx, 1260.);
+        // The detail pane shares the table's line, so the frame's right
+        // padding is measured from the split.
+        let frame = PageFrame {
+            page: "obs-frame",
+            title: "obs-title",
+            title_text: "Incidents",
+            content: "obs-incidents-split",
+        };
+        let table = Table {
+            table: Some("obs-incidents-table-scroll"),
+            list: "obs-incidents-list",
+            density: Density::Toggle("obs-density"),
+        };
+        for text_size in [crate::ui::BASE_TEXT, 20.] {
+            cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
+                .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                assert_page_frame(window, cx, &frame);
+                let rows = assert_table(window, cx, &table);
+                assert!(rows.header.is_some() && rows.compact.is_some(), "{rows:#?}");
+            })
+            .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn example_incidents_select_by_key_filter_and_clear(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = open_example(cx, 1260.);
+        let selected = |cx: &mut gpui_kit::App| {
+            let state = &page.read(cx).incident_observations;
+            (
+                state.selected().map(|(key, _)| key.clone()),
+                state.detail.as_ref().map(|d| d.key.clone()),
+            )
+        };
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for key in ["INC-12", "INC-13", "INC-11"] {
+                assert!(
+                    window
+                        .find(gpui_kit::SharedString::from(format!(
+                            "obs-live-incident-{key}"
+                        )))
+                        .visible()
+                );
+            }
+            let table = window.find("obs-incidents-table").bounds();
+            let detail = window.find("obs-incident-detail").bounds();
+            assert!(
+                detail.left() >= table.right(),
+                "a wide page puts the detail beside"
+            );
+            assert_eq!(selected(cx), (Some("INC-12".into()), Some("INC-12".into())));
+            window.click("obs-live-incident-INC-13", cx);
+            assert_eq!(selected(cx), (Some("INC-13".into()), Some("INC-13".into())));
+            page.update(cx, |page, cx| page.refresh(cx));
+            assert_eq!(
+                selected(cx),
+                (Some("INC-13".into()), Some("INC-13".into())),
+                "a new answer keeps the selection by key"
+            );
+
+            window.click("obs-incidents-resolved", cx);
+            window.render_frame(cx);
+            assert_eq!(page.read(cx).incident_observations.shown.len(), 1);
+            assert!(window.try_find("obs-live-incident-INC-13").is_none());
+            assert!(window.find("obs-incidents-showing").visible());
+            assert_eq!(selected(cx).0.as_deref(), Some("INC-13"));
+            window.click("obs-incidents-show-all", cx);
+            window.render_frame(cx);
+            assert_eq!(page.read(cx).incident_observations.shown.len(), 3);
+            assert!(window.try_find("obs-incidents-showing").is_none());
+
+            let width = page.read(cx).incident_observations.width;
+            window.click("obs-columns", cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+            assert!(page.read(cx).incident_observations.width < width);
+
+            window.click("obs-filter", cx);
+            window.input("no-such-incident", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("obs-incidents-empty").visible());
+            window.click("obs-incidents-clear", cx);
+            assert_eq!(page.read(cx).incident_observations.shown.len(), 3);
+            assert!(page.read(cx).incident_observations.query.is_empty());
         })
         .unwrap();
     }

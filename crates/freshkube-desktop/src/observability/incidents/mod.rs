@@ -3,38 +3,75 @@
 use super::*;
 use freshkube_core::coroot as api;
 mod detail;
+mod table;
 #[cfg(test)]
 mod tests;
+use super::tables::{ColumnKind, PageColumn, TableKey};
 use detail::{Detail, detail};
+pub(super) use table::IncidentCells;
 const PAGE_SIZE: usize = 10;
+/// From this content width the detail sits beside the table.
+const SPLIT_WIDTH: f32 = 900.;
+const PANE_WIDTH: f32 = 460.;
+const PANE_MIN_WIDTH: f32 = 320.;
+const SPLIT_GAP: f32 = 14.;
+/// Columns hidden until Columns shows them; the detail's summary has both.
+pub(super) const HIDDEN_BY_DEFAULT: [ColumnKind; 2] = [ColumnKind::Duration, ColumnKind::Impact];
 
 #[derive(Default)]
 pub(super) struct Incidents {
-    selected: Option<(String, api::AppId)>,
+    /// By key and application, never by position.
+    selected: Option<TableKey>,
     rows: Vec<Row>,
+    /// Indexes into `rows` the chips and the filter leave, in Coroot's order.
+    shown: Vec<usize>,
+    /// The chip chosen: open or resolved incidents only.
+    state_filter: Option<api::IncidentState>,
+    query: String,
+    /// Open and resolved incidents in the sample.
+    counts: [usize; 2],
+    columns: Vec<PageColumn>,
+    width: f32,
     detail: Option<Detail>,
-    page_ix: usize,
     count: Option<String>,
-    title: String,
-    page_label: String,
+    sample: String,
     related_page_ix: usize,
     related_page_label: String,
 }
 struct Row {
-    key: String,
+    key: TableKey,
+    id: SharedString,
+    incident: SharedString,
     app: api::AppId,
-    title: String,
-    summary: String,
+    app_label: SharedString,
+    title: SharedString,
+    /// The whole row in words, for its tooltip and accessibility label.
+    label: SharedString,
     severity: Status,
+    state: api::IncidentState,
+    opened: SharedString,
+    duration: SharedString,
+    impact: SharedString,
+    /// Lowercase key, title and application, for the filter.
+    search: String,
 }
 impl Incidents {
+    /// Nothing from the last connection, but the viewer's filters, which
+    /// the filter field still shows.
+    pub(super) fn cleared(&mut self) -> Self {
+        Self {
+            state_filter: self.state_filter,
+            query: std::mem::take(&mut self.query),
+            ..Default::default()
+        }
+    }
     pub(super) fn clear_evidence(&mut self) {
         self.rows.clear();
+        self.shown.clear();
+        self.counts = [0; 2];
         self.detail = None;
         self.count = None;
-        self.title.clear();
-        self.page_label.clear();
-        self.page_ix = 0;
+        self.sample.clear();
         self.related_page_ix = 0;
         self.related_page_label.clear();
     }
@@ -42,45 +79,73 @@ impl Incidents {
         let previous = self.selected.clone();
         if !values
             .iter()
-            .any(|i| self.selected.as_ref() == Some(&(i.key.clone(), i.app.clone())))
+            .any(|i| self.selected.as_ref() == Some(&key(i)))
         {
-            self.selected = values.first().map(|i| (i.key.clone(), i.app.clone()));
+            self.selected = values.first().map(key);
         }
         self.rows = values
             .iter()
-            .map(|i| Row {
-                key: i.key.clone(),
-                app: i.app.clone(),
-                title: format!("{} · {}", i.app.short(), i.description),
-                summary: format!(
-                    "{} · {} · {} affected",
-                    state(i.state),
-                    format::duration(i.duration),
-                    format::percent(Some(i.impact_percent))
-                ),
-                severity: i.severity.into(),
+            .map(|i| {
+                let title = SharedString::from(i.description.clone());
+                let app_label = SharedString::from(i.app.short());
+                let duration = SharedString::from(format::duration(i.duration));
+                let impact = SharedString::from(format::percent(Some(i.impact_percent)));
+                Row {
+                    key: key(i),
+                    id: format!("obs-live-incident-{}", i.key).into(),
+                    incident: i.key.clone().into(),
+                    label: format!(
+                        "{} · {app_label} · {title} · {} · {duration} · {impact} affected",
+                        i.key,
+                        state(i.state)
+                    )
+                    .into(),
+                    search: format!("{} {} {}", i.key, i.description, app_label).to_lowercase(),
+                    app: i.app.clone(),
+                    app_label,
+                    title,
+                    severity: i.severity.into(),
+                    state: i.state,
+                    opened: i
+                        .opened_at
+                        .map_or_else(|| "—".to_owned(), format::local_time)
+                        .into(),
+                    duration,
+                    impact,
+                }
             })
             .collect();
         let open = values
             .iter()
             .filter(|i| i.state == api::IncidentState::Open)
             .count();
+        self.counts = [open, values.len() - open];
         // '+' denotes a sample, not a complete project count. Even a short sample
         // can mean the server has no world yet, rather than no incident history.
         self.count = (open > 0).then(|| format!("{open} sampled"));
-        self.title = format!("Incidents · {open} open in sample");
-        self.page_ix = self
-            .page_ix
-            .min(self.rows.len().saturating_sub(1) / PAGE_SIZE);
-        self.prepare_page();
+        self.sample = match values.len() {
+            1 => "1 incident in the latest sample".into(),
+            n => format!("{n} incidents in the latest sample"),
+        };
+        self.project();
         previous != self.selected
     }
-    fn prepare_page(&mut self) {
-        self.page_label = format!(
-            "{} / {}",
-            self.page_ix + 1,
-            self.rows.len().div_ceil(PAGE_SIZE).max(1)
-        );
+    /// The rows the chips and the filter leave.
+    fn project(&mut self) {
+        self.shown = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| self.state_filter.is_none_or(|state| row.state == state))
+            .filter(|(_, row)| row.search.contains(&self.query))
+            .map(|(ix, _)| ix)
+            .collect();
+    }
+    fn selected(&self) -> Option<(&String, &api::AppId)> {
+        match &self.selected {
+            Some(TableKey::Incident(key, app)) => Some((key, app)),
+            _ => None,
+        }
     }
     fn prepare_related(&mut self) {
         let count = self.detail.as_ref().map_or(0, |d| d.related.len());
@@ -93,6 +158,9 @@ impl Incidents {
             count.div_ceil(PAGE_SIZE).max(1)
         );
     }
+}
+fn key(incident: &api::Incident) -> TableKey {
+    TableKey::Incident(incident.key.clone(), incident.app.clone())
 }
 fn state(value: api::IncidentState) -> &'static str {
     match value {
@@ -111,14 +179,14 @@ impl ObservabilityPage {
         let Some(to) = self.live.range.to else {
             return;
         };
+        self.incident_observations
+            .prepare_list(&example::incidents(to));
+        self.prepare_incident_columns();
         let state = &mut self.incident_observations;
-        state.prepare_list(&example::incidents(to));
-        state.detail = state
-            .selected
-            .as_ref()
-            .and_then(|(key, _)| example::incident_view(key, to))
-            .as_ref()
-            .map(detail);
+        let view = state
+            .selected()
+            .and_then(|(key, _)| example::incident_view(key, to));
+        state.detail = view.as_ref().map(detail);
         state.prepare_related();
     }
     pub(super) fn read_incidents(
@@ -165,6 +233,7 @@ impl ObservabilityPage {
                         let changed = this
                             .incident_observations
                             .prepare_list(this.live.incidents.data().expect("successful list"));
+                        this.prepare_incident_columns();
                         if changed {
                             this.live.incident_job = None;
                             this.live.incident = Default::default();
@@ -180,7 +249,11 @@ impl ObservabilityPage {
         );
     }
     fn read_incident_detail(&mut self, cx: &mut Context<Self>) {
-        let Some((key, app)) = self.incident_observations.selected.clone() else {
+        let Some((key, app)) = self
+            .incident_observations
+            .selected()
+            .map(|(key, app)| (key.clone(), app.clone()))
+        else {
             return;
         };
         let (Some(provider), Some(source)) = (self.live.provider.clone(), self.live.source.clone())
@@ -211,21 +284,19 @@ impl ObservabilityPage {
         );
         self.live.incident_job = Some(job);
     }
-    fn select_incident(&mut self, key: String, app: api::AppId, cx: &mut Context<Self>) {
-        if !self.live.visible
-            || self.incident_observations.selected.as_ref() == Some(&(key.clone(), app.clone()))
-        {
+    pub(super) fn select_incident(&mut self, key: String, app: api::AppId, cx: &mut Context<Self>) {
+        if !self.live.visible || self.incident_observations.selected() == Some((&key, &app)) {
             return;
         }
         if !self
             .incident_observations
             .rows
             .iter()
-            .any(|r| r.key == key && r.app == app)
+            .any(|r| r.incident == key && r.app == app)
         {
             return;
         }
-        self.incident_observations.selected = Some((key, app));
+        self.incident_observations.selected = Some(TableKey::Incident(key, app));
         self.live.incident = Default::default();
         self.incident_observations.detail = None;
         self.incident_observations.related_page_ix = 0;
@@ -241,8 +312,7 @@ impl ObservabilityPage {
             return;
         };
         if detail.key != key
-            || self.incident_observations.selected.as_ref()
-                != Some(&(detail.key.clone(), detail.app.clone()))
+            || self.incident_observations.selected() != Some((&detail.key, &detail.app))
         {
             return;
         }
@@ -251,127 +321,34 @@ impl ObservabilityPage {
         }
         self.open_app(app, Report::Errors, cx);
     }
-    fn live_incident_list(&self, stacked: bool, cx: &Context<Self>) -> Div {
-        let state = &self.incident_observations;
-        card(state.title.clone(), cx)
-            .when_else(stacked, |b| b.w_full(), |b| b.w(dp(260.)).flex_none())
-            .children(
-                state
-                    .rows
-                    .iter()
-                    .skip(state.page_ix * PAGE_SIZE)
-                    .take(PAGE_SIZE)
-                    .map(|row| {
-                        let (key, app) = (row.key.clone(), row.app.clone());
-                        Button::new(SharedString::from(format!("obs-live-incident-{}", row.key)))
-                            .ghost()
-                            .group("fog-control")
-                            .selected(state.selected.as_ref() == Some(&(key.clone(), app.clone())))
-                            .w_full()
-                            .h(dp(104.))
-                            .justify_start()
-                            .px(dp(14.))
-                            .child(status(row.severity, cx))
-                            .child(
-                                v_flex()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .items_start()
-                                    .text_left()
-                                    .gap(dp(4.))
-                                    .child(mono(row.key.clone()).truncate())
-                                    .child(
-                                        text(row.title.clone()).whitespace_normal().line_clamp(2),
-                                    )
-                                    .child(muted(row.summary.clone(), cx).whitespace_normal()),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select_incident(key.clone(), app.clone(), cx)
-                            }))
-                    }),
-            )
-            .child(
-                body().child(
-                    line()
-                        .child(
-                            action("obs-incidents-previous", "Previous")
-                                .disabled(state.page_ix == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.incident_observations.page_ix =
-                                        this.incident_observations.page_ix.saturating_sub(1);
-                                    this.incident_observations.prepare_page();
-                                    cx.notify();
-                                })),
-                        )
-                        .child(muted(state.page_label.clone(), cx))
-                        .child(
-                            action("obs-incidents-next", "Next")
-                                .disabled((state.page_ix + 1) * PAGE_SIZE >= state.rows.len())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    let state = &mut this.incident_observations;
-                                    state.page_ix = (state.page_ix + 1)
-                                        .min(state.rows.len().saturating_sub(1) / PAGE_SIZE);
-                                    state.prepare_page();
-                                    cx.notify();
-                                })),
-                        ),
-                ),
-            )
-    }
-    pub(super) fn render_live_incidents(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let state = &self.incident_observations;
-        if state.rows.is_empty() {
-            return card("Incidents",cx).id("obs-incidents-empty").test_support().child(body()
-                .child(text("No incidents were returned in the latest project sample."))
-                .child(muted("Coroot can also return no data before its project world is ready. Refresh to check again.",cx))).into_any_element();
-        }
-        let stacked = crate::screens::content_width(window) < 880.;
-        let mut content = v_flex()
-            .id("obs-incident-detail")
+    /// The table, with the selected incident beside it on a wide page and
+    /// below it on a narrow one, at DESIGN.md's detail pane sizes.
+    pub(super) fn render_incidents(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let beside = crate::screens::content_width(window) >= SPLIT_WIDTH;
+        let table = self.render_incident_table(beside, window, cx);
+        let detail = self.render_incident_detail(cx);
+        div()
+            .id("obs-incidents-split")
             .test_support()
-            .flex_1()
-            .min_w_0()
-            .gap(dp(12.))
-            .when(stacked, |b| b.w_full())
-            .when(self.live.incident.is_loading(), |b| {
-                b.child(muted("Reading incident…", cx))
-            })
-            .when(self.live.incident.is_stale(), |b| {
-                b.child(text("Last known incident · stale"))
-            })
-            .when_some(self.live.incident.error(), |b, e| {
-                b.child(text(e.to_string()).text_color(palette(cx).crit_ink))
-                    .child(
-                        action("obs-incident-retry", "Retry incident")
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+            .flex()
+            .items_start()
+            .gap(dp(SPLIT_GAP))
+            .when_else(beside, |this| this.flex_row(), |this| this.flex_col())
+            .child(
+                div()
+                    .min_w_0()
+                    .when_else(beside, |this| this.flex_1(), |this| this.w_full())
+                    .child(table),
+            )
+            .children(detail.map(|detail| {
+                div()
+                    .when_else(
+                        beside,
+                        |this| this.w(dp(PANE_WIDTH)).min_w(dp(PANE_MIN_WIDTH)).flex_none(),
+                        |this| this.w_full(),
                     )
-            });
-        if let Some(d) = &state.detail {
-            let (key, app) = (d.key.clone(), d.app.clone());
-            content = content
-                .child(
-                    line()
-                        .flex_wrap()
-                        .child(ui::page_title(d.title.clone()))
-                        .child(status(d.severity, cx))
-                        .child(text(d.state)),
-                )
-                .child(muted(d.summary.clone(), cx).whitespace_normal())
-                .child(
-                    action("obs-incident-primary-app", d.app.short())
-                        .disabled(self.live.incident.is_stale())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.incident_app(&key, app.clone(), cx)
-                        })),
-                )
-                .child(self.live_incident_slo(d, cx))
-                .child(self.live_incident_rca(d, cx));
-        } else if !self.live.incident.is_loading() && self.live.incident.error().is_none() {
-            content = content.child(text("Select an incident to read its details."));
-        }
-        v_flex().gap(dp(12.))
-            .child(muted("Latest project incidents · up to 100 · all states. The list is not filtered by the toolbar window; details use the incident's time context.",cx).whitespace_normal())
-            .child(div().flex().gap(dp(12.)).items_start().when_else(stacked,|b|b.flex_col(),|b|b.flex_row())
-                .child(self.live_incident_list(stacked,cx)).child(content)).into_any_element()
+                    .child(detail)
+            }))
+            .into_any_element()
     }
 }

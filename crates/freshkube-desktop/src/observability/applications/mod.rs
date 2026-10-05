@@ -3,7 +3,7 @@ use super::*;
 pub(super) mod columns;
 pub(super) mod header;
 use super::tables::{TableCells, TableKey};
-use application_columns::{ApplicationColumn, ColumnKind};
+use application_columns::{ColumnKind, PageColumn};
 use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
 
 /// A fitted table stays bounded even when its outer page scrolls.
@@ -71,7 +71,7 @@ impl ObservabilityPage {
         &self,
         cells: &ApplicationCells<'_>,
         style: &RowStyle,
-        column: &ApplicationColumn,
+        column: &PageColumn,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let app = cells.app;
@@ -140,6 +140,7 @@ impl ObservabilityPage {
                 )
                 .into_any_element()
             }
+            _ => cell.into_any_element(),
         }
     }
     pub(in crate::observability) fn application_group(

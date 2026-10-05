@@ -80,7 +80,7 @@ pub(crate) struct ObservabilityPage {
     applications: Vec<Application>,
     matrix: Vec<MatrixRow>,
     application_table: freshkube_ui::table::TableState,
-    application_columns: Vec<application_columns::ApplicationColumn>,
+    application_columns: Vec<tables::PageColumn>,
     application_metrics: application_columns::ApplicationMetrics,
     hidden_application_columns: std::collections::BTreeSet<application_columns::ColumnKind>,
     application_width: f32,
@@ -109,6 +109,10 @@ pub(crate) struct ObservabilityPage {
     map_display: map::MapDisplay,
     map_problems: bool,
     incident_observations: incidents::Incidents,
+    incident_table: freshkube_ui::table::TableState,
+    hidden_incident_columns: std::collections::BTreeSet<tables::ColumnKind>,
+    /// The Incidents filter; its text is projected into the list.
+    incident_query: Entity<InputState>,
     live_traces: live_traces::Traces,
     live_profiles: live_profiling::Profiles,
     /// The applications' picker entries, by label.
@@ -164,6 +168,8 @@ impl ObservabilityPage {
         let secret = cx.new(|cx| InputState::new(window, cx).masked(true));
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter applications…"));
         let flame_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a function…"));
+        let incident_query =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter incidents…"));
         let threshold = cx.new(|cx| InputState::new(window, cx).placeholder("Threshold"));
         let app_select = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
@@ -177,6 +183,7 @@ impl ObservabilityPage {
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
                 if this.application_metrics.sync(cx) {
                     this.prepare_application_columns();
+                    this.prepare_incident_columns();
                     cx.notify();
                 }
             }),
@@ -219,6 +226,12 @@ impl ObservabilityPage {
                 if matches!(event, InputEvent::Change) {
                     this.query_text = query.read(cx).value().to_lowercase();
                     this.project_filters();
+                    cx.notify();
+                }
+            }),
+            cx.subscribe(&incident_query, |this, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.filter_incidents(input.read(cx).value().to_lowercase());
                     cx.notify();
                 }
             }),
@@ -286,6 +299,9 @@ impl ObservabilityPage {
             map_display: Default::default(),
             map_problems: false,
             incident_observations: Default::default(),
+            incident_table: freshkube_ui::table::TableState::new("obs-incidents"),
+            hidden_incident_columns: incidents::HIDDEN_BY_DEFAULT.into(),
+            incident_query,
             live_traces: Default::default(),
             live_profiles: Default::default(),
             app_choices: Rc::new([]),

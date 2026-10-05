@@ -79,12 +79,12 @@ fn objective(
 }
 pub(super) fn detail(value: &api::IncidentView) -> Detail {
     let i = value.incident();
-    let started = i.opened_at.map_or("Not reported".into(), |t| {
-        t.format("%d %b %H:%M UTC").to_string()
-    });
+    let started = i
+        .opened_at
+        .map_or("Not reported".into(), format::local_time);
     let ended = i
         .resolved_at
-        .map(|t| format!(" · Ended {}", t.format("%d %b %H:%M UTC")))
+        .map(|t| format!(" · Ended {}", format::local_time(t)))
         .unwrap_or_default();
     let slo = i.slo.as_ref();
     let objectives = vec![
@@ -157,9 +157,150 @@ pub(super) fn detail(value: &api::IncidentView) -> Detail {
     }
 }
 
+/// One part of the pane, under a hairline.
+fn section(title: &str, cx: &App) -> Div {
+    v_flex()
+        .min_w_0()
+        .border_t_1()
+        .border_color(palette(cx).line)
+        .child(
+            h_flex()
+                .px(dp(14.))
+                .pt(dp(12.))
+                .child(ui::caption(title, cx)),
+        )
+}
+
 impl ObservabilityPage {
+    /// The selected incident in a detail pane: its heading, then Coroot's
+    /// objectives and analysis. Nothing when the list is empty.
+    pub(super) fn render_incident_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let state = &self.incident_observations;
+        if state.rows.is_empty() {
+            return None;
+        }
+        let read = &self.live.incident;
+        let read_tag = if read.is_loading() {
+            Some((Tone::Unknown, "Reading"))
+        } else if read.is_stale() {
+            Some((Tone::Warn, "Stale"))
+        } else if read.error().is_some() {
+            Some((Tone::Crit, "Failed"))
+        } else {
+            None
+        };
+        let pane = freshkube_ui::page::card(cx)
+            .id("obs-incident-detail")
+            .test_support()
+            .when_some(read.error(), |pane, e| {
+                pane.child(
+                    body()
+                        .child(text(e.to_string()).text_color(palette(cx).crit_ink))
+                        .child(
+                            action("obs-incident-retry", "Retry incident")
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        ),
+                )
+            });
+        let Some(d) = &state.detail else {
+            let note = if read.is_loading() || read.error().is_some() {
+                None
+            } else {
+                Some("Select an incident to read its details.")
+            };
+            return Some(
+                pane.child(self.incident_heading(None, read_tag, cx))
+                    .children(note.map(|note| body().child(muted(note, cx))))
+                    .into_any_element(),
+            );
+        };
+        let (key, app) = (d.key.clone(), d.app.clone());
+        Some(
+            pane.child(self.incident_heading(Some(d), read_tag, cx))
+                .child(
+                    body()
+                        .pt_0()
+                        .child(text(d.title.clone()).whitespace_normal())
+                        .child(muted(d.summary.clone(), cx).whitespace_normal())
+                        .child(
+                            line().child(
+                                Button::new("obs-incident-primary-app")
+                                    .outline()
+                                    .xsmall()
+                                    .label(d.app.short())
+                                    .tooltip("Open this application's errors report")
+                                    .disabled(read.is_stale())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.incident_app(&key, app.clone(), cx)
+                                    })),
+                            ),
+                        ),
+                )
+                .child(self.live_incident_slo(d, cx))
+                .child(self.live_incident_rca(d, cx))
+                .into_any_element(),
+        )
+    }
+    fn incident_heading(
+        &self,
+        d: Option<&Detail>,
+        read: Option<(Tone, &'static str)>,
+        cx: &Context<Self>,
+    ) -> Div {
+        let title = d.map_or_else(
+            || {
+                self.incident_observations
+                    .selected()
+                    .map_or_else(String::new, |(key, _)| key.clone())
+            },
+            |d| d.key.clone(),
+        );
+        h_flex()
+            .items_start()
+            .gap(dp(8.))
+            .px(dp(14.))
+            .pt(dp(12.))
+            .pb(dp(8.))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(dp(2.))
+                    .child(ui::caption("Incident", cx))
+                    .child(
+                        div()
+                            .id("obs-incident-title")
+                            .test_support()
+                            .font_family(MONO_FONT)
+                            .text_size(dp(13.5))
+                            .truncate()
+                            .child(title),
+                    ),
+            )
+            .children(d.map(|d| {
+                let tone = if d.state == "Open" {
+                    d.severity.tone()
+                } else {
+                    Tone::Good
+                };
+                div()
+                    .id("obs-incident-state")
+                    .test_support()
+                    .mt(dp(14.))
+                    .child(ui::tag(tone, None, d.state, cx))
+            }))
+            .children(read.map(|(tone, text)| {
+                div()
+                    .id("obs-incident-read")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(text)
+                    .mt(dp(14.))
+                    .child(ui::tag(tone, None, text, cx))
+            }))
+    }
     pub(super) fn live_incident_slo(&self, d: &Detail, cx: &Context<Self>) -> Div {
-        card("Service level objectives", cx).children(d.objectives.iter().map(|o| {
+        section("Service level objectives", cx).children(d.objectives.iter().map(|o| {
             body()
                 .child(
                     line()
@@ -180,7 +321,7 @@ impl ObservabilityPage {
     pub(super) fn live_incident_rca(&self, d: &Detail, cx: &Context<Self>) -> Div {
         let key = d.key.clone();
         let stale = self.live.incident.is_stale();
-        card("Coroot analysis", cx).child(
+        section("Coroot analysis", cx).child(
             body()
                 .child(muted(d.rca_state.clone(), cx))
                 .when(d.evidence.is_empty(), |b| {

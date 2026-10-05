@@ -17,7 +17,7 @@ impl Render for ObservabilityPage {
                 Destination::Applications => self.render_applications(window, cx),
                 Destination::ServiceMap => self.render_map(window, cx),
                 Destination::Application => self.render_report(window, cx),
-                Destination::Incidents => self.render_live_incidents(window, cx),
+                Destination::Incidents => self.render_incidents(window, cx),
                 Destination::Traces if !self.fixture => self.render_live_traces(window, cx),
                 Destination::Profiling if !self.fixture => self.render_live_profiling(cx),
                 _ if !self.fixture => self.render_limited(cx),
@@ -48,11 +48,12 @@ impl Render for ObservabilityPage {
                         freshkube_ui::page::page("obs-frame")
                             .h_auto()
                             .flex_none()
-                            .child(if self.destination == Destination::Applications {
-                                self.applications_header(window, cx)
-                            } else {
-                                self.source_controls(self.page_header(window), cx)
-                                    .render(cx)
+                            .child(match self.destination {
+                                Destination::Applications => self.applications_header(window, cx),
+                                Destination::Incidents => self.incidents_header(window, cx),
+                                _ => self
+                                    .source_controls(self.page_header(window), cx)
+                                    .render(cx),
                             })
                             .when(!self.fixture && !unavailable, |this| {
                                 this.when(self.settings_open, |this| {
