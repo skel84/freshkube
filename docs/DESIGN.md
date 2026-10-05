@@ -110,7 +110,7 @@ Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette 
 | Pending / unknown | Dashed grey ring |
 | Completed | Grey tick in a faint ring (not drawn yet: Pods shows a tick icon) |
 | Integration required | Lavender ring with a plus |
-| Log errors | Small blue dot (not drawn yet) |
+| Information, such as log errors | Small blue dot, `Tone::Info`: something to know that isn't a fault |
 
 Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. Prose links, breadcrumbs, selection and focus are blue. A chosen chip or outline toggle takes the primary outline (`ui::choice`); a chosen segment of a ghost segmented control on a `surface_2` track takes the accent tint (`ui::segment`), since Kit's own selected ghost colour matches that track. Dense cross-references use secondary text with dotted underlines and become blue on hover.
 

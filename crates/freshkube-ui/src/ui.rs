@@ -100,6 +100,9 @@ pub enum Tone {
     Unknown,
     /// Needs an integration before it can say more (docs/DESIGN.md).
     Integration,
+    /// Something to know that isn't a fault, such as errors in an
+    /// application's logs: a small blue dot.
+    Info,
     Accent,
     Outline,
 }
@@ -115,7 +118,7 @@ pub fn tag(tone: Tone, icon: Option<IconName>, text: impl Into<SharedString>, cx
         Tone::Crit | Tone::Died => (p.crit_soft, p.crit_ink),
         Tone::Unknown => (p.unk_soft, p.unk_ink),
         Tone::Integration => (p.integration.opacity(0.14), p.integration),
-        Tone::Accent => (p.accent_soft, p.accent),
+        Tone::Info | Tone::Accent => (p.accent_soft, p.accent),
         Tone::Outline => (transparent_black(), p.muted),
     };
     h_flex()
@@ -166,8 +169,8 @@ pub fn segment(button: Button, selected: bool, cx: &App) -> Button {
 /// The status language of docs/DESIGN.md, the G6 Round set: one round
 /// silhouette whose inside carries the meaning. A dot in a halo is OK, a
 /// half-filled ring a warning, a disc with a bar cut out critical, the
-/// skull a container that died, a dashed ring pending or unknown, and a
-/// ring with a plus integration required. Accent and Outline carry no
+/// skull a container that died, a dashed ring pending or unknown, a ring
+/// with a plus integration required, and a small blue dot information. Accent and Outline carry no
 /// status and have no glyph. The glyph is decorative: whatever holds it
 /// names the state, as a tag's text, a chip's label or [`status_mark`]'s
 /// tooltip do.
@@ -212,6 +215,7 @@ fn glyph(tone: Tone, cx: &App) -> Option<(&'static [u8], Hsla)> {
         Tone::Crit | Tone::Died => p.crit,
         Tone::Unknown => p.unk_ink,
         Tone::Integration => p.integration,
+        Tone::Info => p.accent,
         Tone::Accent | Tone::Outline => return None,
     };
     Some((drawing(tone)?, color))
@@ -230,6 +234,7 @@ fn drawing(tone: Tone) -> Option<&'static [u8]> {
         Tone::Died => include_bytes!("../assets/glyphs/died.svg"),
         Tone::Unknown => include_bytes!("../assets/glyphs/pending.svg"),
         Tone::Integration => include_bytes!("../assets/glyphs/integration.svg"),
+        Tone::Info => include_bytes!("../assets/glyphs/info.svg"),
         Tone::Accent | Tone::Outline => return None,
     })
 }
@@ -525,13 +530,14 @@ mod tests {
 
     use super::*;
 
-    const STATUS: [(Tone, &str); 6] = [
+    const STATUS: [(Tone, &str); 7] = [
         (Tone::Good, "Running"),
         (Tone::Warn, "Not ready"),
         (Tone::Crit, "ImagePullBackOff"),
         (Tone::Died, "CrashLoopBackOff"),
         (Tone::Unknown, "Pending"),
         (Tone::Integration, "Needs metrics-server"),
+        (Tone::Info, "3 errors in the logs"),
     ];
 
     /// A tone's drawing rasterised as GPUI rasterises it for a 16 px glyph
@@ -543,7 +549,13 @@ mod tests {
         let width = image.size(0).width.0 as usize;
         let bgra = image.as_bytes(0).unwrap();
         bgra.chunks_exact(width * 4)
-            .map(|row| row.chunks_exact(4).map(|pixel| pixel[3]).collect())
+            .map(|row| {
+                row.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|pixel| pixel[3])
+                    .collect()
+            })
             .collect()
     }
 
@@ -595,6 +607,10 @@ mod tests {
         assert_eq!(at(&alpha(Tone::Unknown), 8., 8.), 0);
         // Integration required: a ring with a plus.
         assert_eq!(at(&alpha(Tone::Integration), 8., 8.), 255);
+        // Information: a small dot, nothing around it.
+        let info = alpha(Tone::Info);
+        assert_eq!(at(&info, 8., 8.), 255);
+        assert_eq!(at(&info, 8., 3.), 0);
     }
 
     struct Marks;
