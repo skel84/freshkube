@@ -865,7 +865,7 @@ fn applications_uses_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAp
         list: "obs-applications-list",
         density: "obs-density",
     };
-    for text_size in [14., 20.] {
+    for text_size in [crate::ui::BASE_TEXT, 20.] {
         cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
             .unwrap();
         cx.run_until_parked();
