@@ -1099,56 +1099,62 @@ fn categories_fall_back_to_all_and_keep_new_categories_after_all_is_chosen(
 #[gpui_kit::test]
 fn filtering_applications_resets_the_uniform_list_to_the_first_row(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            let seed = example::applications()[0].clone();
+            let apps: Vec<_> = (0..100)
+                .map(|ix| {
+                    let mut app = seed.clone();
+                    app.id =
+                        freshkube_core::coroot::AppId::new(format!("c:ns:Deployment:app-{ix:03}"));
+                    app.status = if ix < 50 {
+                        freshkube_core::coroot::Status::Critical
+                    } else {
+                        freshkube_core::coroot::Status::Warning
+                    };
+                    app
+                })
+                .collect();
+            page.filter = super::Filter::All;
+            page.apply_applications(&apps);
+        })
+    });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("obs-filter-all", cx);
+        assert!(window.find("obs-name-c:ns:Deployment:app-000").visible());
         page.read(cx)
             .application_table
             .scroll
             .scroll_to_item_strict(20, gpui_kit::ScrollStrategy::Top);
         window.render_frame(cx);
         assert!(
-            page.read(cx)
-                .application_table
-                .scroll
-                .logical_scroll_top_index()
-                > 0
+            window
+                .try_find("obs-name-c:ns:Deployment:app-000")
+                .is_none()
         );
         window.click("obs-tally-critical", cx);
         window.render_frame(cx);
-        assert_eq!(
-            page.read(cx)
-                .application_table
-                .scroll
-                .logical_scroll_top_index(),
-            0
-        );
-        window.click("obs-filter-all", cx);
+        assert_eq!(page.read(cx).shown_apps, 50);
+        assert!(window.find("obs-name-c:ns:Deployment:app-000").visible());
         page.read(cx)
             .application_table
             .scroll
             .scroll_to_item_strict(20, gpui_kit::ScrollStrategy::Top);
         window.render_frame(cx);
+        assert!(
+            window
+                .try_find("obs-name-c:ns:Deployment:app-000")
+                .is_none()
+        );
         window.click("obs-filter", cx);
-        window.input("worker", cx);
+        window.input("app-", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(
-            page.read(cx)
-                .application_table
-                .scroll
-                .logical_scroll_top_index(),
-            0
-        );
-        assert_eq!(page.read(cx).shown_apps, 1);
-        assert!(
-            window
-                .find("obs-name-fixture:payments:Deployment:worker")
-                .visible()
-        );
+        assert_eq!(page.read(cx).shown_apps, 50);
+        assert!(window.find("obs-name-c:ns:Deployment:app-000").visible());
     })
     .unwrap();
 }
@@ -1179,9 +1185,15 @@ fn application_namespace_select_searches_and_applies_the_chosen_namespace(cx: &m
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("obs-namespace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         window.input("cache", cx);
     })
     .unwrap();
+    cx.advance_clock(std::time::Duration::from_millis(110));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);

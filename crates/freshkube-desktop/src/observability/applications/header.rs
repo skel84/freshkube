@@ -118,7 +118,7 @@ impl ObservabilityPage {
             .live
             .apps
             .last_successful()
-            .or_else(|| self.fixture.then(|| self.live.time_origin.into()))
+            .or_else(|| self.live.range.to.filter(|_| self.fixture).map(Into::into))
         {
             meta.extend([" · ".into_any_element(), ui::clock(time).into_any_element()]);
         }
@@ -333,8 +333,10 @@ fn namespace_choices(names: &[String], current: Option<&str>) -> SearchableVec<N
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use gpui_kit::component::searchable_list::SearchableListDelegate;
+    use super::namespace_choices;
+    use gpui_kit::component::{
+        IndexPath, searchable_list::SearchableListDelegate, select::SelectItem,
+    };
 
     #[test]
     fn capped_namespaces_explain_the_limit_and_keep_the_selected_namespace() {
