@@ -118,6 +118,8 @@ pub(super) struct Nodes {
     scroll: UniformListScrollHandle,
     /// The frame's scroll, used while the window is short.
     pub(super) page_scroll: ScrollHandle,
+    /// The node pane's scroll, used while the window is short on Logs.
+    pub(super) pane_scroll: ScrollHandle,
     split: Entity<ResizableState>,
     pub(super) document: Entity<DetailPane>,
 }
@@ -196,6 +198,7 @@ impl Nodes {
             tab_scroll: ScrollHandle::new(),
             scroll: UniformListScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
+            pane_scroll: ScrollHandle::new(),
             split: cx.new(|_| ResizableState::default()),
             document: cx.new(|cx| DetailPane::new(runtime, window, cx)),
         }
@@ -358,6 +361,9 @@ impl Pilot {
         self.node_workspace
             .page_scroll
             .set_offset(point(px(0.), px(0.)));
+        self.node_workspace
+            .pane_scroll
+            .set_offset(point(px(0.), px(0.)));
         self.node_workspace.sync_tabs();
         self.navigate(Page::Nodes, window, cx);
         self.activate_node_tab(window, cx);
@@ -367,6 +373,9 @@ impl Pilot {
         self.node_workspace.open = false;
         self.node_workspace
             .page_scroll
+            .set_offset(point(px(0.), px(0.)));
+        self.node_workspace
+            .pane_scroll
             .set_offset(point(px(0.), px(0.)));
         if self.node_workspace.view == NodeView::Table {
             self.node_workspace.show_selected_healthy();
@@ -387,6 +396,9 @@ impl Pilot {
             return;
         }
         self.node_workspace.tab = tab;
+        self.node_workspace
+            .pane_scroll
+            .set_offset(point(px(0.), px(0.)));
         if let Some(index) = self
             .node_workspace
             .inline_tabs

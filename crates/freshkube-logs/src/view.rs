@@ -510,8 +510,11 @@ impl<S: LogSource> Render for LogView<S> {
             .rounded_t(px(10.))
             .border_1().border_color(p.line)
             .focus_visible(|style| style.border_color(cx.theme().ring))
+            // The list has scrolled by now; a frame that scrolls around the
+            // log, as a short node pane does, stays where it is.
             .on_scroll_wheel(cx.listener(|this, _, _, cx| {
                 this.set_following(false, cx);
+                cx.stop_propagation();
             }))
             .on_action(cx.listener(|this, _: &CopySelected, _, cx| this.copy(cx)))
             .on_action(cx.listener(|this, _: &NextLine, _, cx| this.navigate(1, false, cx)))

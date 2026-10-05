@@ -645,3 +645,86 @@ fn level_toggles_draw_the_shared_glyphs() {
         assert_eq!(level_tone(&level), None, "{level}");
     }
 }
+
+/// A frame that scrolls around a log, as a short node pane does.
+struct Frame {
+    panel: Entity<LogPanel>,
+    scroll: gpui_kit::ScrollHandle,
+}
+
+impl gpui_kit::Render for Frame {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{TestSupportExt, prelude::*};
+        gpui_kit::div()
+            .id("frame")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .child(
+                gpui_kit::div()
+                    .id("frame-header")
+                    .test_support()
+                    .h(px(120.)),
+            )
+            .child(gpui_kit::div().h(px(560.)).child(self.panel.clone()))
+            .child(gpui_kit::div().h(px(400.)))
+    }
+}
+
+#[gpui_kit::test]
+fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut TestAppContext) {
+    let runtime = Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    cx.update(gpui_kit::init);
+    let scroll = gpui_kit::ScrollHandle::new();
+    let mut panel = None;
+    let handle = cx.open_window(size(px(620.), px(760.)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = LogPanel::new(runtime.handle().clone(), 100, window, cx);
+            view.set_fixture(fixture_events(), window, cx);
+            view
+        });
+        panel = Some(view.clone());
+        let frame = cx.new(|_| Frame {
+            panel: view,
+            scroll: scroll.clone(),
+        });
+        Root::new(frame, window, cx)
+    });
+    let panel = panel.unwrap();
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(scroll.max_offset().y > px(0.), "the frame doesn't scroll");
+        let down = ScrollDelta::Pixels(point(px(0.), px(-60.)));
+        window.scroll("frame-header", down, cx);
+        window.render_frame(cx);
+        let framed = scroll.offset().y;
+        assert!(
+            framed < px(0.),
+            "the header's wheel didn't scroll the frame"
+        );
+        assert!(panel.read(cx).following);
+        let before = panel.read(cx).scroll.offset();
+        window.scroll(
+            "logs-viewport",
+            ScrollDelta::Pixels(point(px(0.), px(300.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(!panel.read(cx).following, "the wheel didn't reach the log");
+        assert_ne!(
+            panel.read(cx).scroll.offset(),
+            before,
+            "the log didn't scroll"
+        );
+        assert_eq!(
+            scroll.offset().y,
+            framed,
+            "the log's wheel scrolled the frame"
+        );
+    })
+    .unwrap();
+}

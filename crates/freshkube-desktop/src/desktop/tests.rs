@@ -4,7 +4,7 @@ use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
     component::{ActiveTheme, Root, Theme, ThemeMode},
-    px, size,
+    point, px, size,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -1320,7 +1320,9 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
-fn narrow_shell_log_catalog_and_multiline_errors_preserve_viewport(cx: &mut TestAppContext) {
+fn a_short_window_scrolls_the_node_pane_to_its_log_catalog_and_multiline_errors(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         let events = (0..30)
@@ -1352,26 +1354,52 @@ fn narrow_shell_log_catalog_and_multiline_errors_preserve_viewport(cx: &mut Test
         window.render_frame(cx);
         // Reach the same retained log view through the node pane.
         open_node_tab(window, cx, super::nodes::NodeTab::Logs);
-        window.render_frame(cx);
-        let viewport = window.find("logs-viewport");
-        let panel = window.find("logs-panel");
-        assert!(viewport.bounds().top() >= panel.bounds().top());
-        assert!(viewport.bounds().left() >= panel.bounds().left());
-        assert!(viewport.bounds().right() <= panel.bounds().right());
-        assert!(viewport.bounds().bottom() <= panel.bounds().bottom());
-        assert!(viewport.visible());
-        assert!(viewport.bounds().size.height >= window.rem_size() * 6.);
-        assert!(viewport.bounds().right() <= px(760.));
-        assert!(viewport.bounds().bottom() <= px(560.));
-        let notices = window.find("logs-notices");
-        assert!(notices.visible());
-        assert!(notices.bounds().size.height >= window.rem_size());
-        assert!(notices.bounds().bottom() <= viewport.bounds().top());
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+        // 560 px is short at the default text size, so the node pane scrolls
+        // on Logs. The log keeps its notices above a usable viewport inside
+        // its panel, and the status bar's log status stays below the pane.
+        let panel = window.find("logs-panel").bounds();
+        let viewport = window.find("logs-viewport").bounds();
+        let notices = window.find("logs-notices").bounds();
+        assert!(viewport.top() >= panel.top());
+        assert!(viewport.left() >= panel.left());
+        assert!(viewport.right() <= panel.right());
+        assert!(viewport.bottom() <= panel.bottom());
+        assert!(viewport.size.height >= window.rem_size() * 6.);
+        assert!(viewport.right() <= px(760.));
+        assert!(notices.size.height >= window.rem_size());
+        assert!(notices.bottom() <= viewport.top());
+        assert!(window.find("logs-notices").visible());
+        assert!(window.find("logs-collection").visible());
+        let shown = window.find("node-pane").bounds();
         let status = window.find("logs-status");
         assert!(status.visible());
-        assert!(status.bounds().top() >= viewport.bounds().bottom());
+        assert!(status.bounds().top() >= shown.bottom());
         assert!(status.bounds().bottom() <= px(560.));
-        assert!(window.find("logs-collection").visible());
+
+        // The pane's scroll reaches every part of the log.
+        let pane = view.read(cx).node_workspace.pane_scroll.clone();
+        let max = pane.max_offset().y;
+        assert!(max > px(0.), "the short pane doesn't scroll");
+        for (name, part) in [("notices", notices), ("viewport", viewport)] {
+            assert!(
+                part.top() >= shown.top() && part.bottom() - max <= shown.bottom(),
+                "{name} at {part:?} is out of the pane's reach {shown:?} + {max:?}"
+            );
+        }
+
+        // Scrolled to the log, the whole viewport shows inside the pane,
+        // above the status bar.
+        pane.set_offset(point(px(0.), -max));
+        window.render_frame(cx);
+        let viewport = window.find("logs-viewport");
+        assert!(viewport.visible());
+        assert!(viewport.bounds().size.height >= window.rem_size() * 6.);
+        assert!(viewport.bounds().top() >= shown.top());
+        assert!(viewport.bounds().bottom() <= shown.bottom());
+        assert!(window.find("logs-status").bounds().top() >= viewport.bounds().bottom());
     })
     .unwrap();
 }

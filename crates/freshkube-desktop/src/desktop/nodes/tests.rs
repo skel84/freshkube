@@ -1700,3 +1700,93 @@ fn a_tall_window_keeps_the_frame_still_and_the_table_filling_it(cx: &mut TestApp
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn node_logs_in_a_short_window_scroll_the_pane_and_keep_their_controls(cx: &mut TestAppContext) {
+    use freshkube_ui::page::SHORT_LIST_HEIGHT;
+    use gpui_kit::{ScrollDelta, point, px};
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+        });
+        // The log view learns its width while drawing, then lays out again.
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+        let toolbar = window.find("logs-toolbar").bounds();
+        for id in ["logs-collection", "logs-search", "logs-follow"] {
+            let control = window.find(id).bounds();
+            assert!(
+                control.top() >= toolbar.top() && control.bottom() <= toolbar.bottom(),
+                "{id} at {control:?} is clipped by the toolbar at {toolbar:?}"
+            );
+        }
+        let viewport = window.find("logs-viewport").bounds();
+        let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window);
+        assert!(
+            viewport.size.height >= least,
+            "the log is squeezed to {viewport:?}"
+        );
+        let pane = pilot.read(cx).node_workspace.pane_scroll.clone();
+        assert!(pane.max_offset().y > px(0.), "the pane doesn't scroll");
+
+        // The pane scrolls from its header; a wheel over the log scrolls the
+        // log and leaves the pane where it is.
+        let down = ScrollDelta::Pixels(point(px(0.), px(-120.)));
+        window.scroll("node-pane-title", down, cx);
+        window.render_frame(cx);
+        assert!(
+            pane.offset().y < px(0.),
+            "the header's wheel didn't scroll the pane"
+        );
+        pane.set_offset(point(px(0.), -pane.max_offset().y));
+        window.render_frame(cx);
+        let scrolled = pane.offset().y;
+        let logs = pilot.read(cx).logs.clone();
+        window.scroll(
+            "logs-viewport",
+            ScrollDelta::Pixels(point(px(0.), px(120.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert_eq!(
+            pane.offset().y,
+            scrolled,
+            "the log's wheel scrolled the pane"
+        );
+        assert!(!logs.read(cx).following(), "the wheel didn't reach the log");
+
+        // Another tab starts the pane at the top again.
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_node_tab(NodeTab::Overview, window, cx)
+        });
+        window.render_frame(cx);
+        assert_eq!(pane.offset().y, px(0.));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn node_logs_in_a_tall_window_keep_the_pane_still(cx: &mut TestAppContext) {
+    use gpui_kit::px;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+        });
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+        let pane = pilot.read(cx).node_workspace.pane_scroll.clone();
+        assert_eq!(pane.max_offset().y, px(0.));
+        let pane_bounds = window.find("node-pane").bounds();
+        let viewport = window.find("logs-viewport").bounds();
+        assert!(
+            viewport.bottom() <= pane_bounds.bottom() + px(0.5),
+            "{viewport:?} in {pane_bounds:?}"
+        );
+    })
+    .unwrap();
+}

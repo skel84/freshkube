@@ -1,0 +1,1 @@
+- **Node logs fit short windows:** under 620 dp of height the node pane scrolls on its Logs tab, which keeps every control and a usable list, and a wheel over a log scrolls the log rather than the frame around it.
