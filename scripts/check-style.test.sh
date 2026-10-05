@@ -108,6 +108,33 @@ fn table() { uniform_list("rows", 1, f); }
 EOF
 expect 1 "the Resources screen is a page like any other" "list crates/freshkube-desktop/src/resources/screen/view.rs:1:"
 
+tree
+page buttons.rs <<'EOF'
+fn controls() -> Div {
+    div()
+        .child(Button::new("refresh").ghost().icon(IconName::Refresh).tooltip("Refresh pods"))
+        .child(Button::new("next").icon(IconName::ChevronDown).tooltip_with_action("Next", &Next, None))
+        .child(Button::new("copy").icon(IconName::Copy).label("Copy"))
+        .child(Button::new("open").on_click(|_, _, _| open(Button::new("x"))).child(icon()))
+        .child(Button::new("plain").label("Plain"))
+        .child(
+            Button::new("close")
+                .small()
+                .icon(IconName::X)
+                .on_click(cx.listener(|view, _, window, cx| view.close(window, cx))),
+        )
+}
+EOF
+expect 1 "an icon-only button without a tooltip fails" "tip crates/freshkube-desktop/src/buttons.rs:9:"
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --list)"
+if [ "$(grep -c '^tip ' <<<"$out")" = 1 ]; then
+  echo "ok: an icon button with a tooltip, label or child passes"
+else
+  echo "FAIL: an icon button with a tooltip, label or child passes"
+  sed 's/^/    /' <<<"$out"
+  failures=$((failures + 1))
+fi
+
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
   exit 1

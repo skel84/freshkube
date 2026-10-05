@@ -22,6 +22,7 @@ mod failure;
 mod forward;
 mod kinds;
 mod metadata;
+mod node_usage;
 mod object;
 mod pod_links;
 mod pod_logs;
@@ -44,6 +45,7 @@ pub use forward::{
     WorkloadKind, candidates, declared_ports, listen_local, preferred_port, start_forward,
 };
 pub use kinds::{ResourceKind, builtin, builtin_by_gvk};
+pub use node_usage::{NodeUsage, list_node_usage};
 pub use object::{
     Condition, ContainerStatus, Diagnosis, Instance, ObjectDocument, Overview, Owner, PodStatus,
     SecretKey, SecretSummary, SecretValue, Severity, get_object, hidden_value, is_error_reason,

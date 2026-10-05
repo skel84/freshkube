@@ -1,5 +1,11 @@
 //! Machines from both summaries, with one retained pane for their details.
+mod cards;
+mod header;
 mod join;
+mod metrics;
+mod projection;
+mod resource;
+mod table;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -10,7 +16,13 @@ use crate::{
     ui,
 };
 use freshkube_core::monitoring::history::Subject;
-use gpui_kit::{component::resizable::ResizableState, *};
+use gpui_kit::{
+    component::{
+        input::{InputEvent, InputState},
+        resizable::ResizableState,
+    },
+    *,
+};
 pub(crate) use join::{NodeKey, NodeRow};
 use std::{sync::Arc, time::Duration};
 
@@ -71,7 +83,28 @@ impl NodeTab {
 
 pub(super) struct Nodes {
     pub(super) rows: Arc<Vec<NodeRow>>,
-    empty: Option<(SharedString, SharedString)>,
+    empty: Option<Empty>,
+    lines: Vec<usize>,
+    items: Vec<projection::Item>,
+    counts: [usize; 4],
+    group_counts: [usize; 4],
+    filter: Option<projection::Status>,
+    healthy_open: bool,
+    healthy_folded: bool,
+    query: Entity<InputState>,
+    query_text: String,
+    search_keys: Vec<String>,
+    meta: SharedString,
+    _query_subscription: Subscription,
+    table: freshkube_ui::table::TableState,
+    all_columns: Vec<table::Column>,
+    menu_columns: Arc<Vec<(table::Field, SharedString)>>,
+    columns: Vec<table::Column>,
+    hidden_columns: std::collections::BTreeSet<table::Field>,
+    table_width: f32,
+    metrics: metrics::Metrics,
+    resource_cells: std::collections::HashMap<NodeKey, resource::RowResources>,
+    talos_current: bool,
     pub(super) selected: Option<NodeKey>,
     pub(super) open: bool,
     pub(super) expanded: bool,
@@ -87,18 +120,68 @@ pub(super) struct Nodes {
     pub(super) document: Entity<DetailPane>,
 }
 
+#[derive(Clone, Debug)]
+enum Empty {
+    Loading,
+    Failed(SharedString),
+    Loaded,
+}
+
 impl Nodes {
     pub(super) fn new(
         runtime: tokio::runtime::Handle,
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
+        cx.bind_keys([KeyBinding::new(
+            "escape",
+            BackNode,
+            Some("NodeWorkspaceFilter"),
+        )]);
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter nodes"));
+        let subscription =
+            cx.subscribe_in(
+                &query,
+                window,
+                |pilot, input, event, window, cx| match event {
+                    InputEvent::Change => {
+                        pilot.node_workspace.query_text = input.read(cx).value().to_lowercase();
+                        pilot.node_workspace.rebuild_lines();
+                        pilot.node_workspace.table.reveal(0, ScrollStrategy::Top);
+                        pilot
+                            .node_workspace
+                            .scroll
+                            .scroll_to_item(0, ScrollStrategy::Top);
+                        cx.notify();
+                    }
+                    InputEvent::PressEnter { .. } => window.focus(&pilot.node_focus, cx),
+                    _ => {}
+                },
+            );
         Self {
             rows: Arc::new(Vec::new()),
-            empty: Some((
-                "Waiting for nodes".into(),
-                "The cluster summaries have not answered yet.".into(),
-            )),
+            empty: Some(Empty::Loading),
+            lines: Vec::new(),
+            items: Vec::new(),
+            counts: [0; 4],
+            group_counts: [0; 4],
+            filter: None,
+            healthy_open: false,
+            healthy_folded: false,
+            query,
+            query_text: String::new(),
+            search_keys: Vec::new(),
+            meta: "Not connected".into(),
+            _query_subscription: subscription,
+            table: freshkube_ui::table::TableState::new("nodes"),
+            all_columns: Vec::new(),
+            menu_columns: Arc::new(Vec::new()),
+            columns: Vec::new(),
+            hidden_columns: std::collections::BTreeSet::from([table::Field::Load]),
+            table_width: 0.,
+            metrics: metrics::Metrics::new(runtime.clone()),
+            resource_cells: Default::default(),
+            talos_current: false,
             selected: None,
             open: false,
             expanded: false,
@@ -184,14 +267,18 @@ impl Pilot {
             .kubernetes_summary
             .data()
             .and_then(|summary| summary.nodes.loaded());
-        self.node_workspace.rows = Arc::new(join::join(
+        let rows = join::join(
             &self.nodes,
             kubernetes.map(Vec::as_slice).unwrap_or_default(),
             self.overview.data().is_some(),
             self.kubernetes_summary
                 .data()
                 .is_some_and(|summary| summary.nodes.is_current()),
-        ));
+        );
+        self.node_workspace.set_rows(
+            rows,
+            self.overview.data().is_some() && !self.overview.is_stale(),
+        );
         if self
             .node_workspace
             .selected
@@ -209,21 +296,19 @@ impl Pilot {
                 .or_else(|| self.kubernetes_summary.error())
                 .or_else(|| self.overview.error());
             Some(if let Some(error) = error {
-                ("Nodes unavailable".into(), error.to_owned().into())
+                Empty::Failed(error.to_owned().into())
             } else if kubernetes.is_some() {
-                (
-                    "No nodes reported".into(),
-                    "No nodes were reported for this context.".into(),
-                )
+                Empty::Loaded
             } else {
-                (
-                    "Waiting for nodes".into(),
-                    "The cluster summaries have not answered yet.".into(),
-                )
+                Empty::Loading
             })
         } else {
             None
         };
+        self.rebuild_nodes_meta();
+        self.node_workspace.rebuild_lines();
+        self.node_workspace
+            .rebuild_columns(self.kubernetes_only.is_none());
         self.node_workspace.sync_tabs();
         self.overview_display = crate::presentation::overview::Overview::build(
             &self.node_workspace.rows,
@@ -260,6 +345,10 @@ impl Pilot {
             self.select_node_by_name(name.clone(), window, cx);
         }
         self.node_workspace.selected = Some(key);
+        if self.node_workspace.view == NodeView::Table {
+            self.node_workspace.show_selected_healthy();
+            freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
+        }
         self.node_workspace.open = true;
         self.node_workspace.sync_tabs();
         self.navigate(Page::Nodes, window, cx);
@@ -268,6 +357,10 @@ impl Pilot {
 
     pub(super) fn close_node(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.node_workspace.open = false;
+        if self.node_workspace.view == NodeView::Table {
+            self.node_workspace.show_selected_healthy();
+            freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
+        }
         self.sync_node_visibility(window, cx);
         window.focus(&self.node_focus, cx);
         cx.notify();
@@ -296,6 +389,7 @@ impl Pilot {
     }
 
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_node_metrics(window, cx);
         let shown = self.page == Page::Nodes && self.node_workspace.open;
         self.node_pods.update(cx, |pods, cx| {
             pods.set_visible(
@@ -376,27 +470,38 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.node_workspace.rows.len();
-        if count == 0 {
-            return;
-        }
-        let index = self
-            .node_workspace
-            .rows
-            .iter()
-            .position(|row| Some(&row.key) == self.node_workspace.selected.as_ref());
-        let next = index
-            .map(|index| index.saturating_add_signed(delta).min(count - 1))
-            .unwrap_or(0);
-        let key = self.node_workspace.rows[next].key.clone();
-        self.node_workspace
-            .scroll
-            .scroll_to_item(next, ScrollStrategy::Nearest);
+        use freshkube_ui::table::{self, TableSource};
+        let key = if self.node_workspace.selected.is_none() {
+            // Preserve the existing first-row choice for either arrow, skipping groups.
+            table::step(self, 1, cx)
+        } else {
+            table::step(self, delta, cx)
+        };
+        let Some(key) = key else { return };
         if self.node_workspace.open {
             self.open_node(key, window, cx);
         } else {
             self.node_workspace.selected = Some(key);
             cx.notify();
+        }
+        if self.node_workspace.open || self.node_workspace.view == NodeView::Cards {
+            if let Some(line) = self
+                .node_workspace
+                .selected
+                .as_ref()
+                .and_then(|key| self.line_of(key))
+            {
+                let columns = if self.node_workspace.open {
+                    1
+                } else {
+                    cards::card_columns(window)
+                };
+                self.node_workspace
+                    .scroll
+                    .scroll_to_item(line / columns, ScrollStrategy::Nearest);
+            }
+        } else {
+            table::reveal(self, ScrollStrategy::Nearest);
         }
     }
 

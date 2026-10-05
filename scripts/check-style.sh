@@ -10,7 +10,9 @@
 #   radius  round a corner with rounded*(px(n)) other than DESIGN.md's 3, 8, 10 and 12 px (or 0);
 #   title   size text 20 dp or larger with a literal, as only ui::page_title may;
 #   glyph   draw a status glyph itself (a ● ◆ ▲ ○ ✓ string, or a small rounded_full dot)
-#           instead of ui::status_glyph, ui::status_mark or ui::health_mark.
+#           instead of ui::status_glyph, ui::status_mark or ui::health_mark;
+#   tip     give a button an icon and neither a label, a child nor a tooltip
+#           (DESIGN.md "Tooltips": an icon-only control names its action).
 #
 # scripts/style-allowlist.txt names, per rule, the files that broke it when the
 # check arrived. It may only shrink: the check fails when an unlisted file
@@ -78,6 +80,34 @@ offences() {
     while ($text =~ /\.size\(\s*dp\(\s*([0-9.]+)\s*\)\s*\)\s*\.rounded_full\(\)/g) {
       $report->("glyph", $-[0]) if $1 <= 12;
     }
+    # A button and its builder chain run until a comma, semicolon or closing
+    # bracket at its own depth. A tooltip added after a wrapper call, as in
+    # ui::segment(Button::new(…), …).tooltip(…), is outside that chain.
+    while ($text =~ /\bButton::new\(/g) {
+      my $start = $-[0];
+      my ($at, $depth) = (pos($text), 1);
+      while ($at < length $text) {
+        my $c = substr($text, $at, 1);
+        if ($c eq q(")) {
+          $at++;
+          while ($at < length $text && substr($text, $at, 1) ne q(")) {
+            $at++ if substr($text, $at, 1) eq "\\";
+            $at++;
+          }
+        } elsif ($c =~ /[({\[]/) {
+          $depth++;
+        } elsif ($c =~ /[)}\]]/) {
+          last if --$depth < 0;
+        } elsif ($depth == 0 && ($c eq ";" || $c eq ",")) {
+          last;
+        }
+        $at++;
+      }
+      my $chain = substr($text, $start, $at - $start);
+      pos($text) = $start + 1;
+      next unless $chain =~ /\.icon\(/;
+      $report->("tip", $start) unless $chain =~ /\.(?:label|child|children|tooltip\w*)\(/;
+    }
   '
 }
 
@@ -104,8 +134,8 @@ if [ -n "$new" ]; then
   while read -r rule file; do
     printf '%s\n' "$found" | grep -F "$rule $file:" | sed 's/^/  /'
   done <<<"$new"
-  echo "Use the shared components (ui::page_title, ui::status_glyph, the table) instead;"
-  echo "the allowlist only shrinks, so don't add to it."
+  echo "Use the shared components (ui::page_title, ui::status_glyph, the table) instead,"
+  echo "and give an icon-only button a tooltip; the allowlist only shrinks, so don't add to it."
 fi
 if [ -n "$clean" ]; then
   status=1

@@ -120,7 +120,7 @@ Pods start on Problems when problems exist, grouped by cause, with healthy rows 
 
 The status is a glyph, replaced by a checkbox on a marked row. Ready and restarts share a cell (`0/1 ↻14`). Owner prefixes are muted (`deploy/`, `sts/`). Namespace prefixes are muted; random suffixes are faint. Remove a common node prefix only when detected and keep the full name in its tooltip. Sort arrows, a blue focus outline, ↑↓, Enter, X and L keep their existing behavior.
 
-Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities.
+Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities. Every per-row CPU and memory value uses these shared resource meters.
 
 ## G8: pod detail
 
@@ -192,6 +192,8 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 | `StatCard` | A muted 12 bold title, then one figure (22, weight 900) or a wrap of named figures (18, each at least 96 wide, 20 × 8 apart), each with an optional tag, gauge or sparkline. | Card; header 28 with 14 left padding; body 14 × 10. |
 | `ChartCard` | A 13 bold title, the unit, an info mark with the query, the stale mark at the right; the plot, then its legend. | Card; header 32 with 12 left padding; plot padded 12, at least 64 high. |
 
+The Nodes card grid and compact two-line pane list are a scoped virtualization exception in `desktop/nodes/cards.rs`; when a second page needs a virtualized card grid, it becomes a `freshkube-ui` component.
+
 ### States
 
 | State | Where | How it looks |
@@ -245,7 +247,7 @@ Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, 
 Two checks keep pages on these components ([#48](https://github.com/skel84/freshkube/issues/48)).
 
 - **Layout tests.** A table page's UI test calls `desktop::layout_check::assert_table_page` with its page, title, table, list and density ids. It measures a headless render's painted bounds at both densities: the 30 header, 34 and 26 rows, group rows at the row height, 26 side padding and the 20 title on its 28 line. Pods' test runs it at the default text size and at 20 px; every migrated table page adds its own. A page whose table isn't the whole page uses the two halves: `assert_page_frame` (page, title and content ids: padding and title) and `assert_table` (an optional header frame, the list and its density, toggled or fixed: header, rows and group rows), once per table.
-- **Style check.** `scripts/check-style.sh` runs in CI beside Clippy. Outside the shared components (`crates/freshkube-ui`) a page may not run its own `uniform_list` or `VirtualList` (logs, YAML and the terminal measure their own rows), round a corner with `px` radii other than 3, 8, 10 or 12, set text 20 or larger with a literal, or draw a status glyph itself (a `●` `◆` `▲` `○` `✓` string, or a small `rounded_full` dot) instead of `ui::status_glyph`, `ui::status_mark` or `ui::health_mark`. `scripts/style-allowlist.txt` names, per rule, the files that broke a rule when the check arrived. It only shrinks: the check fails when an unlisted file breaks a rule and when a listed one no longer does, so a migration removes its entries in the same change. `--list` prints every offence with its line.
+- **Style check.** `scripts/check-style.sh` runs in CI beside Clippy. Outside the shared components (`crates/freshkube-ui`) a page may not run its own `uniform_list` or `VirtualList` (logs, YAML and the terminal measure their own rows), round a corner with `px` radii other than 3, 8, 10 or 12, set text 20 or larger with a literal, or draw a status glyph itself (a `●` `◆` `▲` `○` `✓` string, or a small `rounded_full` dot) instead of `ui::status_glyph`, `ui::status_mark` or `ui::health_mark`, or give a button an icon and no label, child or tooltip ([Tooltips](#tooltips)). `scripts/style-allowlist.txt` names, per rule, the files that broke a rule when the check arrived. It only shrinks: the check fails when an unlisted file breaks a rule and when a listed one no longer does, so a migration removes its entries in the same change. `--list` prints every offence with its line.
 
 ## Open
 
