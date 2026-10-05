@@ -16,7 +16,7 @@ use freshkube_core::diagnostic_runner::{
 use freshkube_core::diagnostics::{CheckCategory, CheckStatus, CniType};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Disableable, Icon, Selectable, Sizable,
+    Disableable, Sizable,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
@@ -26,52 +26,23 @@ use std::rc::Rc;
 use tokio::runtime::Handle;
 
 use super::{
-    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    failure_banner, field, gate, meta, mono, panel, partial_notice, refresh_control, stat,
-    table_head, table_width,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
+    panel, partial_notice, refresh_control,
 };
 use crate::actions;
 use crate::backend::spawn_job;
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
+use freshkube_ui::table;
+use source::{Derived, Shown, TALLIES};
 use std::time::Duration;
 
 const CONTEXT: &str = "TalosDiagnostics";
 /// The ids of the page's header: `diagnostics-title`, `diagnostics-toolbar`, ….
 const PREFIX: &str = "diagnostics";
-const ROW_HEIGHT: f32 = 34.;
-/// Below this content width the details pane moves under the list.
-const SIDE_DETAILS: f32 = 920.;
-const DETAILS_WIDTH: f32 = 380.;
-const LIST_MIN_HEIGHT: f32 = 240.;
-const DETAILS_HEIGHT: f32 = 320.;
 /// A fix is one or two RPCs; this only bounds a node that never answers.
 const FIX_DEADLINE: Duration = Duration::from_secs(120);
-
-const FULL_COLUMNS: [Column; 3] = [
-    Column {
-        label: "Status",
-        width: Some(104.),
-    },
-    Column {
-        label: "Check",
-        width: Some(200.),
-    },
-    Column {
-        label: "Result",
-        width: None,
-    },
-];
-
-/// Narrow lists fold the result into the check's own cell.
-const COMPACT_COLUMNS: [Column; 2] = [
-    FULL_COLUMNS[0],
-    Column {
-        label: "Check",
-        width: None,
-    },
-];
 
 actions!(
     talos_diagnostics,
@@ -110,16 +81,6 @@ fn section_slug(category: CheckCategory) -> &'static str {
     }
 }
 
-fn section_icon(category: CheckCategory) -> IconName {
-    match category {
-        CheckCategory::System => IconName::Cpu,
-        CheckCategory::Kubernetes => IconName::Boxes,
-        CheckCategory::Cni => IconName::Network,
-        CheckCategory::Services => IconName::ServerCog,
-        CheckCategory::Addons => IconName::PackageCheck,
-    }
-}
-
 /// The section's title; the CNI section names the detected provider.
 fn section_title(category: CheckCategory, snapshot: &DiagnosticSnapshot) -> String {
     match (category, snapshot.cni.cni_type.as_ref()) {
@@ -152,13 +113,13 @@ fn key(check: &DiagnosticCheck) -> String {
     format!("{}:{}", section_slug(check.category), check.id)
 }
 
-/// The checks to list: grouped in the TUI's section order, optionally only
-/// the warnings and failures.
-fn visible_checks(snapshot: &DiagnosticSnapshot, only_problems: bool) -> Vec<&DiagnosticCheck> {
+/// The checks to list: grouped in the TUI's section order, filtered to the
+/// statuses shown.
+fn visible_checks(snapshot: &DiagnosticSnapshot, shown: Shown) -> Vec<&DiagnosticCheck> {
     let mut checks: Vec<&DiagnosticCheck> = snapshot
         .checks
         .iter()
-        .filter(|check| !only_problems || is_problem(check))
+        .filter(|check| shown.shows(&check.status))
         .collect();
     checks.sort_by_key(|check| section_index(check.category));
     checks
@@ -317,12 +278,14 @@ pub(crate) struct DiagnosticsScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<DiagnosticSnapshot>,
-    only_problems: bool,
+    shown: Shown,
     /// Selection survives refreshes by key; the first row shows until one is chosen.
     selected: Option<String>,
     notice: Option<FixNotice>,
     focus: FocusHandle,
-    scroll: ScrollHandle,
+    table: table::TableState,
+    /// The rows, tallies and meta parts, derived from the loader's data.
+    derived: Option<Derived>,
 }
 
 impl EventEmitter<ScreenEvent> for DiagnosticsScreen {}
@@ -345,11 +308,12 @@ impl ScreenPanel for DiagnosticsScreen {
             runtime,
             source: None,
             loader: Loader::default(),
-            only_problems: false,
+            shown: Shown::All,
             selected: None,
             notice: None,
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            table: table::TableState::new("diagnostic"),
+            derived: None,
         }
     }
 
@@ -360,7 +324,7 @@ impl ScreenPanel for DiagnosticsScreen {
             self.loader.reset();
             self.selected = None;
             self.notice = None;
-            self.only_problems = false;
+            self.shown = Shown::All;
         }
         self.source = source;
         cx.notify();
@@ -666,49 +630,33 @@ impl DiagnosticsScreen {
         cx.notify();
     }
 
+    /// The listed checks, in order.
+    #[cfg(test)]
     fn visible(&self) -> Vec<&DiagnosticCheck> {
         self.loader
             .data()
-            .map(|snapshot| visible_checks(snapshot, self.only_problems))
+            .map(|snapshot| visible_checks(snapshot, self.shown))
             .unwrap_or_default()
     }
 
-    fn keys(&self) -> Vec<String> {
-        self.visible().into_iter().map(key).collect()
-    }
-
-    /// Index of the selected row; the first row until the user picks one
-    /// (or when the picked one is filtered out).
-    fn selected_index(&self, keys: &[String]) -> Option<usize> {
-        if keys.is_empty() {
-            return None;
-        }
-        Some(
-            self.selected
-                .as_ref()
-                .and_then(|selected| keys.iter().position(|key| key == selected))
-                .unwrap_or(0),
-        )
-    }
-
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let keys = self.keys();
-        if keys.is_empty() {
+        self.sync();
+        let Some(key) = table::step(&*self, delta, cx) else {
             return;
-        }
-        let current = self.selected_index(&keys).unwrap_or(0);
-        let next = current.saturating_add_signed(delta).min(keys.len() - 1);
-        self.selected = Some(keys[next].clone());
+        };
+        self.selected = Some(key);
+        table::reveal(&*self, ScrollStrategy::Nearest);
         cx.notify();
     }
 
-    fn set_only_problems(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.only_problems = on;
+    fn show(&mut self, shown: Shown, cx: &mut Context<Self>) {
+        self.shown = shown;
         cx.notify();
     }
 }
 
 mod example;
+mod source;
 mod view;
 use example::example;
 
