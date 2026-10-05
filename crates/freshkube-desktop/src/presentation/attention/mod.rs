@@ -221,7 +221,10 @@ fn append_node_problem(row: &NodeRow, now: DateTime<Utc>, rows: &mut Vec<Attenti
             && let Some((memory_tone, _)) =
                 crate::ui::memory_tone(super::memory_level(memory.percent()))
         {
-            problems.push(format!("Memory at {:.0} %", memory.percent()));
+            problems.push(format!(
+                "Memory at {} %",
+                super::whole_percent(memory.percent())
+            ));
             if memory_tone == Tone::Crit {
                 tone = Tone::Crit;
             }

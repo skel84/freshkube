@@ -59,6 +59,18 @@ fn memory_levels_follow_core_thresholds() {
     assert_eq!(memory_level(MEMORY_CRITICAL_PERCENT), MemoryLevel::Critical);
 }
 #[test]
+fn whole_percent_rounds_down_so_a_value_never_reads_as_the_next_threshold() {
+    assert_eq!(whole_percent(84.9), 84);
+    assert_eq!(whole_percent(85.0), 85);
+    assert_eq!(whole_percent(94.5), 94);
+    assert_eq!(whole_percent(94.99), 94);
+    assert_eq!(whole_percent(95.0), 95);
+    assert_eq!(whole_percent(100.0), 100);
+    assert_eq!(whole_percent(0.4), 0);
+    assert_eq!(whole_percent(-1.0), 0);
+}
+
+#[test]
 fn etcd_card_shows_remaining_tolerance_and_warns_when_none_remains() {
     for (healthy, total, remaining) in [(2, 3, 0), (3, 5, 0), (3, 3, 1), (5, 5, 2)] {
         let mut cluster = crate::fixture::cluster("prod-fra", 1);

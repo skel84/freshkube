@@ -1,7 +1,7 @@
 use gpui_kit::SharedString;
 // A joined row is derived when either cluster summary changes.
 use crate::{
-    presentation::{NodeSummary as TalosNode, Role},
+    presentation::{NodeSummary as TalosNode, Role, whole_percent},
     ui::Tone,
 };
 use freshkube_core::{
@@ -324,8 +324,8 @@ fn memory_text(talos: Option<&TalosNode>) -> SharedString {
         .and_then(|node| node.memory)
         .map(|memory| {
             format!(
-                "{:.0}% · {}",
-                memory.percent(),
+                "{}% · {}",
+                whole_percent(memory.percent()),
                 freshkube_core::formatting::format_bytes(memory.total)
             )
         })
@@ -338,7 +338,7 @@ fn problem_text(problem: &NodeProblem<'_>) -> SharedString {
         NodeProblem::KubernetesNotReady => "Kubernetes NotReady".into(),
         NodeProblem::TalosUnresponsive => "Talos API not answering".into(),
         NodeProblem::UnhealthyService(id) => format!("{id} unhealthy").into(),
-        NodeProblem::HighMemory(percent) => format!("Memory {percent:.0}%").into(),
+        NodeProblem::HighMemory(percent) => format!("Memory {}%", whole_percent(*percent)).into(),
     }
 }
 
