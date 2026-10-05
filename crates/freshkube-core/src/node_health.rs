@@ -4,7 +4,8 @@
 use talos_rs::ServiceInfo;
 
 use crate::{
-    HasHealth, HealthIndicator, NodeRole, constants::NODE_MEMORY_WARNING_PERCENT,
+    HasHealth, HealthIndicator, NodeRole,
+    constants::{MEMORY_CRITICAL_PERCENT, MEMORY_WARNING_PERCENT},
     kubernetes_summary::NodeSummary as KubernetesNode,
 };
 
@@ -82,6 +83,9 @@ impl HasHealth for NodeProblem<'_> {
     fn health(&self) -> HealthIndicator {
         match self {
             Self::KubernetesNotReady | Self::TalosUnresponsive => HealthIndicator::Error,
+            Self::HighMemory(percent) if *percent >= MEMORY_CRITICAL_PERCENT => {
+                HealthIndicator::Error
+            }
             Self::UnhealthyService(_) | Self::HighMemory(_) => HealthIndicator::Warning,
         }
     }
@@ -131,7 +135,7 @@ impl<'a> NodeAssessment<'a> {
             );
             if let Some(percent) = node
                 .memory_percent
-                .filter(|percent| *percent >= NODE_MEMORY_WARNING_PERCENT)
+                .filter(|percent| *percent >= MEMORY_WARNING_PERCENT)
             {
                 problems.push(NodeProblem::HighMemory(percent));
             }
@@ -368,7 +372,7 @@ mod tests {
                     NodeRole::Worker,
                     responding,
                     &services,
-                    Some(96.),
+                    Some(90.),
                 )),
                 None,
                 true,
@@ -376,7 +380,7 @@ mod tests {
             );
             let warnings = [
                 NodeProblem::UnhealthyService("kubelet"),
-                NodeProblem::HighMemory(96.),
+                NodeProblem::HighMemory(90.),
             ];
             if responding {
                 assert_eq!(node.health(), HealthIndicator::Warning);
@@ -390,13 +394,14 @@ mod tests {
     }
 
     #[test]
-    fn node_memory_warning_starts_at_ninety_percent() {
+    fn node_memory_follows_the_memory_levels_thresholds() {
         for (percent, expected) in [
             (None, HealthIndicator::Healthy),
-            (Some(85.), HealthIndicator::Healthy),
-            (Some(89.99), HealthIndicator::Healthy),
-            (Some(90.), HealthIndicator::Warning),
-            (Some(100.), HealthIndicator::Warning),
+            (Some(84.9), HealthIndicator::Healthy),
+            (Some(85.), HealthIndicator::Warning),
+            (Some(94.9), HealthIndicator::Warning),
+            (Some(95.), HealthIndicator::Error),
+            (Some(100.), HealthIndicator::Error),
         ] {
             let node = NodeAssessment::from_sources(
                 Some(TalosNodeFacts::new(NodeRole::Worker, true, &[], percent)),
@@ -405,6 +410,12 @@ mod tests {
                 false,
             );
             assert_eq!(node.health(), expected, "memory {percent:?}");
+            let high = percent.filter(|_| expected != HealthIndicator::Healthy);
+            assert_eq!(
+                node.problems(),
+                high.map(NodeProblem::HighMemory).as_slice(),
+                "memory {percent:?}"
+            );
         }
     }
 

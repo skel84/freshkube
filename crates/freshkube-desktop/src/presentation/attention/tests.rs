@@ -193,23 +193,32 @@ fn node_problems_merge_and_unknown_service_health_stays_unknown() {
 }
 
 #[test]
-fn a_responding_node_only_warns_once_memory_reaches_the_attention_threshold() {
+fn a_responding_nodes_memory_follows_the_memory_level() {
     let mut node = node();
     node.kubernetes = None;
     let talos = node.talos.as_mut().unwrap();
     talos.responding = true;
     talos.services.clear();
-    talos.memory = Some(crate::presentation::Memory {
-        used: 89,
-        total: 100,
-    });
-    assert_eq!(build(&[node.clone()], None, None, now()).total, 0);
-
-    node.talos.as_mut().unwrap().memory.as_mut().unwrap().used = 90;
-    let attention = build(&[node], None, None, now());
-    assert_eq!(attention.total, 1);
-    assert_eq!(attention.rows[0].tone, Tone::Warn);
-    assert_eq!(attention.rows[0].reason, "Memory at 90 %");
+    for (used, tone) in [
+        (849, None),
+        (850, Some(Tone::Warn)),
+        (949, Some(Tone::Warn)),
+        (950, Some(Tone::Crit)),
+    ] {
+        node.talos.as_mut().unwrap().memory =
+            Some(crate::presentation::Memory { used, total: 1000 });
+        let attention = build(&[node.clone()], None, None, now());
+        assert_eq!(
+            attention.rows.first().map(|row| row.tone),
+            tone,
+            "used {used}"
+        );
+        if tone.is_some() {
+            assert_eq!(attention.total, 1);
+            let percent = used.div_ceil(10);
+            assert_eq!(attention.rows[0].reason, format!("Memory at {percent} %"));
+        }
+    }
 }
 
 #[test]
