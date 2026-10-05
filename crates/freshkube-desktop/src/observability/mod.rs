@@ -28,7 +28,6 @@ mod frame;
 mod header;
 mod incidents;
 mod live_profiling;
-mod live_traces;
 mod map;
 mod model;
 mod plots;
@@ -40,6 +39,7 @@ mod settings;
 mod tables;
 #[cfg(test)]
 mod tests;
+mod traces;
 mod view;
 use model::Application;
 pub(crate) use model::Destination;
@@ -112,7 +112,7 @@ pub(crate) struct ObservabilityPage {
     hidden_incident_columns: std::collections::BTreeSet<tables::ColumnKind>,
     /// The Incidents filter; its text is projected into the list.
     incident_query: Entity<InputState>,
-    live_traces: live_traces::Traces,
+    live_traces: traces::Traces,
     live_profiles: live_profiling::Profiles,
     /// The applications' picker entries, by label.
     app_choices: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
