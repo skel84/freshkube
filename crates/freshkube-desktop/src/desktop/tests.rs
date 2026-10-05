@@ -3018,7 +3018,11 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
             pilot.read(cx).observability.read(cx).destination(),
             crate::observability::Destination::Traces
         );
-        window.click("obs-time-24", cx);
+        window.click("obs-time", cx);
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("enter", cx);
         assert_eq!(pilot.read(cx).observability.read(cx).hours(), 24);
         window.press("secondary-b", cx);
         assert!(!pilot.read(cx).column_collapsed(window));

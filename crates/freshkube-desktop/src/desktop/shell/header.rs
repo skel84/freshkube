@@ -1,7 +1,6 @@
 //! The header: the context switcher, where the window is, Search
 //! everything, Refresh, appearance and Settings.
 use super::*;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 /// Command-K's hint on the search field.
 const SEARCH_KEY: &str = if cfg!(target_os = "macos") {
@@ -43,9 +42,6 @@ impl Pilot {
                     .pl(dp(12.))
                     .pr(dp(14.))
                     .flex_shrink_0()
-                    .when(self.page == Page::Observability, |this| {
-                        this.child(self.render_observability_range(window, cx))
-                    })
                     .child(self.render_search_field(window, cx))
                     .when(!minimal, |this| {
                         this.child(self.render_refresh(cx))
@@ -113,58 +109,6 @@ impl Pilot {
                                 this.show_area(area, window, cx)
                             }),
                         )
-                }),
-            )
-            .into_any_element()
-    }
-
-    fn render_observability_range(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let hours = self.observability.read(cx).hours();
-        if window.viewport_size().width / ui::dp_px(1., window) < 950. {
-            let page = self.observability.downgrade();
-            return Button::new("obs-time-menu")
-                .outline()
-                .small()
-                .label(format!("{hours}h"))
-                .dropdown_caret(true)
-                .tooltip("Observability time range")
-                .dropdown_menu(move |mut menu, _, _| {
-                    for (span, label) in [
-                        (1, "1 hour"),
-                        (3, "3 hours"),
-                        (24, "24 hours"),
-                        (168, "7 days"),
-                    ] {
-                        let page = page.clone();
-                        menu =
-                            menu.item(PopupMenuItem::new(label).checked(hours == span).on_click(
-                                move |_, _, cx| {
-                                    _ = page.update(cx, |page, cx| page.set_range(span, cx));
-                                },
-                            ));
-                    }
-                    menu
-                })
-                .into_any_element();
-        }
-        h_flex()
-            .gap(dp(2.))
-            .p(dp(3.))
-            .rounded(px(8.))
-            .bg(palette(cx).surface_2)
-            .children(
-                [(1, "1h"), (3, "3h"), (24, "24h"), (168, "7d")].map(|(span, label)| {
-                    ui::segment(
-                        Button::new(SharedString::from(format!("obs-time-{span}"))),
-                        hours == span,
-                        cx,
-                    )
-                    .xsmall()
-                    .label(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.observability
-                            .update(cx, |page, cx| page.set_range(span, cx))
-                    }))
                 }),
             )
             .into_any_element()
