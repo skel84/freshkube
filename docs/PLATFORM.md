@@ -4,7 +4,7 @@ Freshkube today is a cluster browser with Talos inside it. This file proposes a 
 
 It records the direction taken with the user, the stack it was shaped on, the screens, the model behind them and an order of work. Nothing here is built. The [roadmap](ROADMAP.md) decides when a step starts; the future ideas it extends are [F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation) (ownership and Argo CD), [F06](FUTURE_IDEAS.md#f06-plan-changes-and-observe-their-outcomes) (reviewed changes and their outcomes) and [F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) (simultaneous clusters). The writes follow the pattern of [pod exec](POD_EXEC.md) and [port forwarding](PORT_FORWARD.md). [#42](https://github.com/skel84/freshkube/issues/42) tracks the work; the spike is [#43](https://github.com/skel84/freshkube/issues/43) and the session registry [#44](https://github.com/skel84/freshkube/issues/44).
 
-The mocks are static HTML pages with example data, in [`platform/`](platform/). Each screen below links its page. The same boards live on the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1) as P1–P7, P1d, P4d and P4w, with R, the app today, beside them; the canvas is private to its owner until shared. They show intent, not pixels: where a mock and this file differ, this file wins.
+The mocks are static HTML pages with example data, in [`platform/`](platform/). Each screen below links its page. The same boards live on the [Freshkube holistic layout canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1): P1–P7 in the Platform section, and P1d, P4d, P4w, R (the app today) and the Native pass boards N1, N1c and N2 in the Desktop grade section. The canvas is private to its owner until shared. The mocks show intent, not pixels: where a mock and this file differ, this file wins.
 
 ## Decisions
 
@@ -15,6 +15,7 @@ Taken with the user on 4 October 2026.
 - **Clusters have roles.** A core cluster runs Argo CD, Kargo, VictoriaMetrics and Coroot. A CI/CD cluster runs Tekton and Harbor. Each environment has its own workload cluster. The app holds all of them at once.
 - **Two starting points.** Platform engineers look across every team; developers look at their own apps. Home has both, one switch apart.
 - **Approval early.** Promoting freight and stepping or aborting a rollout come with the first delivery slice, not after it. They are explicit actions behind a confirmation that shows what will happen, the evidence and who the user acts as.
+- **Desktop grade is the look.** Chosen by the user on 5 October 2026 over the look of P1–P7 ([below](#desktop-grade)). P1–P7 stay as the reference for what each screen holds and how the screens connect; [DESIGN.md](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges) holds the look.
 
 ## The stack, and where each piece is read
 
@@ -58,6 +59,8 @@ The rail is organised by what people are doing.
 **What an application is** has to be decided once and shared by every screen. The proposal: a Kargo Project first, then an Argo CD Application or ApplicationSet, then the `app.kubernetes.io/part-of` label, with a manual override saved in the workspace. "My apps" are the applications of the user's teams; how teams are known is an open question.
 
 ## Screens
+
+P1–P7 below are the information architecture: what each screen holds and where it leads. They are drawn in the earlier dashboard style, which is not the chosen look; [Desktop grade](#desktop-grade) shows how they are built.
 
 ### Home, My apps
 
@@ -105,7 +108,7 @@ A failed task's **Logs** opens the step container's log in the existing `LogView
 
 ### Desktop grade
 
-The screens above read like a web dashboard: hero headings, cards with their own buttons, generous spacing. The app is meant to ship on macOS, Windows and Linux, so the target is not a Mac look but [desktop grade](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges): tables and outlines, an inspector, actions on the selection, desktop density, with each platform's conventions adapted in one place. Home and the Delivery tab are redrawn that way for comparison; which version wins is still open.
+The screens above read like a web dashboard: hero headings, cards with their own buttons, generous spacing. The app is meant to ship on macOS, Windows and Linux, so the target is not a Mac look but [desktop grade](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges): tables and outlines, an inspector, actions on the selection, desktop density, with each platform's conventions adapted in one place. The user chose it on 5 October 2026. Home and the Delivery tab are redrawn that way below; every other screen keeps P1–P7's content and takes this form when it is built. On the canvas, the Native pass boards (N1, N1c, N2) show the same direction for the workspace around a page: source list, document tabs, inspector and bottom panel.
 
 ![Home, desktop grade](platform/home-desktop.png)
 
@@ -115,7 +118,7 @@ The screens above read like a web dashboard: hero headings, cards with their own
 
 [HTML mock](platform/app-delivery-desktop.html). Freight as rows and stages as columns; the column headers are the pipeline. Each cell says what that freight is in that stage: running now, was there, ready, rolling out or blocked. Selecting the ready cell enables Promote in the toolbar and fills the inspector; Next step and Abort stay disabled until a rollout is selected.
 
-For reference, [the app today](platform/today-pods.png): Pods in example mode, captured from a debug build of `a1b6b24` at the same size. It is already denser than P1–P7, with a compact toolbar, grouped rows and a status bar; its uppercase column headers and the card around its table are what desktop grade would change.
+For reference, [the app today](platform/today-pods.png): Pods in example mode, captured from a debug build of `a1b6b24` at the same size. It is already denser than P1–P7, with a compact toolbar, grouped rows and a status bar; [DESIGN.md](DESIGN.md#from-todays-app-to-desktop-grade) lists the changes from it to desktop grade, in order, starting with its uppercase column headers and the card around its table.
 
 [The same on Windows](platform/app-delivery-windows.html) ([screenshot](platform/app-delivery-windows.png)): a menu button and caption buttons instead of traffic lights, Ctrl labels, and the default button first.
 

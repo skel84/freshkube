@@ -33,7 +33,7 @@ Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12
 
 ## Platforms: desktop grade, adapted at the edges
 
-Freshkube is a desktop app and is meant to ship on macOS, Windows and Linux. GPUI draws every control itself, so the app imitates no operating system: it keeps one look of its own on all three, holds it to the conventions desktop apps share, and adapts each platform's differences in one place. Agreed with the user on 5 October 2026.
+Freshkube is a desktop app and is meant to ship on macOS, Windows and Linux. GPUI draws every control itself, so the app imitates no operating system: it keeps one look of its own on all three, holds it to the conventions desktop apps share, and adapts each platform's differences in one place. Agreed with the user on 5 October 2026, and chosen the same day as the look for every screen over the dashboard style of the platform boards P1–P7, which remain the reference for what each screen holds ([PLATFORM.md](PLATFORM.md#desktop-grade)).
 
 What desktop apps share, and new screens follow:
 
@@ -58,7 +58,27 @@ What differs, handled by one platform module and never by a screen:
 
 Bind keys with `secondary-` and show the platform's label (`⌘K`, `Ctrl+K`). A focused terminal takes every key without the modifier above, so on Windows and Linux its shortcuts can't use plain Ctrl, which the shell needs. The bundled faces keep the same metrics on every platform. [#81](https://github.com/skel84/freshkube/issues/81) adds Linux and Windows checks to CI and fixes the terminal's copy and paste keys there first.
 
-The comps are P1d, P4d and P4w on the [canvas](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1), also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`; [PLATFORM.md](PLATFORM.md#desktop-grade) compares them with P1 and P4.
+The comps are in the canvas's [Desktop grade](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1) section. P1d, P4d and P4w are pages, also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`. N1, N1c and N2, the Native pass, are the workspace around a page: a source list, document tabs, the inspector and a bottom panel for logs, the terminal and agent activity. R is the app today, for comparison.
+
+### From today's app to desktop grade
+
+The changes below take what Pods draws today (R) to desktop grade. They are in order, and each is one PR in `freshkube-ui`'s page and table components. Only two pages draw with those components today: **Resources** (Pods and every other kind, with its detail pane) and **System services**. Overview, Nodes, the Talos screens, Monitoring and Observability take each change when they migrate; no PR here restyles them by hand.
+
+Each PR updates the rows of [Components](#components) it changes, since that section describes the app as it is, and the numbers in `layout_check` and `scripts/check-style.sh` in the same change.
+
+1. **Sentence-case column headers.** The header cells use a new `ui::column_label` (11.5 px semibold, muted, the label as given) instead of `ui::caption`, which keeps uppercase for section and field labels for now. Pages give labels in sentence case: `Ready ↻`, not `READY`. Resources' server-printed columns already arrive as `Name`, `Ready`. *Resources, System services.*
+2. **A 26 header row.** `HEADER_HEIGHT` 30 → 26, still on `surface_2` with a bottom hairline. *Resources, System services.*
+3. **Rows 28 and 26.** `ROW_HEIGHT` 34 → 28; `COMPACT_ROW_HEIGHT` stays 26 and group rows follow the row height. Cells pad 10 horizontally instead of 12. *Resources, System services.*
+4. **No card around the table.** `data_table` draws the table bare by default, edge to edge across its pane, with hairlines where it meets the toolbar, the inspector and the status bar. A table inside a card of its own asks for `.carded()`, which replaces `.bare()`. *Resources, System services.*
+5. **A page frame without margins.** `page::page` drops the 26 / 22 / 18 padding and the 14 gaps: toolbar, any banner and panes stack edge to edge, divided by hairlines, and content inside a pane is padded 10–12. *Resources, System services.*
+6. **`PageHeader` as a toolbar.** One 38 row with a bottom hairline: the filter, the segment and `StatusChips` at the left, the controls after the spacer, every control 24 high. A page's `.secondary(row)` becomes a second toolbar row. In a narrow window the controls fold into an overflow menu instead of wrapping onto more lines. The title stays where it is until its open question is answered. *Resources, System services.*
+7. **The meta line in the status bar.** The context, count, state and refresh time move from under the header to the status bar's page segment, which the page fills. *Resources, System services, and the shell's status bar.*
+8. **Counts in the table's footer.** `ShowingBar`'s `Showing 40 of 212` with Show all, and `SelectionBar`'s `3 selected` with its actions, move into the `Legend` row: 26 high, on the frame's fill, with a top hairline. The blue strip above the rows goes. *Resources, System services.*
+9. **An inspector instead of the detail card.** A shared `Inspector` takes the pane's frame: the split's trailing pane, with no card, divided by a hairline, padded 12, tabs 28 high. The split stays resizable, and its width is remembered per page in `navigation.json`. Below 900 content width it still opens under the table. *Resources (the detail pane of every kind).*
+10. **Actions on the selection, not the row.** A shared row context menu is built from the same actions as the toolbar, each shown with its key in the platform's label. `GroupRow`'s Select all, Expand and Open node move to it and to keys; a group row keeps its chevron, glyph, label and count. *Resources (Pods grouped by cause).*
+11. **System services without an actions column.** Its row actions, such as Health check, act on the selected row from the toolbar, the context menu and keys, and the column goes. *System services.*
+
+Three questions in [Open](#open) hold changes back. Page titles decide whether a 12th change folds the title into the toolbar. The interface face, Figtree or Inter, is one change to the embedded fonts and the type sizes. Replacing today's status glyphs with G6 and the K1 skull is one change inside `ui::status_glyph`, `status_mark` and `health_mark`, which the style check already makes the only places glyphs are drawn. The terminal's Ctrl-Shift shortcuts belong to [#81](https://github.com/skel84/freshkube/issues/81), not to this list.
 
 ## Frame
 
@@ -216,12 +236,18 @@ Two checks keep pages on these components ([#48](https://github.com/skel84/fresh
 
 ## Open
 
+For the user, before the matching changes in [From today's app to desktop grade](#from-todays-app-to-desktop-grade):
+
+- **Page titles.** The 20 px black heading `PageHeader` draws today, or a label in the toolbar, as P1d and P4d draw it.
+- **The interface face.** Whether Figtree stays at desktop density, or Inter replaces it. The Native pass boards were drawn in the system face.
+- **Terminal shortcuts.** Whether the terminal's own shortcuts on Windows and Linux use Ctrl-Shift, as the [platform table](#platforms-desktop-grade-adapted-at-the-edges) proposes.
+- **Status glyphs.** Whether the round G6 glyphs and the K1 skull for a container that died, drawn on the platform and desktop-grade boards, replace the glyphs in [Status and links](#status-and-links).
+
+Also open:
+
 - Whether integration-required lavender should become soft teal, to separate it from memory.
-- Default row density; comfortable remains the initial value.
+- Default row density; comfortable remains the initial value. Once rows are 28 and 26, whether the Density control still earns its place.
 - More causal grouping beyond pod state and NotReady nodes.
 - Fog light theme.
-- Screen titles: the 20 px black heading above versus a toolbar label under [desktop grade](#platforms-desktop-grade-adapted-at-the-edges). Decide with the P1/P1d and P4/P4d comparison; existing pages move only when next touched.
-- Whether Figtree stays the interface face at desktop density, or Inter replaces it.
-- The Ctrl-Shift terminal shortcuts on Windows and Linux.
 - Whether a last-known problem keeps a muted rail dot. Today a card whose evidence is stale shows Unknown with "Last known ·" and leaves no dot, Kubernetes and Talos cards alike ([#65](https://github.com/skel84/freshkube/issues/65)).
 - Later Coroot destinations and a reviewed workflow for any fixes. The first live slice is read-only; [COROOT.md](COROOT.md) records its supported evidence and remaining API gaps.
