@@ -2,7 +2,9 @@
 mod cards;
 mod header;
 mod join;
+mod metrics;
 mod projection;
+mod resource;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -100,6 +102,9 @@ pub(super) struct Nodes {
     columns: Vec<table::Column>,
     hidden_columns: std::collections::BTreeSet<table::Field>,
     table_width: f32,
+    metrics: metrics::Metrics,
+    resource_cells: std::collections::HashMap<NodeKey, resource::RowResources>,
+    talos_current: bool,
     pub(super) selected: Option<NodeKey>,
     pub(super) open: bool,
     pub(super) expanded: bool,
@@ -172,8 +177,11 @@ impl Nodes {
             all_columns: Vec::new(),
             menu_columns: Arc::new(Vec::new()),
             columns: Vec::new(),
-            hidden_columns: std::collections::BTreeSet::new(),
+            hidden_columns: std::collections::BTreeSet::from([table::Field::Load]),
             table_width: 0.,
+            metrics: metrics::Metrics::new(runtime.clone()),
+            resource_cells: Default::default(),
+            talos_current: false,
             selected: None,
             open: false,
             expanded: false,
@@ -381,6 +389,7 @@ impl Pilot {
     }
 
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_node_metrics(window, cx);
         let shown = self.page == Page::Nodes && self.node_workspace.open;
         self.node_pods.update(cx, |pods, cx| {
             pods.set_visible(

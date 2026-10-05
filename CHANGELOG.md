@@ -13,6 +13,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ### Other changes
 
+- Nodes shows CPU and memory with Pods’ request/use meters against node allocatable, retains stale metrics, and falls back to Talos memory when metrics-server is unavailable; load averages are an optional column.
 - Nodes shares Pods’ page header and table styling, with a text filter, source freshness, matching health glyph counts and problems first. Healthy rows fold while problems exist; comfortable/compact rows, a Columns menu and 12 px cards keep the retained node pane.
 
 - Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.

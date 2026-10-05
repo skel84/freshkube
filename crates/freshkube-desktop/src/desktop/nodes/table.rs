@@ -13,10 +13,11 @@ pub(super) enum Field {
     Role,
     Kubernetes,
     Talos,
-    Load,
+    Cpu,
     Memory,
     Pods,
     Services,
+    Load,
 }
 
 pub(crate) struct Column {
@@ -45,6 +46,7 @@ impl Column {
             Field::Role => "Role",
             Field::Kubernetes => "Kubernetes",
             Field::Talos => "Talos",
+            Field::Cpu => "CPU",
             Field::Load => "Load",
             Field::Memory => "Memory",
             Field::Pods => "Pods",
@@ -56,7 +58,7 @@ impl Column {
             Field::Glyph => 34.,
             Field::Name => 160.,
             Field::Load => 160.,
-            Field::Memory => 140.,
+            Field::Cpu | Field::Memory => 124.,
             _ => {
                 let chars = rows
                     .iter()
@@ -86,6 +88,7 @@ impl Field {
             Self::Role => row.role.label(),
             Self::Kubernetes => row.ready,
             Self::Talos => &row.talos_state,
+            Self::Cpu => "—",
             Self::Load => &row.table_load,
             Self::Memory => &row.memory,
             Self::Pods => &row.pods,
@@ -102,19 +105,14 @@ impl Nodes {
             Field::Role,
             Field::Kubernetes,
             Field::Talos,
-            Field::Load,
+            Field::Cpu,
             Field::Memory,
             Field::Pods,
             Field::Services,
+            Field::Load,
         ]
         .into_iter()
-        .filter(|field| {
-            talos
-                || !matches!(
-                    field,
-                    Field::Talos | Field::Load | Field::Memory | Field::Services
-                )
-        })
+        .filter(|field| talos || !matches!(field, Field::Talos | Field::Load | Field::Services))
         .map(|field| Column::new(field, &self.rows))
         .collect();
         self.menu_columns = Arc::new(
@@ -260,6 +258,19 @@ impl TableSource for Pilot {
                 .child(row.name.clone())
                 .into_any_element(),
             Field::Kubernetes => table::cell(column).child(row.ready).into_any_element(),
+            field @ (Field::Cpu | Field::Memory) => {
+                let Some(resources) = self.node_workspace.resource_cells.get(&row.key) else {
+                    return table::cell(column).child("—").into_any_element();
+                };
+                let (resource, cell) = if field == Field::Cpu {
+                    (freshkube_ui::meters::Resource::Cpu, &resources.cpu)
+                } else {
+                    (freshkube_ui::meters::Resource::Memory, &resources.memory)
+                };
+                table::cell(column)
+                    .child(cell.render(resource, (row.id.clone(), field as usize).into(), &style.p))
+                    .into_any_element()
+            }
             Field::Services => {
                 let label = row.service_status.label.clone();
                 table::cell(column)
@@ -283,7 +294,7 @@ impl TableSource for Pilot {
                     Field::Role => row.role.label().into(),
                     Field::Talos => row.talos_state.clone(),
                     Field::Load => row.table_load.clone(),
-                    Field::Memory => row.memory.clone(),
+
                     Field::Pods => row.pods.clone(),
                     _ => unreachable!("the other columns have dedicated cells"),
                 };
@@ -337,6 +348,9 @@ impl TableSource for Pilot {
             row
         };
         Some(row.render(cx).into_any_element())
+    }
+    fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        Some(self.nodes_meter_legend(window, cx))
     }
     fn selected_key(&self) -> Option<&NodeKey> {
         self.node_workspace.selected.as_ref()

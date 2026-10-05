@@ -57,6 +57,285 @@ fn projection_sources() -> (
 }
 
 #[test]
+fn resource_cells_keep_request_use_allocatable_and_stale_inputs_for_shared_meters() {
+    use freshkube_core::resources::{Amounts, NodeUsage};
+    let (talos, mut kube) = projection_sources();
+    kube.allocatable =
+        serde_json::from_value(serde_json::json!({"cpu":"4","memory":"8Gi"})).unwrap();
+    kube.requests = Amounts {
+        cpu_millis: Some(1000.),
+        memory_bytes: Some(1024. * 1024. * 1024.),
+    };
+    let row = join::join(&[talos], &[kube], true, true).remove(0);
+    for (used, stale) in [(500., false), (1500., false), (3400., false), (3500., true)] {
+        let sample = NodeUsage {
+            name: row.name.to_string(),
+            usage: Amounts {
+                cpu_millis: Some(used),
+                memory_bytes: Some(2. * 1024. * 1024. * 1024.),
+            },
+            sampled_at: None,
+        };
+        let cells =
+            super::resource::RowResources::new(&row, Some(&sample), stale, "read failed", true);
+        assert_eq!(cells.cpu.used, Some(used));
+        assert_eq!(cells.cpu.request, Some(1000.));
+        assert_eq!(cells.cpu.allocatable, Some(4000.));
+        assert_eq!(cells.cpu.stale, stale);
+        assert_eq!(
+            cells.cpu.text,
+            if used < 1000. {
+                "500m"
+            } else if used == 1500. {
+                "1.5"
+            } else if used == 3400. {
+                "3.4"
+            } else {
+                "3.5"
+            }
+        );
+        assert!(
+            cells
+                .cpu
+                .tooltip
+                .contains("requested 1.0 · allocatable 4.0")
+        );
+        assert!(
+            cells
+                .cpu
+                .tooltip
+                .contains("load averages: 1.00 · 2.00 · 3.00 (not CPU use)")
+        );
+        assert_eq!(
+            cells.cpu.tooltip.contains("last known metrics.k8s.io"),
+            stale
+        );
+        assert_eq!(cells.memory.text, "2.0Gi");
+    }
+}
+
+#[test]
+fn missing_node_metrics_fall_back_to_talos_memory_without_inventing_allocatable() {
+    let (mut talos, mut kube) = projection_sources();
+    talos.memory = Some(presentation::Memory {
+        used: 3 * 1024 * 1024 * 1024,
+        total: 4 * 1024 * 1024 * 1024,
+    });
+    kube.allocatable.clear();
+    let row = join::join(&[talos], &[kube], true, true).remove(0);
+    let cells = super::resource::RowResources::new(
+        &row,
+        None,
+        false,
+        "metrics-server isn't installed",
+        true,
+    );
+    assert_eq!(cells.cpu.used, None);
+    assert_eq!(cells.cpu.text, "—");
+    assert!(cells.cpu.tooltip.contains("metrics-server isn't installed"));
+    assert_eq!(cells.memory.used, Some(3. * 1024. * 1024. * 1024.));
+    assert_eq!(cells.memory.text, "3.0Gi");
+    assert_eq!(cells.memory.allocatable, None);
+    assert!(cells.memory.tooltip.contains("Talos memory fallback"));
+    assert!(cells.memory.tooltip.contains("physical total"));
+    assert!(
+        cells
+            .memory
+            .tooltip
+            .contains("allocatable unavailable (end unknown)")
+    );
+    let stale = super::resource::RowResources::new(&row, None, false, "denied", false);
+    assert!(stale.memory.stale);
+    assert!(stale.memory.tooltip.contains("last known Talos memory"));
+}
+
+#[gpui_kit::test]
+fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut TestAppContext) {
+    use freshkube_core::resources::{Amounts, NodeUsage};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            assert!(!pilot.node_workspace.metrics.visible);
+            assert!(pilot.node_workspace.metrics.delivery.is_none());
+            assert!(pilot.node_workspace.metrics.job.is_none());
+            pilot.navigate(Page::Nodes, window, cx);
+            let metrics = &mut pilot.node_workspace.metrics;
+            assert!(metrics.visible);
+            assert!(metrics.delivery.is_some());
+            let generation = metrics.generation;
+            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            assert!(metrics.apply(
+                generation,
+                &request,
+                Ok(vec![
+                    NodeUsage {
+                        name: "talos-wk-fra1-02".into(),
+                        usage: Amounts {
+                            cpu_millis: Some(250.),
+                            memory_bytes: Some(1048576.)
+                        },
+                        sampled_at: None
+                    },
+                    NodeUsage {
+                        name: "old-source".into(),
+                        usage: Amounts::default(),
+                        sampled_at: None
+                    }
+                ])
+            ));
+            assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
+            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            assert!(metrics.apply(generation, &request, Err("denied".into())));
+            assert_eq!(
+                metrics.snapshot.data().unwrap()["talos-wk-fra1-02"]
+                    .usage
+                    .cpu_millis,
+                Some(250.)
+            );
+            pilot.node_workspace.rebuild_resource_cells();
+            let row = pilot
+                .node_workspace
+                .rows
+                .iter()
+                .find(|row| row.name == "talos-wk-fra1-02")
+                .unwrap();
+            let cells = &pilot.node_workspace.resource_cells[&row.key];
+            assert!(cells.cpu.stale);
+            assert_eq!(cells.memory.used, Some(1048576.)); // Last metrics outrank a new fallback.
+            assert!(cells.memory.tooltip.contains("last known metrics.k8s.io"));
+            let request = pilot
+                .node_workspace
+                .metrics
+                .snapshot
+                .begin(pilot.node_workspace.metrics.source.clone().unwrap());
+            pilot.navigate(Page::Overview, window, cx);
+            assert!(pilot.node_workspace.metrics.delivery.is_none());
+            assert!(pilot.node_workspace.metrics.job.is_none());
+            assert!(
+                !pilot
+                    .node_workspace
+                    .metrics
+                    .apply(generation, &request, Ok(vec![]))
+            );
+            pilot.navigate(Page::Nodes, window, cx);
+            let metrics = &mut pilot.node_workspace.metrics;
+            let generation = metrics.generation;
+            let token = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            assert!(metrics.apply(
+                generation,
+                &token,
+                Ok(vec![NodeUsage {
+                    name: "old-source".into(),
+                    usage: Amounts::default(),
+                    sampled_at: None
+                }])
+            ));
+            assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
+            let old_id = metrics.source.clone();
+            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+            pilot.applied.context = Some("different".into());
+            pilot.push_source(window, cx);
+            assert!(
+                !pilot
+                    .node_workspace
+                    .metrics
+                    .apply(generation, &request, Ok(vec![]))
+            );
+            assert_ne!(pilot.node_workspace.metrics.source, old_id);
+            assert!(
+                !pilot
+                    .node_workspace
+                    .metrics
+                    .snapshot
+                    .data()
+                    .unwrap()
+                    .contains_key("old-source")
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn example_nodes_show_use_as_soon_as_the_page_shows(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Nodes, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    pilot.read_with(cx, |pilot, _| {
+        let nodes = &pilot.node_workspace;
+        let joined: Vec<_> = nodes
+            .rows
+            .iter()
+            .filter(|row| row.kubernetes.is_some())
+            .collect();
+        assert!(!joined.is_empty());
+        for row in joined {
+            let cells = &nodes.resource_cells[&row.key];
+            assert!(cells.cpu.used.is_some(), "{} has no CPU use", row.name);
+            assert!(
+                cells.memory.used.is_some(),
+                "{} has no memory use",
+                row.name
+            );
+            assert!(cells.cpu.allocatable.is_some(), "{}", row.name);
+            assert!(!cells.cpu.stale, "{}", row.name);
+        }
+    });
+}
+
+#[gpui_kit::test]
+fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContext) {
+    let (runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.executor().allow_parking();
+    for replace_context in [false, true] {
+        let (job, receiver) = crate::backend::spawn_job(
+            &runtime.handle().clone(),
+            std::time::Duration::from_secs(60),
+            "timeout".into(),
+            std::future::pending::<Result<(), String>>(),
+        );
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.navigate(Page::Nodes, window, cx);
+                pilot.node_workspace.metrics.job = Some(job);
+                if replace_context {
+                    pilot.applied.context = Some("replacement".into());
+                    pilot.push_source(window, cx);
+                } else {
+                    pilot.navigate(Page::Overview, window, cx);
+                }
+                assert!(pilot.node_workspace.metrics.job.is_none());
+                if !replace_context {
+                    assert!(pilot.node_workspace.metrics.delivery.is_none());
+                }
+            });
+        })
+        .unwrap();
+        assert!(
+            runtime.block_on(receiver).is_err(),
+            "the workspace must abort the pending job"
+        );
+    }
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
+    })
+    .unwrap();
+    let before = pilot.read_with(cx, |pilot, _| pilot.node_workspace.metrics.generation);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(45));
+    cx.run_until_parked();
+    pilot.read_with(cx, |pilot, _| {
+        let metrics = &pilot.node_workspace.metrics;
+        assert_eq!(metrics.generation, before);
+        assert!(metrics.job.is_none());
+        assert!(metrics.delivery.is_none());
+    });
+}
+
+#[test]
 fn joined_row_preserves_display_contract_and_problem_order() {
     let (mut talos, kube) = projection_sources();
     talos.responding = false;
@@ -942,7 +1221,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
                     .node_workspace
                     .all_columns
                     .iter()
-                    .filter(|column| matches!(column.label().as_ref(), "Load" | "Memory"))
+                    .filter(|column| matches!(column.label().as_ref(), "CPU" | "Memory" | "Load"))
                     .map(TableColumn::width)
                     .collect::<Vec<_>>()
             };
@@ -965,7 +1244,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
             );
             assert_eq!(
                 pilot.node_workspace.columns.len(),
-                pilot.node_workspace.all_columns.len() - 1
+                pilot.node_workspace.all_columns.len() - 2
             );
             assert!(
                 !pilot
@@ -999,7 +1278,10 @@ fn leaving_kubernetes_only_restores_talos_columns_without_waiting_for_a_summary(
                     .map(|column| column.label().to_string())
                     .collect::<Vec<_>>()
             };
-            assert_eq!(labels(pilot), ["", "Name", "Role", "Kubernetes", "Pods"]);
+            assert_eq!(
+                labels(pilot),
+                ["", "Name", "Role", "Kubernetes", "CPU", "Memory", "Pods"]
+            );
             pilot.leave_kubernetes_only(window, cx);
             assert_eq!(
                 labels(pilot),
@@ -1009,7 +1291,7 @@ fn leaving_kubernetes_only_restores_talos_columns_without_waiting_for_a_summary(
                     "Role",
                     "Kubernetes",
                     "Talos",
-                    "Load",
+                    "CPU",
                     "Memory",
                     "Pods",
                     "Services"
@@ -1177,13 +1459,15 @@ fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expande
                         "column width {} exceeds viewport {:?}", nodes.table_width, viewport);
                     let name = window.find(("nodes-sort", 1usize)).bounds();
                     for row in nodes.rows.iter() {
-                        for (label, value) in [("Load", row.table_load.as_ref()), ("Memory", row.memory.as_ref())] {
+                        let resources = nodes.resource_cells.get(&row.key).unwrap();
+                        for (label, value) in [("CPU", resources.cpu.text.as_ref()), ("Memory", resources.memory.text.as_ref())] {
                             let column = nodes.columns.iter().find(|column| column.label() == label).unwrap();
+                            assert_eq!(column.width(), 124.);
                             let run = TextRun {len: value.len(), font: font(crate::ui::MONO_FONT),
                                 color: Default::default(), background_color: None, underline: None, strikethrough: None};
                             let shaped = window.text_system().shape_line(SharedString::from(value.to_owned()),
                                 crate::ui::dp_px(12.5, window), &[run], None).width;
-                            assert!(shaped <= crate::ui::dp_px(column.width() - 24., window),
+                            assert!(shaped <= crate::ui::dp_px(48., window),
                                 "{label} truncates {value} at text {text}");
                         }
                         if row.name.len() <= 16 {

@@ -88,6 +88,9 @@ impl Nodes {
             .map(|row| format!("{} {} {}", row.name, row.address, row.role.label()).to_lowercase())
             .collect();
         self.rows = Arc::new(rows);
+        self.talos_current = talos_current;
+        self.refresh_example_metrics();
+        self.rebuild_resource_cells();
     }
 
     pub(super) fn rebuild_lines(&mut self) {

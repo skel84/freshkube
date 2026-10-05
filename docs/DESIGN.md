@@ -58,7 +58,7 @@ Pods start on Problems when problems exist, grouped by cause, with healthy rows 
 
 The status is a glyph, replaced by a checkbox on a marked row. Ready and restarts share a cell (`0/1 ↻14`). Owner prefixes are muted (`deploy/`, `sts/`). Namespace prefixes are muted; random suffixes are faint. Remove a common node prefix only when detected and keep the full name in its tooltip. Sort arrows, a blue focus outline, ↑↓, Enter, X and L keep their existing behavior.
 
-Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities.
+Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. Tooltips name used/requested/limit, freshness and missing limits; the footer explains the states. Unknown limits must be identified, never represented as known capacities. Every per-row CPU and memory value uses these shared resource meters.
 
 ## G8: pod detail
 

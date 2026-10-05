@@ -1126,6 +1126,7 @@ impl Pilot {
 
     /// Hands every screen the current source; the visible one loads if empty.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_node_metrics(window, cx);
         self.deliver_summary_nodes(cx);
         let source = self.screen_source();
         for (_, screen) in &self.screens {
