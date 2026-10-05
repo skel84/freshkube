@@ -3,6 +3,7 @@
 //! ([docs/DESIGN.md](../../docs/DESIGN.md#components)).
 
 pub mod card;
+pub mod document;
 pub mod meters;
 pub mod page;
 pub mod palette;

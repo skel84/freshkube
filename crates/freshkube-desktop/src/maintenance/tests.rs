@@ -547,6 +547,26 @@ async fn apply_needs_an_explicit_confirmation_of_the_reviewed_yaml(cx: &mut Test
 }
 
 #[gpui_kit::test]
+async fn the_review_draws_each_row_as_a_document_line(cx: &mut TestAppContext) {
+    let world = World::new("review-lines");
+    let (_runtime, handle, view) = mount(cx, &world, NODE);
+    reach_apply_confirmation(cx, handle, &view, &world).await;
+    // No line of the fake configuration is long enough to wrap.
+    let rows = World::yaml(MachineRole::ControlPlane, "/dev/sda")
+        .lines()
+        .count();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for ix in 0..rows {
+            let line = window.find(("maint-review-line", ix)).bounds();
+            assert_eq!(line.size.height, px(freshkube_ui::document::LINE_HEIGHT));
+        }
+        assert!(window.try_find(("maint-review-line", rows)).is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 async fn a_stale_apply_preview_is_refused_and_sends_nothing(cx: &mut TestAppContext) {
     let world = World::new("stale");
     let (_runtime, handle, view) = mount(cx, &world, NODE);
