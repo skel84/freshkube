@@ -120,11 +120,24 @@ fn second_refresh_produces_rates(cx: &mut TestAppContext) {
                 .label()
                 .is_some_and(|label| label.contains("measuring"))
         );
+        let row = |window: &mut Window, cx: &mut App| {
+            let id = row_ids(&screen, cx)[0].clone();
+            window.render_frame(cx);
+            window.find(id).label().unwrap_or_default().to_string()
+        };
+        let before = row(window, cx);
+        assert!(before.contains("RX measuring"), "{before}");
         screen.update(cx, |screen, cx| screen.refresh(window, cx));
         window.render_frame(cx);
         let second = screen.read(cx).snapshot().unwrap().clone();
         assert!(second.interfaces.iter().all(|i| i.rate.is_some()));
         assert!(second.totals.rx_bytes_per_sec > 0);
+        // The table's rows show the rates, not "measuring".
+        let after = row(window, cx);
+        assert!(
+            !after.contains("measuring") && after.contains("/s"),
+            "{after}"
+        );
     })
     .unwrap();
 }
