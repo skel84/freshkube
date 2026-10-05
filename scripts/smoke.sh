@@ -3,6 +3,7 @@
 # press keys and click, the way a person would. See AGENTS.md, "Smoke tests".
 #
 #   scripts/smoke.sh start [--page SLUG] [--theme light|dark] [--size WxH] [--release] [-- APP_ARGS...]
+#   scripts/smoke.sh start --story SLUG [--theme light|dark] [--size WxH]   the workbench on a story
 #   scripts/smoke.sh shot NAME [SETTLE_SECONDS]   capture the window to target/smoke/<worktree>/NAME.png
 #   scripts/smoke.sh key 'keystroke "k" using command down'   any System Events key clause
 #   scripts/smoke.sh click X Y                    click at points from the window's top-left
@@ -12,7 +13,8 @@
 #   scripts/smoke.sh stop
 #   scripts/smoke.sh pages [--wait SECONDS] [-- APP_ARGS...]   start on every page and capture each
 #
-# APP_ARGS default to --fixture. For a live check, pass the context the user
+# APP_ARGS default to --fixture; the workbench takes none (docs/WORKBENCH.md).
+# For a live check, pass the context the user
 # chose (`-- --config … --context … --kubeconfig …`); only look and navigate,
 # never press Operations or maintenance actions.
 # FRESHKUBE_SMOKE_BINARY selects a saved executable without rebuilding it.
@@ -73,10 +75,11 @@ stop() {
 }
 
 start() {
-  local page="" theme="" size="" profile=debug
+  local page="" story="" theme="" size="" profile=debug
   while [[ $# -gt 0 ]]; do
     case $1 in
       --page) page=$2; shift 2 ;;
+      --story) story=$2; shift 2 ;;
       --theme) theme=$2; shift 2 ;;
       --size) size=$2; shift 2 ;;
       --release) profile=release; shift ;;
@@ -84,9 +87,17 @@ start() {
       *) echo "smoke: unknown option $1" >&2; exit 2 ;;
     esac
   done
-  local args=("$@")
-  [[ ${#args[@]} -eq 0 ]] && args=(--fixture)
-  local binary=${FRESHKUBE_SMOKE_BINARY:-$TARGET/$profile/freshkube}
+  local args=("$@") bin=freshkube package=freshkube
+  if [[ -n $story ]]; then
+    if [[ -n $page || ${#args[@]} -gt 0 ]]; then
+      echo "smoke: --story takes no --page or APP_ARGS" >&2
+      exit 2
+    fi
+    bin=freshkube-workbench package=freshkube-workbench
+  elif [[ ${#args[@]} -eq 0 ]]; then
+    args=(--fixture)
+  fi
+  local binary=${FRESHKUBE_SMOKE_BINARY:-$TARGET/$profile/$bin}
   if [[ -n ${FRESHKUBE_SMOKE_BINARY:-} ]]; then
     [[ $binary == /* ]] || binary=$PWD/$binary
     if [[ ! -f $binary || ! -x $binary ]]; then
@@ -94,9 +105,9 @@ start() {
       exit 1
     fi
   elif [[ $profile == release ]]; then
-    cargo build -q --release --manifest-path "$ROOT/Cargo.toml" --bin freshkube
+    cargo build -q --release --manifest-path "$ROOT/Cargo.toml" -p "$package" --bin "$bin"
   else
-    cargo build -q --manifest-path "$ROOT/Cargo.toml" --bin freshkube
+    cargo build -q --manifest-path "$ROOT/Cargo.toml" -p "$package" --bin "$bin"
   fi
   helper id 0 >/dev/null 2>&1 || true # build the helper before timing the window
   screen_acquire smoke $$
@@ -104,18 +115,20 @@ start() {
   # A new build asks Keychain for a remembered Coroot key; only the user can
   # answer, so call them with a sound on a live run.
   local stamp=$OUT/launched-$profile
-  if [[ ${args[0]} != --fixture && $binary -nt $stamp ]]; then
+  if [[ -z $story && ${args[0]} != --fixture && $binary -nt $stamp ]]; then
     afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 &
     echo "smoke: a new build; it may ask Keychain for the Coroot key, which the user answers" >&2
   fi
   touch "$stamp"
-  FRESHKUBE_PAGE=$page FRESHKUBE_THEME=$theme FRESHKUBE_WINDOW_SIZE=$size \
-    nohup "$binary" "${args[@]}" >"$OUT/app.log" 2>&1 &
+  # Bash 3.2 calls an empty array unbound, so the workbench's empty
+  # arguments expand only when set.
+  FRESHKUBE_PAGE=$page FRESHKUBE_STORY=$story FRESHKUBE_THEME=$theme FRESHKUBE_WINDOW_SIZE=$size \
+    nohup "$binary" ${args[@]+"${args[@]}"} >"$OUT/app.log" 2>&1 &
   echo $! >"$PIDFILE"
   screen_owner_pid "$(cat "$PIDFILE")"
   for _ in {1..300}; do
     if helper id "$(pid)" >/dev/null 2>&1; then
-      echo "smoke: freshkube $(pid) is up${page:+ on $page}"
+      echo "smoke: $bin $(pid) is up${page:+ on $page}${story:+ on $story}"
       return
     fi
     sleep 0.1

@@ -44,6 +44,7 @@ cargo build
 cargo run -- --fixture            # synthetic example data, no credentials or cluster
 cargo run -- --config ~/.talos/config --context <name>
 cargo run -- --kubernetes-only --kubeconfig <file> --kube-context <name>   # no talosconfig
+cargo run -p freshkube-workbench   # the shared components on invented data, one story at a time; not shipped
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
