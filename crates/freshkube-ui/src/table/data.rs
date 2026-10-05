@@ -617,8 +617,8 @@ mod tests {
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
-        AnyWindowHandle, AppContext, Entity, IntoElement, Render, ScrollDelta, TestAppContext,
-        point, px, size,
+        AnyView, AnyWindowHandle, AppContext, Entity, InputEvent, IntoElement, MouseMoveEvent,
+        Render, ScrollDelta, ScrollWheelEvent, StyleRefinement, TestAppContext, point, px, size,
     };
 
     use super::*;
@@ -937,6 +937,78 @@ mod tests {
             assert!((inset(window, ("wide-pinned", 1usize)) + 499.).abs() <= 1.5);
             assert!((inset(window, "Column 0 1") + 499.).abs() <= 1.5);
             assert!((inset(window, ("wide-sort", 0usize)) + 500.).abs() <= 1.5);
+        })
+        .unwrap();
+    }
+
+    /// A page that keeps its table in a cached view, as the Resources pane
+    /// keeps its own.
+    struct CachedTable(Entity<Wide>);
+
+    impl Render for CachedTable {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            AnyView::from(self.0.clone()).cached(StyleRefinement::default().size_full())
+        }
+    }
+
+    /// The first sideways scroll from the left edge pins on the frame it
+    /// draws, inside a cached view too: the wheel notifies the table's view,
+    /// which marks the cached views around it dirty. The frames here are
+    /// the ones the app draws, through the caches, never `render_frame`.
+    #[gpui_kit::test]
+    fn the_first_scroll_pins_through_a_cached_view(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(900.), px(400.)), |window, cx| {
+                let wide = cx.new(|_| Wide::new(2, 4, true));
+                let page = cx.new(|_| CachedTable(wide));
+                Root::new(page, window, cx)
+            })
+            .into();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.try_find(("wide-pinned", 1usize)).is_none());
+            let position = window.find("wide-table-scroll").bounds().center();
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        // The update's end drew the window the wheel left dirty.
+        cx.update_window(handle, |_, window, cx| {
+            assert!(
+                (inset(window, "Column 4 1") - 700.).abs() <= 1.5,
+                "no scroll"
+            );
+            assert!(inset(window, "wide-group").abs() <= 1.5);
+            assert!(pinned_inset(window, Some(1), "Column 0 1").abs() <= 1.5);
+            assert!(pinned_inset(window, None, ("wide-sort", 0usize)).abs() <= 1.5);
+            // Nothing waits for a next frame, and the next one changes nothing.
+            assert_eq!(window.simulate_next_frame(cx), 0);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, _| {
+            assert!(pinned_inset(window, Some(1), "Column 0 1").abs() <= 1.5);
         })
         .unwrap();
     }
