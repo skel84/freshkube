@@ -43,17 +43,48 @@ with the local measurement records.
 
 Nightly, sccache, nextest, cargo-llvm-lines, cargo-bloat and sold are not installed.
 No tool has been installed for this research. Stable Cargo's timing report
-separates compilation units; it does not prove a split between type checking,
-monomorphization and LLVM inside one unit.
+separates frontend and codegen sections for library units. It does not separate
+individual type-checking or monomorphization queries, and binary units do not
+expose the same split. The codegen section is an upper bound for a backend change,
+not a promise that Cranelift can remove all that time.
 
 | Baseline | Result |
 | --- | --- |
-| Empty-artifact `cargo build --locked --timings` | Running; start load 6.91, no other Cargo/rustc process at start |
+| Empty-artifact `cargo build --locked --timings` | Passed: 3,134.0 s (52m 14s); start/end load 6.91/5.24; mixed contention |
 | Desktop one-line edit → build / test compile / clippy | Pending |
 | Core one-line edit → build / package test compile | Pending |
 | UI one-line edit → build / package test compile | Pending |
 | Workspace test binaries and link cost | Pending |
 | Build + test + clippy artifact size | Pending |
+
+### Empty-artifact build
+
+Cargo recorded 847 compiler/build-script units across 634 package versions. The
+largest units were GPUI Component (311.0 s), GPUI Base (250.6 s), GPUI Pre
+(207.3 s), the AWS-LC native build script (186.9 s), and image (126.2 s).
+These durations overlap; adding them does not give a wall-time saving. They
+identify dependencies worth testing with a compiler cache, while retaining the
+required dependency optimization.
+
+| Workspace unit, first compile | Frontend | Codegen | Total |
+| --- | ---: | ---: | ---: |
+| desktop library | 33.52 s | 86.56 s | 120.08 s |
+| core library | 19.42 s | 60.48 s | 79.90 s |
+| UI library | 1.79 s | 5.46 s | 7.25 s |
+| app binary | Not exposed | Not exposed | 6.42 s |
+
+These are **cold compilation** numbers, not the requested one-line rebuild
+fractions and not the trigger for installing nightly. Incremental codegen may
+reuse most of this work; measure the edited case before ranking an alternate
+backend.
+
+The finished `target/` occupies 6.390 GiB of allocated blocks (6.162 GiB logical
+file bytes), deduplicating hard links: 4.529 GiB in dependency outputs, 1.484 GiB
+incremental, 0.200 GiB build-script outputs and 0.152 GiB in the app executable.
+The deps directory includes workspace outputs too. `talos-rs` generated six Rust
+files, 4,775 lines / 176,998 bytes; its build-script run took 0.72 s. Its library
+compile took 17.36 s. Re-running protobuf generation alone cannot explain the
+desktop rebuild cost.
 
 ## Workspace dependency graph
 
@@ -294,6 +325,13 @@ backend or CI cache is modified in this local experiment. Rank a CI trial on
 observed cacheable units and unchanged-code hits, including transfer/setup time;
 do not subtract the entire test-compile step from CI time.
 [sccache GitHub Actions backend](https://github.com/mozilla/sccache/blob/v0.18.0/docs/GHA.md)
+
+Version 0.18.0 hashes the compiler working directory and Cargo environment,
+while excluding output/search paths and hashing dependency contents. During this
+cold build, registry and git dependency compiler processes ran from their stable
+source-cache directories (verified with `lsof`); workspace paths differ between
+worktrees. Test cross-target dependency reuse separately from CI workspace hits,
+where the checkout path normally stays fixed.
 
 Keep each worktree's writable target separate. A read-only dependency seed would
 need a verified compiler/profile/target/feature key and must exclude workspace
