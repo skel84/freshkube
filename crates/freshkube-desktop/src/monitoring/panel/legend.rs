@@ -117,7 +117,7 @@ fn table_row(
         .gap(dp(8.))
         .h(dp(20.))
         .px(dp(4.))
-        .rounded(px(5.))
+        .rounded(px(3.))
         .hover(|this| this.bg(p.hover))
         .child(
             div()
@@ -171,7 +171,7 @@ fn entry(
         .id(view.element_id(&format!("legend-{series}")))
         .flex_none()
         .cursor_pointer()
-        .when(picked, |this| this.bg(p.hover).rounded(px(5.)))
+        .when(picked, |this| this.bg(p.hover).rounded(px(3.)))
         .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
             if *hovered {
                 view.set_hovered(Some(series), cx);
@@ -185,7 +185,7 @@ fn entry(
                 .flex_none()
                 .w(dp(14.))
                 .h(px(2.))
-                .rounded(px(1.))
+                .rounded(px(3.))
                 .bg(color),
         )
 }

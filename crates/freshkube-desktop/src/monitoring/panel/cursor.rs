@@ -272,7 +272,7 @@ impl PanelView {
                 .color(focus == Some(row.series));
             swatches.push(
                 cell()
-                    .child(div().w(dp(12.)).h(px(2.)).rounded(px(1.)).bg(color))
+                    .child(div().w(dp(12.)).h(px(2.)).rounded(px(3.)).bg(color))
                     .into_any_element(),
             );
             values.push(
