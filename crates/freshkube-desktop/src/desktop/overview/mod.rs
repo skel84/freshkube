@@ -1,12 +1,11 @@
 //! Cluster cards and shared attention subjects.
 use super::{PAGE_PADDING, Pilot, clock};
 use crate::palette::palette;
-use crate::ui::{self, Tone, dp};
+use crate::ui::{self, dp};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
-    h_flex,
     tooltip::Tooltip,
     v_flex,
 };
@@ -117,6 +116,75 @@ impl Pilot {
         ))
     }
 
+    /// The context as the title, with the connection state, any version
+    /// drift, what the cluster runs and where its node list comes from in
+    /// the meta line. The texts are derived with the cards.
+    fn overview_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let p = palette(cx);
+        let display = &self.overview_display;
+        let context = self.applied.context.clone().unwrap_or_default();
+        let stale = self.overview.is_stale() || self.kubernetes_summary.is_stale();
+        let separator = || div().flex_none().px(dp(5.)).child("·");
+        let drift = display.drift.clone().map(|drift| {
+            let tip = display.drift_tip.clone();
+            div()
+                .id("version-drift")
+                .test_support()
+                .flex_none()
+                .text_color(p.warn_ink)
+                .aria_label(tip.clone())
+                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                .child(drift)
+        });
+        let subtitle = display.subtitle.clone();
+        let roster = (!display.roster.is_empty()).then(|| {
+            let tip = display.roster_tip.clone();
+            div()
+                .id("roster")
+                .test_support()
+                .flex_none()
+                .aria_label(tip.clone())
+                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                .child(display.roster.clone())
+        });
+        let mut meta = vec![
+            div()
+                .id("overview-connection")
+                .test_support()
+                .flex_none()
+                .when(stale, |this| this.text_color(p.warn_ink))
+                .child(if stale { "Stale snapshot" } else { "Connected" })
+                .into_any_element(),
+        ];
+        for part in [drift, roster].into_iter().flatten() {
+            meta.push(separator().into_any_element());
+            meta.push(part.into_any_element());
+        }
+        if !subtitle.is_empty() {
+            meta.push(separator().into_any_element());
+            meta.push(
+                div()
+                    .id("overview-runs")
+                    .test_support()
+                    .min_w_0()
+                    .truncate()
+                    .tooltip({
+                        let subtitle = subtitle.clone();
+                        move |window, cx| Tooltip::new(subtitle.clone()).build(window, cx)
+                    })
+                    .child(subtitle)
+                    .into_any_element(),
+            );
+        }
+        freshkube_ui::page::PageHeader::new(
+            "overview",
+            context,
+            Self::content_width(window) < freshkube_ui::page::HEADER_NARROW,
+        )
+        .meta(meta)
+        .render(cx)
+    }
+
     pub(super) fn render_overview(
         &mut self,
         window: &mut Window,
@@ -134,52 +202,8 @@ impl Pilot {
         {
             return self.unreachable_state(error.to_owned(), cx);
         }
-        let p = palette(cx);
-        let context = self.applied.context.clone().unwrap_or_default();
+        let header = self.overview_header(window, cx);
         let display = &self.overview_display;
-        let tip = display.roster_tip.clone();
-        let drift_tip = display.drift_tip.clone();
-        let header = v_flex()
-            .gap(dp(7.))
-            .child(
-                h_flex()
-                    .gap(dp(10.))
-                    .flex_wrap()
-                    .child(ui::page_title(context))
-                    .child(ui::tag(
-                        if self.overview.is_stale() || self.kubernetes_summary.is_stale() {
-                            Tone::Warn
-                        } else {
-                            Tone::Good
-                        },
-                        None,
-                        if self.overview.is_stale() || self.kubernetes_summary.is_stale() {
-                            "Stale snapshot"
-                        } else {
-                            "Connected"
-                        },
-                        cx,
-                    ))
-                    .when_some(display.drift.clone(), |this, drift| {
-                        this.child(
-                            div()
-                                .id("version-drift")
-                                .tooltip(move |window, cx| {
-                                    Tooltip::new(drift_tip.clone()).build(window, cx)
-                                })
-                                .child(ui::tag(Tone::Warn, None, drift, cx)),
-                        )
-                    }),
-            )
-            .child(div().text_color(p.muted).child(display.subtitle.clone()))
-            .child(
-                div()
-                    .id("roster")
-                    .test_support()
-                    .aria_label(tip.clone())
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .child(ui::tag(Tone::Outline, None, display.roster.clone(), cx)),
-            );
         let cards = self.render_cards(window, cx);
         let warnings = display
             .warnings
@@ -187,8 +211,9 @@ impl Pilot {
             .map(|warning| ui::warning_banner(None, warning.clone(), None, cx))
             .collect::<Vec<_>>();
         let attention = self.render_attention(None, cx);
-        let body = self
-            .page_body()
+        // The shared frame, at its content's height inside the scrolling page.
+        let body = freshkube_ui::page::page("overview-frame")
+            .h_auto()
             .children(self.stale_banner(cx))
             .child(header)
             .children(warnings)

@@ -28,6 +28,70 @@ pub(crate) enum Destination {
     },
 }
 
+/// Needs attention's severity groups, in the order they show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum AttentionGroup {
+    Failing,
+    Warning,
+    /// Last-known evidence from a stale source.
+    Unknown,
+}
+
+impl AttentionGroup {
+    pub(crate) const ALL: [Self; 3] = [Self::Failing, Self::Warning, Self::Unknown];
+
+    fn of(tone: Tone) -> Self {
+        match tone {
+            Tone::Crit => Self::Failing,
+            Tone::Warn => Self::Warning,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(crate) fn tone(self) -> Tone {
+        match self {
+            Self::Failing => Tone::Crit,
+            Self::Warning => Tone::Warn,
+            Self::Unknown => Tone::Unknown,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Failing => "Failing",
+            Self::Warning => "Warning",
+            Self::Unknown => "Unknown",
+        }
+    }
+
+    /// `overview-group-failing`, …
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Failing => "overview-group-failing",
+            Self::Warning => "overview-group-warning",
+            Self::Unknown => "overview-group-unknown",
+        }
+    }
+}
+
+/// A group header's detail for each group: how many problems it holds,
+/// counted before any cap.
+pub(crate) type GroupDetails = [SharedString; 3];
+
+fn details(counts: [usize; 3]) -> GroupDetails {
+    counts.map(|count| {
+        format!(
+            "{count} {}",
+            if count == 1 { "problem" } else { "problems" }
+        )
+        .into()
+    })
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AttentionRow {
     pub(crate) id: SharedString,
@@ -35,6 +99,8 @@ pub(crate) struct AttentionRow {
     pub(crate) name: SharedString,
     pub(crate) reason: SharedString,
     pub(crate) tone: Tone,
+    /// Set from the final tone when the rows are finished.
+    pub(crate) group: AttentionGroup,
     pub(crate) open: Destination,
     pub(crate) logs: Option<Destination>,
     pub(crate) node: Option<String>,
@@ -46,7 +112,9 @@ pub(crate) struct AttentionRow {
 pub(crate) struct Attention {
     pub(crate) complete: bool,
     pub(crate) rows: Vec<AttentionRow>,
+    pub(crate) details: GroupDetails,
     pub(crate) by_node: BTreeMap<String, Vec<AttentionRow>>,
+    pub(crate) node_details: BTreeMap<String, GroupDetails>,
     pub(crate) total: usize,
     pub(crate) more: SharedString,
 }
@@ -164,6 +232,7 @@ fn append_node_problem(row: &NodeRow, now: DateTime<Utc>, rows: &mut Vec<Attenti
             name: row.name.clone(),
             reason: problems.join(" · ").into(),
             tone,
+            group: AttentionGroup::Warning,
             open: Destination::Node(row.key.clone(), NodeTab::Overview),
             logs: None,
             open_node: None,
@@ -188,6 +257,7 @@ fn append_services(row: &NodeRow, rows: &mut Vec<AttentionRow>) {
                 name: format!("{}/{}", node.name, service.id).into(),
                 reason: reason.to_owned().into(),
                 tone: Tone::Warn,
+                group: AttentionGroup::Warning,
                 open: Destination::Service {
                     node: node.name.clone(),
                     service: service.id.clone(),
@@ -220,6 +290,7 @@ fn append_pods(summary: &KubernetesSummary, rows: &mut Vec<AttentionRow>) {
                 name: format!("{}/{}", pod.namespace, pod.name).into(),
                 reason: pod.issue.label().to_owned().into(),
                 tone,
+                group: AttentionGroup::Warning,
                 open: object(summary, "pods", &pod.namespace, &pod.name, Tab::Overview),
                 logs: Some(object(
                     summary,
@@ -261,6 +332,7 @@ fn append_workloads(summary: &KubernetesSummary, rows: &mut Vec<AttentionRow>) {
                 } else {
                     Tone::Warn
                 },
+                group: AttentionGroup::Warning,
                 open: object(
                     summary,
                     kind,
@@ -286,6 +358,7 @@ fn append_claims(summary: &KubernetesSummary, rows: &mut Vec<AttentionRow>) {
                 name: format!("{}/{}", claim.namespace, claim.name).into(),
                 reason: claim.reason.clone().into(),
                 tone: Tone::Warn,
+                group: AttentionGroup::Warning,
                 open: object(
                     summary,
                     "persistentvolumeclaims",
@@ -331,6 +404,7 @@ fn append_etcd(cluster: &ClusterOverview, rows: &mut Vec<AttentionRow>) {
             name: "etcd".into(),
             reason: problems.join(" · ").into(),
             tone: Tone::Crit,
+            group: AttentionGroup::Warning,
             open: Destination::Page(Page::Etcd),
             logs: None,
             open_node: None,
@@ -341,10 +415,14 @@ fn append_etcd(cluster: &ClusterOverview, rows: &mut Vec<AttentionRow>) {
 }
 
 fn finish(mut rows: Vec<AttentionRow>) -> Attention {
+    for row in &mut rows {
+        row.group = AttentionGroup::of(row.tone);
+    }
+    // Failing, then current warnings, then last-known evidence, so the cap
+    // drops stale rows first.
     rows.sort_by(|left, right| {
-        let rank = |tone| if tone == Tone::Crit { 0 } else { 1 };
-        rank(left.tone)
-            .cmp(&rank(right.tone))
+        left.group
+            .cmp(&right.group)
             .then_with(|| {
                 left.since
                     .unwrap_or(DateTime::<Utc>::MAX_UTC)
@@ -354,9 +432,13 @@ fn finish(mut rows: Vec<AttentionRow>) -> Attention {
             .then_with(|| left.id.cmp(&right.id))
     });
     let total = rows.len();
+    let mut counts = [0; 3];
     let mut by_node: BTreeMap<String, Vec<AttentionRow>> = BTreeMap::new();
+    let mut node_counts: BTreeMap<String, [usize; 3]> = BTreeMap::new();
     for row in &rows {
+        counts[row.group.index()] += 1;
         if let Some(node) = &row.node {
+            node_counts.entry(node.clone()).or_default()[row.group.index()] += 1;
             let node_rows = by_node.entry(node.clone()).or_default();
             if node_rows.len() < 50 {
                 node_rows.push(row.clone());
@@ -367,7 +449,12 @@ fn finish(mut rows: Vec<AttentionRow>) -> Attention {
     Attention {
         complete: false,
         rows,
+        details: details(counts),
         by_node,
+        node_details: node_counts
+            .into_iter()
+            .map(|(node, counts)| (node, details(counts)))
+            .collect(),
         total,
         more: format!("Show all {total}").into(),
     }
