@@ -4,14 +4,15 @@ Research for [#53](https://github.com/skel84/freshkube/issues/53), measured from
 `e27a83d24acbf5ab3656c12b2e3fdfdbf25625ae` on 5 October 2026. This is a research
 record: no application, dependency, profile or CI changes are proposed by this PR.
 
-The user has ended the broad measurement batch. A separate small PR from current
-main will add focused inner-loop guidance, disable desktop doctests (there are
+The user has ended the broad measurement batch. The separate [PR #88](https://github.com/skel84/freshkube/pull/88) from current
+main adds focused inner-loop guidance, disable desktop doctests (there are
 none), and set workspace dev debug information to line tables, as CI already does.
 It will record one warmed, one-line desktop library-test rebuild on main and one
 on the branch, then run the standard checks once.
 
-**Parked: linker changes, sccache, nightly/Cranelift, nextest, further disk work
-and crate splits — revisit only if a real loop shows the need.** No cache or
+**Parked: linker changes, nightly/Cranelift, nextest, further disk work and crate
+splits — revisit only if a real loop shows the need.** The user subsequently
+approved scoped sccache adoption for real worktree builds, described below. No
 nightly tool was installed. Earlier proposed experiments below are the research
 record, not pending work. #53 step 3 also remains held until Monitoring's page
 migration lands.
@@ -56,8 +57,8 @@ with the local measurement records. Sampling from 09:19 UTC captured loads
 3.74–24.83; 60 of 184 samples were at or above 10. This run is excluded from
 controlled comparisons; the later edited-build sessions must meet the load gate.
 
-Nightly, sccache, nextest, cargo-llvm-lines, cargo-bloat and sold are not installed.
-No tool has been installed for this research. Stable Cargo's timing report
+At the cold baseline, nightly, sccache, nextest, cargo-llvm-lines, cargo-bloat and
+sold were absent. Sccache 0.18.0 was installed afterward for ordinary team use. Stable Cargo's timing report
 separates frontend and codegen sections for library units. It does not separate
 individual type-checking or monomorphization queries, and binary units do not
 expose the same split. The codegen section is an upper bound for a backend change,
@@ -355,11 +356,30 @@ Debug line tables trade variable/type inspection for source-line backtraces;
 2. Match CI with workspace `[profile.dev] debug = "line-tables-only"`. Keep
    dependency `opt-level = 3` and incremental compilation. Source-line backtraces
    remain; variable/type inspection is reduced.
-3. Revisit only if a real loop shows the need: linker changes, sccache, nightly
+3. Revisit only if a real loop shows the need: linker changes, nightly
    codegen/profiling, nextest, more disk investigation and structural splits.
    None has a measured local improvement in this record.
 
-### Cache and backend notes retained for a future need
+### Scoped compiler cache adopted after the research batch
+
+The user approved sccache for the next real worktree builds without another
+synthetic cold-build experiment. Its upstream 0.18.0 Intel macOS binary is stored
+under `~/.cache/freshkube/tools/sccache-v0.18.0/`; the release archive SHA-256 was
+verified against GitHub's release metadata. The wrappers are in parent-directory
+Cargo configs at `~/.herdr/worktrees/freshkube/.cargo/config.toml` and
+`~/code/kube-gui/.cargo/config.toml`, each using the binary's absolute path. There
+is no repository/CI change and no wrapper in `~/.cargo/config.toml`.
+
+The native sccache config at
+`~/Library/Application Support/Mozilla.sccache/config` sets a 25 GiB disk limit;
+`--show-stats` confirms that limit. The cache starts empty. Record subsequent real
+worktree cache stats and load with their build times. The 52-minute observation
+above remains noisy context, not a controlled speedup baseline.
+
+The requested Homebrew install first attempted to upgrade Rust from source and
+unlinked the existing tools. That installer was stopped; the existing Homebrew
+Rust 1.98.1 links were restored and verified. No new Cellar package was installed.
+The upstream binary avoids that toolchain change.
 
 Local incremental workspace units are not sccache candidates. New worktrees may
 reuse eligible dependency compiles; CI's existing incremental-off mode may reuse
