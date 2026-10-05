@@ -4,11 +4,13 @@ Research for [#53](https://github.com/skel84/freshkube/issues/53), measured from
 `e27a83d24acbf5ab3656c12b2e3fdfdbf25625ae` on 5 October 2026. This is a research
 record: no application, dependency, profile or CI changes are proposed by this PR.
 
-The user has ended the broad measurement batch. The separate [PR #88](https://github.com/skel84/freshkube/pull/88) from current
-main adds focused inner-loop guidance, disable desktop doctests (there are
-none), and set workspace dev debug information to line tables, as CI already does.
-It will record one warmed, one-line desktop library-test rebuild on main and one
-on the branch, then run the standard checks once.
+The user ended the broad measurement batch. The separate
+[PR #88](https://github.com/skel84/freshkube/pull/88) merged as
+`8c33890bb1fbe2f352fdd2e1307af59969f9838b`: focused inner-loop guidance, disabled
+desktop doctests (there are none), and workspace dev debug information set to
+line tables, matching CI. Standard checks passed before merge. The user ended
+the quiet window before the two planned one-line rebuild samples ran; those
+samples were dropped, and no incremental speedup is claimed.
 
 **Parked: linker changes, nightly/Cranelift, nextest, further disk work and crate
 splits — revisit only if a real loop shows the need.** The user subsequently
@@ -27,14 +29,38 @@ migration lands.
   desktop; a full app build cannot assume the same saving.
 - Four recent successful CI checks took 315–355 seconds. The ordinary test step
   accounted for 137–158 seconds; stress checks took another 57–91 seconds.
-- Local workspace crates retain full debug information, while CI explicitly
-  requests line tables. This is a configuration candidate to measure first.
+- At the research baseline, local workspace crates retained full debug information
+  while CI requested line tables. PR #88 now aligns the local profile with CI.
 - Cargo already defaults to unpacked debug information on macOS. Adding that
   setting explicitly is not a demonstrated optimization.
 
 The cold observation and CI evidence below are retained. Broader local comparisons
 were not run after the user narrowed the work; no missing measurement implies a
-gain. The focused implementation PR will carry its own validation and timings.
+gain. The focused implementation PR records validation; its cancelled edit-loop
+samples must not be replaced by cold builds or verification durations.
+
+## Changes shipped in #88
+
+At approved head `7c56ee4`, `cargo build --locked -v`, workspace tests, strict
+workspace clippy with all targets, formatting, the style checker and its tests
+passed. The workspace suite passed 1,035 unit tests and 11 doctests with no failures
+or ignored tests. [CI passed](https://github.com/skel84/freshkube/actions/runs/37309829131),
+including its separate stress-feature checks. The source tree stayed clean.
+
+The first ordinary build under the new debug profile recompiled all eight
+workspace packages and reused every external dependency. Each worktree has this
+one-time workspace rebuild after adopting the profile. The subsequent workspace
+test command also compiled additional dependency feature variants: core's
+dev-dependency enables Tokio `test-util`. This is expected feature selection,
+not evidence that the debug profile invalidates external dependencies.
+
+The earlier package-test warm-up took 1,097.19 seconds under contention; it was
+preparation, not an edit-loop sample. Neither it nor the standard-check durations
+establishes the saving from the three changes. Any later numbers should come from
+agents' ordinary builds starting at merge `8c33890`, without a dedicated build or
+screen session, and be added as observations to PR #88. Record command, source
+revision, load and whether the one-time profile rebuild is included; such runs
+are not a matched before/after comparison.
 
 ## Measurement conditions
 
@@ -55,7 +81,7 @@ cold sample has changing contention; do not compare it with later quiet runs to
 claim an optimization. The load history and compiler-process samples are retained
 with the local measurement records. Sampling from 09:19 UTC captured loads
 3.74–24.83; 60 of 184 samples were at or above 10. This run is excluded from
-controlled comparisons; the later edited-build sessions must meet the load gate.
+controlled comparisons. The proposed edited-build sessions did not run.
 
 At the cold baseline, nightly, sccache, nextest, cargo-llvm-lines, cargo-bloat and
 sold were absent. Sccache 0.18.0 was installed afterward for ordinary team use. Stable Cargo's timing report
@@ -70,7 +96,7 @@ not a promise that Cranelift can remove all that time.
 | Desktop one-line edit → build / test compile / clippy | Not run; broader measurement batch parked |
 | Core one-line edit → build / package test compile | Not run; broader measurement batch parked |
 | UI one-line edit → build / package test compile | Not run; broader measurement batch parked |
-| Workspace test binaries and link cost | Not run; broader measurement batch parked |
+| Workspace tests | Passed for #88: 1,035 unit tests and 11 doctests; individual link cost unmeasured |
 | Build + test + clippy artifact size | Not run; broader measurement batch parked |
 
 ### Empty-artifact build
@@ -198,8 +224,8 @@ command/binaries and doctests. The first run lists only workspace packages as
 `Compiling` in this step: the 104 seconds primarily cover workspace compilation
 and linking, with Cargo overhead. CI did not capture per-link timing or a compiler
 profile, so attributing a numerical share to LLVM versus the linker would be
-unsupported. Local link measurements below must not be projected onto a different
-CI architecture as if measured there.
+unsupported. The local cold compilation data must not be projected onto a
+different CI architecture as if measured there.
 
 The toolchain action sets `CARGO_INCREMENTAL=0`, and the cache action logs
 `cache-workspace-crates: false`. At audit time the repository had 51 caches,
@@ -315,8 +341,8 @@ when the user chose to ship the three small changes. Use
 `cargo test -p <crate> --lib <filter>` during iteration and package clippy once at
 the end, while retaining workspace test/clippy/fmt/style before the PR. Desktop's
 `doctest = false` does not remove the ordinary desktop library needed by the app's
-workspace test. One main/branch narrow-loop sample is observational validation,
-not a controlled statistical estimate of the full-loop saving.
+workspace test. The later main/branch narrow-loop samples were also cancelled
+when the quiet window ended; no full-loop saving was measured.
 
 ## Dependency and profile candidates
 
@@ -329,8 +355,8 @@ evidence before calling it cache thrashing. [Cargo feature resolution](https://d
 
 `talos-rs/build.rs` writes generated protobufs into `OUT_DIR` and declares
 `proto/`, `PROTOC` and `PROTOC_INCLUDE` as rerun inputs. Source inspection shows no
-timestamp or generated file written into the source tree. Repeated fingerprint
-logs will test whether this correctly remains fresh after unrelated edits.
+timestamp or generated file written into the source tree. Further fingerprint
+investigation is parked unless an ordinary rebuild shows a problem.
 
 One cold-build hypothesis is redundant TLS provider compilation. The direct
 `tokio-rustls = "0.26"` dependency enables its AWS-LC default; workspace Rustls
@@ -351,11 +377,11 @@ Debug line tables trade variable/type inspection for source-line backtraces;
 
 ## Agreed action order and parked options
 
-1. Ship focused inner-loop guidance and desktop `doctest = false`, retaining all
-   required whole-workspace checks before a PR.
-2. Match CI with workspace `[profile.dev] debug = "line-tables-only"`. Keep
-   dependency `opt-level = 3` and incremental compilation. Source-line backtraces
-   remain; variable/type inspection is reduced.
+1. Shipped in #88: focused inner-loop guidance and desktop `doctest = false`,
+   retaining all required whole-workspace checks before a PR.
+2. Shipped in #88: workspace `[profile.dev] debug = "line-tables-only"`, matching
+   CI. Dependency `opt-level = 3` and incremental compilation remain. Source-line
+   backtraces remain; variable/type inspection is reduced.
 3. Revisit only if a real loop shows the need: linker changes, nightly
    codegen/profiling, nextest, more disk investigation and structural splits.
    None has a measured local improvement in this record.
@@ -372,9 +398,13 @@ is no repository/CI change and no wrapper in `~/.cargo/config.toml`.
 
 The native sccache config at
 `~/Library/Application Support/Mozilla.sccache/config` sets a 25 GiB disk limit;
-`--show-stats` confirms that limit. The cache starts empty. Record subsequent real
-worktree cache stats and load with their build times. The 52-minute observation
-above remains noisy context, not a controlled speedup baseline.
+`--show-stats` confirms that limit. The planned verbose build verified the wrapper
+on dependency rustc invocations. After #88's standard checks, the shared server
+reported 367 MiB cached, 653 misses, zero hits and no cache or compilation errors.
+These are shared population counters, not an isolated cache benchmark or proof of
+a speedup. Record subsequent real worktree cache stats and load with their build
+times. The 52-minute observation above remains noisy context, not a controlled
+speedup baseline.
 
 The requested Homebrew install first attempted to upgrade Rust from source and
 unlinked the existing tools. That installer was stopped; the existing Homebrew
