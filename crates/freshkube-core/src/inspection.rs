@@ -1627,7 +1627,10 @@ impl EtcdHealthSnapshot {
 
     /// The sole reported leader ID, if every status agrees on one leader.
     pub fn leader_id(&self) -> Option<u64> {
-        (self.reported_leader_ids.len() == 1).then_some(self.reported_leader_ids[0])
+        match self.reported_leader_ids.as_slice() {
+            [leader] => Some(*leader),
+            _ => None,
+        }
     }
 
     /// Formats the largest database size with the core signed-byte formatter.
@@ -1982,5 +1985,45 @@ mod tests {
         assert_eq!(rate.tx_bytes_per_sec, 50);
         assert_eq!(totals.rx_bytes_per_sec, 100);
         assert_eq!(totals.tx_bytes_per_sec, 50);
+    }
+
+    #[test]
+    fn a_roster_without_a_leader_has_no_leader_id() {
+        let member = |id: u64| talos_rs::EtcdMemberInfo {
+            id,
+            hostname: format!("cp-{id}"),
+            peer_urls: Vec::new(),
+            client_urls: Vec::new(),
+            is_learner: false,
+        };
+        let status = |id: u64, leader_id: u64| talos_rs::EtcdMemberStatus {
+            node: format!("cp-{id}"),
+            member_id: id,
+            protocol_version: "3.6.0".into(),
+            db_size: 0,
+            db_size_in_use: 0,
+            leader_id,
+            raft_index: 1,
+            raft_term: 1,
+            raft_applied_index: 1,
+            errors: Vec::new(),
+            is_learner: false,
+        };
+        let snapshot = |statuses| {
+            assemble_etcd_health(
+                InspectionTarget::new("cp-1", "10.0.0.1"),
+                vec![member(1), member(2)],
+                statuses,
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+        // Every member answered and none follows a leader: a lost quorum.
+        assert_eq!(snapshot(vec![status(1, 0), status(2, 0)]).leader_id(), None);
+        assert_eq!(snapshot(vec![status(1, 2), status(2, 1)]).leader_id(), None);
+        assert_eq!(
+            snapshot(vec![status(1, 2), status(2, 2)]).leader_id(),
+            Some(2)
+        );
     }
 }
