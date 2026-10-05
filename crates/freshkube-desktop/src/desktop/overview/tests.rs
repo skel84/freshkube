@@ -210,6 +210,113 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
 }
 
 #[test]
+fn cards_wait_for_a_first_answer_and_mark_the_last_known_one() {
+    use crate::{
+        fixture,
+        presentation::{
+            node_summaries,
+            overview::{CardState, Overview},
+        },
+        resources::example,
+    };
+    use freshkube_core::kubernetes_summary::{Part, Unavailable};
+    let state = |overview: &Overview, id: &str| {
+        overview
+            .cards
+            .iter()
+            .find(|card| card.id == id)
+            .unwrap()
+            .state
+            .clone()
+    };
+    let waiting = Overview::build(&[], &[], None, None, false, false);
+    assert!(
+        waiting
+            .cards
+            .iter()
+            .all(|card| card.state == CardState::Waiting),
+        "nothing has answered"
+    );
+    let cluster = fixture::cluster("prod-fra", 0);
+    let nodes = node_summaries(&cluster);
+    let mut kube = example::summary("prod-fra", chrono::Utc::now().timestamp());
+    let current = Overview::build(&[], &nodes, Some(&kube), Some(&cluster), false, false);
+    assert!(
+        current
+            .cards
+            .iter()
+            .all(|card| card.state == CardState::Current)
+    );
+    // A refused read without earlier evidence says why in its detail; one
+    // with evidence shows it as last known.
+    let pods = kube.pods.loaded().cloned();
+    kube.events = Part::Refused("forbidden".into());
+    kube.pods = Part::Failed(Unavailable {
+        failure: None,
+        message: "timed out".into(),
+        last_good: pods,
+    });
+    let failed = Overview::build(&[], &nodes, Some(&kube), Some(&cluster), false, false);
+    assert_eq!(state(&failed, "tile-events"), CardState::Current);
+    assert_eq!(
+        state(&failed, "tile-pods"),
+        CardState::LastKnown("timed out".into())
+    );
+    let stale = failed.talos_stale("unreachable".into());
+    assert_eq!(
+        state(&stale, "tile-etcd"),
+        CardState::LastKnown("unreachable".into())
+    );
+    assert_eq!(state(&stale, "tile-nodes"), CardState::Current);
+}
+
+#[gpui_kit::test]
+fn waiting_cards_show_a_skeleton(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.kubernetes_summary = Default::default();
+            pilot.rebuild_joined_nodes();
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.within("tile-pods").find("card-skeleton").visible());
+        // The Talos cards have their answer.
+        assert!(
+            window
+                .within("tile-etcd")
+                .find("tile-card-content")
+                .visible()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn tab_reaches_a_card_and_enter_or_space_opens_it(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1600., 1000.);
+    cx.update_window(handle, |_, window, cx| {
+        for (id, key, page) in [
+            ("tile-nodes", "enter", Page::Nodes),
+            ("tile-etcd", "space", Page::Etcd),
+        ] {
+            window.click("nav-overview", cx);
+            window.render_frame(cx);
+            let mut tabs = 0;
+            while window.find(id).focused() != Some(true) {
+                tabs += 1;
+                assert!(tabs < 100, "Tab never reached {id}");
+                window.press("tab", cx);
+            }
+            assert_eq!(pilot.read(cx).page, Page::Overview);
+            window.press(key, cx);
+            assert_eq!(pilot.read(cx).page, page, "{key} on {id}");
+        }
+    })
+    .unwrap();
+}
+
+#[test]
 fn kubernetes_only_cards_and_refused_parts_keep_the_other_counts() {
     use crate::{presentation::overview::Overview, resources::example};
     use freshkube_core::kubernetes_summary::Part;
@@ -315,6 +422,8 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
             let (tone, detail) = tone(pilot.read(cx), id);
             assert_eq!(tone, Tone::Unknown, "{id}");
             assert!(detail.starts_with("Last known · "), "{id}: {detail}");
+            // The header's stale mark says so too.
+            assert!(window.find(format!("{id}-stale")).visible(), "{id}");
         }
         assert_eq!(pilot.read(cx).rail_marks.tone(Area::ControlPlane), None);
         // A refresh that answers brings back the good cards, the warning and its dot.

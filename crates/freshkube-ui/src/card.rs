@@ -211,7 +211,15 @@ pub struct Figure<'a> {
     pub tone: Option<Tone>,
     /// A gauge's fill, 0 to 1, in the tone or the accent.
     pub gauge: Option<f32>,
+    /// A meter of parts, one per item in its tone, such as a cluster's
+    /// nodes, drawn where a gauge goes.
+    pub segments: Option<&'a [Tone]>,
     pub spark: Option<Spark<'a>>,
+    /// A muted line under the figure, wrapping, such as what it counts.
+    pub detail: Option<&'a SharedString>,
+    /// The value in its tone's text colour rather than in ink, for a card
+    /// whose figure is the status itself.
+    pub tinted: bool,
 }
 
 /// A figure's sparkline: grey history, then the last stretch in `recent`.
@@ -234,7 +242,9 @@ pub fn figures(figures: &[Figure<'_>], cx: &App) -> AnyElement {
             .pb(dp(10.))
             .child(value(figure, dp(22.), cx))
             .children(figure.gauge.map(|fill| gauge(fill, figure.tone, cx)))
+            .children(figure.segments.map(|parts| segments(parts, cx)))
             .children(figure.spark.map(|spark| sparkline(spark, cx)))
+            .children(figure.detail.map(|line| detail(line, cx)))
             .into_any_element();
     }
     let p = palette(cx);
@@ -261,20 +271,23 @@ pub fn figures(figures: &[Figure<'_>], cx: &App) -> AnyElement {
                 }))
                 .child(value(figure, dp(18.), cx))
                 .children(figure.gauge.map(|fill| gauge(fill, figure.tone, cx)))
+                .children(figure.segments.map(|parts| segments(parts, cx)))
                 .children(figure.spark.map(|spark| sparkline(spark, cx)))
+                .children(figure.detail.map(|line| detail(line, cx)))
         }))
         .into_any_element()
 }
 
 fn value(figure: &Figure<'_>, text_size: Rems, cx: &App) -> impl IntoElement {
     let p = palette(cx);
+    let ink = value_ink(figure, &p);
     h_flex()
         .gap(dp(8.))
         .child(
             div()
                 .text_size(text_size)
                 .font_weight(ui::TITLE_WEIGHT)
-                .text_color(p.ink)
+                .text_color(ink)
                 .whitespace_nowrap()
                 .child(figure.value.clone()),
         )
@@ -290,14 +303,33 @@ fn value(figure: &Figure<'_>, text_size: Rems, cx: &App) -> impl IntoElement {
         }))
 }
 
-/// A gauge's fill, or a bar list's: the tone's colour, or the accent.
-pub fn gauge(fraction: f32, tone: Option<Tone>, cx: &App) -> impl IntoElement {
-    let p = palette(cx);
-    let color = match tone {
+/// Ink, or the tone's text colour when the figure is tinted; an unknown
+/// tone reads muted.
+fn value_ink(figure: &Figure<'_>, p: &crate::palette::Palette) -> Hsla {
+    match figure.tone.filter(|_| figure.tinted) {
+        None => p.ink,
+        Some(Tone::Good) => p.good_ink,
+        Some(Tone::Warn) => p.warn_ink,
+        Some(Tone::Crit | Tone::Died) => p.crit_ink,
+        Some(_) => p.muted,
+    }
+}
+
+/// A gauge's colour: the accent, a warning or critical tone, or grey for
+/// a last-known reading.
+fn gauge_fill(tone: Option<Tone>, p: &crate::palette::Palette) -> Hsla {
+    match tone {
         Some(Tone::Crit | Tone::Died) => p.crit,
         Some(Tone::Warn) => p.warn,
+        Some(Tone::Unknown) => p.unk,
         _ => p.accent,
-    };
+    }
+}
+
+/// A gauge's fill, or a bar list's.
+pub fn gauge(fraction: f32, tone: Option<Tone>, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    let color = gauge_fill(tone, &p);
     div()
         .flex_none()
         .w_full()
@@ -312,6 +344,81 @@ pub fn gauge(fraction: f32, tone: Option<Tone>, cx: &App) -> impl IntoElement {
                 .rounded(px(3.))
                 .bg(color),
         )
+}
+
+/// Above this many parts, a meter draws a run per tone: one piece each would
+/// fall under 4 dp on a 156 dp track, and its gaps would push some out.
+const MOST_PIECES: usize = 24;
+
+/// One part per item in its tone, on a gauge's track. Past `MOST_PIECES`, a
+/// run per tone, problems first, each as wide as its share and at least
+/// 4 dp, so a single failing item still shows.
+fn segments(parts: &[Tone], cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    let fill = |tone: Tone| match tone {
+        Tone::Good => p.good,
+        Tone::Warn => p.warn,
+        Tone::Crit | Tone::Died => p.crit,
+        _ => p.unk,
+    };
+    let pieces: Vec<(Tone, usize)> = if parts.len() > MOST_PIECES {
+        segment_runs(parts)
+    } else {
+        parts.iter().map(|tone| (*tone, 1)).collect()
+    };
+    h_flex()
+        .flex_none()
+        .w_full()
+        .max_w(dp(156.))
+        .h(dp(6.))
+        .gap(px(2.))
+        .rounded(px(3.))
+        .overflow_hidden()
+        .children(
+            pieces
+                .into_iter()
+                .enumerate()
+                .map(|(index, (tone, count))| {
+                    div()
+                        .id(("segment", index))
+                        .test_support()
+                        .flex_basis(px(0.))
+                        .flex_grow(count as f32)
+                        .min_w(dp(4.))
+                        .h_full()
+                        .bg(fill(tone))
+                }),
+        )
+}
+
+/// How many parts of each tone, in the order critical, warning, unknown,
+/// good; a tone with no parts is left out.
+fn segment_runs(parts: &[Tone]) -> Vec<(Tone, usize)> {
+    let rank = |tone: &Tone| match tone {
+        Tone::Crit | Tone::Died => 0,
+        Tone::Warn => 1,
+        Tone::Good => 3,
+        _ => 2,
+    };
+    let mut counts = [0; 4];
+    for tone in parts {
+        counts[rank(tone)] += 1;
+    }
+    [Tone::Crit, Tone::Warn, Tone::Unknown, Tone::Good]
+        .into_iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 0)
+        .collect()
+}
+
+/// A figure's muted line, wrapping.
+fn detail(line: &SharedString, cx: &App) -> impl IntoElement {
+    div()
+        .pt(dp(2.))
+        .text_size(dp(12.))
+        .text_color(palette(cx).muted)
+        .whitespace_normal()
+        .child(line.clone())
 }
 
 /// Grey history, and the last stretch in the spark's colour. Status
@@ -372,4 +479,246 @@ fn sparkline(spark: Spark<'_>, cx: &App) -> impl IntoElement {
     .w_full()
     .max_w(dp(156.))
     .h(dp(24.))
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AppContext, Context, Render, TestAppContext, Window, size};
+
+    use super::*;
+
+    fn figure(value: &SharedString) -> Figure<'_> {
+        Figure {
+            name: None,
+            value,
+            note: None,
+            tone: Some(Tone::Crit),
+            gauge: None,
+            segments: None,
+            spark: None,
+            detail: None,
+            tinted: false,
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_tinted_figure_takes_its_tone_and_an_untinted_one_ink(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            let p = palette(cx);
+            let value = SharedString::from("3 failing");
+            let plain = figure(&value);
+            assert_eq!(value_ink(&plain, &p), p.ink);
+            let tinted = Figure {
+                tinted: true,
+                ..plain
+            };
+            assert_eq!(value_ink(&tinted, &p), p.crit_ink);
+            let unknown = Figure {
+                tone: Some(Tone::Unknown),
+                ..tinted
+            };
+            assert_eq!(value_ink(&unknown, &p), p.muted);
+            let toneless = Figure {
+                tone: None,
+                ..tinted
+            };
+            assert_eq!(value_ink(&toneless, &p), p.ink);
+            // A last-known gauge is grey, not the accent of a good one.
+            assert_eq!(gauge_fill(Some(Tone::Unknown), &p), p.unk);
+            assert_eq!(gauge_fill(Some(Tone::Good), &p), p.accent);
+        });
+    }
+
+    #[test]
+    fn runs_put_problems_first_and_leave_out_missing_tones() {
+        use Tone::*;
+        // A container that died counts as critical.
+        let parts = [Good, Crit, Good, Integration, Warn, Good, Died, Crit];
+        assert_eq!(
+            segment_runs(&parts),
+            vec![(Crit, 3), (Warn, 1), (Unknown, 1), (Good, 3)]
+        );
+        assert_eq!(segment_runs(&[Good, Good]), vec![(Good, 2)]);
+        assert!(segment_runs(&[]).is_empty());
+    }
+
+    /// A meter of `parts` alone on a 320 wide card.
+    struct Meter(Vec<Tone>);
+
+    impl Render for Meter {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let value = SharedString::from("Nodes");
+            div()
+                .w(px(320.))
+                .child(StatCard::new(CardHeader::new("meter", "Nodes")).render(
+                    figures(
+                        &[Figure {
+                            segments: Some(&self.0),
+                            ..figure(&value)
+                        }],
+                        cx,
+                    ),
+                    cx,
+                ))
+        }
+    }
+
+    fn meter(parts: Vec<Tone>, cx: &mut TestAppContext) -> gpui_kit::WindowHandle<Root> {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        cx.open_window(size(px(400.), px(300.)), |window, cx| {
+            let view = cx.new(|_| Meter(parts));
+            Root::new(view, window, cx)
+        })
+    }
+
+    #[gpui_kit::test]
+    fn a_few_parts_draw_a_piece_each(cx: &mut TestAppContext) {
+        let handle = meter(vec![Tone::Good, Tone::Warn, Tone::Crit], cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let meter = window.within("meter");
+            let widths: Vec<_> = (0usize..3)
+                .map(|index| meter.find(("segment", index)).bounds().size.width)
+                .collect();
+            // Equal shares, give or take the pixel each is rounded to.
+            assert!(
+                widths
+                    .iter()
+                    .all(|width| (*width - widths[0]).abs() <= px(1.)),
+                "{widths:?}"
+            );
+            assert!(meter.find(("segment", 2usize)).visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn many_parts_draw_a_run_per_tone_with_one_failure_showing(cx: &mut TestAppContext) {
+        let mut parts = vec![Tone::Good; 199];
+        parts.insert(120, Tone::Crit);
+        let handle = meter(parts, cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let meter = window.within("meter");
+            let crit = meter.find(("segment", 0usize)).bounds();
+            let good = meter.find(("segment", 1usize)).bounds();
+            assert!(
+                crit.size.width >= dp_px(4., window) - px(0.5),
+                "the one failure stays visible: {crit:?}"
+            );
+            assert!(crit.right() <= good.left(), "problems come first");
+            let card = window.find("meter").bounds();
+            assert!(good.right() <= card.right(), "nothing is clipped: {good:?}");
+            assert!(
+                good.size.width > crit.size.width * 10.,
+                "a run is as wide as its share: {good:?}"
+            );
+        })
+        .unwrap();
+    }
+
+    /// Four cards in a column: a bare figure, one with a detail line, one
+    /// with a meter of parts, and a named figure with both.
+    struct Cards;
+
+    impl Render for Cards {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let value = SharedString::from("4 / 6 Ready");
+            let line = SharedString::from("3 control planes · 3 workers");
+            let name = SharedString::from("nodes");
+            let parts = [Tone::Good, Tone::Good, Tone::Warn, Tone::Crit];
+            let bare = figure(&value);
+            let cards = [
+                ("bare", bare),
+                (
+                    "detail",
+                    Figure {
+                        detail: Some(&line),
+                        ..bare
+                    },
+                ),
+                (
+                    "segments",
+                    Figure {
+                        segments: Some(&parts),
+                        ..bare
+                    },
+                ),
+            ];
+            v_flex()
+                .w(px(320.))
+                .children(cards.map(|(id, figure)| {
+                    StatCard::new(CardHeader::new(id, "Nodes"))
+                        .render(figures(&[figure], cx), cx)
+                        .h_auto()
+                }))
+                .child(
+                    StatCard::new(CardHeader::new("named", "Nodes"))
+                        .render(
+                            figures(
+                                &[
+                                    Figure {
+                                        name: Some(&name),
+                                        detail: Some(&line),
+                                        segments: Some(&parts),
+                                        ..bare
+                                    },
+                                    Figure {
+                                        name: Some(&name),
+                                        ..bare
+                                    },
+                                ],
+                                cx,
+                            ),
+                            cx,
+                        )
+                        .h_auto(),
+                )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_detail_adds_its_line_and_segments_their_meter(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(400.), px(800.)), |window, cx| {
+            let view = cx.new(|_| Cards);
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let height = |id: &str| window.find(id.to_owned()).bounds().size.height;
+            let bare = height("bare");
+            let line = height("detail") - bare;
+            assert!(
+                // The 4 dp gap, 2 dp of padding and one 12 dp line; two
+                // lines would pass 36.
+                line > dp_px(18., window) && line < dp_px(36., window),
+                "a detail adds one line: {line:?}"
+            );
+            let meter = height("segments") - bare;
+            assert!(
+                (meter - dp_px(10., window)).abs() < px(0.5),
+                "segments add a 6 dp meter after a 4 dp gap: {meter:?}"
+            );
+            assert!(
+                height("named") > bare,
+                "a named figure shows its detail and meter too"
+            );
+        })
+        .unwrap();
+    }
 }

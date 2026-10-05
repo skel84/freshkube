@@ -1,9 +1,9 @@
 //! Overview's cards, and what a click on one opens.
 use super::Pilot;
-use crate::palette::palette;
-use crate::presentation::overview::CardTarget;
-use crate::ui::{self, Tone, dp};
-use gpui_kit::component::{button::Button, h_flex, v_flex};
+use crate::presentation::overview::{Card, CardState, CardTarget};
+use crate::ui::{self, dp};
+use freshkube_ui::card::{self, CardHeader, Figure, StatCard};
+use gpui_kit::component::{ThemeStyled, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -13,7 +13,6 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let p = palette(cx);
         let display = &self.overview_display;
         div()
             .id("overview-cards")
@@ -24,69 +23,79 @@ impl Pilot {
             } else {
                 4
             })
-            .gap(dp(12.))
-            .children(display.cards.iter().map(|card| {
-                let target = card.target.clone();
-                let content = v_flex()
-                    .size_full()
-                    .whitespace_normal()
-                    .min_w_0()
-                    .p(dp(14.))
-                    .gap(dp(8.))
-                    .id("tile-card-content")
-                    .test_support()
-                    .child(ui::caption(card.label, cx))
-                    .child(
-                        div()
-                            .font_weight(ui::TITLE_WEIGHT)
-                            .text_size(dp(25.))
-                            .text_color(match card.tone {
-                                Tone::Good => p.good_ink,
-                                Tone::Crit => p.crit_ink,
-                                Tone::Warn => p.warn_ink,
-                                _ => p.muted,
-                            })
-                            .child(card.figure.clone()),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(dp(3.))
-                            .flex_wrap()
-                            .children(card.segments.iter().map(|tone| {
-                                div().w(dp(16.)).h(dp(6.)).rounded(px(2.)).bg(match tone {
-                                    Tone::Good => p.good,
-                                    Tone::Crit => p.crit,
-                                    Tone::Warn => p.warn,
-                                    _ => p.unk,
-                                })
-                            })),
-                    )
-                    .when_some(card.meter, |this, (percent, level)| {
-                        this.child(ui::meter(percent, level, cx))
-                    })
-                    .child(
-                        div()
-                            .text_size(dp(12.))
-                            .text_color(p.muted)
-                            .child(card.detail.clone()),
-                    );
-                Button::new(card.id)
-                    .accessibility_label(card.label)
-                    .outline()
-                    .border_1()
-                    .border_color(p.line)
-                    .rounded(px(10.))
-                    .bg(p.surface)
-                    .items_start()
-                    .h_auto()
-                    .w_full()
-                    .min_w_0()
-                    .p_0()
-                    .child(content)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_card(target.clone(), window, cx)
-                    }))
-            }))
+            .gap(dp(8.))
+            .children(
+                display
+                    .cards
+                    .iter()
+                    .map(|card| self.render_card(card, window, cx)),
+            )
+    }
+
+    /// A `StatCard` that opens its target: from a click, or from Enter or
+    /// Space once Tab has reached it.
+    fn render_card(&self, card: &Card, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let stale = match &card.state {
+            CardState::LastKnown(reason) => Some(reason.clone()),
+            _ => None,
+        };
+        let body = match card.state {
+            CardState::Waiting => v_flex()
+                .id("card-skeleton")
+                .test_support()
+                .gap(dp(8.))
+                .px(dp(14.))
+                .pt(dp(4.))
+                .pb(dp(10.))
+                .child(ui::skeleton(relative(0.4), dp(22.)))
+                .child(ui::skeleton(relative(0.7), dp(12.)))
+                .into_any_element(),
+            _ => card::figures(
+                &[Figure {
+                    name: None,
+                    value: &card.figure,
+                    note: None,
+                    tone: Some(card.tone),
+                    gauge: card.meter.map(|(percent, _)| (percent / 100.) as f32),
+                    segments: (!card.segments.is_empty()).then_some(&card.segments[..]),
+                    spark: None,
+                    detail: Some(&card.detail),
+                    tinted: true,
+                }],
+                cx,
+            ),
+        };
+        // The id the startup checks align the cards' contents by.
+        let body = div()
+            .id("tile-card-content")
+            .test_support()
+            .size_full()
+            .child(body);
+        let target = card.target.clone();
+        let focus = window
+            .use_keyed_state(
+                SharedString::from(format!("{}-focus", card.id)),
+                cx,
+                // A tracked handle carries its own tab stop.
+                |_, cx| cx.focus_handle().tab_stop(true),
+            )
+            .read(cx)
+            .clone();
+        let focused = focus.is_focused(window);
+        StatCard::new(CardHeader::new(card.id, card.label).stale(stale))
+            .render(body, cx)
+            .role(Role::Button)
+            .aria_label(card.label)
+            .track_focus(&focus)
+            .cursor_pointer()
+            .hover(|this| this.bg(crate::palette::palette(cx).hover))
+            // A click opens the card without leaving a focus ring on it.
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.open_card(target.clone(), window, cx)),
+            )
+            .when(focused, |this| this.focus_ring_style(window, cx))
+            .into_any_element()
     }
 
     fn open_card(&mut self, target: CardTarget, window: &mut Window, cx: &mut Context<Self>) {
