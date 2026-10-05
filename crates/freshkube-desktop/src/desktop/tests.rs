@@ -1,4 +1,5 @@
 use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot};
+use crate::logs::TalosPanel;
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
@@ -3342,4 +3343,58 @@ fn pods_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+/// A page whose table isn't the whole page (a dashboard's table panel, a list
+/// with no density switch) checks its frame and its table apart.
+#[gpui_kit::test]
+fn the_frame_and_table_checks_measure_apart(cx: &mut TestAppContext) {
+    use super::layout_check::{Density, PageFrame, Table, assert_page_frame, assert_table};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let frame = PageFrame {
+            page: PODS.page,
+            title: PODS.title,
+            title_text: PODS.title_text,
+            content: PODS.table,
+        };
+        assert_page_frame(window, cx, &frame);
+        // Each fixed density measures once, at that density's sizes.
+        for density in [Density::Comfortable, Density::Compact] {
+            let rows = assert_table(
+                window,
+                cx,
+                &Table {
+                    table: Some(PODS.table),
+                    list: PODS.list,
+                    density,
+                },
+            );
+            assert!(rows.header.is_some(), "{rows:#?}");
+            assert!(
+                rows.comfortable.is_some() != rows.compact.is_some(),
+                "{rows:#?}"
+            );
+            window.click(PODS.density, cx);
+        }
+        // A list without column captions skips the header.
+        let rows = assert_table(
+            window,
+            cx,
+            &Table {
+                table: None,
+                list: PODS.list,
+                density: Density::Toggle(PODS.density),
+            },
+        );
+        assert!(rows.header.is_none(), "{rows:#?}");
+        assert!(rows.comfortable.zip(rows.compact).is_some(), "{rows:#?}");
+    })
+    .unwrap();
 }

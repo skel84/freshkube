@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    logs::TalosPanel,
     palette::palette,
     screens::content_width,
     ui::{MONO_FONT, dp, dp_px},
