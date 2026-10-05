@@ -1,4 +1,5 @@
 //! Machines from both summaries, with one retained pane for their details.
+mod cards;
 mod join;
 #[cfg(test)]
 mod tests;
