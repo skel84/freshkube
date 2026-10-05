@@ -173,6 +173,51 @@ fn the_page_takes_the_shared_frame_and_its_last_panel_ends_at_the_padding(cx: &m
 }
 
 #[gpui_kit::test]
+fn a_narrow_header_puts_the_controls_under_the_breadcrumb(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    // The page's width at 760 × 560 and 20 px, beside the rail and column.
+    cx.simulate_window_resize(handle, size(px(560.), px(560.)));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        let toolbar = window.find("monitoring-toolbar").bounds();
+        let title = window.find("monitoring-title").bounds();
+        let refresh = window.find("monitoring-refresh").bounds();
+        // None of the controls folds, so they take a row of their own
+        // rather than run over the title.
+        assert!(
+            refresh.top() >= toolbar.bottom(),
+            "{refresh:?} on {toolbar:?}"
+        );
+        assert!(
+            title.right() <= toolbar.right(),
+            "{title:?} past {toolbar:?}"
+        );
+        assert!(refresh.right() <= toolbar.right() + px(1.), "{refresh:?}");
+    })
+    .unwrap();
+    // Wide, they share the title's row.
+    cx.simulate_window_resize(handle, size(px(1200.), px(900.)));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(13., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        let toolbar = window.find("monitoring-toolbar").bounds();
+        let title = window.find("monitoring-title").bounds();
+        let refresh = window.find("monitoring-refresh").bounds();
+        assert!(
+            refresh.bottom() <= toolbar.bottom(),
+            "{refresh:?} under {toolbar:?}"
+        );
+        assert!(
+            title.right() < refresh.left(),
+            "{title:?} meets {refresh:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn the_meta_line_counts_the_panels_and_says_when_they_answered(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));
     show(cx, handle, &page);

@@ -290,6 +290,9 @@ struct Placement {
     folded: usize,
     /// Whether the chips have a row of their own, under the toolbar's.
     chips_below: bool,
+    /// Whether the controls have a row of their own, under the chips': only
+    /// when even a full fold leaves them no room beside the title.
+    controls_below: bool,
 }
 
 /// The natural widths of a header's parts, the gap between them and the
@@ -313,7 +316,8 @@ struct HeaderWidths {
 
 impl HeaderWidths {
     /// The fewest folded controls that fit the chips on the toolbar's row;
-    /// else the chips on a row of their own, and the fewest that fit then.
+    /// else the chips on a row of their own, and the fewest that fit then;
+    /// else the controls on a row of their own too, folded as that row needs.
     fn place(&self) -> Placement {
         // The foldable controls, the rightmost first.
         let foldable: Vec<usize> = (0..self.controls.len())
@@ -331,23 +335,28 @@ impl HeaderWidths {
                     return Placement {
                         folded,
                         chips_below,
+                        controls_below: false,
                     };
                 }
             }
         }
+        let chips_below = self
+            .chips
+            .is_some_and(|chips| self.leading + self.gap + chips > self.width);
+        let folded = (0..=foldable.len())
+            .find(|folded| self.controls(&foldable[..*folded]) - self.gap <= self.width)
+            .unwrap_or(foldable.len());
         Placement {
-            folded: foldable.len(),
-            chips_below: self.chips.is_some(),
+            folded,
+            chips_below,
+            controls_below: true,
         }
     }
 
-    /// The toolbar's row with the `folded` controls in the menu.
-    fn row(&self, folded: &[usize], chips_below: bool) -> Pixels {
+    /// The controls left after folding `folded`, and the menu if any fold,
+    /// each after a gap.
+    fn controls(&self, folded: &[usize]) -> Pixels {
         let gap = self.gap;
-        let chips = self
-            .chips
-            .filter(|_| !chips_below)
-            .map_or(px(0.), |chips| gap + chips);
         let controls = self
             .controls
             .iter()
@@ -359,7 +368,17 @@ impl HeaderWidths {
         } else {
             gap + self.more
         };
-        self.leading + chips + controls + more
+        controls + more
+    }
+
+    /// The toolbar's row with the `folded` controls in the menu.
+    fn row(&self, folded: &[usize], chips_below: bool) -> Pixels {
+        let gap = self.gap;
+        let chips = self
+            .chips
+            .filter(|_| !chips_below)
+            .map_or(px(0.), |chips| gap + chips);
+        self.leading + chips + self.controls(folded)
     }
 }
 
@@ -515,10 +534,10 @@ impl PageHeader {
                     // A breadcrumb's title truncates, at least 120 wide, when
                     // even a full fold leaves it no room, so what counts is
                     // the width of an unseen copy that never shrinks.
+                    // Its own least width is the parent's, the "/" and 120.
                     Some(parent) => div()
                         .relative()
                         .flex_shrink(1.)
-                        .min_w_0()
                         .child(
                             measured(breadcrumb(parent, self.title.clone(), cx), slot)
                                 .absolute()
@@ -606,6 +625,11 @@ impl PageHeader {
                 .id(controls_id)
                 .test_support()
         };
+        let (controls_row, controls_below) = if placement.controls_below {
+            (None, Some(row(controls)))
+        } else {
+            (Some(controls), None)
+        };
         let toolbar = row(h_flex()
             .w_full()
             .min_w_0()
@@ -613,7 +637,7 @@ impl PageHeader {
             .gap(gap)
             .child(leading)
             .children(chips_row)
-            .child(controls))
+            .children(controls_row))
         .id(toolbar_id)
         .test_support();
         let secondary = self
@@ -662,6 +686,7 @@ impl PageHeader {
             .relative()
             .child(toolbar)
             .children(chips_below)
+            .children(controls_below)
             .children(secondary)
             .children(meta)
             .child(decide)
@@ -696,6 +721,11 @@ mod tests {
         let placed = |folded, chips_below| Placement {
             folded,
             chips_below,
+            controls_below: false,
+        };
+        let below = |folded, chips_below| Placement {
+            controls_below: true,
+            ..placed(folded, chips_below)
         };
         // 300 + 208 + 108 + 108 + 58: everything on one row.
         assert_eq!(at(782.), placed(0, false));
@@ -709,12 +739,30 @@ mod tests {
         assert_eq!(at(647.), placed(0, true));
         assert_eq!(at(573.), placed(1, true));
         assert_eq!(at(440.), placed(2, true));
-        assert_eq!(at(100.), placed(2, true));
-        let bare = HeaderWidths {
-            chips: None,
-            ..widths(300.)
+        // Then the controls take a row of their own too: 100 + 8 + 100 + 8
+        // + 50 whole, 100 + 8 + 100 + 8 + 24 with one folded, 100 + 8 + 24
+        // with both.
+        assert_eq!(at(439.), below(0, true));
+        assert_eq!(at(265.), below(1, true));
+        assert_eq!(at(132.), below(2, true));
+        assert_eq!(at(100.), below(2, true));
+        let bare = |width| {
+            HeaderWidths {
+                chips: None,
+                ..widths(width)
+            }
+            .place()
         };
-        assert_eq!(bare.place(), placed(2, false));
+        assert_eq!(bare(440.), placed(2, false));
+        assert_eq!(bare(439.), below(0, false));
+        // A wide control that doesn't fold goes down alone, and the chips
+        // stay beside the title while they fit there: 300 + 108 of 450.
+        let wide = HeaderWidths {
+            chips: Some(px(100.)),
+            controls: vec![(px(300.), false)],
+            ..widths(450.)
+        };
+        assert_eq!(wide.place(), below(0, false));
     }
 
     /// A header like Applications': a filter, chips and categories of fixed
