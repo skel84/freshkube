@@ -1,5 +1,6 @@
 //! Panels that reduce each series to one value: stats (a Grafana gauge is a
 //! stat with a bar), bar lists (bar gauge, pie and bar chart), and tables.
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use chrono::{Local, TimeZone};
@@ -18,8 +19,10 @@ use crate::monitoring::colors::{self, Tier};
 pub(crate) const MAX_STATS: usize = 24;
 /// Bar rows drawn at most.
 pub(crate) const MAX_BARS: usize = 50;
-/// Table rows drawn at most; the rest are counted.
-pub(crate) const MAX_ROWS: usize = 100;
+/// Table rows kept at most, a hard cap; the rest are counted.
+pub(crate) const MAX_ROWS: usize = 1_000;
+/// Table rows shown until Show all.
+pub(crate) const FOLDED_ROWS: usize = 100;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Stat {
@@ -56,12 +59,16 @@ pub(crate) struct BarRow {
     pub missing: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct TableData {
     pub columns: Vec<Column>,
-    pub rows: Vec<Vec<SharedString>>,
-    /// Rows in the answer, drawn or not.
+    /// At most [`MAX_ROWS`], in the answer's order.
+    pub rows: Vec<TableRow>,
+    /// Rows in the answer, kept or not.
     pub total: usize,
+    /// Whether a column names each row's severity, so the table leads with
+    /// its glyph.
+    pub severity: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +76,26 @@ pub(crate) struct Column {
     pub name: SharedString,
     /// Right-aligned in IBM Plex Mono.
     pub numeric: bool,
+    /// The most characters a cell or the name has.
+    pub chars: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TableRow {
+    pub key: RowKey,
+    pub cells: Vec<SharedString>,
+    /// From the severity column: only critical or error and warning or warn
+    /// carry one.
+    pub tier: Option<Tier>,
+}
+
+/// A table row's identity: its label cells, and which of the rows with
+/// the same labels it is, in the answer's order. Numbers and times change
+/// with every answer, so they don't count.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct RowKey {
+    pub labels: Rc<[SharedString]>,
+    pub occurrence: usize,
 }
 
 pub(super) fn summary(viz: &Viz, shown: &[Shown]) -> Body {
@@ -285,12 +312,13 @@ pub(super) fn table(spec: &PanelSpec, frame: &Frame) -> Body {
             Some((index, spec.field.for_field(&context).into_owned(), time))
         })
         .collect();
-    let rows = table
+    let mut seen: HashMap<Rc<[SharedString]>, usize> = HashMap::new();
+    let mut rows: Vec<TableRow> = table
         .rows
         .iter()
         .take(MAX_ROWS)
         .map(|row| {
-            columns
+            let cells: Vec<SharedString> = columns
                 .iter()
                 .map(|(index, field, time)| match row.get(*index) {
                     Some(Cell::Number(value)) if *time => date_time(*value).into(),
@@ -298,25 +326,78 @@ pub(super) fn table(spec: &PanelSpec, frame: &Frame) -> Body {
                     Some(Cell::Text(text)) => text.clone().into(),
                     None => SharedString::default(),
                 })
-                .collect()
+                .collect();
+            let labels: Rc<[SharedString]> = columns
+                .iter()
+                .zip(&cells)
+                .filter(|((index, _, _), _)| matches!(row.get(*index), Some(Cell::Text(_))))
+                .map(|(_, cell)| cell.clone())
+                .collect();
+            let count = seen.entry(labels.clone()).or_default();
+            let occurrence = *count;
+            *count += 1;
+            TableRow {
+                key: RowKey { labels, occurrence },
+                cells,
+                tier: None,
+            }
         })
         .collect();
-    let columns = columns
+    let columns: Vec<Column> = columns
         .iter()
-        .map(|(index, _, time)| Column {
-            name: table.columns[*index].clone().into(),
-            numeric: !time
-                && table
-                    .rows
-                    .iter()
-                    .any(|row| matches!(row.get(*index), Some(Cell::Number(_)))),
+        .enumerate()
+        .map(|(position, (index, _, time))| {
+            let name: SharedString = table.columns[*index].clone().into();
+            let widest = rows
+                .iter()
+                .map(|row| row.cells[position].chars().count())
+                .max()
+                .unwrap_or(0);
+            Column {
+                chars: widest.max(name.chars().count()),
+                name,
+                numeric: !time
+                    && table
+                        .rows
+                        .iter()
+                        .any(|row| matches!(row.get(*index), Some(Cell::Number(_)))),
+            }
         })
         .collect();
+    let severity = columns
+        .iter()
+        .position(|column| !column.numeric && column.name.eq_ignore_ascii_case("severity"));
+    if let Some(at) = severity {
+        for row in &mut rows {
+            row.tier = severity_tier(&row.cells[at]);
+        }
+    }
     Body::Table(Rc::new(TableData {
         columns,
         rows,
         total: table.rows.len(),
+        severity: severity.is_some(),
     }))
+}
+
+/// A severity's status: critical and error are critical, warning and warn
+/// a warning, in any case. Anything else (info, none, debug, a name we
+/// don't know) carries none, and never reads as good.
+pub(crate) fn severity_tier(severity: &str) -> Option<Tier> {
+    let severity = severity.trim();
+    if ["critical", "error"]
+        .iter()
+        .any(|name| severity.eq_ignore_ascii_case(name))
+    {
+        Some(Tier::Crit)
+    } else if ["warning", "warn"]
+        .iter()
+        .any(|name| severity.eq_ignore_ascii_case(name))
+    {
+        Some(Tier::Warn)
+    } else {
+        None
+    }
 }
 
 /// A time cell on the local clock. Table times arrive in milliseconds.

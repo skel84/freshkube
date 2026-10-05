@@ -267,6 +267,7 @@ fn step_line(
 #[derive(Clone, Copy, Default)]
 pub struct DataTable {
     carded: bool,
+    inset: bool,
     fit: Option<usize>,
 }
 
@@ -283,6 +284,13 @@ impl DataTable {
         self
     }
 
+    /// Inside a card its caller draws, such as a dashboard panel's: on the
+    /// card's surface, edge to edge, with a hairline above.
+    pub fn inset(mut self) -> Self {
+        self.inset = true;
+        self
+    }
+
     /// As tall as the header and its lines, at most `max_lines` of them,
     /// for a table in a scrolling page rather than one that fills it.
     pub fn fit(mut self, max_lines: usize) -> Self {
@@ -295,7 +303,7 @@ impl DataTable {
         let state = source.table_state();
         let ids = &state.ids;
         // What the rows sit on, which pinned cells paint to stay opaque.
-        let fill = if self.carded {
+        let fill = if self.carded || self.inset {
             palette(cx).surface
         } else {
             cx.theme().background
@@ -351,6 +359,12 @@ impl DataTable {
             });
         let frame = if self.carded {
             card(cx)
+        } else if self.inset {
+            v_flex()
+                .min_w_0()
+                .bg(fill)
+                .border_t_1()
+                .border_color(palette(cx).line)
         } else {
             v_flex()
                 .min_w_0()

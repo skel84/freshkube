@@ -24,7 +24,8 @@ use crate::monitoring::panel::marker_glyph;
 use crate::monitoring::store::Choice;
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
-use freshkube_ui::page::{self, PageHeader};
+use freshkube_ui::page::{self, Fold, MenuItems, PageHeader};
+use std::rc::Rc;
 
 impl Render for MonitoringPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -41,41 +42,56 @@ impl Render for MonitoringPage {
 }
 
 impl MonitoringPage {
-    /// "Dashboards / title"; where the data comes from, the time picker,
-    /// refresh and auto-refresh; then the meta line.
+    /// "Dashboards / title", the time picker, refresh and auto-refresh,
+    /// which fold into the "…" menu when the row is short; then the meta
+    /// line, which says where the data comes from.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title = self.board.as_ref().map_or_else(
             || SharedString::from("Monitoring"),
             |board| board.title.clone(),
         );
-        let mut header = PageHeader::new("monitoring", title)
-            .parent(
-                "dashboards",
-                "Dashboards",
-                cx.listener(|_, _, _, cx| cx.emit(MonitoringEvent::Dashboards)),
-            )
-            .control(self.render_status(cx));
+        let mut header = PageHeader::new("monitoring", title).parent(
+            "dashboards",
+            "Dashboards",
+            cx.listener(|_, _, _, cx| cx.emit(MonitoringEvent::Dashboards)),
+        );
         if let Some(board) = self.board.as_ref().filter(|board| board.error.is_none()) {
-            header = header.control(self.render_time(board, cx));
+            let items = self.range_items(board, cx);
+            header = header.foldable(
+                self.render_time(board, items.clone()),
+                page::submenu_value("Time range", board.range_label.clone(), items),
+            );
         }
-        let header = header
-            .control(
-                Button::new("monitoring-refresh")
-                    .ghost()
-                    .small()
-                    .size(dp(ui::CONTROL_HEIGHT))
-                    .icon(IconName::RefreshCw)
-                    .tooltip("Refresh dashboard")
-                    .on_click(cx.listener(|page, _, _, cx| page.refresh(cx))),
-            )
-            .control(self.render_auto_refresh(cx))
-            .meta(self.render_meta());
-        header.render(window, cx)
+        let refresh = page::handler(cx, |page: &mut Self, _, cx| page.refresh(cx));
+        let button = Button::new("monitoring-refresh")
+            .ghost()
+            .small()
+            .size(dp(ui::CONTROL_HEIGHT))
+            .icon(IconName::RefreshCw)
+            .accessibility_label("Refresh dashboard")
+            .tooltip("Refresh dashboard")
+            .on_click({
+                let refresh = refresh.clone();
+                move |_, window, cx| refresh(window, cx)
+            });
+        let every = self.refresh_every;
+        let items = self.refresh_items(cx);
+        let auto_refresh = Fold::from(page::submenu_value(
+            "Auto-refresh",
+            refresh_label(every),
+            items.clone(),
+        ))
+        .changed(every.map(|_| format!("Auto-refresh {}", refresh_label(every)).into()));
+        header
+            .foldable(button, page::item("Refresh", refresh))
+            .foldable(self.render_auto_refresh(items, cx), auto_refresh)
+            .meta(self.render_meta(cx))
+            .render(window, cx)
     }
 
-    /// The context, then the board's count, state and time. Example data and
-    /// "Not connected" are left to the source label, which already says so.
-    fn render_meta(&self) -> Vec<AnyElement> {
+    /// The context, where the answers come from, then the board's count,
+    /// state and time. Example data has no context to name.
+    fn render_meta(&self, cx: &Context<Self>) -> Vec<AnyElement> {
         let context = match (&self.connection, &self.source) {
             (Connection::Example, _) | (_, None) => None,
             (_, Some(source)) => Some(SharedString::from(source.context.clone())),
@@ -84,20 +100,25 @@ impl MonitoringPage {
             .board
             .as_ref()
             .filter(|board| board.error.is_none())
-            .map(|board| board.meta.clone());
+            .map(|board| board.meta.clone().into_any_element());
+        let parts = context
+            .map(IntoElement::into_any_element)
+            .into_iter()
+            .chain([self.render_status(cx)])
+            .chain(board);
         let mut meta = Vec::new();
-        for part in context.into_iter().chain(board) {
+        for part in parts {
             if !meta.is_empty() {
                 meta.push(" · ".into_any_element());
             }
-            meta.push(part.into_any_element());
+            meta.push(part);
         }
         meta
     }
 
-    /// Where the answers come from, or what the page is waiting for.
+    /// Where the answers come from, or what the page is waiting for, with a
+    /// glyph when it's a state rather than a name.
     fn render_status(&self, cx: &Context<Self>) -> AnyElement {
-        let p = palette(cx);
         let (tone, text, tooltip): (Option<ui::Tone>, SharedString, Option<SharedString>) =
             match &self.connection {
                 Connection::None if self.source.is_none() => (None, "Not connected".into(), None),
@@ -115,12 +136,7 @@ impl MonitoringPage {
         h_flex()
             .id("monitoring-source")
             .flex_none()
-            .h(dp(ui::CONTROL_HEIGHT))
-            .gap(dp(6.))
-            .px(dp(4.))
-            .font_family(ui::MONO_FONT)
-            .text_size(dp(11.5))
-            .text_color(p.muted)
+            .gap(dp(4.))
             .children(tone.and_then(|tone| ui::status_glyph(tone, cx)))
             .child(text)
             .when_some(tooltip, |this, tooltip| {
@@ -132,9 +148,27 @@ impl MonitoringPage {
             .into_any_element()
     }
 
-    fn render_time(&self, board: &Board, cx: &Context<Self>) -> AnyElement {
+    /// The board's ranges, checked at the current one: the picker's menu
+    /// and its folded form.
+    fn range_items(&self, board: &Board, cx: &Context<Self>) -> MenuItems {
         let page = cx.entity().downgrade();
         let (ranges, current) = (board.ranges.clone(), board.span);
+        Rc::new(move |mut menu, _, _| {
+            for (span, label) in ranges.iter() {
+                let (page, span) = (page.clone(), *span);
+                menu = menu.item(
+                    PopupMenuItem::new(label.clone())
+                        .checked(span == current)
+                        .on_click(move |_, _, cx| {
+                            _ = page.update(cx, |page, cx| page.set_range(span, cx));
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    fn render_time(&self, board: &Board, items: MenuItems) -> AnyElement {
         Button::new("monitoring-range")
             .outline()
             .small()
@@ -143,25 +177,31 @@ impl MonitoringPage {
             .label(board.range_label.clone())
             .dropdown_caret(true)
             .accessibility_label("Time range")
-            .dropdown_menu(move |mut menu, _, _| {
-                for (span, label) in ranges.iter() {
-                    let (page, span) = (page.clone(), *span);
-                    menu = menu.item(
-                        PopupMenuItem::new(label.clone())
-                            .checked(span == current)
-                            .on_click(move |_, _, cx| {
-                                _ = page.update(cx, |page, cx| page.set_range(span, cx));
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
             .into_any_element()
     }
 
-    /// The auto-refresh interval, with a good glyph while it's on.
-    fn render_auto_refresh(&self, cx: &Context<Self>) -> impl IntoElement {
+    /// The auto-refresh intervals, checked at the current one.
+    fn refresh_items(&self, cx: &Context<Self>) -> MenuItems {
         let page = cx.entity().downgrade();
+        let every = self.refresh_every;
+        Rc::new(move |mut menu, _, _| {
+            for choice in REFRESH_CHOICES {
+                let page = page.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(refresh_label(choice))
+                        .checked(choice == every)
+                        .on_click(move |_, _, cx| {
+                            _ = page.update(cx, |page, cx| page.set_refresh(choice, cx));
+                        }),
+                );
+            }
+            menu
+        })
+    }
+
+    /// The auto-refresh interval, with a good glyph while it's on.
+    fn render_auto_refresh(&self, items: MenuItems, cx: &Context<Self>) -> impl IntoElement {
         let every = self.refresh_every;
         Button::new("monitoring-auto-refresh")
             .outline()
@@ -171,19 +211,7 @@ impl MonitoringPage {
             .label(refresh_label(every))
             .dropdown_caret(true)
             .tooltip("Auto-refresh while the page shows")
-            .dropdown_menu(move |mut menu, _, _| {
-                for choice in REFRESH_CHOICES {
-                    let page = page.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(refresh_label(choice))
-                            .checked(choice == every)
-                            .on_click(move |_, _, cx| {
-                                _ = page.update(cx, |page, cx| page.set_refresh(choice, cx));
-                            }),
-                    );
-                }
-                menu
-            })
+            .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
     }
 
     /// One chip per shown variable: its name, then its value as a menu.
@@ -276,7 +304,12 @@ impl MonitoringPage {
                 })
                 .test_support()
         };
+        // It wraps inside itself too: at 20 px beside the column, the label
+        // and both toggles are wider than the page.
         h_flex()
+            .id("monitoring-annotations")
+            .min_w_0()
+            .flex_wrap()
             .gap(dp(8.))
             .child(
                 div()
@@ -306,6 +339,7 @@ impl MonitoringPage {
                     cx,
                 ))
             })
+            .test_support()
     }
 
     fn render_variable_error(&self, cx: &Context<Self>) -> Option<AnyElement> {
