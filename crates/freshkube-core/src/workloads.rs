@@ -120,6 +120,13 @@ impl PodIssue {
         }
     }
 
+    /// Whether a container ran and stopped: `CrashLoopBackOff`, `OOMKilled`
+    /// or `Error`. A pod that couldn't start, such as `ImagePullBackOff` or a
+    /// pending one, has nothing that died, though it can still be failing.
+    pub const fn died(&self) -> bool {
+        matches!(self, Self::CrashLoopBackOff | Self::OOMKilled | Self::Error)
+    }
+
     /// Severity used when aggregating a pod into its namespace.
     pub const fn severity(&self) -> HealthState {
         match self {
@@ -692,6 +699,27 @@ mod tests {
             classify_pod_status("Running", HIGH_RESTART_THRESHOLD, containers),
             Some(PodIssue::CrashLoopBackOff)
         );
+    }
+
+    #[test]
+    fn only_a_container_that_ran_and_stopped_died() {
+        for issue in [
+            PodIssue::CrashLoopBackOff,
+            PodIssue::OOMKilled,
+            PodIssue::Error,
+        ] {
+            assert!(issue.died(), "{issue:?}");
+            assert_eq!(issue.severity(), HealthState::Failing);
+        }
+        for issue in [
+            PodIssue::ImagePullBackOff,
+            PodIssue::ErrImagePull,
+            PodIssue::Pending,
+            PodIssue::HighRestarts(HIGH_RESTART_THRESHOLD),
+            PodIssue::Unknown("ContainerCreating".into()),
+        ] {
+            assert!(!issue.died(), "{issue:?}");
+        }
     }
 
     #[test]

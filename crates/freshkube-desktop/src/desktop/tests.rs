@@ -3062,6 +3062,45 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
+fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut TestAppContext) {
+    use crate::observability::Destination;
+    // At 20 px text a 560 high window can't show every destination.
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+    })
+    .unwrap();
+    for destination in [
+        Destination::Deployments,
+        Destination::Applications,
+        Destination::Profiling,
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            let page = pilot.read(cx).observability.clone();
+            page.update(cx, |page, cx| page.open(destination, cx));
+            // The reveal is asked for while drawing and applied by the next layout.
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let list = window.find("obs-navigation-scroll").bounds();
+            let item = window
+                .find(format!("nav-obs-{}", destination.slug()))
+                .bounds();
+            assert!(
+                item.top() >= list.top() - px(0.5) && item.bottom() <= list.bottom() + px(0.5),
+                "{destination:?}: {item:?} outside {list:?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 fn fog_narrow_sidebar_can_be_expanded_manually(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
