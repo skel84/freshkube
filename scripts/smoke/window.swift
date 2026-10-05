@@ -3,7 +3,8 @@
 //   window id <pid> [front]       the window number, for `screencapture -l`
 //   window bounds <pid> [front]   x y width height, in screen points
 //   window click <x> <y>          a left click at screen points, as the mouse sends it
-//   window scroll <x> <y> <dy>    a scroll wheel at screen points; dy > 0 scrolls down
+//   window scroll <x> <y> <dy> [dx]   a scroll wheel at screen points; dy > 0 scrolls
+//                                 down, dx > 0 right
 //
 // `front` picks the process's frontmost window instead of its largest, for a
 // browser with several windows open.
@@ -26,7 +27,7 @@ func window(of pid: Int, front: Bool) -> [String: Any]? {
 
 let args = CommandLine.arguments
 guard args.count >= 3 else {
-    FileHandle.standardError.write("usage: window id|bounds <pid> [front] | click <x> <y> | scroll <x> <y> <dy>\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: window id|bounds <pid> [front] | click <x> <y> | scroll <x> <y> <dy> [dx]\n".data(using: .utf8)!)
     exit(2)
 }
 switch args[1] {
@@ -48,7 +49,8 @@ case "click":
         usleep(useconds_t(pause))
     }
 case "scroll":
-    guard args.count == 5, let x = Double(args[2]), let y = Double(args[3]), let dy = Int32(args[4]) else { exit(2) }
+    guard args.count == 5 || args.count == 6, let x = Double(args[2]), let y = Double(args[3]),
+          let dy = Int32(args[4]), let dx = Int32(args.count == 6 ? args[5] : "0") else { exit(2) }
     let source = CGEventSource(stateID: .hidSystemState)
     CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: x, y: y), mouseButton: .left)!
         .post(tap: .cghidEventTap)
@@ -56,7 +58,7 @@ case "scroll":
     // In steps, as a trackpad sends them, so lists that animate keep up.
     let steps: Int32 = 10
     for _ in 0..<steps {
-        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1, wheel1: -dy / steps, wheel2: 0, wheel3: 0)!
+        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: -dy / steps, wheel2: -dx / steps, wheel3: 0)!
             .post(tap: .cghidEventTap)
         usleep(16_000)
     }
