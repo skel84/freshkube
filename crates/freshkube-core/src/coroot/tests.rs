@@ -649,3 +649,249 @@ fn coroot_markup_becomes_plain_text_without_eating_comparisons() {
     assert_eq!(plain("AT&T <b>bold"), "AT&T bold");
     assert_eq!(plain("<i>x</i> <<i>y</i>"), "x <y");
 }
+
+fn app_view_wire() -> serde_json::Value {
+    let ctx = serde_json::json!({"from":1789996400000_i64,"to":1790000000000_i64,"step":60000,"raw_step":60000,"truncated":false});
+    serde_json::json!({"context":{},"data":{
+        "app_map":{
+            "application":{"id":"c:shop:Deployment:auth","cluster":"main","category":"application","status":"ok","icon":"java","labels":{"ns":"shop"}},
+            "instances":[{"id":"auth-7d9f-a1"},{"id":"auth-7d9f-b2","labels":{"role":"primary"}}],
+            "clients":[{"id":"c:shop:Deployment:shop-api","status":"ok","icon":"golang","link_status":"ok","link_direction":"to","link_stats":["12 rps","3ms"],"link_weight":12.0}],
+            "dependencies":[
+                {"id":"c:shop:StatefulSet:auth-db","status":"warning","icon":"postgres","link_status":"critical","link_status_reason":"<b>failed</b> connections","link_direction":"both","link_stats":null,"link_weight":0},
+                {"id":"c:shop:Deployment:shop-redis","status":"ok","icon":"redis","link_status":"unknown"}],
+            "custom_applications":null,"categories":null},
+        "reports":[
+            {"name":"SLO","status":"unknown","checks":null,"widgets":null},
+            {"name":"CPU","status":"ok","checks":[
+                {"id":"CPUNode","title":"Node CPU utilization","status":"ok","message":"","threshold":80,"unit":"percent","condition_format_template":"the CPU usage of a node > <threshold>"},
+                {"id":"CPUContainer","title":"Container CPU utilization","status":"warning","message":"high CPU utilization","threshold":80,"unit":"percent","condition_format_template":"the CPU usage of a container > <threshold> of its CPU limit"}],
+             "widgets":[
+                {"chart_group":{"title":"CPU usage <selector>, cores","charts":[
+                    {"ctx":ctx,"title":"container: app","series":[{"name":"auth-7d9f-a1","data":[0.1,null,0.2]}],"threshold":{"name":"limit","color":"black","data":[1,1,1]},"featured":true,"stacked":false,"column":false,"color_shift":0,"annotations":[{"name":"deployment","x1":1789998000000_i64,"x2":0,"icon":"mdi-swap"}],"drill_down_link":null,"hide_legend":false},
+                    {"ctx":ctx,"title":"overview","series":null,"threshold":null}]},
+                 "doc_link":{"group":"inspections","item":"cpu","hash":""}},
+                {"chart":{"ctx":ctx,"title":"Node CPU usage, %","series":[{"name":"node-a","color":"red","fill":true,"data":[10,null,12]}],"column":true}},
+                {"group_header":"Disks","width":"100%"}]},
+            {"name":"Instances","status":"ok","checks":[
+                {"id":"InstanceAvailability","title":"Instance availability","status":"ok","threshold":0.75,"unit":"percent","condition_format_template":"the number of available instances < <threshold> of the desired"}],
+             "widgets":[{"table":{"header":["Instance","Status","Restarts","Node"],"rows":[
+                {"id":"auth-7d9f-a1","cells":[{"value":"auth-7d9f-a1"},{"status":"ok","value":"up (running)"},{"is_stub":true,"value":"—"},{"value":"node-a","link":{"title":"node-a","name":"overview","params":{"view":"nodes","id":"node-a"}}}]}]},
+                "width":"100%"}]},
+            {"name":"Logs","status":"ok","checks":[{"id":"LogErrors","title":"Errors","status":"ok","threshold":0,"unit":"","condition_format_template":"the number of messages with the ERROR and CRITICAL severity levels > <threshold>"}],
+             "widgets":[{"logs":{"application_id":"c:shop:Deployment:auth","check":{"id":"LogErrors","title":"Errors","status":"ok","threshold":0,"condition_format_template":"x > <threshold>"}},"width":"100%"}]},
+            {"name":"DNS","status":"ok","checks":[{"id":"DNSLatency","title":"DNS latency","status":"ok","threshold":0.1,"unit":"second","condition_format_template":"the 95th percentile of DNS response times > <threshold>"}],"widgets":[{"dependency_map":{"nodes":[],"links":[]}}]},
+            {"name":"Profiling","status":"unknown","widgets":[{"profiling":{"application_id":"c:shop:Deployment:auth"},"width":"100%"}]},
+            {"name":"Tracing","status":"unknown","widgets":[{"tracing":{"application_id":"c:shop:Deployment:auth"},"width":"100%"}]}]
+    }})
+}
+
+#[tokio::test]
+async fn app_view_reads_the_map_reports_checks_and_widgets() {
+    let server = server(vec![(200, app_view_wire())]).await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let app = AppId::new("c:shop:Deployment:auth");
+    let view = provider
+        .app_view(&source(&provider), range(), &app)
+        .await
+        .unwrap();
+
+    let map = &view.map;
+    assert_eq!(map.app.id, app);
+    assert!(map.app.link.is_none());
+    assert_eq!(map.instances.len(), 2);
+    assert_eq!(map.instances[1].labels["role"], "primary");
+    let client = map.clients[0].link.as_ref().unwrap();
+    assert_eq!(client.stats, ["12 rps", "3ms"]);
+    assert_eq!(client.weight, Some(12.));
+    assert!(!client.both_ways);
+    let db = map.dependencies[0].link.as_ref().unwrap();
+    assert_eq!(db.status, Status::Critical);
+    assert_eq!(db.reason, "failed connections");
+    assert!(db.both_ways);
+    assert_eq!(db.weight, None);
+    assert_eq!(
+        map.dependencies[1].link.as_ref().unwrap().status,
+        Status::Unknown
+    );
+
+    let names: Vec<_> = view.reports.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "SLO",
+            "CPU",
+            "Instances",
+            "Logs",
+            "DNS",
+            "Profiling",
+            "Tracing"
+        ]
+    );
+    assert!(!view.reports[0].judged());
+
+    let cpu = &view.reports[1];
+    assert!(cpu.judged());
+    assert_eq!(cpu.checks[1].status, Status::Warning);
+    assert_eq!(cpu.checks[1].message, "high CPU utilization");
+    assert_eq!(
+        cpu.checks[1].condition(),
+        (
+            "the CPU usage of a container > ",
+            "80%".into(),
+            " of its CPU limit"
+        )
+    );
+    let WidgetKind::ChartGroup { title, charts } = &cpu.widgets[0].kind else {
+        panic!("a chart group");
+    };
+    assert_eq!(title, "CPU usage <selector>, cores");
+    assert_eq!(cpu.widgets[0].width, 0.5);
+    assert_eq!(charts.len(), 2);
+    assert!(charts[0].featured);
+    assert_eq!(
+        (charts[0].step_ms, charts[0].from_ms),
+        (60_000, 1_789_996_400_000)
+    );
+    assert_eq!(charts[0].series[0].points, [Some(0.1), None, Some(0.2)]);
+    assert_eq!(charts[0].threshold.as_ref().unwrap().name, "limit");
+    assert_eq!(charts[0].annotations[0].from_ms, 1_789_998_000_000);
+    assert!(charts[1].series.is_empty());
+    let WidgetKind::Chart(node) = &cpu.widgets[1].kind else {
+        panic!("a chart");
+    };
+    assert!(node.column && node.stacked);
+    assert_eq!(node.series[0].color, "red");
+    assert!(node.series[0].fill);
+    assert!(matches!(&cpu.widgets[2].kind, WidgetKind::Header(h) if h == "Disks"));
+    assert_eq!(cpu.widgets[2].width, 1.);
+
+    let instances = &view.reports[2];
+    assert_eq!(
+        instances.checks[0].condition().1,
+        "0.75%",
+        "the threshold is shown as Coroot sends it"
+    );
+    let WidgetKind::Table(table) = &instances.widgets[0].kind else {
+        panic!("a table");
+    };
+    assert_eq!(table.header.len(), 4);
+    let row = &table.rows[0];
+    assert_eq!(row[1].status, Some(Status::Ok));
+    assert!(row[2].stub);
+    let link = row[3].link.as_ref().unwrap();
+    assert_eq!((link.view.as_str(), link.id.as_str()), ("nodes", "node-a"));
+
+    assert!(
+        matches!(&view.reports[3].widgets[0].kind, WidgetKind::Logs(Some(c)) if c.id == "LogErrors")
+    );
+    let dns = &view.reports[4];
+    assert_eq!(dns.checks[0].condition().1, "100ms");
+    assert!(matches!(
+        dns.widgets[0].kind,
+        WidgetKind::Other("dependency map")
+    ));
+    assert!(matches!(
+        view.reports[5].widgets[0].kind,
+        WidgetKind::Profiling
+    ));
+    assert!(matches!(
+        view.reports[6].widgets[0].kind,
+        WidgetKind::Tracing
+    ));
+}
+
+#[tokio::test]
+async fn app_view_failures_stay_distinct_from_an_empty_page() {
+    let mut other = app_view_wire();
+    other["data"]["app_map"]["application"]["id"] = "c:shop:Deployment:other".into();
+    let mut bad_chart = app_view_wire();
+    bad_chart["data"]["reports"][1]["widgets"][1]["chart"]["ctx"]["step"] = 0.into();
+    let mut no_map = app_view_wire();
+    no_map["data"]["app_map"] = serde_json::Value::Null;
+    let mut empty = app_view_wire();
+    empty["data"]["reports"] = serde_json::Value::Null;
+    let server = server(vec![
+        (200, serde_json::json!({"context":{},"data":null})),
+        (200, other),
+        (200, bad_chart),
+        (200, no_map),
+        (403, serde_json::json!({})),
+        (200, empty),
+    ])
+    .await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let app = AppId::new("c:shop:Deployment:auth");
+    let source = source(&provider);
+    let read = || provider.app_view(&source, range(), &app);
+    assert_eq!(read().await.unwrap_err(), ReadError::Missing);
+    assert_eq!(read().await.unwrap_err(), ReadError::InvalidResponse);
+    assert_eq!(read().await.unwrap_err(), ReadError::InvalidResponse);
+    assert_eq!(read().await.unwrap_err(), ReadError::InvalidResponse);
+    assert_eq!(read().await.unwrap_err(), ReadError::Refused);
+    let view = read().await.unwrap();
+    assert!(view.reports.is_empty());
+    assert_eq!(view.map.instances.len(), 2);
+}
+
+#[test]
+fn app_view_bounds_reject_runaway_answers() {
+    let view = |data: serde_json::Value| app_view::decode(data["data"].clone()).unwrap();
+    let mut wire = app_view_wire();
+    assert_eq!(limits::app_view(&view(wire.clone())), Ok(()));
+    wire["data"]["app_map"]["instances"] = (0..2_001)
+        .map(|i| serde_json::json!({"id": format!("i{i}")}))
+        .collect();
+    assert_eq!(limits::app_view(&view(wire)), Err(ReadError::Limit));
+
+    let mut wire = app_view_wire();
+    wire["data"]["reports"][1]["widgets"][1]["chart"]["series"][0]["data"] =
+        vec![1.0; 4_097].into();
+    assert_eq!(limits::app_view(&view(wire)), Err(ReadError::Limit));
+
+    let mut wire = app_view_wire();
+    wire["data"]["reports"][2]["checks"][0]["message"] = "x".repeat(8_193).into();
+    assert_eq!(limits::app_view(&view(wire)), Err(ReadError::Limit));
+}
+
+#[test]
+fn check_thresholds_read_as_coroot_writes_them() {
+    let check = |threshold: f32, unit: &str| {
+        Check {
+            id: String::new(),
+            title: String::new(),
+            status: Status::Ok,
+            message: String::new(),
+            threshold,
+            unit: unit.into(),
+            condition: "x > <threshold>".into(),
+        }
+        .condition()
+        .1
+    };
+    assert_eq!(check(0., ""), "0");
+    assert_eq!(check(1., ""), "1");
+    assert_eq!(check(0.01, "second"), "10ms");
+    assert_eq!(check(0.05, "second"), "50ms");
+    assert_eq!(check(2.5, "second"), "2.5s");
+    assert_eq!(check(0.02, "seconds/second"), "0.02 seconds/second");
+    assert_eq!(check(75., "percent"), "75%");
+    assert_eq!(check(10., "percent"), "10%");
+    let none = Check {
+        id: String::new(),
+        title: String::new(),
+        status: Status::Ok,
+        message: String::new(),
+        threshold: 0.,
+        unit: String::new(),
+        condition: "IO or SQL replication thread is not running".into(),
+    };
+    assert_eq!(
+        none.condition(),
+        (
+            "IO or SQL replication thread is not running",
+            "0".into(),
+            ""
+        )
+    );
+}

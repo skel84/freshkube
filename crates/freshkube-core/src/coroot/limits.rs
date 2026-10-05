@@ -114,6 +114,168 @@ fn summary(series: &SeriesSummary) -> Result<(), ReadError> {
     Ok(())
 }
 
+/// Coroot's page for one application. Charts are bounded per page rather
+/// than per report, since a report's charts are drawn side by side.
+pub(super) fn app_view(value: &AppView) -> Result<(), ReadError> {
+    let map = &value.map;
+    map_app(&map.app)?;
+    count(map.instances.len(), 2_000)?;
+    for instance in &map.instances {
+        text(&instance.id, 1024)?;
+        labels(&instance.labels)?;
+    }
+    count(map.clients.len() + map.dependencies.len(), 1_000)?;
+    for app in map.clients.iter().chain(&map.dependencies) {
+        map_app(app)?;
+    }
+    count(value.reports.len(), 32)?;
+    let mut charts = 0;
+    let mut series = 0;
+    let mut cells = 0;
+    for report in &value.reports {
+        text(&report.name, 256)?;
+        text(&report.instrumentation, 256)?;
+        count(report.checks.len(), 64)?;
+        for c in &report.checks {
+            check(c)?;
+        }
+        count(report.widgets.len(), 128)?;
+        for widget in &report.widgets {
+            match &widget.kind {
+                WidgetKind::Chart(c) => {
+                    charts += 1;
+                    series += chart(c)?;
+                }
+                WidgetKind::ChartGroup {
+                    title,
+                    charts: group,
+                } => {
+                    text(title, 1024)?;
+                    charts += group.len();
+                    for c in group {
+                        series += chart(c)?;
+                    }
+                }
+                WidgetKind::Table(table) => {
+                    count(table.header.len(), 32)?;
+                    for h in &table.header {
+                        text(h, 1024)?;
+                    }
+                    count(table.rows.len(), 2_000)?;
+                    for row in &table.rows {
+                        count(row.len(), 32)?;
+                        cells += row.len();
+                        for c in row {
+                            cell(c)?;
+                        }
+                    }
+                }
+                WidgetKind::Heatmap(h) => {
+                    text(&h.title, 1024)?;
+                    count(h.rows.len(), 64)?;
+                    series += h.rows.len();
+                    for row in &h.rows {
+                        points(row)?;
+                    }
+                }
+                WidgetKind::Logs(Some(c)) => check(c)?,
+                WidgetKind::Header(h) => text(h, 1024)?,
+                _ => {}
+            }
+        }
+    }
+    count(charts, 512)?;
+    count(series, 4_096)?;
+    count(cells, 50_000)?;
+    Ok(())
+}
+fn map_app(app: &MapApp) -> Result<(), ReadError> {
+    text(app.id.as_str(), 1024)?;
+    text(&app.cluster, 1024)?;
+    text(&app.category, 256)?;
+    text(&app.icon, 256)?;
+    labels(&app.labels)?;
+    if let Some(link) = &app.link {
+        text(&link.reason, 4096)?;
+        count(link.stats.len(), 16)?;
+        for stat in &link.stats {
+            text(stat, 256)?;
+        }
+    }
+    Ok(())
+}
+fn labels(labels: &std::collections::BTreeMap<String, String>) -> Result<(), ReadError> {
+    count(labels.len(), 32)?;
+    for (key, value) in labels {
+        text(key, 256)?;
+        text(value, 1024)?;
+    }
+    Ok(())
+}
+fn check(c: &Check) -> Result<(), ReadError> {
+    text(&c.id, 256)?;
+    text(&c.title, 1024)?;
+    text(&c.message, 8192)?;
+    text(&c.unit, 64)?;
+    text(&c.condition, 4096)
+}
+/// The chart's own bounds; returns how many series it has.
+fn chart(c: &AppChart) -> Result<usize, ReadError> {
+    text(&c.title, 1024)?;
+    count(c.series.len(), 128)?;
+    count(c.annotations.len(), 256)?;
+    for a in &c.annotations {
+        text(&a.name, 1024)?;
+        text(&a.icon, 64)?;
+    }
+    for s in c.series.iter().chain(&c.threshold) {
+        points(s)?;
+    }
+    Ok(c.series.len() + usize::from(c.threshold.is_some()))
+}
+fn points(s: &Series) -> Result<(), ReadError> {
+    text(&s.name, 1024)?;
+    text(&s.title, 1024)?;
+    text(&s.color, 64)?;
+    count(s.points.len(), 4_096)
+}
+fn cell(c: &Cell) -> Result<(), ReadError> {
+    text(&c.value, 4096)?;
+    text(&c.short_value, 1024)?;
+    text(&c.unit, 64)?;
+    count(c.values.len(), 32)?;
+    for v in &c.values {
+        text(v, 4096)?;
+    }
+    count(c.tags.len(), 32)?;
+    for t in &c.tags {
+        text(t, 256)?;
+    }
+    if let Some((name, color)) = &c.icon {
+        text(name, 256)?;
+        text(color, 64)?;
+    }
+    if let Some(link) = &c.link {
+        text(&link.title, 1024)?;
+        text(&link.view, 256)?;
+        text(&link.id, 1024)?;
+    }
+    if let Some((_, color)) = &c.progress {
+        text(color, 64)?;
+    }
+    if let Some((rx, tx)) = &c.bandwidth {
+        text(rx, 64)?;
+        text(tx, 64)?;
+    }
+    count(c.chart.len(), 4_096)?;
+    count(c.deployments.len(), 32)?;
+    for d in &c.deployments {
+        text(&d.report, 256)?;
+        text(&d.message, 4096)?;
+    }
+    Ok(())
+}
+
 pub(super) fn tracing(value: &Tracing) -> Result<(), ReadError> {
     text(&value.message, 4096)?;
     count(value.sources.len(), 8)?;

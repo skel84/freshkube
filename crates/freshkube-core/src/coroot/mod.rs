@@ -1,5 +1,6 @@
 //! Read-only Coroot access. Protocols and decoding belong to `coroot-rs`;
 //! this boundary owns explicit selection, limits and safe failure categories.
+mod app_view;
 mod connection;
 mod limits;
 mod profiling;
@@ -8,6 +9,11 @@ mod subject;
 mod tests;
 mod tracing;
 
+pub use app_view::{
+    Annotation, AppMap, AppReport, AppView, Cell, CellLink, Chart as AppChart, Check,
+    DeploymentSummary, Heatmap as AppHeatmap, MapApp, MapInstance, MapLink, Series, Table, Widget,
+    WidgetKind,
+};
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
     AppHealth, AppId, Application, BurnRate, Chart, ClientLink, Credentials, Dependency, Incident,
