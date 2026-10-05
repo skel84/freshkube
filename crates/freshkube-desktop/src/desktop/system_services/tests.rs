@@ -192,6 +192,33 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// The rows the fit checks read: the unhealthy one, and one of the
+/// baremetal node's, whose long name is the widest and truncates.
+const FIT_ROWS: [&str; 2] = [
+    UNHEALTHY,
+    "system-service-talos-cp-fra1-03-baremetal-rack-b7-auditd",
+];
+
+/// Health check fills the line up to the actions: its right edge sits no
+/// further from Logs than the actions cell's padding and a little slack.
+fn assert_health_check_reaches_the_actions(
+    window: &mut gpui_kit::Window,
+    rows: &[&'static str],
+    size: f32,
+) {
+    let health = window.find(("system-services-sort", 4usize)).bounds();
+    let dp = gpui_kit::px(size / crate::ui::BASE_TEXT);
+    for &row in rows {
+        let logs = window.within(row).find("logs").bounds();
+        assert!(
+            logs.left() >= health.right() && logs.left() - health.right() <= dp * 16.,
+            "{row}: Health check ends at {:?}, Logs starts at {:?} at {size} px",
+            health.right(),
+            logs.left()
+        );
+    }
+}
+
 #[gpui_kit::test]
 fn the_row_actions_fit_at_1280_at_the_default_text_size_and_one_up(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
@@ -201,11 +228,7 @@ fn the_row_actions_fit_at_1280_at_the_default_text_size_and_one_up(cx: &mut Test
             window.press("secondary-7", cx);
             window.render_frame(cx);
             let table = window.find("system-services-table-scroll").bounds();
-            // The baremetal node's long name is the widest; its rows truncate it.
-            for row in [
-                UNHEALTHY,
-                "system-service-talos-cp-fra1-03-baremetal-rack-b7-auditd",
-            ] {
+            for row in FIT_ROWS {
                 for action in ["logs", "open"] {
                     let bounds = window.within(row).find(action).bounds();
                     assert!(
@@ -214,7 +237,21 @@ fn the_row_actions_fit_at_1280_at_the_default_text_size_and_one_up(cx: &mut Test
                     );
                 }
             }
+            assert_health_check_reaches_the_actions(window, &FIT_ROWS, size);
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn health_check_reaches_the_actions_when_the_table_scrolls(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        // Only the first rows are drawn in this short window.
+        assert_health_check_reaches_the_actions(window, &[UNHEALTHY], 20.);
+    })
+    .unwrap();
 }

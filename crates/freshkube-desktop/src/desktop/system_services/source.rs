@@ -47,6 +47,11 @@ fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>) -> f32 {
 /// The Node column's widest: a longer name truncates, and the row's
 /// tooltip holds it, so the actions stay in view at 1280 one text size up.
 const NODE_WIDTH: f32 = 200.;
+/// Logs and Open node at xsmall, with a little room. They sit at the
+/// column's left, right after Health check, which fills the rest; Kit's
+/// buttons don't scale exactly with the text size, so what room is left
+/// over falls at the table's edge, not between the message and Logs.
+const ACTIONS_WIDTH: f32 = 120.;
 
 /// The columns for these rows, and their total width.
 pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
@@ -73,7 +78,7 @@ pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
             fit("State", rows.iter().map(|row| &row.state)),
         ),
         column(Field::Message, "Health check", 240.),
-        column(Field::Actions, "", 168.),
+        column(Field::Actions, "", ACTIONS_WIDTH),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
@@ -166,7 +171,6 @@ impl TableSource for SystemServices {
                 let (open_node, open_service) = (logs_node.clone(), logs_service.clone());
                 cell.flex()
                     .items_center()
-                    .justify_end()
                     .gap_1()
                     .child(Button::new("logs").ghost().xsmall().label("Logs").on_click(
                         cx.listener(move |_, _, _, cx| {
