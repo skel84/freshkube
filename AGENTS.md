@@ -9,11 +9,12 @@ crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
-└── freshkube-desktop/   the GPUI Kit application (shell, screens, logs, theme)
+├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame and table
+└── freshkube-desktop/   the GPUI Kit application (shell, screens, logs)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
 
-Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary.
+Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
 
 ### Module layout
 
@@ -97,7 +98,7 @@ Documentation is thin. Before using an API, read the source of the pinned versio
 
 ### Sizes
 
-The user chooses the text size (`text_size.rs`), which becomes the window's rem size, and the whole layout scales with it.
+The user chooses the text size (`freshkube-ui`'s `text_size.rs`), which becomes the window's rem size, and the whole layout scales with it.
 
 - Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 14 px, as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
 - Keep borders, hairlines, corner radii and shadows in `px`, as Kit does.
