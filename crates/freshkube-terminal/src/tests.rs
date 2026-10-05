@@ -14,6 +14,23 @@ use super::{RESIZE_INTERVAL, SCROLLBACK, TerminalEvent, TerminalSize, TerminalVi
 
 gpui_kit::actions!(terminal_tests, [AppKey]);
 
+// Literal expected shortcuts: exercise the production keymap through events.
+const COPY: &str = if cfg!(target_os = "macos") {
+    "cmd-c"
+} else {
+    "ctrl-shift-c"
+};
+const PASTE: &str = if cfg!(target_os = "macos") {
+    "cmd-v"
+} else {
+    "ctrl-shift-v"
+};
+const LEAVE: &str = if cfg!(target_os = "macos") {
+    "cmd-escape"
+} else {
+    "ctrl-shift-q"
+};
+
 struct Mounted {
     window: AnyWindowHandle,
     view: Entity<TerminalView>,
@@ -106,7 +123,7 @@ impl Mounted {
     }
 
     fn copy(&self, cx: &mut TestAppContext) -> Option<String> {
-        self.press(cx, "cmd-c");
+        self.press(cx, COPY);
         cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
     }
 
@@ -137,6 +154,8 @@ fn mount(cx: &mut TestAppContext) -> Mounted {
             KeyBinding::new("tab", AppKey, None),
             KeyBinding::new("escape", AppKey, None),
             KeyBinding::new("ctrl-tab", AppKey, None),
+            KeyBinding::new("ctrl-c", AppKey, None),
+            KeyBinding::new("ctrl-v", AppKey, None),
             KeyBinding::new("cmd-a", AppKey, None),
         ]);
     });
@@ -211,7 +230,7 @@ fn bytes_draw_on_the_grid_and_rebuild_rows_once_per_cycle(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn keys_are_encoded_from_the_terminal_modes(cx: &mut TestAppContext) {
+fn keyboard_keys_are_encoded_from_the_terminal_modes(cx: &mut TestAppContext) {
     let terminal = mount(cx);
     terminal.press(cx, "up");
     terminal.press(cx, "ctrl-c");
@@ -226,7 +245,7 @@ fn keys_are_encoded_from_the_terminal_modes(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_terminal_takes_keys_before_the_apps_bindings(cx: &mut TestAppContext) {
+fn keyboard_terminal_takes_keys_before_the_apps_bindings(cx: &mut TestAppContext) {
     let terminal = mount(cx);
     terminal.press(cx, "tab");
     terminal.press(cx, "escape");
@@ -237,8 +256,45 @@ fn the_terminal_takes_keys_before_the_apps_bindings(cx: &mut TestAppContext) {
     terminal.press(cx, "cmd-a");
     assert_eq!(terminal.output(), b"");
     assert_eq!(*terminal.app_keys.borrow(), 1);
-    // Command-Escape hands the keyboard back.
-    terminal.press(cx, "cmd-escape");
+    // The terminal's leave shortcut hands the keyboard back.
+    terminal.press(cx, LEAVE);
+    assert_eq!(terminal.take_events(), [TerminalEvent::Leave]);
+}
+
+#[gpui_kit::test]
+fn keyboard_shortcuts_preserve_control_c_and_v_for_the_shell(cx: &mut TestAppContext) {
+    let terminal = mount(cx);
+    terminal.feed(cx, b"hello world");
+    let selected = terminal.cell(cx, 0, 2);
+    terminal.click(cx, selected, 2);
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("kept".into())));
+
+    // Ctrl-C must interrupt even with a selection, and Ctrl-V must reach the
+    // program instead of pasting. These go through the real interceptor.
+    terminal.press(cx, "ctrl-c");
+    terminal.press(cx, "ctrl-v");
+    assert_eq!(terminal.output(), b"\x03\x16");
+    assert_eq!(*terminal.app_keys.borrow(), 0);
+    assert_eq!(
+        cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text())),
+        Some("kept".into())
+    );
+
+    // Ctrl-Shift stays shell input on macOS, whose shortcuts use Command.
+    #[cfg(target_os = "macos")]
+    {
+        terminal.press(cx, "ctrl-shift-c");
+        terminal.press(cx, "ctrl-shift-v");
+        assert_eq!(terminal.output(), b"\x03\x16");
+    }
+
+    // Sending input clears the selection; select the word again to copy it.
+    terminal.click(cx, selected, 2);
+    assert_eq!(terminal.copy(cx).as_deref(), Some("hello"));
+    assert!(terminal.output().is_empty());
+    terminal.press(cx, PASTE);
+    assert_eq!(terminal.output(), b"hello");
+    terminal.press(cx, LEAVE);
     assert_eq!(terminal.take_events(), [TerminalEvent::Leave]);
 }
 
@@ -250,7 +306,7 @@ fn typed_text_goes_to_the_program(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn dragging_selects_and_command_c_copies(cx: &mut TestAppContext) {
+fn keyboard_copy_uses_the_drag_selection(cx: &mut TestAppContext) {
     let terminal = mount(cx);
     terminal.feed(cx, b"hello world\r\nsecond line");
     let from = terminal_cell_left(terminal.cell(cx, 0, 0));
@@ -293,14 +349,14 @@ fn double_click_selects_a_word_and_triple_click_a_line(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn paste_is_bracketed_only_when_the_program_asks(cx: &mut TestAppContext) {
+fn keyboard_paste_is_bracketed_only_when_the_program_asks(cx: &mut TestAppContext) {
     let terminal = mount(cx);
     cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("echo a\necho b".into())));
-    terminal.press(cx, "cmd-v");
+    terminal.press(cx, PASTE);
     assert_eq!(terminal.output(), b"echo a\recho b");
     terminal.feed(cx, b"\x1b[?2004h");
     cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("x\x1b[201~y".into())));
-    terminal.press(cx, "cmd-v");
+    terminal.press(cx, PASTE);
     assert_eq!(terminal.output(), b"\x1b[200~x[201~y\x1b[201~");
 }
 

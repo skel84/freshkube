@@ -31,7 +31,8 @@ jobs:
     # A skipped job for an unrelated label never enters this concurrency group.
     concurrency:
       group: capture-${{ github.event.pull_request.number || github.ref }}
-      cancel-in-progress: true
+      # New PR heads replace old ones; manual builds finish even if another starts.
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: macos-15-intel
     timeout-minutes: 60
     steps:

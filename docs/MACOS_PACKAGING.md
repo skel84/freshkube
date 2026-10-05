@@ -77,6 +77,24 @@ Changelog fragments have a separate Ubuntu job on every run, including
 Markdown-only changes and draft PRs. It runs `scripts/changelog.test.sh` and
 `scripts/changelog.sh check` without a Rust build or a macOS runner.
 
+The separate [Platform checks workflow](../.github/workflows/platforms.yml)
+runs on native `ubuntu-latest` and `windows-latest` runners. It uses the same
+application/docs filter and ready-PR, `main` push and manual triggers. Each job
+runs `cargo check --workspace --all-targets --locked`, strict workspace Clippy,
+and `cargo test -p freshkube-terminal --lib keyboard --locked`. The keyboard
+tests drive the real terminal view: Ctrl-C and Ctrl-V reach shell output, while
+Ctrl-Shift-C/V copy and paste and Ctrl-Shift-Q returns focus on Linux and
+Windows. The macOS workspace tests exercise the unchanged Command shortcuts.
+
+These checks are **advisory**, separate from the macOS workflow used to promote
+release bundles. They start without a Cargo cache to avoid evicting the macOS
+caches. Both install protoc; Linux also installs the pinned GPUI Kit version's
+X11, Wayland, font, WebKit and Vulkan prerequisites. A green run establishes
+compilation, linting and the focused headless keyboard tests only: the full
+Linux/Windows test suites, running-app checks, credential stores and packaging
+remain separate work. Making these checks required needs a reviewed green
+baseline on `main`.
+
 Both the checks and bundle jobs install protobuf before building. They generate
 the Talos client in their own Cargo output directory; no checked-in generated
 Rust or regeneration maintenance command is required. Schema changes trigger
@@ -119,6 +137,8 @@ then replaces its pending capture build. Adding other labels does not start a
 build, and this workflow never cancels the required CI check. To request a build
 on a branch by hand, run
 `gh workflow run capture.yml --ref <branch> -f debug_binary=true`.
+Manual builds on the same branch wait for a running capture instead of cancelling
+it; only newer PR heads cancel an in-progress capture.
 
 The job uses stable Rust, protobuf and `Swatinem/rust-cache`, with a separate
 `capture-debug-x86_64` key for debug builds. Only runs on `main` save the cache;
