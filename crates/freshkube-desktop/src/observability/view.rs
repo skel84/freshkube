@@ -151,14 +151,8 @@ pub(super) fn app_label(id: &freshkube_core::coroot::AppId) -> String {
 }
 
 impl ObservabilityPage {
-    /// A live evidence page's title, its application picker and a way back
-    /// to the application's report.
-    pub(super) fn evidence_header(
-        &self,
-        _title: &'static str,
-        id: &'static str,
-        cx: &Context<Self>,
-    ) -> Div {
+    /// A live evidence page's application picker and a way back to its report.
+    pub(super) fn evidence_header(&self, id: &'static str, cx: &Context<Self>) -> Div {
         // Kit's Select fills its parent, so a box sets its size in the row.
         let picker = div().w(dp(300.)).flex_none().child(
             Select::new(&self.app_select)

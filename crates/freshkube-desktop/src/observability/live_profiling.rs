@@ -335,7 +335,7 @@ impl ObservabilityPage {
             .id("obs-live-profiling")
             .test_support()
             .gap(dp(12.))
-            .child(self.evidence_header("Profiling", "obs-profile-app", cx));
+            .child(self.evidence_header("obs-profile-app", cx));
         if self.selected_app.is_none() {
             return page
                 .child(muted(
