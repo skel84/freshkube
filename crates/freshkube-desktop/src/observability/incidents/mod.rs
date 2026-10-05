@@ -319,9 +319,9 @@ impl ObservabilityPage {
     /// The table, with the selected incident beside it on a wide page and
     /// below it on a narrow one.
     pub(super) fn render_incidents(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = view::beside(window);
+        let beside = crate::screens::beside(window);
         let table = self.render_incident_table(beside, window, cx);
         let detail = self.render_incident_detail(cx);
-        view::split("obs-incidents-split", beside, table, detail)
+        crate::screens::split("obs-incidents-split", beside, table, detail)
     }
 }

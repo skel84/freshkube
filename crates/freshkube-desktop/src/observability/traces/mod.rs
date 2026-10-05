@@ -379,10 +379,15 @@ impl ObservabilityPage {
         if waiting {
             return page.into_any_element();
         }
-        let beside = view::beside(window);
+        let beside = crate::screens::beside(window);
         let table = self.render_trace_table(beside, window, cx);
         let pane = self.live_waterfall(cx);
-        page.child(view::split("obs-traces-split", beside, table, Some(pane)))
-            .into_any_element()
+        page.child(crate::screens::split(
+            "obs-traces-split",
+            beside,
+            table,
+            Some(pane),
+        ))
+        .into_any_element()
     }
 }

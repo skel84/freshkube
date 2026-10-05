@@ -248,14 +248,7 @@ impl DetailPane {
             .when(detail.target.kind.is_pod(), |this| {
                 let shell = self.shell.read(cx);
                 let running = shell.running().then(|| {
-                    div()
-                        .id("detail-shell-running")
-                        .test_support()
-                        .aria_label("A shell runs")
-                        .size(dp(7.))
-                        .rounded_full()
-                        .bg(p.good)
-                        .into_any_element()
+                    ui::status_mark("detail-shell-running", Tone::Good, "A shell runs", cx)
                 });
                 let title = shell.title().cloned();
                 this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None, None))

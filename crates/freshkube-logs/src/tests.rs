@@ -632,3 +632,16 @@ fn command_f_g_and_a_find_and_select_from_the_lines_or_the_search(cx: &mut TestA
     })
     .unwrap();
 }
+
+#[test]
+fn level_toggles_draw_the_shared_glyphs() {
+    use crate::view::level_tone;
+    use freshkube_core::types::LogLevel;
+    use freshkube_ui::ui::Tone;
+    // An application's errors are information, not the cluster's health.
+    assert_eq!(level_tone(&LogLevel::Error), Some(Tone::Info));
+    assert_eq!(level_tone(&LogLevel::Warning), Some(Tone::Warn));
+    for level in [LogLevel::Info, LogLevel::Debug, LogLevel::Unknown] {
+        assert_eq!(level_tone(&level), None, "{level}");
+    }
+}

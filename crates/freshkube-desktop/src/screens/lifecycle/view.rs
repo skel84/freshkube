@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::table::{DataTable, TableSource};
 
 impl LifecycleScreen {
     fn target_button(&self, node: &str, cx: &mut Context<Self>) -> Button {
@@ -36,135 +37,15 @@ impl LifecycleScreen {
             .child(stat("Alerts", view.display.summary_labels[2].clone(), cx))
     }
 
-    fn render_row(
-        &self,
-        ix: usize,
-        row: &NodeRow,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let selected = self.selected == Some(Item::Node(row.name.clone()));
-        let name = row.name.clone();
-        let value = |column: Column, text: String, kind: u8| {
-            // kind: 0 plain, 1 not reported, 2 warning.
-            cell(column)
-                .text_right()
-                .when(!selected && kind == 1, |this| this.text_color(p.unk_ink))
-                .when(!selected && kind == 2, |this| this.text_color(p.warn_ink))
-                .child(text)
-        };
-        let not_reported = || "not reported".to_owned();
-        let talos = row.talos.clone().ok();
-        let kubelet = row.kubelet.clone().ok();
-        let config = match (&row.config, row.drift) {
-            (Ok(hash), Drift::Differs) => (format!("{hash} · differs"), 2),
-            (Ok(hash), _) => (hash.clone(), 0),
-            (Err(_), _) => ("—".to_owned(), 1),
-        };
-        let role = row.role_label();
-        h_flex()
-            .id(("lifecycle-node", ix))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(format!(
-                "{} · {} · Talos {} · kubelet {} · config {} · discovery {} · Kubernetes {}",
-                row.name,
-                role,
-                talos.clone().unwrap_or_else(not_reported),
-                kubelet.clone().unwrap_or_else(not_reported),
-                match (&row.config, row.drift) {
-                    (Ok(hash), Drift::Differs) => format!("{hash}, differs from other nodes"),
-                    (Ok(hash), _) => hash.clone(),
-                    (Err(_), _) => not_reported(),
-                },
-                presence_text(row.in_discovery, "discovery"),
-                presence_text(row.in_kubernetes, "Kubernetes"),
-            ))
+    /// The roster as the shared table: carded among the page's cards, as
+    /// tall as its rows, and scrolling sideways when the view is narrower
+    /// than its columns, with the node's name kept at the left edge.
+    fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        DataTable::new()
+            .carded()
+            .fit(self.line_count().max(1))
+            .render(self, window, cx)
             .w_full()
-            .h(dp(ROW_HEIGHT))
-            .font_family(MONO_FONT)
-            .text_size(dp(12.))
-            .cursor_pointer()
-            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-            .child(cell(COLUMNS[0]).child(row.name.clone()))
-            .child(cell(COLUMNS[1]).child(role))
-            .child(value(
-                COLUMNS[2],
-                talos.clone().unwrap_or_else(not_reported),
-                if talos.is_some() { 0 } else { 1 },
-            ))
-            .child(value(
-                COLUMNS[3],
-                kubelet.clone().unwrap_or_else(not_reported),
-                match (&kubelet, row.kubelet_behind) {
-                    (None, _) => 1,
-                    (Some(_), true) => 2,
-                    _ => 0,
-                },
-            ))
-            .child(value(COLUMNS[4], config.0, config.1))
-            .child(
-                cell(COLUMNS[5])
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(dp(6.))
-                    .children(ui::status_glyph(presence(row.in_discovery), cx))
-                    .child(div().text_color(p.muted).child("·"))
-                    .children(ui::status_glyph(presence(row.in_kubernetes), cx)),
-            )
-            .on_click(cx.listener(move |view, _, window, cx| {
-                view.select(Item::Node(name.clone()), window, cx);
-            }))
-    }
-
-    fn nodes_panel(&self, rows: &[NodeRow], cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let list = if rows.is_empty() {
-            div()
-                .px_3()
-                .py_3p5()
-                .text_size(dp(12.5))
-                .text_color(p.muted)
-                .child(
-                    "No node roster is available, so versions, time and configuration are unknown.",
-                )
-                .into_any_element()
-        } else {
-            v_flex()
-                .children(
-                    rows.iter()
-                        .enumerate()
-                        .map(|(ix, row)| self.render_row(ix, row, cx)),
-                )
-                .into_any_element()
-        };
-        panel(cx).overflow_hidden().child(
-            div()
-                .id("lifecycle-node-scroll")
-                .test_support()
-                .overflow_x_scroll()
-                .child(
-                // Fill the panel; without `w_full` the table takes its
-                // max-content width and a long node name pushes columns out.
-                v_flex()
-                    .w_full()
-                    .min_w(dp(table_width(&COLUMNS)))
-                    .child(table_head(&COLUMNS, cx))
-                    .child(
-                        div()
-                            .id("lifecycle-nodes")
-                            .test_support()
-                            .role(Role::ListBox)
-                            .aria_label(
-                                "Nodes; arrows select a node or alert, Escape clears the selection",
-                            )
-                            .child(list),
-                    ),
-            ),
-        )
     }
 
     fn alerts_panel(&self, alerts: &[AlertRow], cx: &mut Context<Self>) -> Div {
@@ -312,7 +193,11 @@ impl LifecycleScreen {
             roster_status(&snapshot.kubernetes_roster, "node", "nodes");
         let (kubelets, kubelets_known) =
             roster_status(&view.kubelets, "kubelet version", "kubelet versions");
-        let talos = node_rows(view).into_iter().find_map(|row| row.talos.ok());
+        let talos = view
+            .display
+            .rows
+            .iter()
+            .find_map(|row| row.talos.clone().ok());
         let support = match talos.as_deref().and_then(kubernetes_support) {
             Some((low, high)) => format!("v1.{low} – v1.{high}"),
             None => "not in the support table".to_owned(),
@@ -638,14 +523,14 @@ impl Render for LifecycleScreen {
         let alerts = view.display.alerts.clone();
         let missing = view.display.missing.clone();
         let summary = self.summary(view, &rows, &alerts, cx);
-        let nodes = self.nodes_panel(&rows, cx);
+        let nodes = self.nodes_panel(window, cx);
         let alerts_panel = self.alerts_panel(&alerts, cx);
         let etcd = self.etcd_panel(view, cx);
         let sources = self.sources_panel(view, cx);
         let details = self.details(view, cx);
         // Details sit beside the lists only when the roster still fits whole;
         // otherwise they'd push its last columns behind a horizontal scroll.
-        let wide = content_width(window) >= table_width(&COLUMNS) + DETAILS_WIDTH + GAP;
+        let wide = content_width(window) >= view.display.width + DETAILS_WIDTH + GAP;
         let body = if wide {
             h_flex()
                 .items_start()
