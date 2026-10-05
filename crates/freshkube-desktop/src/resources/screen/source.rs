@@ -5,14 +5,12 @@ use super::super::rows::{PodRow, PodState};
 use super::super::store::ResourceEntry;
 use super::layout::{ColumnSource, DisplayColumn, ToneSource};
 use super::*;
-use crate::palette::Palette;
-use table::{Line, SortOrder, TableRow, TableSource, TableState};
+use gpui_kit::ClickEvent;
+use table::{Line, RowStyle, SortOrder, TableRow, TableSource, TableState};
 
 /// What a row's cells read, derived once per row and frame.
 pub(crate) struct RowCells<'a> {
     entry: &'a ResourceEntry,
-    /// The palette with muted text brightened on a selected or marked row.
-    p: Palette,
     node_ready: bool,
     /// Metrics are last known: the read failed or the node isn't ready.
     stale: bool,
@@ -64,19 +62,13 @@ impl TableSource for ResourcesScreen {
         self.projection.items_len()
     }
 
-    fn line(&self, line: usize, cx: &App) -> Option<Line<ResourceIdentity, RowCells<'_>>> {
+    fn line(&self, line: usize, _: &App) -> Option<Line<ResourceIdentity, RowCells<'_>>> {
         let ix = match self.projection.item(line)? {
             Item::Group(group) => return Some(Line::Group(group)),
             Item::Row(ix) => ix,
         };
         let entry = self.projection.entry(&self.store, ix)?;
         let row = entry.row();
-        let selected = self.projection.selected_index() == Some(ix);
-        let marked = self.marked.contains(&row.identity);
-        let mut p = palette(cx);
-        if selected || marked {
-            p.muted = p.ink_2;
-        }
         let node_ready = row
             .pod
             .as_ref()
@@ -93,13 +85,13 @@ impl TableSource for ResourcesScreen {
                     row.cells.join(" · ")
                 ),
                 None => format!("{} · {}", identity.address(), row.cells.join(" · ")),
-            },
-            selected,
-            marked,
+            }
+            .into(),
+            tooltip: None,
+            marked: self.marked.contains(identity),
             muted: row.terminating,
             data: RowCells {
                 entry,
-                p,
                 node_ready,
                 stale: self.usage_state == UsageState::Stale || !node_ready,
             },
@@ -109,15 +101,16 @@ impl TableSource for ResourcesScreen {
     fn cell(
         &self,
         line: &TableRow<ResourceIdentity, RowCells<'_>>,
+        style: &RowStyle,
         column: &DisplayColumn,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let RowCells {
             entry,
-            p,
             node_ready,
             stale,
         } = line.data;
+        let p = style.p;
         let row = entry.row();
         let pod = row.pod.as_ref();
         let printed = |cell_ix: usize| row.cells.get(cell_ix).map(String::as_str).unwrap_or("");
@@ -154,7 +147,7 @@ impl TableSource for ResourcesScreen {
                 column,
                 row.owner.as_ref(),
                 &row.identity.namespace,
-                line.selected,
+                style.selected,
                 cx,
             ),
             ColumnSource::Ready => match pod {
@@ -213,22 +206,38 @@ impl TableSource for ResourcesScreen {
         self.group_header(group, cx)
     }
 
-    fn click(&mut self, key: &ResourceIdentity, window: &mut Window, cx: &mut Context<Self>) {
+    fn selected_key(&self) -> Option<&ResourceIdentity> {
+        self.projection.selected()
+    }
+
+    fn line_of(&self, key: &ResourceIdentity) -> Option<usize> {
+        let ix = self.projection.index_of(&self.store, key)?;
+        Some(self.projection.line_of(ix))
+    }
+
+    fn click(
+        &mut self,
+        key: &ResourceIdentity,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.click_row(key, window, cx);
     }
 
-    fn empty(&self) -> Option<String> {
+    fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if self.projection.items_len() != 0 {
             return None;
         }
         let title = self.noun();
-        Some(if !self.store.is_empty() {
+        let text = if !self.store.is_empty() {
             format!("No {title} match this filter.")
         } else if let Some(namespace) = self.namespace.as_ref().filter(|_| self.kind.namespaced) {
             format!("No {title} in {namespace}.")
         } else {
             format!("No {title} found.")
-        })
+        };
+        Some(text.into_any_element())
     }
 
     fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

@@ -34,7 +34,7 @@ Split code by concern, not by line count. A long file with one tight concern is 
 
 `talos-rs` generates gRPC code with `protoc`. Install it (`brew install protobuf`) or point `PROTOC` at a binary.
 
-Worktrees on one machine share a build directory: `export CARGO_TARGET_DIR=~/.cache/freshkube/target`. Dependencies then build once, each worktree's own crates keep separate artifacts, and Cargo's lock queues builds instead of running two at once. "Blocking waiting for file lock" means another worktree is building; wait for it rather than switching directories.
+Each worktree builds into its own `target/`; leave `CARGO_TARGET_DIR` unset. Don't share one build directory between worktrees: Cargo fingerprints workspace crates by paths relative to the crate and judges freshness by modification time, so a worktree whose sources are older than another worktree's build links that other branch's code without rebuilding it. The first build in a new worktree compiles the dependencies.
 
 ```sh
 cargo build
@@ -137,6 +137,7 @@ scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name
 - Look at every capture yourself, then report what you checked and what you saw: the captures that show the change, anything wrong, and anything you could not check.
 - Judge a page from all of it, not its first screen: `full` captures each screenful down to the bottom, and `scroll` reaches a part further down to click there.
 - `start` takes `--page`, `--theme`, `--size` and `--release`; the slugs are those of `FRESHKUBE_PAGE` (see [Build, run and test](#build-run-and-test)), plus `observability-<destination>`. Open pages with `--page` rather than navigating to them, and click only to exercise the change.
+- `FRESHKUBE_SMOKE_BINARY=/absolute/path/to/saved/freshkube` makes `start` use that executable without building; `FRESHKUBE_STRESS_BINARY` selects a saved stress executable the same way.
 - Live checks only look and navigate. Never press Operations or maintenance actions, and keep credentials out of captures you share.
 - One worktree uses the screen at a time. `start`, `browser.sh open` and `stress.sh` wait for a lock (`scripts/smoke/lock.sh`, in `~/.cache/freshkube/screen.lock`) that `stop` and `close` release; a dead owner's lock, or a smoke test idle for ten minutes, is taken over. Build before you start, keep the session short, and always `stop`. "screen: waiting for …" means another worktree is checking; let it finish. A locked screen spoils captures and keys too, so every command waits for it to be unlocked ("screen: locked; waiting …"); keep the Mac awake for long unattended runs (`caffeinate -d -i`).
 - A live `start` after a new build plays a sound: the app may ask Keychain for the remembered Coroot key, and only the user answers it.

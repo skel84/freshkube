@@ -642,13 +642,7 @@ pub(crate) fn partial_notice(missing: Vec<String>, cx: &App) -> Option<AnyElemen
 
 /// A bordered surface for lists, tables and detail panes.
 pub(crate) fn panel(cx: &App) -> Div {
-    let p = palette(cx);
-    v_flex()
-        .rounded(px(12.))
-        .border_1()
-        .border_color(p.line)
-        .bg(p.surface)
-        .min_w_0()
+    freshkube_ui::page::card(cx)
 }
 
 /// A labelled value, as in the Services detail pane.

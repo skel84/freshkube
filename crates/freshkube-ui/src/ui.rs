@@ -95,6 +95,8 @@ pub enum Tone {
     Crit,
     #[default]
     Unknown,
+    /// Needs an integration before it can say more (docs/DESIGN.md).
+    Integration,
     Accent,
     Outline,
 }
@@ -109,6 +111,7 @@ pub fn tag(tone: Tone, icon: Option<IconName>, text: impl Into<SharedString>, cx
         Tone::Warn => (p.warn_soft, p.warn_ink),
         Tone::Crit => (p.crit_soft, p.crit_ink),
         Tone::Unknown => (p.unk_soft, p.unk_ink),
+        Tone::Integration => (p.integration.opacity(0.14), p.integration),
         Tone::Accent => (p.accent_soft, p.accent),
         Tone::Outline => (transparent_black(), p.muted),
     };
@@ -158,7 +161,8 @@ pub fn segment(button: Button, selected: bool, cx: &App) -> Button {
 }
 
 /// The status language of docs/DESIGN.md, shape and color together: ● OK,
-/// outlined ▲ warning, ◆ critical, ○ pending or unknown. Accent and Outline
+/// outlined ▲ warning, ◆ critical, ○ pending or unknown, outlined □
+/// integration required. Accent and Outline
 /// carry no status and have no glyph.
 pub fn status_glyph(tone: Tone, cx: &App) -> Option<AnyElement> {
     let p = palette(cx);
@@ -175,6 +179,12 @@ pub fn status_glyph(tone: Tone, cx: &App) -> Option<AnyElement> {
             .rounded_full()
             .border(px(1.5))
             .border_color(p.unk_ink)
+            .into_any_element(),
+        Tone::Integration => div()
+            .size(dp(9.))
+            .rounded(px(1.))
+            .border(px(1.5))
+            .border_color(p.integration)
             .into_any_element(),
         Tone::Accent | Tone::Outline => return None,
     };
