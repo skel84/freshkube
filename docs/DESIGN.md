@@ -31,6 +31,35 @@ Figtree Regular, SemiBold, Bold and Black are embedded as static faces (GPUI loa
 
 Use a 4 px grid, 16–20 px content padding, 12–14 px card padding and 10–12 px gaps. Radii: cards 12 px, controls 8 px, rail buttons 10 px, meters 3 px, chips fully rounded. Shadows belong only to tooltips and popovers. The previous light palette remains available until a Fog light theme is designed.
 
+## Platforms: desktop grade, adapted at the edges
+
+Freshkube is a desktop app and is meant to ship on macOS, Windows and Linux. GPUI draws every control itself, so the app imitates no operating system: it keeps one look of its own on all three, holds it to the conventions desktop apps share, and adapts each platform's differences in one place. Agreed with the user on 5 October 2026.
+
+What desktop apps share, and new screens follow:
+
+- **Lists, tables and outlines carry the content.** Selecting a row shows it in an inspector or pane. No dashboards of cards.
+- **Actions act on the selection,** from the toolbar, a context menu or a key. An inspector or dialog has at most one default button; rows and cards don't carry their own.
+- **The frame states the location.** Pages don't open on a hero heading or a greeting.
+- **Desktop density.** Controls 24 dp, toolbars 38 dp, rows 26–28 dp, column headers in sentence case at 11.5 px semibold, panes padded 10–12 dp.
+- **Space belongs to panes.** Splits are resizable and remembered; empty space sits inside a pane, not between cards.
+- **Every action has a key,** and ⌘K reaches everything.
+
+What differs, handled by one platform module and never by a screen:
+
+| Concern | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Window controls | Traffic lights, leading | Caption buttons, trailing | The desktop's decorations; client-side when the compositor asks |
+| Primary modifier | ⌘ | Ctrl | Ctrl |
+| Default button in a group | Trailing | Leading | Trailing |
+| App menu | Global menu bar | Menu button in the header | Menu button in the header |
+| Credentials | Keychain | Credential Manager | Secret Service |
+| Terminal-wide shortcuts | ⌘ | Ctrl-Shift (proposed) | Ctrl-Shift (proposed) |
+| Packaging | DMG, Homebrew cask | MSI or winget | AppImage, Flatpak or deb |
+
+Bind keys with `secondary-` and show the platform's label (`⌘K`, `Ctrl+K`). A focused terminal takes every key without the modifier above, so on Windows and Linux its shortcuts can't use plain Ctrl, which the shell needs. The bundled faces keep the same metrics on every platform. [#81](https://github.com/skel84/freshkube/issues/81) adds Linux and Windows checks to CI and fixes the terminal's copy and paste keys there first.
+
+The comps are P1d, P4d and P4w on the canvas, also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`; [PLATFORM.md](PLATFORM.md#desktop-grade) compares them with P1 and P4.
+
 ## Frame
 
 - Header 52 dp: context and “Talos + Kubernetes”, Dashboard / Nodes / Workloads / Events / Observability tabs, relevant time range, Search (⌘K), refresh and settings. Tabs become icons in narrow windows.
@@ -104,4 +133,7 @@ Heatmap levels: `#323845`, `#33466A`, `#3D5C92`, `#5379BB`, `#7AA0E6`, `#B3CEFA`
 - Default row density; comfortable remains the initial value.
 - More causal grouping beyond pod state and NotReady nodes.
 - Fog light theme.
+- Screen titles: the 20 px black heading above versus a toolbar label under [desktop grade](#platforms-desktop-grade-adapted-at-the-edges). Decide with the P1/P1d and P4/P4d comparison; existing pages move only when next touched.
+- Whether Figtree stays the interface face at desktop density, or Inter replaces it.
+- The Ctrl-Shift terminal shortcuts on Windows and Linux.
 - Later Coroot destinations and a reviewed workflow for any fixes. The first live slice is read-only; [COROOT.md](COROOT.md) records its supported evidence and remaining API gaps.

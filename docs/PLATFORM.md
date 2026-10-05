@@ -103,6 +103,20 @@ A failed task's **Logs** opens the step container's log in the existing `LogView
 
 [HTML mock](platform/workspace.html). Settings › Workspace gives each cluster a role and a kubeconfig context, with what is read from it and what may be written. Sources outside the clusters (GitHub, Harbor, Coroot, metrics) sit below with their access and any limit. The mock shows the ambiguous case: Argo CD deploys to a server address that two contexts share, so the user picks one.
 
+### Desktop grade
+
+The screens above read like a web dashboard: hero headings, cards with their own buttons, generous spacing. The app is meant to ship on macOS, Windows and Linux, so the target is not a Mac look but [desktop grade](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges): tables and outlines, an inspector, actions on the selection, desktop density, with each platform's conventions adapted in one place. Home and the Delivery tab are redrawn that way for comparison; which version wins is still open.
+
+![Home, desktop grade](platform/home-desktop.png)
+
+[HTML mock](platform/home-desktop.html). One outline grouped into Needs you, Shipping and Broken, with delivered changes folded. The selected change fills the inspector, which holds its evidence, its trail, who the user acts as and the one default button. Below, in a resizable split, where each change is and today's events.
+
+![checkout, Delivery, desktop grade](platform/app-delivery-desktop.png)
+
+[HTML mock](platform/app-delivery-desktop.html). Freight as rows and stages as columns; the column headers are the pipeline. Each cell says what that freight is in that stage: running now, was there, ready, rolling out or blocked. Selecting the ready cell enables Promote in the toolbar and fills the inspector; Next step and Abort stay disabled until a rollout is selected.
+
+[The same on Windows](platform/app-delivery-windows.html) ([screenshot](platform/app-delivery-windows.png)): a menu button and caption buttons instead of traffic lights, Ctrl labels, and the default button first.
+
 ## Several clusters at once
 
 None of the screens above work with one connection, and today the app holds one context at a time. This is F10's session registry, and it comes first.
