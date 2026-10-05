@@ -4,14 +4,26 @@ use freshkube_core::inspection::{ProcessSort, ProcessTree};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    App, AppContext, Entity, Pixels, SharedString, Size, TestAppContext, WindowHandle, px, size,
+    AnyWindowHandle, App, AppContext, Entity, Pixels, SharedString, Size, TestAppContext, Window,
+    WindowHandle, px, size,
 };
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{ProcessesScreen, ScreenPanel, ScreenSource, StateFilter};
 use crate::backend::Target;
+use crate::desktop::layout_check;
+use crate::desktop::nodes::NodeTab;
+use crate::desktop::tests::{fixture as app, open_node_tab};
 use crate::{fixture, presentation};
+
+/// The page's frame reaches the split of the table and its details.
+const PROCESSES_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "processes-page",
+    title: "processes-title",
+    title_text: "Processes",
+    content: "processes-split",
+};
 
 fn source(node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -272,8 +284,9 @@ fn sortable_headers_sort_and_show_their_arrow(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_command_shows_without_a_sideways_scroll(cx: &mut TestAppContext) {
-    // About as narrow as the node pane leaves the table at 1280 wide.
-    let (_runtime, _screen, handle) = mount_in(cx, "talos-cp-fra1-01", size(px(600.), px(760.)));
+    // About as narrow as the node pane leaves the table at 1280 wide; the
+    // table runs edge to edge, so the window is its width.
+    let (_runtime, _screen, handle) = mount_in(cx, "talos-cp-fra1-01", size(px(540.), px(760.)));
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let view = window.find("processes-table-scroll").bounds();
@@ -339,23 +352,174 @@ fn keys_work_while_the_filters_hide_every_row(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn processes_draw_the_shared_table_at_both_text_sizes(cx: &mut TestAppContext) {
-    use crate::desktop::layout_check::{Table, assert_table};
-    let (_runtime, _screen, handle) = mount(cx, "talos-cp-fra1-01");
-    let table = Table {
-        table: Some("processes-table-scroll"),
-        list: "processes-list",
-    };
-    for text_size in [crate::ui::BASE_TEXT, 20.] {
-        cx.update_window(handle.into(), |_, _, cx| {
-            crate::text_size::set(text_size, cx)
+fn processes_are_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            open_node_tab(window, cx, NodeTab::Processes);
+            window.render_frame(cx);
         })
         .unwrap();
         cx.run_until_parked();
-        cx.update_window(handle.into(), |_, window, cx| {
-            let rows = assert_table(window, cx, &table);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            layout_check::assert_edge_frame(window, cx, &PROCESSES_FRAME);
+            let rows = layout_check::assert_table(
+                window,
+                cx,
+                &layout_check::Table {
+                    table: Some("processes-table-scroll"),
+                    list: "processes-list",
+                },
+            );
             assert!(rows.header.is_some(), "{rows:#?}");
         })
         .unwrap();
     }
+}
+
+/// The state in the table's place sits under the toolbar, which keeps the
+/// title and Refresh.
+fn under_the_toolbar(window: &Window, id: &'static str) {
+    let toolbar = window.find("processes-toolbar").bounds();
+    window.find("processes-title");
+    window.find("processes-refresh");
+    let state = window.find(id).bounds();
+    assert!(
+        state.top() >= toolbar.bottom(),
+        "{id} {state:?} isn't under the toolbar {toolbar:?}"
+    );
+    assert!(window.try_find("processes-table").is_none());
+}
+
+#[gpui_kit::test]
+fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // A node that isn't responding.
+        under_the_toolbar(window, "screen-retry");
+        // A responding node whose read failed.
+        screen.update(cx, |screen, cx| {
+            let source = source("talos-wk-fra1-02");
+            let target = source.target.clone();
+            screen.set_source(Some(source), window, cx);
+            screen.loader.resolve(target, Err("no process list".into()));
+        });
+        window.render_frame(cx);
+        under_the_toolbar(window, "screen-retry");
+        // No node.
+        screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+        window.render_frame(cx);
+        under_the_toolbar(window, "processes-state");
+        assert!(window.try_find("screen-retry").is_none());
+        // The page keeps its keys while a state shows.
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+        window.press("z", cx);
+        assert_eq!(screen.read(cx).state_filter, StateFilter::Zombie);
+    })
+    .unwrap();
+}
+
+/// Draws until the header stops asking for another frame to place its
+/// parts.
+fn settle(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+    for _ in 0..4 {
+        cx.run_until_parked();
+        let asked = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.simulate_next_frame(cx)
+            })
+            .unwrap();
+        if asked == 0 {
+            return;
+        }
+    }
+    panic!("the header keeps moving");
+}
+
+/// Opens the "…" menu and clicks its `item`th entry, then, for a submenu,
+/// its `sub`th entry.
+fn pick(handle: AnyWindowHandle, item: usize, sub: Option<usize>, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| {
+        window.click("processes-more", cx);
+        window.render_frame(cx);
+        window.within("popup-menu").click(item, cx);
+        window.render_frame(cx);
+        if let Some(sub) = sub {
+            window.within("submenu").within("popup-menu").click(sub, cx);
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+    settle(handle, cx);
+}
+
+#[gpui_kit::test]
+fn the_folded_controls_act_as_their_controls(cx: &mut TestAppContext) {
+    // The title, the filter, Refresh and "…" fit; no other control does.
+    let (_runtime, screen, handle) = mount_in(cx, "talos-wk-fra1-02", size(px(340.), px(600.)));
+    let handle: AnyWindowHandle = handle.into();
+    settle(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        assert!(
+            window.try_find("process-tree").is_none(),
+            "Tree isn't folded"
+        );
+        assert!(
+            window.try_find("process-state").is_none(),
+            "states aren't folded"
+        );
+        window.find("process-filter");
+        window.find("processes-refresh");
+    })
+    .unwrap();
+    // Tree, then the states' submenu: All, Running, Disk wait, Zombie.
+    pick(handle, 0, None, cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.tree),
+        ProcessTree::Full
+    );
+    pick(handle, 0, None, cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.tree),
+        ProcessTree::Flat
+    );
+    pick(handle, 1, Some(3), cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.state_filter),
+        StateFilter::Zombie
+    );
+    cx.update_window(handle, |_, window, _| {
+        window.find("processes-more-dot");
+    })
+    .unwrap();
+    pick(handle, 1, Some(0), cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.state_filter),
+        StateFilter::All
+    );
+    // A subtree folds between them, and its item leaves it.
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.selected = Some(1);
+            screen.toggle_subtree(cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    settle(handle, cx);
+    assert!(matches!(
+        screen.read_with(cx, |screen, _| screen.tree),
+        ProcessTree::Subtree { root_pid: 1 }
+    ));
+    pick(handle, 1, None, cx);
+    assert_eq!(
+        screen.read_with(cx, |screen, _| screen.tree),
+        ProcessTree::Flat
+    );
 }

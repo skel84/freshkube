@@ -1,146 +1,179 @@
-//! The Processes page: summary, toolbar, table and details.
+//! The Processes page: the toolbar with its filters, the table edge to edge
+//! and the selection's details.
 use super::*;
 
 impl ProcessesScreen {
-    /// One line, like the TUI header: CPU, memory, load and process counts.
-    /// Values a source didn't report show as unknown.
-    fn summary(&self, snapshot: &ProcessInspectionSnapshot, cx: &App) -> Stateful<Div> {
-        let p = palette(cx);
-        let system = &snapshot.system;
-        let unknown = || "unknown".to_owned();
-        let cores = system
-            .cpu_count
-            .map(|count| format!(" of {count} cores"))
-            .unwrap_or_default();
-        let cpu = system
-            .cpu
-            .as_ref()
-            .map(|cpu| {
-                cpu.usage_display()
-                    .map(|usage| format!("{usage}{cores}"))
-                    .unwrap_or_else(|| "measuring…".into())
-            })
-            .unwrap_or_else(unknown);
-        let memory = system
-            .memory
-            .as_ref()
-            .map(|memory| memory.display())
-            .unwrap_or_else(unknown);
-        let load = system
-            .load_average
-            .as_ref()
-            .map(|load| {
-                format!(
-                    "{:.2}  {:.2}  {:.2}",
-                    load.one_minute, load.five_minutes, load.fifteen_minutes
-                )
-            })
-            .unwrap_or_else(unknown);
-        let counts = snapshot.state_counts;
-        let item = |label: &'static str, value: String| {
-            h_flex()
-                .gap_1p5()
-                .child(div().text_color(p.muted).child(label))
-                .child(mono(value))
-        };
-        h_flex()
-            .id("process-summary")
-            .gap_x_5()
-            .gap_y_1()
-            .flex_wrap()
-            .text_size(dp(12.5))
-            .child(item("CPU", cpu))
-            .child(item("Memory", memory))
-            .child(item("Load", load))
-            .child(item(
-                "Processes",
-                format!(
-                    "{} · {} running · {} sleeping",
-                    snapshot.processes.len(),
-                    counts.running,
-                    counts.sleeping
-                ),
-            ))
-    }
-
-    fn toolbar(&self, counts: ProcessStateCounts, total: usize, cx: &mut Context<Self>) -> Div {
-        let filter = self.state_filter;
-        let tree = self.tree;
-        h_flex()
-            .gap_2p5()
-            .flex_wrap()
-            .child(
-                div().flex_1().min_w(dp(180.)).max_w(dp(320.)).child(
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "Processes");
+        let header = match &self.derived {
+            Some(derived) => {
+                let filter = div().child(
                     Input::new(&self.query)
                         .id("process-filter")
                         .aria_label("Filter processes by command, path or arguments")
                         .small()
+                        .h(dp(ui::CONTROL_HEIGHT))
                         .cleanable(true)
                         .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                ),
+                );
+                // The rightmost folds first: the widest, the states.
+                let header = header
+                    .filter(filter)
+                    .foldable(self.render_tree(cx), self.tree_fold(cx));
+                let header = match self.tree {
+                    ProcessTree::Subtree { root_pid } => header.foldable(
+                        self.render_subtree(root_pid, cx),
+                        self.subtree_fold(root_pid, cx),
+                    ),
+                    _ => header,
+                };
+                header.foldable(
+                    self.render_states(&derived.states, cx),
+                    self.states_fold(&derived.states, cx),
+                )
+            }
+            None => header,
+        };
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh processes",
+            self.source.as_ref(),
+            &self.loader,
+            cx,
+        );
+        let parts = self
+            .derived
+            .as_ref()
+            .map(|derived| derived.summary.clone())
+            .unwrap_or_default();
+        header
+            .control(refresh)
+            .meta(meta(
+                self.source.as_ref(),
+                Scope::Node,
+                &self.loader,
+                self.embedded,
+                parts,
+            ))
+            .render(window, cx)
+    }
+
+    fn render_tree(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("process-tree")
+            .outline()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .icon(IconName::ListTree)
+            .label("Tree")
+            .selected(self.tree == ProcessTree::Full)
+            .on_click(cx.listener(|view, _, _, cx| view.toggle_tree(cx)))
+    }
+
+    /// Tree folded: a checked item.
+    fn tree_fold(&self, cx: &mut Context<Self>) -> page::Fold {
+        let full = self.tree == ProcessTree::Full;
+        page::Fold::from(page::checked_item(
+            "Tree",
+            full,
+            page::handler(cx, |view: &mut Self, _, cx| view.toggle_tree(cx)),
+        ))
+        .changed(full.then(|| "Tree".into()))
+    }
+
+    fn render_subtree(&self, root_pid: i32, cx: &mut Context<Self>) -> Button {
+        Button::new("clear-subtree")
+            .small()
+            .primary()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .icon(IconName::X)
+            .label(format!("Subtree of {root_pid}"))
+            .on_click(cx.listener(|view, _, _, cx| view.leave_subtree(cx)))
+    }
+
+    /// The subtree's clear button folded: an item that leaves it.
+    fn subtree_fold(&self, root_pid: i32, cx: &mut Context<Self>) -> page::Fold {
+        page::Fold::from(page::item(
+            format!("Leave the subtree of {root_pid}"),
+            page::handler(cx, |view: &mut Self, _, cx| view.leave_subtree(cx)),
+        ))
+        .changed(Some(format!("Subtree of {root_pid}").into()))
+    }
+
+    fn render_states(&self, labels: &[SharedString; 4], cx: &mut Context<Self>) -> ButtonGroup {
+        let filter = self.state_filter;
+        let button = |ix: usize| {
+            Button::new(STATE_IDS[ix])
+                .h(dp(ui::CONTROL_HEIGHT))
+                .label(labels[ix].clone())
+                .selected(filter == STATE_FILTERS[ix])
+        };
+        ButtonGroup::new("process-state")
+            .outline()
+            .small()
+            .children((0..STATE_FILTERS.len()).map(button))
+            .on_click(cx.listener(|view, selected: &Vec<usize>, _, cx| {
+                let filter = selected
+                    .first()
+                    .and_then(|ix| STATE_FILTERS.get(*ix))
+                    .copied()
+                    .unwrap_or(StateFilter::All);
+                view.set_state_filter(filter, cx);
+            }))
+    }
+
+    /// The states folded: `State · All 312` over a checked item for each.
+    fn states_fold(&self, labels: &[SharedString; 4], cx: &mut Context<Self>) -> page::Fold {
+        let current = self.state_filter;
+        let items: Vec<page::MenuItems> = STATE_FILTERS
+            .iter()
+            .zip(labels)
+            .map(|(&filter, label)| {
+                page::checked_item(
+                    label.clone(),
+                    filter == current,
+                    page::handler(cx, move |view: &mut Self, _, cx| {
+                        view.set_state_filter(filter, cx)
+                    }),
+                )
+            })
+            .collect();
+        let ix = STATE_FILTERS
+            .iter()
+            .position(|&filter| filter == current)
+            .unwrap_or(0);
+        let items: page::MenuItems = Rc::new(move |menu, window, cx| {
+            items.iter().fold(menu, |menu, item| item(menu, window, cx))
+        });
+        page::Fold::from(page::submenu_value("State", labels[ix].clone(), items)).changed(
+            (current != StateFilter::All).then(|| format!("State {}", current.name()).into()),
+        )
+    }
+
+    /// The table, with the selection's details beside it on a wide page and
+    /// below it on a narrow one.
+    fn render_split(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let beside = crate::screens::beside(window);
+        let table = div()
+            .id("processes-table")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .child(DataTable::new().render(self, window, cx).flex_1().min_h_0())
+            .into_any_element();
+        let details = div()
+            .id("process-details")
+            .size_full()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .when_else(
+                beside,
+                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
+                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
             )
-            .child(
-                Button::new("process-tree")
-                    .outline()
-                    .small()
-                    .icon(IconName::ListTree)
-                    .label("Tree")
-                    .selected(tree == ProcessTree::Full)
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_tree(cx))),
-            )
-            .when_some(
-                match tree {
-                    ProcessTree::Subtree { root_pid } => Some(root_pid),
-                    _ => None,
-                },
-                |this, root_pid| {
-                    this.child(
-                        Button::new("clear-subtree")
-                            .small()
-                            .primary()
-                            .icon(IconName::X)
-                            .label(format!("Subtree of {root_pid}"))
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.tree = ProcessTree::Flat;
-                                cx.notify();
-                            })),
-                    )
-                },
-            )
-            .child(
-                ButtonGroup::new("process-state")
-                    .outline()
-                    .small()
-                    .child(
-                        Button::new("state-all")
-                            .label(format!("All {total}"))
-                            .selected(filter == StateFilter::All),
-                    )
-                    .child(
-                        Button::new("state-running")
-                            .label(format!("Running {}", counts.running))
-                            .selected(filter == StateFilter::Running),
-                    )
-                    .child(
-                        Button::new("state-disk-wait")
-                            .label(format!("Disk wait {}", counts.disk_sleep))
-                            .selected(filter == StateFilter::DiskWait),
-                    )
-                    .child(
-                        Button::new("state-zombie")
-                            .label(format!("Zombie {}", counts.zombie))
-                            .selected(filter == StateFilter::Zombie),
-                    )
-                    .on_click(cx.listener(|view, selected: &Vec<usize>, _, cx| {
-                        let filter = match selected.first() {
-                            Some(1) => StateFilter::Running,
-                            Some(2) => StateFilter::DiskWait,
-                            Some(3) => StateFilter::Zombie,
-                            _ => StateFilter::All,
-                        };
-                        view.set_state_filter(filter, cx);
-                    })),
-            )
+            .child(self.details(cx))
+            .into_any_element();
+        crate::screens::split_fill("processes-split", beside, DETAILS_HEIGHT, table, details)
     }
 
     fn details(&self, cx: &mut Context<Self>) -> Div {
@@ -274,39 +307,65 @@ impl ProcessesScreen {
 impl Render for ProcessesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("processes");
-        if let Some(page) = gated_page_mode(
-            "processes-page",
-            "Processes",
-            Scope::Node,
+        self.sync_rows(cx);
+        let header = self.render_header(window, cx);
+        let state = gate(
             self.source.as_ref(),
             &self.loader,
+            Scope::Node,
             "the process list",
-            self.embedded,
             cx,
-        ) {
-            return page;
-        }
-        self.sync_rows(cx);
-        let (Some(source), Some(snapshot)) = (self.source.clone(), self.loader.data()) else {
-            return div().into_any_element();
+        );
+        // The table runs edge to edge under the toolbar; the banners and a
+        // state in the table's place sit in an inset between them. A short
+        // page scrolls its frame, so the list keeps some rows.
+        let page = page::page("processes-page")
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(page::toolbar(cx).child(header));
+        let page = match (state, self.loader.data()) {
+            (Some(state), _) => page.child(
+                page::inset()
+                    .id("processes-state")
+                    .test_support()
+                    .child(state),
+            ),
+            (None, Some(snapshot)) => {
+                let missing = snapshot
+                    .unavailable
+                    .iter()
+                    .map(|InspectionUnavailable { source, message }| {
+                        format!("{}: {message}", source.label())
+                    })
+                    .collect();
+                let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
+                    .map(IntoElement::into_any_element)
+                    .into_iter()
+                    .chain(partial_notice(missing, cx))
+                    .collect();
+                page.when(!banners.is_empty(), |page| {
+                    page.child(
+                        page::inset()
+                            .flex()
+                            .flex_col()
+                            .gap(dp(page::PANE_PADDING_Y))
+                            .children(banners),
+                    )
+                })
+                .child(self.render_split(window, cx))
+            }
+            (None, None) => page,
         };
-        let counts = snapshot.state_counts;
-        let total = snapshot.processes.len();
-        let summary = self.summary(snapshot, cx);
-        let missing = snapshot
-            .unavailable
-            .iter()
-            .map(|InspectionUnavailable { source, message }| {
-                format!("{}: {message}", source.label())
-            })
-            .collect();
         // The keys live on a wrapper drawn in every state, so `/` and Escape
         // still work while the filters hide every row. Selection survives
         // refreshes by PID; the details say when the process is gone.
-        let list = div()
-            .id("processes-table")
+        div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
             .on_action(cx.listener(|view, _: &NextProcess, _, cx| view.step(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousProcess, _, cx| view.step(-1, cx)))
             .on_action(cx.listener(|view, _: &FirstProcess, _, cx| view.step(isize::MIN, cx)))
@@ -328,20 +387,10 @@ impl Render for ProcessesScreen {
                 view.set_sort(ProcessSort::ResidentMemory, cx)
             }))
             .on_action(cx.listener(|view, _: &ToggleZombies, _, cx| {
-                let next = if view.state_filter == StateFilter::Zombie {
-                    StateFilter::All
-                } else {
-                    StateFilter::Zombie
-                };
-                view.set_state_filter(next, cx);
+                view.toggle_state_filter(StateFilter::Zombie, cx)
             }))
             .on_action(cx.listener(|view, _: &ToggleDiskWait, _, cx| {
-                let next = if view.state_filter == StateFilter::DiskWait {
-                    StateFilter::All
-                } else {
-                    StateFilter::DiskWait
-                };
-                view.set_state_filter(next, cx);
+                view.toggle_state_filter(StateFilter::DiskWait, cx)
             }))
             .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
                 let focus = view.query.read(cx).focus_handle(cx);
@@ -350,76 +399,6 @@ impl Render for ProcessesScreen {
             .on_action(
                 cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
             )
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(dp(LIST_MIN_HEIGHT))
-            .child(
-                DataTable::new()
-                    .carded()
-                    .render(self, window, cx)
-                    .flex_1()
-                    .min_h_0(),
-            );
-        let details = self.details(cx);
-        let wide = content_width(window) >= SIDE_DETAILS;
-        // Short windows scroll the page rather than squeezing the list.
-        let split = if wide {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT))
-                .items_stretch()
-                .gap(dp(14.))
-                .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
-                .child(
-                    div()
-                        .id("process-details")
-                        .w(dp(340.))
-                        .flex_none()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .child(details),
-                )
-        } else {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
-                .child(
-                    v_flex().size_full().gap(dp(14.)).child(list).child(
-                        div()
-                            .id("process-details")
-                            .h(dp(DETAILS_HEIGHT))
-                            .flex_none()
-                            .overflow_y_scroll()
-                            .restrict_scroll_to_axis()
-                            .child(details),
-                    ),
-                )
-        };
-        v_flex()
-            .id("processes-page")
-            .test_support()
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
-            .child(header_mode(
-                "Processes",
-                &source,
-                Scope::Node,
-                &self.loader,
-                self.embedded,
-                cx,
-            ))
-            .children(failure_banner(&self.loader, cx))
-            .children(partial_notice(missing, cx))
-            .child(summary)
-            .child(self.toolbar(counts, total, cx))
-            .child(split)
-            .into_any_element()
+            .child(page)
     }
 }

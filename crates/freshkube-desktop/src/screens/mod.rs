@@ -420,6 +420,53 @@ pub(crate) fn split_narrow(
     split_at(id, beside, NARROW_PANE_WIDTH, table, pane)
 }
 
+/// [`split_narrow`] for a list that fills the page's height and scrolls its
+/// own rows, such as Processes': the pane runs beside it at its height, or
+/// `below` dp high under it. The split keeps the list at least
+/// [`page::SHORT_LIST_HEIGHT`] high, so a short page scrolls its frame.
+pub(crate) fn split_fill(
+    id: &'static str,
+    beside: bool,
+    below: f32,
+    table: AnyElement,
+    pane: AnyElement,
+) -> AnyElement {
+    let list = freshkube_ui::page::SHORT_LIST_HEIGHT;
+    div()
+        .id(id)
+        .test_support()
+        .flex()
+        .flex_1()
+        .gap(dp(SPLIT_GAP))
+        .when_else(
+            beside,
+            |this| this.flex_row().items_stretch().min_h(dp(list)),
+            |this| this.flex_col().min_h(dp(list + SPLIT_GAP + below)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .child(table),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .when_else(
+                    beside,
+                    |this| this.w(dp(NARROW_PANE_WIDTH)).min_w(dp(PANE_MIN_WIDTH)),
+                    |this| this.w_full().h(dp(below)),
+                )
+                .child(pane),
+        )
+        .into_any_element()
+}
+
 fn split_at(
     id: &'static str,
     beside: bool,

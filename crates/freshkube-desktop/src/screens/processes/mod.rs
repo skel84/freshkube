@@ -3,8 +3,9 @@
 //!
 //! This is the reference screen. Others follow its shape: a `Loader` for the
 //! data, `set_source` that drops data only when the target changes, example
-//! data for `--fixture`, the shared `gated_page` / `header` helpers, and
+//! data for `--fixture`, the toolbar header over `gate`'s states, and
 //! element ids plus roles so UI tests can drive it.
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -20,7 +21,6 @@ use gpui_kit::component::{
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
-    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -28,20 +28,21 @@ use talos_rs::{CpuStat, ProcessInfo, ProcessState};
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gated_page_mode, header_mode, mono, panel, partial_notice,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
+    panel, partial_notice, refresh_control,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use example::example;
+use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::table::{self, DataTable, TableState};
 use source::Derived;
 
 const CONTEXT: &str = "TalosProcesses";
+/// The header's ids start with it: `processes-title`, `processes-refresh`.
+const PREFIX: &str = "processes";
 const PAGE_ROWS: isize = 20;
-/// Below this content width the details pane moves under the list.
-const SIDE_DETAILS: f32 = 900.;
-const LIST_MIN_HEIGHT: f32 = 200.;
+/// The details' height under the list on a narrow page.
 const DETAILS_HEIGHT: f32 = 220.;
 
 actions!(
@@ -74,7 +75,30 @@ enum StateFilter {
     Zombie,
 }
 
+/// The state segment's filters, in order, and their buttons' ids.
+const STATE_FILTERS: [StateFilter; 4] = [
+    StateFilter::All,
+    StateFilter::Running,
+    StateFilter::DiskWait,
+    StateFilter::Zombie,
+];
+const STATE_IDS: [&str; 4] = [
+    "state-all",
+    "state-running",
+    "state-disk-wait",
+    "state-zombie",
+];
+
 impl StateFilter {
+    fn name(self) -> &'static str {
+        match self {
+            StateFilter::All => "All",
+            StateFilter::Running => "Running",
+            StateFilter::DiskWait => "Disk wait",
+            StateFilter::Zombie => "Zombie",
+        }
+    }
+
     fn state(self) -> Option<ProcessState> {
         match self {
             StateFilter::All => None,
@@ -276,6 +300,22 @@ impl ProcessesScreen {
 
     fn set_state_filter(&mut self, filter: StateFilter, cx: &mut Context<Self>) {
         self.state_filter = filter;
+        self.table.reveal(0, ScrollStrategy::Top);
+        cx.notify();
+    }
+
+    /// `z` and `d`: that state alone, or back to all.
+    fn toggle_state_filter(&mut self, filter: StateFilter, cx: &mut Context<Self>) {
+        let next = if self.state_filter == filter {
+            StateFilter::All
+        } else {
+            filter
+        };
+        self.set_state_filter(next, cx);
+    }
+
+    fn leave_subtree(&mut self, cx: &mut Context<Self>) {
+        self.tree = ProcessTree::Flat;
         self.table.reveal(0, ScrollStrategy::Top);
         cx.notify();
     }

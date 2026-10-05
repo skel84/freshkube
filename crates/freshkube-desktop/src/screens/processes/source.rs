@@ -100,6 +100,11 @@ pub(super) struct Derived {
     pub(super) rows: Vec<ProcessRow>,
     columns: Vec<ProcessColumn>,
     width: f32,
+    /// The meta line's parts: CPU, memory, load and the process counts.
+    pub(super) summary: Vec<SharedString>,
+    /// The state segment's labels, with their counts: All, Running, Disk
+    /// wait and Zombie.
+    pub(super) states: [SharedString; 4],
 }
 
 impl Derived {
@@ -120,7 +125,16 @@ impl Derived {
             .collect();
         let columns = columns(&rows);
         let width = columns.iter().map(|column| column.width).sum();
+        let counts = snapshot.state_counts;
+        let states = [
+            format!("All {}", snapshot.processes.len()).into(),
+            format!("Running {}", counts.running).into(),
+            format!("Disk wait {}", counts.disk_sleep).into(),
+            format!("Zombie {}", counts.zombie).into(),
+        ];
         Self {
+            summary: summary(&snapshot),
+            states,
             snapshot,
             settings,
             rows,
@@ -128,6 +142,54 @@ impl Derived {
             width,
         }
     }
+}
+
+/// Like the TUI header: CPU, memory, load and process counts. Values a
+/// source didn't report show as unknown.
+fn summary(snapshot: &ProcessInspectionSnapshot) -> Vec<SharedString> {
+    let system = &snapshot.system;
+    let unknown = || "unknown".to_owned();
+    let cores = system
+        .cpu_count
+        .map(|count| format!(" of {count} cores"))
+        .unwrap_or_default();
+    let cpu = system
+        .cpu
+        .as_ref()
+        .map(|cpu| {
+            cpu.usage_display()
+                .map(|usage| format!("{usage}{cores}"))
+                .unwrap_or_else(|| "measuring…".into())
+        })
+        .unwrap_or_else(unknown);
+    let memory = system
+        .memory
+        .as_ref()
+        .map(|memory| memory.display())
+        .unwrap_or_else(unknown);
+    let load = system
+        .load_average
+        .as_ref()
+        .map(|load| {
+            format!(
+                "{:.2} {:.2} {:.2}",
+                load.one_minute, load.five_minutes, load.fifteen_minutes
+            )
+        })
+        .unwrap_or_else(unknown);
+    let counts = snapshot.state_counts;
+    vec![
+        format!("CPU {cpu}").into(),
+        format!("memory {memory}").into(),
+        format!("load {load}").into(),
+        format!(
+            "{} processes, {} running, {} sleeping",
+            snapshot.processes.len(),
+            counts.running,
+            counts.sleeping
+        )
+        .into(),
+    ]
 }
 
 /// The Command column's widest least width. It comes right after the PID,
