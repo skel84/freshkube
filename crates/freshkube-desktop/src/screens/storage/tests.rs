@@ -12,8 +12,8 @@ use crate::{fixture, presentation};
 
 #[test]
 fn read_only_is_expected_on_loop_devices_and_flagged_on_disks() {
-    let image = super::disk("loop0", 147_456, "147 kB", "", "", "", false, true, false);
-    let stuck = super::disk(
+    let image = super::example::disk("loop0", 147_456, "147 kB", "", "", "", false, true, false);
+    let stuck = super::example::disk(
         "sda",
         1 << 30,
         "1.1 GB",
