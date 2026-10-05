@@ -53,6 +53,7 @@ impl ColumnState {
         }
     }
     /// A debug visual-check override that never changes the saved preference.
+    #[cfg(any(debug_assertions, feature = "stress"))]
     pub(in crate::desktop) fn preview(&mut self, collapsed: bool) {
         self.collapsed = collapsed;
         self.narrow_override = Some(collapsed);

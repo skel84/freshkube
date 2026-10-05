@@ -115,6 +115,7 @@ pub(crate) const CLUSTER: [(&str, &str); 3] = [
 pub(crate) const DEFAULT_KIND: &str = "pods";
 
 /// The navigation's own copy of a resource key, if it offers that kind.
+#[cfg(any(debug_assertions, feature = "stress", test))]
 pub(crate) fn known(key: &str) -> Option<&'static str> {
     if let Some((_, key)) = CLUSTER.iter().find(|(_, item)| *item == key) {
         return Some(*key);
