@@ -26,6 +26,11 @@ pub const PAGE_GAP: f32 = 14.;
 pub const PANE_PADDING: f32 = 12.;
 /// Above and below that content.
 pub const PANE_PADDING_Y: f32 = 10.;
+/// A window shorter than this, in dp, scrolls a table page's frame: see
+/// [`is_short`].
+pub const SHORT_HEIGHT: f32 = 620.;
+/// The least height a table page's list keeps while its frame scrolls.
+pub const SHORT_LIST_HEIGHT: f32 = 180.;
 /// A toolbar row's height: the header's row, and its secondary row.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
 /// Below this width, the header's own (the page's inside its insets), the
@@ -37,9 +42,18 @@ const FILTER_WIDTH: f32 = 150.;
 
 /// A page's frame, without margins: its header, any banners and its panes
 /// stack edge to edge, and the caller puts what isn't a pane, such as the
-/// header, in an [`inset`]. The caller adds scrolling.
+/// header, in an [`inset`]. The caller adds scrolling: a table page scrolls
+/// its frame when the window [`is_short`], and its list keeps at least
+/// [`SHORT_LIST_HEIGHT`].
 pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex().id(id).test_support().size_full().min_h_0()
+}
+
+/// Whether the window is too short for a table page's header and a usable
+/// list together, so the page scrolls its frame instead: under
+/// [`SHORT_HEIGHT`].
+pub fn is_short(window: &Window) -> bool {
+    window.viewport_size().height < crate::ui::dp_px(SHORT_HEIGHT, window)
 }
 
 /// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above
