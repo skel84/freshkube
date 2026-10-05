@@ -271,6 +271,7 @@ fn row(id: &str, name: &str, tone: Tone, since: Option<DateTime<Utc>>, node: &st
         kind: "Pod",
         reason: "Pending".into(),
         tone,
+        group: AttentionGroup::Warning,
         open: Destination::Page(Page::Resources),
         logs: None,
         node: Some(node.into()),
@@ -330,4 +331,60 @@ fn node_groups_keep_their_own_limit_before_the_global_display_limit() {
     assert_eq!(node_a[49].id, "a-49");
     assert_eq!(node_b[0].id, "b-00");
     assert_eq!(node_b[49].id, "b-49");
+}
+
+#[test]
+fn groups_put_failing_then_warnings_then_last_known_evidence() {
+    let attention = finish(vec![
+        row(
+            "stale",
+            "a",
+            Tone::Unknown,
+            Some(now() - chrono::Duration::days(2)),
+            "n",
+        ),
+        row("warn", "b", Tone::Warn, None, "n"),
+        row("crit", "c", Tone::Crit, None, "m"),
+        row("recent", "d", Tone::Warn, Some(now()), "n"),
+    ]);
+    let ids: Vec<_> = attention.rows.iter().map(|row| row.id.as_ref()).collect();
+    // Older last-known evidence no longer outranks a current warning.
+    assert_eq!(ids, ["crit", "recent", "warn", "stale"]);
+    let groups: Vec<_> = attention.rows.iter().map(|row| row.group).collect();
+    assert_eq!(
+        groups,
+        [
+            AttentionGroup::Failing,
+            AttentionGroup::Warning,
+            AttentionGroup::Warning,
+            AttentionGroup::Unknown
+        ]
+    );
+    assert_eq!(attention.details, ["1 problem", "2 problems", "1 problem"]);
+    assert_eq!(
+        attention.node_details["n"],
+        ["0 problems", "2 problems", "1 problem"]
+    );
+    assert_eq!(attention.node_details["m"][0], "1 problem");
+}
+
+#[test]
+fn group_counts_include_rows_past_the_cap() {
+    let mut rows = Vec::new();
+    for ix in 0..60 {
+        rows.push(row(&format!("crit-{ix:02}"), "a", Tone::Crit, None, "n"));
+    }
+    rows.push(row("stale", "b", Tone::Unknown, None, "n"));
+    let attention = finish(rows);
+    assert_eq!(attention.rows.len(), 50);
+    assert!(
+        attention
+            .rows
+            .iter()
+            .all(|row| row.group == AttentionGroup::Failing)
+    );
+    assert_eq!(
+        attention.details,
+        ["60 problems", "0 problems", "1 problem"]
+    );
 }

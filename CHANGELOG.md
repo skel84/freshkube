@@ -19,6 +19,8 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 - **Nodes shows CPU and memory with Pods’ request/use meters** against node allocatable, retains stale metrics, and falls back to Talos memory when metrics-server is unavailable; load averages are an optional column.
 - **System services looks like Pods:** the same header, table and row heights, with comfortable and compact rows. Services group by health while any is unwell; the counts beside the filter (unhealthy, not reported, healthy) filter the list, and a refresh keeps your filter and place.
 - Grafana text panels show readable text instead of raw Markdown or HTML: images are dropped, links keep their label.
+- **Overview looks like the other pages:** the shared page frame and header, with the context as the title and the connection state, version drift, node list source and what the cluster runs on the line below. Needs attention is a card of compact rows grouped as Failing, Warning and Unknown, each with its glyph, kind, name, reason (in full in the tooltip) and actions; a node's pane shows its own rows the same way. Showing 8 of N and Show all replace the button; past fifty rows the bar says how many are left out. Rows from a stale source now come after current warnings, so the fifty kept are the current ones first.
+- **Quieter column headers:** tables label their columns in sentence case (Name, Ready, Health check), not uppercase.
 - **Wide tables keep their bearings:** scrolled sideways, a table's group rows keep their label in view, and Pods, every other Resources kind and System services keep each row's status and name at the left edge.
 
 ## 0.5.0 (2026-10-04)
