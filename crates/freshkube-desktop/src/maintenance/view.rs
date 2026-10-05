@@ -2,8 +2,6 @@
 //! panels, the progress log and the status bar.
 use super::*;
 
-const MAX_DISKS: usize = 256;
-
 fn phase_label(phase: &BootstrapPhase) -> (&'static str, Tone) {
     match phase {
         BootstrapPhase::CollectingInsecureData => ("Collecting node data", Tone::Accent),
@@ -294,11 +292,8 @@ impl MaintenanceView {
     fn snapshot_panel(
         &self,
         snapshot: &InsecureMaintenanceSnapshot,
-        session: &BootstrapSession,
-        busy: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let p = palette(cx);
         let version = match &snapshot.version {
             SourceAvailability::Available(version) => (
                 format!(
@@ -338,11 +333,6 @@ impl MaintenanceView {
                 (format!("Unknown · {reason}"), Tone::Unknown)
             }
         };
-        let selecting = session.phase == BootstrapPhase::SelectingInstallTarget;
-        let selected = session
-            .install_target
-            .as_ref()
-            .map(|target| target.device_path().to_owned());
         let fact = |id: &'static str, label: &'static str, (text, tone): (String, Tone)| {
             div()
                 .id(id)
@@ -368,64 +358,6 @@ impl MaintenanceView {
                     cx,
                 ))
         };
-        let disks = snapshot
-            .disks
-            .iter()
-            .take(MAX_DISKS)
-            .enumerate()
-            .map(|(ix, disk)| {
-                let usable = !disk.readonly && !disk.cdrom;
-                let chosen = selected.as_deref() == Some(disk.dev_path.as_str());
-                let path = disk.dev_path.clone();
-                let detail = format!(
-                    "{} · {} · {}",
-                    disk.size_pretty,
-                    disk.model.as_deref().unwrap_or("model unknown"),
-                    disk.serial.as_deref().unwrap_or("serial unknown"),
-                );
-                h_flex()
-                    .id(("maint-disk", ix))
-                    .test_support()
-                    .role(Role::Group)
-                    .aria_label(format!("Disk {}, {detail}", disk.dev_path))
-                    .gap_3()
-                    .px_3()
-                    .py_2()
-                    .border_t_1()
-                    .border_color(p.line)
-                    .items_center()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(mono(format!("{} / {}", disk.dev_path, disk.id)))
-                            .child(div().text_size(dp(12.)).text_color(p.muted).child(detail)),
-                    )
-                    .when(disk.readonly, |row| {
-                        row.child(ui::tag(Tone::Warn, None, "Read-only", cx))
-                    })
-                    .when(disk.cdrom, |row| {
-                        row.child(ui::tag(Tone::Warn, None, "Optical", cx))
-                    })
-                    .when(chosen, |row| {
-                        row.child(ui::tag(
-                            Tone::Accent,
-                            Some(IconName::CircleCheck),
-                            "Selected",
-                            cx,
-                        ))
-                    })
-                    .child(
-                        Button::new(("maint-disk-select", ix))
-                            .outline()
-                            .small()
-                            .label("Select install disk")
-                            .disabled(busy || !selecting || !usable)
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                view.select_disk(path.clone(), cx)
-                            })),
-                    )
-            });
         panel(cx)
             .id("maint-snapshot")
             .test_support()
@@ -436,21 +368,6 @@ impl MaintenanceView {
             .child(heading("Talos hardware and install disks"))
             .child(fact("maint-version", "Version", version))
             .child(fact("maint-volumes", "Volumes", volumes))
-            .child(if snapshot.disks.is_empty() {
-                div()
-                    .text_size(dp(12.5))
-                    .text_color(p.muted)
-                    .child("Talos reported no disks.")
-            } else {
-                div()
-            })
-            .child(
-                v_flex()
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(p.line)
-                    .children(disks),
-            )
     }
 
     fn readiness_panel(&self, evidence: &BootstrapReadinessEvidence, cx: &App) -> impl IntoElement {
@@ -494,7 +411,7 @@ impl MaintenanceView {
             }))
     }
 
-    fn workflow(&self, cx: &mut Context<Self>) -> Div {
+    fn workflow(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
         let busy = self.work.is_some() || Self::slot_busy(cx).is_some();
         let Some(session) = &self.session else {
@@ -545,7 +462,9 @@ impl MaintenanceView {
                 }),
         );
         if let Some(snapshot) = &session.insecure_snapshot {
-            column = column.child(self.snapshot_panel(snapshot, session, busy, cx));
+            column = column
+                .child(self.snapshot_panel(snapshot, cx))
+                .child(self.disks_panel(window, cx));
         }
         if let Some(target) = &session.install_target {
             column = column.child(
@@ -778,11 +697,11 @@ impl MaintenanceView {
 }
 
 impl Render for MaintenanceView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let error = self.error.clone();
         let form = self.form(cx);
-        let workflow = self.workflow(cx);
+        let workflow = self.workflow(window, cx);
         let progress = self.progress_panel(cx);
         v_flex()
             .size_full()

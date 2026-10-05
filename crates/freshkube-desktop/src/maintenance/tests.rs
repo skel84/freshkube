@@ -250,15 +250,29 @@ fn mount_with(
         &mut gpui_kit::Context<MaintenanceView>,
     ) -> MaintenanceView,
 ) -> Mounted {
+    mount_at(cx, 1400., create)
+}
+
+/// Mounts in a window `width` pixels wide.
+fn mount_at(
+    cx: &mut TestAppContext,
+    width: f32,
+    create: impl FnOnce(
+        tokio::runtime::Handle,
+        &mut gpui_kit::Window,
+        &mut gpui_kit::Context<MaintenanceView>,
+    ) -> MaintenanceView,
+) -> Mounted {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
+        crate::text_size::install(None, cx);
         Theme::change(ThemeMode::Light, None, cx);
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut view = None;
-    let window = cx.open_window(size(px(1400.), px(2600.)), |window, cx| {
+    let window = cx.open_window(size(px(width), px(2600.)), |window, cx| {
         let created = cx.new(|cx| create(runtime.handle().clone(), window, cx));
         view = Some(created.clone());
         Root::new(created, window, cx)
@@ -851,4 +865,103 @@ async fn changing_the_form_after_connecting_is_not_possible(cx: &mut TestAppCont
     });
     assert!(target.is_none());
     let _ = InstallTarget::select(&World::disks(), "/dev/sda").unwrap();
+}
+
+/// The install disks are the shared table at both text sizes. A row click
+/// chooses nothing; only a disk's button does, and the chosen disk is then
+/// the table's selected row.
+#[gpui_kit::test]
+async fn the_install_disks_are_the_shared_table_and_only_a_button_chooses(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{Table, assert_table};
+    use freshkube_ui::table::TableSource;
+    use gpui_kit::point;
+    let world = World::new("disk-table");
+    let (_runtime, handle, view) = mount(cx, &world, NODE);
+    inspect(cx, handle, &view, &world).await;
+    let table = Table {
+        table: Some("maint-disks-table-scroll"),
+        list: "maint-disks-list",
+    };
+    for text_size in [13., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            window.render_frame(cx);
+            let rows = assert_table(window, cx, &table);
+            assert!(rows.header.is_some(), "{text_size}: {rows:#?}");
+        })
+        .unwrap();
+    }
+    // The row's far end, its ID: away from the button.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let row = window.find(("maint-disk", 0usize)).bounds();
+        window.click_at(
+            ("maint-disk", 0usize),
+            point(row.size.width - px(12.), row.size.height / 2.),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        phase(cx, &view),
+        Some(BootstrapPhase::SelectingInstallTarget)
+    );
+    cx.update(|cx| assert!(view.read(cx).selected_key().is_none()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("maint-disk-select", 0usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(phase(cx, &view), Some(BootstrapPhase::Configuring));
+    cx.update(|cx| {
+        let view = view.read(cx);
+        let selected = view.selected_key().expect("the chosen disk is selected");
+        assert_eq!(selected.as_ref(), "/dev/sda");
+        assert_eq!(view.line_of(selected), Some(0));
+    });
+}
+
+/// When the disk table is wider than its card, as in a 760-wide window at
+/// 16 px text, it scrolls sideways under the device, its flags and its
+/// button, which stay in view. (At 20 px they would take more than the
+/// shared table's two thirds, and scroll with the rest.)
+#[gpui_kit::test]
+async fn a_disk_button_stays_in_view_when_the_table_scrolls(cx: &mut TestAppContext) {
+    use freshkube_ui::table::TableSource;
+    use gpui_kit::{ScrollDelta, point};
+    let world = World::new("disk-scroll");
+    let (endpoint, runner) = (NODE.to_owned(), world.runner());
+    let (_runtime, handle, view) = mount_at(cx, 760., move |runtime, window, cx| {
+        MaintenanceView::with_runner(endpoint, runtime, runner, window, cx)
+    });
+    inspect(cx, handle, &view, &world).await;
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(16., cx);
+        window.render_frame(cx);
+        let before = window.find(("maint-disk-select", 0usize)).bounds();
+        window.scroll(
+            "maint-disks-table-scroll",
+            ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let table = window.find("maint-disks-table-scroll").bounds();
+        let columns = crate::ui::dp_px(TableSource::width(view.read(cx)), window);
+        assert!(
+            columns > table.size.width,
+            "the columns ({columns:?}) fit the table {table:?}: nothing scrolled"
+        );
+        let button = window.find(("maint-disk-select", 0usize)).bounds();
+        assert!(
+            (button.left() - before.left()).abs() < px(0.5),
+            "the button moved from {before:?} to {button:?}"
+        );
+        assert!(
+            button.left() >= table.left() && button.right() <= table.right(),
+            "the button {button:?} is outside its table {table:?}"
+        );
+    })
+    .unwrap();
 }
