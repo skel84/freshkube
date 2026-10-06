@@ -32,7 +32,7 @@ impl Pilot {
         // The node's screens lay out by the inspector's width beside the
         // table; stacked or expanded, it has the page's.
         crate::screens::set_node_pane_width(if beside && !expanded {
-            self.node_workspace.split.width()
+            self.node_workspace.split.live_width(cx)
         } else {
             f32::MAX
         });

@@ -2426,3 +2426,74 @@ fn node_events_and_yaml_draw_without_a_card(cx: &mut TestAppContext) {
         .unwrap();
     }
 }
+
+/// Kit rescales the inspector when the text size or the window changes and
+/// says nothing, so the node's screens lay out by the width it has, not the
+/// width it was last dragged to.
+#[gpui_kit::test]
+fn the_node_screens_follow_the_inspector_after_a_text_size_change(cx: &mut TestAppContext) {
+    use crate::ui::dp_px;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open_first_node(window, cx);
+        let state = pilot.read(cx).node_workspace.split.beside_state().clone();
+        state.update(cx, |state, cx| {
+            state.resize_panel(1, dp_px(800., window), window, cx)
+        });
+        let check = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, what: &str| {
+            for _ in 0..4 {
+                window.render_frame(cx);
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            let pane = window.find("node-inspector").bounds().size.width / dp_px(1., window);
+            let seen =
+                crate::screens::embedded_width(window) + freshkube_ui::page::PANE_PADDING * 2.;
+            assert!(
+                (pane - seen).abs() <= 1.,
+                "{what}: the inspector is {pane} dp, its screens lay out by {seen}"
+            );
+        };
+        check(window, cx, "after the drag");
+        crate::text_size::set(20., cx);
+        check(window, cx, "at 20 px");
+        crate::text_size::set(13., cx);
+        check(window, cx, "back at 13 px");
+    })
+    .unwrap();
+}
+
+/// Expanded, stepping to another node keeps the frame at the top, so the
+/// node's name and Collapse stay in view in a short window.
+#[gpui_kit::test]
+fn stepping_nodes_while_expanded_keeps_the_heading_in_view(cx: &mut TestAppContext) {
+    use gpui_kit::px;
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        let key = pilot.read(cx).node_workspace.rows[0].key.clone();
+        pilot.update(cx, |pilot, cx| pilot.open_node(key, window, cx));
+        window.render_frame(cx);
+        window.click("node-expand", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.expanded);
+        let frame = pilot.read(cx).node_workspace.page_scroll.clone();
+        let first = pilot.read(cx).node_workspace.selected.clone();
+        pilot.update(cx, |pilot, cx| pilot.step_joined_node(1, window, cx));
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+        assert_ne!(pilot.read(cx).node_workspace.selected, first, "no step");
+        assert_eq!(frame.offset().y, px(0.));
+        let page = window.find("nodes-page").bounds();
+        let title = window.find("node-pane-title").bounds();
+        assert!(title.top() >= page.top(), "{title:?} above {page:?}");
+        assert!(window.try_find("node-expand").is_some());
+    })
+    .unwrap();
+}

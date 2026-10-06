@@ -391,9 +391,23 @@ impl InspectorSplit {
         self.heights.short_height(beside, open)
     }
 
-    /// The inspector's width beside the table, in dp.
+    /// The inspector's width beside the table, in dp, as the user last
+    /// left it: what it starts at and what is saved.
     pub fn width(&self) -> f32 {
         self.width.get()
+    }
+
+    /// The inspector's width beside the table as Kit last laid it out, in
+    /// dp. Kit rescales both panels when the window or the text size
+    /// changes and says nothing, so [`Self::width`], which changes only
+    /// when a drag ends, can be stale; anything that lays out by the
+    /// inspector's width reads this. [`Self::width`] until the split
+    /// first lays out.
+    pub fn live_width(&self, cx: &App) -> f32 {
+        match self.beside.read(cx).sizes().as_slice() {
+            [_, size] => f32::from(*size) * BASE_TEXT / crate::text_size::current(cx),
+            _ => self.width(),
+        }
     }
 
     /// Kit's state for the split beside the table, for tests that resize it.

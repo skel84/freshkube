@@ -373,8 +373,15 @@ impl Pilot {
             }
         }
         self.node_workspace.open = true;
-        // A short page scrolls its frame down to the inspector.
-        self.node_workspace.page_scroll.scroll_to_bottom();
+        // A short page scrolls its frame down to the inspector, or to the
+        // top when the inspector fills it, so its heading stays in view.
+        if self.node_workspace.expanded {
+            self.node_workspace
+                .page_scroll
+                .set_offset(point(px(0.), px(0.)));
+        } else {
+            self.node_workspace.page_scroll.scroll_to_bottom();
+        }
         self.node_workspace
             .logs_scroll
             .set_offset(point(px(0.), px(0.)));
@@ -608,15 +615,24 @@ fn reveal_when_settled(
     window: &Window,
 ) {
     window.on_next_frame(move |window, cx| {
-        let height = view
+        // Closed or expanded, there is no table to reveal it in.
+        let Some(height) = view
             .update(cx, |pilot, cx| {
+                if !pilot.node_workspace.open || pilot.node_workspace.expanded {
+                    return None;
+                }
                 freshkube_ui::table::reveal(pilot, ScrollStrategy::Nearest);
                 cx.notify();
-                (pilot.node_workspace.table.scroll.0.borrow().last_item_size)
-                    .map(|size| size.item.height)
+                Some(
+                    (pilot.node_workspace.table.scroll.0.borrow().last_item_size)
+                        .map(|size| size.item.height),
+                )
             })
             .ok()
-            .flatten();
+            .flatten()
+        else {
+            return;
+        };
         let settled = changed && height == last;
         if frames > 1 && !settled {
             let changed = changed || (last.is_some() && height != last);
