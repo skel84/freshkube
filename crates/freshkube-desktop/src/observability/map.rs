@@ -1,5 +1,5 @@
 use super::*;
-use freshkube_graph::layout::{ARROW, NODE_H, NODE_W, Node, curve, layered};
+use freshkube_graph::layout::{NODE_H, NODE_W, Node, Route, route};
 const NODES_PER_PAGE: usize = 24;
 const EDGE_MARKERS: usize = 24;
 
@@ -7,9 +7,9 @@ const EDGE_MARKERS: usize = 24;
 pub(super) struct MapDisplay {
     nodes: std::rc::Rc<Vec<MapNode>>,
     connections: std::rc::Rc<Vec<Connection>>,
+    /// Each drawn connection's line around the boxes, in `connections`' order.
+    routes: std::rc::Rc<Vec<Route>>,
     markers: Vec<usize>,
-    /// Each drawn connection's midpoint, where its marker sits.
-    midpoints: Vec<(f32, f32)>,
     width: f32,
     height: f32,
     summary: String,
@@ -66,33 +66,25 @@ impl ObservabilityPage {
             .collect();
         // Lay out by every connection between these nodes, not only the
         // filtered ones, so the problem filter doesn't move the boxes.
+        let mut routed = BTreeMap::new();
         let links: Vec<_> = self
             .connections
             .iter()
             .filter_map(|edge| Some((*positions.get(&edge.id.0)?, *positions.get(&edge.id.1)?)))
-            .filter(|(from, to)| from != to)
+            .filter(|&link| routed.insert(link, routed.len()).is_none())
             .collect();
-        let (width, height) = layered(&mut nodes, &links);
-        let connections: Vec<_> = self
+        let layout = route(&mut nodes, &links);
+        let (connections, routes): (Vec<_>, Vec<_>) = self
             .visible_links
             .iter()
             .filter_map(|&ix| {
                 let mut edge = self.connections[ix].clone();
                 edge.from = *positions.get(&edge.id.0)?;
                 edge.to = *positions.get(&edge.id.1)?;
-                Some(edge)
+                let route = layout.routes[routed[&(edge.from, edge.to)]].clone();
+                Some((edge, route))
             })
-            .collect();
-        let midpoints = connections
-            .iter()
-            .map(|edge| {
-                let [a, b, c, d] = curve(&nodes[edge.from], &nodes[edge.to]);
-                (
-                    (a.0 + 3. * b.0 + 3. * c.0 + d.0) / 8.,
-                    (a.1 + 3. * b.1 + 3. * c.1 + d.1) / 8.,
-                )
-            })
-            .collect();
+            .unzip();
         let mut markers: Vec<_> = (0..connections.len().min(EDGE_MARKERS)).collect();
         if let Some(ix) = connections
             .iter()
@@ -117,10 +109,10 @@ impl ObservabilityPage {
             ),
             nodes: nodes.into(),
             connections: connections.into(),
+            routes: routes.into(),
             markers,
-            midpoints,
-            width,
-            height,
+            width: layout.width,
+            height: layout.height,
             pages,
         };
     }
@@ -170,8 +162,8 @@ impl ObservabilityPage {
     }
     fn map_graph(&self, cx: &Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let nodes = self.map_display.nodes.clone();
         let connections = self.map_display.connections.clone();
+        let routes = self.map_display.routes.clone();
         let selected = self.selected_link.clone();
         let edges = canvas(
             |_, _, _| {},
@@ -181,17 +173,11 @@ impl ObservabilityPage {
                 let at =
                     |(x, y): (f32, f32)| point(bounds.left() + unit * x, bounds.top() + unit * y);
                 // The selected connection is drawn last, over the others.
-                let order = connections
-                    .iter()
-                    .filter(|e| selected.as_ref() != Some(&e.id))
-                    .chain(
-                        connections
-                            .iter()
-                            .filter(|e| selected.as_ref() == Some(&e.id)),
-                    );
-                for edge in order {
-                    let (from, to) = (&nodes[edge.from], &nodes[edge.to]);
-                    let [a, b, c, d] = curve(from, to);
+                let drawn = || connections.iter().zip(routes.iter());
+                let order = drawn()
+                    .filter(|(e, _)| selected.as_ref() != Some(&e.id))
+                    .chain(drawn().filter(|(e, _)| selected.as_ref() == Some(&e.id)));
+                for (edge, route) in order {
                     let color = if selected.as_ref() == Some(&edge.id) {
                         p.accent
                     } else {
@@ -207,16 +193,18 @@ impl ObservabilityPage {
                         let dash = unit * 5.;
                         path = path.dash_array(&[dash, dash * 0.6]);
                     }
-                    path.move_to(at(a));
-                    path.cubic_bezier_to(at(d), at(b), at(c));
+                    path.move_to(at(route.segments[0][0]));
+                    for &[_, b, c, d] in &route.segments {
+                        path.cubic_bezier_to(at(d), at(b), at(c));
+                    }
                     if let Ok(path) = path.build() {
                         window.paint_path(path, color);
                     }
-                    let tip = (d.0 + ARROW, d.1);
+                    let [tip, left, right] = route.head();
                     let mut head = PathBuilder::fill();
                     head.move_to(at(tip));
-                    head.line_to(at((d.0, d.1 - ARROW * 0.6)));
-                    head.line_to(at((d.0, d.1 + ARROW * 0.6)));
+                    head.line_to(at(left));
+                    head.line_to(at(right));
                     head.close();
                     if let Ok(head) = head.build() {
                         window.paint_path(head, color);
@@ -236,7 +224,7 @@ impl ObservabilityPage {
             .child(edges)
             .children(self.map_display.markers.iter().map(|&ix| {
                 let edge = &self.map_display.connections[ix];
-                let (x, y) = self.map_display.midpoints[ix];
+                let (x, y) = self.map_display.routes[ix].mid;
                 let id = edge.id.clone();
                 Button::new(edge.element_id.clone())
                     .ghost()
@@ -518,6 +506,37 @@ mod tests {
             });
         })
         .unwrap();
+    }
+    #[gpui_kit::test]
+    fn no_connection_runs_through_a_box_on_any_page(cx: &mut TestAppContext) {
+        use freshkube_graph::layout::{NODE_H, NODE_W, point_at};
+        let (_runtime, _handle, page) = mount(cx, true);
+        cx.update(|cx| {
+            page.update(cx, |page, _| {
+                (page.nodes, page.connections) = projection::map(&large_map());
+                page.prepare_map();
+                for number in 0..page.map_display.pages {
+                    page.map_page = number;
+                    page.prepare_map();
+                    let display = &page.map_display;
+                    assert_eq!(display.routes.len(), display.connections.len());
+                    for (edge, route) in display.connections.iter().zip(display.routes.iter()) {
+                        for segment in &route.segments {
+                            for step in 0..=16 {
+                                let (x, y) = point_at(segment, step as f32 / 16.);
+                                let inside = display.nodes.iter().any(|node| {
+                                    x > node.x + 0.5
+                                        && x < node.x + NODE_W - 0.5
+                                        && y > node.y + 0.5
+                                        && y < node.y + NODE_H - 0.5
+                                });
+                                assert!(!inside, "page {number}: {:?} at {x}, {y}", edge.id);
+                            }
+                        }
+                    }
+                }
+            })
+        });
     }
     #[gpui_kit::test]
     fn narrow_map_scrolls_inside_its_card_at_large_text(cx: &mut TestAppContext) {

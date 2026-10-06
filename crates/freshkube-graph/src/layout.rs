@@ -1,5 +1,5 @@
 //! Places a graph's boxes in columns, callers left of what they call, and
-//! draws each connection as a curve between them. Positions are in dp at
+//! routes each connection around them. Positions are in dp at
 //! the default text size; nothing here knows GPUI or where the graph came
 //! from.
 
@@ -17,95 +17,6 @@ pub const MAX_ROWS: usize = 8;
 pub trait Node {
     fn position(&self) -> (f32, f32);
     fn set_position(&mut self, x: f32, y: f32);
-}
-
-/// Places callers left of what they call: each node's column is the length
-/// of the longest chain of callers above it, tall columns wrap, and each
-/// column is ordered by where its callers sit to keep crossings down. Nodes
-/// with no connection share a last column. Returns the map's size in dp.
-pub fn layered<N: Node>(nodes: &mut [N], links: &[(usize, usize)]) -> (f32, f32) {
-    let n = nodes.len();
-    if n == 0 {
-        return (0., 0.);
-    }
-    let mut layer = vec![0usize; n];
-    // Longest path by relaxation; a cycle stops changing after n passes.
-    for _ in 0..n {
-        let mut changed = false;
-        for &(from, to) in links {
-            if layer[to] < layer[from] + 1 && layer[from] + 1 < n {
-                layer[to] = layer[from] + 1;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let linked: Vec<bool> = (0..n)
-        .map(|ix| links.iter().any(|&(a, b)| a == ix || b == ix))
-        .collect();
-    let last = layer
-        .iter()
-        .zip(&linked)
-        .filter(|(_, l)| **l)
-        .map(|(l, _)| *l)
-        .max();
-    let mut columns: Vec<Vec<usize>> = vec![vec![]; last.map_or(0, |l| l + 1)];
-    let mut loose = vec![];
-    for ix in 0..n {
-        if linked[ix] {
-            columns[layer[ix]].push(ix);
-        } else {
-            loose.push(ix);
-        }
-    }
-    let mut row = vec![0f32; n];
-    for column in &mut columns {
-        let key = |ix: usize| {
-            let callers: Vec<f32> = links
-                .iter()
-                .filter(|&&(from, to)| to == ix && layer[from] < layer[ix])
-                .map(|&(from, _)| row[from])
-                .collect();
-            if callers.is_empty() {
-                f32::MAX
-            } else {
-                callers.iter().sum::<f32>() / callers.len() as f32
-            }
-        };
-        column.sort_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)));
-        for (ix, &node) in column.iter().enumerate() {
-            row[node] = ix as f32;
-        }
-    }
-    if !loose.is_empty() {
-        columns.push(loose);
-    }
-    let (mut x, mut rows) = (0, 0);
-    for column in columns {
-        for chunk in column.chunks(MAX_ROWS) {
-            for (r, &ix) in chunk.iter().enumerate() {
-                nodes[ix].set_position(PAD + x as f32 * COLUMN, PAD + r as f32 * ROW);
-            }
-            rows = rows.max(chunk.len());
-            x += 1;
-        }
-    }
-    (
-        2. * PAD + x as f32 * COLUMN - (COLUMN - NODE_W),
-        2. * PAD + rows as f32 * ROW - (ROW - NODE_H),
-    )
-}
-
-/// A connection's curve in dp: from the caller's right edge to just short of
-/// the callee's left edge, where the arrowhead takes over.
-pub fn curve(from: &impl Node, to: &impl Node) -> [(f32, f32); 4] {
-    let ((from_x, from_y), (to_x, to_y)) = (from.position(), to.position());
-    let a = (from_x + NODE_W, from_y + NODE_H / 2.);
-    let d = (to_x - ARROW, to_y + NODE_H / 2.);
-    let pull = ((d.0 - a.0).abs() / 2.).max(48.);
-    [a, (a.0 + pull, a.1), (d.0 - pull, d.1), d]
 }
 
 /// Space between two lines that share a gutter.
@@ -138,12 +49,6 @@ impl Route {
         Self { segments, tip, mid }
     }
 
-    /// A [`curve`] as a route, so the two can be drawn and compared alike.
-    pub fn from_curve(curve: [(f32, f32); 4]) -> Self {
-        let end = curve[3];
-        Self::new(vec![curve], (end.0 + ARROW, end.1))
-    }
-
     /// The arrowhead: its tip, then the two corners of its base.
     pub fn head(&self) -> [(f32, f32); 3] {
         let end = self.segments.last().map_or(self.tip, |segment| segment[3]);
@@ -154,9 +59,11 @@ impl Route {
     }
 }
 
-/// Places the boxes as [`layered`] does and routes every call around them.
+/// Places callers left of what they call and routes every call around the
+/// boxes. Returns the map's size and each call's route.
 ///
-/// A call that closes a cycle is turned back for layering, so columns only
+/// Each box's column is the length of the longest chain of callers above
+/// it. Boxes with no call share the last columns. A call that closes a cycle is turned back for layering, so columns only
 /// see forward calls. Tall columns wrap into ordinary columns. A call that
 /// spans several columns crosses each one through the gutter between two
 /// boxes, in a lane of its own; a crowded gutter grows by what its lanes
@@ -204,7 +111,7 @@ pub fn route<N: Node>(nodes: &mut [N], links: &[(usize, usize)]) -> Layout {
             }
         })
         .collect();
-    // Boxes with no calls share the last columns, as in `layered`.
+    // Boxes with no calls share the last columns.
     let mut rows = 0;
     for (c, chunk) in grid.loose.chunks(MAX_ROWS).enumerate() {
         for (r, &ix) in chunk.iter().enumerate() {
@@ -316,7 +223,7 @@ struct Grid {
 }
 
 impl Grid {
-    /// Boxes in columns, ordered as [`layered`] orders them, and a waypoint
+    /// Boxes in layers, tall layers wrapped into columns, and a waypoint
     /// in every column a call crosses.
     fn columns(
         n: usize,
@@ -653,9 +560,8 @@ mod tests {
     }
 
     fn place(count: usize, links: &[(usize, usize)]) -> (Vec<Box>, (f32, f32)) {
-        let mut nodes = vec![Box::default(); count];
-        let size = layered(&mut nodes, links);
-        (nodes, size)
+        let (nodes, layout) = routed(count, links);
+        (nodes, (layout.width, layout.height))
     }
 
     /// The column a box sits in.
@@ -725,17 +631,6 @@ mod tests {
         for (i, a) in nodes.iter().enumerate() {
             assert!(nodes[i + 1..].iter().all(|b| a != b));
         }
-    }
-
-    #[test]
-    fn a_curve_runs_from_the_right_edge_to_the_arrowhead() {
-        let (from, to) = (Box(PAD, PAD), Box(PAD + COLUMN, PAD + ROW));
-        let [a, b, c, d] = curve(&from, &to);
-        assert_eq!(a, (PAD + NODE_W, PAD + NODE_H / 2.));
-        assert_eq!(d, (PAD + COLUMN - ARROW, PAD + ROW + NODE_H / 2.));
-        // The handles leave and arrive level, at least 48 dp out.
-        assert_eq!((b.1, c.1), (a.1, d.1));
-        assert!(b.0 - a.0 >= 48. && d.0 - c.0 >= 48.);
     }
 
     /// A named graph: its box count and its links between box indices.
@@ -955,26 +850,16 @@ mod tests {
     }
 
     #[test]
-    fn routes_cross_less_than_curves_in_a_fan_out() {
+    fn a_fan_out_routes_without_crossings() {
+        // The story's fan-out: 43 crossings, 4 through a box, as curves.
         let links: Vec<_> = (1..=12).map(|to| (0, to)).collect();
-        let (before, _) = place(13, &links);
-        let curves: Vec<_> = links
-            .iter()
-            .map(|&(from, to)| Route::from_curve(curve(&before[from], &before[to])))
-            .collect();
-        let (after, layout) = routed(13, &links);
-        let (old, new) = (crossings(&curves), crossings(&layout.routes));
-        let through = |nodes: &[Box], routes: &[Route]| {
-            routes
+        let (nodes, layout) = routed(13, &links);
+        assert_eq!(crossings(&layout.routes), 0);
+        assert!(
+            layout
+                .routes
                 .iter()
-                .filter(|r| through_a_box(nodes, r).is_some())
-                .count()
-        };
-        eprintln!(
-            "fan-out: curves {old} crossings, {} through a box; routes {new} crossings, {} through a box",
-            through(&before, &curves),
-            through(&after, &layout.routes)
+                .all(|route| through_a_box(&nodes, route).is_none())
         );
-        assert_eq!(new, 0, "{old} → {new}");
     }
 }
