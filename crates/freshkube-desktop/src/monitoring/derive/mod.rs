@@ -26,7 +26,7 @@ use freshkube_core::monitoring::model::{
 use gpui_kit::SharedString;
 
 pub(crate) use cap::{Capped, MOST_SERIES, SeriesCap, picks_series};
-pub(crate) use chart::{Axis, Chart, ChartSeries, LegendMode, LegendRow};
+pub(crate) use chart::{Axis, BarSlot, Chart, ChartSeries, LegendMode, LegendRow};
 pub(crate) use summary::{BarRow, FOLDED_ROWS, RowKey, Stat, TableData, TableRow};
 pub(crate) use ticks::fitting;
 

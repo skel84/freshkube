@@ -374,6 +374,79 @@ fn percent_stacking_fills_to_a_hundred() {
     assert!(chart.series[1].fill > 0.);
 }
 
+fn bar_places(chart: &Chart) -> Vec<(usize, usize)> {
+    chart
+        .series
+        .iter()
+        .map(|s| {
+            let bar = s.bar.expect("a bar series");
+            (bar.index, bar.count)
+        })
+        .collect()
+}
+
+fn bars(defaults: Value, overrides: Value, names: &[&str]) -> Rc<Chart> {
+    let mut spec = json!({
+        "type": "timeseries",
+        "title": "Chart",
+        "targets": [{"refId": "A", "expr": "up"}],
+        "fieldConfig": {"defaults": defaults, "overrides": overrides},
+        "options": {},
+    });
+    spec["fieldConfig"]["defaults"]["custom"]["drawStyle"] = json!("bars");
+    let spec = panel(spec);
+    let series = names.iter().map(|name| series(name, &[1.; 7])).collect();
+    chart_of(&derive(&spec, frame(series), window()))
+}
+
+#[test]
+fn bars_stand_side_by_side_unless_they_stack() {
+    // Side by side, the last series first.
+    let chart = bars(json!({"custom": {}}), json!([]), &["a", "b", "c"]);
+    assert_eq!(bar_places(&chart), [(2, 3), (1, 3), (0, 3)]);
+    assert!(chart.groups.is_empty());
+
+    // Stacked, they share the whole column.
+    let stacked = json!({"custom": {"stacking": {"mode": "normal"}}});
+    let chart = bars(stacked.clone(), json!([]), &["a", "b", "c"]);
+    assert_eq!(bar_places(&chart), [(0, 1), (0, 1), (0, 1)]);
+
+    // One series out of the stack stands beside it.
+    let alone = json!([{
+        "matcher": {"id": "byName", "options": "c"},
+        "properties": [{"id": "custom.stacking", "value": {"mode": "none"}}],
+    }]);
+    let chart = bars(stacked, alone, &["a", "b", "c"]);
+    assert_eq!(bar_places(&chart), [(1, 2), (1, 2), (0, 2)]);
+}
+
+#[test]
+fn lines_that_look_alike_are_one_group_derived_with_the_chart() {
+    let spec = timeseries(json!({}), json!({}));
+    let names: Vec<String> = (0..10).map(|i| format!("pod-{i}")).collect();
+    let chart = chart_of(&derive(
+        &spec,
+        frame(names.iter().map(|name| series(name, &[1.; 7])).collect()),
+        window(),
+    ));
+    assert!(chart.series.iter().all(|s| s.bar.is_none()));
+    let mut members: Vec<usize> = chart.groups.iter().flatten().copied().collect();
+    members.sort_unstable();
+    assert_eq!(members, (0..10).collect::<Vec<_>>(), "{:?}", chart.groups);
+    // Past the sixth series the lines are one grey, so fewer groups than
+    // series; every member draws as its group's first.
+    assert!(chart.groups.len() < 10, "{:?}", chart.groups);
+    for group in &chart.groups {
+        let first = &chart.series[group[0]];
+        for &i in group {
+            assert_eq!(chart.series[i].ink.color(false), first.ink.color(false));
+        }
+    }
+    // The last series' group draws first, so the first series ends on top.
+    assert!(chart.groups[0].contains(&9));
+    assert!(chart.groups.last().unwrap().contains(&0));
+}
+
 #[test]
 fn threshold_lines_carry_their_meaning_not_their_colour() {
     let spec = timeseries(
