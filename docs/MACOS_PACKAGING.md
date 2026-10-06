@@ -82,8 +82,10 @@ runs on native `ubuntu-latest` and `windows-latest` runners. It uses the same
 application/docs filter and ready-PR, `main` push and manual triggers, plus a
 weekly main run on Monday at 04:23 UTC. Scheduled and manual runs always check,
 even without an application change. Each job runs
-`cargo check --workspace --all-targets --locked`, strict workspace Clippy,
-and `cargo test -p freshkube-terminal --lib keyboard --locked`. The keyboard
+`cargo check --workspace --all-targets --locked` and strict workspace Clippy.
+Linux then runs the whole test suite, `cargo test --workspace --locked`,
+headless UI tests included: GPUI's test platform needs no display. Windows runs
+`cargo test -p freshkube-terminal --lib keyboard --locked`. The keyboard
 tests drive the real terminal view: Ctrl-C and Ctrl-V reach shell output, while
 Ctrl-Shift-C/V copy and paste and Ctrl-Shift-Q returns focus on Linux and
 Windows. The macOS workspace tests exercise the unchanged Command shortcuts.
@@ -93,9 +95,9 @@ release bundles. A red native run blocks the lead's approval, but it is not a
 required merge-button check; branch protection remains unchanged. Both install
 protoc; Linux also installs the pinned GPUI Kit version's X11, Wayland, font,
 WebKit and Vulkan prerequisites. A green run establishes
-compilation, linting and the focused headless keyboard tests only: the full
-Linux/Windows test suites, running-app checks, credential stores and packaging
-remain separate work. The first uncached main run was green (Linux 16m23s,
+compilation, linting and the headless tests: the whole suite on Linux, the
+keyboard tests on Windows. The Windows test suite, running-app checks,
+credential stores and packaging remain separate work. The first uncached main run was green (Linux 16m23s,
 Windows 32m42s); Linux becoming required will be reconsidered if its warm
 runtime approaches macOS's.
 
@@ -110,7 +112,9 @@ after seeding or changing dependencies: all workflows share the 10 GB budget.
 Let GitHub evict older unused entries; do not widen the cache policy if the
 active set would evict the macOS caches. To measure a warm run after main has
 saved the Linux entry, dispatch `gh workflow run platforms.yml --ref main` and
-record restore, check, Clippy and keyboard test times.
+record restore, check, Clippy and test times. The Linux entry also holds the
+test build's dependencies, so after it grows, check that the macOS Tests job
+still restores warm.
 
 Both the checks and bundle jobs install protobuf before building. They generate
 the Talos client in their own Cargo output directory; no checked-in generated

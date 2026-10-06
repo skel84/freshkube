@@ -337,7 +337,7 @@ fn search_marks_matches_steps_through_them_and_escape_backs_out(cx: &mut TestApp
         window.render_frame(cx);
         window.click("detail-overview", cx);
     });
-    step(cx, &|window, cx| window.press("cmd-f", cx));
+    step(cx, &|window, cx| window.press("secondary-f", cx));
     step(cx, &|window, cx| {
         assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
         window.input("CONTAINER", cx);
@@ -398,7 +398,7 @@ fn lines_select_and_copy_and_copy_yaml_takes_the_whole_document(cx: &mut TestApp
             window.find("detail-copy-lines").label(),
             Some("Copy 3 lines")
         );
-        window.press("cmd-c", cx);
+        window.press("secondary-c", cx);
     })
     .unwrap();
     let yaml = pane.read_with(cx, |pane, _| pane.view().unwrap().document.yaml.clone());
@@ -411,7 +411,7 @@ fn lines_select_and_copy_and_copy_yaml_takes_the_whole_document(cx: &mut TestApp
             window.find("detail-feedback").label(),
             Some("Copied 3 lines")
         );
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.render_frame(cx);
         assert_eq!(
             window.find("detail-copy-lines").label(),
