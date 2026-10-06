@@ -12,8 +12,26 @@ description = "Freshkube's look: theme, palette, text size and the shared compon
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-graph.workspace = true
+# Render probes: the loading rows and the change flash count their frames.
+freshkube-probe.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+# The reduced-motion readers hand the OS's answer back to GPUI (`motion`).
+futures.workspace = true
+
+# The OS's reduced-motion setting and its change notification (`motion`).
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSAccessibility", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSNotification", "NSOperation", "NSString", "block2", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+
+# The settings portal, as GPUI's Linux platform reads it: on zbus's own
+# thread (async-io), so no runtime is added.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "settings"] }
 
 [features]
 # UI tests read which of a segment's lines the bar drew (`status::shown`).
@@ -21,3 +39,4 @@ testing = []
 
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+freshkube-probe = { workspace = true, features = ["counting"] }

@@ -156,6 +156,38 @@ else
   failures=$((failures + 1))
 fi
 
+tree
+mkdir -p "$work/tree/crates/freshkube-ui/src/motion" "$work/tree/crates/freshkube-ui/src/table"
+cat >"$work/tree/crates/freshkube-ui/src/motion/mod.rs" <<'EOF'
+fn fade(el: Div) -> AnimationElement<Div> { el.with_animation("fade", Animation::new(FADE), f) }
+EOF
+cat >"$work/tree/crates/freshkube-ui/src/table/flash.rs" <<'EOF'
+fn tint(el: Div) -> AnimationElement<Div> { motion::fade_out("tint", el) }
+EOF
+page spinner.rs <<'EOF'
+fn spinner() -> impl IntoElement { motion::pulse("dot", div()) }
+EOF
+expect 0 "animations through ui::motion pass"
+
+cat >"$work/tree/crates/freshkube-ui/src/table/loading.rs" <<'EOF'
+fn bar() -> impl IntoElement {
+    div().with_animation("bar", Animation::new(PULSE), f)
+}
+EOF
+page tests.rs <<'EOF'
+fn sample() { div().with_spring("slide", spring, f); }
+EOF
+expect 1 "an animation outside ui::motion fails, in freshkube-ui too" "motion crates/freshkube-ui/src/table/loading.rs:2:"
+expect 1 "tests are not exempt from the motion rule" "motion crates/freshkube-desktop/src/tests.rs:1:"
+
+tree
+page steps.rs <<'EOF'
+fn steps() -> impl IntoElement {
+    div().with_animations("steps", vec![Animation::new(QUICK), Animation::new(FADE)], f)
+}
+EOF
+expect 1 "a chain of animations outside ui::motion fails" "motion crates/freshkube-desktop/src/steps.rs:2:"
+
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
   exit 1

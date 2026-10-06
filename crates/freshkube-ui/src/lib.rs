@@ -8,6 +8,7 @@ pub mod graph;
 pub mod grid;
 pub mod inspector;
 pub mod meters;
+pub mod motion;
 pub mod page;
 pub mod palette;
 pub mod status;

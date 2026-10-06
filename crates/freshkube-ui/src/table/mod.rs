@@ -16,12 +16,16 @@ use gpui_kit::{
 use crate::palette::palette;
 
 mod data;
+mod flash;
+mod loading;
 mod pinned;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
     DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState, data_table, reveal,
     step,
 };
+pub use flash::{FlashLayer, Reduced, RowsAt};
+pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look};
 
 /// Every table's row height. Group rows take the same height, so the list
 /// stays uniform; the text size scales it for anyone who wants it larger.

@@ -3,6 +3,7 @@
 //! window's width (docs/WORKBENCH.md). It depends on the shared crates only,
 //! never on the app, so a story is what a page can build from them.
 
+use freshkube_ui::motion::{self, Choice};
 use freshkube_ui::palette::palette;
 use freshkube_ui::text_size;
 use freshkube_ui::theme;
@@ -40,6 +41,7 @@ pub fn run() {
             gpui_kit::init(cx);
             theme::install(cx);
             text_size::install(None, cx);
+            motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.on_window_closed(|cx, _| {
@@ -252,6 +254,21 @@ impl Workbench {
                 window.resize(size(px(preset), height));
             })
         });
+        let chosen = motion::choice(cx);
+        let motions = [
+            (Choice::System, "system", self.system_label(cx)),
+            (Choice::Reduced, "reduced", "Reduced".into()),
+            (Choice::Full, "full", "Full".into()),
+        ]
+        .map(|(choice, id, label)| {
+            self::choice(
+                format!("workbench-motion-{id}"),
+                label,
+                choice == chosen,
+                cx,
+            )
+            .on_click(move |_, _, cx| motion::choose(choice, cx))
+        });
         h_flex()
             .id("workbench-strip")
             .test_support()
@@ -265,6 +282,16 @@ impl Workbench {
             .child(group("Theme", themes, cx))
             .child(group("Text", sizes, cx))
             .child(group("Width", widths, cx))
+            .child(group("Motion", motions, cx))
+    }
+
+    /// The System option, with what the OS last said.
+    fn system_label(&self, cx: &App) -> SharedString {
+        match motion::system(cx) {
+            Some(true) => "System (reduced)".into(),
+            Some(false) => "System (full)".into(),
+            None => "System".into(),
+        }
     }
 }
 

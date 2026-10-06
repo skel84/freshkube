@@ -1,6 +1,7 @@
 //! `DataTable`: the header, the virtualised rows and their selection, for
 //! any page whose entity implements [`TableSource`]. Generic rather than
 //! dynamic, so a 20,000-row list costs what a hand-written one does.
+use std::cell::RefCell;
 use std::hash::Hash;
 use std::ops::Range;
 
@@ -89,6 +90,8 @@ pub struct TableState {
     /// The sideways scroll, which group labels and pinned columns undo.
     sideways: ScrollHandle,
     ids: TableIds,
+    /// The loading rows the table last drew, stilled when it stops.
+    loading: RefCell<Option<super::LoadingRows>>,
 }
 
 impl TableState {
@@ -99,12 +102,34 @@ impl TableState {
             scroll: UniformListScrollHandle::new(),
             sideways: ScrollHandle::new(),
             ids: TableIds::new(prefix),
+            loading: RefCell::default(),
         }
     }
 
     /// `<prefix>-<part>`, for the parts the page draws around the table.
     pub fn id(&self, part: &str) -> SharedString {
         format!("{}-{part}", self.ids.prefix).into()
+    }
+
+    /// Where the rows are in the window, for a layer drawn over them, such
+    /// as the change flash ([`super::FlashLayer`]).
+    pub fn rows_at(&self) -> super::RowsAt {
+        super::RowsAt {
+            list: self.scroll.clone(),
+            sideways: self.sideways.clone(),
+        }
+    }
+
+    /// Remembers the loading rows the table draws now and stills the ones
+    /// it stopped drawing, so their motion stops asking for frames.
+    fn track_loading(&self, now: Option<&super::LoadingRows>) {
+        let mut drawn = self.loading.borrow_mut();
+        if let Some(old) = drawn.as_ref()
+            && now.is_none_or(|rows| !rows.same(old))
+        {
+            old.hide();
+        }
+        *drawn = now.cloned();
     }
 
     /// Scrolls a line into view.
@@ -190,6 +215,13 @@ pub trait TableSource: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+    }
+    /// What replaces the rows until the first answer: the
+    /// [`super::LoadingRows`] the page keeps, drawn still under the real
+    /// header; the page draws their [`super::LoadingMotion`] over the table.
+    /// While they show, [`empty`](Self::empty) isn't asked.
+    fn loading(&self) -> Option<&super::LoadingRows> {
+        None
     }
     /// What replaces the rows when there are none, such as a line or a
     /// title and a hint; the table gives it its padding and muted text.
@@ -312,12 +344,18 @@ impl DataTable {
         } else {
             cx.theme().background
         };
-        let empty = source.empty(cx);
+        let loading = source.loading();
+        state.track_loading(loading);
+        let empty = if loading.is_some() {
+            None
+        } else {
+            source.empty(cx)
+        };
         let is_empty = empty.is_some();
         // A fitted list is as tall as its lines; an empty one as its state.
         let list_height = self
             .fit
-            .filter(|_| empty.is_none())
+            .filter(|_| empty.is_none() && loading.is_none())
             .map(|max| source.line_count().min(max) as f32 * ROW_HEIGHT);
         let list = div()
             .id(ids.list.clone())
@@ -329,8 +367,9 @@ impl DataTable {
                 None if self.fit.is_some() => this.flex_none(),
                 None => this.flex_1().min_h_0(),
             })
-            .map(|this| match empty {
-                Some(empty) => this.child(
+            .map(|this| match (loading, empty) {
+                (Some(rows), _) => this.child(rows.render(source.columns(), fill, window, cx)),
+                (None, Some(empty)) => this.child(
                     div()
                         .id(ids.empty.clone())
                         .test_support()
@@ -340,7 +379,7 @@ impl DataTable {
                         .text_color(palette(cx).muted)
                         .child(empty),
                 ),
-                None => this.child(
+                (None, None) => this.child(
                     uniform_list(
                         ids.rows.clone(),
                         source.line_count(),
@@ -752,6 +791,8 @@ mod tests {
         marked: Option<usize>,
         /// The footer's legend line.
         legend: Option<SharedString>,
+        /// The loading rows, until the first read answers.
+        loading: Option<super::super::LoadingRows>,
     }
 
     impl Wide {
@@ -772,6 +813,7 @@ mod tests {
                 glyphs: false,
                 marked: None,
                 legend: None,
+                loading: None,
             }
         }
 
@@ -820,6 +862,10 @@ mod tests {
 
         fn table_state(&self) -> &TableState {
             &self.table
+        }
+
+        fn loading(&self) -> Option<&super::super::LoadingRows> {
+            self.loading.as_ref()
         }
 
         fn columns(&self) -> &[Column] {
@@ -1419,6 +1465,88 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             AnyView::from(self.0.clone()).cached(StyleRefinement::default().size_full())
         }
+    }
+
+    /// A page that keeps its table cached and draws the loading rows'
+    /// motion over it, as a page adopting them would.
+    struct LoadingPage {
+        table: Entity<Wide>,
+        motion: Entity<super::super::LoadingMotion>,
+    }
+
+    impl Render for LoadingPage {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            freshkube_probe::probe::hit("test.loading-page");
+            div()
+                .relative()
+                .size_full()
+                .child(
+                    AnyView::from(self.table.clone())
+                        .cached(StyleRefinement::default().size_full()),
+                )
+                .child(self.motion.clone())
+        }
+    }
+
+    /// The loading motion asks frames while the table draws its loading
+    /// rows, and none from the frame its rows replace them: it forgets the
+    /// bars, so it veils nothing over the rows either.
+    #[gpui_kit::test]
+    fn the_loading_motion_stops_when_the_rows_arrive(cx: &mut TestAppContext) {
+        use super::super::{LoadingRows, Look};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(false);
+        });
+        let mut wide = None;
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(900.), px(400.)), |window, cx| {
+                let rows = LoadingRows::new("wide");
+                let motion = cx.new(|_| rows.motion(Look::Shimmer));
+                let table = cx.new(|_| Wide {
+                    loading: Some(rows),
+                    ..Wide::new(0, 4, false)
+                });
+                wide = Some(table.clone());
+                let page = cx.new(|_| LoadingPage { table, motion });
+                Root::new(page, window, cx)
+            })
+            .into();
+        let wide = wide.unwrap();
+        let frame = |cx: &mut TestAppContext| {
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(16));
+            let asked = cx
+                .update_window(handle, |_, window, cx| window.simulate_next_frame(cx))
+                .unwrap();
+            cx.run_until_parked();
+            asked
+        };
+        cx.run_until_parked();
+        for _ in 0..3 {
+            assert!(frame(cx) > 0, "the bars move while the table loads");
+        }
+        cx.update(|cx| {
+            wide.update(cx, |wide, cx| {
+                wide.loading = None;
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+        // At most the frame already asked, which draws the rows.
+        frame(cx);
+        let pages = freshkube_probe::probe::count("test.loading-page");
+        for _ in 0..3 {
+            assert_eq!(frame(cx), 0, "no frames once the rows arrive");
+        }
+        assert_eq!(freshkube_probe::probe::count("test.loading-page"), pages);
+        cx.update_window(handle, |_, window, _| {
+            assert!(window.try_find("wide-loading").is_none());
+            assert!(window.find("wide-row-0").visible());
+        })
+        .unwrap();
     }
 
     /// The first sideways scroll from the left edge pins on the frame it
