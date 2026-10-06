@@ -13,6 +13,13 @@
 //! connections it closed itself, while they sit in TIME_WAIT. So a refused
 //! port is tried once more with `SO_REUSEADDR` when nothing accepts a
 //! connection on it and none of our forwards holds it.
+//!
+//! Linux checks the flag on both sockets, and a connection takes it from
+//! the listener that accepted it, so there the retry can't pass our own
+//! TIME_WAIT. On Linux the first bind sets the flag: it never binds over
+//! a listening socket, and our connections then wait out TIME_WAIT
+//! without holding the port. Windows must never set it, since there it
+//! lets a socket bind over a port another program listens on.
 
 use std::collections::HashSet;
 use std::io;
@@ -26,6 +33,9 @@ use tokio::net::{TcpListener, TcpSocket};
 const BACKLOG: u32 = 128;
 /// Tries at a system-picked port that ::1 also has free.
 const SYSTEM_TRIES: usize = 8;
+/// Whether the first bind sets `SO_REUSEADDR`: only on Linux, where it
+/// can't bind over a listener.
+const REUSE_FIRST: bool = cfg!(target_os = "linux");
 /// How long asking whether something listens may take. On the loopback
 /// the answer is immediate, unless a listener is too busy to accept.
 const PROBE_DEADLINE: Duration = Duration::from_millis(200);
@@ -162,7 +172,7 @@ fn listen(address: SocketAddr, reuse: bool) -> io::Result<TcpListener> {
         SocketAddr::V4(_) => TcpSocket::new_v4()?,
         SocketAddr::V6(_) => TcpSocket::new_v6()?,
     };
-    socket.set_reuseaddr(reuse)?;
+    socket.set_reuseaddr(reuse || REUSE_FIRST)?;
     socket.bind(address)?;
     socket.listen(BACKLOG)
 }
@@ -231,7 +241,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(target_os = "linux", ignore = "Linux port reuse, #212")]
     async fn a_port_whose_closed_connections_wait_out_time_wait_is_bound_again() {
         let listeners = bind_loopback(0).unwrap();
         let port = listeners.port;
@@ -243,8 +252,42 @@ mod tests {
         let _ = std::io::Read::read(&mut client, &mut [0; 1]);
         drop(client);
         drop(listeners);
-        assert!(listen(SocketAddr::from((Ipv4Addr::LOCALHOST, port)), false).is_err());
+        // On macOS and Windows the first bind, without the flag, is refused,
+        // which is why the retry exists; on Linux it sets the flag, as the
+        // closed connections did, and passes at once.
+        assert_eq!(
+            listen(SocketAddr::from((Ipv4Addr::LOCALHOST, port)), false).is_ok(),
+            REUSE_FIRST
+        );
         bind_loopback(port).expect("nothing listens, so the port is reused");
+    }
+
+    #[tokio::test]
+    async fn a_live_port_is_refused_even_with_reuse() {
+        // Our own listener, with connections closed from our side first, so
+        // that some sit in TIME_WAIT, and one still open.
+        let listeners = bind_loopback(0).unwrap();
+        let port = listeners.port;
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        for _ in 0..3 {
+            let mut client = std::net::TcpStream::connect(address).unwrap();
+            let (accepted, _) = listeners.v4.accept().await.unwrap();
+            drop(accepted);
+            let _ = std::io::Read::read(&mut client, &mut [0; 1]);
+        }
+        let _open = std::net::TcpStream::connect(address).unwrap();
+        let _accepted = listeners.v4.accept().await.unwrap();
+        let error = bind_loopback(port).unwrap_err();
+        assert!(is_taken(&error), "{error}");
+        assert!(listen(address, true).is_err(), "not even with the flag");
+
+        // Another program's listener on the loopback, with the flag set as
+        // std sets it.
+        let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = other.local_addr().unwrap().port();
+        let error = bind_loopback(port).unwrap_err();
+        assert!(is_taken(&error), "{error}");
+        assert!(listen(SocketAddr::from((Ipv4Addr::LOCALHOST, port)), true).is_err());
     }
 
     #[tokio::test]

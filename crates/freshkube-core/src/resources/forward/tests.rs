@@ -458,7 +458,6 @@ async fn a_pod_forward_relays_bytes_both_ways_on_the_automatic_port() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "Linux port reuse, #212")]
 async fn stopping_frees_the_port_and_closes_every_websocket() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
@@ -481,7 +480,6 @@ async fn stopping_frees_the_port_and_closes_every_websocket() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "Linux port reuse, #212")]
 async fn dropping_the_guard_stops_the_forward() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
@@ -581,7 +579,6 @@ async fn a_port_nothing_listens_on_is_reported_and_the_forward_listens_on() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "Linux port reuse, #212")]
 async fn being_forbidden_ends_the_forward_and_frees_its_port() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
@@ -621,7 +618,6 @@ async fn another_refusal_is_the_connections_error_only() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "Linux port reuse, #212")]
 async fn a_pod_forward_ends_when_its_pod_is_deleted_or_replaced() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
