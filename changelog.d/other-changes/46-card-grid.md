@@ -1,0 +1,1 @@
+- Nodes' cards share the page's width evenly, a lone card in the last row as wide as the rest; the cards and the pane's node list are drawn with a shared virtualised card grid.

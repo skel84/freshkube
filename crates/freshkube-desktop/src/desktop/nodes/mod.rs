@@ -523,9 +523,10 @@ impl Pilot {
                 } else {
                     cards::card_columns(window)
                 };
-                self.node_workspace
-                    .scroll
-                    .scroll_to_item(line / columns, ScrollStrategy::Nearest);
+                self.node_workspace.scroll.scroll_to_item(
+                    freshkube_ui::grid::row_of(line, columns),
+                    ScrollStrategy::Nearest,
+                );
             }
         } else {
             table::reveal(self, ScrollStrategy::Nearest);
