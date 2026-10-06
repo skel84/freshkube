@@ -350,6 +350,73 @@ fn the_folded_time_range_picks_a_range_as_its_picker_does(cx: &mut TestAppContex
     );
 }
 
+/// The variables and the annotation toggles are the header's second row,
+/// under the toolbar and above the meta line, at the toolbar's control
+/// height.
+#[gpui_kit::test]
+fn the_variables_are_the_headers_second_row(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    cx.update_window(handle, |_, window, cx| {
+        crate::desktop::tests::settle_header(window, cx);
+        let toolbar = window.find("monitoring-toolbar").bounds();
+        let row = window.find("monitoring-secondary").bounds();
+        let meta = window.find("monitoring-scope").bounds();
+        assert!(
+            row.top() >= toolbar.bottom() - px(0.5),
+            "{row:?} over {toolbar:?}"
+        );
+        assert!(
+            meta.top() >= row.bottom() - px(0.5),
+            "{meta:?} over {row:?}"
+        );
+        let height = crate::ui::dp_px(crate::ui::CONTROL_HEIGHT, window);
+        for id in [
+            "monitoring-variable-node",
+            "monitoring-variable-namespace",
+            "monitoring-markers-deploys",
+            "monitoring-markers-nodes",
+        ] {
+            let bounds = window.find(id).bounds();
+            assert!(
+                row.contains(&bounds.center()),
+                "{id} {bounds:?} outside {row:?}"
+            );
+            assert!(
+                (bounds.size.height - height).abs() < px(0.5),
+                "{id} is {:?} high, not {height:?}",
+                bounds.size.height
+            );
+        }
+        assert_eq!(
+            window.find("monitoring-variable-node").label(),
+            Some("node: All")
+        );
+    })
+    .unwrap();
+}
+
+/// Auto-refresh says what it does: off, or its interval.
+#[gpui_kit::test]
+fn auto_refresh_names_itself_and_its_interval(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let label = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| {
+            window
+                .find("monitoring-auto-refresh")
+                .label()
+                .map(str::to_owned)
+        })
+        .unwrap()
+    };
+    assert_eq!(label(cx).as_deref(), Some("Auto-refresh off"));
+    cx.update(|cx| page.update(cx, |page, cx| page.set_refresh(Some(30), cx)));
+    frame(cx, handle);
+    assert_eq!(label(cx).as_deref(), Some("Auto-refresh 30s"));
+    cx.update(|cx| page.update(cx, |page, cx| page.set_visible(false, cx)));
+}
+
 #[gpui_kit::test]
 fn the_annotations_stay_inside_a_narrow_page(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));

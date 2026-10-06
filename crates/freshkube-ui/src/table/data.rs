@@ -265,6 +265,9 @@ fn step_line(
     Some(at)
 }
 
+/// A card's corner inside its hairline: `page::card`'s 12 px less 1.
+const CARD_INNER_RADIUS: f32 = 11.;
+
 /// How a table sits on its page: bare or in its card, filling its parent
 /// or as tall as its rows.
 #[derive(Clone, Copy, Default)]
@@ -364,9 +367,12 @@ impl DataTable {
         let frame = if self.carded {
             card(cx)
         } else if self.inset {
+            // GPUI doesn't clip a fill to its parent's corners, so a table
+            // that reaches its card's bottom rounds its own.
             v_flex()
                 .min_w_0()
                 .bg(fill)
+                .rounded_b(px(CARD_INNER_RADIUS))
                 .border_t_1()
                 .border_color(palette(cx).line)
         } else {
@@ -387,7 +393,12 @@ impl DataTable {
         };
         let (counts, legend) = (source.counts(cx), source.legend(window, cx));
         let footer = (!counts.is_empty() || legend.is_some())
-            .then(|| super::footer(state.id("footer"), counts, legend, fill, cx));
+            .then(|| super::footer(state.id("footer"), counts, legend, fill, cx))
+            .map(|footer| {
+                footer.when(self.carded || self.inset, |this| {
+                    this.rounded_b(px(CARD_INNER_RADIUS))
+                })
+            });
         frame
             .overflow_hidden()
             .child(

@@ -45,7 +45,6 @@ impl Render for MonitoringPage {
             .key_context("Monitoring")
             .track_focus(&self.focus)
             .child(self.render_header(window, cx))
-            .children(self.render_variables(cx))
             .children(self.render_variable_error(cx))
             .child(
                 div()
@@ -62,8 +61,9 @@ impl Render for MonitoringPage {
 
 impl MonitoringPage {
     /// "Dashboards / title", the time picker, refresh and auto-refresh,
-    /// which fold into the "…" menu when the row is short; then the meta
-    /// line, which says where the data comes from.
+    /// which fold into the "…" menu when the row is short; the variables
+    /// and annotations as the header's second row; then the meta line,
+    /// which says where the data comes from.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title = self.board.as_ref().map_or_else(
             || SharedString::from("Monitoring"),
@@ -74,6 +74,9 @@ impl MonitoringPage {
             "Dashboards",
             cx.listener(|_, _, _, cx| cx.emit(MonitoringEvent::Dashboards)),
         );
+        if let Some(variables) = self.render_variables(cx) {
+            header = header.secondary(variables);
+        }
         if let Some(board) = self.board.as_ref().filter(|board| board.error.is_none()) {
             let items = self.range_items(board, cx);
             header = header.foldable(
@@ -219,21 +222,27 @@ impl MonitoringPage {
         })
     }
 
-    /// The auto-refresh interval, with a good glyph while it's on.
+    /// "Auto-refresh off", or the interval after a good glyph while it's on.
     fn render_auto_refresh(&self, items: MenuItems, cx: &Context<Self>) -> impl IntoElement {
         let every = self.refresh_every;
+        let label = match every {
+            None => "Auto-refresh off".to_owned(),
+            Some(_) => format!("Auto-refresh {}", refresh_label(every)),
+        };
         Button::new("monitoring-auto-refresh")
             .outline()
             .small()
             .h(dp(ui::CONTROL_HEIGHT))
+            .accessibility_label(label.clone())
             .children(every.and_then(|_| ui::status_glyph(ui::Tone::Good, cx)))
-            .label(refresh_label(every))
+            .child(label)
             .dropdown_caret(true)
             .tooltip("Auto-refresh while the page shows")
             .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
     }
 
-    /// One chip per shown variable: its name, then its value as a menu.
+    /// The header's second row: one picker per shown variable, its name
+    /// muted before its value, then the annotation toggles at the right.
     fn render_variables(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let board = self.board.as_ref()?;
         if board.error.is_some() {
@@ -243,53 +252,37 @@ impl MonitoringPage {
         let page = cx.entity().downgrade();
         Some(
             h_flex()
-                .flex_none()
+                .w_full()
+                .min_w_0()
                 .flex_wrap()
                 .gap(dp(8.))
                 .children(board.controls.iter().map(|control| {
                     let (page, index) = (page.clone(), control.index);
                     let (options, current) = (control.options.clone(), control.value.clone());
-                    h_flex()
-                        .h(dp(28.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(p.line)
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .h_full()
-                                .flex()
-                                .items_center()
-                                .px(dp(9.))
-                                .bg(p.surface_2)
-                                .font_family(ui::MONO_FONT)
-                                .text_size(dp(11.5))
-                                .text_color(p.muted)
-                                .child(control.label.clone()),
-                        )
-                        .child(
-                            Button::new(control.id.clone())
-                                .ghost()
-                                .small()
-                                .label(control.value.clone())
-                                .dropdown_caret(true)
-                                .dropdown_menu(move |mut menu, _, _| {
-                                    for option in options.iter() {
-                                        let (page, value) = (page.clone(), option.clone());
-                                        menu = menu.item(
-                                            PopupMenuItem::new(option.clone())
-                                                .checked(*option == current)
-                                                .on_click(move |_, _, cx| {
-                                                    let value = value.clone();
-                                                    _ = page.update(cx, |page, cx| {
-                                                        page.set_variable(index, value, cx)
-                                                    });
-                                                }),
-                                        );
-                                    }
-                                    menu
-                                }),
-                        )
+                    Button::new(control.id.clone())
+                        .outline()
+                        .small()
+                        .h(dp(ui::CONTROL_HEIGHT))
+                        .accessibility_label(format!("{}: {}", control.label, control.value))
+                        .child(div().text_color(p.muted).child(control.label.clone()))
+                        .child(control.value.clone())
+                        .dropdown_caret(true)
+                        .dropdown_menu(move |mut menu, _, _| {
+                            for option in options.iter() {
+                                let (page, value) = (page.clone(), option.clone());
+                                menu = menu.item(
+                                    PopupMenuItem::new(option.clone())
+                                        .checked(*option == current)
+                                        .on_click(move |_, _, cx| {
+                                            let value = value.clone();
+                                            _ = page.update(cx, |page, cx| {
+                                                page.set_variable(index, value, cx)
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
+                        })
                 }))
                 .child(div().flex_1())
                 .child(self.render_annotations(cx))
@@ -297,31 +290,25 @@ impl MonitoringPage {
         )
     }
 
-    /// "Annotations" and a toggle each for deploys and node events, as the
-    /// mock's pills, with a mark when part of them couldn't be read.
+    /// "Annotations" and a toggle each for deploys and node events, chosen
+    /// as any chip is, with a mark when part of them couldn't be read.
     fn render_annotations(&self, cx: &Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let toggle = |id: &'static str, label: &'static str, color, on: bool, which| {
             let page = cx.entity().downgrade();
-            h_flex()
-                .id(id)
-                .h(dp(28.))
-                .px(dp(10.))
-                .gap(dp(6.))
-                .rounded_full()
-                .border_1()
-                .border_color(if on { p.line_strong } else { p.line })
-                .when(on, |this| this.bg(p.hover))
-                .cursor_pointer()
-                .text_size(dp(12.))
-                .font_weight(FontWeight::BOLD)
-                .text_color(if on { p.ink_2 } else { p.muted })
-                .child(marker_glyph(if on { color } else { p.faint }, 10.))
-                .child(label)
-                .on_click(move |_, _, cx| {
-                    _ = page.update(cx, |page, cx| page.toggle_markers(which, cx));
-                })
-                .test_support()
+            ui::choice(
+                Button::new(id)
+                    .outline()
+                    .small()
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .accessibility_label(label)
+                    .child(marker_glyph(if on { color } else { p.faint }, 10.))
+                    .child(label),
+                on,
+            )
+            .on_click(move |_, _, cx| {
+                _ = page.update(cx, |page, cx| page.toggle_markers(which, cx));
+            })
         };
         // It wraps inside itself too: at 20 px beside the column, the label
         // and both toggles are wider than the page.
