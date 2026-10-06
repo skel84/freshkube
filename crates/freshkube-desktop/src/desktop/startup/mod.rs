@@ -137,6 +137,27 @@ impl Pilot {
                         .update(cx, |resources, cx| resources.answer_history_now(cx));
                 }
             }
+            Some("workload-logs") if self.fixture => {
+                let context = self.applied.context.as_deref().unwrap_or("prod-fra");
+                let now = chrono::Utc::now().timestamp();
+                if let Some(identity) =
+                    resources::example::read(context, "deployments.apps", None, now).and_then(
+                        |(_, rows)| {
+                            rows.into_iter()
+                                .find(|row| row.identity.name == "api")
+                                .map(|row| row.identity)
+                        },
+                    )
+                {
+                    self.open_object(
+                        builtin("deployments.apps").unwrap(),
+                        identity.into(),
+                        resources::Tab::Logs,
+                        window,
+                        cx,
+                    );
+                }
+            }
             Some("search") => {
                 self.open_search(window, cx);
                 if self.fixture {

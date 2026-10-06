@@ -212,6 +212,13 @@ pub trait LogSource: Sized + 'static {
 
     /// Stream failures by source, shown above the lines.
     fn errors(&self) -> &BTreeMap<ServiceId, String>;
+
+    /// What a row's source column shows for `service`, when its name is too
+    /// long to tell apart there: a looked-up label, never one formatted
+    /// here. Copy and search keep the full name.
+    fn source_label(&self, _service: &ServiceId) -> Option<SharedString> {
+        None
+    }
 }
 
 pub struct LogView<S: LogSource> {

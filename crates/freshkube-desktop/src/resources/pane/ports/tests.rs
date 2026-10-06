@@ -297,5 +297,9 @@ fn the_tabs_follow_the_kind(cx: &mut TestAppContext) {
     );
     let deployment = target("deployments.apps", |cells| cells[0] == "grafana");
     pane.open(cx, &deployment);
-    assert_eq!(tabs(&pane, cx), [false, false, true]);
+    assert_eq!(
+        tabs(&pane, cx),
+        [true, false, true],
+        "a workload has Logs and Ports"
+    );
 }

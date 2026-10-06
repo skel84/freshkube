@@ -24,7 +24,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use self::pods::{PodSelector, Subscription};
-use self::target::{PodInfo, RemotePort, choose_pod, label_selector, service_selector};
+pub(crate) use self::target::label_selector;
+use self::target::{PodInfo, RemotePort, choose_pod, service_selector};
 use super::events::classify;
 use super::failure::{Failure, FailureKind};
 use super::kinds::ResourceKind;

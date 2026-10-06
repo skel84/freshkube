@@ -13,6 +13,7 @@ use super::failure::{Failure, FailureKind};
 use super::forward::{DeclaredPort, declared_ports};
 use super::kinds::ResourceKind;
 use super::pod_logs::{PodContainers, pod_containers};
+use super::workload_pods::{runs_pods, workload_selector};
 
 mod pod_status;
 
@@ -60,6 +61,9 @@ pub struct Overview {
     pub pod_status: Option<PodStatus>,
     /// Present for a kind that can be forwarded: the ports it declares.
     pub ports: Option<Vec<DeclaredPort>>,
+    /// Present for a kind that runs pods: the label selector that finds
+    /// them, `None` inside when it selects none.
+    pub selector: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +156,7 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     overview.pod = kind.is_pod().then(|| pod_containers(&object));
     overview.pod_status = kind.is_pod().then(|| PodStatus::new(&object));
     overview.ports = declared_ports(kind, &object);
+    overview.selector = runs_pods(kind).then(|| workload_selector(&object));
     let yaml = serde_yaml::to_string(&object)
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
     let metadata = object.get("metadata");
@@ -363,6 +368,7 @@ fn overview(object: &Value) -> Overview {
         pod: None,
         pod_status: None,
         ports: None,
+        selector: None,
     }
 }
 

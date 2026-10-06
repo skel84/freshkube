@@ -35,6 +35,7 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                 ("nodes", Page::Nodes, "nodes-page"),
                 ("node-overview", Page::Nodes, "node-pane"),
                 ("pod-overview", Page::Resources, "resource-detail"),
+                ("workload-logs", Page::Resources, "workload-logs-status"),
                 ("search", Page::Resources, "command"),
             ] {
                 cx.update_window(handle, |_, window, cx| {

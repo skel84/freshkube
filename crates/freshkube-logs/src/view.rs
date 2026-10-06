@@ -146,7 +146,11 @@ impl<S: LogSource> LogView<S> {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_color(p.ink_2)
-                        .child(entry.service.as_str().to_owned()),
+                        .child(
+                            self.source
+                                .source_label(&entry.service)
+                                .unwrap_or_else(|| entry.service.as_str().to_owned().into()),
+                        ),
                 )
             })
             .child(

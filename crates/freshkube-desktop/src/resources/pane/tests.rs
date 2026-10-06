@@ -10,7 +10,7 @@ use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{DetailEvent, DetailPane};
-use crate::logs::PodLogPanel;
+use crate::logs::{PodLogPanel, WorkloadLogPanel};
 use crate::resources::detail::{DetailTarget, DocumentRead, DocumentView, FOLLOW_INTERVAL, Reveal};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
@@ -508,12 +508,14 @@ fn running_pod() -> (DetailTarget, String) {
 }
 
 #[gpui_kit::test]
-fn only_a_pod_has_a_logs_tab(cx: &mut TestAppContext) {
+fn pods_and_what_runs_them_have_a_logs_tab(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (pod, _) = running_pod();
-    let (deployment, _) = target("deployments.apps", |_, _| true);
+    let (deployment, _) = target("deployments.apps", |_, name| name == "api");
+    let (secret, _) = target("secrets", |_, _| true);
+    let workload_logs = pane.read_with(cx, |pane, _| pane.workload_logs.clone());
     cx.update_window(handle, |_, window, cx| {
-        open(&pane, &deployment, Duration::ZERO, cx);
+        open(&pane, &secret, Duration::ZERO, cx);
         window.render_frame(cx);
         assert!(window.try_find("detail-tab-logs").is_none());
 
@@ -523,13 +525,39 @@ fn only_a_pod_has_a_logs_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
         assert_eq!(window.find("pod-logs-status").label(), Some("Streaming"));
+        assert!(window.try_find("workload-logs-status").is_none());
 
-        // Another kind has no logs to stay on.
+        // A workload's Logs tab follows every pod it runs, and only once
+        // the tab shows.
+        window.click("detail-tab-overview", cx);
         open(&pane, &deployment, Duration::ZERO, cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
-        assert!(window.try_find("pod-logs-status").is_none());
         assert!(!pane.read(cx).logs.read(cx).streaming());
+        assert!(!workload_logs.read(cx).reading());
+        window.click("detail-tab-logs", cx);
+        window.render_frame(cx);
+        assert!(workload_logs.read(cx).reading());
+        assert!(window.try_find("pod-logs-status").is_none());
+        let status = window
+            .find("workload-logs-status")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(status.starts_with("Following: "), "{status}");
+
+        // Another tab keeps it; hiding the page or another kind ends it.
+        window.click("detail-tab-events", cx);
+        assert!(workload_logs.read(cx).reading());
+        pane.update(cx, |pane, cx| pane.set_active(false, cx));
+        assert!(!workload_logs.read(cx).reading());
+        pane.update(cx, |pane, cx| pane.set_active(true, cx));
+        assert!(workload_logs.read(cx).reading());
+        window.click("detail-tab-logs", cx);
+        open(&pane, &secret, Duration::ZERO, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert!(!workload_logs.read(cx).reading());
     })
     .unwrap();
 }
