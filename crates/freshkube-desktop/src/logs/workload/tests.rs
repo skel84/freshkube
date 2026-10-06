@@ -20,6 +20,14 @@ const CONTEXT: &str = "production";
 
 /// The view on its own, active and on screen, as the Logs tab shows it.
 fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<WorkloadLogView>, AnyWindowHandle) {
+    mount_sized(cx, 900., 820.)
+}
+
+fn mount_sized(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<WorkloadLogView>, AnyWindowHandle) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -27,7 +35,7 @@ fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<WorkloadLogView>, AnyWindo
     });
     let runtime = Runtime::new().unwrap();
     let mut view = None;
-    let handle = cx.open_window(size(px(900.), px(820.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let logs = cx.new(|cx| {
             let mut logs = WorkloadLogView::for_workloads(runtime.handle().clone(), window, cx);
             logs.set_active(true, cx);
@@ -262,12 +270,16 @@ fn a_failing_stream_says_why_while_the_others_read_on(cx: &mut TestAppContext) {
         let errors = view.read(cx).source().errors.clone();
         let error = errors.get(&ServiceId::new(refused_tag.clone())).unwrap();
         assert!(error.contains("forbidden"), "{error}");
+        // Its chip says so, in the row or behind "+N".
+        let chips = view.read(cx).source().chips.clone();
+        let chip = chips
+            .iter()
+            .find(|chip| chip.service.as_str() == refused_tag)
+            .unwrap();
         assert!(
-            window
-                .find(format!("workload-logs-stream-{refused_tag}"))
-                .label()
-                .unwrap()
-                .starts_with(&format!("{refused_tag}: Failed"))
+            chip.tooltip.starts_with(&format!("{refused_tag}: Failed")),
+            "{}",
+            chip.tooltip
         );
         // The coredns pods stream.
         assert!(tags(&view, cx).iter().all(|tag| tag.ends_with("/coredns")));
@@ -825,6 +837,69 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
         );
     })
     .unwrap();
+}
+
+/// Chips past the rows' room end in "+N", which lists every container
+/// and shows or hides its lines like a chip.
+#[gpui_kit::test]
+fn chips_past_the_rows_end_in_more_which_lists_them_all(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount_sized(cx, 520., 820.);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        // A narrow panel: the chips fit its width on the next frame.
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let total = view.read(cx).source().chips.len();
+        assert_eq!(total, all.len());
+        let fits = view.read(cx).source().fits;
+        assert!(fits < total, "{fits} of {total}");
+        let shown = (0..total)
+            .filter(|&ix| {
+                let id = view.read(cx).source().chips[ix].id.clone();
+                window.try_find(id).is_some()
+            })
+            .count();
+        assert_eq!(shown, fits);
+        let more = window
+            .find("workload-logs-more")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(more.contains(&format!("+{}", total - fits)), "{more}");
+
+        window.click("workload-logs-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("workload-logs-list").visible());
+        let last = view.read(cx).source().chips[total - 1].clone();
+        window.click(last.list_id.clone(), cx);
+        window.render_frame(cx);
+        assert!(view.read(cx).source().hidden.contains(&last.service));
+        assert_eq!(window.find(last.list_id.clone()).checked(), Some(false));
+    })
+    .unwrap();
+}
+
+#[test]
+fn chips_fit_their_rows_and_leave_room_for_more() {
+    use gpui_kit::px;
+    let fit = |widths: &[f32], rows| {
+        let widths: Vec<_> = widths.iter().map(|&width| px(width)).collect();
+        super::chips_that_fit(&widths, px(30.), px(6.), px(100.), rows)
+    };
+    // All fit: no "+N" needed.
+    assert_eq!(fit(&[40., 40.], 1), 2);
+    assert_eq!(fit(&[40., 40., 40., 40.], 2), 4);
+    // The third doesn't fit one row; "+N" (30) after the first leaves 76.
+    assert_eq!(fit(&[40., 40., 40.], 1), 1);
+    // Two rows of two, then "+N" takes the second's place in the last row.
+    assert_eq!(fit(&[40., 40., 40., 40., 40.], 2), 3);
+    // No rows: only "+N".
+    assert_eq!(fit(&[40.], 0), 0);
+    // A chip too wide for any row still takes one alone.
+    assert_eq!(fit(&[150.], 1), 1);
 }
 
 #[test]

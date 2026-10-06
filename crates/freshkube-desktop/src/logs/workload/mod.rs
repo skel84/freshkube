@@ -39,7 +39,7 @@ use freshkube_core::resources::{
     ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, WorkloadPod,
     WorkloadPods, follow_pod_log, follow_workload_pods,
 };
-use gpui_kit::{AnyElement, App, Context, SharedString, Task, Window};
+use gpui_kit::{AnyElement, App, Context, Pixels, SharedString, Task, Window};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 
@@ -193,6 +193,8 @@ pub(super) enum PodsState {
 pub(super) struct Chip {
     pub(super) service: ServiceId,
     pub(super) id: SharedString,
+    /// Its id in the list of every container, behind "+N".
+    pub(super) list_id: SharedString,
     pub(super) label: SharedString,
     /// The full tag, its state and what a click does.
     pub(super) tooltip: SharedString,
@@ -250,6 +252,18 @@ pub(crate) struct WorkloadLogs {
     hidden: BTreeSet<ServiceId>,
     seen: BTreeSet<ServiceId>,
     pub(super) chips: Rc<Vec<Chip>>,
+    /// Advances whenever the chips are derived again, so their measured
+    /// widths are taken again.
+    chips_revision: u64,
+    /// The chips' widths, and the "+N" chip's, for the revision and text
+    /// size they were measured at.
+    chip_widths: Vec<Pixels>,
+    more_width: Pixels,
+    measured: Option<(u64, Pixels)>,
+    /// How many chips the rows have room for; "+N" lists the rest.
+    pub(super) fits: usize,
+    /// Whether the list of every container is open.
+    pub(super) more_open: bool,
     /// What the source column and the chips show for each tag: the pod
     /// name without the prefix every pod shares, derived with the chips.
     labels: BTreeMap<ServiceId, SharedString>,
@@ -287,6 +301,12 @@ impl WorkloadLogs {
             hidden: BTreeSet::new(),
             seen: BTreeSet::new(),
             chips: Rc::default(),
+            chips_revision: 0,
+            chip_widths: Vec::new(),
+            more_width: Pixels::ZERO,
+            measured: None,
+            fits: usize::MAX,
+            more_open: false,
             labels: BTreeMap::new(),
             status: Status {
                 tone: Tone::Unknown,
@@ -369,6 +389,7 @@ impl WorkloadLogs {
                 };
                 Chip {
                     id: format!("workload-logs-stream-{name}").into(),
+                    list_id: format!("workload-logs-list-{name}").into(),
                     label: self
                         .labels
                         .get(&service)
@@ -387,6 +408,7 @@ impl WorkloadLogs {
             })
             .collect();
         self.chips = Rc::new(chips);
+        self.chips_revision += 1;
         let pods = self.pods.len();
         let streams = self.streams.len();
         let counts = format!(
@@ -467,6 +489,15 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 }
 
 impl LogSource for WorkloadLogs {
+    fn prepare_controls(
+        view: &mut WorkloadLogView,
+        width: Pixels,
+        window: &mut Window,
+        cx: &mut Context<WorkloadLogView>,
+    ) {
+        view.fit_chips(width, window, cx);
+    }
+
     fn controls(view: &WorkloadLogView, cx: &mut Context<WorkloadLogView>) -> Vec<AnyElement> {
         view.render_controls(cx)
     }
@@ -490,6 +521,46 @@ impl LogSource for WorkloadLogs {
     fn source_label(&self, service: &ServiceId) -> Option<SharedString> {
         self.labels.get(service).cloned()
     }
+}
+
+/// How many chips fit in `rows` rows of `room`, leaving the last row room
+/// for the "+N" chip when some don't. Every chip fits when they all do.
+fn chips_that_fit(
+    widths: &[Pixels],
+    more: Pixels,
+    gap: Pixels,
+    room: Pixels,
+    rows: usize,
+) -> usize {
+    // Where each chip lands, packed left to right and row by row: its row
+    // and where it ends.
+    let mut placed: Vec<(usize, Pixels)> = Vec::with_capacity(widths.len());
+    for &width in widths {
+        let (row, end) = match placed.last() {
+            None => (0, width),
+            Some(&(row, end)) if end + gap + width <= room => (row, end + gap + width),
+            Some(&(row, _)) => (row + 1, width),
+        };
+        if row >= rows {
+            break;
+        }
+        placed.push((row, end));
+    }
+    if placed.len() == widths.len() {
+        return widths.len();
+    }
+    // Some don't fit: take chips off the end until "+N" fits after the
+    // last one, or alone at the start of its row.
+    while let Some(&(row, end)) = placed.last() {
+        if end + gap + more <= room {
+            break;
+        }
+        placed.pop();
+        if placed.last().is_none_or(|&(previous, _)| previous < row) {
+            break;
+        }
+    }
+    placed.len()
 }
 
 /// Short labels for `pod/container` tags: each pod name without the prefix

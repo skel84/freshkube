@@ -335,3 +335,45 @@ fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppCont
     })
     .unwrap();
 }
+
+/// At the smallest window a workload's Logs tab keeps every control above
+/// the log and inside the pane: the chips give their rows up first, and
+/// "+N" lists every container.
+#[gpui_kit::test]
+fn workload_logs_controls_stay_above_the_log_at_minimum_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("workload-logs"), None, None, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        // The panel learns its height while drawing; the chips fit it on
+        // the next frame.
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+        let pane = window.find("resource-detail").bounds();
+        let toolbar = window.find("logs-toolbar").bounds();
+        let viewport = window.find("logs-viewport").bounds();
+        assert!(
+            toolbar.bottom() <= viewport.top(),
+            "{toolbar:?} {viewport:?}"
+        );
+        assert!(toolbar.top() >= pane.top() && toolbar.bottom() <= pane.bottom());
+        assert!(toolbar.left() >= pane.left() && toolbar.right() <= pane.right());
+        // Nothing in the toolbar is cut off at its bottom.
+        for id in ["workload-logs-status", "logs-search", "logs-follow"] {
+            let bounds = window.find(id).bounds();
+            assert!(
+                bounds.bottom() <= toolbar.bottom() + gpui_kit::px(0.5),
+                "{id}: {bounds:?} below {toolbar:?}"
+            );
+        }
+        // Every container stays in reach.
+        assert!(window.try_find("workload-logs-more").is_some());
+    })
+    .unwrap();
+}
