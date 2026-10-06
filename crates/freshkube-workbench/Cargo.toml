@@ -10,11 +10,12 @@ description = "A developer workbench: Freshkube's shared components on invented 
 # This library has no doctests; re-enable them if an example is added.
 doctest = false
 
-# Depends on the shared components only, never on freshkube-desktop or
+# Depends on the shared crates only, never on freshkube-desktop or
 # freshkube-core, so a story shows what a page can build from them
 # (docs/WORKBENCH.md).
 [dependencies]
 gpui-kit = "=0.7.0"
+freshkube-graph.workspace = true
 freshkube-probe.workspace = true
 freshkube-ui.workspace = true
 

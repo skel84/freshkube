@@ -1,14 +1,14 @@
 //! The workbench: Freshkube's shared components on invented data, one story
 //! at a time, beside a strip that changes the theme, the text size and the
-//! window's width (docs/WORKBENCH.md). It depends on `freshkube-ui` only, so
-//! a story is what a page can build from the shared components.
+//! window's width (docs/WORKBENCH.md). It depends on the shared crates only,
+//! never on the app, so a story is what a page can build from them.
 
 use freshkube_ui::palette::palette;
 use freshkube_ui::text_size;
 use freshkube_ui::theme;
 use freshkube_ui::ui::{self, dp};
 use gpui_kit::component::button::Button;
-use gpui_kit::component::{ActiveTheme, Sizable, Theme, ThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, Sizable, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyView, App, Context, Div, KeyBinding, Pixels, Role, SharedString, Size, TestSupportExt,
@@ -167,18 +167,50 @@ impl Workbench {
             .border_r_1()
             .border_color(p.line)
             .child(ui::caption("Stories", cx).pb(dp(4.)))
-            .children(STORIES.iter().enumerate().map(|(ix, story)| {
-                ui::segment(
-                    Button::new(SharedString::from(format!("story-{}", story.slug))),
-                    ix == self.story,
-                    cx,
-                )
-                .small()
-                .w_full()
-                .justify_start()
-                .label(story.title)
-                .on_click(cx.listener(move |this, _, window, cx| this.select(ix, window, cx)))
-            }))
+            .children(
+                STORIES
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, story)| self.render_item(ix, story, cx)),
+            )
+    }
+
+    /// A story in the list, drawn as the app's column draws a page: the
+    /// one shown is raised.
+    fn render_item(
+        &self,
+        ix: usize,
+        story: &Story,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let p = palette(cx);
+        let active = ix == self.story;
+        h_flex()
+            .id(SharedString::from(format!("story-{}", story.slug)))
+            .test_support()
+            .role(Role::Tab)
+            .aria_selected(active)
+            .aria_label(story.title)
+            .tab_index(0)
+            .h(dp(30.))
+            .flex_none()
+            .px(dp(8.))
+            .gap_2()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(gpui_kit::transparent_black())
+            .cursor_pointer()
+            .text_size(dp(13.))
+            .text_color(if active { p.ink } else { p.ink_2 })
+            .when(active, |this| {
+                this.bg(p.surface_2)
+                    .border_color(p.line_strong)
+                    .font_weight(ui::HEADING_WEIGHT)
+            })
+            .when(!active, |this| this.hover(|style| style.bg(p.hover)))
+            .child(Icon::new((story.icon)()).size(dp(15.)).text_color(p.muted))
+            .child(div().min_w_0().truncate().child(story.title))
+            .on_click(cx.listener(move |this, _, window, cx| this.select(ix, window, cx)))
     }
 
     /// Theme, text size and width: what every story is checked at.

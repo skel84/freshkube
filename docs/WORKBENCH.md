@@ -18,6 +18,8 @@ The window has the story list at the left, and a strip above the story with the 
 
 - **`data-table`:** `DataTable` on invented pods (`shop-api`, `app-a`, `cluster-a`, `registry.example`). It shows group rows with status glyphs, a pinned glyph and name while the wider columns scroll sideways, and sorting by name, restarts or age. The header's chips filter by status. Its controls switch between rows, loading, empty and failed, and between 24 and 2,000 rows.
 
+- **`graph`:** `freshkube-graph`'s layout on invented services. Callers sit left of what they call, a curve with an arrowhead joins each call, and a call with a problem is dashed. The service map in Observability uses the same layout. Its controls switch between a shop's calls, a fan-out whose column wraps, a cycle, and services with no calls.
+
 ## Add a story
 
 1. Write its view in `crates/freshkube-workbench/src/stories/<name>.rs` with a `build(window, cx) -> AnyView` and a root element with the id `<slug>-page`.
@@ -26,4 +28,4 @@ The window has the story list at the left, and a strip above the story with the 
 4. Use invented names only (`app-a`, `shop-redis`, `cluster-a`, `registry.example`).
 5. Give its own states controls in its header, with ids starting `<slug>-`, and test them in `src/tests.rs`. The shared test already draws every story in both themes at text sizes 13 and 20.
 
-The crate depends on `freshkube-ui` and `freshkube-probe` only, never on `freshkube-desktop` or `freshkube-core`. A story needs nothing a page outside the shared components owns.
+The crate depends on `freshkube-ui`, `freshkube-graph` and `freshkube-probe` only, never on `freshkube-desktop` or `freshkube-core`. A story needs nothing a page outside the shared components owns.

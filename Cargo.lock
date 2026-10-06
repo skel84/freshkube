@@ -2586,6 +2586,7 @@ dependencies = [
 name = "freshkube-workbench"
 version = "0.5.0"
 dependencies = [
+ "freshkube-graph",
  "freshkube-probe",
  "freshkube-ui",
  "gpui-kit",
