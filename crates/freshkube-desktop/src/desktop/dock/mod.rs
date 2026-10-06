@@ -665,16 +665,21 @@ impl Dock {
     }
 
     /// The connection the tabs read with. The same one refreshes their
-    /// handles; another closes every tab. The first one restores the saved
-    /// tabs when its context is theirs.
+    /// handles; another, or none while a new one is set up, closes every
+    /// tab, as the Resources page starts over. The first one restores the
+    /// saved tabs when its context is theirs.
     pub(crate) fn set_source(
         &mut self,
         source: Option<KubeSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A connection being set up again keeps the tabs until it is known.
         let Some(source) = source else {
+            // Before the first connection there is nothing to close, and
+            // the saved tabs wait for it.
+            if self.source.take().is_some() {
+                self.close_all(window, cx);
+            }
             return;
         };
         match &self.source {

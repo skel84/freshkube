@@ -467,6 +467,92 @@ fn another_context_closes_every_tab(cx: &mut TestAppContext) {
     assert!(view.upgrade().is_none());
 }
 
+/// Runs `change` on the shell as a live Talos session would, with the new
+/// configuration still loading so nothing is contacted: the Kubernetes
+/// source is gone until the new cluster answers.
+fn while_loading(
+    handle: AnyWindowHandle,
+    pilot: &Entity<Pilot>,
+    cx: &mut TestAppContext,
+    change: impl FnOnce(&mut Pilot, &mut gpui_kit::Window, &mut gpui_kit::Context<Pilot>),
+) {
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.fixture = false;
+            pilot.config_loading = true;
+            change(pilot, window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn another_talos_context_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    let view = pod_view(&dock, 0, cx).downgrade();
+    let other = cx.update(|cx| {
+        let pilot = pilot.read(cx);
+        pilot
+            .contexts
+            .iter()
+            .find(|context| Some(*context) != pilot.applied.context.as_ref())
+            .cloned()
+            .unwrap()
+    });
+    while_loading(handle, &pilot, cx, |pilot, window, cx| {
+        pilot.select_context(other, window, cx);
+        assert!(pilot.kube_source().is_none());
+    });
+    assert!(titles(&dock, cx).is_empty());
+    assert!(view.upgrade().is_none());
+}
+
+#[gpui_kit::test]
+fn another_kubeconfig_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
+    use freshkube_core::cluster_overview::KubeconfigSelection;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config");
+    std::fs::write(&path, "apiVersion: v1\nkind: Config\n").unwrap();
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    let view = pod_view(&dock, 0, cx).downgrade();
+    while_loading(handle, &pilot, cx, |pilot, window, cx| {
+        let selection = KubeconfigSelection::File {
+            path: path.clone(),
+            context: None,
+        };
+        pilot.apply_kubeconfig(selection, window, cx);
+        assert!(pilot.kube_source().is_none());
+    });
+    assert!(titles(&dock, cx).is_empty());
+    assert!(view.upgrade().is_none());
+}
+
+#[gpui_kit::test]
+fn losing_the_source_closes_every_tab_and_its_return_reopens_none(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    let source = cx.update(|cx| pilot.read(cx).kube_source());
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            dock.set_source(None, window, cx);
+            assert!(dock.tabs.is_empty());
+            // The same connection back opens nothing it had.
+            dock.set_source(source.clone(), window, cx);
+            assert!(dock.tabs.is_empty());
+        })
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
