@@ -3,9 +3,10 @@
 //! from `derive` when an answer arrives; `render` only reads it.
 //!
 //! A timeseries draws its plot in a cached child view ([`PlotView`]), so a
-//! moving cursor or a hovered legend row redraws only the overlay above it.
-//! Another chart's cursor is drawn beside the panel ([`Linked`]), so it
-//! redraws no panel at all.
+//! hovered legend row repaints the plot without building its shapes again.
+//! Its cursor is a view drawn beside the panel ([`CursorOverlay`]), and so
+//! is another chart's cursor ([`Linked`]): a moving pointer redraws no
+//! panel at all.
 //! A table is a child view too ([`TableView`]), which keeps its scroll.
 mod cursor;
 mod legend;
@@ -35,7 +36,7 @@ use gpui_kit::{
 use super::derive::{self, Body, PanelData};
 use crate::ui::{self, dp};
 
-pub(crate) use cursor::{Cursor, Linked};
+pub(crate) use cursor::{Cursor, CursorOverlay, Linked};
 pub(crate) use markers::glyph as marker_glyph;
 pub(crate) use plot::{Geometry, PlotView};
 pub(crate) use table::TableView;
@@ -76,6 +77,8 @@ pub(crate) struct PanelView {
     hovered: Option<usize>,
     picked: Option<usize>,
     cursor: Option<Cursor>,
+    /// Draws the cursor, beside the panel; made with the plot.
+    overlay: Option<Entity<CursorOverlay>>,
     /// The page's markers, and those on this chart's window.
     markers: Rc<[Marker]>,
     placed: Rc<[markers::Placed]>,
@@ -103,6 +106,7 @@ impl PanelView {
             hovered: None,
             picked: None,
             cursor: None,
+            overlay: None,
             markers: Rc::from([]),
             placed: Rc::from([]),
         }
@@ -133,6 +137,11 @@ impl PanelView {
             }),
             _ => None,
         };
+        self.overlay = match (&self.plot, self.overlay.take()) {
+            (Some(_), Some(overlay)) => Some(overlay),
+            (Some(_), None) => Some(self.new_overlay(cx)),
+            (None, _) => None,
+        };
         self.table = match &data.body {
             Body::Table(rows) => Some(match self.table.take() {
                 Some(table) => {
@@ -156,6 +165,7 @@ impl PanelView {
         self.hovered = None;
         self.picked = None;
         self.place_markers(cx);
+        self.show_cursor(cx);
         cx.notify();
     }
 
@@ -166,6 +176,9 @@ impl PanelView {
         }
         self.markers = markers;
         self.place_markers(cx);
+        if self.cursor.is_some() {
+            self.show_cursor(cx);
+        }
         cx.notify();
     }
 
@@ -249,6 +262,9 @@ impl PanelView {
         if let Some(plot) = &self.plot {
             plot.update(cx, |plot, cx| plot.set_focus(focus, cx));
         }
+        if self.cursor.is_some() {
+            self.show_cursor(cx);
+        }
         cx.notify();
     }
 
@@ -297,7 +313,7 @@ fn about(spec: &PanelSpec, expressions: &[(String, String)], warnings: &[String]
 }
 
 impl Render for PanelView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         crate::desktop::probe::hit("monitoring-panel");
         let _span = crate::perf::span("monitoring.panel_render");
@@ -310,7 +326,7 @@ impl Render for PanelView {
             .about(self.about.clone())
             .copy(self.promql.clone(), "Click to copy the PromQL")
             .stale(self.stale.clone());
-        let body = self.render_body(window, cx);
+        let body = self.render_body(cx);
         if stat {
             StatCard::new(header).render(body, cx)
         } else {
@@ -320,7 +336,7 @@ impl Render for PanelView {
 }
 
 impl PanelView {
-    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match (&self.state, &self.data) {
             (State::Failed(error), _) => summary::message(
                 self.element_id("failed"),
@@ -330,7 +346,7 @@ impl PanelView {
             ),
             (State::Loading, _) | (_, None) => summary::loading(cx),
             (State::Ready, Some(data)) => match data.body.clone() {
-                Body::Chart(chart) => self.render_chart(&chart, window, cx),
+                Body::Chart(chart) => self.render_chart(&chart, cx),
                 Body::Stats(stats) => summary::stats(&stats, cx),
                 Body::Bars(rows) => summary::bars(self.element_id("bars"), &rows, cx),
                 Body::Table(_) => self
@@ -351,12 +367,7 @@ impl PanelView {
         }
     }
 
-    fn render_chart(
-        &mut self,
-        chart: &Rc<derive::Chart>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_chart(&mut self, chart: &Rc<derive::Chart>, cx: &mut Context<Self>) -> AnyElement {
         let Some(plot) = self.plot.clone() else {
             return div().into_any_element();
         };
@@ -369,7 +380,7 @@ impl PanelView {
                         .relative()
                         .size_full()
                         .child(plot.cached(StyleRefinement::default().size_full()))
-                        .child(self.render_cursor(chart, window, cx))
+                        .child(self.render_cursor(cx))
                         .test_support(),
                 ),
             )

@@ -1,0 +1,1 @@
+- Moving the pointer over a Monitoring chart redraws only its crosshair and readout, not the chart's card, legend and plot, so a large dashboard follows the pointer more smoothly.

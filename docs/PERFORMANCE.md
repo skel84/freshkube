@@ -248,6 +248,23 @@ The idle runs open the same dashboard and touch nothing (`FRESHKUBE_STRESS_KEYS=
 - **Moving, a frame renders one panel instead of about 16.** The main thread is free twice as often, but CPU and frame rate hardly change: the hover script moves every 16 ms, and each frame's cost is now the window's own layout and drawing.
 - `scripts/stress.sh` used to fail such a run with "the dashboard never drew", since its summary leaves out the warm-up and nothing drew after it. When the keys only wait and the per-second lines show the dashboard drawing, it now reports "monitoring: 0 frames after warmup" and passes; a run that never drew, or one whose keys do more than wait, still fails (`scripts/stress.test.sh`).
 
+### A pointer move redraws no panel (#22)
+
+After the change above, a move still drew the panel under the pointer: its card, header, legend and plot. The crosshair and readout were drawn inside the panel, so the panel had to render again to move them. Now they are a view of their own, `panel::CursorOverlay`, drawn beside the cached panel by the page, the history charts and Observability's application charts. The panel keeps the pointer's handlers and tells the overlay when the cursor, the focus or the marker under the pointer change. A sample profile of the 30-panel hover had put a third of the main thread under `PanelView`, but most of a frame was GPUI laying out and drawing the whole window, and a fifth was the Metal renderer copying path vertices into a fresh vector each frame.
+
+Release build, same settings, with the build of the change above as before; runs alternated, with no cargo, rustc or clang running. SSMenuAgent (macOS Remote Management) used 114–210% of a core throughout; the one-minute load average at each start is in the table.
+
+| 30 timeseries, hover and scroll | Load | Frames | `panel_render` | `plot_paint` | Stall median, moving seconds | Stall samples | CPU |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Before 1 | 12.2 | 557 | 557 | 557 | 37.1 ms | 1,124 | 83% |
+| After 1 | 8.6 | 621 | 0 | 0 | 32.3 ms | 1,197 | 80% |
+| Before 2 | 12.0 | 557 | 557 | 557 | 37.3 ms | 1,134 | 83% |
+| After 2 | 9.8 | 622 | 0 | 0 | 32.6 ms | 1,216 | 81% |
+
+- **A move draws no panel, and the window draws about 11% more frames.** Frames are `page_render`'s count, since the page draws with every frame.
+- **The stall is read only in the seconds the pointer moves.** In each second the median is either about 1.2 ms, when the hover script paused, or 30–40 ms while it moved, so the median over a whole run swings with the mix: 4.9 ms before and 23 ms after here. Over the moving seconds alone it drops by about 13%.
+- The rest of the frame is GPUI's layout and paint of the whole window, which the page can't avoid while it draws every frame the pointer moves.
+
 ### Kubernetes summary
 
 Before the watch migration, the shell read the Kubernetes summary from the API server cache on its 15 s cycle on every page. `scripts/stress.sh summary-20k summary` served 20,000 pods, 2,000 deployments and 5,000 warning events through the real client. Typed objects were discarded on Tokio after deriving the summary and Health data. These historical measurements describe that polling implementation.

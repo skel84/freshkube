@@ -30,15 +30,17 @@ struct Host {
 }
 
 impl Render for Host {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .children(self.panels.iter().map(|panel| {
                 div()
+                    .relative()
                     .flex_none()
                     .w(px(self.width))
                     .h(px(320.))
                     .child(panel.clone().cached(StyleRefinement::default().size_full()))
+                    .children(panel.read(cx).cursor_overlay())
             }))
     }
 }
@@ -286,27 +288,37 @@ fn the_cursor_reads_out_values_and_tells_the_page_without_rebuilding_paths(
         .unwrap();
     };
     move_to(cx, title.clone(), 0.);
-    let (panel_draws, paths) = (
-        probe::count("monitoring-panel"),
-        probe::count("monitoring-path"),
-    );
-    move_to(cx, plot.clone(), 0.);
+    let counts = || {
+        [
+            "monitoring-panel",
+            "monitoring-plot",
+            "monitoring-plot-paint",
+            "monitoring-legend",
+            "monitoring-path",
+        ]
+        .map(probe::count)
+    };
+    let before = counts();
+    let readout: gpui_kit::SharedString = format!("monitoring-panel-{cpu}-readout").into();
+    let readout_right = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| {
+            window.find(readout.clone()).bounds().right()
+        })
+        .unwrap()
+    };
+    move_to(cx, plot.clone(), 60.);
+    let near = readout_right(cx);
+    move_to(cx, plot.clone(), 100.);
+    let far = readout_right(cx);
     move_to(cx, plot.clone(), 40.);
-    assert!(probe::count("monitoring-panel") > panel_draws);
-    // The plot renders again inside its panel, but builds no shape.
-    assert_eq!(
-        probe::count("monitoring-path"),
-        paths,
-        "the cursor rebuilt a path"
-    );
+    // Only the cursor's own view draws: the panel, its plot and its legend
+    // stay cached, and no shape is built.
+    assert_eq!(counts(), before, "a pointer move drew the panel again");
+    assert!(far > near, "the readout stayed at {near:?}");
     let cursor = cx.read(|cx| panels[cpu].read(cx).cursor.clone()).unwrap();
     assert!(!cursor.rows.is_empty());
     assert!(!cursor.time.is_empty());
-    assert!(shown(
-        cx,
-        handle,
-        &format!("monitoring-panel-{cpu}-readout")
-    ));
+    assert!(shown(cx, handle, &readout));
     let time = match events.borrow().last() {
         Some(PanelEvent::Cursor(Some(time))) => *time,
         other => panic!("{other:?}"),
@@ -329,6 +341,7 @@ fn the_cursor_reads_out_values_and_tells_the_page_without_rebuilding_paths(
     cx.update_window(handle, |_, window, cx| window.hover(title.clone(), cx))
         .unwrap();
     assert!(cx.read(|cx| panels[cpu].read(cx).cursor.is_none()));
+    assert!(!shown(cx, handle, &readout));
     assert!(matches!(
         events.borrow().last(),
         Some(PanelEvent::Cursor(None))
@@ -553,6 +566,48 @@ fn a_crowded_readout_ranks_the_highest_values_and_fits_the_plot(cx: &mut TestApp
         assert!(readout.bottom() <= plot.bottom(), "{readout:?} in {plot:?}");
     })
     .unwrap();
+}
+
+/// A series picked in the legend while the cursor shows is marked in the
+/// readout at once, and the panel never draws for the pointer.
+#[gpui_kit::test]
+fn a_pick_under_the_cursor_shows_in_the_readout(cx: &mut TestAppContext) {
+    let (handle, panels, result) = crowded(cx);
+    let again = result.clone();
+    cx.update(|cx| {
+        panels[0].update(cx, |panel, cx| {
+            panel.set_result(result, window_range(), cx);
+        })
+    });
+    frame(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        let bounds = window.find("monitoring-panel-0-plot").bounds();
+        window.dispatch_event(
+            gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                position: bounds.center(),
+                pressed_button: None,
+                modifiers: Default::default(),
+            }),
+            cx,
+        );
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    let overlay = cx.read(|cx| panels[0].read(cx).cursor_overlay()).unwrap();
+    let (rows, focused) = cx.read(|cx| overlay.read(cx).named()).unwrap();
+    assert_eq!(focused, None);
+    let pick = rows[1];
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.toggle_picked(pick, cx)));
+    assert_eq!(
+        cx.read(|cx| overlay.read(cx).named()),
+        Some((rows.clone(), Some(pick)))
+    );
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.toggle_picked(pick, cx)));
+    assert_eq!(cx.read(|cx| overlay.read(cx).named()), Some((rows, None)));
+
+    // A new answer takes the cursor away, as before.
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(again, window_range(), cx)));
+    assert_eq!(cx.read(|cx| overlay.read(cx).named()), None);
 }
 
 /// A table panel of `count` alerts, one per name, answered at once.
