@@ -2,6 +2,7 @@
 //! there is no document.
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
@@ -150,7 +151,7 @@ impl DetailPane {
         )
     }
 
-    fn tabs(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
+    fn tabs(&self, detail: &Detail, cx: &mut Context<Self>) -> Observed<Stateful<Div>> {
         let events = &detail.events;
         let tab = |id: &'static str,
                    tab: Tab,
@@ -177,7 +178,12 @@ impl DetailPane {
             _ => None,
         };
         let warnings = events.warnings();
-        h_flex()
+        let active = Tab::of(&detail.target.kind)
+            .iter()
+            .position(|tab| *tab == self.tab)
+            .unwrap_or(0);
+        self.tab_strip
+            .row("detail-tabs", active)
             .key_context(TABS_CONTEXT)
             .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.move_tab(1, window, cx)))
             .on_action(
@@ -358,7 +364,7 @@ impl Render for DetailPane {
                     Inspector::new("detail-inspector")
                         .heading(self.header(detail, cx))
                         .banner(notice)
-                        .tabs(self.tabs(detail, cx))
+                        .tabs(&self.tab_strip, self.tabs(detail, cx))
                         .content(body)
                         .footer(feedback)
                         .render(cx),

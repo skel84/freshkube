@@ -225,7 +225,10 @@ impl Pilot {
         let inspector = Inspector::new("node-inspector")
             .heading(self.render_node_heading(&row, cx))
             .banner(chips)
-            .tabs(self.render_node_tabs(&row, cx))
+            .tabs(
+                &self.node_workspace.tab_strip,
+                self.render_node_tabs(&row, cx),
+            )
             .content(body)
             .render(cx);
         div()
@@ -376,16 +379,21 @@ impl Pilot {
     fn render_node_tabs(&self, row: &NodeRow, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let collecting = self.logs.read(cx).collecting_count() > 0;
-        h_flex()
-            .id("node-tabs")
+        let workspace = &self.node_workspace;
+        // Events and YAML sit in More, so while one shows, More is the
+        // strip's active place.
+        let active = workspace
+            .inline_tabs
+            .iter()
+            .position(|tab| *tab == workspace.tab)
+            .unwrap_or(workspace.inline_tabs.len());
+        workspace
+            .tab_strip
+            .row("node-tabs", active)
             .key_context("NodeWorkspaceTabs")
-            .track_focus(&self.node_workspace.tab_focus)
+            .track_focus(&workspace.tab_focus)
             .tab_index(0)
-            .flex_1()
-            .min_w_0()
             .gap_1()
-            .overflow_x_scroll()
-            .track_scroll(&self.node_workspace.tab_scroll)
             .children(self.node_workspace.inline_tabs.iter().map(|tab| {
                 let label: SharedString = if *tab == NodeTab::Pods {
                     row.pod_label.clone()
