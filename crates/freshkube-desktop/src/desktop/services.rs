@@ -246,8 +246,8 @@ impl Pilot {
 
     fn services_list(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let all = self.services.data().cloned().unwrap_or_default();
-        let visible = self.service_display.visible.clone();
+        let visible = &self.service_display.visible;
+        let reported = self.services.data().is_some_and(|all| !all.is_empty());
         v_flex()
             .id("services-region")
             .test_support()
@@ -266,7 +266,7 @@ impl Pilot {
                 this.child(div().px_2p5().py_3p5().text_color(p.muted).child(
                     if self.services.is_loading() {
                         "Loading services…"
-                    } else if all.is_empty() {
+                    } else if !reported {
                         "This node didn't report any services."
                     } else {
                         "No services match this filter."
