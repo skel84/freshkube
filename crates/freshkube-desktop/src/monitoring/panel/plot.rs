@@ -45,6 +45,8 @@ pub(crate) struct PlotView {
     pub(super) focus: Option<usize>,
     geometry: Rc<Cell<Geometry>>,
     markers: Rc<[Placed]>,
+    /// Whether a path failed to build, so it is reported once.
+    failed: Rc<Cell<bool>>,
 }
 
 impl PlotView {
@@ -56,6 +58,7 @@ impl PlotView {
             focus: None,
             geometry,
             markers: Rc::from([]),
+            failed: Rc::default(),
         }
     }
 
@@ -90,6 +93,7 @@ impl Render for PlotView {
             geometry: self.geometry.clone(),
             markers: self.markers.clone(),
             palette: palette(cx),
+            failed: self.failed.clone(),
         };
         div()
             .id(self.id.clone())
@@ -114,6 +118,7 @@ struct Paint {
     geometry: Rc<Cell<Geometry>>,
     markers: Rc<[Placed]>,
     palette: Palette,
+    failed: Rc<Cell<bool>>,
 }
 
 /// The inner rectangle at a zero origin, and what projects onto it.
@@ -381,9 +386,10 @@ impl Paint {
                 let path = caches.slot(index).get(
                     key((self.revision, index, 0)),
                     bounds.origin,
-                    built(|| bars_path(series, &self.chart.xs, frame, slot, bars)),
+                    built(|| self.reported(bars_path(series, &self.chart.xs, frame, slot, bars))),
                 );
                 if let Some(path) = path {
+                    crate::desktop::probe::hit("monitoring-path-painted");
                     window.paint_path(path, color.opacity(0.7 * fade));
                 }
                 continue;
@@ -457,9 +463,12 @@ impl Paint {
                 let path = caches.slot(slot).get(
                     key((self.revision, slot, 1)),
                     bounds.origin,
-                    built(|| area_path(members, &self.chart.xs, self.chart.curve, frame)),
+                    built(|| {
+                        self.reported(area_path(members, &self.chart.xs, self.chart.curve, frame))
+                    }),
                 );
                 if let Some(path) = path {
+                    crate::desktop::probe::hit("monitoring-path-painted");
                     window.paint_path(path, look.color.opacity(look.fill * fade));
                 }
             }
@@ -468,16 +477,17 @@ impl Paint {
                     key((self.revision, slot + 1, 2)),
                     bounds.origin,
                     built(|| {
-                        line_path(
+                        self.reported(line_path(
                             members,
                             look.dashes,
                             &self.chart.xs,
                             self.chart.curve,
                             frame,
-                        )
+                        ))
                     }),
                 );
                 if let Some(path) = path {
+                    crate::desktop::probe::hit("monitoring-path-painted");
                     window.paint_path(path, look.color.opacity(fade));
                 }
             }
@@ -495,6 +505,19 @@ impl Paint {
                     .corner_radii(diameter / 2.),
             );
         }
+    }
+
+    /// A path, or nothing when it couldn't be built: said once per chart on
+    /// stderr, and a failure in debug builds, so a limit never hides lines
+    /// silently again.
+    fn reported(&self, built: Built) -> Option<Path<Pixels>> {
+        built.unwrap_or_else(|error| {
+            if !self.failed.replace(true) {
+                eprintln!("{}: a path failed to build: {error}", self.id);
+            }
+            debug_assert!(false, "{}: a path failed to build: {error}", self.id);
+            None
+        })
     }
 
     fn tier_color(&self, tier: Tier) -> Hsla {
@@ -588,7 +611,19 @@ fn line_path(
     xs: &[f32],
     curve: Curve,
     frame: &Frame,
-) -> Option<Path<Pixels>> {
+) -> Built {
+    joined(members, &|members| {
+        line_chunk(members, dashes, xs, curve, frame)
+    })
+}
+
+fn line_chunk(
+    members: &[&ChartSeries],
+    dashes: Option<&[f32]>,
+    xs: &[f32],
+    curve: Curve,
+    frame: &Frame,
+) -> Built {
     let mut path = PathBuilder::stroke(px(if dashes.is_some() { 1.5 } else { 2. }));
     if let Some(dashes) = dashes {
         let dashes: Vec<Pixels> = dashes.iter().map(|d| px(*d)).collect();
@@ -604,17 +639,18 @@ fn line_path(
             any = true;
         }
     }
-    any.then(|| path.build().ok()).flatten()
+    finished(any, path)
 }
 
 /// The area under a line, down to its baseline or, stacked, to the series
 /// below.
-fn area_path(
-    members: &[&ChartSeries],
-    xs: &[f32],
-    curve: Curve,
-    frame: &Frame,
-) -> Option<Path<Pixels>> {
+/// Built whole where it can be: GPUI draws a path's triangles over each
+/// other, so where two chunks' areas overlap they would fill twice.
+fn area_path(members: &[&ChartSeries], xs: &[f32], curve: Curve, frame: &Frame) -> Built {
+    halving(members, &|members| area_chunk(members, xs, curve, frame))
+}
+
+fn area_chunk(members: &[&ChartSeries], xs: &[f32], curve: Curve, frame: &Frame) -> Built {
     let mut path = area_builder();
     let mut any = false;
     for series in members {
@@ -646,7 +682,71 @@ fn area_path(
             any = true;
         }
     }
-    any.then(|| path.build().ok()).flatten()
+    finished(any, path)
+}
+
+/// A path, none when there was nothing to draw, or why it couldn't be built.
+type Built = Result<Option<Path<Pixels>>, String>;
+
+fn finished(any: bool, path: PathBuilder) -> Built {
+    if !any {
+        return Ok(None);
+    }
+    path.build().map(Some).map_err(|error| error.to_string())
+}
+
+/// About how many samples one path traces first. GPUI tessellates a path
+/// with 16-bit indices, so one holds at most 65,536 vertices (K25 in
+/// docs/GPUI_FRICTION.md). A sample takes from 2 on a flat straight line to
+/// about 56 on a smooth one that jumps 100 px at every sample; ordinary
+/// charts fit this many, and a chunk that doesn't is halved.
+const SAMPLES_PER_PATH: usize = 4_000;
+
+/// A group's lines built a chunk of series at a time, each under GPUI's
+/// vertex limit, and joined into one path, so the group still draws in one
+/// pass. A chunk that still fails is split in half until it builds.
+fn joined(members: &[&ChartSeries], build: &impl Fn(&[&ChartSeries]) -> Built) -> Built {
+    let mut path = None;
+    let mut start = 0;
+    let mut samples = 0;
+    for (index, series) in members.iter().enumerate() {
+        let count = series.tops.iter().filter(|y| y.is_finite()).count();
+        if index > start && samples + count > SAMPLES_PER_PATH {
+            join(&mut path, halving(&members[start..index], build)?);
+            (start, samples) = (index, 0);
+        }
+        samples += count;
+    }
+    join(&mut path, halving(&members[start..], build)?);
+    Ok(path)
+}
+
+/// `members`' shape, split in half until each half builds.
+fn halving(members: &[&ChartSeries], build: &impl Fn(&[&ChartSeries]) -> Built) -> Built {
+    match build(members) {
+        Err(_) if members.len() > 1 => {
+            let (first, rest) = members.split_at(members.len() / 2);
+            let mut path = halving(first, build)?;
+            join(&mut path, halving(rest, build)?);
+            Ok(path)
+        }
+        built => built,
+    }
+}
+
+/// Adds `more`'s triangles to `path`: a built path is a list of triangles,
+/// so two drawn as one fill the same pixels.
+fn join(path: &mut Option<Path<Pixels>>, more: Option<Path<Pixels>>) {
+    let Some(more) = more.filter(|more| !more.vertices.is_empty()) else {
+        return;
+    };
+    match path {
+        Some(path) => {
+            path.bounds = path.bounds.union(&more.bounds);
+            path.vertices.extend(more.vertices);
+        }
+        None => *path = Some(more),
+    }
 }
 
 /// A fill that draws overlapping areas once. Even-odd, the default, would cut
@@ -658,13 +758,7 @@ fn area_builder() -> PathBuilder {
 }
 
 /// One bar per sample, side by side with the panel's other bar series.
-fn bars_path(
-    series: &ChartSeries,
-    xs: &[f32],
-    frame: &Frame,
-    slot: usize,
-    count: usize,
-) -> Option<Path<Pixels>> {
+fn bars_path(series: &ChartSeries, xs: &[f32], frame: &Frame, slot: usize, count: usize) -> Built {
     let step = xs
         .windows(2)
         .map(|pair| pair[1] - pair[0])
@@ -699,7 +793,7 @@ fn bars_path(
         );
         any = true;
     }
-    any.then(|| path.build().ok()).flatten()
+    finished(any, path)
 }
 
 fn text_width(text: &SharedString, font_size: Pixels, window: &mut Window) -> Pixels {

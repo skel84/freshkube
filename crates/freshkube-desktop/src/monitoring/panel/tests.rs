@@ -536,6 +536,50 @@ fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) 
     assert_eq!(probe::count("monitoring-path") - before, 3 * 2);
 }
 
+/// A group of grey lines past GPUI's 65,536 vertices a path still draws:
+/// it is built in chunks joined into one path, where it once failed to
+/// build and drew nothing.
+#[gpui_kit::test]
+fn a_group_past_the_vertex_limit_still_draws(cx: &mut TestAppContext) {
+    use freshkube_core::monitoring::model::data::{Frame, Series};
+    let dashboard = Dashboard::parse(
+        r#"{
+          "title": "Dense",
+          "panels": [{
+            "type": "timeseries", "title": "Dense",
+            "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
+            "targets": [{"refId": "A", "expr": "go_goroutines", "legendFormat": "{{pod}}"}]
+          }]
+        }"#,
+    )
+    .unwrap();
+    let specs: Vec<Rc<PanelSpec>> = dashboard.panels.iter().cloned().map(Rc::new).collect();
+    let (handle, panels) = mount(cx, specs);
+    // The 600 samples a panel asks for by default.
+    let times: Vec<f64> = (0..600).map(|n| (END - 6 * 3600 + n * 36) as f64).collect();
+    // Seventy jagged series: the 68 grey ones pass the limit as one path.
+    let series = (0..70)
+        .map(|pod| Series {
+            name: format!("app-{pod}"),
+            query: "A".into(),
+            field: None,
+            labels: vec![("pod".into(), format!("app-{pod}"))],
+            values: (0..600).map(|n| ((n * 7 + pod * 13) % 17) as f64).collect(),
+        })
+        .collect();
+    let result = freshkube_core::monitoring::PanelResult {
+        frame: Frame { times, series },
+        warnings: Vec::new(),
+        expressions: Vec::new(),
+    };
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(result, window_range(), cx)));
+    frame(cx, handle);
+    let before = probe::count("monitoring-path-painted");
+    frame(cx, handle);
+    // One frame paints the two coloured lines and the grey ones as one.
+    assert_eq!(probe::count("monitoring-path-painted") - before, 3);
+}
+
 /// Past what fits, the readout names the highest values and the picked
 /// series, and stays inside the plot.
 #[gpui_kit::test]

@@ -4,7 +4,7 @@ This log records GPUI Kit and GPUI friction found while building Freshkube, and 
 
 Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a431fb1b82a6047e908de63913db3d4354` (version 0.7.0). This application uses the published `gpui-kit` 0.7.0 from crates.io. GPUI is the crates.io snapshot `gpui-pre` 0.3.7, and its paths are relative to that crate.
 
-**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K24 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`. From K17 on, toolkit source is cited in the published crates in the Cargo registry, by crate name and version (`gpui-pre` 0.3.7, `gpui-base` 0.7.0, `gpui-component` 0.7.0, `gpui-kit` 0.7.0), with paths relative to each crate.
+**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K25 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`. From K17 on, toolkit source is cited in the published crates in the Cargo registry, by crate name and version (`gpui-pre` 0.3.7, `gpui-base` 0.7.0, `gpui-component` 0.7.0, `gpui-kit` 0.7.0), with paths relative to each crate.
 
 | ID | Summary | Found in | Classification |
 | --- | --- | --- | --- |
@@ -32,6 +32,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 | [K22](#k22-no-terminal-widget-for-the-pinned-kit) | No terminal widget builds against the pinned Kit | Pod exec | Component limitation |
 | [K23](#k23-covered-or-locked-windows-draw-nothing) | Covered or locked windows draw nothing | Live checks, performance pass | Platform limitation |
 | [K24](#k24-path-vertices-are-copied-into-a-fresh-vector-every-frame) | Path vertices are copied into a fresh, unreserved vector every frame | Monitoring, #22 | Framework issue |
+| [K25](#k25-a-path-past-65536-vertices-fails-to-build) | One path holds at most 65,536 vertices | Monitoring series cap | Framework issue |
 
 ## K01 DataTable keys ignore row-only mode
 
@@ -267,11 +268,25 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
   - Series that look the same unfocused share one path, so a crowded panel's grey series draw as one line and one area ([MONITORING.md](MONITORING.md)).
   - Next, a cap on the series a chart draws: the 30 with the highest peaks, with the rest one click away.
   - Moving the cursor builds no path.
+- **Measured without the grey lines:** the profiled dashboard is the stress binary's `thirty.json`, whose crowded charts lost their shared grey path to [K25](#k25-a-path-past-65536-vertices-fails-to-build). These numbers need measuring again.
 - **Classification:** framework issue.
 - **Upstream:** not reported. Suggested fix, smallest first:
   1. Reserve the total up front: `Vec::with_capacity(paths.iter().map(|p| p.vertices.len()).sum())`.
   2. Keep the vector on the renderer and `clear()` it each frame, so its capacity survives between frames.
   3. Write the vertices straight into the instance buffer, with no intermediate vector.
+
+## K25 A path past 65,536 vertices fails to build
+
+- **Found in:** the series cap's captures (#245). After Show all, a `thirty.json` chart drew its two coloured lines and no grey ones.
+- **Symptom:** a chart's grey series share one stroked path ([K24](#k24-path-vertices-are-copied-into-a-fresh-vector-every-frame)). With 65 of them at the 600 samples a panel asks for by default, `PathBuilder::build` returned `Too many vertices`. The plot turned the error into no path and drew nothing, with no message. The 28 grey series under the cap built, at 91,992 triangle vertices.
+- **Source:**
+  - `gpui-pre` 0.3.7 `src/path_builder.rs:262` and `:308`: `PathBuilder` tessellates into lyon's `VertexBuffers<Point<Pixels>, u16>`, then expands the indices into a triangle list.
+  - `lyon_tessellation` 1.0.22 `src/geometry_builder.rs:338-346`: a new vertex whose index passes `u16::MAX` fails with `GeometryBuilderError::TooManyVertices`.
+  - So one path holds at most 65,536 distinct vertices. The triangle list it builds can be longer, since triangles share vertices.
+- **How much fits:** a stroked sample takes about 2 vertices on a flat straight line and about 56 on a smooth line that jumps 100 px at every sample. In one path that is from 32,768 samples down to 1,172.
+- **Freshkube workaround:** `monitoring/panel/plot.rs` builds a group's lines a chunk of series at a time, about 4,000 samples each. It halves a chunk that still fails, and joins the chunks' triangles into one path, so the group still draws in one pass. Areas are halved only on failure, since chunks whose areas overlap would fill twice. A path that fails anyway is reported once per chart on stderr and fails a debug assertion.
+- **Classification:** framework issue. The `u16` limit is lyon's choice of index type, and `build` does return the error; the cost is that nothing near `PathBuilder` says one path has a limit.
+- **Upstream:** not reported. Possible fixes: tessellate with `u32` indices, since `build` expands them into a vertex list anyway, or document the limit on `PathBuilder`.
 
 ## Strengths observed
 
