@@ -147,6 +147,7 @@ mod logs;
 mod maintenance;
 mod monitoring;
 mod mutation;
+mod navigation_file;
 mod observability;
 mod presentation;
 mod resources;

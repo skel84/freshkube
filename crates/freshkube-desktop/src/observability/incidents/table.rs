@@ -6,10 +6,6 @@ use crate::observability::tables::TableCells;
 use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
-/// A table beside the detail stays bounded in the scrolling page.
-const MAX_LINES: usize = 16;
-/// Stacked above the detail: about DESIGN.md's 190 dp list.
-const STACKED_LINES: usize = 5;
 /// The columns Columns can hide; the glyph, key and title always show.
 const OPTIONAL: [ColumnKind; 4] = [
     ColumnKind::App,
@@ -201,20 +197,17 @@ impl ObservabilityPage {
         state.columns = columns;
     }
 
+    /// The table, bare, filling the split's pane beside its inspector.
     pub(super) fn render_incident_table(
         &self,
-        beside: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         DataTable::new()
-            .carded()
-            .fit(if beside { MAX_LINES } else { STACKED_LINES })
             .render(self, window, cx)
             .id(self.incident_table.id("table"))
             .test_support()
-            .w_full()
-            .flex_none()
+            .size_full()
             .into_any_element()
     }
 

@@ -14,6 +14,10 @@ use heat::{Heat, heat};
 pub(super) use table::SpanCells;
 use waterfall::{Waterfall, waterfall};
 
+/// The Application report's Tracing block: the split in a card as tall as
+/// the table's header, sixteen lines and its footer.
+const EMBEDDED_HEIGHT: f32 = 468.;
+
 #[derive(Default)]
 pub(super) struct Traces {
     /// `otel`, `agent`, or empty for Coroot's choice.
@@ -366,40 +370,64 @@ impl ObservabilityPage {
     }
 
     /// The application, Coroot's note and heatmap, then the requests with
-    /// their trace beside them on a wide page and below on a narrow one.
+    /// the trace's inspector beside them on a wide page and below on a
+    /// narrow one. In the Application report the split sits in one card.
     pub(super) fn render_live_traces(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let traces = &self.live_traces;
-        let mut page = v_flex()
-            .id("obs-live-traces")
+        let mut evidence = v_flex()
+            .id("obs-traces-evidence")
             .test_support()
             .gap(dp(12.))
             .child(self.evidence_header("obs-trace-app", cx));
-        if self.selected_app.is_none() {
+        let split = if self.selected_app.is_none() {
+            evidence = evidence.child(muted(
+                "Choose an application to read its traces from Coroot.",
+                cx,
+            ));
+            None
+        } else {
+            // The heatmap stays drawn while Coroot answers, so it keeps the keyboard.
+            let waiting = !self.fixture && self.live.tracing.data().is_none();
+            if !waiting && !traces.note.is_empty() {
+                evidence = evidence.child(muted(traces.note.clone(), cx).whitespace_normal());
+            }
+            evidence = evidence.child(self.live_heatmap(window, cx));
+            (!waiting).then(|| {
+                let table = self.render_trace_table(window, cx);
+                let pane = self.live_waterfall(cx);
+                freshkube_ui::inspector::split(
+                    "obs-traces-split",
+                    &self.trace_split,
+                    inspector_beside(window),
+                    table,
+                    Some(pane),
+                    window,
+                )
+            })
+        };
+        let page = v_flex().id("obs-live-traces").test_support().min_w_0();
+        if self.destination == Destination::Application {
             return page
-                .child(muted(
-                    "Choose an application to read its traces from Coroot.",
-                    cx,
-                ))
+                .gap(dp(12.))
+                .child(evidence)
+                .children(split.map(|split| {
+                    freshkube_ui::page::card(cx)
+                        .h(dp(EMBEDDED_HEIGHT))
+                        .overflow_hidden()
+                        .child(split)
+                }))
                 .into_any_element();
         }
-        // The heatmap stays drawn while Coroot answers, so it keeps the keyboard.
-        let waiting = !self.fixture && self.live.tracing.data().is_none();
-        if !waiting && !traces.note.is_empty() {
-            page = page.child(muted(traces.note.clone(), cx).whitespace_normal());
-        }
-        page = page.child(self.live_heatmap(window, cx));
-        if waiting {
-            return page.into_any_element();
-        }
-        let beside = crate::screens::beside(window);
-        let table = self.render_trace_table(beside, window, cx);
-        let pane = self.live_waterfall(cx);
-        page.child(crate::screens::split(
-            "obs-traces-split",
-            beside,
-            table,
-            Some(pane),
-        ))
-        .into_any_element()
+        page.flex_1()
+            .min_h_0()
+            .child(
+                freshkube_ui::page::inset()
+                    .when(split.is_some(), |this| {
+                        this.border_b_1().border_color(palette(cx).line)
+                    })
+                    .child(evidence),
+            )
+            .children(split.map(|split| self.sized_split(split, true, window)))
+            .into_any_element()
     }
 }

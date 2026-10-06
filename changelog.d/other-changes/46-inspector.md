@@ -1,0 +1,1 @@
+- Incidents and Traces show the selection in an inspector beside a bare table, instead of in a card: drag the hairline between them to resize it, and each page remembers its width.

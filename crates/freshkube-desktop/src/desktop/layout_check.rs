@@ -6,7 +6,8 @@
 //! `assert_edge_frame` an edge-to-edge page's inset and toolbar,
 //! `assert_table` checks one table's header and rows (a page may hold
 //! several), and `assert_table_page` checks a table page with the edge
-//! frame and its table, and that the table sits in no card. A page names a few
+//! frame and its table, and that the table sits in no card;
+//! `assert_inspector` checks an inspector against its table. A page names a few
 //! elements by id; rows and group headers are found by their accessibility
 //! roles inside the list, so the checks need no access to the page's state.
 
@@ -155,6 +156,63 @@ pub(crate) fn assert_bare(window: &Window, table: &'static str) {
         card.is_none(),
         "{table} sits in a card; DESIGN.md's table pages draw it bare: {card:#?}"
     );
+}
+
+/// Asserts DESIGN.md's inspector: beside its table with no gap and reaching
+/// the split's right edge, or under it across the split's width; in no
+/// card; and its heading's `title` `PANE_PADDING` in from its left, with
+/// the heading at its top.
+pub(crate) fn assert_inspector(
+    window: &mut Window,
+    cx: &mut App,
+    split: &'static str,
+    table: &'static str,
+    inspector: &'static str,
+    title: &'static str,
+) {
+    window.render_frame(cx);
+    let split = window.find(split).bounds();
+    let table = window.find(table).bounds();
+    let pane = window.find(inspector).bounds();
+    let heading = window
+        .find(SharedString::from(format!("{inspector}-heading")))
+        .bounds();
+    let title = window.find(title).bounds();
+    let check = |what: &str, actual: Pixels, expected: Pixels| {
+        assert!(
+            (actual - expected).abs() <= px(1.),
+            "{inspector}: {what} is {actual:?}, expected {expected:?}"
+        );
+    };
+    if pane.left() > table.left() {
+        check(
+            "its left against the table's right",
+            pane.left(),
+            table.right(),
+        );
+        check("its right against the split's", pane.right(), split.right());
+        check("its top against the table's", pane.top(), table.top());
+    } else {
+        check(
+            "its top against the table's bottom",
+            pane.top(),
+            table.bottom(),
+        );
+        check(
+            "its width against the split's",
+            pane.size.width,
+            split.size.width,
+        );
+    }
+    let pad = dp_px(PANE_PADDING, window);
+    check("the title's inset", title.left() - pane.left(), pad);
+    check("the heading's top", heading.top(), pane.top());
+    assert!(
+        title.top() - pane.top() >= pad - px(1.),
+        "{inspector}: the title sits {:?} below the top, under {pad:?}",
+        title.top() - pane.top()
+    );
+    assert_bare(window, inspector);
 }
 
 /// Asserts DESIGN.md's padded frame, a page of cards': 26 dp side padding and

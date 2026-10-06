@@ -400,6 +400,10 @@ impl Pilot {
     ) -> Self {
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
+        // Opened before the pages, which read their inspectors' widths from it.
+        let navigation =
+            crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
+        cx.set_global(navigation.clone());
         cx.bind_keys([
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
@@ -772,7 +776,7 @@ impl Pilot {
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             monitoring,
             observability,
-            column_state: shell::ColumnState::new(options.preferences.as_deref()),
+            column_state: shell::ColumnState::new(navigation),
             node_history: cx.new(|_| HistoryView::new(runtime.clone(), "node")),
             area: Area::Overview,
             group_kinds: BTreeMap::new(),

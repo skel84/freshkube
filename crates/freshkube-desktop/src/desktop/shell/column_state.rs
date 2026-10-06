@@ -1,37 +1,20 @@
 //! User preference and prepared namespace labels for the contextual sidebar.
 use super::*;
-use std::{
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use crate::navigation_file::NavigationFile;
 
 pub(in crate::desktop) struct ColumnState {
     pub(in crate::desktop) collapsed: bool,
     narrow_override: Option<bool>,
-    file: Option<PathBuf>,
-    latest: Arc<AtomicBool>,
-    writer: Arc<Mutex<()>>,
+    file: NavigationFile,
     pub(super) namespaces: Vec<(SharedString, SharedString)>,
     pub(super) total: SharedString,
 }
 impl ColumnState {
-    pub(in crate::desktop) fn new(preferences: Option<&Path>) -> Self {
-        let file = preferences.map(|p| p.with_file_name("navigation.json"));
-        let collapsed = file
-            .as_ref()
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|s| serde_json::from_slice::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("collapsed").and_then(|v| v.as_bool()))
-            .unwrap_or(false);
+    pub(in crate::desktop) fn new(file: NavigationFile) -> Self {
         Self {
-            collapsed,
+            collapsed: file.collapsed().unwrap_or(false),
             narrow_override: None,
             file,
-            latest: Arc::new(AtomicBool::new(collapsed)),
-            writer: Arc::new(Mutex::new(())),
             namespaces: vec![],
             total: "—".into(),
         }
@@ -59,27 +42,7 @@ impl ColumnState {
         self.narrow_override = Some(collapsed);
     }
     fn save(&self, cx: &App) {
-        let Some(path) = self.file.clone() else {
-            return;
-        };
-        self.latest.store(self.collapsed, Ordering::SeqCst);
-        let latest = self.latest.clone();
-        let writer = self.writer.clone();
-        cx.background_executor()
-            .spawn(async move {
-                let Ok(_guard) = writer.lock() else {
-                    return;
-                };
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let value = serde_json::json!({"collapsed":latest.load(Ordering::SeqCst)});
-                let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-                if std::fs::write(&temporary, format!("{value}\n")).is_ok() {
-                    let _ = std::fs::rename(&temporary, &path);
-                }
-            })
-            .detach();
+        self.file.set_collapsed(self.collapsed, cx);
     }
 }
 impl Pilot {
@@ -121,6 +84,7 @@ impl Pilot {
 #[cfg(test)]
 mod tests {
     use super::ColumnState;
+    use crate::navigation_file::NavigationFile;
     use gpui_kit::TestAppContext;
 
     #[gpui_kit::test]
@@ -135,7 +99,7 @@ mod tests {
         ));
         let preferences = directory.join("preferences.json");
         cx.update(|cx| {
-            let mut state = ColumnState::new(Some(&preferences));
+            let mut state = ColumnState::new(NavigationFile::open(Some(&preferences)));
             state.collapsed = true;
             state.save(cx);
             state.collapsed = false;
@@ -144,7 +108,7 @@ mod tests {
             state.save(cx);
         });
         cx.run_until_parked();
-        assert!(ColumnState::new(Some(&preferences)).collapsed);
+        assert!(ColumnState::new(NavigationFile::open(Some(&preferences))).collapsed);
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -1,0 +1,221 @@
+//! `navigation.json` beside the preferences: whether the sidebar is
+//! collapsed, and how wide each page's inspector is, in dp. The shell opens
+//! it once and makes it a global, so every writer saves the same snapshot
+//! and none drops another's key.
+//!
+//! An older build reads the file too: it reads `collapsed` and ignores the
+//! keys it doesn't know, and a file it wrote without `inspector` gives each
+//! inspector its default width here. Keys this build doesn't know are kept.
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use gpui_kit::{App, Global};
+use serde_json::{Map, Value};
+
+const COLLAPSED: &str = "collapsed";
+const INSPECTOR: &str = "inspector";
+
+#[derive(Clone, Default)]
+pub(crate) struct NavigationFile(Option<Arc<File>>);
+
+struct File {
+    path: PathBuf,
+    /// The file's object as last changed; a save writes all of it.
+    value: Mutex<Map<String, Value>>,
+    /// Keeps two saves from writing at once.
+    writer: Mutex<()>,
+}
+
+impl Global for NavigationFile {}
+
+impl NavigationFile {
+    /// The file beside `preferences`, read once. Without preferences, as in
+    /// tests, nothing is read or written.
+    pub(crate) fn open(preferences: Option<&Path>) -> Self {
+        let Some(path) = preferences.map(|p| p.with_file_name("navigation.json")) else {
+            return Self(None);
+        };
+        let value = std::fs::read(&path)
+            .ok()
+            .and_then(|s| serde_json::from_slice::<Value>(&s).ok())
+            .and_then(|v| match v {
+                Value::Object(map) => Some(map),
+                _ => None,
+            })
+            .unwrap_or_default();
+        Self(Some(Arc::new(File {
+            path,
+            value: Mutex::new(value),
+            writer: Mutex::new(()),
+        })))
+    }
+
+    /// The shell's file, or none when the shell hasn't opened one.
+    pub(crate) fn global(cx: &App) -> Self {
+        cx.try_global::<Self>().cloned().unwrap_or_default()
+    }
+
+    pub(crate) fn collapsed(&self) -> Option<bool> {
+        self.read(|map| map.get(COLLAPSED).and_then(Value::as_bool))
+    }
+
+    pub(crate) fn set_collapsed(&self, collapsed: bool, cx: &App) {
+        self.change(cx, |map| {
+            map.insert(COLLAPSED.into(), collapsed.into());
+        });
+    }
+
+    /// The width `page`'s inspector was left at, in dp.
+    pub(crate) fn inspector_width(&self, page: &str) -> Option<f32> {
+        self.read(|map| {
+            let width = map.get(INSPECTOR)?.get(page)?.as_f64()? as f32;
+            (width.is_finite() && width > 0.).then_some(width)
+        })
+    }
+
+    pub(crate) fn set_inspector_width(&self, page: &str, width: f32, cx: &App) {
+        self.change(cx, |map| {
+            let widths = map
+                .entry(INSPECTOR)
+                .or_insert_with(|| Value::Object(Map::new()));
+            if !widths.is_object() {
+                *widths = Value::Object(Map::new());
+            }
+            if let Value::Object(widths) = widths {
+                widths.insert(page.into(), width.round().into());
+            }
+        });
+    }
+
+    fn read<T>(&self, read: impl FnOnce(&Map<String, Value>) -> Option<T>) -> Option<T> {
+        let file = self.0.as_ref()?;
+        read(&*file.value.lock().ok()?)
+    }
+
+    /// Changes the snapshot, then writes it in the background, replacing
+    /// the file whole.
+    fn change(&self, cx: &App, change: impl FnOnce(&mut Map<String, Value>)) {
+        let Some(file) = self.0.clone() else {
+            return;
+        };
+        let Ok(mut value) = file.value.lock() else {
+            return;
+        };
+        change(&mut value);
+        drop(value);
+        cx.background_executor()
+            .spawn(async move {
+                let Ok(_guard) = file.writer.lock() else {
+                    return;
+                };
+                // The latest snapshot, which a later change may have moved on.
+                let Ok(text) = file
+                    .value
+                    .lock()
+                    .map(|value| Value::Object(value.clone()).to_string())
+                else {
+                    return;
+                };
+                if let Some(parent) = file.path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let temporary = file
+                    .path
+                    .with_extension(format!("{}.tmp", std::process::id()));
+                if std::fs::write(&temporary, format!("{text}\n")).is_ok() {
+                    let _ = std::fs::rename(&temporary, &file.path);
+                }
+            })
+            .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NavigationFile;
+    use gpui_kit::TestAppContext;
+    use std::path::PathBuf;
+
+    /// A fresh directory for one test's preferences.
+    fn directory(test: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "freshkube-{test}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[gpui_kit::test]
+    fn an_older_file_without_widths_keeps_its_choice_and_the_default_widths(
+        cx: &mut TestAppContext,
+    ) {
+        let directory = directory("navigation-old");
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        // What a build before the inspector writes.
+        std::fs::write(directory.join("navigation.json"), "{\"collapsed\":true}\n").unwrap();
+        let file = NavigationFile::open(Some(&preferences));
+        assert_eq!(file.collapsed(), Some(true));
+        assert_eq!(file.inspector_width("incidents"), None);
+
+        cx.update(|cx| file.set_inspector_width("incidents", 512.4, cx));
+        cx.run_until_parked();
+        let text = std::fs::read_to_string(directory.join("navigation.json")).unwrap();
+        // An older build reads `collapsed` alone, as here, and ignores the rest.
+        let value = serde_json::from_str::<serde_json::Value>(&text).unwrap();
+        assert_eq!(value.get("collapsed").and_then(|v| v.as_bool()), Some(true));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn widths_and_the_sidebar_survive_each_others_saves(cx: &mut TestAppContext) {
+        let directory = directory("navigation-both");
+        let preferences = directory.join("preferences.json");
+        let file = NavigationFile::open(Some(&preferences));
+        cx.update(|cx| {
+            file.set_inspector_width("incidents", 512.4, cx);
+            file.set_collapsed(true, cx);
+            file.set_inspector_width("traces", 400., cx);
+            file.set_collapsed(false, cx);
+        });
+        cx.run_until_parked();
+        let reopened = NavigationFile::open(Some(&preferences));
+        assert_eq!(reopened.collapsed(), Some(false));
+        assert_eq!(reopened.inspector_width("incidents"), Some(512.));
+        assert_eq!(reopened.inspector_width("traces"), Some(400.));
+        assert_eq!(reopened.inspector_width("resources"), None);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn unknown_keys_survive_and_bad_widths_are_ignored(cx: &mut TestAppContext) {
+        let directory = directory("navigation-unknown");
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        std::fs::write(
+            directory.join("navigation.json"),
+            r#"{"later":[1,2],"inspector":{"incidents":"wide","traces":-4}}"#,
+        )
+        .unwrap();
+        let file = NavigationFile::open(Some(&preferences));
+        assert_eq!(file.collapsed(), None);
+        assert_eq!(file.inspector_width("incidents"), None);
+        assert_eq!(file.inspector_width("traces"), None);
+        cx.update(|cx| file.set_collapsed(true, cx));
+        cx.run_until_parked();
+        let text = std::fs::read_to_string(directory.join("navigation.json")).unwrap();
+        let value = serde_json::from_str::<serde_json::Value>(&text).unwrap();
+        assert_eq!(value["later"], serde_json::json!([1, 2]));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn without_preferences_nothing_is_kept() {
+        let file = NavigationFile::open(None);
+        assert_eq!(file.collapsed(), None);
+        assert_eq!(file.inspector_width("incidents"), None);
+    }
+}

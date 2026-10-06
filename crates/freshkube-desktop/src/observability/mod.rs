@@ -4,6 +4,7 @@ use crate::{
     palette::palette,
     ui::{self, MONO_FONT, Tone, dp},
 };
+use freshkube_ui::inspector::{Inspector, InspectorSplit};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Icon, IndexPath, Selectable, Sizable, WindowExt,
@@ -116,11 +117,14 @@ pub(crate) struct ObservabilityPage {
     map_problems: bool,
     incident_observations: incidents::Incidents,
     incident_table: freshkube_ui::table::TableState,
+    /// The incidents and their inspector, with its remembered width.
+    incident_split: InspectorSplit,
     hidden_incident_columns: std::collections::BTreeSet<tables::ColumnKind>,
     /// The Incidents filter; its text is projected into the list.
     incident_query: Entity<InputState>,
     live_traces: traces::Traces,
     trace_table: freshkube_ui::table::TableState,
+    trace_split: InspectorSplit,
     hidden_trace_columns: std::collections::BTreeSet<tables::ColumnKind>,
     /// The Traces filter; its text is projected into the request list.
     trace_query: Entity<InputState>,
@@ -189,6 +193,16 @@ impl ObservabilityPage {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
                 .searchable(true)
         });
+        let navigation = crate::navigation_file::NavigationFile::global(cx);
+        let mut split = |page: &'static str| {
+            let file = navigation.clone();
+            InspectorSplit::new(
+                navigation.inspector_width(page),
+                move |width, cx| file.set_inspector_width(page, width, cx),
+                cx,
+            )
+        };
+        let (incident_split, trace_split) = (split("incidents"), split("traces"));
         let subscriptions = vec![
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
                 if this.application_metrics.sync(cx) {
@@ -316,10 +330,12 @@ impl ObservabilityPage {
             map_problems: false,
             incident_observations: Default::default(),
             incident_table: freshkube_ui::table::TableState::new("obs-incidents"),
+            incident_split,
             hidden_incident_columns: incidents::HIDDEN_BY_DEFAULT.into(),
             incident_query,
             live_traces: Default::default(),
             trace_table: freshkube_ui::table::TableState::new("obs-traces"),
+            trace_split,
             hidden_trace_columns: Default::default(),
             trace_query,
             live_profiles: Default::default(),

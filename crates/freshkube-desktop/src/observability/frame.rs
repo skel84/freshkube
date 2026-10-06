@@ -10,9 +10,20 @@ impl Render for ObservabilityPage {
         let p = palette(cx);
         let unavailable =
             !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());
-        // Applications is a table page, edge to edge; the other destinations
-        // are pages of cards and canvases, which keep the padded frame.
-        let edge = self.destination == Destination::Applications;
+        // Applications is a table page, edge to edge, and so are Incidents
+        // and Traces, whose tables share the page with an inspector. The
+        // other destinations are pages of cards and canvases, which keep the
+        // padded frame.
+        let edge = matches!(
+            self.destination,
+            Destination::Applications | Destination::Incidents | Destination::Traces
+        );
+        // An inspector's split fills the window, as tall as the scroll area;
+        // when a short window scrolls the frame, the split has its own height.
+        let fills = matches!(
+            self.destination,
+            Destination::Incidents | Destination::Traces
+        ) && !self.inspector_scrolls(window);
         let state = |state: AnyElement| {
             if edge {
                 freshkube_ui::page::inset().child(state).into_any_element()
@@ -89,8 +100,8 @@ impl Render for ObservabilityPage {
                     .track_scroll(&self.scroll)
                     .child(
                         frame
-                            .h_auto()
                             .flex_none()
+                            .when(!fills, |this| this.h_auto())
                             .child(header)
                             .when(!self.fixture && !unavailable, |this| {
                                 this.when(self.settings_open, |this| {

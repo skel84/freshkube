@@ -191,10 +191,12 @@ mod ui_tests {
 
     #[gpui_kit::test]
     fn incidents_use_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
-        use crate::desktop::layout_check::{PageFrame, Table, assert_page_frame, assert_table};
+        use crate::desktop::layout_check::{
+            PageFrame, Table, assert_bare, assert_edge_frame, assert_inspector, assert_table,
+        };
         let (_runtime, handle, _page) = open_example(cx, 1260.);
-        // The detail pane shares the table's line, so the frame's right
-        // padding is measured from the split.
+        // The inspector shares the table's line, so the frame's edges are
+        // measured from the split.
         let frame = PageFrame {
             page: "obs-frame",
             title: "obs-title",
@@ -210,12 +212,104 @@ mod ui_tests {
                 .unwrap();
             cx.run_until_parked();
             cx.update_window(handle, |_, window, cx| {
-                assert_page_frame(window, cx, &frame);
+                assert_edge_frame(window, cx, &frame);
                 let rows = assert_table(window, cx, &table);
                 assert!(rows.header.is_some(), "{rows:#?}");
+                assert_bare(window, "obs-incidents-table");
+                assert_inspector(
+                    window,
+                    cx,
+                    "obs-incidents-split",
+                    "obs-incidents-table",
+                    "obs-incident-detail",
+                    "obs-incident-title",
+                );
             })
             .unwrap();
         }
+    }
+
+    /// A short window scrolls the frame around a stacked inspector, so the
+    /// split has its least heights instead of its contents'; a wide short
+    /// window keeps the split filling the page.
+    #[gpui_kit::test]
+    fn a_short_window_keeps_the_split_to_its_least_heights(cx: &mut TestAppContext) {
+        use freshkube_ui::inspector::{LIST_MIN_HEIGHT, MIN_HEIGHT, short_height};
+        let close = |what: &str, a: gpui_kit::Pixels, b: gpui_kit::Pixels| {
+            assert!(
+                (a - b).abs() <= gpui_kit::px(1.),
+                "{what}: {a:?}, expected {b:?}"
+            );
+        };
+        let (_runtime, handle, page) = mount_size(cx, true, 760., 500.);
+        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Incidents, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let split = window.find("obs-incidents-split").bounds();
+            let table = window.find("obs-incidents-table").bounds();
+            let detail = window.find("obs-incident-detail").bounds();
+            let least = crate::ui::dp_px(short_height(false, true), window);
+            close("split", split.size.height, least);
+            assert_eq!(short_height(false, true), LIST_MIN_HEIGHT + MIN_HEIGHT);
+            close("stacked", detail.top(), table.bottom());
+            close("bottom", detail.bottom(), split.bottom());
+        })
+        .unwrap();
+
+        let (_runtime, handle, page) = mount_size(cx, true, 1260., 500.);
+        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Incidents, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let split = window.find("obs-incidents-split").bounds();
+            let scroll = window.find("obs-scroll").bounds();
+            close("fills", split.bottom(), scroll.bottom());
+            let detail = window.find("obs-incident-detail").bounds();
+            close("beside", detail.bottom(), split.bottom());
+        })
+        .unwrap();
+    }
+
+    /// A width dragged to is saved in `navigation.json` beside the
+    /// preferences, and the next page opens its inspector at it.
+    #[gpui_kit::test]
+    fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
+        use crate::navigation_file::NavigationFile;
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-inspector-width-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let preferences = directory.join("preferences.json");
+        cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+        let (_runtime, handle, page) = open_example(cx, 1260.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let state = page.read(cx).incident_split.beside_state().clone();
+            state.update(cx, |state, cx| {
+                state.resize_panel(1, crate::ui::dp_px(560., window), window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let reopened = NavigationFile::open(Some(&preferences));
+        assert_eq!(reopened.inspector_width("incidents"), Some(560.));
+        assert_eq!(reopened.inspector_width("traces"), None);
+
+        cx.update(|cx| cx.set_global(reopened));
+        let (_runtime, handle, _page) = open_example(cx, 1260.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let width = window.find("obs-incident-detail").bounds().size.width;
+            let expected = crate::ui::dp_px(560., window);
+            assert!(
+                (width - expected).abs() <= gpui_kit::px(1.),
+                "{width:?}, expected {expected:?}"
+            );
+        })
+        .unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[gpui_kit::test]
