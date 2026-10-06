@@ -2,4 +2,3 @@
 # One "rule file" per line. This list only shrinks: when a page moves onto the
 # shared components, remove its entries in the same change. The check fails
 # when an entry is no longer needed, and when a file not listed breaks a rule.
-list crates/freshkube-desktop/src/observability/map.rs

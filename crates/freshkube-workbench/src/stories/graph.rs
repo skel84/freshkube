@@ -1,22 +1,19 @@
-//! `freshkube-graph`'s layout on invented services: boxes in columns,
-//! callers left of what they call, and a line with an arrowhead for each
-//! call. Its shapes are the cases the layout handles: a chain, a fan-out
-//! that wraps, a cycle and boxes with no connection. Every call keeps clear
-//! of the boxes, and the header counts where calls cross.
+//! The graph view (`freshkube_ui::graph`) on invented services: boxes in
+//! columns, callers left of what they call, a line with an arrowhead and a
+//! marker for each call, and the list of calls beside them. Its shapes are
+//! the cases the layout handles: a chain, a fan-out that wraps, a cycle and
+//! boxes with no connection. Every call keeps clear of the boxes, and the
+//! header counts where calls cross.
 
-use std::rc::Rc;
-
-use freshkube_graph::layout::{self, NODE_H, NODE_W, Node, Route};
+use freshkube_graph::layout;
+use freshkube_ui::graph::{GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, MONO_FONT, Tone, dp};
 use gpui_kit::component::button::Button;
-use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::component::{Sizable, h_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyView, App, Context, Div, PathBuilder, Role, SharedString, TestSupportExt, Window, canvas,
-    div, point, px,
-};
+use gpui_kit::{AnyElement, AnyView, App, Context, Div, SharedString, Window, div, px};
 
 /// The id prefix of everything the story draws.
 const PREFIX: &str = "graph";
@@ -111,52 +108,31 @@ impl Shape {
     }
 }
 
-/// A placed box.
-#[derive(Clone)]
-pub struct GraphNode {
-    id: SharedString,
-    label: SharedString,
-    namespace: SharedString,
-    tone: Tone,
-    x: f32,
-    y: f32,
-}
-
-impl Node for GraphNode {
-    fn position(&self) -> (f32, f32) {
-        (self.x, self.y)
-    }
-
-    fn set_position(&mut self, x: f32, y: f32) {
-        (self.x, self.y) = (x, y);
-    }
-}
-
-/// A call's line and tone.
-struct Call {
-    route: Route,
-    tone: Tone,
-}
-
+/// The story's graph: a shape's services as boxes, drawn by the same
+/// [`GraphView`] as the service map.
 pub struct GraphStory {
     shape: Shape,
-    /// Placed and routed when the shape changes; drawing only reads them.
-    nodes: Rc<Vec<GraphNode>>,
-    calls: Rc<Vec<Call>>,
-    width: f32,
-    height: f32,
+    graph: GraphState<usize>,
+    /// Placed and counted when the shape changes; drawing only reads them.
     crossings: usize,
+    meta: SharedString,
 }
 
 impl GraphStory {
     pub fn new() -> Self {
         let mut story = Self {
             shape: Shape::Shop,
-            nodes: Rc::default(),
-            calls: Rc::default(),
-            width: 0.,
-            height: 0.,
+            graph: GraphState::new(
+                PREFIX,
+                GraphText {
+                    nouns: ("services", "calls"),
+                    title: "Calls".into(),
+                    problems: "Problem calls".into(),
+                    caption: "Callers on the left · dashed lines have a problem".into(),
+                },
+            ),
             crossings: 0,
+            meta: SharedString::default(),
         };
         story.place();
         story
@@ -173,9 +149,9 @@ impl GraphStory {
 
     /// Each box's label and top-left corner, in dp.
     pub fn positions(&self) -> Vec<(SharedString, f32, f32)> {
-        self.nodes
-            .iter()
-            .map(|node| (node.label.clone(), node.x, node.y))
+        self.graph
+            .placed()
+            .map(|(node, x, y)| (node.label.clone(), x, y))
             .collect()
     }
 
@@ -188,32 +164,42 @@ impl GraphStory {
     }
 
     fn place(&mut self) {
-        let (nodes, calls) = self.shape.graph();
-        let mut nodes: Vec<GraphNode> = nodes
+        let (services, calls) = self.shape.graph();
+        let nodes = services
             .into_iter()
             .enumerate()
             .map(|(ix, (label, namespace, tone))| GraphNode {
+                key: ix,
                 id: SharedString::from(format!("{PREFIX}-node-{ix}")),
+                tooltip: label.clone().into(),
                 label: label.into(),
-                namespace: namespace.into(),
-                tone,
-                x: 0.,
-                y: 0.,
+                detail: namespace.into(),
+                tone: Some(tone),
+            })
+            .collect::<Vec<_>>();
+        let edges = calls
+            .iter()
+            .map(|&(from, to, tone)| GraphEdge {
+                from,
+                to,
+                marker_id: SharedString::from(format!("{PREFIX}-call-{from}--{to}")),
+                row_id: SharedString::from(format!("{PREFIX}-row-{from}--{to}")),
+                tone: Some(tone),
+                width: 1.1,
+                label: format!("{} → {}", nodes[from].label, nodes[to].label).into(),
+                tooltip: SharedString::default(),
             })
             .collect();
-        let links: Vec<_> = calls.iter().map(|&(from, to, _)| (from, to)).collect();
-        let placed = layout::route(&mut nodes, &links);
-        (self.width, self.height) = (placed.width, placed.height);
-        let routes = placed.routes;
+        self.graph.set(nodes, edges);
+        let routes: Vec<_> = self.graph.shown().map(|(_, route)| route.clone()).collect();
         self.crossings = layout::crossings(&routes);
-        self.nodes = Rc::new(nodes);
-        self.calls = Rc::new(
-            routes
-                .into_iter()
-                .zip(calls)
-                .map(|(route, (_, _, tone))| Call { route, tone })
-                .collect(),
-        );
+        self.meta = format!(
+            "{} services · {} calls · {} crossings",
+            self.graph.nodes().len(),
+            self.graph.edges().len(),
+            self.crossings
+        )
+        .into();
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -229,134 +215,45 @@ impl GraphStory {
         });
         PageHeader::new(PREFIX, "Service map")
             .secondary(track(shapes, cx))
-            .meta([div()
-                .child(format!(
-                    "{} services · {} calls · {} crossings",
-                    self.nodes.len(),
-                    self.calls.len(),
-                    self.crossings
-                ))
-                .into_any_element()])
+            .meta([div().child(self.meta.clone()).into_any_element()])
             .render(window, cx)
     }
+}
 
-    /// The calls, under the boxes: a line and an arrowhead each, dashed
-    /// when the call has a problem.
-    fn render_calls(&self, cx: &App) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let calls = self.calls.clone();
-        canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                let unit = ui::dp_px(1., window);
-                let at =
-                    |(x, y): (f32, f32)| point(bounds.left() + unit * x, bounds.top() + unit * y);
-                for call in calls.iter() {
-                    let color = match call.tone {
-                        Tone::Crit => p.crit,
-                        Tone::Warn => p.warn,
-                        _ => p.line_strong,
-                    };
-                    let mut path = PathBuilder::stroke(unit * 1.1);
-                    if call.tone != Tone::Good {
-                        let dash = unit * 5.;
-                        path = path.dash_array(&[dash, dash * 0.6]);
-                    }
-                    path.move_to(at(call.route.segments[0][0]));
-                    for &[_, b, c, d] in &call.route.segments {
-                        path.cubic_bezier_to(at(d), at(b), at(c));
-                    }
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, color);
-                    }
-                    let [tip, left, right] = call.route.head();
-                    let mut head = PathBuilder::fill();
-                    head.move_to(at(tip));
-                    head.line_to(at(left));
-                    head.line_to(at(right));
-                    head.close();
-                    if let Ok(head) = head.build() {
-                        window.paint_path(head, color);
-                    }
-                }
-            },
-        )
-        .size_full()
+impl GraphSource for GraphStory {
+    type Key = usize;
+
+    fn graph(&self) -> &GraphState<usize> {
+        &self.graph
     }
 
-    fn render_graph(
+    fn graph_mut(&mut self) -> &mut GraphState<usize> {
+        &mut self.graph
+    }
+
+    /// The story has nothing to open; a box shows only its hover.
+    fn open(&mut self, _: &usize, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn inspector_head(
         &self,
-        window: &mut Window,
+        selected: Option<&GraphEdge<usize>>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        #[cfg(debug_assertions)]
-        {
-            static STORY: freshkube_probe::first_frame::FirstFrame =
-                freshkube_probe::first_frame::FirstFrame::new("graph");
-            if STORY.pending() {
-                window.on_next_frame(|_, _| STORY.mark());
-            }
-        }
-        #[cfg(not(debug_assertions))]
-        let _ = window;
+    ) -> AnyElement {
         let p = palette(cx);
-        let graph = div()
-            .id(SharedString::from(format!("{PREFIX}-canvas")))
-            .test_support()
-            .role(Role::Group)
-            .relative()
-            .flex_none()
-            .w(dp(self.width))
-            .h(dp(self.height))
-            .child(self.render_calls(cx))
-            .children(self.nodes.iter().map(|node| {
-                h_flex()
-                    .id(node.id.clone())
-                    .test_support()
-                    .absolute()
-                    .left(dp(node.x))
-                    .top(dp(node.y))
-                    .w(dp(NODE_W))
-                    .h(dp(NODE_H))
-                    .px(dp(10.))
-                    .gap(dp(8.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(p.line_strong)
-                    .bg(p.surface_2)
-                    .children(ui::status_glyph(node.tone, cx))
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .truncate()
-                                    .font_family(MONO_FONT)
-                                    .font_weight(ui::HEADING_WEIGHT)
-                                    .child(node.label.clone()),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .truncate()
-                                    .text_size(dp(12.))
-                                    .text_color(p.muted)
-                                    .child(node.namespace.clone()),
-                            ),
-                    )
-            }));
-        // The map scrolls both ways inside its card when it is larger.
-        page::inset().flex().flex_col().flex_1().min_h_0().child(
-            page::card(cx).flex_1().min_h_0().child(
-                div()
-                    .id(SharedString::from(format!("{PREFIX}-scroll")))
-                    .size_full()
-                    .overflow_scroll()
-                    .child(graph),
-            ),
-        )
+        match selected {
+            Some(edge) => div()
+                .font_family(MONO_FONT)
+                .child(edge.label.clone())
+                .into_any_element(),
+            None => div()
+                .text_color(p.muted)
+                .child("Choose a call")
+                .into_any_element(),
+        }
+    }
+
+    fn empty(&self, _: &mut Context<Self>) -> AnyElement {
+        div().child("No services").into_any_element()
     }
 }
 
@@ -378,10 +275,30 @@ impl Default for GraphStory {
 
 impl Render for GraphStory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(debug_assertions)]
+        {
+            static STORY: freshkube_probe::first_frame::FirstFrame =
+                freshkube_probe::first_frame::FirstFrame::new("graph");
+            if STORY.pending() {
+                window.on_next_frame(|_, _| STORY.mark());
+            }
+        }
         let header = self.render_header(window, cx);
-        let graph = self.render_graph(window, cx);
+        // The story's width, inside the list of stories and the inset.
+        let available = window.viewport_size().width / ui::dp_px(1., window)
+            - crate::LIST_WIDTH
+            - page::PANE_PADDING * 2.;
+        let graph = GraphView::new(available).render(self, cx);
         page::page(SharedString::from(format!("{PREFIX}-page")))
             .child(page::toolbar(cx).child(header))
-            .child(graph)
+            .child(
+                div()
+                    .id(SharedString::from(format!("{PREFIX}-body")))
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .child(page::inset().child(graph)),
+            )
     }
 }
