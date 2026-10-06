@@ -124,6 +124,7 @@ impl Controls for WorkloadLogView {
                 .flex_wrap()
                 .max_h(dp(26. * 2. + 6.))
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .gap(dp(6.))
                 .children(chips.iter().map(|chip| {
                     let service = chip.service.clone();
