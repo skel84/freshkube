@@ -558,3 +558,45 @@ fn a_box_tooltip_waiting_to_show_does_not_show_after_its_box_scrolls_away(cx: &m
         "the box's tooltip showed after it scrolled away"
     );
 }
+
+/// Rests the pointer on the middle of element `id` past the show delay, and
+/// returns whether a tooltip showed.
+fn hover_shows(cx: &mut TestAppContext, handle: AnyWindowHandle, id: SharedString) -> bool {
+    let before = marks("");
+    cx.update_window(handle, |_, window, cx| {
+        let position = window.find(id).bounds().center();
+        hover(window, position, cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    shown_since(cx, handle, "", before)
+}
+
+/// A box, marker or row with an empty tooltip shows none, not an empty
+/// popup; a box with text still shows its tooltip.
+#[gpui_kit::test]
+fn an_empty_tooltip_shows_nothing(cx: &mut TestAppContext) {
+    let mut graph = GraphState::new("map", text());
+    let (mut nodes, edges) = invented(7, 8);
+    nodes[0].tooltip = SharedString::default();
+    assert!(edges.iter().all(|edge| edge.tooltip.is_empty()));
+    let marker = edges[0].marker_id.clone();
+    let row = edges[0].row_id.clone();
+    graph.set(nodes, edges);
+    let (handle, _) = open(cx, graph, 1280., None);
+    count_tooltips(cx);
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    for id in ["map-node-0".into(), marker, row] {
+        assert!(
+            !hover_shows(cx, handle, id.clone()),
+            "{id} showed a tooltip"
+        );
+    }
+    assert!(
+        hover_shows(cx, handle, "map-node-1".into()),
+        "a box with text showed no tooltip"
+    );
+}

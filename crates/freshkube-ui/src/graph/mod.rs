@@ -39,6 +39,7 @@ pub struct GraphNode<K> {
     pub detail: SharedString,
     /// `None` draws a dash where the glyph would be.
     pub tone: Option<Tone>,
+    /// Empty shows no tooltip.
     pub tooltip: SharedString,
 }
 
@@ -56,6 +57,7 @@ pub struct GraphEdge<K> {
     /// The line's width in dp.
     pub width: f32,
     pub label: SharedString,
+    /// The marker's and the row's tooltip; empty shows none.
     pub tooltip: SharedString,
 }
 
