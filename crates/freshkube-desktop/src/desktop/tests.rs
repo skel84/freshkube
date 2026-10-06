@@ -2965,7 +2965,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
         window.render_frame(cx);
         area(window, cx, "nav-k8s-group-workloads");
         window.click("nav-health", cx);
-        window.click("screen-refresh", cx);
+        window.click("workloads-refresh", cx);
     })
     .unwrap();
     cx.run_until_parked();

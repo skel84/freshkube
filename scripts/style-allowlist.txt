@@ -4,4 +4,3 @@
 # when an entry is no longer needed, and when a file not listed breaks a rule.
 list crates/freshkube-desktop/src/desktop/nodes/cards.rs
 list crates/freshkube-desktop/src/observability/map.rs
-list crates/freshkube-desktop/src/screens/workloads/mod.rs
