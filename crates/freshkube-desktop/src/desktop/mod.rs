@@ -384,6 +384,11 @@ pub(crate) struct Pilot {
     focus: FocusHandle,
     node_focus: FocusHandle,
     service_focus: FocusHandle,
+    /// Scrolls the Services page, or the node's Services tab.
+    service_scroll: ScrollHandle,
+    /// The selected service changed by pointer or keyboard, so a stacked
+    /// layout brings its details into view once they are laid out.
+    reveal_service: bool,
     _subscriptions: Vec<Subscription>,
     config_job: Option<OwnedJob>,
     overview_job: Option<OwnedJob>,
@@ -813,6 +818,8 @@ impl Pilot {
             focus: cx.focus_handle(),
             node_focus: cx.focus_handle(),
             service_focus: cx.focus_handle(),
+            service_scroll: ScrollHandle::new(),
+            reveal_service: false,
             _subscriptions: subscriptions,
             config_job: None,
             overview_job: None,

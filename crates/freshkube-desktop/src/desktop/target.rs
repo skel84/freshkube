@@ -223,6 +223,7 @@ impl Pilot {
             None => 0,
         };
         self.selected_service = Some(visible[next].id.clone());
+        self.reveal_service = true;
         cx.notify();
     }
 }

@@ -9,7 +9,7 @@ use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Disableable, Icon, Selectable, Sizable,
+    Disableable, ElementExt, Icon, Selectable, Sizable,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::Input,
@@ -62,6 +62,14 @@ impl Pilot {
         let detail = self.service_detail(&node, cx);
         // In the node inspector, by its own width.
         let wide = crate::screens::embedded_width(window) >= 760.;
+        // Stacked, the details sit under the list: a new selection brings
+        // them into view, or nothing would show that it changed.
+        let reveal = std::mem::take(&mut self.reveal_service) && !wide;
+        let detail = if reveal {
+            self.revealing(detail, cx)
+        } else {
+            detail
+        };
         let split = if wide {
             h_flex()
                 .items_start()
@@ -96,7 +104,38 @@ impl Pilot {
             .child(toolbar)
             .child(split);
         self.page_scroll("services-page")
+            .track_scroll(&self.service_scroll)
+            .test_support()
             .child(body)
+            .into_any_element()
+    }
+
+    /// Wraps the stacked details so that, once laid out, the page scrolls
+    /// the least that shows them whole, or their top when they are taller
+    /// than the page.
+    fn revealing(&self, detail: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let scroll = self.service_scroll.clone();
+        let view = cx.entity().downgrade();
+        div()
+            .on_prepaint(move |details, window, _| {
+                let shown = scroll.bounds();
+                let by = if details.size.height > shown.size.height || details.top() < shown.top() {
+                    details.top() - shown.top()
+                } else {
+                    (details.bottom() - shown.bottom()).max(px(0.))
+                };
+                if by == px(0.) {
+                    return;
+                }
+                let offset = scroll.offset();
+                let y = (offset.y - by).clamp(-scroll.max_offset().y, px(0.));
+                scroll.set_offset(point(offset.x, y));
+                let view = view.clone();
+                window.on_next_frame(move |_, cx| {
+                    let _ = view.update(cx, |_, cx| cx.notify());
+                });
+            })
+            .child(detail)
             .into_any_element()
     }
 
@@ -331,6 +370,7 @@ impl Pilot {
                     )
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.selected_service = Some(id.clone());
+                        view.reveal_service = true;
                         window.focus(&view.service_focus, cx);
                         cx.notify();
                     }))
@@ -625,6 +665,8 @@ impl Pilot {
                     ),
             );
         self.page_scroll("services-page")
+            .track_scroll(&self.service_scroll)
+            .test_support()
             .child(body)
             .into_any_element()
     }

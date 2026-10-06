@@ -372,6 +372,11 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
                 .unwrap()
                 .contains("Started task auditd")
         );
+        // The selection scrolled the stacked details into view; the
+        // filter is back at the page's top.
+        let scroll = view.read(cx).service_scroll.clone();
+        scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
+        window.render_frame(cx);
         window.click("service-filter", cx);
         window.input("apid", cx);
     })
@@ -411,6 +416,69 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
         );
     })
     .unwrap();
+}
+
+/// Stacked under the list, a newly selected service's details scroll into
+/// view, by pointer and by keyboard; beside the list, nothing scrolls (#238).
+#[gpui_kit::test]
+fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppContext) {
+    // The node's inspector stacks them beside the table and in a narrow
+    // window; expanded in a wide one, it sets them side by side.
+    for (case, width, expanded, stacked) in [
+        ("beside the table", 1280., false, true),
+        ("narrow window", 760., false, true),
+        ("expanded", 1280., true, false),
+    ] {
+        let (_runtime, handle, view) = fixture(cx, width, 820.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            open_node_tab(window, cx, super::nodes::NodeTab::Services);
+            if expanded {
+                view.update(cx, |view, cx| view.toggle_node_expanded(cx));
+            }
+            window.render_frame(cx);
+            let scroll = view.read(cx).service_scroll.clone();
+            let check = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, step: &str| {
+                // The frame that lays the details out moves the page; the
+                // next one, which it asks for, draws them there.
+                window.render_frame(cx);
+                window.simulate_next_frame(cx);
+                let page = window.find("services-page").bounds();
+                let details = window.find("selected-service").bounds();
+                let list = window.find("services-region").bounds();
+                assert_eq!(
+                    details.top() >= list.bottom(),
+                    stacked,
+                    "{case}: the details {details:?} and the list {list:?}"
+                );
+                if !stacked {
+                    assert_eq!(scroll.offset().y, px(0.), "{case}, {step}: scrolled");
+                    return;
+                }
+                assert!(
+                    details.top() >= page.top() - px(0.5),
+                    "{case}, {step}: the details' top {details:?} is above {page:?}"
+                );
+                for id in ["service-logs", "service-restart"] {
+                    let action = window.find(id).bounds();
+                    assert!(
+                        action.bottom() <= page.bottom() + px(0.5),
+                        "{case}, {step}: {id} at {action:?} is below {page:?}"
+                    );
+                }
+            };
+            window.within("services-region").click("apid", cx);
+            check(window, cx, "pointer");
+            // Back to the top, then a key moves the selection.
+            scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
+            window.render_frame(cx);
+            window.press("down", cx);
+            check(window, cx, "keyboard");
+            assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
+            assert!(view.read(cx).service_focus.is_focused(window));
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]
