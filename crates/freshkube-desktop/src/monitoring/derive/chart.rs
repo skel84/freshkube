@@ -135,7 +135,8 @@ pub(crate) struct LegendRow {
     pub series: usize,
     pub name: SharedString,
     pub values: Vec<SharedString>,
-    /// When the last value is older than the window's end, its time.
+    /// When the last value is older than the window's end, the row's
+    /// tooltip saying when it was.
     pub stale: Option<SharedString>,
     /// The values before formatting, for showing them in the title's unit.
     raw: Vec<f64>,
@@ -569,7 +570,7 @@ fn stale(values: &[f64], times: &[f64]) -> Option<SharedString> {
         return None;
     }
     let index = values.iter().rposition(|value| value.is_finite())?;
-    Some(clock(*times.get(index)?).into())
+    Some(format!("Last value at {}", clock(*times.get(index)?)).into())
 }
 
 /// Moves a unit every left-axis label shares, such as "ms", from the labels

@@ -177,7 +177,7 @@ fn the_dashboards_calcs_pick_the_legend_columns_and_a_stopped_series_is_dated() 
     let stopped = window().times()[4] as f64;
     assert_eq!(
         chart.legend.rows[0].stale.as_deref(),
-        Some(clock(stopped).as_str())
+        Some(format!("Last value at {}", clock(stopped)).as_str())
     );
     assert!(chart.series[0].tops[5].is_nan());
 }

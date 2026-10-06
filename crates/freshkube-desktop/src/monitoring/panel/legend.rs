@@ -1,7 +1,9 @@
 //! A timeseries legend: inline under a few series, else rows with a value
 //! per heading, in two columns where they fit. Hovering a row fades the
-//! other lines; a click keeps that series in front until clicked again.
-use gpui_kit::component::{h_flex, v_flex};
+//! other lines; a click keeps that series in front until clicked again. A
+//! series that stopped before the window's end shows its last value muted,
+//! with the time in the row's tooltip.
+use gpui_kit::component::{h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Div, Stateful, TestSupportExt, div, px, relative};
 
@@ -36,13 +38,14 @@ fn inline(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEl
                 .when_some(row.values.first(), |this, value| {
                     this.child(
                         div()
+                            .id(view.element_id(&format!("legend-{}-last", row.series)))
                             .font_family(ui::MONO_FONT)
                             .text_size(dp(12.))
-                            .text_color(p.ink)
-                            .child(value.clone()),
+                            .text_color(last_color(row, cx))
+                            .child(value.clone())
+                            .test_support(),
                     )
                 })
-                .when_some(row.stale.clone(), |this, at| this.child(stale(at, cx)))
                 .test_support()
         }))
         .into_any_element()
@@ -67,9 +70,17 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
     for row in &legend.rows {
         rows.push(table_row(view, chart, row, cx).into_any_element());
     }
+    // An odd last row shares its line with an empty one, so it keeps half
+    // the width as every other row does; in one column it takes no room.
+    if legend.rows.len() % 2 == 1 {
+        rows.push(half(div()).into_any_element());
+    }
     v_flex()
         .flex_none()
         .max_h(relative(0.5))
+        // Outside the scroll, so rows that overflow stop short of the
+        // card's edge.
+        .pb(dp(10.))
         .child(headings)
         .child(
             v_flex()
@@ -79,15 +90,8 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                 .restrict_scroll_to_axis()
                 .gap(dp(2.))
                 .px(dp(12.))
-                .pt(dp(4.))
-                .pb(dp(10.))
-                .child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_x(dp(18.))
-                        .gap_y(dp(2.))
-                        .children(rows),
-                )
+                .pt(dp(3.))
+                .child(h_flex().flex_wrap().gap_x(dp(18.)).children(rows))
                 .when(legend.more > 0, |this| {
                     this.child(
                         div()
@@ -96,7 +100,8 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                             .text_color(p.muted)
                             .child(format!("and {} more", legend.more)),
                     )
-                }),
+                })
+                .test_support(),
         )
         .into_any_element()
 }
@@ -109,13 +114,12 @@ fn table_row(
 ) -> impl IntoElement {
     let p = palette(cx);
     let mut values = row.values.iter();
-    // Two columns where both fit; one in a narrow panel, so names show.
-    entry(view, chart, row, cx)
-        .flex_grow(1.)
-        .flex_basis(dp(160.))
-        .min_w_0()
+    half(entry(view, chart, row, cx))
         .gap(dp(8.))
         .h(dp(20.))
+        // The rows' spacing, which the empty row beside an odd last one
+        // doesn't take.
+        .my(dp(1.))
         .px(dp(4.))
         .rounded(px(3.))
         .hover(|this| this.bg(p.hover))
@@ -131,15 +135,15 @@ fn table_row(
         )
         .when_some(values.next(), |this, value| {
             this.child(
-                h_flex()
+                div()
+                    .id(view.element_id(&format!("legend-{}-last", row.series)))
                     .flex_none()
-                    .gap(dp(4.))
                     .whitespace_nowrap()
                     .font_family(ui::MONO_FONT)
                     .text_size(dp(12.))
-                    .text_color(p.ink)
+                    .text_color(last_color(row, cx))
                     .child(value.clone())
-                    .when_some(row.stale.clone(), |this, at| this.child(stale(at, cx))),
+                    .test_support(),
             )
         })
         .children(values.map(|value| {
@@ -154,6 +158,21 @@ fn table_row(
                 .child(value.clone())
         }))
         .test_support()
+}
+
+/// Half a line where two rows of at least 160 fit, else the whole line.
+fn half<E: Styled>(element: E) -> E {
+    element
+        .flex_grow(1.)
+        .flex_shrink_0()
+        .flex_basis(relative(0.4))
+        .min_w(dp(160.))
+}
+
+/// A stopped series' last value is muted, as last-known values are.
+fn last_color(row: &LegendRow, cx: &Context<PanelView>) -> gpui_kit::Hsla {
+    let p = palette(cx);
+    if row.stale.is_some() { p.muted } else { p.ink }
 }
 
 /// A row's swatch, hover and click, shared by both modes.
@@ -180,6 +199,9 @@ fn entry(
             }
         }))
         .on_click(cx.listener(move |view, _, _, cx| view.toggle_picked(series, cx)))
+        .when_some(row.stale.clone(), |this, tip| {
+            this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+        })
         .child(
             div()
                 .flex_none()
@@ -188,10 +210,4 @@ fn entry(
                 .rounded(px(3.))
                 .bg(color),
         )
-}
-
-/// The time of a series' last value, when it stopped before the window's
-/// end.
-fn stale(at: gpui_kit::SharedString, cx: &Context<PanelView>) -> impl IntoElement {
-    div().text_color(palette(cx).muted).child(format!("({at})"))
 }
