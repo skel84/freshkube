@@ -100,32 +100,20 @@ async fn signals_empty_results_refusal_failure_and_recovery_remain_distinct() {
     );
 }
 #[tokio::test]
-async fn project_selection_and_report_capabilities_are_explicit() {
-    let server=server(vec![(200,serde_json::json!({"projects":[{"id":"p","name":"Production"}]})),(200,serde_json::json!({"app_map":{"application":{"status":"warning"}},"reports":[{"name":"CPU","status":"warning","checks":[{"id":"CPU","title":"CPU","status":"warning","message":"Coroot finding"}]}]})),(404,serde_json::json!({}))]).await;
+async fn project_selection_is_explicit() {
+    let server = server(vec![(
+        200,
+        serde_json::json!({"projects":[{"id":"p","name":"Production"}]}),
+    )])
+    .await;
     let provider = Provider::new(&server.url, Credentials::ApiKey("fake-key".into())).unwrap();
     let projects = provider.projects().await.unwrap();
     let source = provider.source(&projects[0]);
-    let id = AppId::new("c:prod:Deployment:api");
-    let rest = provider
-        .reports(&source, range(), &id, false)
-        .await
-        .unwrap();
-    assert_eq!(rest.reports[0].issues[0].message, "Coroot finding");
-    let extended = provider.reports(&source, range(), &id, true).await;
-    assert_eq!(extended.unwrap_err(), ReadError::Unsupported);
-    assert_eq!(rest.status, Status::Warning);
     let other = Provider::new(&server.url, Credentials::None).unwrap();
     assert_ne!(provider.id(), other.id());
     assert_eq!(
         other.applications(&source, range()).await.unwrap_err(),
         ReadError::InvalidSelection
-    );
-    assert_eq!(
-        other
-            .reports(&self::source(&other), range(), &id, true)
-            .await
-            .unwrap_err(),
-        ReadError::Unsupported
     );
 }
 #[test]
@@ -293,31 +281,6 @@ async fn oversized_response_is_rejected_before_it_can_become_empty_data() {
             .unwrap_err(),
         ReadError::Limit
     );
-}
-
-#[test]
-fn report_display_fields_are_bounded_individually() {
-    let base = serde_json::json!({"id":"c:ns:Deployment:api","status":"unknown",
-        "reports":[{"name":"Logs","status":"unknown","issues":[{"id":"i","title":"Title","status":"unknown","message":"Evidence"}],"log_patterns":[{"hash":"hash","severity":"info","sample":"Sanitized sample","messages":1}]}],
-        "dependencies":[{"id":"c:ns:Service:db","connectivity":"unknown","connectivity_message":"Not reported","protocols":["postgres"]}],
-        "clients":[{"id":"c:ns:Deployment:web","status":"ok"}]
-    });
-    let health: AppHealth = serde_json::from_value(base.clone()).unwrap();
-    assert_eq!(limits::health(&health), Ok(()));
-    for (path, limit) in [
-        ("/reports/0/issues/0/id", 1024),
-        ("/reports/0/log_patterns/0/hash", 256),
-        ("/reports/0/log_patterns/0/severity", 64),
-        ("/dependencies/0/id", 1024),
-        ("/dependencies/0/connectivity_message", 4096),
-        ("/dependencies/0/protocols/0", 64),
-        ("/clients/0/id", 1024),
-    ] {
-        let mut oversized = base.clone();
-        *oversized.pointer_mut(path).unwrap() = serde_json::json!("x".repeat(limit + 1));
-        let health: AppHealth = serde_json::from_value(oversized).unwrap();
-        assert_eq!(limits::health(&health), Err(ReadError::Limit), "{path}");
-    }
 }
 
 #[tokio::test]

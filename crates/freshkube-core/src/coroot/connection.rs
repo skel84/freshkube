@@ -67,9 +67,6 @@ impl Provider {
     pub fn url(&self) -> &str {
         self.client.base_url().as_str()
     }
-    pub fn has_api_key(&self) -> bool {
-        self.client.credentials().is_api_key()
-    }
 
     pub(super) async fn read<T>(
         &self,
@@ -135,30 +132,6 @@ impl Provider {
         let map = self.read(project.service_map()).await?;
         limits::map(&map)?;
         Ok(map)
-    }
-
-    pub async fn reports(
-        &self,
-        source: &Source,
-        range: TimeRange,
-        app: &AppId,
-        extended: bool,
-    ) -> Result<AppHealth, ReadError> {
-        let project = self.project(source, range)?;
-        if extended && !self.has_api_key() {
-            return Err(ReadError::Unsupported);
-        }
-        let mut health = if extended {
-            self.read(project.app_health(app)).await?
-        } else {
-            self.read(project.app_health_rest(app)).await?
-        };
-        if health.id != *app {
-            return Err(ReadError::InvalidResponse);
-        }
-        limits::health(&health)?;
-        plain_health(&mut health);
-        Ok(health)
     }
 
     /// Latest project incidents, in server order, across all states. This bounded
@@ -240,22 +213,5 @@ impl Source {
     pub fn with_association(mut self, association: Option<Association>) -> Self {
         self.association = association;
         self
-    }
-}
-
-/// Coroot writes report titles and messages for its web page, with markup.
-pub(super) fn plain_health(health: &mut AppHealth) {
-    let plain = super::tracing::plain;
-    for report in &mut health.reports {
-        for issue in &mut report.issues {
-            issue.title = plain(&issue.title);
-            issue.message = plain(&issue.message);
-        }
-        for chart in &mut report.charts {
-            chart.title = plain(&chart.title);
-        }
-    }
-    for dependency in &mut health.dependencies {
-        dependency.connectivity_message = plain(&dependency.connectivity_message);
     }
 }
