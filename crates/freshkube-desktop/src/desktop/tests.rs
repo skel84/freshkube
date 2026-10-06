@@ -2868,12 +2868,19 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     step(cx, &|window, cx| window.click("pod-shell-start", cx));
     let running = |cx: &mut TestAppContext| cx.read(shell::running_anywhere);
     assert_eq!(running(cx).as_deref(), Some(pod.name.as_str()));
+    // The terminal hands the keyboard back with Command-Escape on macOS and
+    // Ctrl-Shift-Q elsewhere.
+    let leave = if cfg!(target_os = "macos") {
+        "secondary-escape"
+    } else {
+        "ctrl-shift-q"
+    };
 
     // Option-Down in the terminal is the shell's; from the list, another
     // connection asks, and Cancel keeps this one and the shell.
     step(cx, &|window, cx| window.press("alt-down", cx));
     assert!(!cx.has_pending_prompt());
-    step(cx, &|window, cx| window.press("secondary-escape", cx));
+    step(cx, &|window, cx| window.press(leave, cx));
     step(cx, &|window, cx| window.press("alt-down", cx));
     let (message, detail) = cx.pending_prompt().unwrap();
     assert_eq!(message, format!("End the shell in {}?", pod.name));
@@ -2909,7 +2916,7 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     // Agreeing to another connection ends the shell and moves on.
     step(cx, &|window, cx| window.click("pod-shell-start", cx));
     assert!(running(cx).is_some());
-    step(cx, &|window, cx| window.press("secondary-escape", cx));
+    step(cx, &|window, cx| window.press(leave, cx));
     step(cx, &|window, cx| window.press("alt-down", cx));
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();

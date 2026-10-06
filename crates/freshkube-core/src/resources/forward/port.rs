@@ -231,6 +231,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(target_os = "linux", ignore = "Linux port reuse, #212")]
     async fn a_port_whose_closed_connections_wait_out_time_wait_is_bound_again() {
         let listeners = bind_loopback(0).unwrap();
         let port = listeners.port;
