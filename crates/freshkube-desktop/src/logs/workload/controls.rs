@@ -1,6 +1,7 @@
 //! A workload's Logs tab controls, above the shared filters and search:
 //! where the pod watch stands, the notices, then one row of chips, one
-//! per container read, which scrolls sideways and shows or hides lines.
+//! per container read, which shows or hides lines. The chips wrap to two
+//! rows and scroll past them, as Talos services do.
 
 use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::assets::IconName;
@@ -120,19 +121,15 @@ impl Controls for WorkloadLogView {
                 .aria_label(plural(chips.len(), "container", "containers"))
                 .w_full()
                 .min_w_0()
-                .overflow_x_scroll()
+                .flex_wrap()
+                .max_h(dp(26. * 2. + 6.))
+                .overflow_y_scroll()
                 .gap(dp(6.))
                 .children(chips.iter().map(|chip| {
                     let service = chip.service.clone();
-                    let name = service.as_str().to_owned();
-                    let tooltip: SharedString = format!(
-                        "{name}: {}. {} its lines.",
-                        chip.state,
-                        if chip.shown { "Hide" } else { "Show" }
-                    )
-                    .into();
+                    let tooltip = chip.tooltip.clone();
                     h_flex()
-                        .id(SharedString::from(format!("workload-logs-stream-{name}")))
+                        .id(chip.id.clone())
                         .test_support()
                         .role(Role::CheckBox)
                         .aria_toggled(if chip.shown {

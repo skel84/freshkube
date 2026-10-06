@@ -406,3 +406,41 @@ pub(crate) async fn talos_flood(
         }
     }
 }
+
+/// The workload logs flood's lines a second, from `FRESHKUBE_STRESS_WORKLOAD_RATE`.
+pub(crate) fn workload_rate() -> Option<u32> {
+    std::env::var("FRESHKUBE_STRESS_WORKLOAD_RATE")
+        .ok()
+        .and_then(|rate| rate.parse().ok())
+        .filter(|rate| *rate > 0)
+}
+
+/// Writes `rate` pod log lines a second, as Kubernetes stamps them, spread
+/// round `streams` and stamped with the time each was due. `send` takes the
+/// stream's index and the line, and answers false when nobody listens.
+pub(crate) async fn line_flood<F, Fut>(rate: u32, streams: usize, send: F)
+where
+    F: Fn(usize, String) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let started_at = chrono::Utc::now();
+    let started = Instant::now();
+    let mut sent = 0u64;
+    let mut tick = tokio::time::interval(Duration::from_millis(10));
+    loop {
+        tick.tick().await;
+        let due = (started.elapsed().as_secs_f64() * f64::from(rate)) as u64;
+        while sent < due {
+            let at = started_at
+                + chrono::Duration::nanoseconds((sent as f64 * 1e9 / f64::from(rate)) as i64);
+            let line = format!(
+                "{} level=info msg=\"stress line\" seq={sent}",
+                at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+            );
+            if !send(sent as usize % streams, line).await {
+                return;
+            }
+            sent += 1;
+        }
+    }
+}

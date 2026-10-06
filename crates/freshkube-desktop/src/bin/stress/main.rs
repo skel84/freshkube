@@ -16,6 +16,7 @@
 //! | `summary-410 <changes/s>` | the same changes, with a forced Pod relist after 10 s |
 //! | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate |
 //! | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
+//! | `workload-logs <lines/s>` | an example Deployment's Logs tab, its 13 pods' containers writing that many lines a second between them |
 //! | `terminal <lines/s>` | a window with only a terminal, fed coloured lines at that rate |
 //! | `terminal-top` | the terminal, redrawn whole by a `top`-like program about 60 times a second |
 //! | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks |
@@ -61,6 +62,7 @@ enum Scenario {
     Burst { pods: usize, rate: u32 },
     PodLogs { rate: u32 },
     TalosLogs { rate: u32 },
+    WorkloadLogs { rate: u32 },
     Terminal { rate: u32 },
     TerminalTop,
     TerminalSample,
@@ -91,6 +93,9 @@ impl Scenario {
                 rate: number(1, 10_000)? as u32,
             },
             "talos-logs" => Scenario::TalosLogs {
+                rate: number(1, 10_000)? as u32,
+            },
+            "workload-logs" => Scenario::WorkloadLogs {
                 rate: number(1, 10_000)? as u32,
             },
             "terminal" => Scenario::Terminal {
@@ -133,6 +138,10 @@ impl Scenario {
                 ("FRESHKUBE_PAGE", "node-logs".into()),
                 ("FRESHKUBE_STRESS_TALOS_RATE", rate.to_string()),
             ],
+            Scenario::WorkloadLogs { rate } => vec![
+                ("FRESHKUBE_PAGE", "workload-logs".into()),
+                ("FRESHKUBE_STRESS_WORKLOAD_RATE", rate.to_string()),
+            ],
             Scenario::Terminal { .. } | Scenario::TerminalTop | Scenario::TerminalSample => {
                 Vec::new()
             }
@@ -167,7 +176,7 @@ fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(scenario) = Scenario::parse(&args) else {
         eprintln!(
-            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
+            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | workload-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
         );
         std::process::exit(2);
     };
@@ -215,7 +224,7 @@ fn main() -> color_eyre::Result<()> {
         return freshkube_desktop::run_terminal(workload);
     }
     let runtime = tokio::runtime::Runtime::new()?;
-    if let Scenario::TalosLogs { .. } = scenario {
+    if let Scenario::TalosLogs { .. } | Scenario::WorkloadLogs { .. } = scenario {
         return freshkube_desktop::run(
             freshkube_desktop::GpuiOptions::fixture(),
             runtime.handle().clone(),

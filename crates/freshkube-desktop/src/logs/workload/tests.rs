@@ -9,9 +9,10 @@ use freshkube_core::resources::{
 };
 
 use super::{
-    EXAMPLE_INTERVAL, MAX_STREAMS, PodsState, StreamKey, StreamState, Streams, WorkloadLogPanel,
-    WorkloadLogView,
+    EXAMPLE_INTERVAL, Fed, MAX_STREAMS, PodsState, RETRY_FIRST, StreamKey, StreamState, Streams,
+    WorkloadLogPanel, WorkloadLogView,
 };
+use crate::desktop::probe;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example, live};
 
@@ -337,6 +338,18 @@ fn pods_joining_and_leaving_start_and_stop_their_streams(cx: &mut TestAppContext
             .filter(|entry| entry.service.as_str() == left_tag)
             .count();
         assert_eq!(kept, left_lines);
+        // The markers' pod tags name no container, so the labels stay the
+        // pods' short names.
+        let labels = view.read(cx).source().labels.clone();
+        assert!(labels.contains_key(&ServiceId::new(leaving.name.clone())));
+        for (tag, label) in &labels {
+            let tag = tag.as_str();
+            assert!(!label.contains('/'), "{tag}: {label}");
+            assert!(tag.starts_with("api-"), "{tag}");
+            assert!(label.len() < tag.len(), "{tag}: {label}");
+        }
+        let chips = view.read(cx).source().chips.clone();
+        assert!(chips.iter().all(|chip| !chip.label.contains('/')));
     })
     .unwrap();
 }
@@ -392,8 +405,9 @@ fn a_lagging_streams_lines_take_their_place_without_moving_the_review(cx: &mut T
     let api = deployment("api");
     let all = pods(&api, "app=api");
     let lagging = all[0].clone();
+    let now = cx.update(|cx| view.read(cx).source().clock.now(cx));
     let line = |minutes_ago: i64, text: &str| {
-        let at = chrono::Utc::now() - chrono::TimeDelta::minutes(minutes_ago);
+        let at = now - chrono::TimeDelta::minutes(minutes_ago);
         PodLogUpdate::Line(format!(
             "{} level=info msg=\"{text}\"",
             at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
@@ -514,6 +528,164 @@ fn hiding_stops_everything_and_showing_reads_on_without_repeats(cx: &mut TestApp
     cx.executor().advance_clock(EXAMPLE_INTERVAL * 3);
     cx.run_until_parked();
     assert!(cx.update(|cx| lines(&view, cx)) > read);
+}
+
+/// Showing again asks each container for its live log from where it
+/// stopped, not its tail again.
+#[gpui_kit::test]
+fn showing_again_reads_on_from_each_streams_saved_position(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let saved = cx
+        .update_window(handle, |_, window, cx| {
+            show(&view, &api, cx);
+            window.render_frame(cx);
+            let source = view.read(cx).source();
+            // The first read asks for the tail.
+            assert!(source.streams.values().all(|stream| {
+                stream.request.resume.is_none() && stream.request.tail.is_some()
+            }));
+            let saved = source.positions.clone();
+            view.update(cx, |view, cx| view.set_active(false, cx));
+            saved
+        })
+        .unwrap();
+    cx.executor().advance_clock(EXAMPLE_INTERVAL * 3);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.set_active(true, cx));
+        window.render_frame(cx);
+        let source = view.read(cx).source();
+        assert!(!source.streams.is_empty());
+        let mut resumed = 0;
+        for (key, stream) in &source.streams {
+            assert!(!stream.request.previous);
+            assert_eq!(stream.request.pod, key.pod);
+            assert_eq!(stream.request.container, key.container);
+            match saved.get(key).filter(|position| position.time().is_some()) {
+                Some(position) => {
+                    assert_eq!(stream.request.resume, Some(*position), "{key:?}");
+                    resumed += 1;
+                }
+                None => assert_eq!(stream.request.resume, None, "{key:?}"),
+            }
+        }
+        // Every container that wrote reads on.
+        assert_eq!(resumed, tags(&view, cx).len());
+    })
+    .unwrap();
+}
+
+/// However many containers write, one delivery hands their lines to the
+/// view: one apply, one ingest, one notify a frame.
+#[gpui_kit::test]
+fn busy_streams_are_applied_once_a_delivery(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let mut all = pods(&api, "app=api");
+    for pod in &mut all {
+        let mut sidecar: Container = pod.containers.containers[0].clone();
+        sidecar.name = "proxy".into();
+        sidecar.role = ContainerRole::App;
+        sidecar.state = ContainerState::Running(None);
+        pod.containers.containers.push(sidecar);
+    }
+    let now = cx.update(|cx| view.read(cx).source().clock.now(cx));
+    for busy in [13, MAX_STREAMS] {
+        cx.update_window(handle, |_, window, cx| {
+            show_fed(&view, &api, cx);
+            feed(&view, all.clone(), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let streams: Vec<(StreamKey, u64)> = cx.update(|cx| {
+            view.read(cx)
+                .source()
+                .streams
+                .iter()
+                .map(|(key, stream)| (key.clone(), stream.generation))
+                .take(busy)
+                .collect()
+        });
+        assert_eq!(streams.len(), busy);
+        let sender = cx.update(|cx| view.update(cx, |view, cx| view.feed(cx)));
+        let before = (
+            probe::count("workload-logs.apply"),
+            cx.update(|cx| lines(&view, cx)),
+        );
+        // Each container writes ten lines before the next delivery.
+        for round in 0..10 {
+            for (ix, (key, generation)) in streams.iter().enumerate() {
+                let at = now + chrono::TimeDelta::milliseconds((round * 100 + ix) as i64);
+                let line = format!(
+                    "{} level=info msg=\"busy\"",
+                    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+                );
+                sender
+                    .try_send(Fed {
+                        key: key.clone(),
+                        generation: *generation,
+                        update: PodLogUpdate::Line(line),
+                    })
+                    .unwrap();
+            }
+        }
+        cx.run_until_parked();
+        assert_eq!(probe::count("workload-logs.apply"), before.0 + 1, "{busy}");
+        assert_eq!(cx.update(|cx| lines(&view, cx)), before.1 + busy * 10);
+        // Another workload starts afresh.
+        cx.update(|cx| view.update(cx, |view, cx| view.show_workload(None, None, cx)));
+    }
+}
+
+/// A refused stream reads again with a backoff while its pod is listed,
+/// and stops once the pod goes.
+#[gpui_kit::test]
+fn a_failed_stream_reads_again_with_a_backoff(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let metrics = deployment("metrics-server");
+    let refused = pods(&metrics, "app=metrics-server");
+    let refused_key = key(&refused[0]);
+    let generation = |cx: &mut TestAppContext| {
+        cx.update(|cx| view.read(cx).source().streams[&refused_key].generation)
+    };
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &metrics, cx);
+        feed(&view, refused.clone(), cx);
+        window.render_frame(cx);
+        let tag = refused_key.service();
+        let label = window
+            .find(format!("workload-logs-stream-{}", tag.as_str()))
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(label.contains("Failed"), "{label}");
+        assert!(label.contains("reading again soon"), "{label}");
+    })
+    .unwrap();
+    let first = generation(cx);
+    cx.executor().advance_clock(RETRY_FIRST / 2);
+    cx.run_until_parked();
+    assert_eq!(generation(cx), first);
+    cx.executor().advance_clock(RETRY_FIRST);
+    cx.run_until_parked();
+    let second = generation(cx);
+    assert!(second > first);
+    // The next wait doubles: the retry at one second fails again at once
+    // and waits two.
+    cx.executor().advance_clock(RETRY_FIRST);
+    cx.run_until_parked();
+    assert_eq!(generation(cx), second);
+    cx.executor().advance_clock(RETRY_FIRST);
+    cx.run_until_parked();
+    assert!(generation(cx) > second);
+
+    // Once the pod goes, nothing reads it again.
+    cx.update(|cx| feed(&view, Vec::new(), cx));
+    cx.executor().advance_clock(RETRY_FIRST * 64);
+    cx.run_until_parked();
+    assert!(cx.update(|cx| view.read(cx).source().streams.is_empty()));
 }
 
 #[gpui_kit::test]
@@ -672,6 +844,15 @@ fn short_labels_drop_the_shared_prefix_up_to_a_dash() {
     assert_eq!(
         labels(&["api-6c4f8d9f-bbbbg/api", "api-7d5e9a0b-cxk2p/proxy"]),
         ["6c4f8d9f-bbbbg/api", "7d5e9a0b-cxk2p/proxy"]
+    );
+    // A pod's own tag, from its markers, doesn't make the container show.
+    assert_eq!(
+        labels(&[
+            "api-6c4f8d9f-bbbbg",
+            "api-6c4f8d9f-bbbbg/api",
+            "api-6c4f8d9f-bbbch/api"
+        ]),
+        ["bbbbg", "bbbbg", "bbbch"]
     );
     // StatefulSet ordinals, and a lone pod.
     assert_eq!(

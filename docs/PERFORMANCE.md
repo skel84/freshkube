@@ -18,6 +18,7 @@ scripts/stress.sh table-20k table 20000
 scripts/stress.sh burst-2k burst 20000 2000
 scripts/stress.sh pod-logs-10k pod-logs 10000
 scripts/stress.sh talos-logs-10k talos-logs 10000
+scripts/stress.sh workload-logs-10k workload-logs 10000
 scripts/stress.sh terminal-50k terminal 50000
 ```
 
@@ -30,6 +31,7 @@ scripts/stress.sh terminal-50k terminal 50000
 | `summary-410 <changes/s>` | the same workload, with one forced Pod watch expiration and relist after 10 s |
 | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate; every 50th line carries 300 more characters |
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
+| `workload-logs <lines/s>` | an example Deployment's Logs tab: its pods' containers, through the shared channel live streams use, writing that many lines a second between them |
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |

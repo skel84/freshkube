@@ -11,6 +11,11 @@
 //! its time among the retained lines, as with Talos services; a paused
 //! review keeps its place and the selection keeps its lines.
 //!
+//! Every stream feeds one channel, which one delivery task drains a frame
+//! at a time into a single `ingest`, as Talos services do, however many
+//! containers write. A stream that fails is read again with the watcher's
+//! backoff while its pod is listed.
+//!
 //! Nothing is read until the Logs tab first shows for the workload. Then
 //! the watch and the streams live while it stays open, whichever tab shows,
 //! and stop when another object opens, the pane closes, the page hides or
@@ -26,22 +31,22 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use chrono::Utc;
+use chrono::{DateTime, TimeDelta, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 use freshkube_core::resources::{
     ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, WorkloadPod,
     WorkloadPods, follow_pod_log, follow_workload_pods,
 };
-use gpui_kit::{AnyElement, Context, SharedString, Task, Window};
+use gpui_kit::{AnyElement, App, Context, SharedString, Task, Window};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 
 use super::{Columns, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{KubeAccess, example, live};
+use crate::resources::{KubeAccess, example};
 use crate::ui::Tone;
 use controls::Controls;
 
@@ -54,8 +59,16 @@ pub(crate) const MAX_STREAMS: usize = 20;
 /// Lines from the end each container's log starts with.
 const TAIL: i64 = 100;
 /// How often an example container writes another line; each stream adds
-/// a little, so they don't all write at once.
+/// a tick or more, so they don't all write at once.
 const EXAMPLE_INTERVAL: Duration = Duration::from_millis(1_500);
+/// The example writer's tick.
+const EXAMPLE_TICK: Duration = Duration::from_millis(250);
+/// How often the delivery task hands what the streams sent to the view.
+const DELIVERY_INTERVAL: Duration = Duration::from_millis(16);
+/// A failed stream's first retry, doubling up to the last, as the pod
+/// watch backs off.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(30);
 
 /// One container's log: which pod incarnation and container.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -110,12 +123,56 @@ impl StreamState {
 
 struct Stream {
     state: StreamState,
-    /// The pod, for the example data's log.
+    /// The pod, for a retry and the example data's log.
     pod: ResourceIdentity,
     /// Advances with each read; updates from an older one are dropped.
     generation: u64,
+    /// What this read asked for, `resume` included.
+    request: LogRequest,
     job: Option<OwnedJob>,
-    delivery: Option<Task<()>>,
+    /// The next read after a failure, once its backoff passes.
+    retry: Option<Task<()>>,
+    /// An example container that goes on writing, and its next line.
+    writes_on: bool,
+    sequence: u64,
+}
+
+/// One update from one container's read, as the shared channel carries it.
+pub(super) struct Fed {
+    key: StreamKey,
+    generation: u64,
+    update: PodLogUpdate,
+}
+
+/// The channel every stream sends into, and the one task that drains it.
+struct Feed {
+    sender: mpsc::Sender<Fed>,
+    _delivery: Task<()>,
+}
+
+/// Wall time by the executor's clock: anchored once, then stepped by it,
+/// so tests advance it with the clock instead of sleeping.
+#[derive(Clone, Copy)]
+struct Clock {
+    started: Instant,
+    at: DateTime<Utc>,
+}
+
+impl Clock {
+    fn new(cx: &App) -> Self {
+        Self {
+            started: cx.background_executor().now(),
+            at: Utc::now(),
+        }
+    }
+
+    fn now(&self, cx: &App) -> DateTime<Utc> {
+        let elapsed = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(self.started);
+        self.at + TimeDelta::from_std(elapsed).unwrap_or_default()
+    }
 }
 
 /// Where the pod watch stands.
@@ -135,9 +192,11 @@ pub(super) enum PodsState {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Chip {
     pub(super) service: ServiceId,
+    pub(super) id: SharedString,
     pub(super) label: SharedString,
+    /// The full tag, its state and what a click does.
+    pub(super) tooltip: SharedString,
     pub(super) tone: Tone,
-    pub(super) state: SharedString,
     pub(super) shown: bool,
 }
 
@@ -153,6 +212,7 @@ pub(super) struct Status {
 
 pub(crate) struct WorkloadLogs {
     runtime: Handle,
+    clock: Clock,
     access: Option<KubeAccess>,
     workload: Option<ResourceIdentity>,
     /// The selector from the workload's document: `None` until it is read,
@@ -172,6 +232,14 @@ pub(crate) struct WorkloadLogs {
     watch_job: Option<OwnedJob>,
     watch_delivery: Option<Task<()>>,
     streams: BTreeMap<StreamKey, Stream>,
+    feed: Option<Feed>,
+    /// Writes the example containers' lines while any stream writes on.
+    example_writer: Option<Task<()>>,
+    /// A `stress` run's flood into the feed.
+    #[cfg(feature = "stress")]
+    stress: Option<OwnedJob>,
+    /// Failures in a row of each container, for its retry's backoff.
+    failures: BTreeMap<StreamKey, u32>,
     /// How far each container was read, kept while the page hides so its
     /// log reads on without repeating a line.
     positions: BTreeMap<StreamKey, LogPosition>,
@@ -192,9 +260,10 @@ pub(crate) struct WorkloadLogs {
 }
 
 impl WorkloadLogs {
-    fn new(runtime: Handle) -> Self {
+    fn new(runtime: Handle, clock: Clock) -> Self {
         let mut source = Self {
             runtime,
+            clock,
             access: None,
             workload: None,
             selector: None,
@@ -207,6 +276,11 @@ impl WorkloadLogs {
             watch_job: None,
             watch_delivery: None,
             streams: BTreeMap::new(),
+            feed: None,
+            example_writer: None,
+            #[cfg(feature = "stress")]
+            stress: None,
+            failures: BTreeMap::new(),
             positions: BTreeMap::new(),
             next_generation: 0,
             left_out: 0,
@@ -238,6 +312,12 @@ impl WorkloadLogs {
         self.watch_job = None;
         self.watch_delivery = None;
         self.streams.clear();
+        self.feed = None;
+        self.example_writer = None;
+        #[cfg(feature = "stress")]
+        {
+            self.stress = None;
+        }
     }
 
     /// The containers to read: app containers of the newest pods first, at
@@ -280,15 +360,28 @@ impl WorkloadLogs {
             .iter()
             .map(|(key, stream)| {
                 let service = key.service();
+                let name = service.as_str();
+                let shown = !self.hidden.contains(&service);
+                let retrying = if stream.retry.is_some() {
+                    ", reading again soon"
+                } else {
+                    ""
+                };
                 Chip {
+                    id: format!("workload-logs-stream-{name}").into(),
                     label: self
                         .labels
                         .get(&service)
                         .cloned()
-                        .unwrap_or_else(|| service.as_str().to_owned().into()),
+                        .unwrap_or_else(|| name.to_owned().into()),
+                    tooltip: format!(
+                        "{name}: {}{retrying}. {} its lines.",
+                        stream.state.label(),
+                        if shown { "Hide" } else { "Show" }
+                    )
+                    .into(),
                     tone: stream.state.tone(),
-                    state: stream.state.label().into(),
-                    shown: !self.hidden.contains(&service),
+                    shown,
                     service,
                 }
             })
@@ -353,10 +446,10 @@ impl WorkloadLogs {
     }
 
     /// A note between lines: a pod joined or left.
-    fn marker(&mut self, pod: &str, text: String) -> LogEvent {
+    fn marker(&mut self, pod: &str, text: String, at: DateTime<Utc>) -> LogEvent {
         let service = ServiceId::new(pod);
         self.seen.insert(service.clone());
-        LogEvent::marker(service, Utc::now().fixed_offset(), text)
+        LogEvent::marker(service, at.fixed_offset(), text)
     }
 
     /// The tags shown: every tag seen but those the user hid.
@@ -402,7 +495,8 @@ impl LogSource for WorkloadLogs {
 /// Short labels for `pod/container` tags: each pod name without the prefix
 /// all of them share, up to a `-` (a ReplicaSet's pods keep their random
 /// suffix, a StatefulSet's their ordinal), and the container only when
-/// the tags name more than one.
+/// the tags name more than one. A pod's own tag, which its markers carry,
+/// gets the pod's label.
 fn short_labels(services: impl Iterator<Item = ServiceId>) -> BTreeMap<ServiceId, SharedString> {
     let tags: BTreeSet<ServiceId> = services.collect();
     let mut names = tags.iter().map(|service| split(service).0);
@@ -426,12 +520,17 @@ fn short_labels(services: impl Iterator<Item = ServiceId>) -> BTreeMap<ServiceId
     let cut = first[..shared.min(shortest.saturating_sub(1))]
         .rfind('-')
         .map_or(0, |dash| dash + 1);
-    let containers: BTreeSet<&str> = tags.iter().map(|service| split(service).1).collect();
+    // A pod's own tag, for its joined and left markers, names no container.
+    let containers: BTreeSet<&str> = tags
+        .iter()
+        .map(|service| split(service).1)
+        .filter(|container| !container.is_empty())
+        .collect();
     tags.iter()
         .map(|service| {
             let (pod, container) = split(service);
             let pod = &pod[cut..];
-            let label = if containers.len() > 1 {
+            let label = if containers.len() > 1 && !container.is_empty() {
                 format!("{pod}/{container}")
             } else {
                 pod.to_owned()
@@ -480,7 +579,8 @@ pub(crate) trait WorkloadLogPanel: Sized + 'static {
 
 impl WorkloadLogPanel for WorkloadLogView {
     fn for_workloads(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::with_source(WorkloadLogs::new(runtime), window, cx).with_columns(Columns {
+        let clock = Clock::new(cx);
+        Self::with_source(WorkloadLogs::new(runtime, clock), window, cx).with_columns(Columns {
             time: true,
             source: true,
         })
@@ -517,6 +617,7 @@ impl WorkloadLogPanel for WorkloadLogView {
         source.pods.clear();
         source.known = None;
         source.positions.clear();
+        source.failures.clear();
         source.left_out = 0;
         source.hidden.clear();
         source.seen.clear();
@@ -605,8 +706,27 @@ trait Streams: Sized + 'static {
         cx: &mut Context<Self>,
     ) -> bool;
 
+    /// The channel every stream sends into, opened with its delivery task
+    /// on first use.
+    fn feed(&mut self, cx: &mut Context<Self>) -> mpsc::Sender<Fed>;
+
+    /// Applies what every stream sent since the last delivery: one ingest,
+    /// one notify, and the streams row derived again only when a stream's
+    /// state changed.
+    fn apply_fed(&mut self, batch: Vec<Fed>, cx: &mut Context<Self>);
+
+    /// Reads a failed container again once its backoff passes.
+    fn schedule_retry(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>);
+
+    /// The retry itself, while the stream still failed and its pod is listed.
+    fn retry_stream(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>);
+
     /// Example data reads at once; a running example container writes on.
     fn start_example(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>);
+
+    /// One tick of the example writer: each running example container
+    /// writes at its own pace, into the feed.
+    fn example_tick(&mut self, tick: u64, cx: &mut Context<Self>);
 }
 
 impl Streams for WorkloadLogView {
@@ -660,7 +780,8 @@ impl Streams for WorkloadLogView {
         if let KubeAccess::Example = access {
             // Example pods don't come and go; the watch counts as running.
             self.source_mut().watch_delivery = Some(Task::ready(()));
-            let pods = example::workload_pods(&workload, &selector, live::now());
+            let now = self.source().clock.now(cx).timestamp();
+            let pods = example::workload_pods(&workload, &selector, now);
             self.apply_pods(
                 epoch,
                 WorkloadPods {
@@ -670,6 +791,8 @@ impl Streams for WorkloadLogView {
                 },
                 cx,
             );
+            #[cfg(feature = "stress")]
+            stress_flood(self, cx);
             return;
         }
         let (sender, mut receiver) = watch::channel(WorkloadPods::default());
@@ -756,9 +879,10 @@ impl Streams for WorkloadLogView {
             }
         }
         source.known = Some(now);
+        let at = source.clock.now(cx);
         let markers: Vec<LogEvent> = markers
             .into_iter()
-            .map(|(pod, text)| source.marker(&pod, text))
+            .map(|(pod, text)| source.marker(&pod, text, at))
             .collect();
         let (wanted, left_out) = source.wanted_streams();
         let wanted: Vec<(StreamKey, ResourceIdentity)> = wanted
@@ -802,6 +926,9 @@ impl Streams for WorkloadLogView {
         source
             .positions
             .retain(|key, _| alive.contains(&(key.pod.clone(), key.uid.clone())));
+        source
+            .failures
+            .retain(|key, _| alive.contains(&(key.pod.clone(), key.uid.clone())));
         let new: Vec<_> = wanted
             .into_iter()
             .filter(|(key, _)| !source.streams.contains_key(key))
@@ -829,26 +956,6 @@ impl Streams for WorkloadLogView {
             .get(&key)
             .filter(|position| position.time().is_some())
             .copied();
-        let source = self.source_mut();
-        source.next_generation += 1;
-        let generation = source.next_generation;
-        source.seen.insert(key.service());
-        source.streams.insert(
-            key.clone(),
-            Stream {
-                state: StreamState::Connecting,
-                pod: pod.clone(),
-                generation,
-                job: None,
-                delivery: None,
-            },
-        );
-        // Its lines show unless the user hid them.
-        self.clear_shown();
-        if let KubeAccess::Example = access {
-            self.start_example(key, generation, cx);
-            return;
-        }
         let request = LogRequest {
             namespace: pod.namespace.clone(),
             pod: key.pod.clone(),
@@ -857,45 +964,66 @@ impl Streams for WorkloadLogView {
             tail: Some(TAIL),
             resume,
         };
-        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+        let source = self.source_mut();
+        source.next_generation += 1;
+        let generation = source.next_generation;
+        source.seen.insert(key.service());
+        source.streams.insert(
+            key.clone(),
+            Stream {
+                state: StreamState::Connecting,
+                pod,
+                generation,
+                request: request.clone(),
+                job: None,
+                retry: None,
+                writes_on: false,
+                sequence: generation,
+            },
+        );
+        // Its lines show unless the user hid them.
+        self.clear_shown();
+        if let KubeAccess::Example = access {
+            self.start_example(key, generation, cx);
+            return;
+        }
+        let feed = self.feed(cx);
+        let stream_key = key.clone();
         let job = self.source().runtime.spawn(async move {
             match access.client().await {
-                Ok(client) => follow_pod_log(client, request, sender).await,
+                Ok(client) => {
+                    // The container's updates, tagged on their way into the
+                    // shared channel.
+                    let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+                    let forward = async {
+                        while let Some(update) = receiver.recv().await {
+                            let fed = Fed {
+                                key: stream_key.clone(),
+                                generation,
+                                update,
+                            };
+                            if feed.send(fed).await.is_err() {
+                                return;
+                            }
+                        }
+                    };
+                    tokio::join!(follow_pod_log(client, request, sender), forward);
+                }
                 Err(error) => {
                     access.forget();
-                    let failure = Failure::new(FailureKind::Other, error);
-                    let _ = sender.send(PodLogUpdate::Failed(failure)).await;
+                    let update = PodLogUpdate::Failed(Failure::new(FailureKind::Other, error));
+                    let _ = feed
+                        .send(Fed {
+                            key: stream_key,
+                            generation,
+                            update,
+                        })
+                        .await;
                 }
-            }
-        });
-        let delivery_key = key.clone();
-        let delivery = cx.spawn(async move |weak, cx| {
-            while let Some(first) = receiver.recv().await {
-                let mut batch = vec![first];
-                // At most a full queue per turn, then yield, however busy
-                // the container.
-                for _ in 1..STREAM_QUEUE_CAPACITY {
-                    let Ok(update) = receiver.try_recv() else {
-                        break;
-                    };
-                    batch.push(update);
-                }
-                let applied = weak
-                    .update(cx, |view, cx| {
-                        view.apply_updates(&delivery_key, generation, batch, cx)
-                    })
-                    .unwrap_or(false);
-                if !applied {
-                    return;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
             }
         });
         if let Some(stream) = self.source_mut().streams.get_mut(&key) {
             stream.job = Some(OwnedJob::new(job));
-            stream.delivery = Some(delivery);
         }
     }
 
@@ -914,32 +1042,96 @@ impl Streams for WorkloadLogView {
         {
             return false;
         }
-        let service = key.service();
+        let batch = updates
+            .into_iter()
+            .map(|update| Fed {
+                key: key.clone(),
+                generation,
+                update,
+            })
+            .collect();
+        self.apply_fed(batch, cx);
+        true
+    }
+
+    fn feed(&mut self, cx: &mut Context<Self>) -> mpsc::Sender<Fed> {
+        if let Some(feed) = &self.source().feed {
+            return feed.sender.clone();
+        }
+        let (sender, mut receiver) = mpsc::channel::<Fed>(STREAM_QUEUE_CAPACITY);
+        let delivery = cx.spawn(async move |weak, cx| {
+            while let Some(first) = receiver.recv().await {
+                let mut batch = vec![first];
+                // At most a full queue per turn, then yield, however busy
+                // the containers.
+                while batch.len() < STREAM_QUEUE_CAPACITY {
+                    let Ok(fed) = receiver.try_recv() else {
+                        break;
+                    };
+                    batch.push(fed);
+                }
+                if weak
+                    .update(cx, |view, cx| view.apply_fed(batch, cx))
+                    .is_err()
+                {
+                    return;
+                }
+                cx.background_executor().timer(DELIVERY_INTERVAL).await;
+            }
+        });
+        self.source_mut().feed = Some(Feed {
+            sender: sender.clone(),
+            _delivery: delivery,
+        });
+        sender
+    }
+
+    fn apply_fed(&mut self, batch: Vec<Fed>, cx: &mut Context<Self>) {
+        crate::desktop::probe::hit("workload-logs.apply");
+        let now = self.source().clock.now(cx);
         let mut lines = Vec::new();
+        let mut changed = false;
+        let mut failed = Vec::new();
         let source = self.source_mut();
-        for update in updates {
-            let position = source.positions.entry(key.clone()).or_default();
-            let Some(stream) = source.streams.get_mut(key) else {
-                break;
+        for Fed {
+            key,
+            generation,
+            update,
+        } in batch
+        {
+            let Some(stream) = source
+                .streams
+                .get_mut(&key)
+                .filter(|stream| stream.generation == generation)
+            else {
+                continue;
             };
+            let service = key.service();
+            let position = source.positions.entry(key.clone()).or_default();
             match update {
                 PodLogUpdate::Line(line) => {
                     position.record(&line);
-                    lines.push(LogEvent::new(service.clone(), line));
+                    lines.push(LogEvent::new(service, line));
                 }
                 PodLogUpdate::Streaming => {
                     stream.state = StreamState::Streaming;
                     source.errors.remove(&service);
+                    source.failures.remove(&key);
+                    changed = true;
                 }
-                PodLogUpdate::Waiting(reason) => stream.state = StreamState::Waiting(reason),
+                PodLogUpdate::Waiting(reason) => {
+                    stream.state = StreamState::Waiting(reason);
+                    changed = true;
+                }
                 PodLogUpdate::Reconnecting { attempt, .. } => {
-                    stream.state = StreamState::Reconnecting(attempt)
+                    stream.state = StreamState::Reconnecting(attempt);
+                    changed = true;
                 }
                 PodLogUpdate::Restarting(ended) => {
                     let how = ended.map(|ended| format!(" ({ended})")).unwrap_or_default();
-                    let at = position.time().unwrap_or_else(Utc::now);
+                    let at = position.time().unwrap_or(now);
                     lines.push(LogEvent::marker(
-                        service.clone(),
+                        service,
                         at.fixed_offset(),
                         format!("{} restarted{how}", key.container),
                     ));
@@ -947,68 +1139,166 @@ impl Streams for WorkloadLogView {
                 PodLogUpdate::Ended(_) => {
                     stream.job = None;
                     stream.state = StreamState::Ended;
+                    changed = true;
                 }
                 PodLogUpdate::Failed(failure) => {
                     stream.job = None;
-                    source.errors.insert(service.clone(), failure.to_string());
+                    source.errors.insert(service, failure.to_string());
                     stream.state = StreamState::Failed(failure);
+                    failed.push((key, generation));
+                    changed = true;
                 }
             }
         }
-        source.describe();
-        self.ingest(lines, cx);
+        for (key, generation) in failed {
+            self.schedule_retry(key, generation, cx);
+        }
+        if changed {
+            self.source_mut().describe();
+        }
+        if !lines.is_empty() {
+            self.ingest(lines, cx);
+        }
         cx.notify();
-        true
     }
 
-    fn start_example(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>) {
-        let Some(pod) = self
-            .source()
+    fn schedule_retry(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>) {
+        let source = self.source_mut();
+        let failures = source.failures.entry(key.clone()).or_default();
+        *failures += 1;
+        let delay = RETRY_FIRST
+            .saturating_mul(1 << (*failures - 1).min(5))
+            .min(RETRY_MAX);
+        let retry_key = key.clone();
+        let task = cx.spawn(async move |weak, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = weak.update(cx, |view, cx| view.retry_stream(retry_key, generation, cx));
+        });
+        if let Some(stream) = self.source_mut().streams.get_mut(&key) {
+            stream.retry = Some(task);
+        }
+    }
+
+    fn retry_stream(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>) {
+        let source = self.source_mut();
+        let Some(stream) = source
             .streams
-            .get(&key)
-            .map(|stream| stream.pod.clone())
+            .get_mut(&key)
+            .filter(|stream| stream.generation == generation)
         else {
             return;
         };
-        let reading_on = self
+        // This runs in the retry's own task: let it finish.
+        if let Some(task) = stream.retry.take() {
+            task.detach();
+        }
+        let listed = source
+            .pods
+            .iter()
+            .any(|pod| pod.name == key.pod && pod.uid == key.uid);
+        if !matches!(stream.state, StreamState::Failed(_)) || !listed {
+            return;
+        }
+        let pod = stream.pod.clone();
+        self.start_stream(key, pod, cx);
+        self.source_mut().describe();
+        cx.notify();
+    }
+
+    fn start_example(&mut self, key: StreamKey, generation: u64, cx: &mut Context<Self>) {
+        let Some((pod, reading_on)) = self
             .source()
-            .positions
+            .streams
             .get(&key)
-            .is_some_and(|position| position.time().is_some());
-        let (mut updates, writes_on) = example::pod_log(&pod, &key.container, false, live::now());
+            .map(|stream| (stream.pod.clone(), stream.request.resume.is_some()))
+        else {
+            return;
+        };
+        let now = self.source().clock.now(cx).timestamp();
+        let (mut updates, writes_on) = example::pod_log(&pod, &key.container, false, now);
         if reading_on {
             // Example history is dated back from the clock, so read again it
             // would pass for new lines. Reading on gets only lines written
             // since.
             updates.retain(|update| !matches!(update, PodLogUpdate::Line(_)));
         }
-        self.apply_updates(&key, generation, updates, cx);
-        if !writes_on {
-            return;
+        if let Some(stream) = self.source_mut().streams.get_mut(&key) {
+            stream.writes_on = writes_on;
         }
-        // Each container writes at its own pace, so their lines interleave.
-        let interval = EXAMPLE_INTERVAL + Duration::from_millis(250 * (generation % 5));
-        let delivery = cx.spawn(async move |weak, cx| {
-            for sequence in generation.. {
-                cx.background_executor().timer(interval).await;
-                let line = example::pod_log_line(sequence, Utc::now());
-                let applied = weak
-                    .update(cx, |view, cx| {
-                        view.apply_updates(&key, generation, vec![PodLogUpdate::Line(line)], cx)
-                    })
-                    .unwrap_or(false);
-                if !applied {
-                    return;
+        self.apply_updates(&key, generation, updates, cx);
+        if writes_on && self.source().example_writer.is_none() {
+            let writer = cx.spawn(async move |weak, cx| {
+                for tick in 1u64.. {
+                    cx.background_executor().timer(EXAMPLE_TICK).await;
+                    if weak
+                        .update(cx, |view, cx| view.example_tick(tick, cx))
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
-            }
-        });
-        let source = self.source_mut();
-        if let Some(stream) = source
-            .streams
-            .values_mut()
-            .find(|stream| stream.generation == generation)
-        {
-            stream.delivery = Some(delivery);
+            });
+            self.source_mut().example_writer = Some(writer);
         }
     }
+
+    fn example_tick(&mut self, tick: u64, cx: &mut Context<Self>) {
+        let now = self.source().clock.now(cx);
+        let feed = self.feed(cx);
+        let base = EXAMPLE_INTERVAL.as_millis() as u64 / EXAMPLE_TICK.as_millis() as u64;
+        for (key, stream) in &mut self.source_mut().streams {
+            let writing = matches!(
+                stream.state,
+                StreamState::Streaming | StreamState::Connecting
+            );
+            if !stream.writes_on || !writing || !tick.is_multiple_of(base + stream.generation % 5) {
+                continue;
+            }
+            stream.sequence += 1;
+            let line = example::pod_log_line(stream.sequence, now);
+            // A full channel drops an example line, nothing more.
+            let _ = feed.try_send(Fed {
+                key: key.clone(),
+                generation: stream.generation,
+                update: PodLogUpdate::Line(line),
+            });
+        }
+    }
+}
+
+/// A `stress` run (`FRESHKUBE_STRESS_WORKLOAD_RATE`) floods the example
+/// streams through the same channel live streams use.
+#[cfg(feature = "stress")]
+fn stress_flood(view: &mut WorkloadLogView, cx: &mut Context<WorkloadLogView>) {
+    let Some(rate) = crate::stress::workload_rate() else {
+        return;
+    };
+    let streams: Vec<(StreamKey, u64)> = view
+        .source()
+        .streams
+        .iter()
+        .map(|(key, stream)| (key.clone(), stream.generation))
+        .collect();
+    if streams.is_empty() {
+        return;
+    }
+    let feed = view.feed(cx);
+    let job = view.source().runtime.spawn(crate::stress::line_flood(
+        rate,
+        streams.len(),
+        move |ix, line| {
+            let (key, generation) = streams[ix].clone();
+            let feed = feed.clone();
+            async move {
+                feed.send(Fed {
+                    key,
+                    generation,
+                    update: PodLogUpdate::Line(line),
+                })
+                .await
+                .is_ok()
+            }
+        },
+    ));
+    view.source_mut().stress = Some(OwnedJob::new(job));
 }
