@@ -4,7 +4,7 @@ This log records GPUI Kit and GPUI friction found while building Freshkube, and 
 
 Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a431fb1b82a6047e908de63913db3d4354` (version 0.7.0). This application uses the published `gpui-kit` 0.7.0 from crates.io. GPUI is the crates.io snapshot `gpui-pre` 0.3.7, and its paths are relative to that crate.
 
-**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K23 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`. From K17 on, toolkit source is cited in the published crates in the Cargo registry, by crate name and version (`gpui-pre` 0.3.7, `gpui-base` 0.7.0, `gpui-component` 0.7.0, `gpui-kit` 0.7.0), with paths relative to each crate.
+**Where entries come from.** K01–K10 were found while building the first Freshkube prototype, a separate repository (archived locally as `freshkube-prototype`, `main` at `7706655`), now superseded by this one. Their Freshkube paths (`pods/table.rs`, `workspace/…`) refer to that repository. K11–K24 come from building this application's GPUI frontend, which started as talos-pilot's GPUI prototype; their paths are relative to `crates/freshkube-desktop/src/`. From K17 on, toolkit source is cited in the published crates in the Cargo registry, by crate name and version (`gpui-pre` 0.3.7, `gpui-base` 0.7.0, `gpui-component` 0.7.0, `gpui-kit` 0.7.0), with paths relative to each crate.
 
 | ID | Summary | Found in | Classification |
 | --- | --- | --- | --- |
@@ -31,6 +31,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 | [K21](#k21-a-dialog-returns-focus-to-what-had-it-at-open) | A dialog returns focus to what had it when it opened | Workflow pass | Documentation gap |
 | [K22](#k22-no-terminal-widget-for-the-pinned-kit) | No terminal widget builds against the pinned Kit | Pod exec | Component limitation |
 | [K23](#k23-covered-or-locked-windows-draw-nothing) | Covered or locked windows draw nothing | Live checks, performance pass | Platform limitation |
+| [K24](#k24-path-vertices-are-copied-into-a-fresh-vector-every-frame) | Path vertices are copied into a fresh, unreserved vector every frame | Monitoring, #22 | Framework issue |
 
 ## K01 DataTable keys ignore row-only mode
 
@@ -251,6 +252,26 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 - **Source (GPUI):** intended and documented. `gpui-pre` 0.3.7 `src/platform.rs:85-112` (`WindowVisibility`: on macOS it comes from `NSWindow.occlusionState`, and the platform requests no frames while the window is hidden). The same comment says that Windows, and X11 with a compositor, keep reporting a covered window as visible.
 - **Freshkube workaround:** `scripts/stress.sh` refuses to run on a locked screen, and smoke tests confirm that the screen is unlocked first ([Smoke tests](../AGENTS.md#smoke-tests)).
 - **Classification:** platform limitation. GPUI documents it; this entry records the cost to checks and measurements.
+
+## K24 Path vertices are copied into a fresh vector every frame
+
+- **Found in:** the Monitoring hover profile for #22 ([PERFORMANCE.md](PERFORMANCE.md#a-pointer-move-redraws-no-panel-22)).
+- **Symptom:** a frame that only moves a small overlay still pays for every path on screen. The test was a release build on an Intel Mac, sampled for 10 s on the main thread while the pointer moved over an invented dashboard: 30 line charts, a few dozen stroked series each, about a third of them on screen.
+  - `MetalRenderer::draw` took 23% of the main thread's samples.
+  - 12% was `RawVecInner::finish_grow` → `realloc` → `memmove` under `draw_paths_to_intermediate`.
+  - 8% was the `map` that turns each `PathVertex` into a `PathRasterizationVertex`.
+- **Source (GPUI):** `gpui-pre-apple` 0.3.7 `src/metal_renderer.rs:768-778` (`MetalRenderer::draw_paths_to_intermediate`).
+  - Each path batch, in every frame, starts from `Vec::new()` with no capacity and `extend`s it with every vertex of every path in the batch, so it grows by doubling through `realloc`. It is then copied once more into the instance buffer (`writer.write(&vertices)`).
+  - The wgpu and DirectX renderers build theirs the same way: `gpui-pre-wgpu` 0.3.7 `src/wgpu_renderer.rs:1842-1845` and `gpui-pre-windows` 0.3.7 `src/directx_renderer.rs:636-639`. Only the Metal one was measured.
+- **Freshkube workaround:** draw fewer vertices.
+  - Series that look the same unfocused share one path, so a crowded panel's grey series draw as one line and one area ([MONITORING.md](MONITORING.md)).
+  - Next, a cap on the series a chart draws: the 30 with the highest peaks, with the rest one click away.
+  - Moving the cursor builds no path.
+- **Classification:** framework issue.
+- **Upstream:** not reported. Suggested fix, smallest first:
+  1. Reserve the total up front: `Vec::with_capacity(paths.iter().map(|p| p.vertices.len()).sum())`.
+  2. Keep the vector on the renderer and `clear()` it each frame, so its capacity survives between frames.
+  3. Write the vertices straight into the instance buffer, with no intermediate vector.
 
 ## Strengths observed
 
