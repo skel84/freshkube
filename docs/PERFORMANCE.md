@@ -288,7 +288,37 @@ Release build of `main` at 16ba2c7, the same hover-and-scroll script, run three 
 - **With its grey lines, the dashboard draws a third as many frames while the pointer moves,** about 8 a second instead of 24, and the main thread is busy throughout. A move still renders no panel; the cost is in drawing what is already built.
 - **Half or more of the main thread is the Metal renderer copying path vertices.** The share is `MetalRenderer::draw`, and most of it is the `map` that turns each `PathVertex` into a `PathRasterizationVertex` (`gpui-pre-apple` 0.3.7 `src/metal_renderer.rs:768-778`). The vector's regrowth, which was the larger part before, is now about 1%.
 - **Show all on one panel changes little:** 201 frames against 202–226 capped.
-- Peak memory is about 250 MB higher with the greys, and about 190 MB higher again with Show all on one panel. This hasn't been traced.
+- Peak memory is about 250 MB higher with the greys, and about 190 MB higher again with Show all on one panel; [Where the grey lines' memory goes](#where-the-grey-lines-memory-goes-22) splits it.
+
+### Where the grey lines' memory goes (#22)
+
+The same release builds on `thirty.json` and the default script, one run each, with load 2.4–3.3: the build before #245 (no greys), `main` at 16ba2c7, and `main` with Show all clicked on Panel 1 during the opening wait. `vmmap --summary` ran 10 s and 20 s in. The figures are each region's dirty and swapped memory; the footprint is `vmmap`'s physical footprint, a different measure from the stress binary's resident size above.
+
+| `thirty.json`, at 10 s / 20 s | Physical footprint | Metal buffers (`IOAccelerator (graphics)`) | Large heap blocks (`MALLOC_LARGE`) |
+| --- | --- | --- | --- |
+| No greys (before #245) | 290 / 220 MB | 157 / 85 MB | 16 / 16 MB |
+| Greys, capped | 552 / 507 MB | 255 / 237 MB | 94 / 132 MB |
+| Greys, Panel 1 shows all 67 | 744 / 573 MB | 400 / 333 MB | 163 / 127 MB |
+
+A temporary test counted what one panel paints from the stress fake's answer, on Panel 1's 275 px plot. Capped at 30 series it paints 99,312 vertices: 92,112 in the grey path and 3,600 in each coloured line, about 6 a sample. With Show all it paints 222,738.
+
+- **About 55–60% of the greys' extra memory is Metal buffers and 40–45% is heap.** Every path vertex is kept and copied as follows:
+  - **The cache:** the chart's `PathCaches` slot keeps 32 B.
+  - **The scene:** it holds two copies of 32 B. `Scene::insert_primitive` (`gpui-pre` 0.3.7 `src/scene.rs:87-138`) keeps the primitive in `paint_operations` and a clone in `paths`. While the next frame is built, the frame on screen keeps its scene too.
+  - **The renderer:** each frame, it writes 104 B a vertex into the instance buffer. The buffer pool grows in powers of two up to 256 MB (`gpui-pre-apple` 0.3.7 `src/metal_renderer.rs:1488-1506`).
+- **About 9 panels reach the renderer, though 15 paint.** The page paints the panels within reach, from half a screen above to a screen below: 15 at the top of `thirty.json`, of which about 9 are on screen. `insert_primitive` drops a primitive wholly outside the content mask, so off-screen paths never enter the scene. About 9 × 99,312 vertices gives roughly 60–115 MB of scene copies and 50 MB of cached paths. It also gives about 93 MB of instance data a frame, which a 128 MB pool buffer holds. That is the same order as the measured split.
+- **After the opening seconds, no plot paints again.** `plot_paint` ran 15 times in the first two seconds and never after: every hover frame replays the panels from GPUI's view cache. The replay copies each vertex on screen four times, 272 B in all:
+  1. `Scene::replay` clones the primitive (32 B).
+  2. `insert_primitive` clones it again (32 B).
+  3. The renderer maps it into a fresh vector (104 B).
+  4. The renderer writes that vector into the instance buffer (104 B).
+
+  That is about 240 MB a frame, or 1.9 GB a second at 8 frames a second.
+- **Show all doesn't fit the per-vertex count.** Its 123,426 extra vertices would add about 25 MB, but it added about 190 MB at 10 s, most of it Metal buffers, in two steps. Plausible causes are the pool's power-of-two growth, more frames in flight, and the allocator keeping freed large blocks. None of them has been traced.
+- **Ruled out:**
+  - The clone of an answer's frame in `draw_answer` lasts only while the answer is derived, about 330 KB per answer.
+  - The chunked grey path grows to about its own length: four chunks of about 23,000 vertices take its vector from 46,000 to 92,000.
+- **Painting only the panels on screen would save little.** It would free the cached paths of the 6 panels off screen, about 19 MB, and their first paint. It would save nothing in a replayed frame. In exchange, each panel would build its paths as it scrolled in, about 12–14 ms each (`plot_paint` at the opening).
 
 ### A chart draws no more samples than its pixels can show (#22)
 
@@ -313,8 +343,27 @@ A temporary page test measured the plot each panel draws, by grid width, at the 
 The test's text is wider than the app's, so its value axis takes more room and these plots are a little narrower than on screen: the real ratios are a little lower.
 
 - **Over 6 h, narrow panels pass four samples per pixel.** Grid widths 3 and 4 at the default page, about 10 and 6, would draw fewer vertices thinned. Every other plot stays under four, where thinning would draw every sample it draws today.
-- **Thinning isn't built; whether it should be is open.** Lowering the sample count is no substitute, since Prometheus evaluates only at each step and a coarser step loses the peaks between.
+- Lowering the sample count is no substitute, since Prometheus evaluates only at each step and a coarser step loses the peaks between.
 - A 30-panel dashboard's vertices come mostly from the number of series, up to 67 a panel in the stress dashboard, before any oversampling.
+
+**Thinning measured, and not built.** A temporary test thinned the stress fake's 30 capped series on Panel 1 at a few plot widths. Each pixel column kept its first, lowest, highest and last sample, counted with columns one point wide and one device pixel wide (half a point on a Retina display). Unthinned, the panel paints 99,312 vertices at any width.
+
+| Capped Panel 1, 601 samples a series | Vertices cut, columns a point wide | Columns a device pixel wide |
+| --- | --- | --- |
+| `thirty.json` as it is: grid width 8, 275 px, 2.2 samples per px | 7% | 0% |
+| Grid width 4 at the default page: 102 px, 5.9 per px | 58% | 28% |
+| Grid width 3 at the default page: 60 px, 10 per px | 70% | 53% |
+| Grid widths 3–4 at the narrow page: 156 px, 3.85 per px | 42% | 0% |
+
+On a Retina display the device-pixel column is the one that keeps every visible peak. Thinning would barely touch `thirty.json`, whose plots hold about two samples a pixel, so it stays unbuilt; the levers are the number of series and the copies per frame ([Where the grey lines' memory goes](#where-the-grey-lines-memory-goes-22)).
+
+**A cheaper stroke isn't a lever either.** The same series, stroked one per path with lyon's default miter joins:
+
+- A straight line takes 6.0 vertices a sample: two triangles a segment, the fewest a triangle list allows.
+- A step takes 11.5: two segments a sample.
+- A smooth curve takes 6.07, since its pieces are under a pixel at 2.2 samples a pixel. Over 1 h, 121 samples on a 1,000 px plot, it takes 6.38 against 5.95 straight.
+- A width of 1, 1.5 or 2 px makes no difference. A 0.25 or 0.5 px tolerance brings smooth down to the straight count.
+- A smooth line costs much more only where samples jump far apart, as [K25](GPUI_FRICTION.md#k25-a-path-past-65536-vertices-fails-to-build)'s table shows.
 
 ### Kubernetes summary
 

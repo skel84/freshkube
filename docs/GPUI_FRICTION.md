@@ -269,11 +269,21 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
   - A cap on the series a chart draws: the 30 with the highest peaks, with the rest one click away ([MONITORING.md](MONITORING.md), The series cap).
   - Moving the cursor builds no path.
 - **Measured again with the grey lines:** the profile above ran on the stress binary's `thirty.json`, whose crowded charts had lost their shared grey path to [K25](#k25-a-path-past-65536-vertices-fails-to-build). With the greys drawn and each chart capped at 30 series, `MetalRenderer::draw` took 52–61% of the main thread's samples, the vertex `map` 38–49% and `finish_grow` about 1%. The window drew about 8 frames a second while the pointer moved, down from 24 ([PERFORMANCE.md](PERFORMANCE.md#the-hover-with-the-grey-lines-drawn-22)).
+- **Copies a replayed frame makes:** in the hover no plot paints, and every frame replays the panels from GPUI's view cache. A path vertex on screen is copied four times a frame, 272 B in all:
+  1. `Scene::replay` clones the primitive (32 B, `gpui-pre` 0.3.7 `src/scene.rs:141-149`).
+  2. `Scene::insert_primitive` clones it again into `paths`, keeping the first in `paint_operations` (32 B, `src/scene.rs:87-138`). Each scene therefore holds every path twice.
+  3. The renderer's `map` into a fresh vector (104 B).
+  4. `writer.write` into the instance buffer (104 B).
+
+  On `thirty.json`, about 9 panels of 99,312 vertices reach the renderer: about 240 MB copied a frame. Most of the greys' extra memory is these copies and the instance buffers that hold them ([PERFORMANCE.md](PERFORMANCE.md#where-the-grey-lines-memory-goes-22)).
 - **Classification:** framework issue.
 - **Upstream:** not reported. Suggested fix, smallest first:
   1. Reserve the total up front: `Vec::with_capacity(paths.iter().map(|p| p.vertices.len()).sum())`.
   2. Keep the vector on the renderer and `clear()` it each frame, so its capacity survives between frames.
   3. Write the vertices straight into the instance buffer, with no intermediate vector.
+  4. Share a path's vertices between the scene's copies (an `Arc<[PathVertex]>` in `Path`), so replay and `insert_primitive` copy a pointer.
+
+  Fixes 1 and 2 remove the regrowth, now about 1% of the main thread. Fix 3 removes copy 4, about 38% of the bytes; the `map` stays. Fix 4 removes copies 1 and 2 and halves each scene's share of the heap.
 
 ## K25 A path past 65,536 vertices fails to build
 
