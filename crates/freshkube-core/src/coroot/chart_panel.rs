@@ -38,11 +38,12 @@ fn label(series: &Series) -> &str {
 
 /// Coroot names a chart's unit after its title's last comma, as in
 /// `Network round-trip time, seconds`; the Grafana unit that formats it,
-/// or none for a plain number.
+/// or none for a plain number. Seconds per second, such as CPU delay, read
+/// as the seconds lost in each second.
 fn unit(title: &str) -> Option<&'static str> {
     let (_, suffix) = title.rsplit_once(", ")?;
     Some(match suffix.trim() {
-        "seconds" => "s",
+        "seconds" | "seconds/second" => "s",
         "bytes" => "bytes",
         "bytes/second" => "Bps",
         "percent" | "%" => "percent",
@@ -311,9 +312,10 @@ mod tests {
             Some("s")
         );
         assert_eq!(unit("Memory usage, bytes").as_deref(), Some("bytes"));
+        // 0.002 seconds of delay each second reads as 2 ms.
+        assert_eq!(unit("CPU delay, seconds/second").as_deref(), Some("s"));
         // Cores and rates are plain numbers.
         assert_eq!(unit("CPU usage, cores"), None);
-        assert_eq!(unit("CPU delay, seconds/second"), None);
         assert_eq!(unit("Instances"), None);
     }
 

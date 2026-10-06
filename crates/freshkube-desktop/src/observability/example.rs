@@ -236,7 +236,8 @@ pub(super) fn map() -> api::ServiceMap {
     api::ServiceMap { nodes, edges }
 }
 
-pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
+/// The checks Coroot reports for an application, from the example matrix.
+pub(super) fn health(app: &api::AppId) -> api::AppHealth {
     let apps = applications();
     let value = apps.iter().find(|a| a.id == *app);
     let worker = *app == id(WORKER);
@@ -283,33 +284,8 @@ pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
             name: name.into(),
             status,
             issues,
-            charts: if extended && name == "CPU" {
-                vec![api::Chart {
-                    title: "CPU usage (cores)".into(),
-                    series: vec![api::SeriesSummary {
-                        name: "worker".into(),
-                        last: Some(0.1),
-                        min: Some(0.0),
-                        max: Some(0.2),
-                        avg: Some(0.1),
-                        sparkline: vec![Some(0.1), None, Some(0.2)],
-                        ..Default::default()
-                    }],
-                    series_omitted: 0,
-                }]
-            } else {
-                vec![]
-            },
-            log_patterns: if extended && worker && name == "Logs" {
-                vec![api::LogPatternSummary {
-                    hash: "example-connect".into(),
-                    severity: "error".into(),
-                    sample: "Connection refused (sanitized example)".into(),
-                    messages: 212,
-                }]
-            } else {
-                vec![]
-            },
+            charts: vec![],
+            log_patterns: vec![],
         }
     })
     .collect();
@@ -319,31 +295,8 @@ pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
         vitals: vec![],
         status: value.map_or(api::Status::Unknown, |a| a.status),
         reports,
-        dependencies: if worker {
-            vec![api::Dependency {
-                id: id("payments/ledger-db"),
-                status: api::Status::Critical,
-                connectivity: api::Status::Critical,
-                connectivity_message: "Connection refused".into(),
-                protocols: vec!["postgres".into()],
-                rtt_seconds: None,
-                rps: None,
-                errors_per_sec: None,
-                latency_seconds: None,
-            }]
-        } else {
-            vec![]
-        },
-        clients: if worker {
-            vec![api::ClientLink {
-                id: id("payments/api"),
-                status: api::Status::Critical,
-                rps: Some(12.),
-                latency_seconds: Some(0.003),
-            }]
-        } else {
-            vec![]
-        },
+        dependencies: vec![],
+        clients: vec![],
     }
 }
 

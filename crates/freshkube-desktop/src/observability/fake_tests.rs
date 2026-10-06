@@ -146,17 +146,23 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
     let observed = page.clone();
     cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
         let page = observed.read(cx);
-        !page.live.rest.is_loading() && !page.live.extended.is_loading()
+        !page.live.view.is_loading()
     })
     .await;
     cx.update_window(handle, |_, window, cx| {
         let current = page.read(cx);
-        assert!(current.live.rest.data().is_some());
-        assert!(current.live.extended.data().is_none());
-        assert_eq!(
-            current.live.capabilities[3],
-            api::Capability::Unavailable(api::ReadError::Unsupported)
-        );
+        assert!(current.live.view.data().is_some());
+        // The page shows Coroot's view alone: one read of the application,
+        // and no report from the REST API or MCP beside it.
+        let paths = server.paths.lock().unwrap();
+        let app_reads = paths.iter().filter(|path| {
+            let path = path.split('?').next().unwrap_or_default();
+            path.rsplit_once("/app/")
+                .is_some_and(|(_, id)| !id.contains('/'))
+        });
+        assert_eq!(app_reads.count(), 1, "{paths:?}");
+        assert!(paths.iter().all(|path| !path.contains("mcp")), "{paths:?}");
+        drop(paths);
         window.render_frame(cx);
         assert!(window.try_find("obs-threshold").is_none());
         assert!(window.try_find("obs-app-rollback").is_none());

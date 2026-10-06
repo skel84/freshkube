@@ -28,8 +28,6 @@ pub(super) struct AppPage {
     tables: Vec<Rc<table::Prepared>>,
     /// Coroot sent no reports at all.
     empty: bool,
-    /// The shown checks' ids and words, which the evidence card leaves out.
-    pub(super) said: Vec<String>,
 }
 
 struct Tab {
@@ -121,22 +119,11 @@ impl AppPage {
             blocks: vec![],
             tables: vec![],
             empty: view.reports.is_empty(),
-            said: vec![],
         };
         if let Some(report) = view.reports.iter().find(|r| r.name == report) {
             let slug = report.name.to_lowercase().replace(' ', "-");
             let key = |ix: usize| (view.map.app.id.clone(), report.name.clone(), ix);
             page.checks = report.checks.iter().map(check).collect();
-            let logs = report.widgets.iter().filter_map(|w| match &w.kind {
-                api::WidgetKind::Logs(Some(check)) => Some(check),
-                _ => None,
-            });
-            for check in report.checks.iter().chain(logs) {
-                page.said.push(check.id.clone());
-                if !check.message.is_empty() {
-                    page.said.push(check.message.clone());
-                }
-            }
             for (ix, widget) in report.widgets.iter().enumerate() {
                 let kind = match &widget.kind {
                     api::WidgetKind::Chart(chart) => {

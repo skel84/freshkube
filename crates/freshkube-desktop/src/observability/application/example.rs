@@ -111,7 +111,7 @@ const REPORTS: [&str; 11] = [
 pub(in crate::observability) fn app_view(app: &api::AppId) -> api::AppView {
     let apps = example::applications();
     let record = apps.iter().find(|a| a.id == *app);
-    let health = example::health(app, false);
+    let health = example::health(app);
     let worker = *app == example::id(example::WORKER);
     let pods = pods(app, record);
     let restarts = record
