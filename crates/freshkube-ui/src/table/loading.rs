@@ -274,7 +274,9 @@ fn paint_shimmer(painted: &Painted, at: f32, band: Hsla, window: &mut Window) {
     let clear = band.opacity(0.);
     for bar in &painted.bars {
         let start = region.left() + unit * (at * travel - BAND - bar.row as f32 * SLANT);
-        let middle = start + unit * (BAND / 2.);
+        // On a whole device pixel, so the halves' masks meet without
+        // painting the pixel between them twice.
+        let middle = snap(start + unit * (BAND / 2.), window);
         let end = start + unit * BAND;
         for (from, to, colors) in [(start, middle, (clear, band)), (middle, end, (band, clear))] {
             let left = from.max(bar.bounds.left());
@@ -300,4 +302,10 @@ fn paint_shimmer(painted: &Painted, at: f32, band: Hsla, window: &mut Window) {
             });
         }
     }
+}
+
+/// `x` on the nearest device pixel.
+fn snap(x: Pixels, window: &Window) -> Pixels {
+    let scale = window.scale_factor();
+    px((f32::from(x) * scale).round() / scale)
 }
