@@ -295,7 +295,8 @@ A page's components should be checked without starting the app. [#53](https://gi
 - (b) Done in `ff8c7e8` and `8a66ef8`: `layered()` and `curve()` lay out through a `Node` trait, then move unchanged into `crates/freshkube-graph`'s `layout` module, which has no dependencies. Unit tests and a workbench graph story follow.
 - (c) A `GraphView<S: GraphSource>` in that crate, with the service map as its first source.
   - Routing landed in `bfb23ea`: `route()` returns a `Layout` whose routes keep clear of every box. A call that spans columns takes a lane in the gutters, a wrapped column is an ordinary column, and a call that closes a cycle comes back below the boxes. In the story's Fan-out, the calls cross 0 times, against 43 with `curve()`, 4 of which ran through a box.
-  - Next: after coroot-view's Observability work lands, the service map switches to `route()`, and `layered()` and `curve()` go. Then `GraphView`.
+  - The service map switched to `route()` in `411c046`; `layered()` and `curve()` are gone. A test checks that no connection on any page of the 120-service fixture runs through a box.
+  - Next: `GraphView`.
 
 ## Next: Coroot observability
 
