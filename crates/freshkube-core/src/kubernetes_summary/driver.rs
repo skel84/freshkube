@@ -1,8 +1,12 @@
 //! Tokio driver. One task owns all read tasks and one debounced publisher.
-use std::{fmt::Debug, pin::pin, time::Duration};
+use std::{
+    fmt::Debug,
+    pin::{Pin, pin},
+    time::Duration,
+};
 
 use chrono::Utc;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use k8s_openapi::api::{
     apps::v1::{DaemonSet, Deployment, StatefulSet},
     core::v1::{Event, Namespace, Node, PersistentVolume, PersistentVolumeClaim, Pod},
@@ -107,39 +111,8 @@ impl Session {
         }
         let mut backoff = Duration::from_secs(1);
         loop {
-            let mut stream = pin!(watcher(api.clone(), config.clone()));
-            let mut initial_deadline = Some(Instant::now() + READ_DEADLINE);
-            let (failure, expired) = loop {
-                let item = match initial_deadline {
-                    Some(deadline) => {
-                        match tokio::time::timeout_at(deadline, stream.next()).await {
-                            Ok(item) => item,
-                            Err(_) => {
-                                break (ObservationFailure::Read(FailureKind::Timeout), false);
-                            }
-                        }
-                    }
-                    None => stream.next().await,
-                };
-                match item {
-                    Some(Ok(event)) => {
-                        if matches!(event, watcher::Event::Init | watcher::Event::InitApply(_)) {
-                            // Bound a stalled read, not the total time needed
-                            // for a large collection that is still progressing.
-                            initial_deadline = Some(Instant::now() + READ_DEADLINE);
-                        }
-                        if matches!(event, watcher::Event::InitDone) {
-                            initial_deadline = None;
-                            backoff = Duration::from_secs(1);
-                        }
-                        if let Err(failure) = self.apply(generation, event, Utc::now()) {
-                            break (failure, false);
-                        }
-                    }
-                    Some(Err(error)) => break classify(error),
-                    None => break (ObservationFailure::Read(FailureKind::Unreachable), false),
-                }
-            };
+            let stream = pin!(watcher(api.clone(), config.clone()));
+            let (failure, expired) = self.run_stream(stream, generation, &mut backoff).await;
             if self.generation() != generation {
                 return;
             }
@@ -147,15 +120,62 @@ impl Session {
             if failure.is_permanent() {
                 return;
             }
-            // Recreate on both event 410 and HTTP watch-start 410. kube 0.98
-            // resets only the former itself. Other failures back off and relist.
-            if !expired {
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(30));
-            } else {
-                tokio::task::yield_now().await;
+            pause(expired, &mut backoff).await;
+        }
+    }
+
+    /// Applies one watch stream's events until it fails, ends, or its initial
+    /// list stalls. Returns the failure and whether the stream expired (410).
+    async fn run_stream<K>(
+        &self,
+        mut stream: Pin<&mut impl Stream<Item = Result<watcher::Event<K>, watcher::Error>>>,
+        generation: u64,
+        backoff: &mut Duration,
+    ) -> (ObservationFailure, bool)
+    where
+        K: SummaryResource,
+    {
+        let mut initial_deadline = Some(Instant::now() + READ_DEADLINE);
+        loop {
+            let item = match initial_deadline {
+                Some(deadline) => match tokio::time::timeout_at(deadline, stream.next()).await {
+                    Ok(item) => item,
+                    Err(_) => return (ObservationFailure::Read(FailureKind::Timeout), false),
+                },
+                None => stream.next().await,
+            };
+            match item {
+                Some(Ok(event)) => {
+                    if matches!(event, watcher::Event::Init | watcher::Event::InitApply(_)) {
+                        // Bound a stalled read, not the total time needed
+                        // for a large collection that is still progressing.
+                        initial_deadline = Some(Instant::now() + READ_DEADLINE);
+                    }
+                    if matches!(event, watcher::Event::InitDone) {
+                        initial_deadline = None;
+                        *backoff = Duration::from_secs(1);
+                    }
+                    if let Err(failure) = self.apply(generation, event, Utc::now()) {
+                        return (failure, false);
+                    }
+                }
+                Some(Err(error)) => return classify(error),
+                None => return (ObservationFailure::Read(FailureKind::Unreachable), false),
             }
         }
+    }
+}
+
+/// Waits before the next list: at once after a 410, otherwise for the backoff,
+/// which doubles up to 30 s.
+async fn pause(expired: bool, backoff: &mut Duration) {
+    // Recreate on both event 410 and HTTP watch-start 410. kube 0.98
+    // resets only the former itself. Other failures back off and relist.
+    if !expired {
+        tokio::time::sleep(*backoff).await;
+        *backoff = (*backoff * 2).min(Duration::from_secs(30));
+    } else {
+        tokio::task::yield_now().await;
     }
 }
 
