@@ -346,7 +346,7 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
             view.navigate(Page::Health, window, cx);
         });
         window.render_frame(cx);
-        window.click("screen-refresh", cx);
+        window.click("workloads-refresh", cx);
     })
     .unwrap();
     cx.run_until_parked();
