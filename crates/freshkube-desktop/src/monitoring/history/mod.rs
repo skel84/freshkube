@@ -28,7 +28,7 @@ use gpui_kit::{
 use tokio::runtime::Handle;
 
 use super::panel::{Linked, PanelEvent, PanelView};
-use crate::backend::{self, OwnedJob};
+use super::request::{self, Request};
 use crate::resources::KubeAccess;
 use crate::ui::{self, dp};
 
@@ -90,12 +90,6 @@ impl HistorySource {
             }
         }
     }
-}
-
-/// A read in flight. Dropping it cancels the work and its answer.
-struct Request {
-    _job: Option<OwnedJob>,
-    _task: Task<()>,
 }
 
 pub(crate) struct HistoryView {
@@ -308,9 +302,14 @@ impl HistoryView {
                         .query_panel(&spec, &context, &Variables::default())
                         .await
                 };
-                Some(self.run(example, work, cx, move |this, result, cx| {
-                    this.answered(index, window, result, cx)
-                }))
+                Some(request::run(
+                    example,
+                    &self.runtime,
+                    DEADLINE,
+                    work,
+                    cx,
+                    move |this, result, cx| this.answered(index, window, result, cx),
+                ))
             })
             .collect();
     }
@@ -334,47 +333,6 @@ impl HistoryView {
         });
         if self.linked.refresh(&self.panels, cx) {
             cx.notify();
-        }
-    }
-
-    /// Runs `work` where its source answers (Tokio for Prometheus, the
-    /// background executor for example data) and hands the result to
-    /// `done`, unless the request is dropped first.
-    fn run<T: Send + 'static>(
-        &self,
-        example: bool,
-        work: impl Future<Output = Result<T, QueryError>> + Send + 'static,
-        cx: &mut Context<Self>,
-        done: impl FnOnce(&mut Self, Result<T, QueryError>, &mut Context<Self>) + 'static,
-    ) -> Request {
-        if example {
-            let work = cx.background_spawn(work);
-            let task = cx.spawn(async move |this, cx| {
-                let result = work.await;
-                _ = this.update(cx, |this, cx| done(this, result, cx));
-            });
-            return Request {
-                _job: None,
-                _task: task,
-            };
-        }
-        let (job, receiver) = backend::spawn_job(
-            &self.runtime,
-            DEADLINE,
-            "Prometheus didn't answer in time".into(),
-            async move { Ok(work.await) },
-        );
-        let task = cx.spawn(async move |this, cx| {
-            let result = match receiver.await {
-                Ok(Ok(result)) => result,
-                Ok(Err(message)) => Err(QueryError::new(ErrorKind::TimedOut, message)),
-                Err(_) => return,
-            };
-            _ = this.update(cx, |this, cx| done(this, result, cx));
-        });
-        Request {
-            _job: Some(job),
-            _task: task,
         }
     }
 
