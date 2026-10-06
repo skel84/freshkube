@@ -5,7 +5,7 @@
 //! their logs, nothing else.
 //!
 //! Pods are found by the workload's selector (core's
-//! `follow_workload_pods`) and followed as they come and go; each container
+//! `follow_pods`) and followed as they come and go; each container
 //! is read by core's `follow_pod_log`, at most [`MAX_STREAMS`] at once. A
 //! line that arrives late, from a stream behind the others, is placed by
 //! its time among the retained lines, as with Talos services; a paused
@@ -36,8 +36,8 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeDelta, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 use freshkube_core::resources::{
-    ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, WorkloadPod,
-    WorkloadPods, follow_pod_log, follow_workload_pods,
+    ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, PodSelector,
+    WorkloadPod, WorkloadPods, follow_pod_log, follow_pods,
 };
 use gpui_kit::{AnyElement, App, Context, Pixels, SharedString, Task, Window};
 use tokio::runtime::Handle;
@@ -880,7 +880,9 @@ impl Streams for WorkloadLogView {
         let namespace = workload.namespace.clone();
         let job = self.source().runtime.spawn(async move {
             match access.client().await {
-                Ok(client) => follow_workload_pods(client, namespace, selector, sender).await,
+                Ok(client) => {
+                    follow_pods(client, namespace, PodSelector::Labels(selector), sender).await
+                }
                 Err(error) => {
                     access.forget();
                     sender.send_modify(|pods| {
