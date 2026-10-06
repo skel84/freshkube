@@ -81,7 +81,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: runner.os == 'Linux'
         with:
-          key: platform-check-Linux
+          key: platform-check-Linux-tests
           # Linux only until its size and the surviving macOS caches are audited.
           # Main saves dependencies; PRs restore without saving their own copies.
           # Workspace crates are excluded by rust-cache's defaults.
