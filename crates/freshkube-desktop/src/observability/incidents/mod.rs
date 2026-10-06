@@ -316,12 +316,20 @@ impl ObservabilityPage {
         }
         self.open_app(app, Report::Errors, cx);
     }
-    /// The table, with the selected incident beside it on a wide page and
-    /// below it on a narrow one.
+    /// The table, with the selected incident's inspector beside it on a
+    /// wide page and below it on a narrow one.
     pub(super) fn render_incidents(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window);
-        let table = self.render_incident_table(beside, window, cx);
+        let table = self.render_incident_table(window, cx);
         let detail = self.render_incident_detail(cx);
-        crate::screens::split("obs-incidents-split", beside, table, detail)
+        let open = detail.is_some();
+        let split = freshkube_ui::inspector::split(
+            "obs-incidents-split",
+            &self.incident_split,
+            inspector_beside(window),
+            table,
+            detail,
+            window,
+        );
+        self.sized_split(split, open, window)
     }
 }

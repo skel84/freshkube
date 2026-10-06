@@ -157,22 +157,24 @@ pub(super) fn detail(value: &api::IncidentView) -> Detail {
     }
 }
 
-/// One part of the pane, under a hairline.
+/// One part of the inspector, under a hairline and its caption.
 fn section(title: &str, cx: &App) -> Div {
     v_flex()
         .min_w_0()
+        .gap(dp(12.))
+        .pt(dp(12.))
         .border_t_1()
         .border_color(palette(cx).line)
-        .child(
-            h_flex()
-                .px(dp(14.))
-                .pt(dp(12.))
-                .child(ui::caption(title, cx)),
-        )
+        .child(ui::caption(title, cx))
+}
+
+/// Lines of one part, without padding: the inspector pads its body.
+fn part() -> Div {
+    v_flex().gap(dp(12.)).min_w_0()
 }
 
 impl ObservabilityPage {
-    /// The selected incident in a detail pane: its heading, then Coroot's
+    /// The selected incident in the inspector: its heading, then Coroot's
     /// objectives and analysis. Nothing when the list is empty.
     pub(super) fn render_incident_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let state = &self.incident_observations;
@@ -189,19 +191,17 @@ impl ObservabilityPage {
         } else {
             None
         };
-        let pane = freshkube_ui::page::card(cx)
-            .id("obs-incident-detail")
-            .test_support()
-            .when_some(read.error(), |pane, e| {
-                pane.child(
-                    body()
-                        .child(text(e.to_string()).text_color(palette(cx).crit_ink))
-                        .child(
-                            action("obs-incident-retry", "Retry incident")
-                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                        ),
+        let failed = read.error().map(|e| {
+            part()
+                .child(text(e.to_string()).text_color(palette(cx).crit_ink))
+                .child(
+                    action("obs-incident-retry", "Retry incident")
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                 )
-            });
+        });
+        let inspector = Inspector::new("obs-incident-detail")
+            .heading(self.incident_heading(state.detail.as_ref(), read_tag, cx))
+            .children(failed);
         let Some(d) = &state.detail else {
             let note = if read.is_loading() || read.error().is_some() {
                 None
@@ -209,17 +209,17 @@ impl ObservabilityPage {
                 Some("Select an incident to read its details.")
             };
             return Some(
-                pane.child(self.incident_heading(None, read_tag, cx))
-                    .children(note.map(|note| body().child(muted(note, cx))))
+                inspector
+                    .children(note.map(|note| muted(note, cx)))
+                    .render(cx)
                     .into_any_element(),
             );
         };
         let (key, app) = (d.key.clone(), d.app.clone());
         Some(
-            pane.child(self.incident_heading(Some(d), read_tag, cx))
+            inspector
                 .child(
-                    body()
-                        .pt_0()
+                    part()
                         .child(text(d.title.clone()).whitespace_normal())
                         .child(muted(d.summary.clone(), cx).whitespace_normal())
                         .child(
@@ -238,6 +238,7 @@ impl ObservabilityPage {
                 )
                 .child(self.live_incident_slo(d, cx))
                 .child(self.live_incident_rca(d, cx))
+                .render(cx)
                 .into_any_element(),
         )
     }
@@ -256,11 +257,10 @@ impl ObservabilityPage {
             |d| d.key.clone(),
         );
         h_flex()
+            .flex_1()
+            .min_w_0()
             .items_start()
             .gap(dp(8.))
-            .px(dp(14.))
-            .pt(dp(12.))
-            .pb(dp(8.))
             .child(
                 v_flex()
                     .flex_1()
@@ -301,7 +301,7 @@ impl ObservabilityPage {
     }
     pub(super) fn live_incident_slo(&self, d: &Detail, cx: &Context<Self>) -> Div {
         section("Service level objectives", cx).children(d.objectives.iter().map(|o| {
-            body()
+            part()
                 .child(
                     line()
                         .flex_wrap()
@@ -322,7 +322,7 @@ impl ObservabilityPage {
         let key = d.key.clone();
         let stale = self.live.incident.is_stale();
         section("Coroot analysis", cx).child(
-            body()
+            part()
                 .child(muted(d.rca_state.clone(), cx))
                 .when(d.evidence.is_empty(), |b| {
                     b.child(text("No analysis text was reported."))

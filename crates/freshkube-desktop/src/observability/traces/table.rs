@@ -7,10 +7,6 @@ use freshkube_ui::page;
 use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
-/// A table beside the trace stays bounded in the scrolling page.
-const MAX_LINES: usize = 16;
-/// Stacked above the trace: about DESIGN.md's 190 dp list.
-const STACKED_LINES: usize = 5;
 /// The columns Columns can hide; the glyph and name always show.
 const OPTIONAL: [ColumnKind; 3] = [
     ColumnKind::Service,
@@ -222,20 +218,20 @@ impl ObservabilityPage {
         traces.columns = columns;
     }
 
-    pub(super) fn render_trace_table(
-        &self,
-        beside: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        DataTable::new()
-            .carded()
-            .fit(if beside { MAX_LINES } else { STACKED_LINES })
+    /// The table, bare, filling the split's pane beside its inspector; on
+    /// the card's surface in the Application report.
+    pub(super) fn render_trace_table(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let table = DataTable::new();
+        let table = if self.destination == Destination::Application {
+            table.inset()
+        } else {
+            table
+        };
+        table
             .render(self, window, cx)
             .id(self.trace_table.id("table"))
             .test_support()
-            .w_full()
-            .flex_none()
+            .size_full()
             .into_any_element()
     }
 

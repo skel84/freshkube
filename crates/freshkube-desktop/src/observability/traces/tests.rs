@@ -149,13 +149,15 @@ mod ui_tests {
 
     #[gpui_kit::test]
     fn traces_use_the_pods_frame_and_table_at_both_text_sizes(cx: &mut TestAppContext) {
-        use crate::desktop::layout_check::{PageFrame, Table, assert_page_frame, assert_table};
+        use crate::desktop::layout_check::{
+            PageFrame, Table, assert_bare, assert_edge_frame, assert_inspector, assert_table,
+        };
         let (_runtime, handle, _page) = open_example(cx, 1260.);
         let frame = PageFrame {
             page: "obs-frame",
             title: "obs-title",
             title_text: "Traces",
-            content: "obs-live-traces",
+            content: "obs-traces-split",
         };
         let table = Table {
             table: Some("obs-traces-table-scroll"),
@@ -166,9 +168,18 @@ mod ui_tests {
                 .unwrap();
             cx.run_until_parked();
             cx.update_window(handle, |_, window, cx| {
-                assert_page_frame(window, cx, &frame);
+                assert_edge_frame(window, cx, &frame);
                 let rows = assert_table(window, cx, &table);
                 assert!(rows.header.is_some(), "{rows:#?}");
+                assert_bare(window, "obs-traces-table");
+                assert_inspector(
+                    window,
+                    cx,
+                    "obs-traces-split",
+                    "obs-traces-table",
+                    "obs-trace-detail",
+                    "obs-trace-title",
+                );
             })
             .unwrap();
         }
@@ -244,6 +255,28 @@ mod ui_tests {
             let traces = &page.read(cx).live_traces;
             assert_eq!(traces.shown.len(), traces.rows.len());
             assert!(traces.query.is_empty());
+        })
+        .unwrap();
+    }
+
+    /// The heatmap leaves a short window no room to fill, so the frame
+    /// scrolls and the split keeps a height of its own.
+    #[gpui_kit::test]
+    fn a_short_window_scrolls_to_a_split_of_its_own_height(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = mount_size(cx, true, 1260., 500.);
+        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Traces, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let split = window.find("obs-traces-split").bounds();
+            let detail = window.find("obs-trace-detail").bounds();
+            let height = crate::ui::dp_px(freshkube_ui::inspector::SHORT_HEIGHT, window);
+            assert!(
+                (split.size.height - height).abs() <= gpui_kit::px(1.),
+                "{split:?}"
+            );
+            assert!((detail.bottom() - split.bottom()).abs() <= gpui_kit::px(1.));
+            assert!(split.top() >= window.find("obs-traces-evidence").bounds().bottom());
         })
         .unwrap();
     }
