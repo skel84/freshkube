@@ -796,9 +796,16 @@ impl PageHeader {
             .children(controls_row))
         .id(toolbar_id)
         .test_support();
-        let secondary = self
-            .secondary
-            .map(|secondary| row(div().id(secondary_id).test_support().child(secondary)));
+        let secondary = self.secondary.map(|secondary| {
+            // As wide as the header, so a row that wraps or pushes part
+            // of itself right, as Monitoring's variables do, has room.
+            row(div()
+                .id(secondary_id)
+                .test_support()
+                .flex_1()
+                .min_w_0()
+                .child(secondary))
+        });
         let meta = (!self.meta.is_empty()).then(|| meta_row(scope_id, self.meta, cx));
         // Decides after every part above has measured itself, since children
         // prepaint in order.
