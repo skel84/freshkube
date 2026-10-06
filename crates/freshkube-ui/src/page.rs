@@ -50,11 +50,30 @@ pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex().id(id).test_support().size_full().min_h_0()
 }
 
-/// Whether the window is too short for a table page's header and a usable
-/// list together, so the page scrolls its frame instead: under
-/// [`SHORT_HEIGHT`].
+/// Whether the window, less the dock under the page, is too short for a
+/// table page's header and a usable list together, so the page scrolls its
+/// frame instead: under [`SHORT_HEIGHT`].
 pub fn is_short(window: &Window) -> bool {
-    window.viewport_size().height < crate::ui::dp_px(SHORT_HEIGHT, window)
+    window.viewport_size().height - crate::ui::dp_px(below(), window)
+        < crate::ui::dp_px(SHORT_HEIGHT, window)
+}
+
+thread_local! {
+    /// The height in dp taken under the page by the dock, which the shell
+    /// sets as it draws. Windows draw on one thread.
+    static BELOW: std::cell::Cell<f32> = const { std::cell::Cell::new(0.) };
+}
+
+/// Tells pages how much of the window's height, in dp, the dock takes
+/// under them, so a page under an open dock lays out as in a window that
+/// much shorter.
+pub fn set_below(height: f32) {
+    BELOW.set(height.max(0.));
+}
+
+/// The height in dp the dock takes under the page.
+pub fn below() -> f32 {
+    BELOW.get()
 }
 
 /// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above

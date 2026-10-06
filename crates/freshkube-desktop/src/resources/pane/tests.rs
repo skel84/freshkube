@@ -10,11 +10,10 @@ use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{DetailEvent, DetailPane};
-use crate::logs::{PodLogPanel, WorkloadLogPanel};
 use crate::resources::detail::{DetailTarget, DocumentRead, DocumentView, FOLLOW_INTERVAL, Reveal};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
-use crate::resources::{example, live};
+use crate::resources::{LogsAt, LogsRequest, ResourceLink, example, live};
 
 const CONTEXT: &str = "homelab";
 
@@ -507,98 +506,51 @@ fn running_pod() -> (DetailTarget, String) {
     })
 }
 
-#[gpui_kit::test]
-fn pods_and_what_runs_them_have_a_logs_tab(cx: &mut TestAppContext) {
-    let (_runtime, pane, handle, _) = mount(cx);
-    let (pod, _) = running_pod();
-    let (deployment, _) = target("deployments.apps", |_, name| name == "api");
-    let (secret, _) = target("secrets", |_, _| true);
-    let workload_logs = pane.read_with(cx, |pane, _| pane.workload_logs.clone());
-    cx.update_window(handle, |_, window, cx| {
-        open(&pane, &secret, Duration::ZERO, cx);
-        window.render_frame(cx);
-        assert!(window.try_find("detail-tab-logs").is_none());
-
-        open(&pane, &pod, Duration::ZERO, cx);
-        window.render_frame(cx);
-        window.click("detail-tab-logs", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
-        assert_eq!(window.find("pod-logs-status").label(), Some("Streaming"));
-        assert!(window.try_find("workload-logs-status").is_none());
-
-        // A workload's Logs tab follows every pod it runs, and only once
-        // the tab shows.
-        window.click("detail-tab-overview", cx);
-        open(&pane, &deployment, Duration::ZERO, cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
-        assert!(!pane.read(cx).logs.read(cx).streaming());
-        assert!(!workload_logs.read(cx).reading());
-        window.click("detail-tab-logs", cx);
-        window.render_frame(cx);
-        assert!(workload_logs.read(cx).reading());
-        assert!(window.try_find("pod-logs-status").is_none());
-        let status = window
-            .find("workload-logs-status")
-            .label()
-            .unwrap()
-            .to_owned();
-        assert!(status.starts_with("Following: "), "{status}");
-
-        // Another tab keeps it; hiding the page or another kind ends it.
-        window.click("detail-tab-events", cx);
-        assert!(workload_logs.read(cx).reading());
-        pane.update(cx, |pane, cx| pane.set_active(false, cx));
-        assert!(!workload_logs.read(cx).reading());
-        pane.update(cx, |pane, cx| pane.set_active(true, cx));
-        assert!(workload_logs.read(cx).reading());
-        window.click("detail-tab-logs", cx);
-        open(&pane, &secret, Duration::ZERO, cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
-        assert!(!workload_logs.read(cx).reading());
-    })
-    .unwrap();
+/// The logs the pane asked the dock for, in order.
+fn asked_logs(emitted: &Emitted) -> Vec<LogsRequest> {
+    emitted
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            DetailEvent::Link(ResourceLink::Logs(request)) => Some(request.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[gpui_kit::test]
-fn a_pods_log_streams_while_it_stays_open_on_any_tab(cx: &mut TestAppContext) {
-    let (_runtime, pane, handle, _) = mount(cx);
+fn pods_and_what_runs_them_ask_the_dock_for_their_logs(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, emitted) = mount(cx);
     let (pod, _) = running_pod();
-    let (crashing, _) = crashing_pod();
-    let logs = pane.read_with(cx, |pane, _| pane.logs.clone());
+    let (deployment, _) = target("deployments.apps", |_, name| name == "api");
+    let (secret, _) = target("secrets", |_, _| true);
     cx.update_window(handle, |_, window, cx| {
+        open(&pane, &secret, Duration::ZERO, cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-open-logs").is_none());
+        assert!(window.try_find("detail-tab-logs").is_none());
+
+        // Logs is a button in the header, not a tab: the pane stays where
+        // it was and asks for the logs in the dock.
         open(&pane, &pod, Duration::ZERO, cx);
         window.render_frame(cx);
-        // Nothing is read until the tab shows.
-        assert!(!logs.read(cx).streaming());
-        window.click("detail-tab-logs", cx);
-        assert!(logs.read(cx).streaming());
-
-        // Another tab keeps the stream.
-        window.click("detail-tab-events", cx);
-        assert!(logs.read(cx).streaming());
-
-        // Hiding the page stops it; showing it reads on.
-        pane.update(cx, |pane, cx| pane.set_active(false, cx));
-        assert!(!logs.read(cx).streaming());
-        pane.update(cx, |pane, cx| pane.set_active(true, cx));
-        assert!(logs.read(cx).streaming());
-
-        // Another pod starts over, on the tab that shows.
-        window.click("detail-tab-logs", cx);
-        open(&pane, &crashing, Duration::ZERO, cx);
+        assert!(window.try_find("detail-tab-logs").is_none());
+        window.click("detail-open-logs", cx);
         window.render_frame(cx);
-        let status = window.find("pod-logs-status").label().unwrap().to_owned();
-        assert!(status.starts_with("Waiting: "), "{status}");
-        assert!(window.find("pod-logs-hint").visible());
+        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
 
-        // Closing the pane ends it.
-        pane.update(cx, |pane, cx| pane.close(cx));
-        assert!(!logs.read(cx).streaming());
+        open(&pane, &deployment, Duration::ZERO, cx);
+        window.render_frame(cx);
+        window.click("detail-open-logs", cx);
+        // Asking for the Logs tab from outside asks the dock too.
+        pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Logs, cx));
+        assert_eq!(pane.read(cx).tab(), super::Tab::Overview);
     })
     .unwrap();
+    let asked = asked_logs(&emitted);
+    let targets: Vec<_> = asked.iter().map(|request| &request.target).collect();
+    assert_eq!(targets, [&pod, &deployment, &deployment]);
+    assert!(asked.iter().all(|request| request.at.is_none()));
 }
 
 #[gpui_kit::test]
@@ -631,11 +583,11 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         assert_eq!(tab(window, "detail-tab-shell"), (Some(true), Some(true)));
         window.press("left", cx);
         window.render_frame(cx);
-        assert_eq!(tab(window, "detail-tab-logs"), (Some(true), Some(true)));
+        assert_eq!(tab(window, "detail-tab-events"), (Some(true), Some(true)));
 
         // From the pane, Command-Shift-] and [ switch the tab and hand the
-        // keyboard to what it shows: the lines on Logs, the pane elsewhere,
-        // and the pane on Shell until a session shows there.
+        // keyboard to what it shows: the pane, and the pane on Shell until
+        // a session shows there.
         pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Overview, cx));
         let focus = pane.read(cx).focus.clone();
         window.focus(&focus, cx);
@@ -648,11 +600,6 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
-        window.press("secondary-{", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
-        assert_eq!(window.find("logs-viewport").focused(), Some(true));
-        window.press("secondary-}", cx);
         window.press("secondary-}", cx);
         window.press("secondary-}", cx);
         window.render_frame(cx);
@@ -719,60 +666,55 @@ fn find_keys_follow_the_tab_shown(cx: &mut TestAppContext) {
     step(cx, &|window, cx| window.press("secondary-shift-g", cx));
     step(cx, &|window, cx| window.press("shift-f3", cx));
     assert_eq!(count(cx), Some(format!("1 of {found}")));
-
-    // On the Logs tab, Command-F goes to the log search, not the YAML.
-    step(cx, &|window, cx| {
-        window.click("detail-tab-logs", cx);
-        window.render_frame(cx);
-        focus_pane(window, cx);
-        window.press("secondary-f", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
-        let yaml = pane.read(cx).find.read(cx).focus_handle(cx);
-        assert!(!yaml.is_focused(window));
-        assert!(!pane.read(cx).focus.is_focused(window));
-        assert!(pane.read(cx).focus.contains_focused(window, cx));
-    });
 }
 
 #[gpui_kit::test]
 fn a_crashing_pod_opens_on_why_with_its_restarts_and_relations(cx: &mut TestAppContext) {
-    let (_runtime, pane, handle, _) = mount(cx);
+    let (_runtime, pane, handle, emitted) = mount(cx);
     let (pod, _) = crashing_pod();
-    cx.update_window(handle, |_, window, cx| {
-        open(&pane, &pod, Duration::ZERO, cx);
-        window.render_frame(cx);
-        assert_eq!(
-            window.find("pod-cause").label(),
-            Some("Why it's failing · CrashLoopBackOff")
-        );
-        assert!(window.find("pod-timeline").visible());
-        assert!(window.try_find("pod-relations").is_some());
-        let links = &pane.read(cx).cross_links;
-        let facts: Vec<&str> = links
-            .facts
-            .iter()
-            .map(|(label, _)| label.as_ref())
-            .collect();
-        assert_eq!(facts, ["ServiceAccount", "Pod IP", "QoS class"]);
-        let card = links.cause.as_ref().unwrap();
-        assert!(card.previous);
-        let container = card.container.clone().unwrap();
+    let container = cx
+        .update_window(handle, |_, window, cx| {
+            open(&pane, &pod, Duration::ZERO, cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("pod-cause").label(),
+                Some("Why it's failing · CrashLoopBackOff")
+            );
+            assert!(window.find("pod-timeline").visible());
+            assert!(window.try_find("pod-relations").is_some());
+            let links = &pane.read(cx).cross_links;
+            let facts: Vec<&str> = links
+                .facts
+                .iter()
+                .map(|(label, _)| label.as_ref())
+                .collect();
+            assert_eq!(facts, ["ServiceAccount", "Pod IP", "QoS class"]);
+            let card = links.cause.as_ref().unwrap();
+            assert!(card.previous);
+            let container = card.container.clone().unwrap();
 
-        // The crashed instance's logs are one click away.
-        window.click("pod-cause-previous", cx);
-        window.render_frame(cx);
-        assert_eq!(pane.read(cx).tab(), super::Tab::Logs);
-        let logs = pane.read(cx).logs.read(cx);
-        assert_eq!(logs.selected_container(), Some(container.as_str()));
-        assert!(logs.reads_previous());
-    })
-    .unwrap();
+            // The crashed instance's logs are one click away, in the dock.
+            window.click("pod-cause-previous", cx);
+            window.render_frame(cx);
+            assert_eq!(pane.read(cx).tab(), super::Tab::Overview);
+            container
+        })
+        .unwrap();
+    let asked = asked_logs(&emitted);
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].target, pod);
+    assert_eq!(
+        asked[0].at,
+        Some(LogsAt {
+            container,
+            previous: true
+        })
+    );
 }
 
 #[gpui_kit::test]
 fn a_healthy_pod_has_no_cause_and_logs_is_its_first_action(cx: &mut TestAppContext) {
-    let (_runtime, pane, handle, _) = mount(cx);
+    let (_runtime, pane, handle, emitted) = mount(cx);
     let (pod, _) = running_pod();
     cx.update_window(handle, |_, window, cx| {
         open(&pane, &pod, Duration::ZERO, cx);
@@ -781,10 +723,13 @@ fn a_healthy_pod_has_no_cause_and_logs_is_its_first_action(cx: &mut TestAppConte
         assert!(window.find("pod-open-logs").visible());
         window.click("pod-open-logs", cx);
         window.render_frame(cx);
-        assert_eq!(pane.read(cx).tab(), super::Tab::Logs);
-        assert!(!pane.read(cx).logs.read(cx).reads_previous());
+        assert_eq!(pane.read(cx).tab(), super::Tab::Overview);
     })
     .unwrap();
+    let asked = asked_logs(&emitted);
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].target, pod);
+    assert!(asked[0].at.as_ref().is_none_or(|at| !at.previous));
 }
 
 /// A pod's tabs are the inspector's: 28 high, at any text size, in one
@@ -809,7 +754,6 @@ fn every_tab_is_28_high_at_any_text_size(cx: &mut TestAppContext) {
                 "detail-tab-overview",
                 "detail-tab-yaml",
                 "detail-tab-events",
-                "detail-tab-logs",
                 "detail-tab-shell",
             ] {
                 let tab = window.find(id).bounds();
@@ -824,33 +768,16 @@ fn every_tab_is_28_high_at_any_text_size(cx: &mut TestAppContext) {
     }
 }
 
-/// The tabs' content starts where the heading does: the Logs tab insets
-/// the log view, which draws to its edges, and YAML its find field.
+/// The YAML tab's content starts where the heading does: its find field
+/// is inset like it.
 #[gpui_kit::test]
-fn the_logs_and_yaml_tabs_are_inset_like_the_heading(cx: &mut TestAppContext) {
+fn the_yaml_tab_is_inset_like_the_heading(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (pod, _) = crashing_pod();
     cx.update(|cx| open(&pane, &pod, Duration::ZERO, cx));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("detail-tab-logs", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let inspector = window.find("detail-inspector").bounds();
-        let logs = window.find("detail-logs").bounds();
-        let inset = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
-        assert!(
-            (logs.left() - inspector.left() - inset).abs() <= px(1.),
-            "{logs:?}"
-        );
-        assert!(
-            (inspector.right() - logs.right() - inset).abs() <= px(1.),
-            "{logs:?}"
-        );
         window.click("detail-tab-yaml", cx);
     })
     .unwrap();

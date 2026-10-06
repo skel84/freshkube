@@ -4,6 +4,7 @@
 //! wide page, under it on a narrow one. The page keeps an
 //! [`InspectorSplit`], which remembers how wide the user made it.
 mod tabs;
+pub(crate) use tabs::bare_strip;
 
 pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 

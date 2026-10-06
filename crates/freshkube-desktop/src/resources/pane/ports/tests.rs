@@ -265,7 +265,7 @@ fn a_forward_outlives_the_pane_and_shows_again_with_its_object(cx: &mut TestAppC
 fn the_tabs_follow_the_kind(cx: &mut TestAppContext) {
     let pane = mount(cx);
     let tabs = |pane: &Mounted, cx: &mut TestAppContext| {
-        ["detail-tab-logs", "detail-tab-shell", "detail-tab-ports"].map(|id| pane.present(cx, id))
+        ["detail-open-logs", "detail-tab-shell", "detail-tab-ports"].map(|id| pane.present(cx, id))
     };
     pane.open(cx, &running_pod("grafana"));
     assert_eq!(tabs(&pane, cx), [true, true, true]);

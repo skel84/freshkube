@@ -14,6 +14,9 @@ impl Pilot {
             ResourceLink::Object(kind, object, tab) => {
                 self.open_object(kind, object, tab, window, cx)
             }
+            ResourceLink::Logs(request) => self
+                .dock
+                .update(cx, |dock, cx| dock.open_logs(request, window, cx)),
             ResourceLink::Node(name, tab) => {
                 self.unless_shell(window, cx, move |this, window, cx| {
                     this.resources

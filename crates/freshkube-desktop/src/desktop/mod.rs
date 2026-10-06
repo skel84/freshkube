@@ -1,5 +1,6 @@
 mod access;
 mod connection;
+pub(crate) mod dock;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
@@ -320,6 +321,8 @@ pub(crate) struct Pilot {
     fps: Entity<shell::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
     forwards: Entity<ForwardsIndicator>,
+    /// Logs under the page, in tabs; app-wide, like the forwards.
+    pub(crate) dock: Entity<dock::Dock>,
     overview_page: Entity<PageHost>,
     services_page: Entity<PageHost>,
     nodes_page: Entity<PageHost>,
@@ -579,6 +582,16 @@ impl Pilot {
                 this.resource_link(event.clone(), window, cx)
             },
         ));
+        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
+        // Its height and whether it shows are laid out by the shell.
+        subscriptions.push(cx.observe(&dock, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(
+            &dock,
+            window,
+            |this, _, event: &dock::DockEvent, window, cx| match event {
+                dock::DockEvent::Leave => this.focus_page(window, cx),
+            },
+        ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
             std::sync::Arc::new(crate::secrets::SystemStore)
@@ -774,6 +787,7 @@ impl Pilot {
             countdown,
             fps: cx.new(shell::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
+            dock,
             overview_page,
             services_page,
             nodes_page,
@@ -1200,6 +1214,8 @@ impl Pilot {
         });
         self.observability
             .update(cx, |page, cx| page.set_source(source.clone(), cx));
+        self.dock
+            .update(cx, |dock, cx| dock.set_source(source.clone(), window, cx));
         self.resources
             .update(cx, |resources, cx| resources.set_source(source, window, cx));
     }

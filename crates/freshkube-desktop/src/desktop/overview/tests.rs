@@ -120,7 +120,11 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
                 window.render_frame(cx);
                 assert_ne!(pilot.read(cx).page, Page::Overview, "{} {id}", row.id);
                 if row.kind == "Pod" && id == "attention-logs" {
-                    assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Logs);
+                    // The pod opens on Overview, and its logs in the dock.
+                    assert_eq!(
+                        pilot.read(cx).resources.read(cx).detail_tab(cx),
+                        Tab::Overview
+                    );
                 }
                 if id == "attention-open-node" {
                     assert_eq!(pilot.read(cx).page, Page::Nodes);
@@ -130,6 +134,15 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
         }
     })
     .unwrap();
+    cx.run_until_parked();
+    let titles: Vec<String> = cx.update(|cx| {
+        let dock = pilot.read(cx).dock.read(cx);
+        dock.tabs.iter().map(|tab| tab.title.to_string()).collect()
+    });
+    assert!(
+        titles.iter().any(|title| title.starts_with("Pod ")),
+        "{titles:?}"
+    );
 }
 
 #[gpui_kit::test]

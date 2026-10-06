@@ -964,23 +964,22 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert_eq!(focused(window, "resource-body"), Some(true));
         assert!(shown(&screen, cx).is_some());
         // From the list, the brackets switch the tab and keep the keyboard
-        // on the list. A pod's tabs wrap round to Ports, Shell, then Logs.
+        // on the list. A pod's tabs wrap round to Ports, then Shell.
         window.press("secondary-}", cx);
         assert_eq!(window.find("detail-tab-events").selected(), Some(true));
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
-        window.press("secondary-{", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-logs").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
         assert_eq!(focused(window, "resource-body"), Some(true));
-        // Enter on the open row hands the keyboard to the lines.
+        // Enter on the open row hands the keyboard to the pane, which has
+        // no session to give it to.
         window.press("enter", cx);
         window.render_frame(cx);
-        assert_eq!(focused(window, "logs-viewport"), Some(true));
-        // With no line selected, Escape goes on to the pane, which steps
-        // back to the list.
+        assert_eq!(focused(window, "resource-detail"), Some(true));
+        // Escape in the pane steps back to the list.
         window.press("escape", cx);
     });
     step(cx, &|window, cx| {
@@ -1288,9 +1287,10 @@ fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
         assert!(screen.read(cx).namespace.is_none());
         assert!(screen.read(cx).query.read(cx).value().is_empty());
         assert_eq!(shown(&screen, cx), Some(identity));
+        // Logs open in the dock; the pane stays on its tab.
         assert_eq!(
             screen.read(cx).detail.read(cx).tab(),
-            crate::resources::Tab::Logs
+            crate::resources::Tab::Overview
         );
         let missing = ResourceIdentity {
             name: "absent-from-list".into(),
@@ -1558,19 +1558,41 @@ fn identity_at_now(screen: &ResourcesScreen) -> ResourceIdentity {
 }
 
 #[gpui_kit::test]
-fn l_opens_the_selected_pod_on_its_logs(cx: &mut TestAppContext) {
+fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let first = identity_at(&screen, 0, cx);
-        window.within(row_id(&first)).click("name", cx);
-        window.render_frame(cx);
-        window.press("l", cx);
-        window.render_frame(cx);
-        assert_eq!(shown(&screen, cx), Some(first));
-        assert_eq!(screen.read(cx).detail_tab(cx), crate::resources::Tab::Logs);
-    })
-    .unwrap();
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let sink = asked.clone();
+    cx.update(|cx| {
+        cx.subscribe(
+            &screen,
+            move |_, event: &crate::resources::ResourceLink, _| {
+                if let crate::resources::ResourceLink::Logs(request) = event {
+                    sink.borrow_mut().push(request.target.identity.clone());
+                }
+            },
+        )
+        .detach()
+    });
+    let first = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let first = identity_at(&screen, 0, cx);
+            window.within(row_id(&first)).click("name", cx);
+            window.render_frame(cx);
+            window.press("l", cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), Some(first.clone()));
+            // The pane stays on its tab, and the list keeps the keyboard
+            // until the dock takes it.
+            assert_eq!(
+                screen.read(cx).detail_tab(cx),
+                crate::resources::Tab::Overview
+            );
+            first
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(*asked.borrow(), [first]);
 }
 
 #[gpui_kit::test]

@@ -422,11 +422,6 @@ impl ResourcesScreen {
         self.field_selector.as_deref()
     }
     #[cfg(test)]
-    pub(crate) fn detail_log_container<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
-        self.detail.read(cx).log_container(cx)
-    }
-
-    #[cfg(test)]
     pub(crate) fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
         self.detail.read(cx).tab()
     }
@@ -513,7 +508,11 @@ impl ResourcesScreen {
             move |this, window, cx| {
                 this.detail.update(cx, |detail, cx| {
                     detail.set_tab(tab, cx);
-                    detail.focus(window, cx);
+                    // Logs open in the dock, which takes the keyboard and
+                    // hands it back to the list.
+                    if tab != crate::resources::Tab::Logs {
+                        detail.focus(window, cx);
+                    }
                 })
             },
             cx,

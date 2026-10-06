@@ -247,6 +247,20 @@ pub(super) fn strip(
     row: AnyElement,
     cx: &App,
 ) -> Observed<Stateful<Div>> {
+    bare_strip(id, strip, row, cx)
+        .mt(dp(UNDER_HEADING))
+        .border_b_1()
+        .border_color(palette(cx).line)
+}
+
+/// [`strip`] without the gap above it or the hairline below, for a bar
+/// that draws its own, such as the dock's.
+pub(crate) fn bare_strip(
+    id: SharedString,
+    strip: &TabStrip,
+    row: AnyElement,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
     let background = cx.theme().background;
     let edges = strip.edges();
     let measure = strip.clone();
@@ -257,11 +271,8 @@ pub(super) fn strip(
         .relative()
         .flex_none()
         .min_w_0()
-        .mt(dp(UNDER_HEADING))
         .px(dp(PANE_PADDING))
         .bg(background)
-        .border_b_1()
-        .border_color(palette(cx).line)
         .child(row)
         .on_prepaint(move |_, window, _| measure.measure(window))
         // gpui gives a wheel to every scroller under the pointer; a cut

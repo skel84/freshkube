@@ -2847,22 +2847,26 @@ fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext)
         window.press("enter", cx);
     });
     step(cx, &|window, cx| {
-        // Overview, YAML, Events, then Logs.
-        for _ in 0..3 {
-            window.press("secondary-}", cx);
-        }
+        // Back to the list, where L opens the pod's logs in the dock.
+        window.press("escape", cx);
     });
     step(cx, &|window, cx| {
-        let list = window.find("resource-list").bounds();
-        let pane = window.find("resource-detail").bounds();
-        // The pane stacks under the list and takes the larger share.
-        assert!(pane.top() >= list.bottom(), "{list:?} {pane:?}");
-        assert!(pane.size.height > list.size.height, "{list:?} {pane:?}");
-        assert!(pane.bottom() <= px(560.), "{pane:?}");
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        window.press("l", cx);
+    });
+    step(cx, &|window, cx| {
+        window.simulate_next_frame(cx);
+    });
+    step(cx, &|window, cx| {
+        let cell = window.find("page-cell").bounds();
+        let dock = window.find("dock").bounds();
+        // The dock sits under the page, which keeps its least room.
+        assert!(dock.bottom() <= cell.bottom() + px(1.), "{cell:?} {dock:?}");
+        assert!(dock.top() - cell.top() >= px(99.), "{cell:?} {dock:?}");
         // The crash-looping pod's restart banner shows whole, never cut by
         // the log's toolbar (#231).
         let find = |window: &mut gpui_kit::Window, id: &'static str| {
-            window.within("resource-detail").find(id).bounds()
+            window.within("dock").find(id).bounds()
         };
         let toolbar = find(window, "logs-toolbar");
         let banner = find(window, "pod-logs-hint");
@@ -2872,9 +2876,9 @@ fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext)
         );
         assert!(banner.bottom() <= find(window, "logs-viewport").top());
         // A wheel over the log's controls scrolls the panel alone, down to
-        // its lines and back up to the banner; the page around it stays.
+        // its lines and back up to the banner; the dock and page stay.
         let wheel = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, by: f32| {
-            let panel = window.within("resource-detail").find("logs-panel").bounds();
+            let panel = window.within("dock").find("logs-panel").bounds();
             use gpui_kit::InputEvent as _;
             window.dispatch_event(
                 gpui_kit::ScrollWheelEvent {
@@ -2888,28 +2892,28 @@ fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext)
             window.render_frame(cx);
         };
         for _ in 0..20 {
-            if find(window, "logs-viewport").bottom() <= pane.bottom() {
+            if find(window, "logs-viewport").bottom() <= dock.bottom() {
                 break;
             }
             wheel(window, cx, -40.);
         }
-        let (pane_now, panel, lines) = (
-            window.find("resource-detail").bounds(),
+        let (dock_now, panel, lines) = (
+            window.find("dock").bounds(),
             find(window, "logs-panel"),
             find(window, "logs-viewport"),
         );
-        assert_eq!(pane_now, pane, "the page scrolled with the log");
+        assert_eq!(dock_now, dock, "the dock moved with the log");
         // At least three log lines show, whole.
         assert!(lines.size.height >= px(54.), "{lines:?}");
         assert!(lines.top() >= panel.top(), "{lines:?} {panel:?}");
-        assert!(lines.bottom() <= pane.bottom(), "{lines:?} {pane:?}");
+        assert!(lines.bottom() <= dock.bottom(), "{lines:?} {dock:?}");
         for _ in 0..20 {
             wheel(window, cx, 40.);
         }
         assert_eq!(
-            window.find("resource-detail").bounds(),
-            pane,
-            "the page scrolled with the log"
+            window.find("dock").bounds(),
+            dock,
+            "the dock moved with the log"
         );
         let banner = find(window, "pod-logs-hint");
         assert!(

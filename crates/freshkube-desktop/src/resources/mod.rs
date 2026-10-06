@@ -32,4 +32,20 @@ pub(crate) enum ResourceLink {
         object: model::ObjectRef,
     },
     Node(String, crate::desktop::nodes::NodeTab),
+    /// An object's logs, which open in the dock.
+    Logs(LogsRequest),
+}
+
+/// Which object's logs to open in the dock, and where.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LogsRequest {
+    pub(crate) target: detail::DetailTarget,
+    pub(crate) at: Option<LogsAt>,
+}
+
+/// A pod's container and instance to open its logs on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LogsAt {
+    pub(crate) container: String,
+    pub(crate) previous: bool,
 }

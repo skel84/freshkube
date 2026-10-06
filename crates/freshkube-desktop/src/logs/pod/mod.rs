@@ -1,8 +1,8 @@
-//! The detail pane's pod logs: one container's log, followed live or its
-//! previous instance read to the end. The stream lives while the pod stays
-//! selected, whichever tab shows, and stops when another object opens, the
-//! pane closes, the page hides or the connection changes. Read-only: it
-//! gets the pod and reads logs, nothing else.
+//! A pod's logs in the dock: one container's log, followed live or its
+//! previous instance read to the end. The stream lives while the dock's tab
+//! stays open (`desktop/dock/`), whatever page shows, and stops when the
+//! tab closes or the connection changes. Read-only: it gets the pod and
+//! reads logs, nothing else.
 //!
 //! This file holds the source's state and its stream; `controls` draws the
 //! container picker, the stream controls and the state of the stream.
@@ -32,7 +32,7 @@ use crate::resources::{KubeAccess, example, live};
 use crate::ui::Tone;
 use controls::Controls;
 
-/// The detail pane's Logs tab.
+/// A pod's tab in the dock.
 pub(crate) type PodLogView = LogView<PodLogs>;
 
 /// How many lines from the end a new stream starts with; `None` is all.
@@ -445,10 +445,13 @@ pub(crate) trait PodLogPanel: Sized + 'static {
     /// Opens an explicitly chosen container and instance from its Overview row.
     fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>);
 
-    #[cfg(test)]
+    /// The container read, which the dock saves with its tab.
     fn selected_container(&self) -> Option<&str>;
 
-    #[cfg(test)]
+    /// Whether the pod's containers are known, so one can be chosen.
+    fn knows_containers(&self) -> bool;
+
+    /// Whether the previous instance is read.
     fn reads_previous(&self) -> bool;
 
     /// Whether a stream is open or about to be, for the pane's tests.
@@ -557,14 +560,16 @@ impl PodLogPanel for PodLogView {
         self.want(cx);
     }
 
-    #[cfg(test)]
     fn selected_container(&self) -> Option<&str> {
         self.source().container.as_deref()
     }
 
-    #[cfg(test)]
     fn reads_previous(&self) -> bool {
         self.source().previous
+    }
+
+    fn knows_containers(&self) -> bool {
+        self.source().known
     }
 
     #[cfg(test)]

@@ -1,4 +1,4 @@
-//! The detail pane's workload logs: every container of every pod a
+//! A workload's logs in the dock: every container of every pod a
 //! Deployment, StatefulSet, DaemonSet, ReplicaSet or Job runs, in one view.
 //! Lines from all streams are interleaved by their timestamps and tagged
 //! `pod/container`. Read-only: it watches the workload's pods and reads
@@ -16,11 +16,10 @@
 //! containers write. A stream that fails is read again with the watcher's
 //! backoff while its pod is listed.
 //!
-//! Nothing is read until the Logs tab first shows for the workload. Then
-//! the watch and the streams live while it stays open, whichever tab shows,
-//! and stop when another object opens, the pane closes, the page hides or
-//! the connection changes. Showing the page again reads each container on
-//! from its last line.
+//! Nothing is read until the dock's tab for the workload first shows
+//! (`desktop/dock/`). Then the watch and the streams live while the tab
+//! stays open, whatever page shows, and stop when it closes or the
+//! connection changes.
 //!
 //! This file holds the source's state and its streams; `controls` draws
 //! the status, the streams and their notices.
