@@ -27,7 +27,7 @@ pub const WIDTHS: [f32; 2] = [1280., 760.];
 /// The window's height when it opens.
 pub const HEIGHT: f32 = 880.;
 /// The story list's width, as the app's column.
-const LIST_WIDTH: f32 = 208.;
+pub(crate) const LIST_WIDTH: f32 = 208.;
 
 /// Opens the workbench window on the first story, or in a debug build on
 /// `FRESHKUBE_STORY`, at `FRESHKUBE_THEME` and `FRESHKUBE_WINDOW_SIZE` as the

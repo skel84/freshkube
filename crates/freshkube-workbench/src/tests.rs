@@ -190,7 +190,7 @@ fn the_graph_story_lays_out_each_shape(cx: &mut TestAppContext) {
             .clone()
             .downcast::<GraphStory>()
             .unwrap();
-        let canvas = window.find("graph-canvas").bounds();
+        let canvas = window.find("graph-graph").bounds();
         // shop-web calls shop-api: the caller sits left of the callee.
         let web = window.find("graph-node-0").bounds();
         let api = window.find("graph-node-1").bounds();
@@ -237,6 +237,34 @@ fn the_graph_story_routes_its_fan_out_without_crossings(cx: &mut TestAppContext)
         assert_eq!(story.read(cx).crossings(), 0);
         // The wrapped column is drawn too.
         assert!(window.find("graph-node-12").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_graph_story_selects_a_call_and_filters_problems(cx: &mut TestAppContext) {
+    use freshkube_ui::graph::GraphSource;
+    let graph = super::stories::find("graph").unwrap();
+    let (handle, workbench) = open(cx, graph);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let story = workbench
+            .read(cx)
+            .view()
+            .clone()
+            .downcast::<GraphStory>()
+            .unwrap();
+        // checkout calls payments-db, and that call is failing.
+        window.click("graph-call-2--6", cx);
+        assert_eq!(story.read(cx).graph().selected(), Some(&(2, 6)));
+        window.render_frame(cx);
+        window.click("graph-problems", cx);
+        window.render_frame(cx);
+        let graph = story.read(cx).graph();
+        assert_eq!(graph.visible_count(), 2);
+        assert_eq!(graph.placed().count(), 8);
+        assert!(window.try_find("graph-call-0--1").is_none());
+        assert!(window.try_find("graph-call-2--6").is_some());
     })
     .unwrap();
 }
