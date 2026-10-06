@@ -136,8 +136,14 @@ pub fn printable(failure: &Failure) -> String {
         }
         FailureKind::Unreachable => "the server could not be reached".into(),
         FailureKind::Timeout => "the request timed out".into(),
-        _ => redact_location(&redact_identity(&failure.message)),
+        _ => redact_message(&failure.message),
     }
+}
+
+/// Text a cluster object carries, such as a status message, as it may be
+/// printed: without identities, URLs, addresses or absolute paths.
+pub fn redact_message(message: &str) -> String {
+    redact_location(&redact_identity(message))
 }
 
 /// A failure as it is printed: its kind and [`printable`] message.

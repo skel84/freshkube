@@ -13,7 +13,7 @@ fn plan(contexts: &[(&str, &str)]) -> Plan {
         argocd_namespace: "argocd".into(),
         build_namespace: "acme-builds".into(),
         github_repo: None,
-        environment: None,
+        environment: "env-a".into(),
         evidence_result: None,
         stage_naming: None,
         commit_names: Default::default(),
@@ -656,7 +656,7 @@ async fn rollouts_are_not_judged_in_a_cluster_that_is_not_the_destination() {
         ("env-a", "https://env-a.example:6443"),
         ("env-b", "https://env-b.example:6443"),
     ]);
-    plan.environment = Some("env-b".into());
+    plan.environment = "env-b".into();
     let trail = join(&collect(&clusters, &plan).await);
     let rollout = one(&trail, Hop::Application, Hop::Rollout);
     assert_eq!(rollout.confidence, Confidence::Unknown);
@@ -678,6 +678,110 @@ async fn rollouts_are_not_judged_in_a_cluster_that_is_not_the_destination() {
 }
 
 #[tokio::test]
+async fn of_two_applications_with_the_same_rollout_only_the_environments_links_to_it() {
+    // Both manage shop/storefront; only env-a is the environment cluster, so
+    // only the Application deploying there reaches the Rollout and its pods.
+    let mut world = healthy();
+    let mut elsewhere = application(Some("https://env-b.example:6443"));
+    elsewhere["metadata"]["name"] = serde_json::json!("storefront-dev-b");
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![application(Some("https://env-a.example:6443")), elsewhere],
+    );
+    let contexts = [
+        ("env-a", "https://env-a.example:6443"),
+        ("env-b", "https://env-b.example:6443"),
+    ];
+    let trail = run(&world, &contexts).await;
+    assert_eq!(link(&trail, Hop::Stage, Hop::Application).len(), 2);
+    let rollouts = link(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollouts.len(), 2, "{rollouts:#?}");
+    let other = rollouts
+        .iter()
+        .find(|l| l.subject == "argocd/storefront-dev-b")
+        .expect("the other Application's link");
+    assert_eq!(other.confidence, Confidence::Unknown);
+    assert!(
+        other
+            .reason
+            .contains("not known to be the environment cluster")
+    );
+    let ours = rollouts
+        .iter()
+        .find(|l| l.subject == "shop/storefront")
+        .expect("the environment Application's link");
+    assert_ne!(ours.confidence, Confidence::Unknown);
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.subject, "shop/storefront");
+    assert_eq!(pods.confidence, Confidence::Confirmed);
+}
+
+#[tokio::test]
+async fn a_rollout_without_a_namespace_leaves_the_others_readable() {
+    let mut world = healthy();
+    let mut app = application(Some("https://env-a.example:6443"));
+    app["spec"]["destination"]
+        .as_object_mut()
+        .unwrap()
+        .remove("namespace");
+    app["status"]["resources"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"group": "argoproj.io", "kind": "Rollout", "name": "nowhere"}));
+    world.argocd = world.argocd.with("applications", vec![app]);
+    let trail = run(&world, &ENV).await;
+    let rollouts = link(&trail, Hop::Application, Hop::Rollout);
+    let nowhere = rollouts
+        .iter()
+        .find(|l| l.subject.ends_with("nowhere"))
+        .expect("the Rollout without a namespace");
+    assert_eq!(nowhere.confidence, Confidence::Unknown);
+    assert!(
+        nowhere.reason.contains("names a namespace"),
+        "{}",
+        nowhere.reason
+    );
+    let named = rollouts
+        .iter()
+        .find(|l| l.subject == "shop/storefront")
+        .expect("the Rollout with a namespace");
+    assert_ne!(named.confidence, Confidence::Unknown, "{}", named.reason);
+    assert_eq!(
+        one(&trail, Hop::Rollout, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_promotion_message_is_printed_without_addresses_or_identities() {
+    let mut world = healthy();
+    let mut promotion = promotion("f-new");
+    promotion["status"]["message"] = serde_json::json!(
+        r#"push to https://git.example.test/acme/config.git failed: User "someone" denied; see /var/run/x, 192.0.2.7:443"#
+    );
+    world.kargo = world.kargo.with("promotions", vec![promotion]);
+    let trail = run(&world, &ENV).await;
+    let reason = &one(&trail, Hop::Freight, Hop::Promotion).reason;
+    for word in ["git.example.test", "someone", "/var/run", "192.0.2.7"] {
+        assert!(!reason.contains(word), "{reason}");
+    }
+    assert!(reason.contains("push to <url> failed"), "{reason}");
+}
+
+#[tokio::test]
+async fn a_sha_256_commit_says_why_no_build_is_found() {
+    let world = healthy();
+    let trail = run_configured(&world, &ENV, &FixtureGitHub::default(), None, |plan| {
+        plan.sha = "b".repeat(64)
+    })
+    .await;
+    let builds = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(builds.confidence, Confidence::Unknown);
+    assert!(builds.reason.contains("SHA-256"), "{}", builds.reason);
+    assert!(world.tekton.requests.borrow().is_empty());
+}
+
+#[tokio::test]
 async fn pods_are_not_read_from_a_cluster_that_is_not_the_destination() {
     let world = without_rollouts();
     let clusters = Clusters {
@@ -689,7 +793,7 @@ async fn pods_are_not_read_from_a_cluster_that_is_not_the_destination() {
     };
     let mut plan = plan(&[("env-a", "https://env-a.example:6443")]);
     plan.stage_naming = Some(naming());
-    plan.environment = Some("env-b".into());
+    plan.environment = "env-b".into();
     let trail = join(&collect(&clusters, &plan).await);
     let pods = one(&trail, Hop::Application, Hop::Pod);
     assert_eq!(pods.confidence, Confidence::Unknown);

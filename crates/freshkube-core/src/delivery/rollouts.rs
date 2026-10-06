@@ -18,7 +18,6 @@ pub struct Rollout {
     pub namespace: String,
     pub name: String,
     pub phase: Option<String>,
-    pub message: Option<String>,
     pub current_pod_hash: Option<String>,
     pub stable_hash: Option<String>,
     /// `spec.template.spec.containers[].image`, as written.
@@ -40,7 +39,6 @@ pub fn parse_rollout(value: &Value) -> Option<Rollout> {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
         phase: text(value, "/status/phase"),
-        message: text(value, "/status/message"),
         current_pod_hash: text(value, "/status/currentPodHash"),
         stable_hash: text(value, "/status/stableRS"),
         images: value

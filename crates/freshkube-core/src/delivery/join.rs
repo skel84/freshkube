@@ -11,13 +11,13 @@
 
 use std::collections::BTreeMap;
 
-use super::argocd::{Application, DestinationMatch, StageClaim, StageNaming};
+use super::argocd::{Application, DestinationMatch, ManagedObject, StageClaim, StageNaming};
 use super::digest::{Digest, repository, tag};
 use super::github::PullRequest;
 use super::kargo::{Freight, KargoRead, Promotion, Stage};
 use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, Rollout};
-use super::source::{Source, Truncation, cap_note};
+use super::source::{Source, Truncation, cap_note, redact_message};
 use super::tekton::{Build, CommitNames, EvidenceResult};
 
 /// How sure a link is.
@@ -142,9 +142,8 @@ pub struct Evidence {
     /// Where each Application's destination points, by `namespace/name`.
     pub destinations: BTreeMap<String, DestinationMatch>,
     /// The context name of the environment cluster, the only cluster
-    /// Rollouts and pods are read from; `None` accepts any destination that
-    /// matches exactly one context.
-    pub environment: Option<String>,
+    /// Rollouts and pods are read from.
+    pub environment: String,
     pub rollouts: Source<Vec<Rollout>>,
     pub analysis_runs: Source<Vec<AnalysisRun>>,
     /// Pods read for each Rollout, by `namespace/name`.
@@ -166,10 +165,7 @@ impl Evidence {
     /// the same name in another cluster says nothing about this one.
     pub fn deploys_to_environment(&self, app_id: &str) -> bool {
         match self.destinations.get(app_id) {
-            Some(DestinationMatch::One(context)) => self
-                .environment
-                .as_deref()
-                .is_none_or(|environment| environment == context),
+            Some(DestinationMatch::One(context)) => *context == self.environment,
             _ => false,
         }
     }
@@ -253,11 +249,9 @@ pub fn candidate_rollouts(evidence: &Evidence) -> Vec<(String, String)> {
                     && evidence.deploys_to_environment(&id(&app.namespace, &app.name))
             }) {
                 for managed in app.managed.iter().filter(|m| m.kind == "Rollout") {
-                    let namespace = managed
-                        .namespace
-                        .clone()
-                        .or_else(|| app.destination_namespace.clone())
-                        .unwrap_or_default();
+                    let Some(namespace) = rollout_namespace(app, managed) else {
+                        continue;
+                    };
                     let key = (namespace, managed.name.clone());
                     if !wanted.contains(&key) {
                         wanted.push(key);
@@ -812,7 +806,7 @@ fn promotion_link(promotion: &Promotion, freight: &Freight) -> Link {
         promotion
             .message
             .as_deref()
-            .map(|message| format!(" ({message})"))
+            .map(|message| format!(" ({})", redact_message(message)))
             .unwrap_or_default()
     );
     let subject = id(&promotion.project, &promotion.name);
@@ -1018,6 +1012,17 @@ fn describe_destination(destination: &DestinationMatch) -> String {
     }
 }
 
+/// The namespace a managed Rollout runs in: its own, else the
+/// Application's destination namespace. `None` when neither names one, and
+/// then it is not read.
+fn rollout_namespace(app: &Application, managed: &ManagedObject) -> Option<String> {
+    managed
+        .namespace
+        .clone()
+        .or_else(|| app.destination_namespace.clone())
+        .filter(|namespace| !namespace.is_empty())
+}
+
 const NOT_THE_ENVIRONMENT: &str =
     "the destination is not known to be the environment cluster, so nothing was read there for it";
 
@@ -1049,11 +1054,17 @@ fn rollout_links(evidence: &Evidence, freight: &Freight, app: &Application) -> V
     };
     let mut links = Vec::new();
     for object in managed {
-        let namespace = object
-            .namespace
-            .clone()
-            .or_else(|| app.destination_namespace.clone())
-            .unwrap_or_default();
+        let Some(namespace) = rollout_namespace(app, object) else {
+            links.push(Link::new(
+                Hop::Application,
+                Hop::Rollout,
+                format!("{app_id}: {}", object.name),
+                Key::None,
+                Confidence::Unknown,
+                "neither the Rollout nor the Application's destination names a namespace, so it was not read",
+            ));
+            continue;
+        };
         let rollout_id = id(&namespace, &object.name);
         let Some(rollout) = rollouts
             .iter()

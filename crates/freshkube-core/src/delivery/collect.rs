@@ -30,10 +30,10 @@ pub struct Plan {
     /// `(context name, server)` of the kubeconfig contexts a destination may
     /// be matched to. Servers are compared here and never output.
     pub contexts: Vec<(String, String)>,
-    /// The context name of the environment cluster. Pods of an Application
-    /// are read from it only when the Application's destination is that
-    /// context; `None` accepts any destination that matches one.
-    pub environment: Option<String>,
+    /// The context name of the environment cluster, one of `contexts`.
+    /// Rollouts and pods of an Application are read from it only when the
+    /// Application's destination is that context.
+    pub environment: String,
     /// Where the pipeline's own evidence record is, if the platform writes
     /// one. Not read unless configured.
     pub evidence_result: Option<EvidenceResult>,

@@ -382,7 +382,7 @@ async fn main() {
         argocd_namespace: argocd_ns,
         build_namespace: build_ns,
         github_repo: args.repo.clone(),
-        environment: Some(env.alias.clone()),
+        environment: env.alias.clone(),
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,

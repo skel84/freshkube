@@ -345,6 +345,10 @@ async fn list_scoped<R: Reader, T>(
 /// The builds PaC started for one commit, with their TaskRuns, in one
 /// namespace. The SHA is only ever sent as a label selector value. Capped
 /// when any of the listings was.
+///
+/// A SHA-256 commit (64 digits) is longer than a label value may be, so no
+/// build is found by it: that read says so, and the commit joins Kargo
+/// Freight on the commit alone.
 pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> Source<Vec<Build>> {
     async fn run<R: Reader>(
         reader: &R,
@@ -352,6 +356,12 @@ pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> S
         sha: &str,
     ) -> Result<(Vec<Build>, Option<Truncation>), Failure> {
         check_sha(sha)?;
+        if sha.len() > 63 {
+            return Err(Failure::new(
+                crate::resources::FailureKind::Other,
+                "a SHA-256 commit is longer than a label value, so no build can be found by its SHA",
+            ));
+        }
         let (runs, mut truncated) = list_scoped(
             reader,
             TEKTON_GROUP,

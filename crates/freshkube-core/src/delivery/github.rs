@@ -134,6 +134,17 @@ async fn read_capped(
     Ok(out)
 }
 
+/// Refuses output that went past `limit`, as [`read_capped`] reports it.
+fn refuse_long(output: &[u8], limit: u64) -> Result<(), Failure> {
+    if output.len() as u64 > limit {
+        return Err(Failure::new(
+            FailureKind::Other,
+            format!("gh answered more than {limit} bytes, which were not read"),
+        ));
+    }
+    Ok(())
+}
+
 impl GhCli {
     async fn get(&self, path: String) -> Result<Value, Failure> {
         let not_run = || Failure::new(FailureKind::Other, "the gh CLI could not be run");
@@ -154,12 +165,7 @@ impl GhCli {
             stdout.map_err(|_| not_run())?,
             stderr.map_err(|_| not_run())?,
         );
-        if stdout.len() as u64 > limit {
-            return Err(Failure::new(
-                FailureKind::Other,
-                format!("gh answered more than {limit} bytes, which were not read"),
-            ));
-        }
+        refuse_long(&stdout, limit)?;
         let status = child.wait().await.map_err(|_| not_run())?;
         if !status.success() {
             return Err(failure_from_gh(&String::from_utf8_lossy(&stderr)));
@@ -250,6 +256,9 @@ mod tests {
         assert_eq!(long.len(), 11, "one byte past the limit says it went on");
         let short = read_capped(Some(&[7u8; 5][..]), 10).await.unwrap();
         assert_eq!(short.len(), 5);
+        let refused = refuse_long(&long, 10).unwrap_err();
+        assert!(refused.message.contains("more than 10 bytes"), "{refused}");
+        assert!(refuse_long(&[7u8; 10], 10).is_ok());
     }
 
     #[test]

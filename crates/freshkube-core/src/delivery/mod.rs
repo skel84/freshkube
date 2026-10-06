@@ -30,5 +30,5 @@ pub use digest::Digest;
 pub use github::{GhCli, GitHub, PullRequest};
 pub use join::{Confidence, Evidence, Hop, Key, Link, Trail, join, render};
 pub use read::{ListRequest, ReadOnlyClient, Reader, Resource, Scope};
-pub use source::{Source, printable, redact_identity, redact_location, shown};
+pub use source::{Source, printable, redact_identity, redact_location, redact_message, shown};
 pub use tekton::{CommitNames, EvidenceResult};

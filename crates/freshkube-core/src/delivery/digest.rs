@@ -46,6 +46,8 @@ impl std::fmt::Display for Digest {
 
 /// A full commit SHA: 40 hexadecimal digits (SHA-1) or 64 (SHA-256). A
 /// shortened one could name more than one commit, so nothing joins on it.
+/// Builds are found only for SHA-1 commits; see
+/// [`read_builds`](super::tekton::read_builds).
 pub fn is_full_sha(sha: &str) -> bool {
     matches!(sha.len(), 40 | 64) && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
