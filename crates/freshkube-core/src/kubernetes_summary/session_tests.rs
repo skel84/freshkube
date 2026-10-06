@@ -503,3 +503,212 @@ fn workloads_are_unavailable_only_when_every_source_failed_without_data() {
             .all(|(_, message)| message.ends_with(" · showing last known data"))
     );
 }
+
+/// Objects from JSON, each given the uid and resourceVersion a reflector
+/// requires: its namespace and name, and "1".
+fn objects<K: serde::de::DeserializeOwned>(values: serde_json::Value) -> Vec<K> {
+    let serde_json::Value::Array(values) = values else {
+        panic!("expected an array");
+    };
+    values
+        .into_iter()
+        .map(|mut value| {
+            let metadata = value["metadata"].as_object_mut().unwrap();
+            let uid = format!(
+                "{}/{}",
+                metadata
+                    .get("namespace")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                metadata["name"].as_str().unwrap()
+            );
+            metadata.entry("uid").or_insert(json!(uid));
+            metadata.entry("resourceVersion").or_insert(json!("1"));
+            serde_json::from_value(value).unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn ready_since_pod_issues_and_not_ready_counts_come_from_status() {
+    use k8s_openapi::api::core::v1::Node;
+    let session = session();
+    sync::<Node>(
+        &session,
+        objects(
+            json!([{"metadata":{"name":"worker"},"status":{"conditions":[{"type":"Ready","status":"False","reason":"KubeletNotReady","lastTransitionTime":"2026-09-01T00:00:00Z"}]}}]),
+        ),
+    );
+    sync::<Pod>(
+        &session,
+        objects(json!([
+            {"metadata":{"name":"pending","namespace":"batch"},"spec":{"containers":[],"nodeName":"worker"},"status":{"phase":"Pending"}},
+            {"metadata":{"name":"crash","namespace":"payments"},"spec":{"containers":[],"nodeName":"worker"},"status":{"phase":"Running","containerStatuses":[{"name":"app","image":"app","imageID":"app","ready":false,"restartCount":14,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}
+        ])),
+    );
+    let publication = session.derive(now());
+    let data = &publication.summary;
+    let nodes = data.nodes.loaded().unwrap();
+    assert!(!nodes[0].is_ready());
+    assert_eq!(nodes[0].ready().unwrap().reason, "KubeletNotReady");
+    assert!(nodes[0].ready().unwrap().since.is_some());
+    assert_eq!(nodes[0].pods, 2);
+    let pods = data.pods.loaded().unwrap();
+    assert_eq!(pods.total, 2);
+    assert_eq!(
+        pods.by_namespace,
+        std::collections::BTreeMap::from([("batch".into(), 1), ("payments".into(), 1)])
+    );
+    assert_eq!(pods.on_not_ready, 2);
+    assert!(
+        pods.issues
+            .iter()
+            .any(|pod| pod.issue.label() == "CrashLoopBackOff" && pod.restarts == 14)
+    );
+    assert!(pods.issues.iter().any(|pod| pod.issue.label() == "Pending"));
+}
+
+#[test]
+fn recent_warnings_exclude_old_normal_and_future_and_explain_pending_claim() {
+    use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+    let session = session();
+    let event = |name: &str, seconds: i64, kind: &str| json!({"metadata":{"name":name,"namespace":"batch"},"involvedObject":{"kind":"PersistentVolumeClaim","namespace":"batch","name":"report-data"},"type":kind,"reason":"ProvisioningFailed","message":"StorageClass fast not found","lastTimestamp":(now() + chrono::Duration::seconds(seconds)).to_rfc3339()});
+    sync::<KubeEvent>(
+        &session,
+        objects(json!([
+            event("old", -3601, "Warning"),
+            event("new", -10, "Warning"),
+            event("normal", -10, "Normal"),
+            event("future", 10, "Warning")
+        ])),
+    );
+    sync::<PersistentVolumeClaim>(
+        &session,
+        objects(json!([
+            {"metadata":{"namespace":"batch","name":"report-data","creationTimestamp":"2026-09-01T00:00:00Z"},"status":{"phase":"Pending"}},
+            {"metadata":{"namespace":"batch","name":"bound"},"status":{"phase":"Bound"}}
+        ])),
+    );
+    let publication = session.derive(now());
+    let data = &publication.summary;
+    assert_eq!(data.events.loaded().unwrap().total, 1);
+    let claims = data.claims.loaded().unwrap();
+    assert_eq!(claims.bound, 1);
+    assert_eq!(claims.pending_count, 1);
+    assert_eq!(claims.pending[0].reason, "StorageClass fast not found");
+    assert!(claims.pending[0].since.is_some());
+}
+
+#[test]
+fn refused_or_failed_events_leave_other_parts_loaded() {
+    use k8s_openapi::api::core::v1::Node;
+    for failure in [
+        ObservationFailure::Read(FailureKind::Forbidden),
+        ObservationFailure::Read(FailureKind::Timeout),
+    ] {
+        let session = session();
+        sync::<Node>(&session, vec![]);
+        sync::<Pod>(&session, vec![]);
+        session.fail(0, Source::Events, failure);
+        let publication = session.derive(now());
+        let data = &publication.summary;
+        assert!(data.events.error().is_some());
+        assert!(data.nodes.loaded().is_some());
+        assert!(data.pods.loaded().is_some());
+        assert!(data.workloads.snapshot().is_some());
+    }
+}
+
+#[test]
+fn issue_caps_keep_newest_and_preserve_counts() {
+    use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+    let session = session();
+    let pods: Vec<_> = (0..250).map(|ix| json!({"metadata":{"name":format!("pod-{ix}"),"namespace":"ns","creationTimestamp":format!("2026-09-01T00:{:02}:{:02}Z",ix/60,ix%60)},"status":{"phase":"Pending"}})).collect();
+    let claims: Vec<_> = pods
+        .iter()
+        .map(|pod| json!({"metadata":pod["metadata"],"status":{"phase":"Pending"}}))
+        .collect();
+    sync::<Pod>(&session, objects(json!(pods)));
+    sync::<PersistentVolumeClaim>(&session, objects(json!(claims)));
+    let publication = session.derive(now());
+    let data = &publication.summary;
+    assert_eq!(data.pods.loaded().unwrap().total, 250);
+    assert_eq!(data.pods.loaded().unwrap().issues.len(), ISSUE_LIMIT);
+    assert_eq!(
+        data.pods
+            .loaded()
+            .unwrap()
+            .issues_by_status
+            .values()
+            .sum::<usize>(),
+        250
+    );
+    assert_eq!(data.pods.loaded().unwrap().issues[0].name, "pod-249");
+    assert_eq!(data.claims.loaded().unwrap().pending_count, 250);
+    assert_eq!(data.claims.loaded().unwrap().pending.len(), ISSUE_LIMIT);
+}
+
+#[test]
+fn warning_cap_does_not_remove_a_pending_claims_reason() {
+    use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+    let session = session();
+    let mut events: Vec<_> = (0..250).map(|ix| json!({"metadata":{"name":format!("warning-{ix}"),"namespace":"ns"},"involvedObject":{"kind":"Pod","name":format!("pod-{ix}")},"type":"Warning","lastTimestamp":(now() - chrono::Duration::seconds(1)).to_rfc3339()})).collect();
+    events.push(json!({"metadata":{"name":"claim","namespace":"batch"},"involvedObject":{"kind":"PersistentVolumeClaim","namespace":"batch","name":"report-data"},"type":"Warning","message":"StorageClass fast not found","lastTimestamp":(now() - chrono::Duration::seconds(60)).to_rfc3339()}));
+    sync::<KubeEvent>(&session, objects(json!(events)));
+    sync::<PersistentVolumeClaim>(
+        &session,
+        objects(
+            json!([{"metadata":{"namespace":"batch","name":"report-data"},"status":{"phase":"Pending"}}]),
+        ),
+    );
+    let publication = session.derive(now());
+    let data = &publication.summary;
+    assert_eq!(data.events.loaded().unwrap().newest.len(), ISSUE_LIMIT);
+    assert_eq!(data.events.loaded().unwrap().total, 251);
+    assert_eq!(
+        data.claims.loaded().unwrap().pending[0].reason,
+        "StorageClass fast not found"
+    );
+}
+
+#[test]
+fn summary_retains_only_issue_identities() {
+    use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+    let session = session();
+    sync::<Pod>(
+        &session,
+        objects(json!([
+            {"metadata":{"name":"pending","namespace":"batch","uid":"pending-uid"},"spec":{"containers":[]},"status":{"phase":"Pending"}},
+            {"metadata":{"name":"healthy","namespace":"batch","uid":"healthy-uid"},"spec":{"containers":[]},"status":{"phase":"Succeeded"}}
+        ])),
+    );
+    sync::<PersistentVolumeClaim>(
+        &session,
+        objects(json!([
+            {"metadata":{"name":"claim","namespace":"batch","uid":"claim-uid"},"spec":{},"status":{"phase":"Pending"}}
+        ])),
+    );
+    let publication = session.derive(now());
+    let data = &publication.summary;
+    assert_eq!(
+        data.references
+            .get(&("pods".into(), "batch".into(), "pending".into()))
+            .map(String::as_str),
+        Some("pending-uid")
+    );
+    assert_eq!(
+        data.references
+            .get(&(
+                "persistentvolumeclaims".into(),
+                "batch".into(),
+                "claim".into()
+            ))
+            .map(String::as_str),
+        Some("claim-uid")
+    );
+    assert!(
+        !data
+            .references
+            .contains_key(&("pods".into(), "batch".into(), "healthy".into()))
+    );
+}
