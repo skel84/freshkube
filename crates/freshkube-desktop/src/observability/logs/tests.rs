@@ -130,14 +130,13 @@ fn a_long_trace_is_one_row_and_a_search_finds_its_last_line(cx: &mut TestAppCont
         window.click("logs-search-next", cx);
         window.render_frame(cx);
         window.render_frame(cx);
-        // The search finds the trace by its last line and scrolls into
-        // it. The shared view reveals a matched row by its middle, not by
-        // the line that matched.
+        // The search finds the trace by its last line and shows that line,
+        // the trace's end, rather than the row's middle (#225).
         let viewport = window.find("logs-viewport").bounds();
         let bounds = window.find(trace.clone()).bounds();
         assert!(bounds.top() < viewport.top(), "{bounds:?} in {viewport:?}");
         assert!(
-            bounds.bottom() > viewport.bottom(),
+            bounds.bottom() > viewport.top() && bounds.bottom() <= viewport.bottom(),
             "{bounds:?} in {viewport:?}"
         );
     })

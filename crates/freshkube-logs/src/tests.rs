@@ -467,6 +467,78 @@ fn evicted_lines_drop_their_measurements(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// A stack trace in one message: 200 lines, the first naming the panic
+/// and the last naming the function the search looks for (#225).
+fn stack_trace() -> String {
+    let mut lines = vec!["error panic: settlement queue closed".to_owned()];
+    lines.extend((1..199).map(|ix| format!("    frame {ix}(0x0, 0x0, 0xc000123456)")));
+    lines.push("    payments/worker.drainSettlementQueue()".to_owned());
+    lines.join("\n")
+}
+
+/// A search moves to the matched line within a row taller than the list,
+/// not to the row's middle, wrapped or not; a match on the row's first
+/// line shows the row's top.
+#[gpui_kit::test]
+fn a_search_shows_the_matched_line_within_a_tall_row(cx: &mut TestAppContext) {
+    for wrapped in [true, false] {
+        let (_runtime, panel, handle) = mount(cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            deliver(&panel, vec![stack_trace()], cx);
+            if !wrapped {
+                window.click("logs-wrap", cx);
+            }
+            window.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx, &panel, handle);
+        for (query, end) in [
+            ("drainSettlementQueue", true),
+            ("settlement queue closed", false),
+        ] {
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.click("logs-search", cx);
+                window.press("secondary-a", cx);
+                window.input(query, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.click("logs-search-next", cx);
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let view = panel.read(cx);
+                let id = view.review.current_match.expect("a match");
+                let row = window
+                    .find(SharedString::from(format!("log-line-1-{id}")))
+                    .bounds();
+                let list = window.find("logs-viewport").bounds();
+                let case = format!("wrapped {wrapped}, {query}");
+                assert!(
+                    row.size.height > list.size.height * 3.,
+                    "{case}: the row {row:?} isn't tall"
+                );
+                if end {
+                    // The matched last line ends the row: its bottom shows.
+                    assert!(
+                        row.bottom() > list.top() && row.bottom() <= list.bottom(),
+                        "{case}: the row's end {:?} is outside the list {list:?}",
+                        row.bottom()
+                    );
+                } else {
+                    assert!(
+                        row.top() >= list.top() && row.top() < list.bottom(),
+                        "{case}: the row's top {:?} is outside the list {list:?}",
+                        row.top()
+                    );
+                }
+            })
+            .unwrap();
+        }
+    }
+}
+
 #[gpui_kit::test]
 fn searches_reveal_inner_rows_and_keyboard_copies_complete_selected_lines(cx: &mut TestAppContext) {
     let (_runtime, panel, handle) = mount(cx);

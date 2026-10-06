@@ -1,12 +1,13 @@
 use std::{rc::Rc, time::Instant};
 
 use gpui_kit::{
-    AvailableSpace, Context, Pixels, Size, Window, component::ActiveTheme, prelude::*, px, size,
+    AvailableSpace, Context, Pixels, ScrollStrategy, Size, Window, component::ActiveTheme, point,
+    prelude::*, px, size,
 };
 
 use super::{
     LogSource, LogView, MeanHeight, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE,
-    RowMeasurement, review::VisibleDelta,
+    RowMeasurement, review::VisibleDelta, view::shown_message,
 };
 
 impl<S: LogSource> LogView<S> {
@@ -172,6 +173,55 @@ impl<S: LogSource> LogView<S> {
         }));
     }
 
+    /// Brings row `ix` into view by its middle. A search's match taller than
+    /// the list instead shows its matched line in the list's middle, so a
+    /// long stack trace doesn't hide the line the search found.
+    pub(super) fn reveal_row(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let list = self.scroll.bounds().size.height;
+        let tall = self.sizes.get(ix).is_some_and(|row| row.height > list);
+        if self.reveal_matched_line
+            && tall
+            && list > px(0.)
+            && let Some(line_end) = self.matched_line_end(ix, window, cx)
+        {
+            let before: Pixels = self.sizes[..ix].iter().map(|row| row.height).sum();
+            let top = (before + line_end - list / 2.).max(px(0.));
+            self.scroll.set_offset(point(self.scroll.offset().x, -top));
+        } else {
+            self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+        }
+    }
+
+    /// How far down row `ix` the first message line holding the query ends,
+    /// measured by laying the row out again with its message cut after that
+    /// line, so it wraps as the row does. `None` when no single line holds
+    /// the query, as when it matched the source's name.
+    fn matched_line_end(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Pixels> {
+        let key = self.measured.clone()?;
+        let query = self.review.query.to_lowercase();
+        let message = shown_message(self.review.entry(ix));
+        let mut end = 0;
+        let mut found = false;
+        for line in message.split_inclusive('\n') {
+            end += line.len();
+            if line.to_lowercase().contains(&query) {
+                found = true;
+                break;
+            }
+        }
+        if query.is_empty() || !found {
+            return None;
+        }
+        let shown = message[..end].trim_end_matches('\n').to_owned();
+        let mut row = (self.render_row_showing(ix, true, Some(&shown), cx)).into_any_element();
+        Some(row.layout_as_root(available(&key), window, cx).height)
+    }
+
     /// Lays out row `ix` as the list draws it and caches its size.
     /// VirtualList trusts supplied heights, so this measures the actual
     /// styled row, not character counts.
@@ -184,16 +234,8 @@ impl<S: LogSource> LogView<S> {
     ) -> Size<Pixels> {
         freshkube_probe::probe::hit("logs.measure");
         let _span = freshkube_probe::perf::span("logs.measure_row");
-        let available = size(
-            if key.wrapped {
-                AvailableSpace::Definite(key.width)
-            } else {
-                AvailableSpace::MaxContent
-            },
-            AvailableSpace::MinContent,
-        );
         let mut row = self.render_row(ix, true, cx).into_any_element();
-        let measured = row.layout_as_root(available, window, cx);
+        let measured = row.layout_as_root(available(key), window, cx);
         self.mean_height.add(measured.height);
         self.row_measurements.insert(
             self.review.id(ix),
@@ -310,4 +352,17 @@ impl<S: LogSource> LogView<S> {
         }
         changed
     }
+}
+
+/// The room a row is laid out in: the list's width when wrapped, its own
+/// width otherwise.
+fn available(key: &MeasurementKey) -> Size<AvailableSpace> {
+    size(
+        if key.wrapped {
+            AvailableSpace::Definite(key.width)
+        } else {
+            AvailableSpace::MaxContent
+        },
+        AvailableSpace::MinContent,
+    )
 }

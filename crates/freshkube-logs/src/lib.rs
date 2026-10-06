@@ -252,6 +252,9 @@ pub struct LogView<S: LogSource> {
     settle: Option<Task<()>>,
     unwrapped_width: Pixels,
     pending_reveal: Option<u64>,
+    /// Whether `pending_reveal` is a search's match, whose matched line is
+    /// brought into view within a row taller than the list.
+    reveal_matched_line: bool,
     review_anchor: Option<ReviewAnchor>,
     anchor_evicted: bool,
     feedback: Option<String>,
@@ -320,6 +323,7 @@ impl<S: LogSource> LogView<S> {
             sizes_height: 0.,
             row_widths: Vec::new(),
             pending_reveal: None,
+            reveal_matched_line: false,
             manual_review: Rc::new(Cell::new(false)),
             row_measurements: BTreeMap::new(),
             row_exact: Vec::new(),
@@ -481,6 +485,7 @@ impl<S: LogSource> LogView<S> {
     fn search(&mut self, forward: bool, cx: &mut Context<Self>) {
         self.set_following(false, cx);
         self.pending_reveal = self.review.search(forward);
+        self.reveal_matched_line = true;
         self.review_anchor = None;
         self.feedback = if self.pending_reveal.is_none() && !self.review.query.is_empty() {
             Some("No matching retained lines in the current filters".into())
