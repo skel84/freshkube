@@ -115,7 +115,7 @@ impl Render for TestChrome {
             .child(self.page.clone())
     }
 }
-fn mount_geometry(
+pub(super) fn mount_geometry(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
