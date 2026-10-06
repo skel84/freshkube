@@ -838,3 +838,89 @@ fn a_stopped_series_keeps_its_value_as_wide_as_the_others(cx: &mut TestAppContex
     );
     assert_eq!(values[0].size.width, values[1].size.width, "{values:?}");
 }
+
+/// A narrow chart of five long-named series, answered at once.
+fn narrow_chart(cx: &mut TestAppContext, width: f32) -> (AnyWindowHandle, Entity<PanelView>) {
+    use freshkube_core::monitoring::{
+        PanelResult,
+        model::data::{Frame, Series},
+    };
+    let dashboard = serde_json::json!({"title": "Test", "panels": [{
+        "type": "timeseries",
+        "title": "Memory",
+        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8},
+        "targets": [{"refId": "A", "expr": "memory", "legendFormat": "{{pod}}"}],
+    }]});
+    let spec = Dashboard::parse(&dashboard.to_string())
+        .unwrap()
+        .panels
+        .remove(0);
+    let (handle, panels) = mount_at(cx, vec![Rc::new(spec)], width);
+    let times: Vec<f64> = window_range()
+        .times()
+        .into_iter()
+        .map(|t| t as f64)
+        .collect();
+    let series = (0..5)
+        .map(|n| {
+            let name = format!("storage-system/instance-manager-{n}-5d8b7c9f4-lwz8r");
+            Series {
+                name: name.clone(),
+                query: "A".into(),
+                field: None,
+                labels: vec![("pod".into(), name)],
+                values: vec![1000. * (n + 1) as f64; times.len()],
+            }
+        })
+        .collect();
+    let panel = panels[0].clone();
+    cx.update(|cx| {
+        panel.update(cx, |panel, cx| {
+            let result = PanelResult {
+                frame: Frame { times, series },
+                warnings: Vec::new(),
+                expressions: Vec::new(),
+            };
+            panel.set_result(result, window_range(), cx);
+        })
+    });
+    frame(cx, handle);
+    (handle, panel)
+}
+
+/// In a narrow chart, long names truncate so the readout stays inside the
+/// plot on either side of the crosshair: just right of the middle it sits
+/// to the left, just left of it to the right.
+#[gpui_kit::test]
+fn a_narrow_readout_stays_inside_the_plot_on_either_side(cx: &mut TestAppContext) {
+    let (handle, panel) = narrow_chart(cx, 360.);
+    let (plot, readout): (gpui_kit::SharedString, gpui_kit::SharedString) = (
+        "monitoring-panel-0-plot".into(),
+        "monitoring-panel-0-readout".into(),
+    );
+    for fraction in [0.62, 0.38, 0.9, 0.1] {
+        let (plot, readout) = (plot.clone(), readout.clone());
+        cx.update_window(handle, |_, window, cx| {
+            let bounds = window.find(plot.clone()).bounds();
+            window.dispatch_event(
+                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                    position: gpui_kit::point(
+                        bounds.left() + bounds.size.width * fraction,
+                        bounds.center().y,
+                    ),
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+            let (plot, readout) = (window.find(plot).bounds(), window.find(readout).bounds());
+            assert!(
+                readout.left() >= plot.left() && readout.right() <= plot.right(),
+                "at {fraction}: {readout:?} in {plot:?}"
+            );
+        })
+        .unwrap();
+        assert!(cx.read(|cx| panel.read(cx).cursor.as_ref().is_some_and(|c| c.own)));
+    }
+}
