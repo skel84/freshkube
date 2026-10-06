@@ -29,6 +29,8 @@ pub(super) struct Slot {
     pub(super) request: Option<Request>,
     /// The last answer was an error.
     pub(super) failed: bool,
+    /// The id of the empty card drawn in its place while it is out of reach.
+    pub(super) placeholder: SharedString,
 }
 
 /// A row of the dashboard, as its header shows it.
@@ -270,6 +272,7 @@ impl MonitoringPage {
                     asked: None,
                     request: None,
                     failed: false,
+                    placeholder: format!("monitoring-placeholder-{}", placed.key).into(),
                 });
             }
             board.rows.push(section.row.as_ref().map(|row| RowHeader {
@@ -437,13 +440,10 @@ impl MonitoringPage {
         let (Some(variables), Some(window)) = (board.variables.clone(), board.window) else {
             return;
         };
-        // Half a screen above and a screen below are read ahead.
+        let (top, bottom) = viewport.reach();
         let wanted: Vec<usize> = board
             .layout(viewport.narrow)
-            .within(
-                viewport.top - viewport.height / 2.,
-                viewport.top + viewport.height * 2.,
-            )
+            .within(top, bottom)
             .filter(|slot| board.slots[*slot].asked != Some(generation))
             .collect();
         let context = QueryContext {

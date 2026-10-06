@@ -11,8 +11,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Bounds, Context, FontWeight, IntoElement, Pixels, Render, SharedString,
-    StyleRefinement, TestSupportExt, Window, canvas, div, px, relative,
+    AnyElement, Bounds, Context, FontWeight, IntoElement, Pixels, Render, ScrollHandle,
+    SharedString, StyleRefinement, TestSupportExt, Window, canvas, div, px, relative,
 };
 
 use super::board::Board;
@@ -54,7 +54,7 @@ impl Render for MonitoringPage {
                     .min_h_0()
                     // A state still centres in the page's height.
                     .when(short, |this| this.flex_none().min_h(relative(1.)))
-                    .child(self.render_body(narrow, short, cx))
+                    .child(self.render_body(narrow, short, window, cx))
                     .test_support(),
             )
     }
@@ -382,7 +382,13 @@ impl MonitoringPage {
         )
     }
 
-    fn render_body(&mut self, narrow: bool, short: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_body(
+        &mut self,
+        narrow: bool,
+        short: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let page = cx.entity().downgrade();
         let retry = move |id: &'static str, label: &'static str| {
             let page = page.clone();
@@ -442,7 +448,7 @@ impl MonitoringPage {
                 cx,
             )
             .into_any_element(),
-            _ => self.render_grid(narrow, short, cx),
+            _ => self.render_grid(narrow, short, window, cx),
         }
     }
 
@@ -493,12 +499,28 @@ impl MonitoringPage {
     /// the page when the window is short. A canvas reports what is in view
     /// of whichever holds the scroll handle once laid out, so the panels
     /// coming into it are asked on the next frame.
-    fn render_grid(&mut self, narrow: bool, short: bool, cx: &mut Context<Self>) -> AnyElement {
+    ///
+    /// Only the panels within the viewport's reach are drawn; the rest are
+    /// empty cards at their places, which are fixed, so nothing moves when
+    /// one comes in. A panel that isn't drawn can't keep the window drawing:
+    /// a loading one doesn't pulse, and its notify reaches no window.
+    fn render_grid(
+        &mut self,
+        narrow: bool,
+        short: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(board) = &self.board else {
             return div().into_any_element();
         };
         let p = palette(cx);
         let layout = board.layout(narrow);
+        let (top, bottom) = self
+            .viewport
+            .get()
+            .at(scrolled(&self.scroll, dp_px(1., window)))
+            .reach();
         let gap = freshkube_core::monitoring::model::layout::GAP;
         let rows = layout.rows.iter().map(|(section, top)| {
             let collapsed = board.is_collapsed(*section);
@@ -543,21 +565,29 @@ impl MonitoringPage {
                 .test_support()
         });
         let panels = layout.panels.iter().map(|place| {
-            div()
+            let slot = &board.slots[place.slot];
+            let at = div()
                 .absolute()
                 .left(relative(place.left))
                 .w(relative(place.width))
                 .top(dp(place.top))
                 .h(dp(place.height))
                 .pr(dp(gap))
-                .pb(dp(gap))
-                .child(
-                    board.slots[place.slot]
-                        .view
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                )
-                .children(board.linked.element(place.slot))
+                .pb(dp(gap));
+            if !place.within(top, bottom) {
+                return at.child(
+                    page::card(cx)
+                        .id(slot.placeholder.clone())
+                        .size_full()
+                        .test_support(),
+                );
+            }
+            at.child(
+                slot.view
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+            )
+            .children(board.linked.element(place.slot))
         });
         let (viewport, scroll, page) = (
             self.viewport.clone(),
@@ -572,15 +602,20 @@ impl MonitoringPage {
                 }
                 let unit = dp_px(1., window);
                 let now = Viewport {
-                    top: ((frame.origin.y - bounds.origin.y) / unit).max(0.),
+                    top: (frame.origin.y - bounds.origin.y) / unit,
                     height: frame.size.height / unit,
                     narrow,
+                    scrolled: scrolled(&scroll, unit),
                 };
                 if viewport.get() != now {
                     viewport.set(now);
                     let page = page.clone();
+                    // Drawn again with the panels that came into reach.
                     window.on_next_frame(move |_, cx| {
-                        _ = page.update(cx, |page, cx| page.ask_visible(cx));
+                        _ = page.update(cx, |page, cx| {
+                            page.ask_visible(cx);
+                            cx.notify();
+                        });
                     });
                 }
             },
@@ -621,4 +656,10 @@ impl MonitoringPage {
             .test_support()
             .into_any_element()
     }
+}
+
+/// How far `scroll` has scrolled down, in dp. A wheel event moves the
+/// offset past the end until the next layout clamps it, so clamp it here.
+fn scrolled(scroll: &ScrollHandle, unit: Pixels) -> f32 {
+    (-scroll.offset().y).clamp(px(0.), scroll.max_offset().y) / unit
 }

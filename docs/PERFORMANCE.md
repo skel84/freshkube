@@ -33,7 +33,7 @@ scripts/stress.sh terminal-50k terminal 50000
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
-| `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span |
+| `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span after the warm-up, unless its keys only wait and it drew during the warm-up |
 
 A run lasts `FRESHKUBE_STRESS_SECONDS` (30) and leaves the first `FRESHKUBE_STRESS_WARMUP` (5) seconds out of its summary. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
 
@@ -221,6 +221,32 @@ Same settings as the baseline, with the saved #181 binary as before, and the run
 - **The stall halves and the frame rate about doubles.** Cluster draws one panel a frame: its panel, plot, cursor and page counts are all about 720.
 - **The page's own render is about 1.3% of the busy time.** A profile of the after run puts the window's root layout, which now includes the page, at 7.5% of main-thread samples, and the panels' layout at 14%, down from 35%.
 - **The thread is still busy, because loading panels animate.** The page asks only the panels in or near the viewport, so about 16 of the 30 stay loading, and Kit's skeleton pulses with an animation that notifies its panel every frame, off screen too. Those are the 9,700 renders of 0.02 ms, and while any panel is unanswered the window never stops drawing. Drawing only the slots near the viewport, #22's next step, takes them out.
+
+### A dashboard draws only the panels near the view (#22)
+
+After the change above, the 30-panel run still rendered about 16 panels a frame. The page asks only the panels in or near the viewport, so the rest stayed loading, and Kit's skeleton pulses with an animation that notifies its panel every frame, off screen too. With a dashboard open, the window never stopped drawing. Now the page draws the same panels it asks (`Viewport::reach`: what is in view, half a screen above and a screen below) and an empty card at each other slot's fixed place. GPUI redraws a window only for the views it drew in the last frame, so a panel that isn't drawn can't make it draw.
+
+Release build, same settings, with the build of the change above as before; runs alternated, with no cargo, rustc or clang running. The one-minute load average at each start is in the table; WindowServer was the busiest other process, at about 40%.
+
+| 30 timeseries, hover and scroll | Load | Main-thread stall: median / 99th | Stall samples | `panel_render`: count, total | `page_render` count | CPU |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before 1 | 31.1 | 43.6 / 66.1 ms | 554 | 8,759, 604 ms | 554 | 85% |
+| After 1 | 21.4 | 29.7 / 46.7 ms | 1,070 | 557, 361 ms | 555 | 83% |
+| Before 2 | 22.9 | 36.2 / 45.7 ms | 643 | 10,154, 696 ms | 643 | 85% |
+| After 2 | 18.7 | 25.8 / 49.8 ms | 1,066 | 544, 419 ms | 543 | 82% |
+
+The idle runs open the same dashboard and touch nothing (`FRESHKUBE_STRESS_KEYS=wait:30000`). The frame rate is `page_render`'s count each second after the first five, since the shell draws the page with every frame.
+
+| 30 timeseries, idle | Load | Frames a second | CPU | Main-thread stall median |
+| --- | --- | --- | --- | --- |
+| Before 1 | 21.4 | 24–31 | 84% | 32.6 ms |
+| After 1 | 15.4 | 0 after the 4th second | 5% | 1.2 ms |
+| Before 2 | 18.7 | 26–31 | 83% | 32.8 ms |
+| After 2 | 15.2 | 0 after the 5th second | 5% | 1.2 ms |
+
+- **Idle, the window stops drawing** once the panels in reach have answered. Before, it drew for as long as the dashboard showed, at most of a core.
+- **Moving, a frame renders one panel instead of about 16.** The main thread is free twice as often, but CPU and frame rate hardly change: the hover script moves every 16 ms, and each frame's cost is now the window's own layout and drawing.
+- `scripts/stress.sh` used to fail such a run with "the dashboard never drew", since its summary leaves out the warm-up and nothing drew after it. When the keys only wait and the per-second lines show the dashboard drawing, it now reports "monitoring: 0 frames after warmup" and passes; a run that never drew, or one whose keys do more than wait, still fails (`scripts/stress.test.sh`).
 
 ### Kubernetes summary
 

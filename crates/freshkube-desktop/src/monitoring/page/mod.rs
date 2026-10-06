@@ -55,13 +55,16 @@ pub(crate) enum MonitoringEvent {
     Dashboards,
 }
 
-/// The part of the dashboard in view, in dp from the grid's top.
+/// The part of the dashboard in view, in dp from the grid's top: `top` is
+/// negative while the grid starts below the top of what is in view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Viewport {
     top: f32,
     height: f32,
     /// The panels stack in one column.
     narrow: bool,
+    /// How far the scroller had scrolled when this was measured, in dp.
+    scrolled: f32,
 }
 
 impl Default for Viewport {
@@ -71,6 +74,25 @@ impl Default for Viewport {
             top: 0.,
             height: 900.,
             narrow: false,
+            scrolled: 0.,
+        }
+    }
+}
+
+impl Viewport {
+    /// The part of the grid whose panels are asked and drawn: what is in
+    /// view, half a screen above and a screen below.
+    fn reach(&self) -> (f32, f32) {
+        (self.top - self.height / 2., self.top + self.height * 2.)
+    }
+
+    /// The viewport once the scroller has moved on to `scrolled` dp: it is
+    /// measured while a frame is laid out, one scroll behind the next one.
+    fn at(self, scrolled: f32) -> Self {
+        Self {
+            top: self.top + scrolled - self.scrolled,
+            scrolled,
+            ..self
         }
     }
 }

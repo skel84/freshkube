@@ -44,12 +44,19 @@ pub(super) struct Layout {
     pub(super) height: f32,
 }
 
+impl Placement {
+    /// Some part of the panel lies within `top..bottom`.
+    pub(super) fn within(&self, top: f32, bottom: f32) -> bool {
+        self.top < bottom && self.top + self.height > top
+    }
+}
+
 impl Layout {
     /// The panels any part of which lies within `top..bottom`.
     pub(super) fn within(&self, top: f32, bottom: f32) -> impl Iterator<Item = usize> + '_ {
         self.panels
             .iter()
-            .filter(move |place| place.top < bottom && place.top + place.height > top)
+            .filter(move |place| place.within(top, bottom))
             .map(|place| place.slot)
     }
 }
