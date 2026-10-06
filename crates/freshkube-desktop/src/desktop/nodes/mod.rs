@@ -115,7 +115,8 @@ pub(super) struct Nodes {
     more: bool,
     pub(super) view: NodeView,
     tab_focus: FocusHandle,
-    tab_scroll: ScrollHandle,
+    /// The tab strip's scroll; the strip brings the active tab into view.
+    pub(super) tab_strip: freshkube_ui::inspector::TabStrip,
     scroll: UniformListScrollHandle,
     /// The frame's scroll, used while the window is short.
     pub(super) page_scroll: ScrollHandle,
@@ -199,7 +200,7 @@ impl Nodes {
             more: false,
             view: NodeView::Table,
             tab_focus: cx.focus_handle(),
-            tab_scroll: ScrollHandle::new(),
+            tab_strip: Default::default(),
             scroll: UniformListScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
             logs_scroll: ScrollHandle::new(),
@@ -245,11 +246,16 @@ impl Nodes {
         self.more = self
             .row()
             .is_some_and(|row| row.talos.is_some() && row.kubernetes.is_some());
-        self.inline_tabs = tabs
+        let inline: Vec<_> = tabs
             .iter()
             .copied()
             .filter(|tab| !self.more || !matches!(tab, NodeTab::Events | NodeTab::Yaml))
             .collect();
+        // Other tabs start unscrolled.
+        if inline != self.inline_tabs {
+            self.tab_strip = Default::default();
+        }
+        self.inline_tabs = inline;
         self.tabs = tabs;
     }
 }
@@ -435,14 +441,6 @@ impl Pilot {
         self.node_workspace
             .logs_scroll
             .set_offset(point(px(0.), px(0.)));
-        if let Some(index) = self
-            .node_workspace
-            .inline_tabs
-            .iter()
-            .position(|candidate| *candidate == tab)
-        {
-            self.node_workspace.tab_scroll.scroll_to_item(index);
-        }
         self.activate_node_tab(window, cx);
         cx.notify();
     }
