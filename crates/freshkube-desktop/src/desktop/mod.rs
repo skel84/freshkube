@@ -137,6 +137,9 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             gpui_kit::init(cx);
             theme::install(cx);
             text_size::install(options.preferences.clone(), cx);
+            // Kit's animations draw still when the OS asks for reduced motion.
+            // Tests never run this, so they keep the reduced motion they set.
+            freshkube_ui::motion::follow_system(cx);
             cx.bind_keys([
                 KeyBinding::new("secondary-q", Quit, None),
                 KeyBinding::new("secondary-r", Refresh, Some("Freshkube")),
