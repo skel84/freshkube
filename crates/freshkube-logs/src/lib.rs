@@ -234,6 +234,10 @@ pub struct LogView<S: LogSource> {
     panel_height: Option<Pixels>,
     measured: Option<MeasurementKey>,
     sizes: Rc<Vec<Size<Pixels>>>,
+    /// The sum of the heights in `sizes`, kept in step with every change to
+    /// them so following needn't add them up each frame. An `f64`, so
+    /// thousands of rows dropped and added don't drift it.
+    sizes_height: f64,
     /// Natural width of each row in `sizes`, for the unwrapped content width.
     row_widths: Vec<Pixels>,
     row_measurements: BTreeMap<u64, RowMeasurement>,
@@ -313,6 +317,7 @@ impl<S: LogSource> LogView<S> {
             panel_height: None,
             measured: None,
             sizes: Rc::new(Vec::new()),
+            sizes_height: 0.,
             row_widths: Vec::new(),
             pending_reveal: None,
             manual_review: Rc::new(Cell::new(false)),
@@ -362,6 +367,11 @@ impl<S: LogSource> LogView<S> {
         if self.visible {
             cx.notify();
         }
+    }
+
+    /// The height of every row together, as the list lays them out.
+    fn sizes_height(&self) -> Pixels {
+        px(self.sizes_height as f32)
     }
 
     /// Identity of the last visible row, which following keeps in view.

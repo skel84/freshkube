@@ -1,6 +1,6 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, FontWeight, ListSizingBehavior, Pixels, Render, Role,
+    AnyElement, AvailableSpace, Context, FontWeight, ListSizingBehavior, Render, Role,
     ScrollStrategy, SharedString, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
@@ -39,7 +39,7 @@ impl<S: LogSource> LogView<S> {
         }
         let columns = self.columns;
         let selected = self.review.selected.contains(&id);
-        let matched = !self.review.query.is_empty() && entry.matches_query(&self.review.query);
+        let matched = self.review.is_match(row_ix);
         let current = self.review.current_match == Some(id);
         let p = palette(cx);
         let (level, level_color, stripe) = match entry.level {
@@ -455,7 +455,7 @@ impl<S: LogSource> Render for LogView<S> {
         drop(measuring);
         if self.following {
             self.pending_reveal = None;
-            let height: Pixels = self.sizes.iter().map(|row| row.height).sum();
+            let height = self.sizes_height();
             // Request beyond the tail; VirtualList prepaint clamps against
             // its *inner* viewport. Nearest would expose the top, not the
             // latest text, when the last wrapped row exceeds the viewport.

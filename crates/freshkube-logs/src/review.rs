@@ -27,6 +27,9 @@ struct MatchCache {
     revision: u64,
     query: String,
     ids: Vec<u64>,
+    /// Whether each visible row matches, by row index, so drawing a row
+    /// doesn't search its text again.
+    rows: Vec<bool>,
 }
 
 fn level_slot(level: &LogLevel) -> usize {
@@ -200,6 +203,24 @@ impl LogReview {
     /// IDs of the visible rows matching the query, in row order. Computed once
     /// per revision and query rather than once per caller per frame.
     pub(super) fn matched_ids(&self) -> Ref<'_, Vec<u64>> {
+        Ref::map(self.match_cache(), |cache| &cache.ids)
+    }
+
+    /// Whether the visible row at `row_ix` matches the query, from the same
+    /// cache as [`Self::matched_ids`].
+    pub(super) fn is_match(&self, row_ix: usize) -> bool {
+        !self.query.is_empty()
+            && self
+                .match_cache()
+                .rows
+                .get(row_ix)
+                .copied()
+                .unwrap_or(false)
+    }
+
+    /// The matches for the current revision and query, searched again only
+    /// when either has changed.
+    fn match_cache(&self) -> Ref<'_, MatchCache> {
         {
             let mut cache = self.matches.borrow_mut();
             if cache
@@ -207,23 +228,27 @@ impl LogReview {
                 .is_none_or(|cache| cache.revision != self.revision || cache.query != self.query)
             {
                 let lowercase = self.query.to_lowercase();
-                let ids = if self.query.is_empty() {
+                let rows: Vec<bool> = if self.query.is_empty() {
                     Vec::new()
                 } else {
                     (0..self.visible.len())
-                        .filter(|&ix| self.entry(ix).matches_lowercase_query(&lowercase))
-                        .map(|ix| self.id(ix))
+                        .map(|ix| self.entry(ix).matches_lowercase_query(&lowercase))
                         .collect()
                 };
+                let ids = (rows.iter().enumerate())
+                    .filter(|(_, matched)| **matched)
+                    .map(|(ix, _)| self.id(ix))
+                    .collect();
                 *cache = Some(MatchCache {
                     revision: self.revision,
                     query: self.query.clone(),
                     ids,
+                    rows,
                 });
             }
         }
         Ref::map(self.matches.borrow(), |cache| {
-            &cache.as_ref().expect("filled above").ids
+            cache.as_ref().expect("filled above")
         })
     }
 
@@ -467,6 +492,33 @@ mod model_tests {
         assert_eq!(review.match_count(), 1);
         review.set_level(&LogLevel::Error, false);
         assert_eq!(review.match_count(), 0);
+    }
+
+    #[test]
+    fn row_match_flags_follow_the_query_and_new_lines() {
+        let mut review = LogReview::new("node");
+        review.append([
+            LogEvent::new("apid", "info first"),
+            LogEvent::new("apid", "error second"),
+        ]);
+        assert!(!review.is_match(1), "no query matches nothing");
+        review.query = "ERROR".into();
+        let flags = |review: &LogReview| -> Vec<bool> {
+            (0..review.visible.len())
+                .map(|ix| review.is_match(ix))
+                .collect()
+        };
+        assert_eq!(flags(&review), [false, true]);
+        review.append([LogEvent::new("apid", "error third")]);
+        assert_eq!(flags(&review), [false, true, true]);
+        let ids: Vec<u64> = (0..3)
+            .filter(|&ix| review.is_match(ix))
+            .map(|ix| review.id(ix))
+            .collect();
+        assert_eq!(*review.matched_ids(), ids);
+        review.query = "first".into();
+        assert_eq!(flags(&review), [true, false, false]);
+        assert!(!review.is_match(7), "a row past the end");
     }
 
     #[test]

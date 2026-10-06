@@ -110,7 +110,9 @@ impl<S: LogSource> LogView<S> {
         let first_new = match kept {
             Some((dropped, first_new)) => {
                 let sizes = Rc::make_mut(&mut self.sizes);
-                sizes.drain(..dropped);
+                for row in sizes.drain(..dropped) {
+                    self.sizes_height -= f64::from(f32::from(row.height));
+                }
                 self.row_widths.drain(..dropped);
                 self.row_exact.drain(..dropped);
                 if resized {
@@ -126,6 +128,7 @@ impl<S: LogSource> LogView<S> {
             }
             None => {
                 self.sizes = Rc::new(Vec::with_capacity(rows));
+                self.sizes_height = 0.;
                 self.row_widths.clear();
                 self.row_exact.clear();
                 0
@@ -151,6 +154,7 @@ impl<S: LogSource> LogView<S> {
             self.row_widths.push(measured.width);
             self.row_exact.push(exact);
             Rc::make_mut(&mut self.sizes).push(size(key.width, measured.height));
+            self.sizes_height += f64::from(f32::from(measured.height));
         }
         estimated
     }
@@ -222,6 +226,8 @@ impl<S: LogSource> LogView<S> {
         self.row_widths[ix] = measured.width;
         let row = &mut Rc::make_mut(&mut self.sizes)[ix];
         let changed = row.height != measured.height;
+        self.sizes_height +=
+            f64::from(f32::from(measured.height)) - f64::from(f32::from(row.height));
         row.height = measured.height;
         changed
     }

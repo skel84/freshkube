@@ -74,6 +74,7 @@ impl<S: LogSource> LogView<S> {
         self.following = true;
         self.measured = None;
         self.sizes = Rc::new(Vec::new());
+        self.sizes_height = 0.;
         self.row_widths.clear();
         self.row_exact.clear();
         self.scroll = VirtualListScrollHandle::new();

@@ -346,6 +346,18 @@ fn deliver(panel: &Entity<LogPanel>, lines: Vec<String>, cx: &mut gpui_kit::App)
     });
 }
 
+/// The total height kept beside `sizes` is their heights added up.
+fn assert_total_height<S: LogSource>(view: &LogView<S>) {
+    let sum: f64 = (view.sizes.iter())
+        .map(|row| f64::from(f32::from(row.height)))
+        .sum();
+    let kept = view.sizes_height;
+    assert!(
+        (kept - sum).abs() < 1e-6,
+        "kept {kept}, rows add up to {sum}"
+    );
+}
+
 #[gpui_kit::test]
 fn a_flood_lays_out_the_rows_on_screen_and_the_rest_once_it_stops(cx: &mut TestAppContext) {
     let (_runtime, panel, handle) = mount(cx);
@@ -407,6 +419,7 @@ fn a_flood_lays_out_the_rows_on_screen_and_the_rest_once_it_stops(cx: &mut TestA
         let view = panel.read(cx);
         assert!(view.settled);
         assert_eq!(view.sizes.len(), 920);
+        assert_total_height(view);
         // Following keeps the newest row in view after the estimates settle.
         let last = view.review.id(view.sizes.len() - 1);
         assert!(
@@ -436,6 +449,7 @@ fn evicted_lines_drop_their_measurements(cx: &mut TestAppContext) {
                 .collect();
             deliver(&panel, lines, cx);
             window.render_frame(cx);
+            assert_total_height(panel.read(cx));
         }
         let view = panel.read(cx);
         assert!(view.review.evicted > 120);
