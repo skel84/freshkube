@@ -222,12 +222,15 @@ compiles again. [Release](../.github/workflows/release.yml) runs when a tag
    with an instruction to collect the notes before tagging.
 2. It finds the successful CI run of that commit on `main` and downloads both
    bundles. Without one (still running, failed, skipped or expired) it stops and
-   says so; it never builds a replacement.
+   says so; it never builds a replacement. It also looks for the Linux and
+   Windows preview builds of that commit; a missing or failed one is left out
+   with a warning at the top of the notes ([PACKAGING.md](PACKAGING.md#releases)).
 3. It verifies each ZIP against its checksum, and each manifest's version,
    target, source commit and clean tree against the tag.
 4. It takes the release notes from the `## <version>` section of
    `CHANGELOG.md`, adds install instructions, and creates a **draft
-   pre-release** with the ZIPs, checksums and manifests.
+   pre-release** with the ZIPs, checksums and manifests, and the Linux and
+   Windows archives it found.
 
 To release:
 
@@ -237,7 +240,10 @@ To release:
    changelog and deleted fragments together; leave a new `## Unreleased`
    heading for the next release. Feature PRs add [fragments](../changelog.d/README.md)
    instead of editing Unreleased directly.
-2. Merge it, and wait for CI on `main` to finish both bundles.
+2. Merge it, and wait for CI on `main` to finish both bundles and for
+   [Linux and Windows packages](../.github/workflows/packages.yml) to finish its
+   four jobs. A tag pushed before that run finishes drafts macOS only, with a
+   warning ([PACKAGING.md](PACKAGING.md#releases)).
 3. Tag the merge commit and push the tag:
    `git tag -a v<version> -m "Freshkube <version>" <commit>` then
    `git push origin v<version>`.

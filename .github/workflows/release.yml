@@ -3,6 +3,8 @@ name: Release
 # Pushing a tag vX.Y.Z drafts a GitHub Release from the bundles CI built for
 # that commit on main. Nothing is compiled here: the release ships the files
 # that were checked and built. Publishing the draft is a person's decision.
+# Linux and Windows are preview (packages.yml): a missing or failed build
+# leaves them out with a warning at the top of the notes, never stops macOS.
 on:
   push:
     tags: ['v*']
@@ -16,6 +18,7 @@ concurrency:
 
 env:
   TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+  PREVIEW_TARGETS: x86_64-unknown-linux-gnu x86_64-pc-windows-msvc
 
 jobs:
   draft:
@@ -75,26 +78,76 @@ jobs:
             dir="dist/freshkube-$target"
             base="Freshkube-$VERSION-$target-adhoc"
             (cd "$dir" && sha256sum -c "$base.zip.sha256")
-            python3 - "$dir/$base.json" "$VERSION" "$target" "$SHA" <<'EOF'
-          import json, sys
-          path, version, target, sha = sys.argv[1:]
-          manifest = json.load(open(path))
-          expected = {"version": version, "target": target, "source_commit": sha, "source_dirty": False}
-          wrong = {k: manifest.get(k) for k, v in expected.items() if manifest.get(k) != v}
-          if wrong:
-              sys.exit(f"::error::{path} doesn't match the tag: {wrong}")
-          EOF
+            python3 scripts/release-manifest.py "$dir/$base.json" "$VERSION" "$target" "$SHA"
           done
+
+      - name: Find and verify the Linux and Windows preview builds
+        # Nothing here may stop or spoil the macOS release: every failure,
+        # GitHub's API included, leaves the platform out with a warning.
+        run: |
+          : > preview-missing.txt
+          mkdir -p dist
+          # A run that failed in one job still holds the other platform's build.
+          if ! run=$(gh api "repos/$GH_REPO/actions/workflows/packages.yml/runs?event=push&branch=main&head_sha=$SHA&status=completed" \
+                --jq '.workflow_runs[0].id // empty'); then
+            run=unknown
+          fi
+          for target in $PREVIEW_TARGETS; do
+            if [ "$run" = unknown ]; then
+              echo "$target: couldn't ask GitHub about the packages run for $SHA" >> preview-missing.txt
+              continue
+            fi
+            if [ -z "$run" ]; then
+              echo "$target: no finished packages run on main for $SHA (still running, or never started)" >> preview-missing.txt
+              continue
+            fi
+            if ! passed=$(gh api "repos/$GH_REPO/actions/runs/$run/jobs?per_page=100" --jq \
+                "[.jobs[] | select(.name == \"Package ($target)\" or .name == \"First frame ($target)\") | select(.conclusion == \"success\")] | length"); then
+              echo "$target: couldn't ask GitHub about run $run's jobs" >> preview-missing.txt
+              continue
+            fi
+            if [ "$passed" != 2 ]; then
+              echo "$target: its package or first-frame job didn't pass in run $run" >> preview-missing.txt
+              continue
+            fi
+            # Downloaded apart and moved into dist/ only once every check has
+            # passed, so a partial build never reaches the notes or the draft.
+            staging=$(mktemp -d)
+            if ! gh run download "$run" -n "freshkube-$target" -D "$staging"; then
+              echo "$target: run $run's build didn't download; it may have expired (90 days)" >> preview-missing.txt
+              rm -rf "$staging"
+              continue
+            fi
+            archive=$(cd "$staging" && ls Freshkube-"$VERSION-$target".tar.gz Freshkube-"$VERSION-$target".zip 2>/dev/null || true)
+            if [ -z "$archive" ] || ! (cd "$staging" && sha256sum -c "$archive.sha256") ||
+               ! python3 scripts/release-manifest.py "$staging/Freshkube-$VERSION-$target.json" "$VERSION" "$target" "$SHA"; then
+              echo "$target: run $run's build doesn't match its checksum or the tag" >> preview-missing.txt
+              rm -rf "$staging"
+              continue
+            fi
+            if ! mv "$staging" "dist/freshkube-$target"; then
+              echo "$target: run $run's build couldn't be moved into place" >> preview-missing.txt
+              rm -rf "$staging" "dist/freshkube-$target"
+            fi
+          done
+          while read -r line; do echo "::warning::Left out of the release: $line"; done < preview-missing.txt
 
       - name: Write the release notes
         run: |
           python3 - "$VERSION" > notes.md <<'EOF'
-          import re, sys
+          import os, re, sys
           version = sys.argv[1]
           text = open("CHANGELOG.md").read()
           match = re.search(rf"^## {re.escape(version)}\b.*?\n(.*?)(?=^## |\Z)", text, re.M | re.S)
           if not match:
               sys.exit(f"::error::CHANGELOG.md has no '## {version}' section.")
+          missing = open("preview-missing.txt").read().splitlines()
+          if missing:
+              print("> [!WARNING]")
+              print("> This release has no build for some preview platforms; the macOS builds are complete.")
+              for line in missing:
+                  print(f"> - {line}")
+              print()
           # Relative links don't resolve on the Releases page; point them at the tag.
           notes = re.sub(r"\]\((?!https?:|#)([^)]+)\)",
                          rf"](https://github.com/skel84/freshkube/blob/v{version}/\1)", match.group(1))
@@ -108,6 +161,28 @@ jobs:
           open: try to open Freshkube, then choose **System Settings → Privacy & Security
           → Open Anyway**. Check a download with `shasum -a 256 -c <file>.zip.sha256`.
           See [macOS packaging](https://github.com/skel84/freshkube/blob/main/docs/MACOS_PACKAGING.md#install-a-release).""")
+          linux = os.path.isdir("dist/freshkube-x86_64-unknown-linux-gnu")
+          windows = os.path.isdir("dist/freshkube-x86_64-pc-windows-msvc")
+          if linux or windows:
+              print("""
+          ### Linux and Windows (preview)
+
+          These builds are checked in CI, which opens a window from each archive, but
+          no one has yet recorded a first run on a real desktop
+          ([first-run reports](https://github.com/skel84/freshkube/blob/main/docs/FIRST_RUN.md)).
+          They are not signed.""")
+          if linux:
+              print("""
+          - **Linux** (`x86_64-unknown-linux-gnu.tar.gz`, glibc 2.35 or later): check it with
+            `sha256sum -c <file>.tar.gz.sha256`, extract it, install the packages in
+            `RUNTIME-PACKAGES.txt`, and run `freshkube`.""")
+          if windows:
+              print("""
+          - **Windows** (`x86_64-pc-windows-msvc.zip`, Windows 10 or later): extract it and run
+            `freshkube.exe`. SmartScreen may stop the first start: choose **More info → Run anyway**.""")
+          if linux or windows:
+              print("""
+          See [Linux and Windows packaging](https://github.com/skel84/freshkube/blob/main/docs/PACKAGING.md#install-a-preview-build).""")
           EOF
           cat notes.md
 

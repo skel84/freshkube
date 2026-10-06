@@ -16,6 +16,7 @@ These hold for every step until a later one deliberately changes them.
 
 | Step | What landed | Commit |
 | --- | --- | --- |
+| Linux and Windows releases 3. Releases and first-run reports (step 2) | A `v*` tag's draft also takes the Linux and Windows builds of the tagged commit from `packages.yml`: only a platform whose package and first-frame jobs passed, whose archive matches its `.sha256` and whose manifest matches the tag (`scripts/release-manifest.py`, shared with macOS). Each build is downloaded apart and moved into the draft's files only once every check has passed. While preview, a missing or failed build, or an error from GitHub's API, leaves that platform out with a warning at the top of the notes, and macOS goes ahead; the notes add a preview install section for each build included. [FIRST_RUN.md](FIRST_RUN.md) holds the tester's checklist (start, fixture, one real context read-only, logs, a shell, a remembered key, scaling, terminal output) and the record that turns a platform supported. Checked with a fake `gh` against a pull request run's real artifacts: all present, no run, a failed job, an expired artifact, a corrupt archive, a CRLF checksum, a download that fails partway, and a failed API call for the run and for its jobs. Replayed with the real `gh` against `main`'s first packages run (`f0a9748`, 0.6.0): both builds verified and attached; and against 0.6.0's tagged commit (`82bb938`), which has no packages run: macOS only, with the warning | the commit that adds this row |
 | Linux and Windows releases 2. Packages and first frame (step 2) | `packages.yml`, apart from CI so a failure never holds back macOS, packages every push to `main` (and by hand on a branch) with `scripts/package-portable.py`: a reproducible Linux tarball built on Ubuntu 22.04 (glibc 2.35 floor, linked libraries checked against `linux-runtime-packages.txt`) and a Windows zip with a static C runtime and a GUI-subsystem executable that attaches to a parent terminal's console. Each has a `.sha256` and a manifest, kept 90 days. Machines that didn't build them start the extracted archive with `--fixture` (Linux in a bare `ubuntu:22.04` container with only the runtime packages, Xvfb and Mesa's software rendering; Windows on WARP) and wait for `first frame: window` ([PACKAGING.md](PACKAGING.md)) | the commit that adds this row |
 | Linux and Windows releases 1. Window first frame (step 2) | `FRESHKUBE_FIRST_FRAME=1` prints `first frame: window after N ms` when the shell first draws, whatever page opens and in release builds too, so a release smoke check can see a packaged binary draw. `freshkube-probe`'s `first_frame` timer is compiled into every build; it stays silent without the variable, costing one atomic load per shell render. The Pods mark stays debug-only | the commit that adds this row |
 | G6 glyphs and the skull ([#46](https://github.com/skel84/freshkube/issues/46), step 6.13) | `ui::status_glyph` draws the G6 Round set instead of the dot, triangle and diamond: a dot in a halo, a half-filled ring, a disc with a bar cut out, a dashed ring, a ring with a plus and, for information such as log errors, a small blue dot (`Tone::Info`), 10 dp at every text size, from compiled-in SVGs painted as alpha masks. A new `Tone::Died` draws a skull in the critical colour; Pods give it to a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`, in an init container too) and so does a pod's cause card, while one that can't start keeps the critical disc. Died pods count and group as failing. `status_mark` is an image named by its tooltip. Unit tests rasterise every drawing; UI tests check the marks' size and labels at 13 and 20 px and Pods' mapping and counts | the commit that adds this row |
@@ -303,12 +304,9 @@ Alongside it, [#22](https://github.com/skel84/freshkube/issues/22) closes:
 
 ### 2. Linux and Windows releases
 
-CI already compiles and tests Linux and Windows. `release.yml` adds a Linux tarball and a Windows zip (an installer later), built from the same commit as the macOS bundles and attached to the same draft release.
-- Neither platform can be looked at on our Macs, so the check is in three parts:
-  1. CI runs the full tests on both.
-  2. A release smoke step starts each binary with `--fixture` (under a virtual display on Linux) and checks that it reaches its first frame (`FRESHKUBE_FIRST_FRAME`).
-  3. A tester's first-run report on each platform (start, fixture, one real context, logs, a shell) is recorded in the release notes before the artifact is called supported.
-- Developer ID signing and notarization stay in step 8.
+Landed (Done, "Linux and Windows releases" 1–3): `packages.yml` builds a Linux tarball and a Windows zip from every push to `main` and opens a window from each in CI, and a release draft attaches them, as preview, when both of a platform's jobs passed ([PACKAGING.md](PACKAGING.md)). 0.6.0 shipped macOS only, since it was tagged before `packages.yml` reached `main`.
+- Still open: a tester's [first-run report](FIRST_RUN.md) on each platform. The first release after one with no blocking problem calls that platform supported, and its build becomes required.
+- An installer later. ARM builds and Developer ID signing and notarization stay in step 8.
 
 ### 3. The delivery chain, step 1: ownership and evidence
 
@@ -349,6 +347,7 @@ Taken as they come up, between larger steps:
 
 - CloudNativePG investigation ([F08](FUTURE_IDEAS.md#f08-build-the-cloudnativepg-investigation)).
 - Developer ID signing and notarization.
+- ARM builds for Linux and Windows (`aarch64-unknown-linux-gnu`, `aarch64-pc-windows-msvc`), after signing.
 - Kubeconfig auth plugins (exec and OIDC) beyond what works today.
 - CLI and MCP explanations ([F11](FUTURE_IDEAS.md#f11-expose-shared-explanations-through-cli-and-mcp)).
 - The rest of [FUTURE_IDEAS.md](FUTURE_IDEAS.md): shared store and workload health (F02, F03), traffic paths (F05), planned changes (F06), integration contracts (F07) and change history (F09).

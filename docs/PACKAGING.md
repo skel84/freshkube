@@ -93,6 +93,25 @@ and files are added in sorted order.
 This workflow is apart from `ci.yml`, so a failure here never stops a macOS
 release while these platforms are preview.
 
+## Releases
+
+A `v*` tag's [Release](../.github/workflows/release.yml) workflow, after
+verifying the macOS bundles ([MACOS_PACKAGING.md](MACOS_PACKAGING.md#releases)):
+1. Finds the finished `packages.yml` run on `main` for the tagged commit.
+2. For each platform whose package and first-frame jobs both passed, downloads
+   its build and checks the archive against its `.sha256` and the manifest
+   (`scripts/release-manifest.py`) against the tag.
+3. Attaches each verified build to the draft, with a preview install section in
+   the notes.
+
+While a platform is preview, a run still going or never started, a failed
+job, a failed or expired download, a mismatch or an error from GitHub's API
+leaves that platform out. A build is downloaded apart and joins the draft only
+once every check has passed. It adds a warning at the top of the
+notes and in the run's annotations, and the macOS release goes ahead. A
+platform turns supported, and its build required, with its first
+[first-run report](FIRST_RUN.md).
+
 ## Install a preview build
 
 **Linux:**
@@ -115,8 +134,8 @@ the Secret Service (GNOME Keyring, KWallet).
 
 ## Before a platform is supported
 
-A tester's first-run report on that platform is recorded before its build is
-called supported:
+A tester's first-run report on that platform is recorded in
+[FIRST_RUN.md](FIRST_RUN.md) before its build is called supported:
 - start, `--fixture`, one real context read-only, logs and a shell;
 - no names, hosts or cluster details from the tester's environment.
 
