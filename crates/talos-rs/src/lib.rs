@@ -33,6 +33,7 @@ pub mod config;
 pub mod error;
 mod log_stream;
 pub mod talosctl;
+mod target;
 
 /// Generated protobuf types and gRPC clients
 pub mod proto {
@@ -119,3 +120,4 @@ pub use talosctl::{
     get_volume_status_insecure, is_kubespan_enabled, is_kubespan_enabled_for_node, reboot_insecure,
     shutdown_insecure,
 };
+pub use target::target_host;

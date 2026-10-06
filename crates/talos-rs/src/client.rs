@@ -8,6 +8,7 @@ use crate::error::TalosError;
 use crate::proto::machine::machine_service_client::MachineServiceClient;
 use crate::proto::machine::{EtcdMemberListRequest, LogsRequest, NetstatRequest, netstat_request};
 use crate::proto::time::time_service_client::TimeServiceClient;
+use crate::target::{is_loopback, target_host};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_stream::StreamExt;
 use tonic::Request;
@@ -36,7 +37,7 @@ pub struct TalosClient {
     connection_id: u64,
     /// Target nodes for API requests
     nodes: Vec<String>,
-    /// Endpoints from configuration (used to filter out vIPs from node targeting)
+    /// Endpoints from configuration, named when no node acknowledges a mutation
     endpoints: Vec<String>,
 }
 
@@ -117,118 +118,48 @@ impl TalosClient {
             .unwrap_or_else(|| {
                 self.nodes
                     .get(index)
-                    .map(|n| n.split(':').next().unwrap_or(n).to_string())
-                    .unwrap_or_else(|| {
-                        self.nodes
-                            .first()
-                            .map(|n| n.split(':').next().unwrap_or(n).to_string())
-                            .unwrap_or_else(|| "node".to_string())
-                    })
+                    .or_else(|| self.nodes.first())
+                    .map_or_else(|| "node".to_string(), |n| target_host(n).to_string())
             })
     }
 
+    /// The configured targets as hosts apid can reach, without ports.
+    ///
+    /// Loopback entries name the machine making the request, not a node,
+    /// so they are left out.
+    fn target_hosts(&self) -> Vec<&str> {
+        self.nodes
+            .iter()
+            .map(|node| target_host(node))
+            .filter(|host| !is_loopback(host))
+            .collect()
+    }
+
     /// Add node targeting metadata to a request
-    /// If no explicit nodes are configured, don't add the header
+    /// If no node is left to target, don't add the header
     /// (Talos will respond from the endpoint node itself)
     ///
     /// Uses the correct Talos API metadata format:
     /// - "node" (singular) for single-node targeting (direct proxy)
     /// - "nodes" (plural) with multiple values for multi-node targeting (aggregated response)
     fn with_nodes<T>(&self, mut request: Request<T>) -> Request<T> {
-        // Only add nodes metadata if explicitly configured (not just endpoints)
-        // When nodes is empty or same as endpoints, skip the header
-        if !self.nodes.is_empty() {
-            // Identify vIPs: endpoints that are NOT in the nodes list
-            // These are load balancers/VIPs that shouldn't be targeted as nodes
-            // Endpoints that ARE also in nodes are real nodes and should be kept
-            let vips: std::collections::HashSet<&str> = self
-                .endpoints
-                .iter()
-                .filter_map(|e| {
-                    let endpoint_host = e.split(':').next().unwrap_or(e);
-                    // Check if this endpoint also appears in the nodes list
-                    let is_also_a_node = self.nodes.iter().any(|n| {
-                        let node_host = n.split(':').next().unwrap_or(n);
-                        node_host == endpoint_host
-                    });
-                    // It's a vIP only if it's NOT also a node
-                    if is_also_a_node {
-                        None
-                    } else {
-                        Some(endpoint_host)
-                    }
-                })
-                .collect();
-
-            // Filter out localhost and vIPs from nodes
-            let valid_nodes: Vec<String> = self
-                .nodes
-                .iter()
-                .filter(|n| {
-                    let is_localhost = n.starts_with("127.0.0.1") || n.starts_with("localhost");
-                    let node_host = n.split(':').next().unwrap_or(n);
-                    let is_vip = vips.contains(node_host);
-                    !is_localhost && !is_vip
-                })
-                .map(|n| n.split(':').next().unwrap_or(n).to_string())
-                .collect();
-
-            if valid_nodes.len() == 1 {
-                // Single node: use "node" header (direct proxy, no aggregation)
-                if let Ok(value) = valid_nodes[0].parse() {
-                    request.metadata_mut().insert("node", value);
-                }
-            } else if !valid_nodes.is_empty() {
-                // Multiple nodes: use "nodes" header with multiple values
-                // Each node must be appended as a separate metadata value (not comma-separated)
-                // This matches the Go client's behavior: md.Set("nodes", nodes...)
-                for node in &valid_nodes {
-                    if let Ok(value) = node.parse() {
-                        request.metadata_mut().append("nodes", value);
-                    }
+        let hosts = self.target_hosts();
+        if let [host] = hosts.as_slice() {
+            // Single node: use "node" header (direct proxy, no aggregation)
+            if let Ok(value) = host.parse() {
+                request.metadata_mut().insert("node", value);
+            }
+        } else {
+            // Multiple nodes: use "nodes" header with multiple values
+            // Each node must be appended as a separate metadata value (not comma-separated)
+            // This matches the Go client's behavior: md.Set("nodes", nodes...)
+            for host in hosts {
+                if let Ok(value) = host.parse() {
+                    request.metadata_mut().append("nodes", value);
                 }
             }
         }
         request
-    }
-
-    /// Get the filtered target nodes that would be sent in API requests
-    ///
-    /// This filters out:
-    /// - localhost/127.0.0.1 entries (proxy endpoints)
-    /// - Entries that match vIPs (endpoints NOT also in nodes list)
-    ///
-    /// Returns the list of actual node hostnames (without ports).
-    #[doc(hidden)]
-    pub fn filtered_target_nodes(&self) -> Vec<String> {
-        // Identify vIPs: endpoints that are NOT in the nodes list
-        let vips: std::collections::HashSet<&str> = self
-            .endpoints
-            .iter()
-            .filter_map(|e| {
-                let endpoint_host = e.split(':').next().unwrap_or(e);
-                let is_also_a_node = self.nodes.iter().any(|n| {
-                    let node_host = n.split(':').next().unwrap_or(n);
-                    node_host == endpoint_host
-                });
-                if is_also_a_node {
-                    None
-                } else {
-                    Some(endpoint_host)
-                }
-            })
-            .collect();
-
-        self.nodes
-            .iter()
-            .filter(|n| {
-                let is_localhost = n.starts_with("127.0.0.1") || n.starts_with("localhost");
-                let node_host = n.split(':').next().unwrap_or(n);
-                let is_vip = vips.contains(node_host);
-                !is_localhost && !is_vip
-            })
-            .map(|n| n.split(':').next().unwrap_or(n).to_string())
-            .collect()
     }
 
     /// Get version information from all configured nodes
@@ -2144,14 +2075,14 @@ pub struct EtcdMemberInfo {
 
 impl EtcdMemberInfo {
     /// Extract IP address from peer_urls
-    /// e.g., "https://10.5.0.2:2380" -> "10.5.0.2"
+    /// e.g., "https://10.5.0.2:2380" -> "10.5.0.2",
+    /// "https://[2001:db8::5]:2380" -> "2001:db8::5"
     pub fn ip_address(&self) -> Option<String> {
         self.peer_urls.first().and_then(|url| {
-            // Parse URL like "https://10.5.0.2:2380"
             url.split("://")
                 .nth(1)
-                .and_then(|host_port| host_port.split(':').next())
-                .map(|s| s.to_string())
+                .map(|authority| authority.split('/').next().unwrap_or(authority))
+                .map(|host_port| target_host(host_port).to_string())
         })
     }
 }
@@ -3475,263 +3406,130 @@ mod tests {
         assert_eq!(shutdown.node, "fixture-node");
     }
 
-    #[tokio::test]
-    async fn test_filtered_nodes_removes_vip_only_endpoint() {
-        // Scenario: vIP is an endpoint but NOT in nodes list
-        // This is the correct config - vIP should be filtered if it accidentally ends up in nodes
-        let client = create_test_client(
-            vec![
-                "cluster.example.com".to_string(), // vIP accidentally in nodes
-                "kubec01".to_string(),
-                "kubec02".to_string(),
-            ],
-            vec!["cluster.example.com:50000".to_string()], // vIP endpoint ONLY (not a real node)
-        );
+    /// The `node` and `nodes` metadata `with_nodes` puts on a request.
+    fn targeting(client: &TalosClient) -> (Option<String>, Vec<String>) {
+        let request = client.with_nodes(Request::new(()));
+        let metadata = request.metadata();
+        let node = metadata
+            .get("node")
+            .map(|value| value.to_str().unwrap().to_string());
+        let nodes = metadata
+            .get_all("nodes")
+            .iter()
+            .map(|value| value.to_str().unwrap().to_string())
+            .collect();
+        (node, nodes)
+    }
 
-        let filtered = client.filtered_target_nodes();
-
-        // vIP should be filtered out (it's in endpoints but NOT in the nodes we're targeting)
-        // Wait - in this test, it IS in nodes. The logic is: endpoints NOT in nodes are vIPs.
-        // Here cluster.example.com IS in nodes, so it's not detected as a vIP.
-        // This test represents a misconfiguration - the correct behavior is to keep it
-        // because we can't distinguish a misconfigured vIP from a real node.
-        assert_eq!(filtered, vec!["cluster.example.com", "kubec01", "kubec02"]);
+    fn targeting_one(node: &str) -> (Option<String>, Vec<String>) {
+        targeting(&create_test_client(vec![node.to_string()], vec![]))
     }
 
     #[tokio::test]
-    async fn test_real_user_config_with_vip() {
-        // Scenario: Real user config with vIP + control plane nodes as endpoints
-        // endpoints: [cluster.example.com (vIP), kubec01, kubec02, kubec03]
-        // nodes: [kubec01, kubec02, kubec03, kubew01, kubew02]
-        let client = create_test_client(
-            vec![
-                "kubec01.example.com".to_string(),
-                "kubec02.example.com".to_string(),
-                "kubec03.example.com".to_string(),
-                "kubew01.example.com".to_string(),
-                "kubew02.example.com".to_string(),
-            ],
-            vec![
-                "cluster.example.com:50000".to_string(), // vIP - NOT in nodes
-                "kubec01.example.com:50000".to_string(), // CP node - also in nodes
-                "kubec02.example.com:50000".to_string(), // CP node - also in nodes
-                "kubec03.example.com:50000".to_string(), // CP node - also in nodes
-            ],
+    async fn targets_an_ipv4_host_without_its_port() {
+        assert_eq!(
+            targeting_one("10.5.0.2:50000"),
+            (Some("10.5.0.2".to_string()), vec![])
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // All 5 nodes should remain - control plane nodes are endpoints AND nodes (real nodes)
-        // cluster.example.com is NOT filtered because it's not in the nodes list to begin with
-        assert_eq!(filtered.len(), 5);
-        assert!(filtered.contains(&"kubec01.example.com".to_string()));
-        assert!(filtered.contains(&"kubec02.example.com".to_string()));
-        assert!(filtered.contains(&"kubec03.example.com".to_string()));
-        assert!(filtered.contains(&"kubew01.example.com".to_string()));
-        assert!(filtered.contains(&"kubew02.example.com".to_string()));
     }
 
     #[tokio::test]
-    async fn test_vip_in_nodes_list_filtered() {
-        // Scenario: User accidentally adds vIP to nodes list
-        // This can happen when nodes defaults to endpoints
-        // The vIP (cluster.example.com) is in endpoints but NOT also listed as a real node endpoint
-        let client = create_test_client(
-            vec![
-                "cluster.example.com".to_string(), // vIP accidentally in nodes
-                "node1".to_string(),
-                "node2".to_string(),
-            ],
-            vec![
-                "cluster.example.com:50000".to_string(), // This is the only endpoint - a vIP
-            ],
+    async fn targets_a_bare_ipv6_address_whole() {
+        assert_eq!(
+            targeting_one("2001:db8::5"),
+            (Some("2001:db8::5".to_string()), vec![])
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // cluster.example.com IS in nodes, so by our logic it's treated as a real node
-        // This is a known limitation - we can't detect misconfigured vIPs in nodes
-        // The user should not add vIPs to their nodes list
-        assert_eq!(filtered, vec!["cluster.example.com", "node1", "node2"]);
     }
 
     #[tokio::test]
-    async fn test_filtered_nodes_removes_localhost() {
-        // Scenario: local proxy endpoint
+    async fn targets_a_bracketed_ipv6_address_without_its_port() {
+        assert_eq!(
+            targeting_one("[2001:db8::5]:50000"),
+            (Some("2001:db8::5".to_string()), vec![])
+        );
+    }
+
+    #[tokio::test]
+    async fn targets_a_hostname_as_given() {
+        assert_eq!(
+            targeting_one("node1.example.com"),
+            (Some("node1.example.com".to_string()), vec![])
+        );
+    }
+
+    #[tokio::test]
+    async fn loopback_targets_leave_the_endpoint_to_answer() {
+        for node in [
+            "127.0.0.1:50000",
+            "localhost:50000",
+            "localhost",
+            "[::1]:50000",
+        ] {
+            assert_eq!(targeting_one(node), (None, vec![]), "{node}");
+        }
+    }
+
+    #[tokio::test]
+    async fn loopback_targets_are_dropped_from_a_list() {
         let client = create_test_client(
             vec![
                 "127.0.0.1:50000".to_string(),
                 "node1".to_string(),
-                "node2".to_string(),
+                "[2001:db8::6]:50000".to_string(),
             ],
             vec!["127.0.0.1:50000".to_string()],
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        assert_eq!(filtered, vec!["node1", "node2"]);
-        assert!(!filtered.iter().any(|n| n.starts_with("127.0.0.1")));
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_removes_localhost_variant() {
-        // Scenario: localhost hostname
-        let client = create_test_client(
-            vec!["localhost:50000".to_string(), "node1".to_string()],
-            vec!["localhost:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        assert_eq!(filtered, vec!["node1"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_strips_ports() {
-        // Ports should be stripped from node names
-        let client = create_test_client(
-            vec!["node1:50000".to_string(), "node2:50000".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        assert_eq!(filtered, vec!["node1", "node2"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_when_nodes_equal_endpoints() {
-        // Scenario: nodes = endpoints (e.g., nodes defaults to endpoints)
-        // Since the endpoint IS in the nodes list, it's treated as a real node
-        let client = create_test_client(
-            vec!["cluster.example.com:50000".to_string()], // same as endpoint
-            vec!["cluster.example.com:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // Since the endpoint appears in nodes, it's treated as a real node, not a vIP
-        // This is intentional - if it's in nodes, we assume the user wants to target it
-        assert_eq!(filtered, vec!["cluster.example.com"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_vip_not_in_nodes() {
-        // Scenario: vIP is an endpoint but NOT in nodes list (correct config)
-        // This is the proper way to configure - vIP should not be in nodes
-        let client = create_test_client(
-            vec![
-                "actual-node-1.cluster.local".to_string(),
-                "actual-node-2.cluster.local".to_string(),
-            ],
-            vec!["vip.cluster.local:50000".to_string()], // vIP is only an endpoint
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // vIP is not in nodes list, so nothing to filter
-        // All nodes are kept
         assert_eq!(
-            filtered,
-            vec!["actual-node-1.cluster.local", "actual-node-2.cluster.local"]
+            targeting(&client),
+            (None, vec!["node1".to_string(), "2001:db8::6".to_string()])
         );
     }
 
     #[tokio::test]
-    async fn test_filtered_nodes_with_vip_accidentally_in_nodes() {
-        // Scenario: vIP accidentally included in nodes (misconfiguration)
-        // vIP is in endpoints but also in nodes
+    async fn endpoints_never_remove_a_configured_node() {
+        // talosctl sends `nodes` as given; an endpoint, VIP or not, only names
+        // where the connection goes.
         let client = create_test_client(
             vec![
-                "vip.cluster.local".to_string(), // vIP accidentally in nodes
-                "actual-node-1.cluster.local".to_string(),
-                "actual-node-2.cluster.local".to_string(),
-            ],
-            vec!["vip.cluster.local:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // Since vip.cluster.local is in BOTH endpoints AND nodes, we can't tell it's a vIP
-        // We keep it because it's in the nodes list
-        assert_eq!(filtered.len(), 3);
-        assert!(filtered.contains(&"vip.cluster.local".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_multiple_endpoints_some_also_nodes() {
-        // Scenario: multiple endpoints, some are also nodes (control plane nodes)
-        // This is the real user config pattern
-        let client = create_test_client(
-            vec![
-                "node1".to_string(),   // in both endpoints and nodes - real node
-                "node2".to_string(),   // in both endpoints and nodes - real node
-                "worker1".to_string(), // only in nodes
-                "worker2".to_string(), // only in nodes
+                "cluster.example.com".to_string(),
+                "kubec01".to_string(),
+                "kubew01:50000".to_string(),
             ],
             vec![
-                "vip.example.com:50000".to_string(), // only in endpoints - vIP
-                "node1:50000".to_string(),           // also in nodes - real node
-                "node2:50000".to_string(),           // also in nodes - real node
+                "cluster.example.com:50000".to_string(),
+                "kubec01:50000".to_string(),
             ],
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // All 4 nodes should be kept - vIP is not in nodes list anyway
-        assert_eq!(filtered, vec!["node1", "node2", "worker1", "worker2"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_no_endpoints() {
-        // Scenario: no endpoints configured (edge case)
-        let client = create_test_client(vec!["node1".to_string(), "node2".to_string()], vec![]);
-
-        let filtered = client.filtered_target_nodes();
-
-        // With no endpoints to filter, all non-localhost nodes remain
-        assert_eq!(filtered, vec!["node1", "node2"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_port_stripping() {
-        // Scenario: endpoint has port, nodes don't
-        // This tests the host extraction logic for comparison
-        let client = create_test_client(
-            vec![
-                "vip.example.com".to_string(), // in nodes
-                "node1".to_string(),
-                "node2".to_string(),
-            ],
-            vec!["vip.example.com:50000".to_string()], // matches after stripping port
+        assert_eq!(
+            targeting(&client),
+            (
+                None,
+                vec![
+                    "cluster.example.com".to_string(),
+                    "kubec01".to_string(),
+                    "kubew01".to_string()
+                ]
+            )
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // Since vip.example.com is in BOTH endpoints (after port strip) AND nodes,
-        // it's treated as a real node and kept
-        assert_eq!(filtered, vec!["vip.example.com", "node1", "node2"]);
     }
 
-    #[tokio::test]
-    async fn test_vip_filtered_when_not_in_nodes() {
-        // Test that a vIP IS filtered when it somehow ends up in the nodes header
-        // but it's identified as a vIP (endpoint NOT in nodes list)
-        // This tests the core vIP detection logic
-        let client = create_test_client(
-            vec!["node1".to_string(), "node2".to_string()],
-            vec![
-                "vip.example.com:50000".to_string(), // NOT in nodes - this is a pure vIP
-                "node1:50000".to_string(),           // in nodes - real node endpoint
-            ],
+    #[test]
+    fn etcd_member_address_keeps_ipv6_whole() {
+        let member = |url: &str| EtcdMemberInfo {
+            id: 1,
+            hostname: "cp1".to_string(),
+            peer_urls: vec![url.to_string()],
+            client_urls: vec![],
+            is_learner: false,
+        };
+        assert_eq!(
+            member("https://10.5.0.2:2380").ip_address().as_deref(),
+            Some("10.5.0.2")
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // vip.example.com is NOT in nodes, so it's identified as a vIP
-        // If it were accidentally added to nodes, it would be filtered
-        // But here, nodes only contains node1, node2 - both should remain
-        assert_eq!(filtered, vec!["node1", "node2"]);
+        assert_eq!(
+            member("https://[2001:db8::5]:2380").ip_address().as_deref(),
+            Some("2001:db8::5")
+        );
     }
 
     // =========================================================================
