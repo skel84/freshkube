@@ -8,8 +8,9 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle, ScrollStrategy,
-    SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
+    AnyElement, AnyView, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle,
+    ScrollStrategy, SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px,
+    uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -107,6 +108,15 @@ impl TableState {
         format!("{}-{part}", self.ids.prefix).into()
     }
 
+    /// Where the rows are in the window, for a layer drawn over them, such
+    /// as the change flash ([`super::FlashLayer`]).
+    pub fn rows_at(&self) -> super::RowsAt {
+        super::RowsAt {
+            list: self.scroll.clone(),
+            sideways: self.sideways.clone(),
+        }
+    }
+
     /// Scrolls a line into view.
     pub fn reveal(&self, line: usize, strategy: ScrollStrategy) {
         self.scroll.scroll_to_item(line, strategy);
@@ -190,6 +200,12 @@ pub trait TableSource: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+    }
+    /// What replaces the rows until the first answer: a
+    /// [`super::LoadingRows`] view the page keeps, under the real header.
+    /// While it shows, [`empty`](Self::empty) isn't asked.
+    fn loading(&self) -> Option<AnyView> {
+        None
     }
     /// What replaces the rows when there are none, such as a line or a
     /// title and a hint; the table gives it its padding and muted text.
@@ -312,12 +328,17 @@ impl DataTable {
         } else {
             cx.theme().background
         };
-        let empty = source.empty(cx);
+        let loading = source.loading();
+        let empty = if loading.is_some() {
+            None
+        } else {
+            source.empty(cx)
+        };
         let is_empty = empty.is_some();
         // A fitted list is as tall as its lines; an empty one as its state.
         let list_height = self
             .fit
-            .filter(|_| empty.is_none())
+            .filter(|_| empty.is_none() && loading.is_none())
             .map(|max| source.line_count().min(max) as f32 * ROW_HEIGHT);
         let list = div()
             .id(ids.list.clone())
@@ -329,8 +350,9 @@ impl DataTable {
                 None if self.fit.is_some() => this.flex_none(),
                 None => this.flex_1().min_h_0(),
             })
-            .map(|this| match empty {
-                Some(empty) => this.child(
+            .map(|this| match (loading, empty) {
+                (Some(rows), _) => this.child(rows),
+                (None, Some(empty)) => this.child(
                     div()
                         .id(ids.empty.clone())
                         .test_support()
@@ -340,7 +362,7 @@ impl DataTable {
                         .text_color(palette(cx).muted)
                         .child(empty),
                 ),
-                None => this.child(
+                (None, None) => this.child(
                     uniform_list(
                         ids.rows.clone(),
                         source.line_count(),
