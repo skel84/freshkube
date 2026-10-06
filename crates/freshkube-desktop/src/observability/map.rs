@@ -113,7 +113,6 @@ impl GraphSource for ObservabilityPage {
         let Some(edge) = selected.and_then(|selected| self.map_connection(selected)) else {
             return muted("Choose a connection to inspect its evidence", cx).into_any_element();
         };
-        let app = edge.id.0.clone();
         v_flex()
             .gap(dp(12.))
             .min_w_0()
@@ -124,10 +123,23 @@ impl GraphSource for ObservabilityPage {
             )
             .child(mono(edge.label.clone()))
             .child(text(edge.detail.clone()))
-            .child(action("obs-map-open-app", "Open application").on_click(
-                cx.listener(move |this, _, _, cx| this.open_app(app.clone(), Report::Net, cx)),
-            ))
             .into_any_element()
+    }
+
+    /// The selected connection's one action: its caller's report.
+    fn inspector_footer(
+        &self,
+        selected: Option<&GraphEdge<AppId>>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let app = self.map_connection(selected?)?.id.0.clone();
+        Some(
+            action("obs-map-open-app", "Open application")
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.open_app(app.clone(), Report::Net, cx)),
+                )
+                .into_any_element(),
+        )
     }
 
     fn empty(&self, _: &mut Context<Self>) -> AnyElement {
@@ -264,6 +276,28 @@ mod tests {
             window.scroll(node, ScrollDelta::Pixels(point(px(-1000.), px(0.))), cx);
             window.render_frame(cx);
             assert!(window.find("obs-map-graph").bounds().left() < before.left());
+        })
+        .unwrap();
+    }
+
+    /// Open application moved into the inspector's footer: it keeps its id
+    /// and opens the selected connection's caller.
+    #[gpui_kit::test]
+    fn the_footer_opens_the_selected_connection_s_caller(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = mount(cx, true);
+        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::ServiceMap, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("obs-map-open-app").is_none());
+            let connection = page.read(cx).connections[0].clone();
+            window.click(connection.button_id.clone(), cx);
+            window.render_frame(cx);
+            assert!(window.try_find("obs-map-inspector-footer").is_some());
+            window.click("obs-map-open-app", cx);
+            let page = page.read(cx);
+            assert_eq!(page.destination, Destination::Application);
+            assert_eq!(page.selected_app.as_ref(), Some(&connection.id.0));
         })
         .unwrap();
     }
