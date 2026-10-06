@@ -2735,18 +2735,42 @@ fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext)
             window.press("secondary-}", cx);
         }
     });
-    step(cx, &|window, _| {
+    step(cx, &|window, cx| {
         let list = window.find("resource-list").bounds();
         let pane = window.find("resource-detail").bounds();
-        let lines = window
-            .within("resource-detail")
-            .find("logs-viewport")
-            .bounds();
         // The pane stacks under the list and takes the larger share.
         assert!(pane.top() >= list.bottom(), "{list:?} {pane:?}");
         assert!(pane.size.height > list.size.height, "{list:?} {pane:?}");
         assert!(pane.bottom() <= px(560.), "{pane:?}");
-        // At least three log lines show.
+        // The crash-looping pod's restart banner shows whole, never cut by
+        // the log's toolbar (#231).
+        let toolbar = window.find("logs-toolbar").bounds();
+        let banner = window.find("pod-logs-hint").bounds();
+        assert!(
+            banner.top() >= toolbar.top() && banner.bottom() <= toolbar.bottom(),
+            "{banner:?} is cut by {toolbar:?}"
+        );
+        assert!(banner.bottom() <= window.find("logs-viewport").bounds().top());
+        // The log panel scrolls on to its lines: at least three show.
+        let panel = window.find("logs-panel").bounds();
+        for _ in 0..20 {
+            let lines = window.find("logs-viewport").bounds();
+            if lines.bottom() <= pane.bottom() {
+                break;
+            }
+            use gpui_kit::InputEvent as _;
+            window.dispatch_event(
+                gpui_kit::ScrollWheelEvent {
+                    position: point(panel.center().x, panel.top() + px(4.)),
+                    delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-40.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.render_frame(cx);
+        }
+        let lines = window.find("logs-viewport").bounds();
         assert!(lines.size.height >= px(54.), "{lines:?}");
         assert!(lines.bottom() <= pane.bottom(), "{lines:?} {pane:?}");
     });

@@ -1,0 +1,1 @@
+- In a short pane a log's controls and a crash-looping pod's restart banner show whole; the panel scrolls on to the lines instead of cutting the banner.

@@ -37,7 +37,8 @@ use std::{
 
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Entity, FocusHandle, Global,
-    KeyBinding, Pixels, Point, SharedString, Size, Subscription, Task, Window, actions,
+    KeyBinding, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task, Window,
+    actions,
     component::{
         VirtualListScrollHandle,
         input::{InputEvent, InputState},
@@ -239,6 +240,9 @@ pub struct LogView<S: LogSource> {
     manual_review: Rc<Cell<bool>>,
     width: Option<Pixels>,
     panel_height: Option<Pixels>,
+    /// Scrolls the whole panel when it is shorter than its controls and
+    /// notices over the list's least height, so none of them is cut.
+    panel_scroll: ScrollHandle,
     measured: Option<MeasurementKey>,
     sizes: Rc<Vec<Size<Pixels>>>,
     /// The sum of the heights in `sizes`, kept in step with every change to
@@ -325,6 +329,7 @@ impl<S: LogSource> LogView<S> {
             scroll: VirtualListScrollHandle::new(),
             width: None,
             panel_height: None,
+            panel_scroll: ScrollHandle::new(),
             measured: None,
             sizes: Rc::new(Vec::new()),
             sizes_height: 0.,
