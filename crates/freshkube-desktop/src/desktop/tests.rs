@@ -3662,6 +3662,127 @@ fn the_visible_page_fills_the_status_bar_and_its_reads_reach_it(cx: &mut TestApp
     .unwrap();
 }
 
+/// A screen whose status bar segment a test sets.
+struct SegmentScreen(Option<freshkube_ui::status::Segment>);
+
+impl gpui_kit::EventEmitter<crate::screens::ScreenEvent> for SegmentScreen {}
+
+impl gpui_kit::Render for SegmentScreen {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        gpui_kit::div()
+    }
+}
+
+impl crate::screens::ScreenPanel for SegmentScreen {
+    fn new(
+        _: tokio::runtime::Handle,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> Self {
+        Self(None)
+    }
+
+    fn set_source(
+        &mut self,
+        _: Option<crate::screens::ScreenSource>,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) {
+    }
+
+    fn activate(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
+
+    fn status(&self) -> Option<&freshkube_ui::status::Segment> {
+        self.0.as_ref()
+    }
+}
+
+#[gpui_kit::test]
+fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContext) {
+    use super::pages::ScreenKind;
+    use freshkube_ui::status::Segment;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    // etcd's page draws a screen that sets its segment as the test says.
+    let screen = cx.new(|_| SegmentScreen(Some(Segment::new(None::<SharedString>, ["3 members"]))));
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            let slot = view
+                .screens
+                .iter_mut()
+                .find(|(kind, _)| *kind == ScreenKind::Etcd)
+                .expect("etcd has a screen");
+            slot.1 = crate::screens::ScreenHandle::new(screen.clone());
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let line = segment(window, "etcd-scope").expect("etcd's segment");
+        assert!(line.contains("3 members"), "{line}");
+    })
+    .unwrap();
+
+    // A new segment reaches the bar on the next frame: the screen's notify
+    // asks for one and marks the shell above it dirty, with no event of its
+    // own.
+    let notices = Rc::new(Cell::new(0usize));
+    cx.update(|cx| {
+        let seen = notices.clone();
+        cx.observe(&screen, move |_, _| seen.set(seen.get() + 1))
+            .detach();
+        screen.update(cx, |screen, cx| {
+            screen.0 = Some(Segment::new(None::<SharedString>, ["2 members"]));
+            cx.notify();
+        })
+    });
+    assert_eq!(notices.get(), 1, "the change asks for a frame");
+    cx.update_window(handle, |_, window, cx| {
+        draw(window, cx);
+        let line = segment(window, "etcd-scope").unwrap();
+        assert!(line.contains("2 members"), "{line}");
+    })
+    .unwrap();
+
+    // Hidden, the screen's segment never shows, even when it changes; the
+    // visible page's screen has none, so the bar has no segment.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Security, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        screen.update(cx, |screen, cx| {
+            screen.0 = Some(Segment::new(None::<SharedString>, ["1 member"]));
+            cx.notify();
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("etcd-scope").is_none());
+        // Security's own line under its header shares the id, so look in
+        // the bar alone.
+        let in_bar = |element: gpui_kit::test::ElementSnapshot| {
+            element
+                .path()
+                .contains(&gpui_kit::ElementId::from("status-bar"))
+        };
+        assert!(!window.try_find("security-scope").is_some_and(in_bar));
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_compact_status_bar_keeps_the_shells_glyph_and_gives_the_page_the_room(
     cx: &mut TestAppContext,

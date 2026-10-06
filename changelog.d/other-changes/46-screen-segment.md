@@ -1,0 +1,1 @@
+- Screens can fill the status bar's page segment, which the next change uses for etcd and Security; nothing changes on screen yet.
