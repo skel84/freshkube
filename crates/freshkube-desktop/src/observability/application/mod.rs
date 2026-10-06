@@ -6,13 +6,18 @@ use super::*;
 use connection::Subject;
 use freshkube_core::coroot as api;
 
+mod charts;
 mod example;
 mod strip;
 mod table;
 #[cfg(test)]
 mod tests;
 
+pub(super) use charts::{ChartKey, ShownChart};
 pub(super) use table::ReportTable;
+
+/// The narrowest a chart is drawn before it takes a row of its own.
+const MIN_CHART_WIDTH: f32 = 360.;
 
 /// What the page shows of one answer and the chosen report.
 pub(super) struct AppPage {
@@ -54,6 +59,9 @@ enum BlockKind {
     Header(SharedString),
     /// The page's table, by its place in `AppPage::tables`.
     Table(usize),
+    /// A chart, or a group of charts of which one shows.
+    Charts(Rc<charts::Charts>),
+    Heatmap(Box<charts::HeatBlock>),
     Profiling,
     Tracing,
 }
@@ -116,6 +124,8 @@ impl AppPage {
             said: vec![],
         };
         if let Some(report) = view.reports.iter().find(|r| r.name == report) {
+            let slug = report.name.to_lowercase().replace(' ', "-");
+            let key = |ix: usize| (view.map.app.id.clone(), report.name.clone(), ix);
             page.checks = report.checks.iter().map(check).collect();
             let logs = report.widgets.iter().filter_map(|w| match &w.kind {
                 api::WidgetKind::Logs(Some(check)) => Some(check),
@@ -127,8 +137,17 @@ impl AppPage {
                     page.said.push(check.message.clone());
                 }
             }
-            for widget in &report.widgets {
+            for (ix, widget) in report.widgets.iter().enumerate() {
                 let kind = match &widget.kind {
+                    api::WidgetKind::Chart(chart) => {
+                        BlockKind::Charts(Rc::new(charts::Charts::chart(key(ix), &slug, chart)))
+                    }
+                    api::WidgetKind::ChartGroup { title, charts } => BlockKind::Charts(Rc::new(
+                        charts::Charts::group(key(ix), &slug, title, charts),
+                    )),
+                    api::WidgetKind::Heatmap(heatmap) => {
+                        BlockKind::Heatmap(Box::new(charts::HeatBlock::new(&slug, ix, heatmap)))
+                    }
                     api::WidgetKind::Header(title) => BlockKind::Header(title.clone().into()),
                     api::WidgetKind::Table(table) => {
                         page.tables.push(Rc::new(table::Prepared::new(table)));
@@ -144,7 +163,9 @@ impl AppPage {
                     _ => continue,
                 };
                 let width = match kind {
-                    BlockKind::Table(_) => widget.width,
+                    BlockKind::Table(_) | BlockKind::Charts(_) | BlockKind::Heatmap(_) => {
+                        widget.width
+                    }
                     _ => 1.,
                 };
                 page.blocks.push(Block { width, kind });
@@ -446,16 +467,22 @@ impl ObservabilityPage {
                     Some(table) => table.clone().into_any_element(),
                     None => continue,
                 },
+                BlockKind::Charts(charts) => self.render_charts(charts, cx),
+                BlockKind::Heatmap(heat) => self.render_heat_block(heat, cx),
                 BlockKind::Profiling => self.render_live_profiling(cx),
                 BlockKind::Tracing => self.render_live_traces(window, cx),
             };
-            grid = grid.child(
-                div()
-                    .min_w_0()
-                    .w(relative(block.width.clamp(0.1, 1.)))
-                    .p(dp(4.))
-                    .child(content),
-            );
+            let cell = div().min_w_0().p(dp(4.));
+            // A half-width chart pairs with the next, and takes the row
+            // alone when the page is too narrow for two.
+            let cell = match block.kind {
+                BlockKind::Charts(_) | BlockKind::Heatmap(_) => cell
+                    .flex_grow(1.)
+                    .flex_basis(relative(block.width.clamp(0.1, 1.)))
+                    .min_w(dp(MIN_CHART_WIDTH)),
+                _ => cell.w(relative(block.width.clamp(0.1, 1.))),
+            };
+            grid = grid.child(cell.child(content));
         }
         Some(grid.into_any_element())
     }

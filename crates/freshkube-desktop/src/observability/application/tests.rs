@@ -151,15 +151,22 @@ fn the_example_agrees_with_itself() {
     let instances = view.reports.iter().find(|r| r.name == "Instances").unwrap();
     let check = &instances.checks[0];
     assert!(check.message.contains("1/2"), "{}", check.message);
-    let api::WidgetKind::Table(table) = &instances.widgets[0].kind else {
-        panic!("Instances has its table");
-    };
+    let table = instances
+        .widgets
+        .iter()
+        .find_map(|w| match &w.kind {
+            api::WidgetKind::Table(table) => Some(table),
+            _ => None,
+        })
+        .expect("Instances has its table");
     let up = table.rows.iter().filter(|r| r[1].value == "up").count();
     assert_eq!((table.rows.len(), up), (2, 1));
     assert_eq!(view.map.instances.len(), 2);
     // Another application lists its own pod, not the worker's.
     let ledger = super::example::app_view(&example::id("payments/ledger-db"));
     assert_eq!(ledger.map.instances[0].id, "ledger-db-0");
+    // Every report stays under core's limit on widgets.
+    assert!(view.reports.iter().all(|r| r.widgets.len() < 128));
 }
 
 /// A live page on the worker's report, its view not read yet.
@@ -291,6 +298,156 @@ fn another_applications_view_never_shows(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("obs-app-loading").visible());
         assert!(window.try_find("obs-app-map").is_none());
+    })
+    .unwrap();
+}
+
+fn chart_keys(page: &super::ObservabilityPage) -> Vec<(String, String, usize)> {
+    page.app_charts
+        .iter()
+        .map(|c| {
+            let (app, report, ix) = c.key();
+            (app.as_str().to_string(), report.clone(), *ix)
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn only_the_shown_reports_charts_are_made(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| page.update(cx, |page, cx| page.open_app(worker(), Report::Cpu, cx)));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for id in ["obs-chart-cpu-0", "obs-chart-cpu-1", "obs-chart-cpu-2"] {
+            assert!(window.find(id).visible(), "{id}");
+        }
+        let app = worker().as_str().to_string();
+        let cpu: Vec<_> = (0..3).map(|ix| (app.clone(), "CPU".into(), ix)).collect();
+        assert_eq!(chart_keys(page.read(cx)), cpu);
+        // A report without charts makes none, and keeps none of the last.
+        window.click("obs-report-profiling", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).app_charts.is_empty());
+        assert!(window.try_find("obs-chart-cpu-0").is_none());
+        window.click("obs-report-slo", cx);
+        window.render_frame(cx);
+        assert!(window.find("obs-chart-slo-0").visible());
+        assert!(window.find("obs-chart-slo-1").visible());
+        assert!(window.find("obs-heatmap-slo-2").visible());
+        let slo: Vec<_> = (0..2).map(|ix| (app.clone(), "SLO".into(), ix)).collect();
+        assert_eq!(chart_keys(page.read(cx)), slo);
+        // The worker's rollout marks its requests.
+        let requests = page.read(cx).app_charts[0].view().clone();
+        let labels = requests.read(cx).marker_labels();
+        assert!(
+            labels.iter().any(|l| l.contains("worker:1.8.2")),
+            "{labels:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_chart_group_opens_on_its_featured_chart_and_picks_another(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| page.update(cx, |page, cx| page.open_app(worker(), Report::Cpu, cx)));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let title = |cx: &gpui_kit::App| page.read(cx).app_charts[0].title().to_string();
+        // The instance that is up is featured, not the first listed.
+        assert_eq!(
+            title(cx),
+            "CPU usage of container worker-6c4f8da0-x2k9q, cores"
+        );
+        window.click("obs-chart-cpu-0-pick-0", cx);
+        window.render_frame(cx);
+        assert!(title(cx).contains(example::POD), "{}", title(cx));
+        assert_eq!(page.read(cx).app_charts.len(), 3);
+        // The pick outlives a trip to another report.
+        window.click("obs-report-net", cx);
+        window.render_frame(cx);
+        assert!(window.find("obs-chart-net-0").visible());
+        window.click("obs-report-cpu", cx);
+        window.render_frame(cx);
+        assert!(title(cx).contains(example::POD), "{}", title(cx));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn another_applications_charts_never_show(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| page.update(cx, |page, cx| page.open_app(worker(), Report::Net, cx)));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(page.read(cx).app_charts.len(), 2);
+        // ledger-db's Net report has no charts of its own.
+        window.click("obs-app-table-0-link-0-0", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).app_charts.is_empty());
+        assert!(window.try_find("obs-chart-net-0").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = live(cx);
+    let chart = |title: &str, series| api::AppChart {
+        title: title.into(),
+        from_ms: 1_760_000_000_000,
+        to_ms: 1_760_000_120_000,
+        step_ms: 60_000,
+        series,
+        ..Default::default()
+    };
+    let points = api::Series {
+        name: "worker".into(),
+        points: vec![Some(0.1), None, Some(0.2)],
+        ..Default::default()
+    };
+    let view = api::AppView {
+        map: api::AppMap {
+            app: api::MapApp {
+                id: worker(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        reports: vec![api::AppReport {
+            name: "CPU".into(),
+            status: api::Status::Ok,
+            checks: vec![],
+            widgets: vec![
+                api::Widget {
+                    kind: api::WidgetKind::Chart(chart("CPU usage, cores", vec![])),
+                    width: 0.5,
+                },
+                api::Widget {
+                    kind: api::WidgetKind::Chart(chart("CPU delay, seconds/second", vec![points])),
+                    width: 0.5,
+                },
+            ],
+            custom: false,
+            instrumentation: String::new(),
+        }],
+    };
+    cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(view))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-chart-cpu-0-empty").visible());
+        assert!(window.try_find("obs-chart-cpu-0").is_none());
+        assert!(window.find("obs-chart-cpu-1").visible());
+        // Only the chart with points has a panel.
+        let keys: Vec<_> = chart_keys(page.read(cx)).into_iter().map(|k| k.2).collect();
+        assert_eq!(keys, [1]);
+        // The two halves share a row.
+        let (left, right) = (
+            window.find("obs-chart-cpu-0-empty").bounds(),
+            window.find("obs-chart-cpu-1").bounds(),
+        );
+        assert!((left.top() - right.top()).abs() < gpui_kit::px(1.));
+        assert!(left.right() <= right.left());
     })
     .unwrap();
 }

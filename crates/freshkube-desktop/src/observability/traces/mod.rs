@@ -3,7 +3,7 @@
 //! waterfall. Display data is prepared when an answer arrives; render reads it.
 use super::*;
 use freshkube_core::coroot as api;
-mod heat;
+pub(super) mod heat;
 mod table;
 #[cfg(test)]
 mod tests;

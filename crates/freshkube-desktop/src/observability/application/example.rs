@@ -199,15 +199,250 @@ fn widgets(
     logs: Option<api::Check>,
 ) -> Vec<api::Widget> {
     let full = |kind| api::Widget { kind, width: 1. };
+    let half = |chart| api::Widget {
+        kind: api::WidgetKind::Chart(chart),
+        width: 0.5,
+    };
     match report {
+        "SLO" if worker => {
+            let [requests, errors] = slo_charts();
+            vec![
+                half(requests),
+                half(errors),
+                full(api::WidgetKind::Heatmap(latency_heatmap())),
+            ]
+        }
+        "Instances" if worker => {
+            let [up, restarted] = instance_charts(pods);
+            vec![
+                half(up),
+                half(restarted),
+                full(api::WidgetKind::Table(instances(pods, restarts))),
+            ]
+        }
         "Instances" => vec![full(api::WidgetKind::Table(instances(pods, restarts)))],
-        "Net" if worker => vec![full(api::WidgetKind::Table(dependencies()))],
+        "CPU" if worker => {
+            let [delay, throttled] = cpu_charts();
+            vec![
+                api::Widget {
+                    kind: cpu_usage(pods),
+                    width: 1.,
+                },
+                half(delay),
+                half(throttled),
+            ]
+        }
+        "Net" if worker => {
+            let [rtt, failed] = net_charts();
+            vec![
+                half(rtt),
+                half(failed),
+                full(api::WidgetKind::Table(dependencies())),
+            ]
+        }
         "Logs" => vec![full(api::WidgetKind::Logs(logs))],
         "Deployments" => vec![full(api::WidgetKind::Table(deployments()))],
         "Profiling" => vec![full(api::WidgetKind::Profiling)],
         "Tracing" => vec![full(api::WidgetKind::Tracing)],
         _ => vec![],
     }
+}
+
+/// Minutes since ledger-db began refusing the worker's connections.
+const FAILING_MINUTES: usize = 20;
+/// The example charts' points, one a minute.
+const POINTS: usize = 60;
+
+/// The example's last hour, ending on the current minute.
+fn hour() -> (i64, i64) {
+    let to = chrono::Utc::now().timestamp() / 60 * 60_000;
+    (to - POINTS as i64 * 60_000, to)
+}
+
+fn chart(title: &str, series: Vec<api::Series>) -> api::AppChart {
+    let (from_ms, to_ms) = hour();
+    api::AppChart {
+        title: title.into(),
+        from_ms,
+        to_ms,
+        step_ms: 60_000,
+        series,
+        ..Default::default()
+    }
+}
+
+fn series(name: &str, points: impl Fn(usize, bool) -> Option<f32>) -> api::Series {
+    api::Series {
+        name: name.into(),
+        points: (0..POINTS)
+            .map(|p| points(p, p >= POINTS - FAILING_MINUTES))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+/// A gentle repeating swing around 1, so lines don't sit flat.
+fn wave(point: usize, phase: usize) -> f32 {
+    1. + 0.15 * ((point + phase) % 7) as f32 / 6. - 0.075
+}
+
+/// A rollout of the worker a little before ledger-db began refusing it.
+fn rollout() -> api::Annotation {
+    let (_, to_ms) = hour();
+    let at = to_ms - (FAILING_MINUTES as i64 + 6) * 60_000;
+    api::Annotation {
+        name: "worker:1.8.2".into(),
+        from_ms: at,
+        to_ms: at,
+        icon: "mdi-swap-horizontal-circle-outline".into(),
+    }
+}
+
+fn slo_charts() -> [api::AppChart; 2] {
+    let fast = series("0-100ms", |p, failing| {
+        Some(if failing { 21. } else { 38. } * wave(p, 0))
+    });
+    let slow = series("100-500ms", |p, failing| {
+        Some(if failing { 9. } else { 4. } * wave(p, 3))
+    });
+    let failed = |name| {
+        series(name, |p, failing| {
+            Some(if failing { 12. * wave(p, 5) } else { 0. })
+        })
+    };
+    let mut total = series("total", |p, failing| {
+        Some(if failing { 42. } else { 42.5 } * wave(p, 1))
+    });
+    total.fill = true;
+    [
+        api::AppChart {
+            stacked: true,
+            threshold: Some(total),
+            annotations: vec![rollout()],
+            ..chart(
+                "Requests to the worker app, per second",
+                vec![fast, slow, failed("errors")],
+            )
+        },
+        api::AppChart {
+            column: true,
+            ..chart("Errors, per second", vec![failed("ledger-db refused")])
+        },
+    ]
+}
+
+fn latency_heatmap() -> api::AppHeatmap {
+    let (from_ms, to_ms) = hour();
+    let row = |name: &str, title: &str, rate: f32, failing_rate: f32| api::Series {
+        name: name.into(),
+        title: title.into(),
+        points: (0..POINTS)
+            .map(|p| {
+                let rate = if p >= POINTS - FAILING_MINUTES {
+                    failing_rate
+                } else {
+                    rate
+                };
+                (rate > 0.).then(|| rate * wave(p, 2))
+            })
+            .collect(),
+        ..Default::default()
+    };
+    api::AppHeatmap {
+        title: "Latency & Errors heatmap, requests per second".into(),
+        from_ms,
+        to_ms,
+        step_ms: 60_000,
+        rows: vec![
+            row("0.1", "100ms", 38., 21.),
+            row("0.5", "500ms", 4., 9.),
+            row("1", "1s", 0.4, 0.),
+            row("errors", "errors", 0., 12.),
+        ],
+    }
+}
+
+fn instance_charts(pods: &[(String, bool)]) -> [api::AppChart; 2] {
+    let up = series("up", |_, failing| Some(if failing { 1. } else { 2. }));
+    let desired = series("desired", |_, _| Some(2.));
+    let restarts = pods
+        .iter()
+        .filter(|(_, failing)| *failing)
+        .map(|(pod, _)| {
+            series(pod, |p, failing| {
+                Some(if failing && p % 3 == 0 { 2. } else { 0. })
+            })
+        })
+        .collect();
+    [
+        api::AppChart {
+            threshold: Some(desired),
+            ..chart("Instances", vec![up])
+        },
+        api::AppChart {
+            column: true,
+            ..chart("Restarts", restarts)
+        },
+    ]
+}
+
+/// CPU usage by container, one chart per instance, the picker opening on
+/// the busier one.
+fn cpu_usage(pods: &[(String, bool)]) -> api::WidgetKind {
+    let charts = pods
+        .iter()
+        .enumerate()
+        .map(|(ix, (pod, failing))| {
+            let usage = if *failing { 0.04 } else { 0.21 };
+            api::AppChart {
+                featured: !failing,
+                threshold: Some(series("limit", |_, _| Some(0.5))),
+                annotations: vec![rollout()],
+                ..chart(
+                    pod,
+                    vec![series("worker", |p, _| Some(usage * wave(p, ix * 2)))],
+                )
+            }
+        })
+        .collect();
+    api::WidgetKind::ChartGroup {
+        title: "CPU usage of container <selector>, cores".into(),
+        charts,
+    }
+}
+
+fn cpu_charts() -> [api::AppChart; 2] {
+    [
+        chart(
+            "CPU delay, seconds/second",
+            vec![series("worker", |p, _| Some(0.002 * wave(p, 1)))],
+        ),
+        chart(
+            "Throttled time, seconds/second",
+            vec![series("worker", |_, _| Some(0.))],
+        ),
+    ]
+}
+
+fn net_charts() -> [api::AppChart; 2] {
+    // A refused connection measures no round trip: the line stops.
+    let ledger = series("ledger-db:5432", |p, failing| {
+        (!failing).then(|| 0.0011 * wave(p, 0))
+    });
+    let api = series("api:8080", |p, _| Some(0.0018 * wave(p, 4)));
+    let failed = series("ledger-db:5432", |p, failing| {
+        Some(if failing { 6. * wave(p, 2) } else { 0. })
+    });
+    [
+        chart(
+            "Network round-trip time to dependencies, seconds",
+            vec![ledger, api],
+        ),
+        api::AppChart {
+            column: true,
+            ..chart("Failed TCP connections, per second", vec![failed])
+        },
+    ]
 }
 
 fn text(value: &str) -> api::Cell {

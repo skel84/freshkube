@@ -1,6 +1,7 @@
 //! Read-only Coroot access. Protocols and decoding belong to `coroot-rs`;
 //! this boundary owns explicit selection, limits and safe failure categories.
 mod app_view;
+mod chart_panel;
 mod connection;
 mod limits;
 mod profiling;
@@ -14,6 +15,7 @@ pub use app_view::{
     DeploymentSummary, Heatmap as AppHeatmap, MapApp, MapInstance, MapLink, Series, Table, Widget,
     WidgetKind,
 };
+pub use chart_panel::ChartPanel;
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
     AppHealth, AppId, Application, BurnRate, Chart, ClientLink, Credentials, Dependency, Incident,
