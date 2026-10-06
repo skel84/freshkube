@@ -199,6 +199,17 @@ pub trait LogSource: Sized + 'static {
         true
     }
 
+    /// The Follow button's tooltip while following: what goes on while the
+    /// reader pauses.
+    fn follow_tooltip(_view: &LogView<Self>) -> SharedString {
+        "Pause to review. Collection keeps running.".into()
+    }
+
+    /// The panel's accessible name.
+    fn panel_label(_view: &LogView<Self>) -> SharedString {
+        "Live logs panel".into()
+    }
+
     /// Stream failures by source, shown above the lines.
     fn errors(&self) -> &BTreeMap<ServiceId, String>;
 }

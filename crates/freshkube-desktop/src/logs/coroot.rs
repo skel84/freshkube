@@ -1,0 +1,182 @@
+//! An application's messages from Coroot, for the Application page's Logs
+//! report. Coroot is read on request, never streamed: the page reads a
+//! window, and a refresh reads only what is newer. The page owns the reads
+//! and Coroot's controls; this source turns Coroot's messages into lines
+//! and says what the list shows when it has none.
+
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Local, SecondsFormat, Utc};
+use freshkube_core::coroot as api;
+use freshkube_core::logs::{LogEvent, ServiceId};
+use gpui_kit::{AnyElement, Context, SharedString, Window};
+
+use super::{Columns, LogSource, LogView};
+
+/// The Application page's Logs report.
+pub(crate) type CorootLogView = LogView<CorootLogs>;
+
+/// The most a line may hold; the view leaves out longer ones entirely.
+const MOST_LINE_BYTES: usize = 64 * 1024;
+
+pub(crate) struct CorootLogs {
+    /// The application the lines belong to.
+    service: ServiceId,
+    /// Always empty: the page shows a failed read above the histogram, since
+    /// it fails the patterns as much as the messages.
+    errors: BTreeMap<ServiceId, String>,
+    empty: SharedString,
+}
+
+impl LogSource for CorootLogs {
+    fn controls(_: &CorootLogView, _: &mut Context<CorootLogView>) -> Vec<AnyElement> {
+        Vec::new()
+    }
+
+    fn empty_message(view: &CorootLogView) -> SharedString {
+        view.source().empty.clone()
+    }
+
+    fn errors(&self) -> &BTreeMap<ServiceId, String> {
+        &self.errors
+    }
+
+    fn follow_tooltip(_: &CorootLogView) -> SharedString {
+        "Pause to review. Refresh reads newer messages.".into()
+    }
+
+    fn panel_label(_: &CorootLogView) -> SharedString {
+        "Coroot logs panel".into()
+    }
+}
+
+/// What the Application page asks of its Logs report.
+pub(crate) trait CorootPanel: Sized + 'static {
+    fn for_coroot(window: &mut Window, cx: &mut Context<Self>) -> Self;
+
+    /// Starts over on another application or query, with no lines.
+    fn start(&mut self, app: &api::AppId, empty: SharedString, cx: &mut Context<Self>);
+
+    /// Adds Coroot's messages, oldest first, after a note on what may be
+    /// missing before them.
+    fn add(
+        &mut self,
+        gap: Option<(DateTime<Utc>, String)>,
+        lines: &[api::LogLine],
+        cx: &mut Context<Self>,
+    );
+
+    /// What the list says while it has no line.
+    fn set_empty(&mut self, empty: SharedString, cx: &mut Context<Self>);
+}
+
+impl CorootPanel for CorootLogView {
+    fn for_coroot(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let source = CorootLogs {
+            service: ServiceId::from(""),
+            errors: BTreeMap::new(),
+            empty: SharedString::default(),
+        };
+        Self::with_source(source, window, cx).with_columns(Columns {
+            time: true,
+            source: false,
+        })
+    }
+
+    fn start(&mut self, app: &api::AppId, empty: SharedString, cx: &mut Context<Self>) {
+        let service = ServiceId::from(app.as_str());
+        self.reset_lines(app.as_str());
+        self.set_shown([service.clone()].into());
+        let source = self.source_mut();
+        source.service = service;
+        source.empty = empty;
+        cx.notify();
+    }
+
+    fn add(
+        &mut self,
+        gap: Option<(DateTime<Utc>, String)>,
+        lines: &[api::LogLine],
+        cx: &mut Context<Self>,
+    ) {
+        let service = self.source().service.clone();
+        let events: Vec<LogEvent> = gap
+            .map(|(at, text)| LogEvent::marker(service.clone(), at, text))
+            .into_iter()
+            .chain(lines.iter().map(|line| event(&service, line)))
+            .collect();
+        if !events.is_empty() {
+            self.ingest(events, cx);
+        }
+    }
+
+    fn set_empty(&mut self, empty: SharedString, cx: &mut Context<Self>) {
+        self.source_mut().empty = empty;
+        cx.notify();
+    }
+}
+
+/// One message as one line: Coroot's time in local time, as the page's
+/// charts show it, then the message whole, however many lines it spans, at
+/// Coroot's severity rather than one its words suggest. A message too long
+/// for the view is cut, and says so.
+pub(crate) fn event(service: &ServiceId, line: &api::LogLine) -> LogEvent {
+    let time = DateTime::from_timestamp_millis(line.time_ms)
+        .unwrap_or_default()
+        .with_timezone(&Local)
+        .to_rfc3339_opts(SecondsFormat::Millis, false);
+    let mut text = format!("{time} {}", line.message);
+    if text.len() > MOST_LINE_BYTES {
+        let cut = format!(" … [cut: {} bytes more]", text.len() - MOST_LINE_BYTES);
+        let mut end = MOST_LINE_BYTES - cut.len();
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push_str(&cut);
+    }
+    LogEvent::new(service.clone(), text).with_level(line.level.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freshkube_core::types::LogLevel;
+
+    fn line(message: String) -> api::LogLine {
+        api::LogLine {
+            time_ms: 1_789_999_000_250,
+            severity: "error".into(),
+            level: LogLevel::Error,
+            message,
+            attributes: Default::default(),
+            trace_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_message_keeps_coroot_s_time_and_severity_and_fits_the_view() {
+        let service = ServiceId::from("app");
+        let short = event(&service, &line("ready, serving\n  on :8080".into()));
+        let (time, message) = short.line.split_once(' ').unwrap();
+        assert_eq!(message, "ready, serving\n  on :8080");
+        let time = DateTime::parse_from_rfc3339(time).unwrap();
+        assert_eq!(time.timestamp_millis(), 1_789_999_000_250);
+        let local = DateTime::from_timestamp_millis(1_789_999_000_250)
+            .unwrap()
+            .with_timezone(&Local);
+        assert_eq!(
+            time.offset().local_minus_utc(),
+            local.offset().local_minus_utc()
+        );
+        assert_eq!(short.level, Some(LogLevel::Error));
+        // At the bound the message is cut on a character, and says so.
+        let long = event(&service, &line("é".repeat(40_000)));
+        assert!(long.line.len() <= MOST_LINE_BYTES, "{}", long.line.len());
+        assert!(
+            long.line.ends_with("bytes more]"),
+            "{}",
+            &long.line[long.line.len() - 40..]
+        );
+    }
+}

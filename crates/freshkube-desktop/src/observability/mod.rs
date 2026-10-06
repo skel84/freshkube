@@ -30,6 +30,7 @@ mod frame;
 mod header;
 mod incidents;
 mod live_profiling;
+mod logs;
 mod map;
 mod model;
 mod plots;
@@ -124,6 +125,8 @@ pub(crate) struct ObservabilityPage {
     /// The Traces filter; its text is projected into the request list.
     trace_query: Entity<InputState>,
     live_profiles: live_profiling::Profiles,
+    /// The Logs report: Coroot's histogram, and its messages or patterns.
+    live_logs: logs::Logs,
     /// The applications' picker entries, by label.
     app_choices: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
     /// The Traces and Profiling picker, and the choices it was last given.
@@ -329,6 +332,7 @@ impl ObservabilityPage {
             hidden_trace_columns: Default::default(),
             trace_query,
             live_profiles: Default::default(),
+            live_logs: logs::Logs::new(cx.entity().downgrade(), window, cx),
             app_choices: Rc::new([]),
             app_select,
             app_select_source: Rc::new([]),

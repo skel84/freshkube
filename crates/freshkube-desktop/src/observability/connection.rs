@@ -22,6 +22,8 @@ pub(super) enum Subject {
     /// One trace of an application, by id.
     Trace(api::AppId, String, String),
     Profiling(api::AppId, api::ProfileQuery),
+    /// An application's logs, by the query without its `since`.
+    Logs(api::AppId, api::LogQuery),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReadIdentity {
@@ -49,6 +51,7 @@ pub(super) struct Live {
     pub traces_job: Option<ReadJob>,
     pub trace_job: Option<ReadJob>,
     pub profile_job: Option<ReadJob>,
+    pub logs_job: Option<ReadJob>,
     pub range: api::TimeRange,
     clock_origin: std::time::Instant,
     time_origin: chrono::DateTime<chrono::Utc>,
@@ -65,6 +68,7 @@ pub(super) struct Live {
     pub tracing: Snapshot<api::Tracing, ReadIdentity>,
     pub trace: Snapshot<api::Tracing, ReadIdentity>,
     pub profiling: Snapshot<api::Profiling, ReadIdentity>,
+    pub logs: Snapshot<api::LogsView, ReadIdentity>,
     /// What reading the applications and the service map showed of access.
     pub capabilities: [api::Capability; 2],
 }
@@ -95,6 +99,7 @@ impl Live {
             traces_job: None,
             trace_job: None,
             profile_job: None,
+            logs_job: None,
             range,
             clock_origin: now,
             time_origin,
@@ -110,6 +115,7 @@ impl Live {
             tracing: Snapshot::default(),
             trace: Snapshot::default(),
             profiling: Snapshot::default(),
+            logs: Snapshot::default(),
             capabilities: [api::Capability::Unchecked; 2],
         }
     }
@@ -120,6 +126,7 @@ impl Live {
         self.traces_job = None;
         self.trace_job = None;
         self.profile_job = None;
+        self.logs_job = None;
         self.connecting = false;
     }
     fn clear(&mut self) {
@@ -133,6 +140,7 @@ impl Live {
         self.tracing = Snapshot::default();
         self.trace = Snapshot::default();
         self.profiling = Snapshot::default();
+        self.logs = Snapshot::default();
         self.capabilities = [api::Capability::Unchecked; 2];
     }
 }
@@ -198,6 +206,7 @@ impl ObservabilityPage {
         self.incident_observations = self.incident_observations.cleared();
         self.live_traces = Default::default();
         self.live_profiles = Default::default();
+        self.live_logs.forget();
         if !self.fixture {
             self.applications.clear();
             self.nodes = Default::default();

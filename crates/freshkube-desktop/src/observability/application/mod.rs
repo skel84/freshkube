@@ -65,6 +65,7 @@ enum BlockKind {
     Heatmap(Box<charts::HeatBlock>),
     Profiling,
     Tracing,
+    Logs,
 }
 
 fn check(ix: usize, check: &api::Check) -> CheckLine {
@@ -150,12 +151,13 @@ impl AppPage {
                         page.tables.push(Rc::new(table::Prepared::new(table)));
                         BlockKind::Table(page.tables.len() - 1)
                     }
-                    // Coroot judges logs in their widget; its check joins the others.
+                    // Coroot judges logs in their widget; its check joins the others,
+                    // and the widget shows the messages.
                     api::WidgetKind::Logs(logs) => {
                         let start = page.checks.len();
                         page.checks
                             .extend(logs.iter().enumerate().map(|(ix, c)| check(start + ix, c)));
-                        continue;
+                        BlockKind::Logs
                     }
                     api::WidgetKind::Profiling => BlockKind::Profiling,
                     api::WidgetKind::Tracing => BlockKind::Tracing,
@@ -239,12 +241,15 @@ impl ObservabilityPage {
         );
     }
 
-    /// Reads what the chosen report embeds: the traces or the profiles.
+    /// Reads what the chosen report embeds: the traces, the profiles or
+    /// the logs.
     pub(super) fn read_embedded(&mut self, cx: &mut Context<Self>) {
         if self.embeds_tracing() {
             self.read_traces(cx);
         } else if self.embeds_profiling() {
             self.read_profiling(cx);
+        } else if self.embeds_logs() {
+            self.read_logs(cx);
         }
     }
 
@@ -262,6 +267,12 @@ impl ObservabilityPage {
         self.app_page
             .as_ref()
             .is_some_and(|page| page.embeds(|b| matches!(b, BlockKind::Profiling)))
+    }
+
+    fn embeds_logs(&self) -> bool {
+        self.app_page
+            .as_ref()
+            .is_some_and(|page| page.embeds(|b| matches!(b, BlockKind::Logs)))
     }
 
     pub(super) fn select_report(&mut self, name: String, cx: &mut Context<Self>) {
@@ -491,6 +502,7 @@ impl ObservabilityPage {
                 BlockKind::Heatmap(heat) => self.render_heat_block(heat, cx),
                 BlockKind::Profiling => self.render_live_profiling(cx),
                 BlockKind::Tracing => self.render_live_traces(window, cx),
+                BlockKind::Logs => self.render_live_logs(window, cx),
             };
             let cell = div().min_w_0().p(dp(4.));
             // A half-width chart pairs with the next, and takes the row

@@ -19,6 +19,8 @@ struct TestLogs {
     fixture_target: Option<Target>,
     stream_revision: u64,
     errors: BTreeMap<ServiceId, String>,
+    /// The source's own words for its panel, when a test gives some.
+    words: Option<(SharedString, SharedString)>,
 }
 
 /// The stream a batch came from.
@@ -43,6 +45,20 @@ impl LogSource for TestLogs {
 
     fn errors(&self) -> &BTreeMap<ServiceId, String> {
         &self.errors
+    }
+
+    fn follow_tooltip(view: &LogView<Self>) -> SharedString {
+        match &view.source().words {
+            Some((tooltip, _)) => tooltip.clone(),
+            None => "Pause to review. Collection keeps running.".into(),
+        }
+    }
+
+    fn panel_label(view: &LogView<Self>) -> SharedString {
+        match &view.source().words {
+            Some((_, label)) => label.clone(),
+            None => "Live logs panel".into(),
+        }
     }
 }
 
@@ -69,6 +85,7 @@ impl TestPanel for LogPanel {
             fixture_target: None,
             stream_revision: 0,
             errors: BTreeMap::new(),
+            words: None,
         };
         Self::with_source(source, window, cx)
     }
@@ -172,6 +189,35 @@ fn settle(cx: &mut TestAppContext, panel: &Entity<LogPanel>, handle: WindowHandl
         }
     }
     panic!("estimated rows never settled");
+}
+
+#[gpui_kit::test]
+fn a_source_that_is_not_a_stream_names_its_panel_and_follow_in_its_own_words(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, panel, handle) = mount(cx);
+    let label = |cx: &mut TestAppContext| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.find("logs-panel").label().map(str::to_owned)
+        })
+        .unwrap()
+    };
+    assert_eq!(label(cx).as_deref(), Some("Live logs panel"));
+    panel.update(cx, |view, cx| {
+        view.source_mut().words = Some((
+            "Pause to review. Refresh adds newer messages.".into(),
+            "Saved logs panel".into(),
+        ));
+        cx.notify();
+    });
+    assert_eq!(label(cx).as_deref(), Some("Saved logs panel"));
+    panel.read_with(cx, |view, _| {
+        assert_eq!(
+            TestLogs::follow_tooltip(view),
+            "Pause to review. Refresh adds newer messages."
+        )
+    });
 }
 
 #[gpui_kit::test]
