@@ -410,12 +410,21 @@ impl OperationsScreen {
             ))
             .gap_1()
             .child(
+                // The sentence wraps beside its chip, inside the plan's card.
                 h_flex()
                     .gap_2()
-                    .items_center()
-                    .child(ui::tag(v.tone, v.icon, v.label, cx))
+                    .items_start()
                     .child(
                         div()
+                            .flex_none()
+                            .child(ui::tag(v.tone, v.icon, v.label, cx)),
+                    )
+                    .child(
+                        div()
+                            .id(("ops-verdict-detail", k))
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
                             .text_size(dp(12.5))
                             .text_color(p.muted)
                             .child(v.detail),

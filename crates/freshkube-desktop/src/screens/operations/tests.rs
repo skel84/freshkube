@@ -614,3 +614,30 @@ fn no_target_sits_under_the_header_without_a_segment(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// At 760 px and the largest text, each node's etcd verdict, a chip and its
+/// sentence, wraps inside the plan's card rather than running past it.
+#[gpui_kit::test]
+fn the_etcd_verdict_wraps_inside_the_plan(cx: &mut TestAppContext) {
+    // Tall, so the plan is drawn without scrolling; the width is what counts.
+    let (_runtime, handle, _view) = app(cx, 760., 2400.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("secondary-9", cx);
+        window.render_frame(cx);
+        window.press("ctrl-tab", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let row = window.find(("ops-plan-target", 0usize)).bounds();
+        let detail = window.find(("ops-verdict-detail", 0usize)).bounds();
+        assert!(
+            detail.right() <= row.right() && detail.left() >= row.left(),
+            "{detail:?} inside {row:?}"
+        );
+    })
+    .unwrap();
+}
