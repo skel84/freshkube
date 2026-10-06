@@ -260,6 +260,40 @@ pub(super) fn tracing(value: &Tracing) -> Result<(), ReadError> {
     Ok(())
 }
 
+/// A read asks for at most 1,000 messages; each is bounded on its own, and
+/// all of them together, so a page of stack traces stays a page.
+pub(super) fn logs(value: &LogsView) -> Result<(), ReadError> {
+    text(&value.message, 4096)?;
+    count(value.origins.len(), 4)?;
+    if let Some(c) = &value.chart {
+        chart(c)?;
+    }
+    count(value.lines.len(), 1_000)?;
+    let mut bytes = 0;
+    for line in &value.lines {
+        text(&line.severity, 64)?;
+        text(&line.message, 65_536)?;
+        text(&line.trace_id, 256)?;
+        count(line.attributes.len(), 128)?;
+        bytes += line.message.len();
+        for (key, value) in &line.attributes {
+            text(key, 1024)?;
+            text(value, 16_384)?;
+            bytes += key.len() + value.len();
+        }
+    }
+    count(bytes, 8 << 20)?;
+    count(value.patterns.len(), 1_000)?;
+    for pattern in &value.patterns {
+        text(&pattern.severity, 64)?;
+        text(&pattern.sample, 16_384)?;
+        if let Some(c) = &pattern.chart {
+            chart(c)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn profiling(value: &Profiling) -> Result<(), ReadError> {
     text(&value.message, 4096)?;
     count(value.kinds.len(), 64)?;

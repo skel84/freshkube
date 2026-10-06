@@ -130,3 +130,16 @@ Both pages read one application, chosen from the page's picker or with **Traces*
 | Profiling | `GET api/project/{p}/app/{app}/profiling?from&to&query=…`: `cpu` until a type is chosen, then `{"type","mode","instance"}`, with `mode` `diff` to compare. | A flame graph nests deeper than serde_json's default limit, so its body is checked for at most 4,096 levels and parsed on a thread with a 256 MiB stack. Frames narrower than 0.05% of the total and past 20,000 are left out and counted. The page draws at most 600 frames, 64 rows below the zoomed frame, each at least 0.3% of it, and says how many it leaves out. |
 
 Coroot's own notes, such as which service's traces it used, are shown as plain text. A comparison's change is the frame's share of this window minus its share of the window before, in percentage points.
+
+## Logs
+
+Core reads an application's logs with `Provider::logs`; the Application page's Logs tab draws them in a later step.
+
+| Read | Request | Bounds |
+| --- | --- | --- |
+| Logs | `GET api/project/{p}/app/{app}/logs?from&to&query={"source","view","filters":[],"limit","since"}`. Only ever GET: a POST to the same path saves the application's log settings. The limit is one of Coroot's 10, 20, 50, 100 or 1,000, and `since` a positive epoch nanosecond; both are checked before anything is sent. | 4 origins, 1,000 messages of at most 64 KiB with 128 attributes each, 8 MiB of messages and attributes together, 1,000 patterns with samples of at most 16 KiB, and each chart as on the application page. |
+
+- **Levels.** Each message keeps the severity Coroot stored: trace and debug read as Debug, info as Info, warning as Warning, error and fatal as Error, and anything else as Unknown. The level is never guessed from the message's words.
+- **Order and caps.** Messages are kept oldest first. Coroot's query has a limit but no order, so an answer with as many messages as were asked for is marked capped: some of the matching messages, not the latest ones.
+- **Refreshing.** `LogCursor` asks a refresh for messages from the newest one's nanosecond on, since Coroot's `since` is exclusive. It drops a message of that millisecond equal to one already taken, because Coroot stamps messages only to the millisecond. A new message equal in every part to one already taken in the same millisecond is taken for it. A refresh that comes back capped may leave a gap before its messages, and says so.
+- **No logs store.** Without one, Coroot answers `unknown` with its reason and the patterns it found in its own metrics. That is information, not a read failure.

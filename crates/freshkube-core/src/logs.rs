@@ -78,6 +78,9 @@ pub struct LogEvent {
     /// A note from the viewer, such as "the container restarted", rather
     /// than a line the source wrote. See [`LogEvent::marker`].
     pub marker: bool,
+    /// The level the source states, such as a severity Coroot stored with
+    /// the line. None guesses it from the line's words.
+    pub level: Option<LogLevel>,
 }
 
 impl LogEvent {
@@ -86,7 +89,15 @@ impl LogEvent {
             service: service.into(),
             line: line.into(),
             marker: false,
+            level: None,
         }
+    }
+
+    /// The line at the level its source states, instead of one guessed from
+    /// its words.
+    pub fn with_level(mut self, level: LogLevel) -> Self {
+        self.level = Some(level);
+        self
     }
 
     /// A note placed among the lines at `time`, which keeps it in order with
@@ -104,6 +115,7 @@ impl LogEvent {
                 text.as_ref()
             ),
             marker: true,
+            level: None,
         }
     }
 }
@@ -194,6 +206,9 @@ fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -
 
 fn parse_event(event: LogEvent, sequence: u64) -> LogEntry {
     let mut entry = parse_log_line_with_sequence(event.service, &event.line, sequence);
+    if let Some(level) = event.level {
+        entry.level = level;
+    }
     if event.marker {
         entry.marker = true;
         entry.level = LogLevel::Unknown;
@@ -1180,6 +1195,32 @@ mod tests {
         assert_eq!(buffer.retain_newest_bytes(0), 1);
         assert!(buffer.entries().is_empty());
         assert_eq!(buffer.current_match(), None);
+    }
+
+    #[test]
+    fn a_stated_level_wins_and_lines_without_one_are_guessed_as_before() {
+        let mut buffer = LogBuffer::new();
+        buffer.append_batch([
+            // Existing sources state no level: the words still decide.
+            LogEvent::new("apid", "retrying after error"),
+            LogEvent::new("apid", "INFO ready"),
+            // A severity Coroot stored outranks the words in the line.
+            LogEvent::new("app", "retrying after error").with_level(LogLevel::Info),
+            LogEvent::new("app", "a plain line").with_level(LogLevel::Unknown),
+            LogEvent::marker("app", Utc::now(), "a note").with_level(LogLevel::Error),
+        ]);
+        let levels: Vec<_> = buffer.entries().iter().map(|e| e.level.clone()).collect();
+        assert_eq!(
+            levels,
+            [
+                LogLevel::Error,
+                LogLevel::Info,
+                LogLevel::Info,
+                LogLevel::Unknown,
+                // A marker never has a level.
+                LogLevel::Unknown,
+            ]
+        );
     }
 
     fn stamped(second: u32, text: &str) -> LogEvent {
