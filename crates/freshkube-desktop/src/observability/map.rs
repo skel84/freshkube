@@ -1,6 +1,7 @@
 use super::*;
 use freshkube_core::coroot::AppId;
 use freshkube_ui::graph::{GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView};
+use freshkube_ui::inspector::InspectorSplit;
 
 /// The service map's graph: its page, filter and selection, and what it
 /// draws. Clearing the page's observations resets it to an empty map.
@@ -66,8 +67,18 @@ impl ObservabilityPage {
             .collect();
         self.map_display.set(nodes, edges);
     }
+
     pub(super) fn render_map(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        GraphView::new(crate::screens::content_width(window)).render(self, cx)
+        GraphView::new(crate::screens::content_width(window))
+            .page_width(crate::screens::page_width(window))
+            .render(self, window, cx)
+    }
+
+    /// The page's connection for a call of the graph.
+    fn map_connection(&self, edge: &GraphEdge<AppId>) -> Option<&Connection> {
+        self.connections
+            .iter()
+            .find(|connection| connection.id.0 == edge.from && connection.id.1 == edge.to)
     }
 }
 
@@ -80,6 +91,10 @@ impl GraphSource for ObservabilityPage {
 
     fn graph_mut(&mut self) -> &mut GraphState<AppId> {
         &mut self.map_display
+    }
+
+    fn graph_split(&self) -> &InspectorSplit {
+        &self.map_split
     }
 
     fn highlighted(&self) -> Option<&AppId> {
@@ -95,11 +110,7 @@ impl GraphSource for ObservabilityPage {
         selected: Option<&GraphEdge<AppId>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(edge) = selected.and_then(|selected| {
-            self.connections
-                .iter()
-                .find(|edge| edge.id.0 == selected.from && edge.id.1 == selected.to)
-        }) else {
+        let Some(edge) = selected.and_then(|selected| self.map_connection(selected)) else {
             return muted("Choose a connection to inspect its evidence", cx).into_any_element();
         };
         let app = edge.id.0.clone();
@@ -255,5 +266,58 @@ mod tests {
             assert!(window.find("obs-map-graph").bounds().left() < before.left());
         })
         .unwrap();
+    }
+
+    /// A width dragged to beside the map is saved under `map` in
+    /// `navigation.json`, and the next page opens its inspector at it.
+    #[gpui_kit::test]
+    fn the_map_inspector_width_survives_reopening(cx: &mut TestAppContext) {
+        use crate::navigation_file::NavigationFile;
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-map-width-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let preferences = directory.join("preferences.json");
+        cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+        let open = |cx: &mut TestAppContext| {
+            let (runtime, handle, page) =
+                crate::observability::tests::mount_size(cx, true, 1800., 900.);
+            cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::ServiceMap, cx)));
+            cx.run_until_parked();
+            (runtime, handle, page)
+        };
+        let (_runtime, handle, page) = open(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let (lead, inspector) = (
+                window.find("obs-map-lead").bounds(),
+                window.find("obs-map-inspector").bounds(),
+            );
+            assert!(inspector.left() >= lead.right(), "{lead:?} {inspector:?}");
+            let state = page.read(cx).map_split.beside_state().clone();
+            state.update(cx, |state, cx| {
+                state.resize_panel(1, crate::ui::dp_px(400., window), window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let reopened = NavigationFile::open(Some(&preferences));
+        assert_eq!(reopened.inspector_width("map"), Some(400.));
+        assert_eq!(reopened.inspector_width("incidents"), None);
+
+        cx.update(|cx| cx.set_global(reopened));
+        let (_runtime, handle, _page) = open(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let width = window.find("obs-map-inspector").bounds().size.width;
+            let expected = crate::ui::dp_px(400., window);
+            assert!(
+                (width - expected).abs() <= gpui_kit::px(1.),
+                "{width:?}, expected {expected:?}"
+            );
+        })
+        .unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

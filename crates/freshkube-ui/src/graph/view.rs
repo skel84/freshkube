@@ -1,39 +1,65 @@
-//! Drawing a graph from its source: the toolbar, the graph's card with
-//! its calls, markers and boxes, the legend, and the inspector beside the
-//! card, or under it once the graph can't sit beside it.
+//! Drawing a graph from its source: the toolbar, then one card holding
+//! the shared inspector split, with the graph, its summary and legend on
+//! the leading side and the inspector beside it, or under it once the
+//! whole graph can't sit beside it.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Div, PathBuilder, SharedString, TestSupportExt, canvas, div, point,
-    px, uniform_list,
+    AnyElement, App, Context, Div, PathBuilder, SharedString, TestSupportExt, Window, canvas, div,
+    point, px, uniform_list,
 };
 
 use freshkube_graph::layout::{NODE_H, NODE_W};
 
-use super::{GraphEdge, GraphSource};
+use super::{GraphEdge, GraphSource, STACKED};
+use crate::inspector::{self, Inspector};
+use crate::page::PANE_PADDING;
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 
-/// The inspector's width beside the graph.
-const INSPECTOR_W: f32 = 264.;
+/// The summary's line and the legend's, each padded 14 above and below.
+const LINE_H: f32 = 48.;
+/// The room under a graph that scrolls sideways, for its scrollbar.
+const SCROLLBAR_H: f32 = 10.;
+/// The least height of the card with the inspector beside the graph, so
+/// the inspector shows its head and a few calls.
+const BESIDE_HEIGHT: f32 = 460.;
 
 /// Draws a [`GraphSource`]'s graph. Like the data table, it is a plain
 /// struct: the source's entity owns the state and the view only reads it.
 pub struct GraphView {
-    /// The width the graph and its inspector may take, in dp.
+    /// The width the graph's card may take, in dp.
     available: f32,
+    /// The page's width, in dp, which the inspector's split compares with
+    /// [`inspector::SPLIT_WIDTH`].
+    page_width: f32,
 }
 
 impl GraphView {
     /// A view `available` dp wide, such as the page's content width.
     pub fn new(available: f32) -> Self {
-        Self { available }
+        Self {
+            available,
+            page_width: available,
+        }
     }
 
-    pub fn render<S: GraphSource>(self, source: &S, cx: &mut Context<S>) -> AnyElement {
+    /// The page's width in dp, when it is wider than what the card may take,
+    /// such as `screens::page_width` on a padded page.
+    pub fn page_width(mut self, width: f32) -> Self {
+        self.page_width = width;
+        self
+    }
+
+    pub fn render<S: GraphSource>(
+        self,
+        source: &S,
+        window: &Window,
+        cx: &mut Context<S>,
+    ) -> AnyElement {
         let state = source.graph();
         let toolbar = render_toolbar(source, cx);
         if state.nodes.is_empty() {
@@ -45,24 +71,50 @@ impl GraphView {
                 .child(source.empty(cx))
                 .into_any_element();
         }
-        // The inspector moves below once the whole graph can't sit beside it.
-        let stacked = self.available < state.display.width.max(560.) + 320.;
-        // Beside the inspector the graph always fits; stacked, it scrolls
-        // when it is wider than the card (less its 1 px borders).
-        let scrolls = stacked && self.available < state.display.width + 2.;
-        let panel = render_panel(source, stacked, scrolls, cx);
-        let inspector = render_inspector(source, stacked, cx);
+        let split = source.graph_split();
+        let display = &state.display;
+        // The inspector sits beside the graph only on a wide page, and only
+        // while the whole graph fits next to it (less the card's borders);
+        // otherwise it opens under the graph.
+        let beside = self.page_width >= inspector::SPLIT_WIDTH
+            && self.available >= display.width + 2. + split.width();
+        // Stacked, the graph scrolls when it is wider than the card.
+        let scrolls = !beside && self.available < display.width + 2.;
+        let lead = LINE_H * 2. + display.height + if scrolls { SCROLLBAR_H } else { 0. };
+        let height = if beside {
+            lead.max(BESIDE_HEIGHT)
+        } else {
+            let lead = lead.clamp(STACKED.lead.least, STACKED.lead.most.unwrap_or(lead));
+            split.lead_start(lead, cx);
+            lead + STACKED.trail.start
+        };
+        let graph = render_lead(source, scrolls, cx).into_any_element();
+        let inspector = render_inspector(source, cx);
+        let p = palette(cx);
         v_flex()
             .gap(dp(14.))
             .child(toolbar)
             .child(
-                div()
-                    .flex()
-                    .when_else(stacked, |this| this.flex_col(), |this| this.flex_row())
-                    .items_start()
-                    .gap(dp(12.))
-                    .child(panel)
-                    .child(inspector),
+                v_flex()
+                    .id(state.ids.panel.clone())
+                    .test_support()
+                    .w_full()
+                    // The panes' heights, inside the card's borders.
+                    .h(ui::dp_px(height, window) + px(2.))
+                    .min_w_0()
+                    .overflow_hidden()
+                    .rounded(px(12.))
+                    .bg(p.surface)
+                    .border_1()
+                    .border_color(p.line)
+                    .child(inspector::split(
+                        state.ids.split.clone(),
+                        split,
+                        beside,
+                        graph,
+                        Some(inspector),
+                        window,
+                    )),
             )
             .into_any_element()
     }
@@ -150,40 +202,40 @@ fn render_toolbar<S: GraphSource>(source: &S, cx: &mut Context<S>) -> Div {
         )
 }
 
-/// The graph's card: the summary, the graph scrolling sideways inside it,
-/// and the legend.
-fn render_panel<S: GraphSource>(
+/// The split's leading side: the summary, the graph scrolling sideways
+/// inside it, and the legend. It scrolls down on its own when the graph
+/// and legend are taller than the most the card gives it; only a vertical
+/// wheel scrolls it, so a sideways one always reaches the graph.
+fn render_lead<S: GraphSource>(
     source: &S,
-    stacked: bool,
     scrolls: bool,
     cx: &mut Context<S>,
 ) -> impl IntoElement + use<S> {
     let state = source.graph();
-    let p = palette(cx);
     let graph = render_graph(source, cx);
     v_flex()
-        .id(state.ids.panel.clone())
+        .id(state.ids.lead.clone())
         .test_support()
-        .when(stacked, |this| this.w_full())
-        .flex_1()
+        .size_full()
         .min_w_0()
-        .rounded(px(12.))
-        .bg(p.surface)
-        .border_1()
-        .border_color(p.line)
+        .min_h_0()
+        .overflow_y_scroll()
+        .restrict_scroll_to_axis()
         .child(
             line()
+                .flex_none()
                 .justify_between()
                 .p(dp(14.))
                 .child(muted(state.display.summary.clone(), cx)),
         )
-        // A graph wider than its card is inset like the summary, so it is
+        // A graph wider than its side is inset like the summary, so it is
         // clipped inside the card's border, with a scrollbar under it that
         // says there is more. One that fits is drawn as it always was.
         .child(
             div()
                 .relative()
-                .when(scrolls, |this| this.mx(dp(14.)).pb(dp(10.)))
+                .flex_none()
+                .when(scrolls, |this| this.mx(dp(14.)).pb(dp(SCROLLBAR_H)))
                 .min_w_0()
                 .child(
                     div()
@@ -205,6 +257,9 @@ fn render_panel<S: GraphSource>(
         )
         .child(
             line()
+                .id(state.ids.legend.clone())
+                .test_support()
+                .flex_none()
                 .p(dp(14.))
                 .flex_wrap()
                 .children(
@@ -352,46 +407,14 @@ fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyElement {
         .into_any_element()
 }
 
-/// The inspector: its card, with the source's head and the list of calls
-/// as its content.
-fn render_inspector<S: GraphSource>(
-    source: &S,
-    stacked: bool,
-    cx: &mut Context<S>,
-) -> impl IntoElement + use<S> {
+/// The shared inspector: the graph's title as its heading; the source's
+/// head for the selected call, how many calls there are and their list,
+/// which takes the height left; and the source's footer.
+fn render_inspector<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyElement {
     let state = source.graph();
-    let content = inspector_content(source, cx);
-    let p = palette(cx);
-    v_flex()
-        .id(state.ids.inspector.clone())
-        .test_support()
-        .min_w_0()
-        .rounded(px(12.))
-        .bg(p.surface)
-        .border_1()
-        .border_color(p.line)
-        .when_else(
-            stacked,
-            |this| this.w_full(),
-            |this| this.w(dp(INSPECTOR_W)).flex_none(),
-        )
-        .child(
-            h_flex().h(dp(42.)).px(dp(14.)).flex_none().child(
-                div()
-                    .min_w_0()
-                    .child(state.text.title.clone())
-                    .font_weight(ui::HEADING_WEIGHT)
-                    .text_size(dp(14.)),
-            ),
-        )
-        .children(content)
-}
-
-/// What the inspector shows, apart from its frame: the source's head for
-/// the selected call, then how many calls there are and their list.
-fn inspector_content<S: GraphSource>(source: &S, cx: &mut Context<S>) -> [Div; 2] {
-    let state = source.graph();
-    let head = source.inspector_head(state.selected_edge(), cx);
+    let selected = state.selected_edge();
+    let head = source.inspector_head(selected, cx);
+    let footer = source.inspector_footer(selected, cx);
     let list = uniform_list(
         state.ids.connections.clone(),
         state.visible.len(),
@@ -405,18 +428,30 @@ fn inspector_content<S: GraphSource>(source: &S, cx: &mut Context<S>) -> [Div; 2
         }),
     )
     .track_scroll(&state.scroll)
-    .h(dp(300.))
+    .flex_1()
+    .min_h_0()
     .w_full();
-    [
-        body().child(head),
-        body()
-            .child(muted(state.display.count.clone(), cx))
-            .child(list),
-    ]
-}
-
-fn body() -> Div {
-    v_flex().p(dp(14.)).gap(dp(12.)).min_w_0()
+    let content = v_flex()
+        .size_full()
+        .min_w_0()
+        .min_h_0()
+        .gap(dp(12.))
+        .p(dp(PANE_PADDING))
+        .child(div().flex_none().min_w_0().child(head))
+        .child(muted(state.display.count.clone(), cx).flex_none())
+        .child(list);
+    Inspector::new(state.ids.inspector.clone())
+        .heading(
+            div()
+                .min_w_0()
+                .child(state.text.title.clone())
+                .font_weight(ui::HEADING_WEIGHT)
+                .text_size(dp(14.)),
+        )
+        .content(content)
+        .footer(footer)
+        .render(cx)
+        .into_any_element()
 }
 
 fn render_row<S: GraphSource>(

@@ -1,5 +1,8 @@
+use std::cell::RefCell;
+
 use freshkube_graph::layout::{NODE_H, NODE_W, point_at};
 use gpui_kit::component::Root;
+use gpui_kit::component::button::Button;
 use gpui_kit::prelude::*;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
@@ -183,7 +186,10 @@ fn no_call_runs_through_a_box_on_any_page() {
 /// A page showing the graph: it records the boxes it was asked to open.
 struct Map {
     graph: GraphState<usize>,
+    split: InspectorSplit,
     opened: Vec<usize>,
+    /// Widths the split was dragged to, as a page would save them.
+    remembered: Rc<RefCell<Vec<f32>>>,
 }
 
 impl GraphSource for Map {
@@ -195,6 +201,10 @@ impl GraphSource for Map {
 
     fn graph_mut(&mut self) -> &mut GraphState<usize> {
         &mut self.graph
+    }
+
+    fn graph_split(&self) -> &InspectorSplit {
+        &self.split
     }
 
     fn open(&mut self, node: &usize, _: &mut Window, cx: &mut Context<Self>) {
@@ -217,6 +227,23 @@ impl GraphSource for Map {
         }
     }
 
+    fn inspector_footer(
+        &self,
+        selected: Option<&GraphEdge<usize>>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let from = selected?.from;
+        Some(
+            Button::new("map-open")
+                .label("Open caller")
+                .on_click(cx.listener(move |this: &mut Self, _, _, cx| {
+                    this.opened.push(from);
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> AnyElement {
         div().child("No services").into_any_element()
     }
@@ -230,7 +257,7 @@ impl Render for Map {
         div()
             .size_full()
             .p(dp(16.))
-            .child(GraphView::new(available).render(self, cx))
+            .child(GraphView::new(available).render(self, window, cx))
     }
 }
 
@@ -252,9 +279,19 @@ fn open(
     let mut view = None;
     // Tall enough to show the inspector stacked under the graph.
     let handle = cx.open_window(size(px(width), px(2000.)), |window, cx| {
-        let map = cx.new(|_| Map {
+        let remembered = Rc::new(RefCell::new(vec![]));
+        let map = cx.new(|cx| Map {
             graph,
+            split: inspector_split(
+                None,
+                {
+                    let remembered = remembered.clone();
+                    move |width, _| remembered.borrow_mut().push(width)
+                },
+                cx,
+            ),
             opened: vec![],
+            remembered,
         });
         view = Some(map.clone());
         Root::new(map, window, cx)
@@ -346,8 +383,10 @@ fn a_narrow_graph_scrolls_inside_its_card_at_large_text(cx: &mut TestAppContext)
         assert!(viewport.left() - panel.left() >= px(14.));
         assert!(panel.right() - viewport.right() >= px(14.));
         assert!(before.size.width > viewport.size.width);
-        // Stacked: the inspector sits under the graph's card.
-        assert!(window.find("map-inspector").bounds().top() >= panel.bottom());
+        // Stacked: the inspector sits under the graph, inside its card.
+        let inspector = window.find("map-inspector").bounds();
+        assert!(inspector.top() >= window.find("map-lead").bounds().bottom());
+        assert!(inspector.bottom() <= panel.bottom() + px(1.));
         let node = map
             .read(cx)
             .graph
@@ -599,4 +638,130 @@ fn an_empty_tooltip_shows_nothing(cx: &mut TestAppContext) {
         hover_shows(cx, handle, "map-node-1".into()),
         "a box with text showed no tooltip"
     );
+}
+
+/// An element's bounds.
+fn bounds(window: &mut Window, id: &'static str) -> gpui_kit::Bounds<gpui_kit::Pixels> {
+    window.find(id).bounds()
+}
+
+/// The inspector sits beside a graph that fits next to it on a wide page;
+/// a graph too wide for that, or a page under 900, puts it under the
+/// graph, in the same card.
+#[gpui_kit::test]
+fn the_inspector_sits_beside_only_a_graph_that_fits(cx: &mut TestAppContext) {
+    // Four columns, 744 dp wide, fit beside the inspector at 1280.
+    let (handle, _) = open(cx, state(8, 10), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let (lead, inspector) = (bounds(window, "map-lead"), bounds(window, "map-inspector"));
+        let panel = bounds(window, "map-panel");
+        assert!(inspector.left() >= lead.right(), "{lead:?} {inspector:?}");
+        assert!((inspector.top() - lead.top()).abs() < px(1.));
+        assert!(inspector.right() <= panel.right() + px(1.));
+        // Nothing of the graph's side is cut off.
+        assert!(bounds(window, "map-legend").bottom() <= lead.bottom() + px(1.));
+    })
+    .unwrap();
+    // Six columns, 1120 dp wide, don't fit beside it at 1280; the graph's
+    // side then keeps its least height.
+    let (handle, _) = open(cx, state(7, 8), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let (lead, inspector) = (bounds(window, "map-lead"), bounds(window, "map-inspector"));
+        assert!(inspector.top() >= lead.bottom(), "{lead:?} {inspector:?}");
+        assert!((inspector.left() - lead.left()).abs() < px(1.));
+        assert!((lead.size.height - px(300.)).abs() < px(1.), "{lead:?}");
+        assert!(bounds(window, "map-legend").bottom() <= lead.bottom() + px(1.));
+    })
+    .unwrap();
+    // Under 900 the inspector opens below even a graph that would fit.
+    let (handle, _) = open(cx, state(3, 2), 880., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let (lead, inspector) = (bounds(window, "map-lead"), bounds(window, "map-inspector"));
+        assert!(inspector.top() >= lead.bottom(), "{lead:?} {inspector:?}");
+    })
+    .unwrap();
+}
+
+/// Stacked, the graph's side starts as tall as the graph with its summary,
+/// legend and scrollbar, within 300 and 700, and the inspector takes 380
+/// under it. Past 700 the side scrolls down to its legend.
+#[gpui_kit::test]
+fn stacked_the_graph_s_side_follows_the_graph_s_height(cx: &mut TestAppContext) {
+    // Six rows, 466 dp high and 744 wide, so it scrolls sideways at 760.
+    let (handle, map) = open(cx, state(18, 9), 760., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let graph = map.read(cx).graph.display.height;
+        let (lead, inspector) = (bounds(window, "map-lead"), bounds(window, "map-inspector"));
+        let expected = px(graph + 2. * 48. + 10.);
+        assert!(
+            (lead.size.height - expected).abs() < px(1.),
+            "{lead:?} for a graph {graph} high"
+        );
+        assert!(
+            (inspector.size.height - px(380.)).abs() < px(1.),
+            "{inspector:?}"
+        );
+        assert!(bounds(window, "map-legend").bottom() <= lead.bottom() + px(1.));
+    })
+    .unwrap();
+    // Eight rows, 618 high: the side stops at 700 and scrolls.
+    let (handle, _) = open(cx, state(120, 300), 760., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let lead = bounds(window, "map-lead");
+        assert!((lead.size.height - px(700.)).abs() < px(1.), "{lead:?}");
+        assert!(bounds(window, "map-legend").bottom() > lead.bottom());
+        // A wheel over the summary; over the graph it scrolls sideways.
+        use gpui_kit::{InputEvent, ScrollWheelEvent};
+        window.dispatch_event(
+            ScrollWheelEvent {
+                position: lead.origin + point(px(20.), px(20.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-200.))),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(bounds(window, "map-legend").bottom() <= lead.bottom() + px(1.));
+    })
+    .unwrap();
+}
+
+/// The footer shows the source's action for the selected call, and none
+/// while nothing is selected.
+#[gpui_kit::test]
+fn the_footer_acts_on_the_selected_call(cx: &mut TestAppContext) {
+    let (handle, map) = open(cx, state(8, 10), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("map-inspector-footer").is_none());
+        let edge = map.read(cx).graph.markers().next().unwrap().clone();
+        window.click(edge.marker_id.clone(), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("map-inspector-footer").is_some());
+        window.click("map-open", cx);
+        assert_eq!(map.read(cx).opened, vec![edge.from]);
+    })
+    .unwrap();
+}
+
+/// A drag on the hairline beside the graph is reported once, in dp, for
+/// the source to save.
+#[gpui_kit::test]
+fn a_dragged_inspector_width_is_reported_once(cx: &mut TestAppContext) {
+    let (handle, map) = open(cx, state(8, 10), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(map.read(cx).split.width(), inspector::MIN_WIDTH);
+        let state = map.read(cx).split.beside_state().clone();
+        state.update(cx, |state, cx| state.resize_panel(1, px(400.), window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(*map.read(cx).remembered.borrow(), vec![400.]));
 }
