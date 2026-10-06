@@ -185,11 +185,19 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     /// The user navigated here: focus the main list so keys work at once.
     /// Not called on source changes, so it never steals focus from a popover.
     fn focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    /// The page's line in the status bar, which the shell draws while the
+    /// screen is the visible page. Derive it when the data changes and
+    /// notify, so the shell only reads it; `None` draws no segment.
+    fn status(&self) -> Option<&freshkube_ui::status::Segment> {
+        None
+    }
 }
 
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
+type StatusFn = Rc<dyn Fn(&App) -> Option<freshkube_ui::status::Segment>>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -200,6 +208,7 @@ pub(crate) struct ScreenHandle {
     refresh: WindowFn,
     focus: WindowFn,
     embedded: EmbeddedFn,
+    status: StatusFn,
 }
 
 impl ScreenHandle {
@@ -210,8 +219,9 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
-        let embedded = entity.clone();
+        let (embedded, status) = (entity.clone(), entity.clone());
         Self {
+            status: Rc::new(move |cx| status.read(cx).status().cloned()),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
             }),
@@ -231,6 +241,11 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
+    }
+
+    /// The screen's status bar segment, if it has one.
+    pub(crate) fn status(&self, cx: &App) -> Option<freshkube_ui::status::Segment> {
+        (self.status)(cx)
     }
 
     pub(crate) fn set_embedded(&self, embedded: bool, cx: &mut App) {
