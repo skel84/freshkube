@@ -21,7 +21,7 @@ use crate::ui::{dp, dp_px};
 
 /// A tab's height, and the space at its sides.
 pub const TAB_HEIGHT: f32 = 28.;
-const TAB_PADDING: f32 = 10.;
+pub(super) const TAB_PADDING: f32 = 10.;
 /// How far a cut end's fade and chevron reach in from the strip's edge, and
 /// the chevron's share of it.
 const END: f32 = 40.;
@@ -184,16 +184,18 @@ impl TabStrip {
         let scroll = &self.0.scroll;
         let viewport = scroll.bounds();
         let offset = scroll.offset().x;
-        let clear = dp_px(END - PANE_PADDING, window);
+        // A tab whose label is clear of the fade shows, though its padding
+        // may lie under it; counting it as cut would move the row a pixel.
+        let shown = dp_px(END - PANE_PADDING - TAB_PADDING, window);
         let items =
             (0..scroll.children_count()).filter_map(|ix| Some((ix, scroll.bounds_for_item(ix)?)));
         let cut = if later {
             items
-                .filter(|(_, item)| item.right() + offset > viewport.right() - clear + px_half())
+                .filter(|(_, item)| item.right() + offset > viewport.right() - shown + px_half())
                 .min_by_key(|(ix, _)| *ix)
         } else {
             items
-                .filter(|(_, item)| item.left() + offset < viewport.left() + clear - px_half())
+                .filter(|(_, item)| item.left() + offset < viewport.left() + shown - px_half())
                 .max_by_key(|(ix, _)| *ix)
         };
         let Some((ix, item)) = cut else {
@@ -229,6 +231,7 @@ pub(super) fn strip(
     let background = cx.theme().background;
     let edges = strip.edges();
     let measure = strip.clone();
+    let wheel = strip.clone();
     h_flex()
         .id(id.clone())
         .test_support()
@@ -242,6 +245,14 @@ pub(super) fn strip(
         .border_color(palette(cx).line)
         .child(row)
         .on_prepaint(move |_, window, _| measure.measure(window))
+        // gpui gives a wheel to every scroller under the pointer; a cut
+        // strip keeps it, so the page behind doesn't scroll too.
+        .on_scroll_wheel(move |_, _, cx| {
+            let edges = wheel.edges();
+            if edges.earlier || edges.later {
+                cx.stop_propagation();
+            }
+        })
         .children(
             edges
                 .earlier

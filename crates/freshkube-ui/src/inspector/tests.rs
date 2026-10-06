@@ -448,6 +448,8 @@ struct Strip {
     strip: TabStrip,
     width: f32,
     active: usize,
+    /// Wheel events that reached the page behind the inspector.
+    page_wheels: usize,
 }
 
 const LABELS: [&str; 7] = [
@@ -467,15 +469,18 @@ impl Render for Strip {
                     cx,
                 )
             }));
-        div().size_full().child(
-            div().w(px(self.width)).h_full().child(
-                Inspector::new("inspector")
-                    .heading(div().child("api-7d9"))
-                    .tabs(&self.strip, row)
-                    .content(div())
-                    .render(cx),
-            ),
-        )
+        div()
+            .size_full()
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.page_wheels += 1))
+            .child(
+                div().w(px(self.width)).h_full().child(
+                    Inspector::new("inspector")
+                        .heading(div().child("api-7d9"))
+                        .tabs(&self.strip, row)
+                        .content(div())
+                        .render(cx),
+                ),
+            )
     }
 }
 
@@ -491,6 +496,7 @@ fn open_strip(
             strip: TabStrip::default(),
             width,
             active,
+            page_wheels: 0,
         });
         page = Some(view.clone());
         Root::new(view, window, cx)
@@ -701,4 +707,64 @@ fn a_wheel_scroll_stays_until_the_active_tab_changes(cx: &mut TestAppContext) {
         close("left as it was", strip_tab(window, 0).left(), left);
     })
     .unwrap();
+}
+
+/// Each chevron click shows a tab that wasn't showing: the row moves by
+/// more than a tab's padding, or that end stops being cut. A tab whose
+/// padding alone lies under the fade doesn't count as cut.
+#[gpui_kit::test]
+fn every_chevron_click_shows_another_tab(cx: &mut TestAppContext) {
+    for width in (230..=420).step_by(7) {
+        let (handle, _) = open_strip(cx, width as f32, 0);
+        cx.update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            let padding = dp_px(super::tabs::TAB_PADDING, window);
+            for (end, ahead) in [
+                ("inspector-tabs-later", -1.),
+                ("inspector-tabs-earlier", 1.),
+            ] {
+                for _ in 0..=LABELS.len() {
+                    if window.try_find(end).is_none() {
+                        break;
+                    }
+                    let before = strip_tab(window, 0).left();
+                    window.click(end, cx);
+                    settle(window, cx);
+                    let moved = (strip_tab(window, 0).left() - before) * ahead;
+                    assert!(
+                        moved > padding || window.try_find(end).is_none(),
+                        "{end} at {width} moved the row {moved:?}"
+                    );
+                }
+                assert!(
+                    window.try_find(end).is_none(),
+                    "{end} at {width} never ends"
+                );
+            }
+        })
+        .unwrap();
+    }
+}
+
+/// A cut strip keeps the wheel that scrolls it, so the page behind doesn't
+/// scroll as well; a strip with room lets it through.
+#[gpui_kit::test]
+fn a_cut_strip_keeps_its_wheel_from_the_page(cx: &mut TestAppContext) {
+    for (width, reaches) in [(260., 0), (900., 1)] {
+        let (handle, view) = open_strip(cx, width, 0);
+        cx.update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            window.scroll(
+                "strip-row",
+                ScrollDelta::Pixels(point(px(0.), px(-80.))),
+                cx,
+            );
+        })
+        .unwrap();
+        assert_eq!(
+            view.read_with(cx, |strip, _| strip.page_wheels),
+            reaches,
+            "at {width}"
+        );
+    }
 }
