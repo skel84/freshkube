@@ -575,3 +575,68 @@ Raw reports are retained under `target/stress/`: `watch-before-counted-{1,2,3}`,
 (each `.log`). The before and after aggregate JSON files and each saved
 binary's `build.txt` record provenance. Locked-screen attempts and runs whose
 filters preceded list completion are excluded.
+
+#### Where a burst's time goes, 6 October 2026 (#22)
+
+The burst workload from the comparison above ran again on an Apple M1 Pro
+MacBook Pro (macOS 26.3, rustc 1.96.0), with two release builds made natively
+in one target from the same `Cargo.lock`. The baseline is `eaaa3f1`, main after
+#216. The instrumented build is that commit plus spans for the summary's
+consumers and the Table's filter, sort and group steps; it changes nothing else
+and is not a fix. Each run was `burst 20000 2000` on the Pods list at 1280×880,
+90 s with the first 30 s left out, so 60 measured seconds. Before every launch
+the one-minute load had to be under 10, with no compiler or other app running;
+another process kept it between 3.4 and 7.
+
+Two baseline/instrumented pairs are valid, one from each of two sessions.
+Times are milliseconds, median / 99th / max, for each run; the Table applied
+about 567 batches of 221 Pods (median) in each.
+
+| Span | Baseline, pair 1 | Baseline, pair 2 | Instrumented, pair 1 | Instrumented, pair 2 |
+| --- | --- | --- | --- | --- |
+| Table batch apply | 3.88 / 7.90 / 9.18 | 3.91 / 8.13 / 11.18 | 4.01 / 8.61 / 11.21 | 3.92 / 7.65 / 8.92 |
+| Table store | 1.32 / 4.36 / 5.03 | 1.33 / 4.61 / 4.84 | 1.40 / 4.81 / 5.03 | 1.36 / 4.52 / 5.17 |
+| Table rebuild | 2.55 / 4.07 / 5.96 | 2.58 / 4.39 / 6.51 | 2.60 / 4.41 / 6.77 | 2.55 / 3.90 / 5.10 |
+| Table render | 0.09 / 0.14 / 0.19 | 0.09 / 0.14 / 0.17 | 0.09 / 0.18 / 0.24 | 0.09 / 0.15 / 0.20 |
+| Summary apply | 1.35 / 1.96 / 2.00 | 1.36 / 1.89 / 2.04 | 1.44 / 2.05 / 2.17 | 1.36 / 1.82 / 1.98 |
+| Main-thread stalls | 1.05 / 7.13 / 12.32 | 1.05 / 7.00 / 15.11 | 1.04 / 7.55 / 15.10 | 1.05 / 7.05 / 13.76 |
+| Process CPU, median | 28.8% | 29.5% | 31.2% | 28.3% |
+| Peak RSS, with the synthetic API | 314 MB | 306 MB | 286 MB | 341 MB |
+
+The instrumented runs split the rebuild and the summary apply (medians, pair 1
+and pair 2):
+
+| Step | Median, ms |
+| --- | --- |
+| Table group | 2.07, 2.02 (99th 3.25, 2.96) |
+| Table sort | 0.51, 0.50 |
+| Table filter | 0.03, 0.03 |
+| Summary: joined nodes | 0.95, 0.89 |
+| Summary: Health | 0.27, 0.26 |
+| Summary: resource nodes, context, Lifecycle | 0.07 or less each |
+
+- **The instrumentation costs no more than the noise.** Every instrumented
+  median is within about 0.1 ms of the baselines', and the second instrumented
+  run beats both baselines on several spans; CPU and memory move both ways.
+- **A batch's time is storing it and rebuilding the rows, and grouping is most
+  of the rebuild.** Grouping takes about 2 of the rebuild's 2.6 ms; sorting
+  takes 0.5 and filtering almost nothing. Drawing the Table is under 0.25 ms.
+- **The summary is cheap under this burst.** Its apply stays near 1.4 ms, most
+  of it joining the node rows. Its dirty-to-apply lag, about 530 ms at the
+  median and at most 567 ms, is mostly the 500 ms coalescing window.
+- Every run had all nine summary sources current and its first Table drawn at
+  second 1; retained payload stayed at 6.17 MiB and staging at 6.0 MiB. Each
+  run listed Pods once for the Table and once for the summary, 40 pages each,
+  and opened one watch for each.
+
+Only the burst scenario is measured here; the table-filter, quiet summary,
+forced 410 and churn scenarios, and a profile sample, were not run. Two pairs
+give no pooled 99th percentile, and the 16 ms target was not the question: the
+pair answers what the instrumentation costs and where the time goes.
+
+Runs left out: in the first session a compiler started during the second
+instrumented run, so the runner stopped it and that pair is discarded. In the
+second session the window lost the front 13 s into the second baseline run and
+the Table stopped drawing, so that pair is discarded too. An earlier start was
+refused because another copy of the app was open, and measured nothing. Raw
+reports and the runner's records stay local.
