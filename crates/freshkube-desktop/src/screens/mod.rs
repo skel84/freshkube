@@ -187,9 +187,10 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// The page's line in the status bar, which the shell draws while the
-    /// screen is the visible page. Derive it when the data changes and
-    /// notify, so the shell only reads it; `None` draws no segment.
-    fn status(&self) -> Option<&freshkube_ui::status::Segment> {
+    /// screen is the visible page. The shell reads it before the screen
+    /// renders, so derive it here when its inputs changed, as Resources
+    /// does, and notify when they change; `None` draws no segment.
+    fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
         None
     }
 }
@@ -197,7 +198,7 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
-type StatusFn = Rc<dyn Fn(&App) -> Option<freshkube_ui::status::Segment>>;
+type StatusFn = Rc<dyn Fn(&mut App) -> Option<freshkube_ui::status::Segment>>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -221,7 +222,7 @@ impl ScreenHandle {
         );
         let (embedded, status) = (entity.clone(), entity.clone());
         Self {
-            status: Rc::new(move |cx| status.read(cx).status().cloned()),
+            status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
             }),
@@ -244,7 +245,7 @@ impl ScreenHandle {
     }
 
     /// The screen's status bar segment, if it has one.
-    pub(crate) fn status(&self, cx: &App) -> Option<freshkube_ui::status::Segment> {
+    pub(crate) fn status(&self, cx: &mut App) -> Option<freshkube_ui::status::Segment> {
         (self.status)(cx)
     }
 
@@ -630,6 +631,27 @@ pub(crate) fn meta<T: Send + 'static>(
         meta.push(part.into_any_element());
     }
     meta
+}
+
+/// A cluster page's line in the status bar: its context, the screen's own
+/// `parts`, when it last updated and whether the data is an example. Derive
+/// it when the loader's answer changes, not in render.
+pub(crate) fn segment<T: Send + 'static>(
+    source: Option<&ScreenSource>,
+    loader: &Loader<T>,
+    parts: impl IntoIterator<Item = freshkube_ui::status::Part>,
+) -> freshkube_ui::status::Segment {
+    use freshkube_ui::status::{Part, Segment};
+    let updated = loader
+        .last_successful()
+        .map(|time| Part::new(format!("updated {}", clock(time))));
+    let example = source
+        .filter(|source| source.is_example())
+        .map(|_| Part::new("example data"));
+    Segment::new(
+        source.map(|source| source.target.context.clone()),
+        parts.into_iter().chain(updated).chain(example),
+    )
 }
 
 /// A screen's Refresh in its `PageHeader`: a ghost icon with a tooltip,

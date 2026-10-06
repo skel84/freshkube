@@ -205,6 +205,17 @@ impl Page {
             _ => None,
         }
     }
+    /// The status bar segment's id for a page drawn by a screen.
+    pub(super) fn scope_id(self) -> Option<&'static str> {
+        match self {
+            Self::Etcd => Some("etcd-scope"),
+            Self::Health => Some("health-scope"),
+            Self::Security => Some("security-scope"),
+            Self::Lifecycle => Some("lifecycle-scope"),
+            Self::Operations => Some("operations-scope"),
+            _ => None,
+        }
+    }
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Overview => "Overview",

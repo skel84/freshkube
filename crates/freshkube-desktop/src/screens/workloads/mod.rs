@@ -2,7 +2,9 @@
 //! TUI's workload view. Namespaces come first with problems on top; each one
 //! expands to its deployments, statefulsets, daemonsets and the pods that need
 //! attention. Read-only: nothing here changes the cluster.
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -24,21 +26,46 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
-    panel, partial_notice, refresh_control, retry_button,
+    Column, Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
+    failure_banner, field, gated_page, header, mono, page_body, page_scroll, panel, partial_notice,
+    retry_button, table_width,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
-use freshkube_ui::page::{self, PageHeader};
-use freshkube_ui::table::{self, DataTable, TableState};
-use source::Derived;
 
 const CONTEXT: &str = "TalosWorkloads";
+const ROW_HEIGHT: f32 = 28.;
 const PAGE_ROWS: isize = 20;
-/// The page header's id prefix.
-const PREFIX: &str = "workloads";
-/// The details' height under the list on a narrow page.
+/// The details pane sits beside the list only when the list still has this
+/// much for names: enough to tell pods of one workload apart.
+const NAME_BESIDE_DETAILS: f32 = 320.;
+const DETAILS_WIDTH: f32 = 340.;
+const GAP: f32 = 14.;
+/// Below this content width the issue column is left to the details pane.
+const ISSUE_COLUMN: f32 = 700.;
+const LIST_MIN_HEIGHT: f32 = 200.;
 const DETAILS_HEIGHT: f32 = 240.;
+
+const STATUS: Column = Column {
+    label: "Status",
+    width: Some(100.),
+};
+const NAME: Column = Column {
+    label: "Name",
+    width: None,
+};
+const KIND: Column = Column {
+    label: "Kind",
+    width: Some(108.),
+};
+const READY: Column = Column {
+    label: "Ready / restarts",
+    width: Some(120.),
+};
+const ISSUE: Column = Column {
+    label: "Issue",
+    width: Some(200.),
+};
 
 actions!(
     talos_workloads,
@@ -71,8 +98,8 @@ impl WorkloadData {
 }
 
 /// Identifies a row across refreshes and filter changes.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum ItemKey {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ItemKey {
     Namespace(String),
     Workload {
         namespace: String,
@@ -87,7 +114,7 @@ pub(crate) enum ItemKey {
 
 /// A visible row, as indexes into the snapshot.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum RowRef {
+enum RowRef {
     Namespace(usize),
     Workload(usize, usize),
     Pod(usize, usize),
@@ -117,7 +144,7 @@ impl RowRef {
 }
 
 /// Text for one row, whatever its kind.
-pub(crate) struct RowView {
+struct RowView {
     health: HealthState,
     tone: Tone,
     nested: bool,
@@ -198,6 +225,19 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 
 /// The visible rows for one data set and one set of filters. The data is
 /// held, so pointer identity can't be reused by a newer set.
+struct CachedRows {
+    data: Arc<WorkloadData>,
+    settings: RowSettings,
+    rows: Rc<Vec<RowRef>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RowSettings {
+    query: String,
+    only_unhealthy: bool,
+    collapsed: HashSet<String>,
+}
+
 pub(crate) struct WorkloadsScreen {
     _runtime: Handle,
     summary_managed: bool,
@@ -208,9 +248,8 @@ pub(crate) struct WorkloadsScreen {
     only_unhealthy: bool,
     query: Entity<InputState>,
     focus: FocusHandle,
-    table: TableState,
-    /// The rows, columns and meta parts, derived by [`Self::sync`].
-    derived: Option<Derived>,
+    scroll: UniformListScrollHandle,
+    rows: RefCell<Option<CachedRows>>,
     _subscription: Subscription,
     /// Caret and selection changes redraw the filter; this view is cached, so
     /// it has to hear about them.
@@ -255,12 +294,14 @@ impl ScreenPanel for WorkloadsScreen {
             KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
         ]);
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
+        let query = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter by namespace, name, kind, node or issue")
+        });
         let subscription = cx.subscribe_in(&query, window, |this, _, event, window, cx| {
             match event {
                 InputEvent::Change => {
-                    this.sync(cx);
-                    this.table.reveal(0, ScrollStrategy::Top);
+                    this.scroll.scroll_to_item(0, ScrollStrategy::Top);
                     cx.notify();
                 }
                 // Enter hands the keyboard back to the list.
@@ -277,13 +318,13 @@ impl ScreenPanel for WorkloadsScreen {
             collapsed: HashSet::new(),
             only_unhealthy: false,
             _query_observer: cx.observe(&query, |this, _, cx| {
-                this.sync(cx);
+                this.rows(cx);
                 cx.notify();
             }),
             query,
             focus: cx.focus_handle(),
-            table: TableState::new("workload"),
-            derived: None,
+            scroll: UniformListScrollHandle::new(),
+            rows: RefCell::new(None),
             _subscription: subscription,
         }
     }
@@ -328,7 +369,7 @@ impl ScreenPanel for WorkloadsScreen {
         }
         self.loader
             .resolve(source.target.clone(), Ok(Arc::new(example(&source))));
-        self.sync(cx);
+        self.rows(cx);
         cx.notify();
     }
 }
@@ -356,7 +397,7 @@ impl WorkloadsScreen {
         }
         let source = self.source.as_ref().unwrap();
         self.loader.resolve(source.target.clone(), data);
-        self.sync(cx);
+        self.rows(cx);
         cx.notify();
     }
 
@@ -366,6 +407,32 @@ impl WorkloadsScreen {
 
     /// Visible rows: namespaces (problems first, as collected) followed by
     /// their workloads and problem pods unless collapsed.
+    fn rows(&self, cx: &App) -> Rc<Vec<RowRef>> {
+        let Some(data) = self.loader.data() else {
+            return Rc::default();
+        };
+        let settings = RowSettings {
+            query: self.filter_text(cx),
+            only_unhealthy: self.only_unhealthy,
+            collapsed: self.collapsed.clone(),
+        };
+        let mut cache = self.rows.borrow_mut();
+        if let Some(cached) = cache
+            .as_ref()
+            .filter(|cached| Arc::ptr_eq(&cached.data, data) && cached.settings == settings)
+        {
+            return cached.rows.clone();
+        }
+        crate::desktop::probe::hit("workloads.rows");
+        let rows = Rc::new(self.compute_rows(data, &settings.query));
+        *cache = Some(CachedRows {
+            data: data.clone(),
+            settings,
+            rows: rows.clone(),
+        });
+        rows
+    }
+
     fn compute_rows(&self, data: &WorkloadData, query: &str) -> Vec<RowRef> {
         let mut rows = Vec::new();
         for (ns_ix, namespace) in data.snapshot.namespaces.iter().enumerate() {
@@ -457,12 +524,24 @@ impl WorkloadsScreen {
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        self.sync(cx);
-        if let Some(key) = table::step(self, delta, cx) {
-            self.selected = Some(key);
-            table::reveal(self, ScrollStrategy::Nearest);
-            cx.notify();
+        let rows = self.rows(cx);
+        let Some(data) = self.loader.data() else {
+            return;
+        };
+        if rows.is_empty() {
+            return;
         }
+        let current = rows
+            .iter()
+            .position(|row| Some(row.key(&data.snapshot)) == self.selected);
+        let next = match current {
+            Some(ix) => ix.saturating_add_signed(delta).min(rows.len() - 1),
+            None if delta < 0 => rows.len() - 1,
+            None => 0,
+        };
+        self.selected = Some(rows[next].key(&data.snapshot));
+        self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        cx.notify();
     }
 
     fn select(&mut self, key: ItemKey, cx: &mut Context<Self>) {
@@ -479,14 +558,14 @@ impl WorkloadsScreen {
         if !self.collapsed.remove(&namespace) {
             self.collapsed.insert(namespace);
         }
-        self.sync(cx);
+        self.rows(cx);
         cx.notify();
     }
 
     pub(crate) fn set_only_unhealthy(&mut self, on: bool, cx: &mut Context<Self>) {
         self.only_unhealthy = on;
-        self.sync(cx);
-        self.table.reveal(0, ScrollStrategy::Top);
+        self.rows(cx);
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -494,8 +573,201 @@ impl WorkloadsScreen {
         self.query
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.only_unhealthy = false;
-        self.sync(cx);
+        self.rows(cx);
         cx.notify();
+    }
+
+    fn summary(&self, data: &WorkloadData, cx: &App) -> impl IntoElement + use<> {
+        let p = palette(cx);
+        let snapshot = &data.snapshot;
+        // A list that didn't answer is unknown, not zero.
+        let count = |value: usize, source: WorkloadSource| {
+            if data.missing(source) {
+                "unknown".to_owned()
+            } else {
+                value.to_string()
+            }
+        };
+        let item = |label: &'static str, value: String| {
+            h_flex()
+                .gap_1p5()
+                .child(div().text_color(p.muted).child(label))
+                .child(mono(value))
+        };
+        let pods = |health: HealthState, value: usize| {
+            let tone = health_tone(health);
+            ui::tag(
+                tone,
+                None,
+                format!(
+                    "{} {}",
+                    count(value, WorkloadSource::Pods),
+                    health_label(health).to_lowercase()
+                ),
+                cx,
+            )
+        };
+        let summary = format!(
+            "{} deployments, {} statefulsets, {} daemonsets, {} healthy pods, {} degraded, {} failing",
+            count(snapshot.total_deployments, WorkloadSource::Deployments),
+            count(snapshot.total_statefulsets, WorkloadSource::StatefulSets),
+            count(snapshot.total_daemonsets, WorkloadSource::DaemonSets),
+            count(snapshot.total_pods_healthy, WorkloadSource::Pods),
+            count(snapshot.total_pods_degraded, WorkloadSource::Pods),
+            count(snapshot.total_pods_failing, WorkloadSource::Pods),
+        );
+        h_flex()
+            .id("workload-summary")
+            .test_support()
+            .role(Role::Status)
+            .aria_label(summary)
+            .gap_x_5()
+            .gap_y_1p5()
+            .flex_wrap()
+            .text_size(dp(12.5))
+            .child(item(
+                "Deployments",
+                count(snapshot.total_deployments, WorkloadSource::Deployments),
+            ))
+            .child(item(
+                "StatefulSets",
+                count(snapshot.total_statefulsets, WorkloadSource::StatefulSets),
+            ))
+            .child(item(
+                "DaemonSets",
+                count(snapshot.total_daemonsets, WorkloadSource::DaemonSets),
+            ))
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(div().text_color(p.muted).child("Pods"))
+                    .child(pods(HealthState::Healthy, snapshot.total_pods_healthy))
+                    .child(pods(HealthState::Degraded, snapshot.total_pods_degraded))
+                    .child(pods(HealthState::Failing, snapshot.total_pods_failing)),
+            )
+    }
+
+    fn toolbar(&self, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .gap_2p5()
+            .flex_wrap()
+            .child(
+                div().flex_1().min_w(dp(180.)).max_w(dp(320.)).child(
+                    Input::new(&self.query)
+                        .id("workload-filter")
+                        .aria_label("Filter workloads by namespace, name, kind, node or issue")
+                        .small()
+                        .cleanable(true)
+                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
+                ),
+            )
+            .child(
+                Button::new("only-unhealthy")
+                    .outline()
+                    .small()
+                    .icon(IconName::ListFilter)
+                    .label("Only unhealthy")
+                    .selected(self.only_unhealthy)
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.set_only_unhealthy(!view.only_unhealthy, cx)
+                    })),
+            )
+    }
+
+    fn render_row(
+        &self,
+        ix: usize,
+        row: RowRef,
+        data: &WorkloadData,
+        show_issue: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let p = palette(cx);
+        let key = row.key(&data.snapshot);
+        let selected = self.selected.as_ref() == Some(&key);
+        let view = self.describe(row, data);
+        let is_namespace = matches!(row, RowRef::Namespace(_));
+        let tone = view.tone;
+        let label = health_label(view.health);
+        let aria = format!(
+            "{} {} · {label} · {} · {}",
+            view.kind, view.name, view.ready, view.issue
+        );
+        h_flex()
+            .id(("workload-row", ix))
+            .test_support()
+            .role(Role::ListBoxOption)
+            .aria_selected(selected)
+            .aria_label(aria)
+            .w_full()
+            .h(dp(ROW_HEIGHT))
+            .font_family(MONO_FONT)
+            .text_size(dp(12.))
+            .cursor_pointer()
+            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
+            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
+            .child(
+                cell(STATUS)
+                    .flex()
+                    .items_center()
+                    .child(ui::tag(tone, None, label, cx)),
+            )
+            .child(
+                cell(NAME)
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .when(view.nested, |this| this.pl(dp(28.)))
+                    .when(is_namespace, |this| this.font_weight(FontWeight::SEMIBOLD))
+                    .children(view.chevron.map(|chevron| Icon::new(chevron).size(dp(13.))))
+                    // Without `min_w_0` a long pod name widens the column
+                    // and shifts every later cell in its row.
+                    .child(div().flex_1().min_w_0().truncate().child(view.name)),
+            )
+            .child(cell(KIND).text_color(p.muted).child(view.kind))
+            .child(cell(READY).child(view.ready))
+            .when(show_issue, |this| {
+                this.child(
+                    cell(ISSUE)
+                        .when(!selected, |this| this.text_color(p.muted))
+                        .child(view.issue),
+                )
+            })
+            .on_click(cx.listener(move |view, _, window, cx| {
+                let was_selected = view.selected.as_ref() == Some(&key);
+                view.select(key.clone(), cx);
+                if is_namespace && was_selected {
+                    view.toggle_expanded(cx);
+                }
+                window.focus(&view.focus, cx);
+            }))
+    }
+
+    /// Width the list needs, with room for whole pod names, before the
+    /// details pane may sit beside it.
+    fn width_beside_details(show_issue: bool) -> f32 {
+        let name = Column {
+            width: Some(NAME_BESIDE_DETAILS),
+            ..NAME
+        };
+        let mut columns = vec![STATUS, name, KIND, READY];
+        if show_issue {
+            columns.push(ISSUE);
+        }
+        table_width(&columns)
+    }
+
+    fn head(&self, show_issue: bool, cx: &App) -> Div {
+        let p = palette(cx);
+        let mut head = h_flex().py(dp(7.)).border_b_1().border_color(p.line);
+        let mut columns = vec![STATUS, NAME, KIND, READY];
+        if show_issue {
+            columns.push(ISSUE);
+        }
+        for column in columns {
+            head = head.child(cell(column).child(ui::caption(column.label, cx)));
+        }
+        head
     }
 
     fn details(&self, cx: &mut Context<Self>) -> Div {
@@ -720,149 +992,181 @@ fn pod_matches(pod: &PodInfo, query: &str) -> bool {
 }
 
 impl WorkloadsScreen {
-    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let header = PageHeader::new(PREFIX, "Workloads");
-        let header = if self.loader.data().is_some() {
-            let filter = div().child(
-                Input::new(&self.query)
-                    .id("workload-filter")
-                    .aria_label("Filter workloads by namespace, name, kind, node or issue")
-                    .small()
-                    .h(dp(ui::CONTROL_HEIGHT))
-                    .cleanable(true)
-                    .prefix(Icon::new(IconName::Search).size(dp(14.))),
-            );
-            header
-                .filter(filter)
-                .foldable(self.render_unhealthy(cx), self.unhealthy_fold(cx))
-        } else {
-            header
-        };
-        let refresh = refresh_control(
-            header.id("refresh"),
-            "Refresh workloads",
-            self.source.as_ref(),
-            &self.loader,
-            cx,
-        );
-        let counts = self
-            .derived
-            .as_ref()
-            .map(|derived| derived.meta.clone())
-            .unwrap_or_default();
-        let mut parts = meta(
-            self.source.as_ref(),
-            Scope::Cluster,
-            &self.loader,
-            false,
-            counts.clone(),
-        );
-        // The first count, after the context and its separator, names them
-        // all for assistive technology; they wrap as the line's other parts.
-        if let (Some(_), Some(first), Some(slot)) =
-            (self.source.as_ref(), counts.first(), parts.get_mut(2))
-        {
-            *slot = div()
-                .id("workload-summary")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(counts.join(", "))
-                .child(first.clone())
-                .into_any_element();
-        }
-        header.control(refresh).meta(parts).render(window, cx)
-    }
-
-    fn render_unhealthy(&self, cx: &mut Context<Self>) -> Button {
-        Button::new("only-unhealthy")
-            .outline()
-            .small()
-            .h(dp(ui::CONTROL_HEIGHT))
-            .icon(IconName::ListFilter)
-            .label("Only unhealthy")
-            .selected(self.only_unhealthy)
-            .on_click(
-                cx.listener(|view, _, _, cx| view.set_only_unhealthy(!view.only_unhealthy, cx)),
-            )
-    }
-
-    /// Only unhealthy folded: a checked item.
-    fn unhealthy_fold(&self, cx: &mut Context<Self>) -> page::Fold {
-        let on = self.only_unhealthy;
-        page::Fold::from(page::checked_item(
-            "Only unhealthy",
-            on,
-            page::handler(cx, |view: &mut Self, _, cx| {
-                view.set_only_unhealthy(!view.only_unhealthy, cx)
-            }),
-        ))
-        .changed(on.then(|| "Only unhealthy".into()))
-    }
-
-    /// What shows in the table's place: no Kubernetes API, or `gate()`'s
-    /// states.
-    fn render_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::desktop::probe::hit("workloads");
         // No data and the load failed: the Kubernetes API isn't reachable.
         // Nothing is known, so nothing is shown as failed.
-        if let (Some(_), None, false, Some(error)) = (
+        if let (Some(source), None, false, Some(error)) = (
             self.source.as_ref(),
             self.loader.data(),
             self.loader.is_loading(),
             self.loader.error(),
         ) {
             let retry = retry_button("screen-retry", cx);
-            return Some(
-                ui::empty_state(
-                    IconName::Unplug,
-                    "Kubernetes API unavailable",
-                    "Workload health comes from the Kubernetes API, which couldn't be reached. Nothing is known yet, so nothing is shown as failed. Check the kubeconfig in Settings and that the API server is up, then retry.",
-                    Some(error.to_owned()),
-                    vec![retry],
-                    cx,
+            let error = error.to_owned();
+            let top = header("Workloads", source, Scope::Cluster, &self.loader, cx);
+            return page_scroll("workloads-page")
+                .child(
+                    page_body().child(top).child(
+                        ui::empty_state(
+                            IconName::Unplug,
+                            "Kubernetes API unavailable",
+                            "Workload health comes from the Kubernetes API, which couldn't be reached. Nothing is known yet, so nothing is shown as failed. Check the kubeconfig in Settings and that the API server is up, then retry.",
+                            Some(error),
+                            vec![retry],
+                            cx,
+                        )
+                        .id("k8s-unavailable")
+                        .test_support()
+                        .role(Role::Status)
+                        .aria_label("Kubernetes API unavailable"),
+                    ),
                 )
-                .id("k8s-unavailable")
-                .test_support()
-                .role(Role::Status)
-                .aria_label("Kubernetes API unavailable")
-                .into_any_element(),
-            );
+                .into_any_element();
         }
-        gate(
+        if let Some(page) = gated_page(
+            "workloads-page",
+            "Workloads",
+            Scope::Cluster,
             self.source.as_ref(),
             &self.loader,
-            Scope::Cluster,
             "workloads",
             cx,
-        )
-        .map(IntoElement::into_any_element)
-    }
-
-    /// The table edge to edge, with the selection's details beside it on a
-    /// wide page and below it on a narrow one.
-    fn render_split(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window);
-        let table = div()
-            .id("workloads-table")
-            .flex()
-            .flex_col()
+        ) {
+            return page;
+        }
+        let (Some(source), Some(data)) = (self.source.clone(), self.loader.data()) else {
+            return div().into_any_element();
+        };
+        let p = palette(cx);
+        let rows = self
+            .rows
+            .borrow()
+            .as_ref()
+            .map(|cache| cache.rows.clone())
+            .unwrap_or_default();
+        let row_count = rows.len();
+        let width = content_width(window);
+        let show_issue = width >= ISSUE_COLUMN;
+        let wide = width >= Self::width_beside_details(show_issue) + DETAILS_WIDTH + GAP;
+        let missing = data.missing_notice.clone();
+        let empty = if data.snapshot.namespaces.is_empty() {
+            "No workloads found in this cluster."
+        } else {
+            "No workloads match these filters."
+        };
+        let summary = self.summary(data, cx);
+        let list = panel(cx)
             .flex_1()
-            .min_h_0()
-            .child(DataTable::new().render(self, window, cx).flex_1().min_h_0())
-            .into_any_element();
-        let details = div()
-            .id("workload-details")
-            .test_support()
+            .min_h(dp(LIST_MIN_HEIGHT))
+            .overflow_hidden()
+            .child(self.head(show_issue, cx))
+            .child(
+                div()
+                    .id("workload-list")
+                    .test_support()
+                    .role(Role::ListBox)
+                    .aria_label(
+                        "Namespaces, workloads and pods needing attention; arrows select, Enter opens or closes a namespace, U shows only unhealthy",
+                    )
+                    .flex_1()
+                    .min_h_0()
+                    .map(|this| {
+                        if row_count == 0 {
+                            this.child(
+                                div()
+                                    .px_3()
+                                    .py_3p5()
+                                    .text_size(dp(12.5))
+                                    .text_color(p.muted)
+                                    .child(empty),
+                            )
+                            .into_any_element()
+                        } else {
+                            this.child(
+                                uniform_list(
+                                    "workload-rows",
+                                    row_count,
+                                    cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
+                                        let rows = view.rows(cx);
+                                        let Some(data) = view.loader.data() else {
+                                            return Vec::new();
+                                        };
+                                        range
+                                            .filter_map(|ix| {
+                                                rows.get(ix).map(|row| {
+                                                    view.render_row(ix, *row, data, show_issue, cx)
+                                                })
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }),
+                                )
+                                .track_scroll(&self.scroll)
+                                .size_full(),
+                            )
+                            .into_any_element()
+                        }
+                    }),
+            );
+        let details = self.details(cx);
+        // Short windows scroll the page rather than squeezing the list.
+        let split = if wide {
+            h_flex()
+                .flex_1()
+                .min_h(dp(LIST_MIN_HEIGHT))
+                .items_stretch()
+                .gap(dp(GAP))
+                .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
+                .child(
+                    div()
+                        .id("workload-details")
+                        .test_support()
+                        .w(dp(DETAILS_WIDTH))
+                        .flex_none()
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .child(details),
+                )
+        } else {
+            h_flex()
+                .flex_1()
+                .min_h(dp(LIST_MIN_HEIGHT + GAP + DETAILS_HEIGHT))
+                .child(
+                    v_flex().size_full().gap(dp(GAP)).child(list).child(
+                        div()
+                            .id("workload-details")
+                            .test_support()
+                            .h(dp(DETAILS_HEIGHT))
+                            .flex_none()
+                            .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                            .child(details),
+                    ),
+                )
+        };
+        v_flex()
+            .id("workloads-page")
             .size_full()
+            .min_h_0()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
-            .when_else(
-                beside,
-                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
-                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
-            )
-            .child(self.details(cx))
-            .into_any_element();
-        crate::screens::split_fill("workloads-split", beside, DETAILS_HEIGHT, table, details)
+            .px(dp(crate::desktop::PAGE_PADDING))
+            .pt(dp(22.))
+            .pb(dp(18.))
+            .gap(dp(14.))
+            .child(header(
+                "Workloads",
+                &source,
+                Scope::Cluster,
+                &self.loader,
+                cx,
+            ))
+            .children(failure_banner(&self.loader, cx))
+            .children(partial_notice(missing, cx))
+            .child(summary)
+            .child(self.toolbar(cx))
+            .child(split)
+            .into_any_element()
     }
 }
 
@@ -1105,59 +1409,18 @@ fn example(source: &ScreenSource) -> WorkloadData {
     }
 }
 
-mod source;
 #[cfg(test)]
 mod tests;
 
 impl Render for WorkloadsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::desktop::probe::hit("workloads");
-        self.sync(cx);
-        let header = self.render_header(window, cx);
-        // The table runs edge to edge under the toolbar; the banners and a
-        // state in the table's place sit in an inset between them. A short
-        // page scrolls its frame, so the list keeps some rows.
-        let page = page::page("workloads-page")
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .child(page::toolbar(cx).child(header));
-        let page = match (self.render_state(cx), self.loader.data()) {
-            (Some(state), _) => page.child(
-                page::inset()
-                    .id("workloads-state")
-                    .test_support()
-                    .child(state),
-            ),
-            (None, Some(data)) => {
-                let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
-                    .map(IntoElement::into_any_element)
-                    .into_iter()
-                    .chain(partial_notice(data.missing_notice.clone(), cx))
-                    .collect();
-                page.when(!banners.is_empty(), |page| {
-                    page.child(
-                        page::inset()
-                            .flex()
-                            .flex_col()
-                            .gap(dp(page::PANE_PADDING_Y))
-                            .children(banners),
-                    )
-                })
-                .child(self.render_split(window, cx))
-            }
-            (None, None) => page,
-        };
-        // The keys live on a wrapper drawn in every state, so `/` and Escape
-        // still work while the filters hide every row.
+        let content = self.render_content(window, cx);
         div()
             .id("health-body")
             .test_support()
+            .size_full()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
-            .flex()
-            .flex_col()
-            .size_full()
-            .min_h_0()
             .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
             .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
@@ -1175,6 +1438,6 @@ impl Render for WorkloadsScreen {
             .on_action(
                 cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
             )
-            .child(page)
+            .child(content)
     }
 }

@@ -15,6 +15,7 @@ use freshkube_core::inspection::{
     EtcdHealthSnapshot, EtcdInspectionRequest, EtcdMemberSnapshot, InspectionSource,
     InspectionUnavailable, assemble_etcd_health, collect_etcd_health,
 };
+use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::TableState;
 use gpui_kit::assets::IconName;
 use gpui_kit::prelude::*;
@@ -184,10 +185,10 @@ struct Derived {
     alarm_tone: Tone,
     /// Gaps in the answer, for the partial notice.
     missing: Vec<String>,
-    /// The meta line before the quorum (context, members) and after it
-    /// (leader, alarms, time, example data).
-    meta_before: Vec<SharedString>,
-    meta_after: Vec<SharedString>,
+    /// The status bar's line: the context, members, the quorum, then
+    /// leader, alarms, time and example data; the quorum's detail is its
+    /// note. None until etcd answers.
+    status: Option<Segment>,
 }
 
 impl EventEmitter<ScreenEvent> for EtcdScreen {}
@@ -234,6 +235,11 @@ impl ScreenPanel for EtcdScreen {
 
     fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+    }
+
+    fn status(&mut self) -> Option<&Segment> {
+        self.derive_if_changed();
+        self.derived.status.as_ref()
     }
 
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -589,42 +595,17 @@ impl EtcdScreen {
             .iter()
             .any(|missing| missing.source == InspectionSource::EtcdAlarms);
         let reported = snapshot.members.iter().filter(|m| m.is_reachable()).count();
-        let mut before = vec![plural(snapshot.members.len(), "member", "members")];
-        if reported < snapshot.members.len() {
-            before[0] = format!("{reported} of {} reported", snapshot.members.len());
-        }
+        let members = if reported < snapshot.members.len() {
+            format!("{reported} of {} reported", snapshot.members.len())
+        } else {
+            plural(snapshot.members.len(), "member", "members")
+        };
         let leader = match (snapshot.leader_id(), snapshot.reported_leader_ids.len()) {
             (Some(id), _) => format!("leader {}", name_in(&snapshot.members, id)),
             (None, 0) => "leader not reported".into(),
             (None, _) => "members disagree on the leader".into(),
         };
-        // Quorum and leader come first, so a narrow page keeps them in view.
-        let mut after = vec![leader];
-        if snapshot.voting_members == 1 {
-            after.push("single member · no failure tolerance".into());
-        }
-        after.push(if alarms_unknown {
-            "alarms not reported".into()
-        } else if alarms.is_empty() {
-            "no alarms".into()
-        } else {
-            plural(alarms.len(), "alarm", "alarms")
-        });
-        if let Some(time) = self.loader.last_successful() {
-            after.push(format!("updated {}", clock(time)));
-        }
-        if self.source.as_ref().is_some_and(ScreenSource::is_example) {
-            after.push("example data".into());
-        }
-        if let Some(source) = &self.source {
-            before.insert(0, source.target.context.clone());
-        }
-        (self.derived.columns, self.derived.width) = source::columns(&rows);
-        self.derived.quorum = Some(quorum_view(snapshot));
-        self.derived.banner = quorum_banner(snapshot);
-        self.derived.missing = missing(snapshot);
-        self.derived.rows = rows;
-        self.derived.alarm_tone = snapshot
+        let alarm_tone = snapshot
             .members
             .iter()
             .flat_map(|member| member.alarms.iter())
@@ -632,9 +613,50 @@ impl EtcdScreen {
             .map(|alarm| alarm_tone(&alarm.alarm_type))
             .max_by_key(|tone| tone_rank(*tone))
             .unwrap_or(Tone::Unknown);
+        let quorum = quorum_view(snapshot);
+        // Only a part that warns is toned; a calm one keeps the bar's text.
+        let toned = |text: String, tone: Tone| {
+            let part = Part::new(text);
+            if matches!(tone, Tone::Warn | Tone::Crit) {
+                part.tone(tone)
+            } else {
+                part
+            }
+        };
+        // Quorum and leader come first, so a narrow bar keeps them in view.
+        let mut parts = vec![
+            Part::new(members),
+            toned(quorum.label.into(), quorum.tone),
+            Part::new(leader),
+        ];
+        if snapshot.voting_members == 1 {
+            parts.push(Part::new("single member · no failure tolerance"));
+        }
+        parts.push(if alarms_unknown {
+            Part::new("alarms not reported")
+        } else if alarms.is_empty() {
+            Part::new("no alarms")
+        } else {
+            toned(plural(alarms.len(), "alarm", "alarms"), alarm_tone)
+        });
+        if let Some(time) = self.loader.last_successful() {
+            parts.push(Part::new(format!("updated {}", clock(time))));
+        }
+        if self.source.as_ref().is_some_and(ScreenSource::is_example) {
+            parts.push(Part::new("example data"));
+        }
+        let context = self
+            .source
+            .as_ref()
+            .map(|source| source.target.context.clone());
+        self.derived.status = Some(Segment::new(context, parts).note(quorum.detail.clone()));
+        (self.derived.columns, self.derived.width) = source::columns(&rows);
+        self.derived.quorum = Some(quorum);
+        self.derived.banner = quorum_banner(snapshot);
+        self.derived.missing = missing(snapshot);
+        self.derived.rows = rows;
+        self.derived.alarm_tone = alarm_tone;
         self.derived.alarms = alarms;
-        self.derived.meta_before = before.into_iter().map(Into::into).collect();
-        self.derived.meta_after = after.into_iter().map(Into::into).collect();
         self.refilter();
     }
 

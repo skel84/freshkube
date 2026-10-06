@@ -19,10 +19,11 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use freshkube_ui::page::{self, PageHeader};
+use freshkube_ui::status::{Part, Segment};
 
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gate, meta, mono, panel, partial_notice, refresh_control, stat,
+    gate, mono, panel, partial_notice, refresh_control, segment, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -423,7 +424,7 @@ pub(crate) struct SecurityScreen {
     focus: FocusHandle,
     scroll: ScrollHandle,
     /// The meta line's parts for the audit at a loader revision.
-    meta: Option<(u64, Vec<SharedString>)>,
+    status: Option<(u64, Segment)>,
 }
 
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
@@ -443,7 +444,7 @@ impl ScreenPanel for SecurityScreen {
             selected: None,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
-            meta: None,
+            status: None,
         }
     }
 
@@ -466,6 +467,11 @@ impl ScreenPanel for SecurityScreen {
 
     fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+    }
+
+    fn status(&mut self) -> Option<&Segment> {
+        self.sync_status();
+        self.status.as_ref().map(|(_, line)| line)
     }
 
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -537,10 +543,10 @@ impl SecurityScreen {
         cx.notify();
     }
 
-    /// Derives the meta line's parts again when a new audit arrives.
-    fn sync_meta(&mut self) {
+    /// Derives the status bar's line again when a new audit arrives.
+    fn sync_status(&mut self) {
         let revision = self.loader.revision();
-        if self.meta.as_ref().is_some_and(|(at, _)| *at == revision) {
+        if self.status.as_ref().is_some_and(|(at, _)| *at == revision) {
             return;
         }
         let parts = self
@@ -548,7 +554,12 @@ impl SecurityScreen {
             .data()
             .map(|snapshot| identity_parts(&snapshot.identity))
             .unwrap_or_default();
-        self.meta = Some((revision, parts));
+        let line = segment(
+            self.source.as_ref(),
+            &self.loader,
+            parts.into_iter().map(Part::new),
+        );
+        self.status = Some((revision, line));
     }
 
     fn summary(&self, snapshot: &SecurityAuditSnapshot, cx: &App) -> Stateful<Div> {
@@ -729,7 +740,7 @@ impl SecurityScreen {
 
 impl Render for SecurityScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_meta();
+        self.sync_status();
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -779,21 +790,7 @@ impl SecurityScreen {
             &self.loader,
             cx,
         );
-        let parts = self
-            .meta
-            .as_ref()
-            .map(|(_, parts)| parts.clone())
-            .unwrap_or_default();
-        header
-            .control(refresh)
-            .meta(meta(
-                self.source.as_ref(),
-                Scope::Cluster,
-                &self.loader,
-                false,
-                parts,
-            ))
-            .render(window, cx)
+        header.control(refresh).render(window, cx)
     }
 
     /// The banners, the summary and the audit with the selection's details,
@@ -1274,17 +1271,21 @@ mod ui_tests {
         }
     }
 
-    /// Where the audit read from joins the meta line, after the context.
+    /// Where the audit read from joins the status bar's line, after the
+    /// context; the header keeps no meta line.
     #[gpui_kit::test]
-    fn the_endpoints_and_volume_target_are_meta_parts(cx: &mut TestAppContext) {
+    fn the_endpoints_and_volume_target_are_status_parts(cx: &mut TestAppContext) {
         let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
-            let parts = screen.read(cx).meta.clone().unwrap().1;
-            assert_eq!(parts.len(), 2, "{parts:?}");
-            assert!(parts[0].starts_with("endpoints "), "{parts:?}");
-            assert!(parts[1].starts_with("volume target "), "{parts:?}");
-            window.find("security-scope");
+            let line = screen.update(cx, |screen, _| {
+                screen.status().expect("a segment").text(None).clone()
+            });
+            let parts: Vec<&str> = line.split(" · ").collect();
+            assert!(parts[1].starts_with("endpoints "), "{line}");
+            assert!(parts[2].starts_with("volume target "), "{line}");
+            assert!(line.ends_with("example data"), "{line}");
+            assert!(window.try_find("security-scope").is_none());
         })
         .unwrap();
     }
