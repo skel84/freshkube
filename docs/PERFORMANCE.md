@@ -147,7 +147,14 @@ Against the spike's 60 frames a second at 5 MB/s and about 2 ms of paint:
 
 ### Monitoring dashboards
 
-`monitoring` in the stress window (1320 × 860) at the default text size, against 67 Go processes. Release build, 30 s runs with the first 5 left out, three runs of the 30-panel dashboard and two of the built-in Cluster, on 6 October 2026 (#181). The load average was between 8 and 18 throughout, so read the medians, not single values. Times are in milliseconds unless marked; the 30-panel row gives the median of its runs, Cluster's the range of its two.
+`monitoring` in the stress window (1320 × 860) at the default text size, against 67 Go processes. Release build, 30 s runs with the first 5 left out, three runs of the 30-panel dashboard and two of the built-in Cluster, on 6 October 2026 (#181):
+
+```sh
+scripts/stress.sh mon-30 monitoring crates/freshkube-desktop/src/bin/stress/dashboards/thirty.json
+scripts/stress.sh mon-cluster monitoring crates/freshkube-core/src/monitoring/builtin/cluster.json
+```
+
+The load average was between 8 and 18 throughout, so read the medians, not single values. Times are in milliseconds unless marked; the 30-panel row gives the median of its runs, Cluster's the range of its two.
 
 | Dashboard | Main-thread stall: median / 99th / total | `panel_render`: count, median / 99th / total | `plot_paint`: count, median / 99th / total | `cursor` total | CPU | Memory |
 | --- | --- | --- | --- | --- | --- | --- |

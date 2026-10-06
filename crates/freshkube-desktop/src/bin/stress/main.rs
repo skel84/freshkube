@@ -19,7 +19,7 @@
 //! | `terminal <lines/s>` | a window with only a terminal, fed coloured lines at that rate |
 //! | `terminal-top` | the terminal, redrawn whole by a `top`-like program about 60 times a second |
 //! | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks |
-//! | `monitoring <dashboard.json> [processes]` | opens that dashboard against a fake Prometheus with that many Go processes (67), then sweeps the mouse over its first panels and scrolls |
+//! | `monitoring <dashboard.json> [processes]` | opens that dashboard against a fake Prometheus with that many Go processes (67), then sweeps the mouse over its first panels and scrolls; `dashboards/thirty.json` is the 30-panel baseline |
 //!
 //! The run quits after `FRESHKUBE_STRESS_SECONDS` (30) and prints its
 //! timings to stderr; see `src/stress.rs`. `FRESHKUBE_STRESS_KEYS`,
