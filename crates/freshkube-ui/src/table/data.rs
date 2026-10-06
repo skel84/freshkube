@@ -193,12 +193,14 @@ pub trait TableSource: Sized + 'static {
     /// What replaces the rows when there are none, such as a line or a
     /// title and a hint; the table gives it its padding and muted text.
     fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement>;
-    /// Bars above the rows: the selection, folded rows.
-    fn notes(&self, _cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The footer's counts, first in its row: the selection
+    /// ([`super::selection`]) and folded rows ([`super::showing`]).
+    fn counts(&self, _cx: &mut Context<Self>) -> Vec<AnyElement> {
         Vec::new()
     }
-    /// The legend below the rows.
-    fn footer(&self, _window: &Window, _cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// What the table's marks mean, after the counts in its footer
+    /// ([`super::legend`], or [`super::legend_line`] when narrow).
+    fn legend(&self, _window: &Window, _cx: &mut Context<Self>) -> Option<AnyElement> {
         None
     }
 }
@@ -298,7 +300,8 @@ impl DataTable {
         self
     }
 
-    /// Notes, the header, the rows or the empty state, and the footer.
+    /// The header, the rows or the empty state, and the footer with the
+    /// counts and the legend when there are any.
     pub fn render<S: TableSource>(self, source: &S, window: &Window, cx: &mut Context<S>) -> Div {
         let state = source.table_state();
         let ids = &state.ids;
@@ -381,9 +384,11 @@ impl DataTable {
         } else {
             (Some(list), None)
         };
+        let (counts, legend) = (source.counts(cx), source.legend(window, cx));
+        let footer = (!counts.is_empty() || legend.is_some())
+            .then(|| super::footer(state.id("footer"), counts, legend, fill, cx));
         frame
             .overflow_hidden()
-            .children(source.notes(cx))
             .child(
                 div()
                     .id(ids.scroll.clone())
@@ -407,7 +412,7 @@ impl DataTable {
                     ),
             )
             .children(below)
-            .children(source.footer(window, cx))
+            .children(footer)
     }
 }
 
@@ -673,7 +678,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::table::{CELL_PAD, GLYPH_WIDTH, GroupRow, glyph_cell};
+    use crate::table::{CELL_PAD, FOOTER_HEIGHT, GLYPH_WIDTH, GroupRow, glyph_cell};
     use crate::ui::Tone;
 
     /// Lines 0 and 3 are group headers; the rest are rows.
@@ -742,6 +747,10 @@ mod tests {
         carded: bool,
         /// The first column holds each row's glyph, as a page's does.
         glyphs: bool,
+        /// How many rows are marked, for the footer's counts.
+        marked: Option<usize>,
+        /// The footer's legend line.
+        legend: Option<SharedString>,
     }
 
     impl Wide {
@@ -760,6 +769,17 @@ mod tests {
                 sorts: Vec::new(),
                 carded: false,
                 glyphs: false,
+                marked: None,
+                legend: None,
+            }
+        }
+
+        /// `marked` rows marked and four of nine showing, then `legend`.
+        fn footer(self, marked: Option<usize>, legend: Option<&str>) -> Self {
+            Self {
+                marked,
+                legend: legend.map(|legend| legend.to_owned().into()),
+                ..self
             }
         }
 
@@ -911,6 +931,26 @@ mod tests {
         fn click(&mut self, key: &usize, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
             self.selected = Some(*key);
             cx.notify();
+        }
+
+        fn counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+            let Some(marked) = self.marked else {
+                return Vec::new();
+            };
+            vec![
+                super::super::selection("wide-marks", marked, [], cx).into_any_element(),
+                super::super::showing("wide-showing", 4, 9, div().child("Show all 9"), cx)
+                    .into_any_element(),
+            ]
+        }
+
+        fn legend(&self, _: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+            let legend = self.legend.clone()?;
+            Some(
+                super::super::legend_line("wide-legend", legend, "The legend", cx)
+                    .test_support()
+                    .into_any_element(),
+            )
         }
     }
 
@@ -1197,6 +1237,54 @@ mod tests {
                     }),
                     "carded {carded}: no pinned run on the table's fill"
                 );
+            })
+            .unwrap();
+        }
+    }
+
+    /// The counts and the legend share one 26 row under the rows: the
+    /// counts first at their width, the legend truncating after them; no
+    /// row when there is neither.
+    #[gpui_kit::test]
+    fn the_footer_holds_the_counts_then_the_legend(cx: &mut TestAppContext) {
+        let long = "Meters: band = request · line = use · end = limit ".repeat(8);
+        let (handle, _) = open(
+            cx,
+            Wide::new(0, 4, false).footer(Some(3), Some(&long)),
+            600.,
+        );
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let footer = window.find("wide-footer");
+            assert_eq!(
+                footer.bounds().size.height,
+                ui::dp_px(FOOTER_HEIGHT, window)
+            );
+            let rows = window.find("wide-table-scroll").bounds();
+            assert!(
+                footer.bounds().top() >= rows.bottom(),
+                "the footer sits under the rows"
+            );
+            // Nothing sits between the table's top and its header.
+            let header = ui::dp_px(HEADER_HEIGHT, window);
+            assert_eq!(rows.top(), window.find("wide-list").bounds().top() - header);
+            let (marks, showing, legend) = (
+                window.find("wide-marks"),
+                window.find("wide-showing"),
+                window.find("wide-legend").bounds(),
+            );
+            assert!(marks.bounds().right() <= showing.bounds().left());
+            assert!(showing.bounds().right() <= legend.left());
+            // The legend truncates inside the row; the counts keep their width.
+            assert!(legend.right() <= footer.bounds().right(), "{legend:?}");
+            assert!(showing.bounds().right() < footer.bounds().right());
+        })
+        .unwrap();
+        for wide in [Wide::new(0, 4, false), Wide::new(0, 0, false)] {
+            let (handle, _) = open(cx, wide, 600.);
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.try_find("wide-footer").is_none());
             })
             .unwrap();
         }

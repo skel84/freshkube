@@ -152,10 +152,10 @@ impl ResourcesScreen {
         Some(row.render(cx).into_any_element())
     }
 
-    /// Above the rows: the marked rows' actions, and while healthy pods are
-    /// folded, how many show.
-    pub(super) fn table_notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut notes = Vec::new();
+    /// The footer's counts: the marked rows and their actions, and while
+    /// healthy pods are folded, how many show.
+    pub(super) fn table_counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut counts = Vec::new();
         if !self.marked.is_empty() {
             let actions = [
                 Button::new("resource-marks-copy")
@@ -172,8 +172,8 @@ impl ResourcesScreen {
                     .on_click(cx.listener(|view, _, _, cx| view.clear_marks(cx)))
                     .into_any_element(),
             ];
-            notes.push(
-                table::selection_bar("resource-marks", self.marked.len(), actions, cx)
+            counts.push(
+                table::selection("resource-marks", self.marked.len(), actions, cx)
                     .into_any_element(),
             );
         }
@@ -189,8 +189,8 @@ impl ResourcesScreen {
                 .xsmall()
                 .label(format!("Show all {}", tally.total()))
                 .on_click(cx.listener(|view, _, _, cx| view.set_list_view(ListView::All, cx)));
-            notes.push(
-                table::showing_bar(
+            counts.push(
+                table::showing(
                     "resource-collapsed",
                     self.projection.len(),
                     tally.total(),
@@ -200,7 +200,7 @@ impl ResourcesScreen {
                 .into_any_element(),
             );
         }
-        notes
+        counts
     }
 
     fn table(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {

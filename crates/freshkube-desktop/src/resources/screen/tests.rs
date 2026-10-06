@@ -1198,7 +1198,10 @@ fn pods_show_problems_first_and_fold_healthy_ones(cx: &mut TestAppContext) {
             .to_owned();
         assert!(healthy.starts_with("Healthy · 20 pods in "), "{healthy}");
         assert!(healthy.ends_with("· collapsed"), "{healthy}");
-        assert!(window.find("resource-collapsed").visible());
+        // The count sits in the table's footer, under the rows.
+        let collapsed = window.within("resource-footer").find("resource-collapsed");
+        assert!(collapsed.visible());
+        assert!(collapsed.bounds().top() >= window.find("resource-table-scroll").bounds().bottom());
         assert_eq!(
             window.find("resource-tally-failing").label(),
             Some("1 failing")
@@ -1371,7 +1374,12 @@ fn x_marks_rows_and_a_group_selects_all_of_its_own(cx: &mut TestAppContext) {
         window.press("x", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).marked.contains(&first));
-        assert!(window.find("resource-marks").visible());
+        assert!(
+            window
+                .within("resource-footer")
+                .find("resource-marks")
+                .visible()
+        );
         window.press("x", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).marked.is_empty());

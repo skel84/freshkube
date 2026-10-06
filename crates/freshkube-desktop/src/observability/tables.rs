@@ -189,14 +189,14 @@ impl TableSource for ObservabilityPage {
             Shown::Traces => self.trace_empty(cx),
         }
     }
-    fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_notes(cx),
             Shown::Incidents => self.incident_notes(cx),
             Shown::Traces => self.trace_notes(cx),
         }
     }
-    fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_footer(window, cx),
             Shown::Incidents | Shown::Traces => None,

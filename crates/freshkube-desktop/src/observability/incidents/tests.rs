@@ -259,7 +259,12 @@ mod ui_tests {
             window.render_frame(cx);
             assert_eq!(page.read(cx).incident_observations.shown.len(), 1);
             assert!(window.try_find("obs-live-incident-INC-13").is_none());
-            assert!(window.find("obs-incidents-showing").visible());
+            assert!(
+                window
+                    .within("obs-incidents-footer")
+                    .find("obs-incidents-showing")
+                    .visible()
+            );
             assert_eq!(selected(cx).0.as_deref(), Some("INC-13"));
             window.click("obs-incidents-show-all", cx);
             window.render_frame(cx);

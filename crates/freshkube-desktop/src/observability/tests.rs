@@ -1092,7 +1092,12 @@ fn applications_show_all_and_columns_keep_the_same_projection(cx: &mut TestAppCo
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let problems = page.read(cx).shown_apps;
-        assert!(window.find("obs-applications-collapsed").visible());
+        assert!(
+            window
+                .within("obs-applications-footer")
+                .find("obs-applications-collapsed")
+                .visible()
+        );
         let total = page.read(cx).counts[1];
         assert!(total > problems);
         assert_eq!(

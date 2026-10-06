@@ -21,6 +21,7 @@ use freshkube_ui::page::PANE_PADDING;
 /// DESIGN.md's table page, in dp.
 pub(crate) const HEADER_HEIGHT: f32 = 26.;
 pub(crate) const ROW_HEIGHT: f32 = 26.;
+pub(crate) const FOOTER_HEIGHT: f32 = 26.;
 /// The header's toolbar: its row, the title as its label, and its controls.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 38.;
 pub(crate) const LABEL_TEXT: f32 = 13.;
@@ -341,6 +342,20 @@ pub(crate) fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> 
     close("row", rows.row, ROW_HEIGHT);
     if let Some(group) = rows.group {
         close("group header", group, ROW_HEIGHT);
+    }
+    // The footer, when the table has counts or a legend: one row under
+    // the rows, never a strip above them.
+    let footer = table
+        .table
+        .and_then(|frame| frame.strip_suffix("-table-scroll"))
+        .and_then(|prefix| window.try_find(format!("{prefix}-footer")));
+    if let (Some(footer), Some(frame)) = (footer, table.table) {
+        close("footer", footer.bounds().size.height, FOOTER_HEIGHT);
+        assert!(
+            footer.bounds().top() >= window.find(frame).bounds().bottom(),
+            "{}: the footer sits above the rows",
+            table.list
+        );
     }
     rows
 }
