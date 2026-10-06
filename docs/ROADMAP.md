@@ -281,19 +281,84 @@ The other findings remain explicit below, alongside the existing [domain-boundar
 
 After the current integration and guide correction, stop the architecture pass. Promote a row above to an active step only when feature work or measurements establish its scope. Keep file moves separate from logic changes so a reviewer can verify both.
 
-## Next: one visual system
+## Next
 
-Every page should look like Pods. Only the Resources screen does today; Nodes, Overview, Observability, Monitoring and the control-plane pages each draw their own header, padding, cards, tables, chips and states. [#46](https://github.com/skel84/freshkube/issues/46) turns the Pods look into shared components and enforces it, so a page can't drift without failing a check. Its proposed decisions (one time picker in each page's header, page padding 26, control-plane pages migrated when next touched) are recorded there.
+One ordered list. A step starts when the one above it is done or explicitly runs alongside it. Each step becomes an issue with acceptance criteria when it starts.
 
-1. Land the work in flight on `observability/`, and record `scripts/smoke.sh pages` captures and `scripts/stress.sh` numbers as the baseline.
-2. Done: the page types and their components are named in [DESIGN.md](DESIGN.md#components).
-3. Done: Pods' page header and table are shared components in `crates/freshkube-ui`, with no visible change ([#47](https://github.com/skel84/freshkube/issues/47)); see [Done](#done).
-4. Done: layout tests and a CI style check with a shrinking allowlist ([#48](https://github.com/skel84/freshkube/issues/48)); see [Done](#done).
-5. Migrate one page per change: Nodes ([#49](https://github.com/skel84/freshkube/issues/49)), Observability Applications ([#50](https://github.com/skel84/freshkube/issues/50)), Incidents and Traces ([#60](https://github.com/skel84/freshkube/issues/60)) and Overview ([#61](https://github.com/skel84/freshkube/issues/61)) are done; see [Done](#done). Then Monitoring, then each control-plane page when it is next changed.
+### 1. Finish the visual system and #22
 
-No new entities ([#5](https://github.com/skel84/freshkube/issues/5)), moves in their own commits, stress numbers before and after table changes ([#22](https://github.com/skel84/freshkube/issues/22)), and generic row keys so the session registry ([#44](https://github.com/skel84/freshkube/issues/44)) can add a session. New platform pages ([#42](https://github.com/skel84/freshkube/issues/42)) start on these components.
+[#46](https://github.com/skel84/freshkube/issues/46) makes every page look like Pods.
+- Its checklist is updated first: 6.7–6.9 have landed, and the style allowlist is empty.
+- Migrate the remaining pages: Monitoring (4.5), then Workloads and Maintenance (4.6).
+- 6.10 (actions on the selection) and 6.11 (System services without an actions column).
+- The polish issues found in the 6 October pass: [#225](https://github.com/skel84/freshkube/issues/225), [#226](https://github.com/skel84/freshkube/issues/226), [#229](https://github.com/skel84/freshkube/issues/229), [#231](https://github.com/skel84/freshkube/issues/231)–[#233](https://github.com/skel84/freshkube/issues/233), [#235](https://github.com/skel84/freshkube/issues/235), [#238](https://github.com/skel84/freshkube/issues/238), [#241](https://github.com/skel84/freshkube/issues/241) and [#242](https://github.com/skel84/freshkube/issues/242).
+- It closes with `smoke.sh pages` in light and dark, at 760 × 560 and at 20 px text.
 
-## Next: a component workbench
+Alongside it, [#22](https://github.com/skel84/freshkube/issues/22) closes:
+- the Resources burst timing, paired baseline against instrumented on one machine;
+- the chart series cap: a crowded timeseries draws its 30 highest-peaking series, with "Show all". Panels whose query already uses `topk`/`bottomk`, and stacked panels, are never capped.
+
+### 2. Linux and Windows releases
+
+CI already compiles and tests Linux and Windows. `release.yml` adds a Linux tarball and a Windows zip (an installer later), built from the same commit as the macOS bundles and attached to the same draft release.
+- Neither platform can be looked at on our Macs, so the check is in three parts:
+  1. CI runs the full tests on both.
+  2. A release smoke step starts each binary with `--fixture` (under a virtual display on Linux) and checks that it reaches its first frame (`FRESHKUBE_FIRST_FRAME`).
+  3. A tester's first-run report on each platform (start, fixture, one real context, logs, a shell) is recorded in the release notes before the artifact is called supported.
+- Developer ID signing and notarization stay in step 8.
+
+### 3. The delivery chain, step 1: ownership and evidence
+
+The base the chain stands on.
+- **Argo CD ownership** ([F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation)): an Application, the objects it owns, its sync and health, and the image digests actually running.
+- **A minimal evidence model** ([F01](FUTURE_IDEAS.md#f01-model-observations-and-evidence)): each link in a chain is confirmed, claimed or unknown, with where that came from.
+- The [#158](https://github.com/skel84/freshkube/issues/158) spike becomes a public PR:
+  - Generalized, with invented names and fixtures only.
+  - No convention from a real setup is hard-coded; each becomes a setting or a general rule.
+  - Reviewed against the public-content rule before it goes up.
+
+### 4. Several clusters, as far as the chain needs
+
+[F10](FUTURE_IDEAS.md#f10-support-simultaneous-clusters-and-global-search) and [#44](https://github.com/skel84/freshkube/issues/44), limited to what a change view needs: the connections to several contexts at once, and a one-time mapping from an Argo CD destination to a kubeconfig context. Destinations often don't match kubeconfig server URLs, for example behind an access proxy.
+
+### 5. The delivery chain, step 2: the hops
+
+Following one change from commit to running pods ([#42](https://github.com/skel84/freshkube/issues/42)):
+- Kargo's Warehouse, Freight, Stage and Promotion;
+- Tekton runs started by Pipelines as Code, found by commit SHA;
+- Tekton Chains' attestations;
+- Tekton Results for history.
+
+Joins use only the commit SHA and the image digest. A pull request joins through its merge commit. The first screen is one change, from commit to running pods.
+
+### 6. Coroot completion, then linked to the chain
+
+The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histories and deployment comparisons through typed APIs. Then link Coroot to the chain: this deploy, and what its metrics did after it.
+
+### 7. Small daily wins
+
+Taken as they come up, between larger steps:
+- logs of several containers, or of a whole workload, in one `LogView`;
+- current CPU and memory in tables from the metrics API;
+- YAML schema validation.
+
+### 8. Later
+
+- CloudNativePG investigation ([F08](FUTURE_IDEAS.md#f08-build-the-cloudnativepg-investigation)).
+- Developer ID signing and notarization.
+- Kubeconfig auth plugins (exec and OIDC) beyond what works today.
+- CLI and MCP explanations ([F11](FUTURE_IDEAS.md#f11-expose-shared-explanations-through-cli-and-mcp)).
+- The rest of [FUTURE_IDEAS.md](FUTURE_IDEAS.md): shared store and workload health (F02, F03), traffic paths (F05), planned changes (F06), integration contracts (F07) and change history (F09).
+
+### Checks to add
+
+- **Monitoring discovery** finds Prometheus-compatible backends, not just a Prometheus Service. For example, VictoriaMetrics' `vmsingle`, or `vmselect` with its `/select/<tenant>/prometheus` prefix. Tested with an invented fixture.
+
+### Known risks, documented, not fixed now
+
+- **Exec-plugin kubeconfigs from the Dock.** A kubeconfig whose user runs an exec plugin (`tsh`, `aws`, `gcloud`, `kubelogin`, …) needs that command on `PATH`. An app started from the Dock or Finder gets launchd's short `PATH` and may not find it; started from a terminal it works. Recorded in [MACOS_PACKAGING.md](MACOS_PACKAGING.md#install-a-release) until auth plugins are handled (step 8).
+
+## Done: a component workbench
 
 A page's components should be checked without starting the app. [#53](https://github.com/skel84/freshkube/issues/53) adds a workbench, [WORKBENCH.md](WORKBENCH.md), and then moves the service map's layout and drawing out of `observability/` so it can be built there. Steps (b) and (c) go ahead only if (a)'s rebuild and open times are clearly shorter than the app's.
 
@@ -306,18 +371,7 @@ A page's components should be checked without starting the app. [#53](https://gi
   - The service map switched to `route()` in `411c046`; `layered()` and `curve()` are gone. A test checks that no connection on any page of the 120-service fixture runs through a box.
   - `GraphView` landed in `304372b`, `07c90b3` and `a6c5399`. It is shaped like the data table: a page implements `GraphSource` and owns a `GraphState`, which derives the page of boxes, routes, markers, filter and selection when they change. The service map and the workbench's graph story draw through it. A graph wider than its card now scrolls inside the card's border, with a scrollbar under it. The map's Connections moved onto the shared inspector in `0c05a90` and `ec6978d`: one card holds the inspector split, its width is remembered under `map`, and Open application is its footer.
 
-## Next: Coroot observability
-
-The user selected connecting design2's H1–H7 mocks to the `coroot-rs` library in `skel84/corust` as the next feature. [COROOT.md](COROOT.md) records the source review, ownership, capability gaps and validation; [#25](https://github.com/skel84/freshkube/issues/25) tracks delivery. The first read-only slice is delivered in `05d03ce` and `1b16b42` ([PR #31](https://github.com/skel84/freshkube/pull/31)); its actual validation and limitations are recorded in [COROOT.md](COROOT.md#validation). Read-only Incidents landed as `8d3c5d7` ([PR #35](https://github.com/skel84/freshkube/pull/35)), after the audited additive client API in [corust PR #7](https://github.com/skel84/corust/pull/7), merge `362b8d9`. [Its contract and validation](COROOT.md#read-only-incidents-slice) are documented separately. Traces and Profiling read Coroot's per-application views ([contract](COROOT.md#traces-and-profiling)). The broader issue stays open for chart histories, deployment comparisons and shared Health/attention.
-
-1. Library prerequisite done: [corust signal fix #1](https://github.com/skel84/corust/issues/1) landed as `605dced`. Empty healthy, empty unknown and absent signals remain distinct. Freshkube now pins reviewed `c35f713`, which also includes the merged response-byte limit (corust PR #4) and Applications/map collection-shape fix (corust PR #5).
-2. design2 landed in [PR #27](https://github.com/skel84/freshkube/pull/27) (`762d01c`). [Access identity #2](https://github.com/skel84/freshkube/issues/2) is satisfied by merged [PR #30](https://github.com/skel84/freshkube/pull/30), main `4bbc775`. Use `KubeSource.id` and [ACCESS_IDENTITY.md](ACCESS_IDENTITY.md), with separate Coroot provider identity and request generation. The [guide correction #24](https://github.com/skel84/freshkube/issues/24) remains independent.
-3. Complete in `05d03ce` and `1b16b42`: a bounded core Coroot provider connects Applications → service map → supported application-report evidence. Fixture and live inputs share projections, stable AppIds/link identities, cancellation and result guards. Connections use an explicit HTTP(S) URL, memory-only credentials, explicit project selection and a separate Coroot-cluster-to-access association; replacing or clearing credentials invalidates pending work. Kubernetes links resolve metadata through the existing shell guard. Reports retain source health, independent REST/MCP failures and complete bounded evidence behind pagination. See [COROOT.md](COROOT.md) for limits and validation.
-4. Incidents, Traces and Profiling are integrated in the bounded slices above. Extend to complete chart and deployment-comparison data through verified typed APIs ([corust #2](https://github.com/skel84/corust/issues/2)). Keep missing capabilities explicit and live mutations outside this integration.
-
-Lifecycle support/skew interpretation is implemented in the bounded [PR #39](https://github.com/skel84/freshkube/pull/39) slice above. Initial Talos role/response facts and Diagnostics collection/evaluation remain in [#4](https://github.com/skel84/freshkube/issues/4); neither blocks the Coroot pages. Revisit Diagnostics if later shared Health/attention work reaches that evaluator. Keep [#22](https://github.com/skel84/freshkube/issues/22) open for the measured Table/summary burst cost, independently of Coroot delivery. Split files only where the selected feature exposes a responsibility boundary.
-
-## Next: finish Kubernetes browsing
+## Open checks: Kubernetes browsing
 
 Steps 1 to 5 are done. What remains here is checking them against the live cluster.
 
@@ -342,7 +396,7 @@ Validated on main `235ad5b` with all 941 workspace tests (including doctests), s
 
 This is not a pixel-by-pixel audit: group headers currently follow the virtual list's selected row density, and the pinned text API does not expose caption tracking. The earlier light palette remains until a Fog light theme is designed. No release performance benchmark was run for this visual pass; watch's [#22](https://github.com/skel84/freshkube/issues/22) performance target remains open. The Coroot visual pass replaced that grid with a layered layout.
 
-## Next: Monitoring
+## Done: Monitoring
 
 Grafana-like dashboards, now using Fog, drawn natively from the cluster's Prometheus through the Kubernetes API's service proxy, read-only and GET only. Freshkube reuses grafaui's model and query crates and draws its own panels. The review, the decisions and the build order are in [MONITORING.md](MONITORING.md). Observability on Coroot's data comes after.
 
@@ -353,40 +407,6 @@ Grafana-like dashboards, now using Fog, drawn natively from the cluster's Promet
 4. Deploy and node markers. Done.
 5. CPU and memory history in the pod detail and the node pane. Done.
 6. Live check on a context the user names. Done.
-
-## Then: a daily-use workflow
-
-These come from the GPUI evaluation plan (G09–G12) and the follow-ups it listed.
-
-- **Pod exec.** A Shell tab in a pod's pane, on an explicitly chosen container; node-debug pods stay out. Feasibility is settled: `alacritty_terminal` (Apache-2.0) with our own GPUI drawing keeps 60 frames a second through a 5 MB/s stream. The decisions and the four-step build order are in [POD_EXEC.md](POD_EXEC.md). All four steps are done, the live check included.
-- **Port forwarding.** A Ports tab in the pane of a pod, Service or workload, and every forward in the status bar. A forward lives until Stop, through page, pane and context changes, and binds only the loopback on a port derived from the remote one (3306 → 13306). The source review, the decisions and the three-step build order are in [PORT_FORWARD.md](PORT_FORWARD.md). All three steps are done, the live check included.
-- **One app for Talos and Kubernetes.** Talos becomes a Control plane section and a node pane. The sidebar reads Cluster (Overview, Nodes, Namespaces, Events), Resources and Control plane, under a context switcher and Search everything. The Overview, Nodes and the sidebar's badges join both sides through a Kubernetes summary that refreshes with the Talos overview. The code review, the decisions and the seven-step build order are in [HOLISTIC_LAYOUT.md](HOLISTIC_LAYOUT.md). All seven steps are done.
-- **Follow-ups**, each promoted to a step with acceptance criteria when it enters scope:
-  - logs of several containers, or of a workload's pods, in one view: the same `LogView` with several sources and its source filter;
-  - current CPU and memory from the metrics API;
-  - YAML schema validation;
-  - Developer ID signing, notarization and kubeconfig auth plugins (exec and OIDC);
-  - Linux and Windows builds.
-
-## Later: understanding the cluster
-
-[FUTURE_IDEAS.md](FUTURE_IDEAS.md) holds the longer-term backlog. It aims at three questions: why an application is unhealthy, who controls its configuration, and what changed before it broke.
-
-| Task | Topic |
-| --- | --- |
-| F01 | Observations and evidence |
-| F02 | Shared resource store |
-| F03 | Consistent workload health |
-| F04 | Argo CD applications, ownership and reconciliation |
-| F05 | Traffic paths |
-| F06 | Planned changes |
-| F07 | Integration contracts |
-| F08 | CloudNativePG database investigation |
-| F09 | Change history |
-| F10 | Several clusters at once |
-| F11 | CLI and MCP explanations |
-
-The first semantic slice starts with F01 → F02 → F03 and Argo-first F04, with the minimum F07 contracts developed alongside CloudNativePG in F08. Its connected workflow is Application → database → failed backup or instance → storage/node evidence, with Talos inspection where available. F05 adds traffic diagnosis afterward. Flux and cert-manager, then Prometheus and Loki, are the next integration candidates detailed in [FUTURE_IDEAS.md](FUTURE_IDEAS.md#integration-rollout-after-cloudnativepg-and-argo-cd). F06 introduces reviewed resource mutations; it is separate from the existing explicit pod exec and port-forward sessions.
 
 ## History
 

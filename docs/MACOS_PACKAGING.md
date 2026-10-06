@@ -337,8 +337,18 @@ Most browsing uses the built-in Talos and Kubernetes clients;
 `talosctl` is used by particular COSI queries and maintenance features, and a
 kubeconfig may require its own exec authentication tool. Those tools are not
 bundled, and are not prerequisites for a fixture launch or every browsing path.
-Install/configure them only for the features and credentials you use. Finding
-user-installed auth tools from a Finder launch remains separate work.
+Install/configure them only for the features and credentials you use.
+
+**Known risk: exec plugins from the Dock.** A kubeconfig whose user runs an
+exec plugin (`tsh`, `aws`, `gcloud`, `kubelogin`, …) needs that command on
+`PATH`. An app started from the Dock or Finder gets launchd's short `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`), so a plugin installed under Homebrew or
+`~/.local/bin` may not be found, and the context fails to connect. `open` goes through LaunchServices too, so it
+doesn't help. Started as the binary itself from a terminal
+(`/Applications/Freshkube.app/Contents/MacOS/freshkube`), the app inherits the
+shell's `PATH` and the same kubeconfig works. Finding
+user-installed auth tools from a Finder launch is planned with kubeconfig auth
+plugins ([roadmap](ROADMAP.md#8-later)).
 
 ## Local Network privacy
 
