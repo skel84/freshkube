@@ -2735,20 +2735,70 @@ fn the_smallest_window_leaves_room_for_a_pods_log_lines(cx: &mut TestAppContext)
             window.press("secondary-}", cx);
         }
     });
-    step(cx, &|window, _| {
+    step(cx, &|window, cx| {
         let list = window.find("resource-list").bounds();
         let pane = window.find("resource-detail").bounds();
-        let lines = window
-            .within("resource-detail")
-            .find("logs-viewport")
-            .bounds();
         // The pane stacks under the list and takes the larger share.
         assert!(pane.top() >= list.bottom(), "{list:?} {pane:?}");
         assert!(pane.size.height > list.size.height, "{list:?} {pane:?}");
         assert!(pane.bottom() <= px(560.), "{pane:?}");
-        // At least three log lines show.
+        // The crash-looping pod's restart banner shows whole, never cut by
+        // the log's toolbar (#231).
+        let find = |window: &mut gpui_kit::Window, id: &'static str| {
+            window.within("resource-detail").find(id).bounds()
+        };
+        let toolbar = find(window, "logs-toolbar");
+        let banner = find(window, "pod-logs-hint");
+        assert!(
+            banner.top() >= toolbar.top() && banner.bottom() <= toolbar.bottom(),
+            "{banner:?} is cut by {toolbar:?}"
+        );
+        assert!(banner.bottom() <= find(window, "logs-viewport").top());
+        // A wheel over the log's controls scrolls the panel alone, down to
+        // its lines and back up to the banner; the page around it stays.
+        let wheel = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, by: f32| {
+            let panel = window.within("resource-detail").find("logs-panel").bounds();
+            use gpui_kit::InputEvent as _;
+            window.dispatch_event(
+                gpui_kit::ScrollWheelEvent {
+                    position: point(panel.center().x, panel.top() + px(4.)),
+                    delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(by))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.render_frame(cx);
+        };
+        for _ in 0..20 {
+            if find(window, "logs-viewport").bottom() <= pane.bottom() {
+                break;
+            }
+            wheel(window, cx, -40.);
+        }
+        let (pane_now, panel, lines) = (
+            window.find("resource-detail").bounds(),
+            find(window, "logs-panel"),
+            find(window, "logs-viewport"),
+        );
+        assert_eq!(pane_now, pane, "the page scrolled with the log");
+        // At least three log lines show, whole.
         assert!(lines.size.height >= px(54.), "{lines:?}");
+        assert!(lines.top() >= panel.top(), "{lines:?} {panel:?}");
         assert!(lines.bottom() <= pane.bottom(), "{lines:?} {pane:?}");
+        for _ in 0..20 {
+            wheel(window, cx, 40.);
+        }
+        assert_eq!(
+            window.find("resource-detail").bounds(),
+            pane,
+            "the page scrolled with the log"
+        );
+        let banner = find(window, "pod-logs-hint");
+        assert!(
+            banner.top() >= find(window, "logs-panel").top(),
+            "{banner:?}"
+        );
     });
 }
 

@@ -494,7 +494,8 @@ impl<S: LogSource> Render for LogView<S> {
         let entity = cx.entity().downgrade();
         let root_entity = cx.entity().downgrade();
         // Budget the pane's own allocation, not the native window before
-        // shell chrome. The root allocation is independent of these caps.
+        // shell chrome. The controls keep their whole height; only a long
+        // run of notices is capped, and scrolls within its share.
         let panel_height = self.panel_height.unwrap_or(window.bounds().size.height);
         let viewport_min = (window.rem_size() * 6.).min(panel_height * 0.5);
         let chrome_budget = (panel_height - viewport_min).max(px(0.));
@@ -517,7 +518,6 @@ impl<S: LogSource> Render for LogView<S> {
         } else {
             px(0.)
         };
-        let toolbar_cap = chrome_budget - notices_height;
         S::prepare_controls(self, panel_width, window, cx);
         let mut toolbar_content = self.render_toolbar_content(cx).into_any_element();
         let toolbar_size = toolbar_content.layout_as_root(
@@ -528,9 +528,16 @@ impl<S: LogSource> Render for LogView<S> {
             window,
             cx,
         );
-        // Every Scrollable area has a definite measured owner. Percentage
-        // scroll-area wrappers cannot establish an auto-height ancestor.
-        let toolbar_height = (toolbar_size.height + px(1.)).min(toolbar_cap);
+        let toolbar_height = toolbar_size.height + px(1.);
+        // Below this height the panel scrolls as a whole: a control, such
+        // as a source's banner, is never cut, and the list keeps its least
+        // height under them.
+        let notices_gap = if self.has_notices() {
+            window.rem_size() * 0.5
+        } else {
+            px(0.)
+        };
+        let least_height = toolbar_height + notices_height + notices_gap + viewport_min;
         drop(chrome);
         let manual_scroll = ManualReviewScroll {
             base: self.scroll.clone(),
@@ -607,11 +614,20 @@ impl<S: LogSource> Render for LogView<S> {
             )
             .on_action(cx.listener(|this, _: &FindNext, _, cx| this.search(true, cx)))
             .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.search(false, cx)))
-            .flex()
-            .flex_col()
             .size_full()
             .min_w_0()
             .min_h_0()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .track_scroll(&self.panel_scroll)
+            // The panel has scrolled by now; while it can scroll at all, a
+            // frame that scrolls around it, as a short Resources page or
+            // node pane does, stays where it is, as it does for the list.
+            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                if this.panel_scroll.max_offset().y > px(0.) {
+                    cx.stop_propagation();
+                }
+            }))
             .on_prepaint(move |bounds, window, cx| {
                 let changed = root_entity.update(cx, |this, _| {
                     let changed = this.panel_height != Some(bounds.size.height);
@@ -624,44 +640,42 @@ impl<S: LogSource> Render for LogView<S> {
             })
             .text_color(cx.theme().foreground)
             .child(
-                div()
-                    .id("logs-toolbar")
-                    .role(Role::Group)
-                    .aria_label("Log collection, filters and search")
-                    .test_support()
-                    .flex()
-                    .flex_col()
-                    .h(toolbar_height)
-                    .min_h_0()
-                    .max_h(toolbar_cap)
+                v_flex()
+                    .size_full()
+                    .min_w_0()
+                    .min_h(least_height)
                     .child(
-                        self.render_toolbar_content(cx)
-                            .h_full()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .id("logs-toolbar-scroll"),
-                    ),
+                        div()
+                            .id("logs-toolbar")
+                            .role(Role::Group)
+                            .aria_label("Log collection, filters and search")
+                            .test_support()
+                            .flex_none()
+                            .h(toolbar_height)
+                            .child(self.render_toolbar_content(cx)),
+                    )
+                    .when(self.has_notices(), |this| {
+                        this.child(
+                            div()
+                                .id("logs-notices")
+                                .role(Role::Status)
+                                .test_support()
+                                .flex()
+                                .flex_col()
+                                .flex_none()
+                                .h(notices_height)
+                                .mb(notices_gap)
+                                .child(
+                                    self.render_notices(cx)
+                                        .h_full()
+                                        .min_h_0()
+                                        .overflow_y_scrollbar()
+                                        .id("logs-notices-scroll"),
+                                ),
+                        )
+                    })
+                    .child(viewport),
             )
-            .when(self.has_notices(), |this| {
-                this.child(
-                    div()
-                        .id("logs-notices")
-                        .role(Role::Status)
-                        .test_support()
-                        .flex()
-                        .flex_col()
-                        .h(notices_height)
-                        .mb_2()
-                        .child(
-                            self.render_notices(cx)
-                                .h_full()
-                                .min_h_0()
-                                .overflow_y_scrollbar()
-                                .id("logs-notices-scroll"),
-                        ),
-                )
-            })
-            .child(viewport)
     }
 }
 

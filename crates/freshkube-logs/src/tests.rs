@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, ScrollDelta, SharedString, TestAppContext, Window,
-    WindowHandle,
+    AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement, ScrollDelta,
+    SharedString, Styled, TestAppContext, TestSupportExt, Window, WindowHandle,
     component::{Root, Theme},
     point, px, size,
     test::TestWindowExt,
@@ -21,6 +21,8 @@ struct TestLogs {
     errors: BTreeMap<ServiceId, String>,
     /// The source's own words for its panel, when a test gives some.
     words: Option<(SharedString, SharedString)>,
+    /// A tall control of the source's, as a pod's restart banner is.
+    banner: bool,
 }
 
 /// The stream a batch came from.
@@ -35,8 +37,18 @@ struct StreamEvent {
 }
 
 impl LogSource for TestLogs {
-    fn controls(_: &LogView<Self>, _: &mut Context<LogView<Self>>) -> Vec<AnyElement> {
-        Vec::new()
+    fn controls(view: &LogView<Self>, _: &mut Context<LogView<Self>>) -> Vec<AnyElement> {
+        view.source()
+            .banner
+            .then(|| {
+                gpui_kit::div()
+                    .id("test-banner")
+                    .test_support()
+                    .h(freshkube_ui::ui::dp(72.))
+                    .into_any_element()
+            })
+            .into_iter()
+            .collect()
     }
 
     fn empty_message(_: &LogView<Self>) -> SharedString {
@@ -86,6 +98,7 @@ impl TestPanel for LogPanel {
             stream_revision: 0,
             errors: BTreeMap::new(),
             words: None,
+            banner: false,
         };
         Self::with_source(source, window, cx)
     }
@@ -153,6 +166,14 @@ fn fixture_events() -> Vec<LogEvent> {
 }
 
 fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<LogPanel>, WindowHandle<Root>) {
+    mount_sized(cx, 620., 760.)
+}
+
+fn mount_sized(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<LogPanel>, WindowHandle<Root>) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -160,7 +181,7 @@ fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<LogPanel>, WindowHandle<Ro
         .unwrap();
     cx.update(gpui_kit::init);
     let mut panel = None;
-    let handle = cx.open_window(size(px(620.), px(760.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             let mut view = LogPanel::new(runtime.handle().clone(), 100, window, cx);
             view.set_fixture(fixture_events(), window, cx);
@@ -540,6 +561,84 @@ fn a_search_shows_the_matched_line_within_a_tall_row(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_short_panel_keeps_its_controls_whole_and_scrolls_to_the_list(cx: &mut TestAppContext) {
+    // 240 px holds the toolbar, the banner and some list only when the
+    // toolbar is cut; 760 px holds them all.
+    for height in [240., 760.] {
+        let (_runtime, panel, handle) = mount_sized(cx, 620., height);
+        panel.update(cx, |view, cx| {
+            view.source_mut().banner = true;
+            // More errors than the notices' share of the panel holds.
+            for ix in 0..12 {
+                view.source_mut().errors.insert(
+                    format!("service-{ix:02}").into(),
+                    "connection refused".into(),
+                );
+            }
+            cx.notify();
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let shown = window.find("logs-panel").bounds();
+            let toolbar = window.find("logs-toolbar").bounds();
+            let notices = window.find("logs-notices").bounds();
+            let viewport = window.find("logs-viewport").bounds();
+            for id in ["test-banner", "logs-search", "logs-follow"] {
+                let control = window.find(id).bounds();
+                assert!(
+                    control.top() >= toolbar.top() && control.bottom() <= toolbar.bottom(),
+                    "{height}: {id} at {control:?} is cut by the toolbar at {toolbar:?}"
+                );
+            }
+            // The notices take at most a quarter of the panel and scroll
+            // inside it.
+            assert!(
+                notices.size.height <= shown.size.height * 0.25 + px(0.5),
+                "{height}: the notices {notices:?} take more than a quarter of {shown:?}"
+            );
+            // The list keeps its least height, 6 rem, at either height.
+            let least = window.rem_size() * 6.;
+            assert!(
+                viewport.size.height >= least - px(0.5),
+                "{height}: the list {viewport:?} is shorter than {least:?}"
+            );
+            let short = height < 300.;
+            if !short {
+                // A tall panel's list takes all the room left.
+                assert!(
+                    (viewport.bottom() - shown.bottom()).abs() <= px(0.5),
+                    "{height}: the list {viewport:?} doesn't reach the panel's end {shown:?}"
+                );
+            }
+            let scroll = panel.read(cx).panel_scroll.clone();
+            assert_eq!(
+                scroll.max_offset().y > px(0.),
+                short,
+                "{height}: the panel scrolls by {:?}",
+                scroll.max_offset()
+            );
+            // At its end the panel shows the whole list.
+            scroll.set_offset(point(px(0.), -scroll.max_offset().y));
+            window.render_frame(cx);
+            let viewport = window.find("logs-viewport").bounds();
+            assert!(
+                viewport.bottom() <= shown.bottom() + px(0.5),
+                "{height}: the list {viewport:?} ends below the panel {shown:?}"
+            );
+        })
+        .unwrap();
+        // Another source's lines start at the panel's top again.
+        panel.update(cx, |view, _| view.reset_lines("another"));
+        assert_eq!(
+            panel.read_with(cx, |view, _| view.panel_scroll.offset()),
+            point(px(0.), px(0.))
+        );
+    }
+}
+
+#[gpui_kit::test]
 fn searches_reveal_inner_rows_and_keyboard_copies_complete_selected_lines(cx: &mut TestAppContext) {
     let (_runtime, panel, handle) = mount(cx);
     let row = SharedString::from("log-line-1-10");
@@ -782,6 +881,8 @@ fn level_toggles_draw_the_shared_glyphs() {
 struct Frame {
     panel: Entity<LogPanel>,
     scroll: gpui_kit::ScrollHandle,
+    /// The log's height inside the frame.
+    height: f32,
 }
 
 impl gpui_kit::Render for Frame {
@@ -798,13 +899,21 @@ impl gpui_kit::Render for Frame {
                     .test_support()
                     .h(px(120.)),
             )
-            .child(gpui_kit::div().h(px(560.)).child(self.panel.clone()))
-            .child(gpui_kit::div().h(px(400.)))
+            .child(gpui_kit::div().h(px(self.height)).child(self.panel.clone()))
+            .child(gpui_kit::div().h(px(600.)))
     }
 }
 
-#[gpui_kit::test]
-fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut TestAppContext) {
+/// A log `height` tall in a [`Frame`] that scrolls around it.
+fn mount_framed(
+    cx: &mut TestAppContext,
+    height: f32,
+) -> (
+    Runtime,
+    Entity<LogPanel>,
+    gpui_kit::ScrollHandle,
+    WindowHandle<Root>,
+) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -823,10 +932,69 @@ fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut Tes
         let frame = cx.new(|_| Frame {
             panel: view,
             scroll: scroll.clone(),
+            height,
         });
         Root::new(frame, window, cx)
     });
-    let panel = panel.unwrap();
+    (runtime, panel.unwrap(), scroll, handle)
+}
+
+#[gpui_kit::test]
+fn a_wheel_over_a_short_logs_controls_scrolls_the_log_and_not_the_frame(cx: &mut TestAppContext) {
+    let (_runtime, panel, scroll, handle) = mount_framed(cx, 240.);
+    panel.update(cx, |view, cx| {
+        view.source_mut().banner = true;
+        cx.notify();
+    });
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let panel_scroll = panel.read(cx).panel_scroll.clone();
+        assert!(
+            panel_scroll.max_offset().y > px(0.),
+            "the log doesn't scroll"
+        );
+        window.scroll(
+            "frame-header",
+            ScrollDelta::Pixels(point(px(0.), px(-60.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let framed = scroll.offset().y;
+        assert!(
+            framed < px(-1.),
+            "the header's wheel didn't scroll the frame"
+        );
+        // Down to the lines, then back up to the banner.
+        for by in [-400., 400.] {
+            window.scroll(
+                "logs-toolbar",
+                ScrollDelta::Pixels(point(px(0.), px(by))),
+                cx,
+            );
+            window.render_frame(cx);
+            let expected = if by < 0. {
+                -panel_scroll.max_offset().y
+            } else {
+                px(0.)
+            };
+            assert_eq!(
+                panel_scroll.offset().y,
+                expected,
+                "the log didn't scroll by {by}"
+            );
+            assert_eq!(
+                scroll.offset().y,
+                framed,
+                "the log's wheel by {by} scrolled the frame"
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut TestAppContext) {
+    let (_runtime, panel, scroll, handle) = mount_framed(cx, 560.);
     settle(cx, &panel, handle);
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(scroll.max_offset().y > px(0.), "the frame doesn't scroll");
