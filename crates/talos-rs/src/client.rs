@@ -37,8 +37,6 @@ pub struct TalosClient {
     connection_id: u64,
     /// Target nodes for API requests
     nodes: Vec<String>,
-    /// Endpoints from configuration, named when no node acknowledges a mutation
-    endpoints: Vec<String>,
 }
 
 impl TalosClient {
@@ -46,13 +44,11 @@ impl TalosClient {
     pub async fn from_context(ctx: &Context) -> Result<Self, TalosError> {
         let channel = create_channel(ctx).await?;
         let nodes = ctx.target_nodes().to_vec();
-        let endpoints = ctx.endpoints.clone();
 
         Ok(Self {
             channel,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             nodes,
-            endpoints,
         })
     }
 
@@ -89,7 +85,6 @@ impl TalosClient {
             channel: self.channel.clone(),
             connection_id: self.connection_id,
             nodes: vec![node.to_string()],
-            endpoints: self.endpoints.clone(),
         }
     }
 
@@ -125,13 +120,13 @@ impl TalosClient {
 
     /// The configured targets as hosts apid can reach, without ports.
     ///
-    /// Loopback entries name the machine making the request, not a node,
-    /// so they are left out.
+    /// Blank and port-only entries name no host, and loopback entries name
+    /// the machine making the request, not a node, so they are left out.
     fn target_hosts(&self) -> Vec<&str> {
         self.nodes
             .iter()
-            .map(|node| target_host(node))
-            .filter(|host| !is_loopback(host))
+            .map(|node| target_host(node.trim()))
+            .filter(|host| !host.is_empty() && !is_loopback(host))
             .collect()
     }
 
@@ -1737,16 +1732,8 @@ impl TalosClient {
         }
         if count == 0 {
             failure_code = Some(tonic::Code::DataLoss);
-            let targets = if self.nodes.is_empty() {
-                &self.endpoints
-            } else {
-                &self.nodes
-            };
-            let target = if targets.is_empty() {
-                "selected Talos endpoint".to_string()
-            } else {
-                targets.join(", ")
-            };
+            // A mutation is sent only with a target, so name it.
+            let target = self.target_hosts().join(", ");
             failures.push(format!(
                 "{action} on {target}: no acknowledgements returned"
             ));
@@ -2956,7 +2943,7 @@ mod tests {
     use super::*;
 
     /// Helper to create a TalosClient for testing without a real connection
-    fn create_test_client(nodes: Vec<String>, endpoints: Vec<String>) -> TalosClient {
+    fn create_test_client(nodes: Vec<String>) -> TalosClient {
         // Create a dummy channel - we won't actually use it for these tests
         // This is a bit of a hack, but it allows us to test the filtering logic
         let channel = tonic::transport::Channel::from_static("http://[::1]:50000").connect_lazy();
@@ -2965,14 +2952,13 @@ mod tests {
             channel,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             nodes,
-            endpoints,
         }
     }
 
     #[tokio::test]
     async fn connection_id_is_shared_by_clones_and_node_copies_only() {
-        let first = create_test_client(vec![], vec![]);
-        let second = create_test_client(vec![], vec![]);
+        let first = create_test_client(vec![]);
+        let second = create_test_client(vec![]);
         assert_eq!(first.connection_id(), first.clone().connection_id());
         assert_eq!(
             first.connection_id(),
@@ -2983,7 +2969,7 @@ mod tests {
 
     #[tokio::test]
     async fn overview_decoders_reject_embedded_proxy_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["selected-node".into()], vec![]);
+        let client = create_test_client(vec!["selected-node".into()]);
         for (error, code) in [
             ("node unavailable", None),
             ("", Some(14)),
@@ -3042,7 +3028,7 @@ mod tests {
 
     #[tokio::test]
     async fn overview_decoders_accept_direct_node_and_successful_proxy_replies() {
-        let client = create_test_client(vec!["selected-node".into()], vec![]);
+        let client = create_test_client(vec!["selected-node".into()]);
         for metadata in [
             None,
             Some(crate::proto::common::Metadata {
@@ -3190,7 +3176,7 @@ mod tests {
 
     #[tokio::test]
     async fn service_restart_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         assert_mutation_response_protocol("restart service kubelet", |fixtures| {
             client
                 .decode_service_restart(
@@ -3211,7 +3197,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_configuration_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         for dry_run in [true, false] {
             let action = if dry_run {
                 "validate configuration (dry run)"
@@ -3240,7 +3226,7 @@ mod tests {
 
     #[tokio::test]
     async fn reboot_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         assert_mutation_response_protocol("reboot", |fixtures| {
             client
                 .decode_reboot(crate::proto::machine::RebootResponse {
@@ -3258,7 +3244,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         assert_mutation_response_protocol("shutdown", |fixtures| {
             client
                 .decode_shutdown(crate::proto::machine::ShutdownResponse {
@@ -3276,10 +3262,10 @@ mod tests {
 
     #[tokio::test]
     async fn mutation_response_decoders_preserve_success_payloads_and_target_fallbacks() {
-        let client = create_test_client(
-            vec!["configured-node".to_string(), "second-node".to_string()],
-            Vec::new(),
-        );
+        let client = create_test_client(vec![
+            "configured-node".to_string(),
+            "second-node".to_string(),
+        ]);
         let services = client
             .decode_service_restart(
                 crate::proto::machine::ServiceRestartResponse {
@@ -3354,7 +3340,7 @@ mod tests {
     }
 
     fn targeting_one(node: &str) -> (Option<String>, Vec<String>) {
-        targeting(&create_test_client(vec![node.to_string()], vec![]))
+        targeting(&create_test_client(vec![node.to_string()]))
     }
 
     #[tokio::test]
@@ -3390,6 +3376,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn blank_targets_leave_the_endpoint_to_answer() {
+        for node in ["", " ", ":50000"] {
+            assert_eq!(targeting_one(node), (None, vec![]), "{node:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_mutation_without_acknowledgements_names_its_target() {
+        let client = create_test_client(vec!["[2001:db8::5]:50000".to_string()]);
+        let Err(TalosError::Grpc(status)) =
+            client.decode_reboot(crate::proto::machine::RebootResponse { messages: vec![] })
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(status.code(), tonic::Code::DataLoss);
+        assert_eq!(
+            status.message(),
+            "reboot on 2001:db8::5: no acknowledgements returned"
+        );
+    }
+
+    #[tokio::test]
     async fn loopback_targets_leave_the_endpoint_to_answer() {
         for node in [
             "127.0.0.1:50000",
@@ -3403,14 +3411,11 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_targets_are_dropped_from_a_list() {
-        let client = create_test_client(
-            vec![
-                "127.0.0.1:50000".to_string(),
-                "node1".to_string(),
-                "[2001:db8::6]:50000".to_string(),
-            ],
-            vec!["127.0.0.1:50000".to_string()],
-        );
+        let client = create_test_client(vec![
+            "127.0.0.1:50000".to_string(),
+            "node1".to_string(),
+            "[2001:db8::6]:50000".to_string(),
+        ]);
         assert_eq!(
             targeting(&client),
             (None, vec!["node1".to_string(), "2001:db8::6".to_string()])
@@ -3419,8 +3424,14 @@ mod tests {
 
     #[tokio::test]
     async fn mutations_refuse_when_no_node_is_targeted() {
-        for nodes in [vec![], vec!["127.0.0.1:50000".to_string()]] {
-            let client = create_test_client(nodes, vec!["127.0.0.1:50000".to_string()]);
+        for nodes in [
+            vec![],
+            vec!["127.0.0.1:50000".to_string()],
+            vec![String::new()],
+            vec![" ".to_string()],
+            vec![":50000".to_string()],
+        ] {
+            let client = create_test_client(nodes);
             let refused = |result: Result<(), TalosError>| match result {
                 Err(TalosError::Grpc(status)) => {
                     assert_eq!(status.code(), tonic::Code::FailedPrecondition);
@@ -3448,7 +3459,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_targeted_mutation_carries_its_node() {
-        let client = create_test_client(vec!["[2001:db8::5]:50000".to_string()], vec![]);
+        let client = create_test_client(vec!["[2001:db8::5]:50000".to_string()]);
         let request = client
             .with_mutation_targets(Request::new(()), "reboot")
             .unwrap();
@@ -3456,20 +3467,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn endpoints_never_remove_a_configured_node() {
+    async fn configured_nodes_are_sent_as_given() {
         // talosctl sends `nodes` as given; an endpoint, VIP or not, only names
-        // where the connection goes.
-        let client = create_test_client(
-            vec![
-                "cluster.example.com".to_string(),
-                "kubec01".to_string(),
-                "kubew01:50000".to_string(),
-            ],
-            vec![
-                "cluster.example.com:50000".to_string(),
-                "kubec01:50000".to_string(),
-            ],
-        );
+        // where the connection goes, so no endpoint removes a node.
+        let client = create_test_client(vec![
+            "cluster.example.com".to_string(),
+            "kubec01".to_string(),
+            "kubew01:50000".to_string(),
+        ]);
         assert_eq!(
             targeting(&client),
             (
@@ -3518,10 +3523,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_single_node_uses_node_header() {
         // Single node should use "node" (singular) header
-        let client = create_test_client(
-            vec!["node1".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec!["node1".to_string()]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3542,14 +3544,11 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_multiple_nodes_uses_nodes_header() {
         // Multiple nodes should use "nodes" (plural) header
-        let client = create_test_client(
-            vec![
-                "node1".to_string(),
-                "node2".to_string(),
-                "node3".to_string(),
-            ],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec![
+            "node1".to_string(),
+            "node2".to_string(),
+            "node3".to_string(),
+        ]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3572,14 +3571,11 @@ mod tests {
         // Multiple nodes must be separate metadata values, NOT comma-separated
         // tonic's append() creates multiple values for the same key
         // This matches Talos Go client's md.Set("nodes", nodes...) behavior
-        let client = create_test_client(
-            vec![
-                "node1".to_string(),
-                "node2".to_string(),
-                "node3".to_string(),
-            ],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec![
+            "node1".to_string(),
+            "node2".to_string(),
+            "node3".to_string(),
+        ]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3620,7 +3616,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_empty_nodes_no_header() {
         // Empty nodes should not add any header
-        let client = create_test_client(vec![], vec!["vip.example.com:50000".to_string()]);
+        let client = create_test_client(vec![]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3640,10 +3636,7 @@ mod tests {
     async fn test_metadata_two_nodes_uses_nodes_header() {
         // Two nodes should use "nodes" (plural) header, not "node"
         // This is a boundary condition - even 2 nodes should use the plural form
-        let client = create_test_client(
-            vec!["node1".to_string(), "node2".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec!["node1".to_string(), "node2".to_string()]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3669,10 +3662,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_preserves_node_names_without_ports() {
         // Port stripping happens before metadata is set
-        let client = create_test_client(
-            vec!["node1:50000".to_string(), "node2:50000".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec!["node1:50000".to_string(), "node2:50000".to_string()]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);

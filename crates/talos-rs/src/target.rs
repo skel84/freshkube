@@ -6,12 +6,12 @@ use std::net::IpAddr;
 ///
 /// A port is stripped only from `host:port` and `[v6]:port`; brackets are
 /// dropped, since apid adds its own port to the host. A bare IPv6 address has
-/// several colons and stays whole.
+/// several colons and stays whole, zone id included. An unclosed bracket is
+/// malformed and comes back unchanged, for apid to refuse rather than for
+/// this to guess at.
 pub fn target_host(target: &str) -> &str {
-    if let Some(rest) = target.strip_prefix('[')
-        && let Some((host, _)) = rest.split_once(']')
-    {
-        return host;
+    if let Some(rest) = target.strip_prefix('[') {
+        return rest.split_once(']').map_or(target, |(host, _)| host);
     }
     match target.split_once(':') {
         Some((host, port)) if !port.contains(':') => host,
@@ -53,6 +53,24 @@ mod tests {
     fn unbrackets_ipv6_with_or_without_a_port() {
         assert_eq!(target_host("[2001:db8::5]:50000"), "2001:db8::5");
         assert_eq!(target_host("[2001:db8::5]"), "2001:db8::5");
+    }
+
+    #[test]
+    fn keeps_an_ipv6_zone_id() {
+        assert_eq!(target_host("fe80::1%en0"), "fe80::1%en0");
+        assert_eq!(target_host("[fe80::1%en0]:50000"), "fe80::1%en0");
+    }
+
+    #[test]
+    fn empty_and_port_only_targets_have_no_host() {
+        assert_eq!(target_host(""), "");
+        assert_eq!(target_host(":50000"), "");
+    }
+
+    #[test]
+    fn an_unclosed_bracket_comes_back_unchanged() {
+        assert_eq!(target_host("[2001:db8::5"), "[2001:db8::5");
+        assert_eq!(target_host("[node1:50000"), "[node1:50000");
     }
 
     #[test]
