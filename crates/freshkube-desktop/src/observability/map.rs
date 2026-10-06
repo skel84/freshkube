@@ -451,11 +451,27 @@ impl ObservabilityPage {
     }
 }
 
+/// A box the layout places, by its top-left corner in dp.
+trait Node {
+    fn position(&self) -> (f32, f32);
+    fn set_position(&mut self, x: f32, y: f32);
+}
+
+impl Node for MapNode {
+    fn position(&self) -> (f32, f32) {
+        (self.x, self.y)
+    }
+
+    fn set_position(&mut self, x: f32, y: f32) {
+        (self.x, self.y) = (x, y);
+    }
+}
+
 /// Places callers left of what they call: each node's column is the length
 /// of the longest chain of callers above it, tall columns wrap, and each
 /// column is ordered by where its callers sit to keep crossings down. Nodes
 /// with no connection share a last column. Returns the map's size in dp.
-fn layered(nodes: &mut [MapNode], links: &[(usize, usize)]) -> (f32, f32) {
+fn layered<N: Node>(nodes: &mut [N], links: &[(usize, usize)]) -> (f32, f32) {
     let n = nodes.len();
     if n == 0 {
         return (0., 0.);
@@ -518,8 +534,7 @@ fn layered(nodes: &mut [MapNode], links: &[(usize, usize)]) -> (f32, f32) {
     for column in columns {
         for chunk in column.chunks(MAX_ROWS) {
             for (r, &ix) in chunk.iter().enumerate() {
-                nodes[ix].x = PAD + x as f32 * COLUMN;
-                nodes[ix].y = PAD + r as f32 * ROW;
+                nodes[ix].set_position(PAD + x as f32 * COLUMN, PAD + r as f32 * ROW);
             }
             rows = rows.max(chunk.len());
             x += 1;
@@ -533,9 +548,10 @@ fn layered(nodes: &mut [MapNode], links: &[(usize, usize)]) -> (f32, f32) {
 
 /// A connection's curve in dp: from the caller's right edge to just short of
 /// the callee's left edge, where the arrowhead takes over.
-fn curve(from: &MapNode, to: &MapNode) -> [(f32, f32); 4] {
-    let a = (from.x + NODE_W, from.y + NODE_H / 2.);
-    let d = (to.x - ARROW, to.y + NODE_H / 2.);
+fn curve(from: &impl Node, to: &impl Node) -> [(f32, f32); 4] {
+    let ((from_x, from_y), (to_x, to_y)) = (from.position(), to.position());
+    let a = (from_x + NODE_W, from_y + NODE_H / 2.);
+    let d = (to_x - ARROW, to_y + NODE_H / 2.);
     let pull = ((d.0 - a.0).abs() / 2.).max(48.);
     [a, (a.0 + pull, a.1), (d.0 - pull, d.1), d]
 }
