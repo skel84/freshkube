@@ -12,4 +12,5 @@ pub mod status;
 pub mod table;
 pub mod text_size;
 pub mod theme;
+pub mod tooltip;
 pub mod ui;

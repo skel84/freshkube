@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, Icon, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle, ScrollStrategy,
@@ -16,6 +16,7 @@ use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
 use super::{HEADER_HEIGHT, ROW_GROUP, ROW_HEIGHT, TableColumn, cell};
 use crate::page::card;
 use crate::palette::{Palette, palette};
+use crate::tooltip::FollowTooltip as _;
 use crate::ui::{self, MONO_FONT, dp};
 
 /// The order a column is sorted in.
@@ -593,7 +594,7 @@ fn render_line<S: TableSource>(
             })
         })
         .when_some(row.tooltip.clone(), |this, tooltip| {
-            this.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            this.follow_tooltip(tooltip)
         });
     let columns = source.columns();
     let (count, run) = pinned_run(columns);

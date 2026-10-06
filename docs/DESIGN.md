@@ -212,7 +212,7 @@ Each state's element has role status and an id `<page>-<state>`.
 
 ### Tooltips
 
-Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, `tooltip_with_action` on a button with a shortcut. A tooltip says what the element can't show; it never repeats a label shown whole. One is required on:
+Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, `tooltip_with_action` on a button with a shortcut. An element that scrolls, such as a row or a card, uses `freshkube_ui::tooltip::FollowTooltip`'s `.follow_tooltip(text)` instead: GPUI keeps a tooltip up while the pointer stays inside the bounds its element had when the pointer arrived, so after a scroll under a still pointer one row's tooltip would show over another ([#192](https://github.com/skel84/freshkube/issues/192)). The table's row tooltips, `status_mark` and the Nodes cards use it; other lists move to it when they're next changed. A tooltip says what the element can't show; it never repeats a label shown whole. One is required on:
 
 - **Truncated text:** the full value, such as a name cut at its column or shown without its common node prefix.
 - **Compact values:** the full text behind `2.8%`, `1.9k` or `refused`: the exact figure with its unit, or what was refused and why.

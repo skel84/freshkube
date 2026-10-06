@@ -623,3 +623,38 @@ fn a_member_without_a_leader_warns_and_never_reads_healthy() {
         MemberState::NotReported
     );
 }
+
+/// A member's glyph names its state in a tooltip when the pointer rests on
+/// it.
+#[gpui_kit::test]
+fn a_member_glyph_shows_its_state_as_a_tooltip(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        answer(&screen, snapshot(3, [(1, 1), (2, 1), (3, 1)]), cx);
+        window.render_frame(cx);
+        window.hover(SharedString::from("etcd-member-health-1"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // Past the tooltip's show delay.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        let drawn = || {
+            (
+                freshkube_ui::tooltip::drawn("Healthy"),
+                freshkube_ui::tooltip::drawn("cp-1"),
+            )
+        };
+        let before = drawn();
+        window.render_frame(cx);
+        let after = drawn();
+        // The glyph's tooltip, not its row's, though the row has one too.
+        assert!(
+            after.0 > before.0 && after.1 == before.1,
+            "glyph and row tooltip draws went from {before:?} to {after:?}"
+        );
+    })
+    .unwrap();
+}
