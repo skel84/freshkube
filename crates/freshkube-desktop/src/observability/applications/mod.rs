@@ -213,7 +213,7 @@ impl ObservabilityPage {
             return Vec::new();
         }
         vec![
-            table::showing_bar(
+            table::showing(
                 self.application_table.id("collapsed"),
                 self.shown_apps,
                 self.counts[1],

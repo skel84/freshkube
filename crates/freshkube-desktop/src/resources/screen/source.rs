@@ -240,11 +240,11 @@ impl TableSource for ResourcesScreen {
         Some(text.into_any_element())
     }
 
-    fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        self.table_notes(cx)
+    fn counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        self.table_counts(cx)
     }
 
-    fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.lists_pods()
             .then(|| self.meter_legend(page_width(window) < 600., cx))
     }

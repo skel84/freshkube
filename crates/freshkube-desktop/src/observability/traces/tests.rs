@@ -221,7 +221,12 @@ mod ui_tests {
             window.render_frame(cx);
             let traces = &page.read(cx).live_traces;
             assert!(!traces.shown.is_empty() && traces.shown.len() < traces.rows.len());
-            assert!(window.find("obs-traces-showing").visible());
+            assert!(
+                window
+                    .within("obs-traces-footer")
+                    .find("obs-traces-showing")
+                    .visible()
+            );
             window.click("obs-traces-show-all", cx);
             window.render_frame(cx);
             let traces = &page.read(cx).live_traces;

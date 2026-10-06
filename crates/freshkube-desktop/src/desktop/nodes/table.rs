@@ -358,7 +358,7 @@ impl TableSource for Pilot {
         };
         Some(row.render(cx).into_any_element())
     }
-    fn footer(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         Some(self.nodes_meter_legend(window, cx))
     }
     fn selected_key(&self) -> Option<&NodeKey> {

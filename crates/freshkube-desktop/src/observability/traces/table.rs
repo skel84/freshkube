@@ -355,7 +355,7 @@ impl ObservabilityPage {
             return Vec::new();
         }
         vec![
-            table::showing_bar(
+            table::showing(
                 self.trace_table.id("showing"),
                 shown,
                 total,

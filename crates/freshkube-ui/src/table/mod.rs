@@ -1,6 +1,5 @@
 //! The table every list page draws, as Pods does: its cells, group rows,
-//! the bars above its rows, its legend and the status chips that filter
-//! it (docs/DESIGN.md#components).
+//! the footer's counts and legend, and the status chips that filter it (docs/DESIGN.md#components).
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
     Selectable, Sizable,
@@ -29,6 +28,8 @@ pub use data::{
 pub const ROW_HEIGHT: f32 = 26.;
 /// The header row's height.
 pub const HEADER_HEIGHT: f32 = 26.;
+/// The footer's height: the counts and the legend share one row.
+pub const FOOTER_HEIGHT: f32 = 26.;
 /// The hover group of a row, for cells that brighten with it.
 pub const ROW_GROUP: &str = "table-row";
 /// A cell's padding on either side, in dp.
@@ -211,8 +212,103 @@ pub fn glyph_slot(tone: Tone, cx: &App) -> Div {
         .children(ui::status_glyph(tone, cx))
 }
 
-/// The frame of a bar above the rows.
-fn bar(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> {
+/// The table's footer: 26 high under a hairline, on the table's `fill`.
+/// The counts come first and keep their width; the legend after them
+/// truncates at the row's end and never wraps.
+pub(crate) fn footer(
+    id: impl Into<ElementId>,
+    counts: Vec<AnyElement>,
+    legend: Option<AnyElement>,
+    fill: gpui_kit::Hsla,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
+    let p = palette(cx);
+    let mut row = h_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Status)
+        .flex_none()
+        .h(dp(FOOTER_HEIGHT))
+        .px(dp(12.))
+        .gap(dp(12.))
+        .bg(fill)
+        .border_t_1()
+        .border_color(p.line)
+        .text_size(dp(11.))
+        .text_color(p.muted)
+        .overflow_hidden();
+    let separated = counts.len() > 1;
+    for (ix, count) in counts.into_iter().enumerate() {
+        if separated && ix > 0 {
+            row = row.child(div().flex_none().text_color(p.faint).child("·"));
+        }
+        row = row.child(div().flex_none().child(count));
+    }
+    row.children(legend.map(|legend| h_flex().flex_1().min_w_0().overflow_hidden().child(legend)))
+}
+
+/// A count in the footer: its text in `ink_2`, then its actions.
+fn count(
+    id: impl Into<ElementId>,
+    text: String,
+    weight: FontWeight,
+    actions: impl IntoIterator<Item = AnyElement>,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
+    h_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Status)
+        .gap(dp(6.))
+        .text_color(palette(cx).ink_2)
+        .child(div().font_weight(weight).child(text))
+        .children(actions)
+}
+
+/// How many rows are marked, and what can be done with them, for the
+/// table's footer.
+pub fn selection(
+    id: impl Into<ElementId>,
+    count_: usize,
+    actions: impl IntoIterator<Item = AnyElement>,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
+    count(
+        id,
+        format!("{count_} selected"),
+        FontWeight::SEMIBOLD,
+        actions,
+        cx,
+    )
+}
+
+/// `Showing 40 of 212` while rows are folded, and the action that shows
+/// them all, for the table's footer.
+pub fn showing(
+    id: impl Into<ElementId>,
+    shown: usize,
+    total: usize,
+    show_all: impl IntoElement,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
+    count(
+        id,
+        format!("Showing {shown} of {total}"),
+        FontWeight::NORMAL,
+        [show_all.into_any_element()],
+        cx,
+    )
+}
+
+/// `Showing 8 of 20` as a strip above a list that isn't a [`DataTable`]:
+/// Overview's Attention card, until Overview moves onto the table.
+pub fn showing_bar(
+    id: impl Into<ElementId>,
+    shown: usize,
+    total: usize,
+    show_all: impl IntoElement,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
     let p = palette(cx);
     h_flex()
         .bg(p.accent_soft)
@@ -225,36 +321,7 @@ fn bar(id: impl Into<ElementId>, cx: &App) -> Observed<Stateful<Div>> {
         .border_b_1()
         .border_color(p.line)
         .text_size(dp(12.5))
-}
-
-/// How many rows are marked, and what can be done with them.
-pub fn selection_bar(
-    id: impl Into<ElementId>,
-    count: usize,
-    actions: impl IntoIterator<Item = AnyElement>,
-    cx: &App,
-) -> Observed<Stateful<Div>> {
-    bar(id, cx)
-        .child(
-            div()
-                .flex_1()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(format!("{count} selected")),
-        )
-        .children(actions)
-}
-
-/// `Showing 40 of 212` while rows are folded, and the action that shows
-/// them all.
-pub fn showing_bar(
-    id: impl Into<ElementId>,
-    shown: usize,
-    total: usize,
-    show_all: impl IntoElement,
-    cx: &App,
-) -> Observed<Stateful<Div>> {
-    bar(id, cx)
-        .text_color(palette(cx).ink_2)
+        .text_color(p.ink_2)
         .flex_none()
         .child(
             div()
@@ -265,44 +332,32 @@ pub fn showing_bar(
         .child(show_all)
 }
 
-/// The table's footer: what its marks mean, wrapping.
-pub fn legend(items: impl IntoIterator<Item = AnyElement>, cx: &App) -> Div {
-    let p = palette(cx);
-    h_flex()
-        .flex_none()
-        .px(dp(12.))
-        .py(dp(7.))
-        .gap(dp(12.))
-        .flex_wrap()
-        .border_t_1()
-        .border_color(p.line)
-        .text_size(dp(11.))
-        .text_color(p.muted)
-        .children(items)
+/// What the table's marks mean, for its footer: the items on one line.
+pub fn legend(items: impl IntoIterator<Item = AnyElement>, _cx: &App) -> Div {
+    h_flex().flex_none().gap(dp(12.)).children(items)
 }
 
 /// One entry of a [`legend`]: an example mark and what it means.
 pub fn legend_item(mark: impl IntoElement, text: impl Into<SharedString>) -> Div {
-    h_flex().gap(dp(5.)).child(mark).child(text.into())
+    h_flex()
+        .flex_none()
+        .gap(dp(5.))
+        .child(mark)
+        .child(text.into())
 }
 
-/// The legend in a narrow table: one line, the whole legend in its tooltip.
+/// The legend in a narrow table: one line that truncates, the whole legend
+/// in its tooltip.
 pub fn legend_line(
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
     tooltip: &'static str,
-    cx: &App,
+    _cx: &App,
 ) -> Stateful<Div> {
-    let p = palette(cx);
-    h_flex()
+    div()
         .id(id)
-        .h(dp(26.))
-        .flex_none()
-        .px(dp(12.))
-        .border_t_1()
-        .border_color(p.line)
-        .text_size(dp(11.))
-        .text_color(p.muted)
+        .min_w_0()
+        .truncate()
         .child(text.into())
         .tooltip(move |window, cx| Tooltip::new(tooltip).build(window, cx))
 }

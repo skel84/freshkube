@@ -341,7 +341,7 @@ impl ObservabilityPage {
             return Vec::new();
         }
         vec![
-            table::showing_bar(
+            table::showing(
                 self.incident_table.id("showing"),
                 shown,
                 total,

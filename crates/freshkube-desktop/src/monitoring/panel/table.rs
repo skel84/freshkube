@@ -253,7 +253,7 @@ impl TableSource for TableView {
 
     /// `Showing 100 of 240` while rows are folded or past the cap, and
     /// Show all while any kept row is folded.
-    fn notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let (shown, kept, total) = (self.line_count(), self.data.rows.len(), self.data.total);
         if shown >= total {
             return Vec::new();
@@ -266,7 +266,7 @@ impl TableSource for TableView {
                 .on_click(cx.listener(|view, _, _, cx| view.show_all(cx)))
         });
         vec![
-            table::showing_bar(
+            table::showing(
                 self.state.id("showing"),
                 shown,
                 total,
