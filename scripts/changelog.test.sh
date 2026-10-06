@@ -11,7 +11,7 @@ failures=0
 fixture() {
   rm -rf "$tree"
   mkdir -p "$tree/scripts" "$tree/changelog.d/coroot" "$tree/changelog.d/other-changes"
-  cp "$here/changelog.sh" "$tree/scripts/"
+  cp "$here/changelog.sh" "$here/changelog.py" "$tree/scripts/"
   printf '%s\n' 'Fragment instructions' >"$tree/changelog.d/README.md"
   printf '%s\n' 'Coroot' >"$tree/changelog.d/coroot/title"
   printf '%s\n' 'Other changes' >"$tree/changelog.d/other-changes/title"
@@ -181,6 +181,15 @@ printf '%s\n' '- First entry in an empty section.' >"$tree/changelog.d/coroot/no
 expect 0 'an empty existing section accepts notes' 'collected 1' collect
 printf '%s\n' '## Unreleased' '' '### Coroot' '' '- First entry in an empty section.' '' '## 1.0.0' >"$work/expected.md"
 verify 'an empty section retains its separator' cmp -s "$work/expected.md" "$tree/CHANGELOG.md"
+
+fixture
+: >"$tree/scripts/changelog.py"
+expect 1 'a run that reports nothing fails loudly' 'nothing was checked' check
+
+fixture
+printf '%s\n' '- A pending note.' >"$tree/changelog.d/coroot/note.md"
+printf '%s\n' 'print("changelog: checked 0 fragment(s)")' >"$tree/scripts/changelog.py"
+expect 1 'checking fewer fragments than exist fails' 'checked 0 fragment(s), but changelog.d holds 1' check
 
 if [ "$failures" -gt 0 ]; then
   echo "changelog.test: $failures failed"
