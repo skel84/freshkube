@@ -212,6 +212,9 @@ pub(crate) struct WorkloadsScreen {
     table: TableState,
     /// The rows and columns, derived by [`Self::sync`].
     derived: Option<Derived>,
+    /// The most the Name column takes in the list's width, so its glyph
+    /// and name can pin when the table scrolls sideways.
+    name_most: f32,
     /// The status bar's line and the loader revision it was derived at.
     status: Option<(u64, Segment)>,
     _subscription: Subscription,
@@ -287,6 +290,7 @@ impl ScreenPanel for WorkloadsScreen {
             focus: cx.focus_handle(),
             table: TableState::new("workload"),
             derived: None,
+            name_most: f32::INFINITY,
             status: None,
             _subscription: subscription,
         }

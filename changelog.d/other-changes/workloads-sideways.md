@@ -1,0 +1,1 @@
+- A narrow Workloads list scrolls sideways with each row's glyph and name kept at its left edge, as Nodes does; in a narrow window or at a large text size a long name truncates, and its tooltip and the details hold all of it.

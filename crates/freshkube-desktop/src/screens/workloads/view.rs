@@ -325,6 +325,8 @@ impl Render for WorkloadsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("workloads");
         self.sync(cx);
+        let beside = crate::screens::beside(window, false);
+        self.fit_name_column(crate::screens::split_fill_list_width(window, beside));
         let header = self.render_header(window, cx);
         // The table runs edge to edge under the toolbar; the banners and a
         // state in the table's place sit in an inset between them. A short

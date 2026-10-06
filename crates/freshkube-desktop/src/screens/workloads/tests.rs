@@ -463,6 +463,80 @@ fn workloads_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
     }
 }
 
+/// Narrow and at a large text size the table scrolls sideways, as Nodes'
+/// does: its glyph and name stay at the left edge, and the last column can
+/// be brought fully into view (#150's follow-up).
+#[gpui_kit::test]
+fn a_narrow_table_scrolls_sideways_with_its_name_pinned(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    for (width, height, text) in [
+        (1280., 880., None),
+        (760., 560., Some(20.)),
+        (760., 560., Some(14.)),
+        (1024., 700., Some(18.)),
+        (900., 600., Some(16.)),
+    ] {
+        let (_runtime, handle, _view) = app(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            window.press("secondary-5", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let rows = layout_check::assert_table(
+                window,
+                cx,
+                &layout_check::Table {
+                    table: Some("workload-table-scroll"),
+                    list: "workload-list",
+                },
+            );
+            assert!(rows.header.is_some(), "{width}: {rows:#?}");
+            let view = window.find("workload-table-scroll").bounds();
+            let name = window.find(("workload-sort", 1usize)).bounds().left();
+            window.scroll(
+                "workload-table-scroll",
+                ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let last = window.find(("workload-sort", 4usize)).bounds();
+            assert!(
+                last.right() <= view.right() + px(1.5) && last.left() >= view.left(),
+                "{width}: the last column {last:?} is outside its table {view:?}"
+            );
+            // `find` fails on an id that resolves twice, so the pinned
+            // header's name is found once, at its place.
+            let kept = window.find(("workload-sort", 1usize)).bounds().left();
+            assert!(
+                (kept - name).abs() <= px(1.5),
+                "{width}: the name moved from {name:?} to {kept:?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// The Name column narrows only where pinning needs it: a list wide enough
+/// keeps any name up to the table's widest column, and a narrow one never
+/// goes below its least width.
+#[test]
+fn the_name_narrows_only_in_a_narrow_list() {
+    use super::source::name_most;
+    // 1280 at text 13, with the details beside the list.
+    assert!(name_most(654.) > table::WIDEST + 20.);
+    // 760 at text 20, with the details below.
+    let narrow = name_most(378.);
+    assert!(narrow < 220., "{narrow}");
+    assert!((narrow + table::GLYPH_WIDTH) * 1.5 <= 378., "{narrow}");
+    assert_eq!(name_most(100.), 120.);
+}
+
 /// The state in the table's place sits under the toolbar, which keeps the
 /// title and Refresh.
 fn under_the_toolbar(window: &Window, id: &'static str) {
