@@ -90,12 +90,12 @@ impl WorkloadRow {
         } else {
             format!("{} · {}", view.name, view.issue)
         };
-        let id = row_id(&key);
+        let [id, status_id, name_id] = element_ids(&key);
         Self {
             namespace: matches!(key, ItemKey::Namespace(_)),
             key,
-            status_id: format!("{id}-status").into(),
-            name_id: format!("{id}-name").into(),
+            status_id: status_id.into(),
+            name_id: name_id.into(),
             id: id.into(),
             nested: view.nested,
             chevron: view.chevron,
@@ -111,12 +111,21 @@ impl WorkloadRow {
     }
 }
 
-/// A row's element id: `workload-row-<namespace>` for a namespace, and
-/// `workload-row-<namespace>/<kind>/<name>` for a workload or a pod.
-/// Kubernetes names never hold a `/`, so no two items share one.
-pub(super) fn row_id(key: &ItemKey) -> String {
+/// A row's element ids: `workload-row-<path>` for the row, and
+/// `workload-status-<path>` and `workload-name-<path>` for its status and
+/// name cells. The role sits in the prefix, which no other id on the page
+/// starts with, so no two of a page's ids are the same.
+pub(super) fn element_ids(key: &ItemKey) -> [String; 3] {
+    let path = item_path(key);
+    ["row", "status", "name"].map(|role| format!("workload-{role}-{path}"))
+}
+
+/// An item's part of its row's ids: `<namespace>` for a namespace, and
+/// `<namespace>/<kind>/<name>` for a workload or a pod. Kubernetes names
+/// never hold a `/`, so no two items share one.
+fn item_path(key: &ItemKey) -> String {
     match key {
-        ItemKey::Namespace(name) => format!("workload-row-{name}"),
+        ItemKey::Namespace(name) => name.clone(),
         ItemKey::Workload {
             namespace,
             name,
@@ -127,9 +136,9 @@ pub(super) fn row_id(key: &ItemKey) -> String {
                 WorkloadKind::StatefulSet => "statefulset",
                 WorkloadKind::DaemonSet => "daemonset",
             };
-            format!("workload-row-{namespace}/{kind}/{name}")
+            format!("{namespace}/{kind}/{name}")
         }
-        ItemKey::Pod { namespace, name } => format!("workload-row-{namespace}/pod/{name}"),
+        ItemKey::Pod { namespace, name } => format!("{namespace}/pod/{name}"),
     }
 }
 
@@ -305,6 +314,12 @@ impl WorkloadsScreen {
     #[cfg(test)]
     pub(super) fn row_element(&self, line: usize) -> SharedString {
         self.row_list()[line].id.clone()
+    }
+
+    /// The element id of the name cell of the visible row at `line`.
+    #[cfg(test)]
+    pub(super) fn name_element(&self, line: usize) -> SharedString {
+        self.row_list()[line].name_id.clone()
     }
 
     fn row_list(&self) -> &[WorkloadRow] {

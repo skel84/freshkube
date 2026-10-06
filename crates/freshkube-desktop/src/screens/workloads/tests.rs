@@ -136,6 +136,32 @@ fn keyboard_selects_rows_and_updates_details(cx: &mut TestAppContext) {
 
 /// A row's id names its item, not its place: a filter that moves the row
 /// keeps its id, and the id still selects that item.
+/// A row's ids carry their role in the prefix, so a namespace whose name
+/// ends like a role, such as `a-status`, shares no id with namespace `a`.
+#[test]
+fn no_two_rows_share_an_element_id() {
+    use super::source::element_ids;
+    let pod = |namespace: &str, name: &str| ItemKey::Pod {
+        namespace: namespace.into(),
+        name: name.into(),
+    };
+    let keys = [
+        ItemKey::Namespace("a".into()),
+        ItemKey::Namespace("a-status".into()),
+        ItemKey::Namespace("a-name".into()),
+        ItemKey::Namespace("a-row".into()),
+        ItemKey::Workload {
+            namespace: "a".into(),
+            name: "x".into(),
+            kind: WorkloadKind::Deployment,
+        },
+        pod("a", "x"),
+    ];
+    let ids: Vec<String> = keys.iter().flat_map(element_ids).collect();
+    let unique: std::collections::BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+}
+
 #[gpui_kit::test]
 fn a_row_id_follows_its_item_through_a_filter(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
@@ -527,12 +553,7 @@ fn a_namespace_row_is_tinted_at_the_row_height(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(matches!(screen.read(cx).rows()[0], RowRef::Namespace(_)));
         let row = window.find(row_id(screen.read(cx), 0)).bounds();
-        let name = window
-            .find(SharedString::from(format!(
-                "{}-name",
-                row_id(screen.read(cx), 0)
-            )))
-            .bounds();
+        let name = window.find(screen.read(cx).name_element(0)).bounds();
         let height = f32::from(row.size.height);
         assert!((height - 26.).abs() < 0.5, "row {row:?}");
         // Inside the row's 1 px border, above and below.
