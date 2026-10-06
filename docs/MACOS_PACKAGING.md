@@ -4,7 +4,8 @@ Freshkube packages as two separate `Freshkube.app` bundles for macOS 15 or
 later. The pipeline ad-hoc signs them without Apple credentials, so they are
 **not notarized distributables**. A version tag drafts a GitHub pre-release from
 the bundles `main` already built; a person publishes it
-([Releases](#releases)).
+([Releases](#releases)). Linux and Windows preview builds are described in
+[PACKAGING.md](PACKAGING.md).
 
 ## Build locally
 

@@ -1,0 +1,17 @@
+# What the Linux tarball needs at run time, as Ubuntu 22.04 / Debian 12 packages.
+# package-portable.py fails if a linked library comes from a package not listed
+# here; libraries loaded at run time (Vulkan, fontconfig, Wayland, D-Bus) are
+# listed too. CI's first-frame check installs these alone and runs ldd.
+libc6
+libgcc-s1
+libfontconfig1
+libfreetype6
+libxkbcommon0
+libxkbcommon-x11-0
+libxcb1
+libx11-xcb1
+libwayland-client0
+libwayland-cursor0
+libvulkan1
+libzstd1
+libdbus-1-3

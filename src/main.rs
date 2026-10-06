@@ -1,5 +1,10 @@
 //! Freshkube: a native desktop app for Talos Linux and Kubernetes clusters.
 
+// A release build on Windows is a GUI program: opened from Explorer, it shows
+// no console window. `attach_console` gives a terminal that started it its
+// output back.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use clap::Parser;
 use color_eyre::Result;
 use freshkube_desktop::GpuiOptions;
@@ -65,9 +70,27 @@ struct Cli {
     fixture: bool,
 }
 
+/// Writes `--help`, errors and logs to the terminal that started a release
+/// build on Windows. A GUI program starts without a console; when its output
+/// was redirected (a pipe or a file), it keeps that instead.
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE,
+    };
+    // SAFETY: both calls take plain values; neither keeps a pointer.
+    unsafe {
+        if GetStdHandle(STD_ERROR_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() -> Result<()> {
     // `FRESHKUBE_FIRST_FRAME=1` times the first drawn frame from here.
     freshkube_probe::first_frame::start();
+    #[cfg(all(windows, not(debug_assertions)))]
+    attach_console();
     let Cli {
         context,
         config,
