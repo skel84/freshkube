@@ -133,6 +133,7 @@ scripts/smoke.sh start --page observability-traces          # builds, launches w
 scripts/smoke.sh shot traces                                # → target/smoke/<worktree>/traces.png; open it and look
 scripts/smoke.sh key 'keystroke "k" using command down'     # any System Events key clause
 scripts/smoke.sh click 640 220                              # points from the window's top-left
+scripts/smoke.sh hover 640 220                              # the pointer there, no click or wheel: for tooltips
 scripts/smoke.sh scroll 900 500 600                         # wheel at a point, 600 points down
 scripts/smoke.sh full traces                                # traces-0.png, traces-1.png, … the whole scrolling page
 scripts/smoke.sh stop
