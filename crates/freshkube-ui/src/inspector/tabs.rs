@@ -1,6 +1,6 @@
 //! The inspector's tabs: a row under its heading, each 28 high. A row too
 //! wide for the inspector scrolls sideways; a cut end fades under a chevron
-//! that brings the next cut tab in, and the active tab is always in view.
+//! that pages to the tabs beyond it, and the active tab is always in view.
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -179,16 +179,22 @@ impl TabStrip {
         true
     }
 
-    /// A chevron's click: brings in the first tab cut at that end.
+    /// A chevron's click pages the row: › puts the first tab cut at the
+    /// right at the left, clear of the ‹ fade, so every tab that fits after
+    /// it comes in; ‹ puts the first cut at the left at the right. A tab too
+    /// wide for that comes in at the chevron's side instead, so a click
+    /// always moves the row.
     fn step(&self, later: bool, window: &mut Window, cx: &mut App) {
         let scroll = &self.0.scroll;
         let viewport = scroll.bounds();
-        let offset = scroll.offset().x;
+        let current = scroll.offset();
+        let offset = current.x;
+        let clear = dp_px(END - PANE_PADDING, window);
         // A tab whose label is clear of the fade shows, though its padding
         // may lie under it; counting it as cut would move the row a pixel.
-        let shown = dp_px(END - PANE_PADDING - TAB_PADDING, window);
-        let items =
-            (0..scroll.children_count()).filter_map(|ix| Some((ix, scroll.bounds_for_item(ix)?)));
+        let shown = clear - dp_px(TAB_PADDING, window);
+        let last = scroll.children_count().saturating_sub(1);
+        let items = (0..=last).filter_map(|ix| Some((ix, scroll.bounds_for_item(ix)?)));
         let cut = if later {
             items
                 .filter(|(_, item)| item.right() + offset > viewport.right() - shown + px_half())
@@ -201,9 +207,22 @@ impl TabStrip {
         let Some((ix, item)) = cut else {
             return;
         };
-        if self.bring_in(ix, item, viewport, window)
-            && let Some(view) = self.0.view.get()
-        {
+        let lead = if ix == 0 { Pixels::ZERO } else { clear };
+        let trail = if ix >= last { Pixels::ZERO } else { clear };
+        let at_left = viewport.left() + lead - item.left();
+        let at_right = viewport.right() - trail - item.right();
+        let paged = if later {
+            at_left.min(at_right)
+        } else {
+            at_right.max(at_left)
+        };
+        let max = scroll.max_offset().x.max(Pixels::ZERO);
+        let paged = paged.clamp(-max, Pixels::ZERO);
+        if paged == offset {
+            return;
+        }
+        scroll.set_offset(point(paged, current.y));
+        if let Some(view) = self.0.view.get() {
             cx.notify(view);
         }
     }
@@ -262,7 +281,7 @@ pub(super) fn strip(
 }
 
 /// A cut end: a fade from clear into `background`, then a chevron on it
-/// that brings in the next cut tab. It isn't focusable: the keyboard moves
+/// that pages the row toward it. It isn't focusable: the keyboard moves
 /// along the tabs themselves, and the strip follows the active one.
 fn end(
     id: &str,

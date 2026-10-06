@@ -768,3 +768,43 @@ fn a_cut_strip_keeps_its_wheel_from_the_page(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// › pages forward: the first tab cut at the right moves to the left, clear
+/// of the ‹ fade, so every tab that fits after it comes in. ‹ mirrors it.
+#[gpui_kit::test]
+fn a_chevron_pages_the_strip(cx: &mut TestAppContext) {
+    for width in [230., 260., 300.] {
+        let (handle, _) = open_strip(cx, width, 0);
+        cx.update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            let padding = dp_px(super::tabs::TAB_PADDING, window);
+            let edge = window.find("inspector-tabs-later").bounds().left();
+            let next = (0..LABELS.len())
+                .find(|ix| strip_tab(window, *ix).right() > edge + padding + px(0.5))
+                .expect("a cut tab");
+            window.click("inspector-tabs-later", cx);
+            settle(window, cx);
+            let earlier = window.find("inspector-tabs-earlier").bounds().right();
+            if window.try_find("inspector-tabs-later").is_some() {
+                close("paged forward", strip_tab(window, next).left(), earlier);
+            } else {
+                assert!(whole(window, LABELS.len() - 1), "at {width}");
+            }
+
+            let prev = (0..LABELS.len())
+                .rev()
+                .find(|ix| strip_tab(window, *ix).left() < earlier - padding - px(0.5))
+                .expect("a tab cut at the left");
+            window.click("inspector-tabs-earlier", cx);
+            settle(window, cx);
+            if let Some(later) = window.try_find("inspector-tabs-later") {
+                let later = later.bounds().left();
+                if window.try_find("inspector-tabs-earlier").is_some() {
+                    close("paged back", strip_tab(window, prev).right(), later);
+                }
+            }
+            assert!(clear(window, prev), "tab {prev} at {width}");
+        })
+        .unwrap();
+    }
+}
