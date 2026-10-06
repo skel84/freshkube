@@ -1,1 +1,0 @@
-- The service map's Connections is now the shared inspector, inside the map's card: beside the map when it fits and under it otherwise. Drag the divider to resize it, and the width is remembered. Open application sits at its foot.

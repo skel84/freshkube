@@ -1,1 +1,0 @@
-- The app has its own icon, a skull over two crossed decks, in Finder, the Dock and the app switcher.

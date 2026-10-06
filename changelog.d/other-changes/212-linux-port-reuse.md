@@ -1,1 +1,0 @@
-- On Linux, a stopped port forward's local port is free again at once, instead of staying taken for up to a minute.

@@ -1,1 +1,0 @@
-- The detail pane's YAML tab draws on the shared document view, like the maintenance review.

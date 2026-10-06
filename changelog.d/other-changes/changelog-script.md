@@ -1,1 +1,0 @@
-- `scripts/changelog.sh` runs its Python from `scripts/changelog.py` instead of a here-document, never reads the caller's input, and fails if it reports fewer fragments than `changelog.d` holds.

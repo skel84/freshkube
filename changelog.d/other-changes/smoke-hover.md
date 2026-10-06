@@ -1,1 +1,0 @@
-- `scripts/smoke.sh hover X Y` moves the pointer without a click or a wheel event, so a smoke test can check a tooltip; `scroll X Y 0` sends wheel events, which hide a tooltip already shown.

@@ -1,1 +1,0 @@
-- The advisory Linux platform check now runs the whole test suite, headless UI tests included, after compiling and linting.

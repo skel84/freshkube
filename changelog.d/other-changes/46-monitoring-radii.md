@@ -1,1 +1,0 @@
-- Monitoring's legend entries and series swatches, and the chart cursor's swatches, use the design's 3 px data-mark radius.
