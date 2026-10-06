@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use freshkube_core::operations::{NodeTarget, OperationKind, OperationStatus};
 use gpui_kit::component::Root;
@@ -37,17 +37,20 @@ fn mount(
     context: &str,
     step_ms: u64,
 ) -> (Runtime, Entity<OperationsScreen>, WindowHandle<Root>) {
-    let runtime = Builder::new_multi_thread()
-        .worker_threads(1)
+    // The example run pauses on Tokio's clock between its steps. A paused
+    // current-thread runtime makes that clock virtual and runs the worker
+    // only when the test drives it (`step`), on the test's own thread, so no
+    // test waits on the wall clock. `start_paused` needs Tokio's `test-util`,
+    // which only the dev-dependencies turn on.
+    let runtime = Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
     });
-    // A tokio worker wakes GPUI from another thread.
-    cx.executor().allow_parking();
     let source = source(context, 0);
     let mut screen = None;
     let handle = cx.open_window(size(px(1500.), px(1000.)), |window, cx| {
@@ -65,16 +68,34 @@ fn mount(
     (runtime, screen.unwrap(), handle)
 }
 
-fn wait_until(cx: &mut TestAppContext, what: &str, mut done: impl FnMut(&gpui_kit::App) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        cx.run_until_parked();
-        if cx.read(|cx| done(cx)) {
+/// Moves the run's virtual clock on by one of its steps, then lets GPUI take
+/// what the worker sent.
+fn step(cx: &mut TestAppContext, runtime: &Runtime, screen: &Entity<OperationsScreen>) {
+    let step = cx.read(|cx| screen.read(cx).step);
+    runtime.block_on(async { tokio::time::sleep(step).await });
+    cx.run_until_parked();
+}
+
+/// Steps the run until it has finished and released the slot, failing after
+/// `steps` steps.
+fn wait_until_finished(
+    cx: &mut TestAppContext,
+    runtime: &Runtime,
+    screen: &Entity<OperationsScreen>,
+    steps: usize,
+    what: &str,
+) {
+    cx.run_until_parked();
+    for _ in 0..steps {
+        if cx.read(|cx| finished(screen, cx)) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(2));
+        step(cx, runtime, screen);
     }
+    assert!(
+        cx.read(|cx| finished(screen, cx)),
+        "{what} hadn't finished after {steps} steps"
+    );
 }
 
 fn names(screen: &Entity<OperationsScreen>, cx: &TestAppContext) -> Vec<String> {
@@ -123,12 +144,9 @@ fn press_ok(cx: &mut TestAppContext, handle: WindowHandle<Root>) {
     render(cx, handle);
 }
 
-fn finished(screen: &Entity<OperationsScreen>) -> impl FnMut(&gpui_kit::App) -> bool + use<> {
-    let screen = screen.clone();
-    move |cx| {
-        screen.read(cx).run.as_ref().is_some_and(|run| run.finished)
-            && Operations::current(cx).is_none()
-    }
+fn finished(screen: &Entity<OperationsScreen>, cx: &gpui_kit::App) -> bool {
+    screen.read(cx).run.as_ref().is_some_and(|run| run.finished)
+        && Operations::current(cx).is_none()
 }
 
 fn results(
@@ -338,7 +356,7 @@ fn the_screen_refuses_reboot_on_unknown_etcd_and_says_so(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn confirming_in_example_mode_runs_the_simulation_and_shows_results(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
     review(cx, handle);
     cx.update_window(handle.into(), |_, window, _| {
         assert!(window.find("confirm-dialog").visible());
@@ -348,7 +366,8 @@ fn confirming_in_example_mode_runs_the_simulation_and_shows_results(cx: &mut Tes
     assert!(cx.read(|cx| Operations::current(cx).is_none()));
     confirm(cx, handle);
     assert!(cx.read(Operations::current).is_some());
-    wait_until(cx, "the simulated run", finished(&screen));
+    // A drain of one node takes 7 steps.
+    wait_until_finished(cx, &runtime, &screen, 10, "the simulated run");
     assert!(cx.read(Operations::current).is_none());
     assert_eq!(
         results(&screen, cx),
@@ -382,7 +401,7 @@ fn confirming_in_example_mode_runs_the_simulation_and_shows_results(cx: &mut Tes
 
 #[gpui_kit::test]
 fn cancelling_stops_the_simulation_between_steps(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, "prod-fra", 200);
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 200);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click(("ops-node", 1usize), cx);
@@ -390,12 +409,15 @@ fn cancelling_stops_the_simulation_between_steps(cx: &mut TestAppContext) {
     .unwrap();
     review(cx, handle);
     confirm(cx, handle);
+    // One step in, so the run is between steps when Cancel is pressed.
+    step(cx, &runtime, &screen);
     render(cx, handle);
     cx.update_window(handle.into(), |_, window, cx| {
         window.click("ops-run-cancel", cx);
     })
     .unwrap();
-    wait_until(cx, "the run to stop", finished(&screen));
+    // The worker sees the cancel at its next step.
+    wait_until_finished(cx, &runtime, &screen, 4, "the run to stop");
     let outcome = results(&screen, cx);
     assert_eq!(outcome.len(), 2, "{outcome:?}");
     assert!(
@@ -495,7 +517,7 @@ fn a_busy_slot_is_refused_before_and_while_confirming(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_partial_failure_stays_visible(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, "prod-fra", 2);
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 2);
     // talos-wk-fra1-02 answers; talos-wk-fra1-03 does not.
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -506,7 +528,8 @@ fn a_partial_failure_stays_visible(cx: &mut TestAppContext) {
     .unwrap();
     review(cx, handle);
     confirm(cx, handle);
-    wait_until(cx, "the run", finished(&screen));
+    // One drain, the pause between nodes, and a drain failing halfway: 12 steps.
+    wait_until_finished(cx, &runtime, &screen, 15, "the run");
     assert_eq!(
         results(&screen, cx),
         [
@@ -533,7 +556,7 @@ fn a_partial_failure_stays_visible(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_run_keeps_its_context_when_the_target_changes(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, "prod-fra", 40);
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 40);
     review(cx, handle);
     confirm(cx, handle);
     cx.update_window(handle.into(), |_, window, cx| {
@@ -547,7 +570,8 @@ fn a_run_keeps_its_context_when_the_target_changes(cx: &mut TestAppContext) {
     .unwrap();
     // The selection and preview belong to the new target.
     assert_eq!(names(&screen, cx), ["stg-cp-01"]);
-    wait_until(cx, "the run", finished(&screen));
+    // A drain of one node takes 7 steps.
+    wait_until_finished(cx, &runtime, &screen, 10, "the run");
     assert_eq!(
         results(&screen, cx),
         [("talos-cp-fra1-01".to_owned(), OperationStatus::Succeeded)]
