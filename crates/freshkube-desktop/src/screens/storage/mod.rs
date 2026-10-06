@@ -241,7 +241,7 @@ impl StorageRequest {
         config_path: Option<&std::path::Path>,
     ) -> Result<Self, String> {
         // The overview's addresses may carry a port; talosctl wants the host.
-        let node = address.split(':').next().unwrap_or(address).trim();
+        let node = talos_rs::target_host(address.trim());
         let valid = |value: &str| !value.trim().is_empty() && !value.starts_with('-');
         if !valid(context) || !valid(node) {
             return Err(

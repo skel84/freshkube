@@ -233,54 +233,6 @@ pub async fn get_disks_for_node(
     parse_disks_yaml(&output)
 }
 
-/// Get disk information for a context (async, non-blocking)
-///
-/// Executes: talosctl --context <context> -n <node> get disks -o yaml
-pub async fn get_disks_for_context(
-    context: &str,
-    config_path: Option<&str>,
-) -> Result<Vec<DiskInfo>, TalosError> {
-    // Load config to get an endpoint IP to use as the node target
-    let config = match config_path {
-        Some(path) => {
-            let path_buf = std::path::PathBuf::from(path);
-            crate::TalosConfig::load_from(&path_buf)?
-        }
-        None => crate::TalosConfig::load_default()?,
-    };
-    let ctx = config
-        .contexts
-        .get(context)
-        .ok_or_else(|| TalosError::ContextNotFound(context.to_string()))?;
-
-    // Get the first endpoint and extract the IP (remove port if present)
-    let node_ip = ctx
-        .endpoints
-        .first()
-        .ok_or_else(|| TalosError::NoEndpoints(context.to_string()))?
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_string();
-
-    if node_ip.is_empty() {
-        return Err(TalosError::NoEndpoints(context.to_string()));
-    }
-
-    let output = exec_talosctl_async(&[
-        "--context",
-        context,
-        "-n",
-        &node_ip,
-        "get",
-        "disks",
-        "-o",
-        "yaml",
-    ])
-    .await?;
-    parse_disks_yaml(&output)
-}
-
 // ============================================================================
 // Insecure Mode Functions
 // ============================================================================
@@ -564,21 +516,15 @@ pub async fn get_discovery_members_for_context(
         .get(context)
         .ok_or_else(|| TalosError::ContextNotFound(context.to_string()))?;
 
-    // Get the first endpoint and extract the IP (remove port if present)
-    let node_ip = ctx
-        .endpoints
-        .first()
-        .ok_or_else(|| TalosError::NoEndpoints(context.to_string()))?
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let node = first_endpoint_host(&ctx.endpoints)
+        .ok_or_else(|| TalosError::NoEndpoints(context.to_string()))?;
+    get_discovery_members_for_node_async(context, node, config_path).await
+}
 
-    if node_ip.is_empty() {
-        return Err(TalosError::NoEndpoints(context.to_string()));
-    }
-
-    get_discovery_members_for_node_async(context, &node_ip, config_path).await
+/// The first endpoint's host, without its port, for talosctl's `-n`.
+fn first_endpoint_host(endpoints: &[String]) -> Option<&str> {
+    let host = crate::target_host(endpoints.first()?.trim());
+    (!host.is_empty()).then_some(host)
 }
 
 /// Get discovery members for a specific node IP using context certificates (async).
@@ -1330,6 +1276,34 @@ fn parse_duration_to_ms(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_asks_the_first_endpoint_by_host() {
+        let host = |endpoints: &[&str]| {
+            first_endpoint_host(
+                &endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .map(str::to_string)
+        };
+        assert_eq!(
+            host(&["192.0.2.10:50000", "192.0.2.11"]).as_deref(),
+            Some("192.0.2.10")
+        );
+        assert_eq!(host(&["2001:db8::5"]).as_deref(), Some("2001:db8::5"));
+        assert_eq!(
+            host(&["[2001:db8::5]:50000"]).as_deref(),
+            Some("2001:db8::5")
+        );
+        assert_eq!(
+            host(&["node1.example.com"]).as_deref(),
+            Some("node1.example.com")
+        );
+        assert_eq!(host(&[":50000"]), None);
+        assert_eq!(host(&[]), None);
+    }
 
     #[test]
     fn context_get_args_are_explicit() {

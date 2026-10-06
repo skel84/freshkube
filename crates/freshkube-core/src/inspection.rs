@@ -1465,13 +1465,9 @@ async fn collect_kubespan_snapshot(
     }
 }
 
-/// Strips a trailing `:port` from a host address (IPv6 literals are kept).
+/// The host of a node address, without its port, for talosctl's `-n`.
 fn talosctl_host(address: &str) -> &str {
-    let address = address.trim();
-    match address.split_once(':') {
-        Some((host, port)) if !port.contains(':') => host,
-        _ => address,
-    }
+    talos_rs::target_host(address.trim())
 }
 
 /// Rejects values that talosctl would parse as flags or that are empty.
@@ -1896,6 +1892,8 @@ mod tests {
         assert_eq!(talosctl_host("10.0.0.1:50000"), "10.0.0.1");
         assert_eq!(talosctl_host("10.0.0.1"), "10.0.0.1");
         assert_eq!(talosctl_host("fd00::1"), "fd00::1");
+        assert_eq!(talosctl_host("[fd00::1]:50000"), "fd00::1");
+        assert_eq!(talosctl_host(" 10.0.0.1:50000 "), "10.0.0.1");
     }
 
     fn process(pid: i32, ppid: i32, command: &str) -> ProcessSnapshotEntry {

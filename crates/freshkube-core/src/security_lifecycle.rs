@@ -1155,13 +1155,7 @@ fn node_address(value: &str) -> String {
         .strip_prefix("https://")
         .or_else(|| value.strip_prefix("http://"))
         .unwrap_or(value);
-    if let Some(bracketed) = value.strip_prefix('[') {
-        return bracketed.split(']').next().unwrap_or(bracketed).to_string();
-    }
-    if value.matches(':').count() == 1 {
-        return value.split(':').next().unwrap_or(value).to_string();
-    }
-    value.to_string()
+    talos_rs::target_host(value).to_string()
 }
 
 fn members_to_roster(members: Vec<DiscoveryMember>) -> Vec<DiscoveryRosterEntry> {
@@ -1680,6 +1674,8 @@ iV6NtZU=\n-----END CERTIFICATE-----\n";
         assert_eq!(node_address("10.0.0.5:50000"), "10.0.0.5");
         assert_eq!(node_address("[fd00::5]:50000"), "fd00::5");
         assert_eq!(node_address("fd00::5"), "fd00::5");
+        assert_eq!(node_address("https://[fd00::5]:50000"), "fd00::5");
+        assert_eq!(node_address("https://10.0.0.5:50000"), "10.0.0.5");
     }
 
     #[test]

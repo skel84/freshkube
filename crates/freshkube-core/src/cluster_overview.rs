@@ -157,7 +157,7 @@ impl ClusterOverview {
             .or_else(|| {
                 self.endpoints
                     .first()
-                    .map(|endpoint| endpoint_host(endpoint))
+                    .map(|endpoint| talos_rs::target_host(endpoint).to_string())
             })
     }
 
@@ -167,7 +167,7 @@ impl ClusterOverview {
     /// node. Without discovery, etcd service presence is the safe fallback;
     /// every remaining node is therefore a worker and remains visible.
     pub fn node_is_controlplane(&self, node: &str) -> bool {
-        let key = node.split(':').next().unwrap_or(node);
+        let key = talos_rs::target_host(node);
         if let Some(member) = self.discovery_members.iter().find(|member| {
             member.hostname.eq_ignore_ascii_case(node)
                 || member.hostname.eq_ignore_ascii_case(key)
@@ -941,10 +941,6 @@ where
     results
 }
 
-fn endpoint_host(endpoint: &str) -> String {
-    endpoint.split(':').next().unwrap_or(endpoint).to_string()
-}
-
 fn root_cause(error: &dyn std::error::Error) -> String {
     let mut deepest = error;
     while let Some(source) = deepest.source() {
@@ -1013,12 +1009,7 @@ fn nodes_to_query(cluster: &ClusterOverview) -> Vec<(String, String)> {
             .map(|version| {
                 (
                     version.node.clone(),
-                    version
-                        .node
-                        .split(':')
-                        .next()
-                        .unwrap_or(&version.node)
-                        .to_string(),
+                    talos_rs::target_host(&version.node).to_string(),
                 )
             })
             .collect()
@@ -1456,6 +1447,39 @@ mod tests {
         assert!(!cluster.node_is_controlplane("worker1"));
         assert!(cluster.node_is_controlplane("legacy-cp"));
         assert!(!cluster.node_is_controlplane("unknown"));
+    }
+
+    #[test]
+    fn ipv6_node_addresses_match_whole() {
+        let cluster = ClusterOverview {
+            discovery_members: vec![member("cp6", "2001:db8::5", "controlplane")],
+            ..Default::default()
+        };
+        assert!(cluster.node_is_controlplane("2001:db8::5"));
+        assert!(cluster.node_is_controlplane("[2001:db8::5]:50000"));
+        assert!(!cluster.node_is_controlplane("2001:db8::6"));
+
+        assert_eq!(
+            ClusterOverview {
+                endpoints: vec!["[2001:db8::5]:50000".into()],
+                ..Default::default()
+            }
+            .control_plane_ip()
+            .as_deref(),
+            Some("2001:db8::5")
+        );
+
+        let cluster = ClusterOverview {
+            versions: vec![version("2001:db8::5"), version("10.0.0.5:50000")],
+            ..Default::default()
+        };
+        assert_eq!(
+            nodes_to_query(&cluster),
+            vec![
+                ("2001:db8::5".to_string(), "2001:db8::5".to_string()),
+                ("10.0.0.5:50000".to_string(), "10.0.0.5".to_string()),
+            ]
+        );
     }
 
     #[test]
