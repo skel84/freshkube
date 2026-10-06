@@ -109,6 +109,10 @@ tracing-subscriber.workspace = true
 # Match gpui-kit-assets' resolved version so debug-embed unifies with its assets.
 rust-embed = { version = "=8.12.0", optional = true, features = ["debug-embed"] }
 
+[target.'cfg(windows)'.dependencies]
+# AttachConsole, for a release build's output in the terminal that started it.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 # Keep source-line backtraces in development, matching CI.
 [profile.dev]
 debug = "line-tables-only"

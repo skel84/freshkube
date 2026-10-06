@@ -1,0 +1,165 @@
+name: Linux and Windows packages
+
+# Preview builds: pushes to main package Linux and Windows for a release to
+# promote, as ci.yml does for macOS. They run apart from CI, so a failure here
+# never holds back a macOS release while these platforms are preview
+# (docs/PACKAGING.md). A pull request that changes the packaging runs it too,
+# and so can anyone by hand on a branch. Changes only to spikes/, docs/ or
+# Markdown files build nothing.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['spikes/**', 'docs/**', '**.md']
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/packages.yml
+      - scripts/package-portable.py
+      - scripts/first-frame.py
+      - scripts/linux-runtime-packages.txt
+      # The window mark it waits for, AttachConsole and its dependency.
+      - src/main.rs
+      - crates/freshkube-desktop/src/desktop/view.rs
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to a pull request replaces its run; every other run finishes.
+  group: packages-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  package:
+    name: Package (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04's glibc (2.35) is the oldest the tarball needs.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            python: python3
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            python: python
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Confirm native target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$TARGET"
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '36.2'
+          repo-token: ${{ github.token }}
+      - name: Install GPUI Linux dependencies
+        if: runner.os == 'Linux'
+        # As platforms.yml. No rust-cache: a release build's cache would push
+        # the macOS check cache, which gates merges, out of the 10 GB budget.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ clang pkg-config libfontconfig-dev libwayland-dev \
+            libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libssl-dev libzstd-dev libvulkan-dev vulkan-validationlayers libvulkan1
+      - name: Build, package and verify the archive
+        env:
+          TARGET: ${{ matrix.target }}
+          PYTHON: ${{ matrix.python }}
+        run: $PYTHON scripts/package-portable.py --target "$TARGET"
+      - name: Check packaging leaves the source tree clean
+        run: test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freshkube-${{ matrix.target }}
+          path: |
+            target/packages/${{ matrix.target }}/*.tar.gz
+            target/packages/${{ matrix.target }}/*.zip
+            target/packages/${{ matrix.target }}/*.sha256
+            target/packages/${{ matrix.target }}/*.json
+          if-no-files-found: error
+          # A release promotes these exact files, so keep them as long as GitHub allows.
+          retention-days: 90
+          compression-level: 0
+
+  # The downloaded files, on a machine that never built them, must open a
+  # window: --fixture, until FRESHKUBE_FIRST_FRAME prints the first frame.
+  first-frame-linux:
+    name: First frame (x86_64-unknown-linux-gnu)
+    needs: package
+    # One platform's failed package mustn't skip the other's check; a missing
+    # artifact fails the download.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A bare Ubuntu 22.04: first only the runtime packages the tarball names,
+    # for ldd; then a virtual display and Mesa's software Vulkan and OpenGL,
+    # which bring libraries of their own.
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: freshkube-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Install the runtime packages alone and check the linked libraries
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends $(grep -v '^#' scripts/linux-runtime-packages.txt)
+          mkdir linked && tar -xzf dist/*.tar.gz -C linked
+          ldd linked/*/freshkube | tee ldd.txt
+          if grep 'not found' ldd.txt; then
+            echo "::error::The runtime packages leave out a linked library."
+            exit 1
+          fi
+      - name: Install a display and software rendering
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y --no-install-recommends python3 xvfb xauth \
+            mesa-vulkan-drivers libgl1-mesa-dri libegl1
+      - name: Start it
+        run: xvfb-run -a -s '-screen 0 1280x880x24' python3 scripts/first-frame.py dist/*.tar.gz
+
+  first-frame-windows:
+    name: First frame (x86_64-pc-windows-msvc)
+    needs: package
+    if: ${{ !cancelled() }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: freshkube-x86_64-pc-windows-msvc
+          path: dist
+      # No GPU: Direct3D 11 falls back to WARP, its software renderer.
+      - name: Start it
+        shell: bash
+        run: python scripts/first-frame.py dist/*.zip
