@@ -26,6 +26,7 @@ fn window_range() -> TimeWindow {
 /// The panels of a page, one under another.
 struct Host {
     panels: Vec<Entity<PanelView>>,
+    width: f32,
 }
 
 impl Render for Host {
@@ -35,7 +36,7 @@ impl Render for Host {
             .children(self.panels.iter().map(|panel| {
                 div()
                     .flex_none()
-                    .w(px(640.))
+                    .w(px(self.width))
                     .h(px(320.))
                     .child(panel.clone().cached(StyleRefinement::default().size_full()))
             }))
@@ -52,6 +53,15 @@ fn cluster() -> (Dashboard, Vec<Rc<PanelSpec>>) {
 fn mount(
     cx: &mut TestAppContext,
     specs: Vec<Rc<PanelSpec>>,
+) -> (AnyWindowHandle, Vec<Entity<PanelView>>) {
+    mount_at(cx, specs, 640.)
+}
+
+/// Mounts the panels `width` wide.
+fn mount_at(
+    cx: &mut TestAppContext,
+    specs: Vec<Rc<PanelSpec>>,
+    width: f32,
 ) -> (AnyWindowHandle, Vec<Entity<PanelView>>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -70,6 +80,7 @@ fn mount(
             .collect();
         let host = cx.new(|_| Host {
             panels: panels.clone(),
+            width,
         });
         Root::new(host, window, cx)
     });
@@ -665,4 +676,165 @@ fn a_new_answer_keeps_the_tables_show_all(cx: &mut TestAppContext) {
     cx.update(|cx| table.update(cx, |table, _| table.set_data(rows)));
     assert!(cx.read(|cx| table.read(cx).shows_all()));
     frame(cx, handle);
+}
+
+/// A timeseries of `count` series `width` wide, its legend a table of last
+/// and max, answered at once. The series in `stopped` end before the
+/// window does, at the value the others end at.
+fn legend_panel(
+    cx: &mut TestAppContext,
+    count: usize,
+    width: f32,
+    stopped: &[usize],
+) -> (AnyWindowHandle, Entity<PanelView>) {
+    use freshkube_core::monitoring::{
+        PanelResult,
+        model::data::{Frame, Series},
+    };
+    let dashboard = serde_json::json!({"title": "Test", "panels": [{
+        "type": "timeseries",
+        "title": "Memory",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [{"refId": "A", "expr": "memory", "legendFormat": "{{pod}}"}],
+    }]});
+    let spec = Dashboard::parse(&dashboard.to_string())
+        .unwrap()
+        .panels
+        .remove(0);
+    let (handle, panels) = mount_at(cx, vec![Rc::new(spec)], width);
+    let times: Vec<f64> = window_range()
+        .times()
+        .into_iter()
+        .map(|t| t as f64)
+        .collect();
+    let series = (0..count)
+        .map(|n| {
+            let mut values = vec![5.; times.len()];
+            if stopped.contains(&n) {
+                let end = values.len();
+                values[end - 3..].fill(f64::NAN);
+            }
+            Series {
+                name: format!("pod-{n}"),
+                query: "A".into(),
+                field: None,
+                labels: vec![("pod".into(), format!("pod-{n}"))],
+                values,
+            }
+        })
+        .collect();
+    let panel = panels[0].clone();
+    cx.update(|cx| {
+        panel.update(cx, |panel, cx| {
+            let result = PanelResult {
+                frame: Frame { times, series },
+                warnings: Vec::new(),
+                expressions: Vec::new(),
+            };
+            panel.set_result(result, window_range(), cx);
+        })
+    });
+    (handle, panel)
+}
+
+fn bounds_of(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    ids: &[String],
+) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
+    let ids = ids.to_vec();
+    cx.update_window(handle, move |_, window, cx| {
+        window.render_frame(cx);
+        ids.into_iter()
+            .map(|id| window.find(gpui_kit::SharedString::from(id)).bounds())
+            .collect()
+    })
+    .unwrap()
+}
+
+fn legend_rows(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|n| format!("monitoring-panel-0-legend-{n}"))
+        .collect()
+}
+
+/// Eleven series: the eleventh row takes half the width, as the ten above
+/// it do, not the whole line.
+#[gpui_kit::test]
+fn an_odd_last_legend_row_keeps_half_the_width(cx: &mut TestAppContext) {
+    let (handle, _panel) = legend_panel(cx, 11, 640., &[]);
+    let rows = bounds_of(cx, handle, &legend_rows(11));
+    let (first, second, last) = (rows[0], rows[1], rows[10]);
+    assert!(second.left() > first.right(), "two columns: {rows:?}");
+    assert_eq!(second.top(), first.top());
+    for row in &rows {
+        assert!(
+            (row.size.width - first.size.width).abs() < px(0.5),
+            "{rows:?}"
+        );
+    }
+    assert_eq!(last.left(), first.left());
+}
+
+/// Where two rows don't fit, each takes the line, the odd last one too.
+#[gpui_kit::test]
+fn a_narrow_legend_takes_one_column(cx: &mut TestAppContext) {
+    let (handle, _panel) = legend_panel(cx, 5, 300., &[]);
+    let rows = bounds_of(cx, handle, &legend_rows(5));
+    for pair in rows.windows(2) {
+        assert_eq!(pair[1].left(), pair[0].left());
+        assert!(pair[1].top() > pair[0].top(), "{rows:?}");
+        assert_eq!(pair[1].size.width, pair[0].size.width);
+    }
+    // Nothing but the padding beside the rows.
+    let card = bounds_of(cx, handle, &["monitoring-panel-0".into()])[0];
+    assert!(
+        rows[0].size.width > card.size.width - px(40.),
+        "{rows:?} in {card:?}"
+    );
+}
+
+/// A legend that scrolls keeps its bottom padding: its rows end above the
+/// card's edge, not at it.
+#[gpui_kit::test]
+fn a_long_legend_stops_short_of_the_cards_edge(cx: &mut TestAppContext) {
+    let (handle, _panel) = legend_panel(cx, 30, 640., &[]);
+    let found = bounds_of(
+        cx,
+        handle,
+        &[
+            "monitoring-panel-0".into(),
+            "monitoring-panel-0-legend".into(),
+        ],
+    );
+    let (card, legend) = (found[0], found[1]);
+    assert!(
+        card.bottom() - legend.bottom() >= px(10.),
+        "{legend:?} in {card:?}"
+    );
+}
+
+/// A series that stopped early shows its last value muted, with the time in
+/// the row's tooltip: its value takes no more room than any other.
+#[gpui_kit::test]
+fn a_stopped_series_keeps_its_value_as_wide_as_the_others(cx: &mut TestAppContext) {
+    let (handle, panel) = legend_panel(cx, 6, 640., &[0]);
+    let stale = cx.read(|cx| {
+        let chart = panel.read(cx).chart().unwrap();
+        (
+            chart.legend.rows[0].stale.clone(),
+            chart.legend.rows[1].stale.clone(),
+        )
+    });
+    assert!(stale.0.unwrap().starts_with("Last value at "));
+    assert_eq!(stale.1, None);
+    let values = bounds_of(
+        cx,
+        handle,
+        &[
+            "monitoring-panel-0-legend-0-last".into(),
+            "monitoring-panel-0-legend-1-last".into(),
+        ],
+    );
+    assert_eq!(values[0].size.width, values[1].size.width, "{values:?}");
 }
