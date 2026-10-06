@@ -367,7 +367,7 @@ impl Fit {
             }
         }
         let width = width.expect("a line without a width is shown whole");
-        if !self.cut.as_ref().is_some_and(|(cut, _)| *cut == width) {
+        if self.cut.as_ref().is_none_or(|(cut, _)| *cut != width) {
             let last = &ladder[ladder.len() - 1];
             let runs = self.runs(last);
             let mut wrapper = cx

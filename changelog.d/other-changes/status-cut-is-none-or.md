@@ -1,0 +1,1 @@
+- The status bar's line-fitting check is written the way newer clippy versions accept, so builds with a newer stable toolchain stay free of warnings.
