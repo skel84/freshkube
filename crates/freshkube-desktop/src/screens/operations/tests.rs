@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use freshkube_core::operations::{NodeTarget, OperationKind, OperationStatus};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{AppContext, ElementId, Entity, TestAppContext, WindowHandle, px, size};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -13,6 +13,8 @@ use super::{
     blocked_reason, example_preview, verdict,
 };
 use crate::backend::Target;
+use crate::desktop::layout_check;
+use crate::desktop::tests::fixture as app;
 use crate::{fixture, presentation};
 
 fn source(context: &str, node_ix: usize) -> ScreenSource {
@@ -550,4 +552,65 @@ fn a_run_keeps_its_context_when_the_target_changes(cx: &mut TestAppContext) {
         results(&screen, cx),
         [("talos-cp-fra1-01".to_owned(), OperationStatus::Succeeded)]
     );
+}
+
+const OPERATIONS_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "ops-page",
+    title: "ops-title",
+    title_text: "Operations",
+    content: "ops-body",
+};
+
+/// Operations is a page of cards under the toolbar header, and where it
+/// reads and when is the status bar's segment.
+#[gpui_kit::test]
+fn operations_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            // Lifecycle, then the next page in the column.
+            window.press("secondary-9", cx);
+            window.render_frame(cx);
+            window.press("ctrl-tab", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            layout_check::assert_page_frame(window, cx, &OPERATIONS_FRAME);
+            window.find("ops-refresh");
+            assert!(window.try_find("screen-refresh").is_none());
+            let scope = window.find("operations-scope");
+            assert!(
+                scope.path().contains(&ElementId::from("status-bar")),
+                "the segment is in the status bar"
+            );
+            let line = scope.label().unwrap_or_default().to_owned();
+            assert!(line.contains("example data"), "{line}");
+        })
+        .unwrap();
+    }
+}
+
+/// Without a target the page keeps its header, says why it is empty and
+/// gives the status bar no segment.
+#[gpui_kit::test]
+fn no_target_sits_under_the_header_without_a_segment(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 50);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(screen.update(cx, |screen, _| screen.status().is_some()));
+        screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+        window.render_frame(cx);
+        let toolbar = window.find("ops-toolbar").bounds();
+        let state = window.find("ops-state").bounds();
+        assert!(state.top() >= toolbar.bottom(), "{state:?} {toolbar:?}");
+        assert!(window.try_find("ops-body").is_none());
+        assert!(screen.update(cx, |screen, _| screen.status().is_none()));
+    })
+    .unwrap();
 }

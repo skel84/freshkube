@@ -72,16 +72,18 @@ use talos_rs::{EtcdMemberInfo, EtcdMemberStatus};
 use tokio::{runtime::Handle, sync::mpsc};
 
 use super::{
-    Column, Loader, SCREEN_DEADLINE, Scope, ScreenEvent, ScreenPanel, ScreenSource, cell,
-    content_width, header, panel, retry_button, table_head, table_width,
+    Column, Loader, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
+    panel, refresh_control, retry_button, segment, table_head, table_width,
 };
 use crate::backend::{self, OwnedJob};
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::Role as NodeRole;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::status::Segment;
 
 const CONTEXT: &str = "TalosOperations";
+const PREFIX: &str = "ops";
 const ROW_HEIGHT: f32 = 30.;
 /// The plan pane, when it sits beside the roster.
 const PLAN_WIDTH: f32 = 400.;
@@ -810,7 +812,14 @@ pub(crate) struct OperationsScreen {
     step: Duration,
     focus: FocusHandle,
     _operations: Subscription,
+    /// The status bar's segment, none without a target, and the audit
+    /// revision and source it was derived from.
+    status: Option<(StatusKey, Option<Segment>)>,
 }
+
+/// What the status bar's segment shows: the audit log's revision, and the
+/// context and whether it is example data.
+type StatusKey = (u64, Option<(String, bool)>);
 
 impl EventEmitter<ScreenEvent> for OperationsScreen {}
 
@@ -850,6 +859,7 @@ impl ScreenPanel for OperationsScreen {
             focus: cx.focus_handle(),
             // The slot is app-wide: redraw whenever anything takes or frees it.
             _operations: cx.observe(&operations, |_, _, cx| cx.notify()),
+            status: None,
         }
     }
 
@@ -911,6 +921,11 @@ impl ScreenPanel for OperationsScreen {
         window.focus(&self.focus, cx);
     }
 
+    fn status(&mut self) -> Option<&Segment> {
+        self.sync_status();
+        self.status.as_ref().and_then(|(_, line)| line.as_ref())
+    }
+
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.notice = None;
         self.ensure_preview(true, window, cx);
@@ -920,6 +935,25 @@ impl ScreenPanel for OperationsScreen {
 }
 
 impl OperationsScreen {
+    /// Derives the status bar's segment again when the audit log or the
+    /// source changed; the shell asks for it before the screen renders.
+    fn sync_status(&mut self) {
+        let key = (
+            self.audit.revision(),
+            self.source
+                .as_ref()
+                .map(|source| (source.target.context.clone(), source.is_example())),
+        );
+        if self.status.as_ref().is_some_and(|(at, _)| *at == key) {
+            return;
+        }
+        let line = self
+            .source
+            .as_ref()
+            .map(|source| segment(Some(source), &self.audit, []));
+        self.status = Some((key, line));
+    }
+
     fn roster(&self) -> Vec<RosterNode> {
         let Some(source) = &self.source else {
             return Vec::new();
