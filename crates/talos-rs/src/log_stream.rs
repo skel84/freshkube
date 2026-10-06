@@ -15,23 +15,30 @@ pub(crate) fn decode_log_chunk(data: crate::proto::common::Data) -> Result<Vec<u
 pub(crate) fn validate_metadata(
     metadata: Option<&crate::proto::common::Metadata>,
 ) -> Result<(), TalosError> {
-    if let Some(metadata) = metadata {
-        let status = metadata.status.as_ref().filter(|status| status.code != 0);
-        if !metadata.error.is_empty() || status.is_some() {
-            let code = status.map_or(tonic::Code::Unknown, |status| {
-                tonic::Code::from_i32(status.code)
-            });
-            let message = if metadata.error.is_empty() {
-                status
-                    .map(|status| status.message.clone())
-                    .unwrap_or_default()
-            } else {
-                metadata.error.clone()
-            };
-            return Err(TalosError::Grpc(tonic::Status::new(code, message)));
-        }
+    match metadata.and_then(metadata_failure) {
+        Some((code, message)) => Err(TalosError::Grpc(tonic::Status::new(code, message))),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// The failure a reply's metadata reports: its error text, its upstream
+/// status, or both. `None` when the reply succeeded.
+pub(crate) fn metadata_failure(
+    metadata: &crate::proto::common::Metadata,
+) -> Option<(tonic::Code, String)> {
+    let status = metadata.status.as_ref().filter(|status| status.code != 0);
+    let upstream =
+        status.map(|status| format!("upstream status {}: {}", status.code, status.message));
+    let message = match (metadata.error.as_str(), upstream) {
+        ("", None) => return None,
+        ("", Some(upstream)) => upstream,
+        (error, None) => error.to_string(),
+        (error, Some(upstream)) => format!("{error} ({upstream})"),
+    };
+    let code = status.map_or(tonic::Code::Unknown, |status| {
+        tonic::Code::from_i32(status.code)
+    });
+    Some((code, message))
 }
 
 /// Keep at most one transport chunk and one bounded partial line. Unlike a
@@ -120,7 +127,42 @@ mod tests {
             panic!("expected status");
         };
         assert_eq!(status.code(), tonic::Code::Unavailable);
-        assert_eq!(status.message(), "service unavailable");
+        assert_eq!(
+            status.message(),
+            "service unavailable (upstream status 14: unavailable)"
+        );
+    }
+
+    #[test]
+    fn metadata_failure_names_the_error_and_the_upstream_status() {
+        let metadata = |error: &str, code: i32| crate::proto::common::Metadata {
+            hostname: "node".into(),
+            error: error.into(),
+            status: Some(crate::proto::google::rpc::Status {
+                code,
+                message: "unavailable".into(),
+                details: vec![],
+            }),
+        };
+        assert_eq!(metadata_failure(&metadata("", 0)), None);
+        assert_eq!(
+            metadata_failure(&metadata("dial failed", 0)),
+            Some((tonic::Code::Unknown, "dial failed".to_string()))
+        );
+        assert_eq!(
+            metadata_failure(&metadata("", 14)),
+            Some((
+                tonic::Code::Unavailable,
+                "upstream status 14: unavailable".to_string()
+            ))
+        );
+        assert_eq!(
+            metadata_failure(&metadata("dial failed", 14)),
+            Some((
+                tonic::Code::Unavailable,
+                "dial failed (upstream status 14: unavailable)".to_string()
+            ))
+        );
     }
 
     #[test]
@@ -141,7 +183,7 @@ mod tests {
             panic!("expected status");
         };
         assert_eq!(status.code(), tonic::Code::PermissionDenied);
-        assert_eq!(status.message(), "permission denied");
+        assert_eq!(status.message(), "upstream status 7: permission denied");
         data.metadata
             .as_mut()
             .unwrap()

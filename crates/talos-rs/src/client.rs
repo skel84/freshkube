@@ -1730,27 +1730,9 @@ impl TalosClient {
         for (index, metadata) in messages.enumerate() {
             count += 1;
             let node = self.node_from_metadata(metadata, index);
-            if let Some(metadata) = metadata {
-                let status = metadata.status.as_ref().filter(|status| status.code != 0);
-                if !metadata.error.is_empty() || status.is_some() {
-                    let code = status.map_or(tonic::Code::Unknown, |status| {
-                        tonic::Code::from_i32(status.code)
-                    });
-                    failure_code.get_or_insert(code);
-                    let detail = match (metadata.error.is_empty(), status) {
-                        (false, Some(status)) => format!(
-                            "{} (upstream status {}: {})",
-                            metadata.error, status.code, status.message
-                        ),
-                        (false, None) => metadata.error.clone(),
-                        (true, Some(status)) => {
-                            format!("upstream status {}: {}", status.code, status.message)
-                        }
-                        (true, None) => unreachable!(),
-                    };
-                    failures.push(format!("{action} on {node}: {detail}"));
-                    continue;
-                }
+            if let Some((code, detail)) = metadata.and_then(crate::log_stream::metadata_failure) {
+                failure_code.get_or_insert(code);
+                failures.push(format!("{action} on {node}: {detail}"));
             }
         }
         if count == 0 {
@@ -2781,10 +2763,14 @@ mod tests {
 
     #[tokio::test]
     async fn packet_capture_surfaces_proxy_metadata_errors_and_stops() {
-        for (error, code) in [
-            ("capture denied", Some(7)),
-            ("", Some(7)),
-            ("capture denied", None),
+        for (error, code, message) in [
+            (
+                "capture denied",
+                Some(7),
+                "capture denied (upstream status 7: permission denied)",
+            ),
+            ("", Some(7), "upstream status 7: permission denied"),
+            ("capture denied", None, "capture denied"),
         ] {
             let stream = packet_capture_chunks(futures::stream::iter(vec![
                 Ok(crate::proto::common::Data {
@@ -2816,14 +2802,7 @@ mod tests {
                     tonic::Code::Unknown
                 }
             );
-            assert_eq!(
-                status.message(),
-                if error.is_empty() {
-                    "permission denied"
-                } else {
-                    error
-                }
-            );
+            assert_eq!(status.message(), message);
             assert!(stream.next().await.is_none());
         }
     }
