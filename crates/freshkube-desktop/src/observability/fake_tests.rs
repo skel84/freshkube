@@ -16,6 +16,8 @@ struct Server {
     paths: Arc<Mutex<Vec<String>>>,
     incident_mode: Arc<AtomicUsize>,
     incident_gate: Arc<tokio::sync::Notify>,
+    /// The status the logs path answers with while the rest answer 200.
+    logs_status: Arc<AtomicU16>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -37,10 +39,12 @@ impl Server {
         let incident_mode = Arc::new(AtomicUsize::new(0));
         let incident_gate = Arc::new(tokio::sync::Notify::new());
         let (mode, gate) = (incident_mode.clone(), incident_gate.clone());
+        let logs_status = Arc::new(AtomicU16::new(200));
+        let logs_state = logs_status.clone();
         let task=runtime.spawn(async move {
             loop {
                 let (mut socket,_)=listener.accept().await.unwrap();
-                let (state,reads,captured,mode,gate)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone());
+                let (state,reads,captured,mode,gate,logs_state)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone());
                 tokio::spawn(async move {
                     let mut buf=vec![0;16384]; let Ok(n)=socket.read(&mut buf).await else{return;};
                     let request=String::from_utf8_lossy(&buf[..n]);
@@ -50,6 +54,7 @@ impl Server {
                     // Like Coroot, any API key but the right one, exactly, is refused.
                     let key=request.lines().find_map(|line| line.strip_prefix("authorization: ").or_else(|| line.strip_prefix("Authorization: ")));
                     let status=if key.is_some_and(|key| key!="Bearer sanitized-key") {401} else if path.contains("mcp") {404} else {state.load(Ordering::SeqCst)};
+                    let status=if path.contains("/logs") && status==200 {logs_state.load(Ordering::SeqCst)} else {status};
                     let selected_mode=mode.load(Ordering::SeqCst);
                     if path.contains("/incident/k1") && selected_mode==5 {gate.notified().await;}
                     let body=if path.contains("/incidents") {
@@ -70,10 +75,12 @@ impl Server {
                         tracing_wire(path)
                     } else if path.contains("/profiling") {
                         profiling_wire(path)
+                    } else if path.contains("/logs") {
+                        logs_wire(path)
                     } else if path.contains("/app/") {
                         // The application the path names, as Coroot answers for it.
                         let id=path.split("/app/").nth(1).unwrap_or("").split('?').next().unwrap_or("").replace("%3A",":");
-                        serde_json::json!({"app_map":{"application":{"id":id,"status":"warning"},"dependencies":[{"id":"cluster-a:prod:Deployment:db","status":"ok","link":{"status":"critical"}}]},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available","threshold":80,"unit":"percent","condition_format_template":"the CPU usage > <threshold>"}],"widgets":[{"table":{"header":["Container","Usage"],"rows":[{"cells":[{"value":"api"},{"value":"0.2","unit":"cores"}]}]},"width":"100%"}]}]})
+                        serde_json::json!({"app_map":{"application":{"id":id,"status":"warning"},"dependencies":[{"id":"cluster-a:prod:Deployment:db","status":"ok","link":{"status":"critical"}}]},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available","threshold":80,"unit":"percent","condition_format_template":"the CPU usage > <threshold>"}],"widgets":[{"table":{"header":["Container","Usage"],"rows":[{"cells":[{"value":"api"},{"value":"0.2","unit":"cores"}]}]},"width":"100%"}]},{"name":"Logs","status":"ok","checks":[],"widgets":[{"logs":{},"width":"100%"}]}]})
                     } else if path.contains("map") {
                         serde_json::json!({"map":[]})
                     } else if status==204 {
@@ -95,6 +102,7 @@ impl Server {
             paths,
             incident_mode,
             incident_gate,
+            logs_status,
             task,
         }
     }
@@ -1287,4 +1295,168 @@ async fn an_application_reads_coroots_own_view(cx: &mut TestAppContext) {
         assert!(window.find("obs-app-table-0-row-0").visible());
     })
     .unwrap();
+}
+
+/// Coroot's logs answer: two messages, or on a refresh the newest again
+/// with one after it, as Coroot's `since` returns the newest message's own
+/// millisecond.
+fn logs_wire(path: &str) -> serde_json::Value {
+    let refresh = !path.contains("since%22%3A%22%22");
+    let t = 1_789_999_000_000_i64;
+    let entry = |ms: i64, message: &str| serde_json::json!({"timestamp":ms,"severity":"info","message":message,"attributes":{"host.name":"app-a"},"trace_id":""});
+    let (entries, newest) = if refresh {
+        (
+            vec![
+                entry(t + 2000, "third"),
+                entry(t + 1000, "second\n  continued"),
+            ],
+            t + 2000,
+        )
+    } else {
+        (
+            vec![entry(t + 1000, "second\n  continued"), entry(t, "first")],
+            t + 1000,
+        )
+    };
+    serde_json::json!({"status":"ok","message":"Using container logs","sources":["agent"],"source":"agent",
+        "view":"messages","entries":entries,"patterns":null,"limit":0,"max_ts":(newest * 1_000_000).to_string(),
+        "chart":{"ctx":{"from":t - 3_600_000,"to":t + 3_600_000,"step":60_000},"title":"","column":true,
+            "series":[{"name":"info","color":"blue-lighten2","data":[1,2]}]}})
+}
+
+async fn logs_read(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) {
+    let page = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        let page = page.read(cx);
+        page.live.logs_job.is_some() && !page.live.logs.is_loading() && !page.live.view.is_loading()
+    })
+    .await;
+}
+
+fn retained(cx: &mut TestAppContext, page: &gpui_kit::Entity<ObservabilityPage>) -> Vec<String> {
+    cx.read(|cx| {
+        let view = page.read(cx).live_logs.view.read(cx);
+        view.retained().iter().map(|e| e.raw.clone()).collect()
+    })
+}
+
+#[gpui_kit::test]
+async fn logs_are_read_then_refreshed_with_since_and_a_failure_keeps_them(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let app = page.applications[0].id.clone();
+            page.open_app(app, Report::Logs, cx);
+        })
+    });
+    logs_read(cx, handle, &page).await;
+    let path = last_path(&server, "/logs");
+    assert!(
+        path.contains("/project/p1/app/cluster-a%3Aprod%3ADeployment%3Aapi/logs?"),
+        "{path}"
+    );
+    assert!(path.contains("since%22%3A%22%22"), "{path}");
+    assert_eq!(retained(cx, &page).len(), 2);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for id in ["obs-logs-histogram", "obs-logs-list", "obs-logs-limit"] {
+            assert!(window.try_find(id).is_some(), "{id}");
+        }
+        assert!(window.try_find("obs-logs-failed").is_none());
+    })
+    .unwrap();
+    // A refresh asks from the newest message's nanosecond and adds only
+    // what is new.
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
+    logs_read(cx, handle, &page).await;
+    // One read a window, though the page asks again when the view
+    // answers; the second asks from the newest message's nanosecond.
+    let paths: Vec<String> = server.paths.lock().unwrap().clone();
+    let reads: Vec<&String> = paths.iter().filter(|p| p.contains("/logs?")).collect();
+    assert_eq!(reads.len(), 2, "{reads:#?}");
+    assert!(
+        reads[1].contains("since%22%3A%221789999000999999999%22"),
+        "{reads:#?}"
+    );
+    let lines = retained(cx, &page);
+    assert_eq!(lines.len(), 3, "{lines:#?}");
+    assert!(lines[2].ends_with(" third"), "{lines:#?}");
+    // A failed read keeps the lines and offers Retry.
+    server.logs_status.store(500, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        observed.read(cx).live_logs.failure().is_some()
+    })
+    .await;
+    assert_eq!(retained(cx, &page).len(), 3);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let banner = window.find("obs-logs-failed");
+        assert!(
+            banner
+                .label()
+                .is_some_and(|l| l.contains("from the last read")),
+            "{:?}",
+            banner.label()
+        );
+        server.logs_status.store(200, Ordering::SeqCst);
+        window.click("obs-logs-retry", cx);
+    })
+    .unwrap();
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        observed.read(cx).live_logs.failure().is_none()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("obs-logs-failed").is_none());
+    })
+    .unwrap();
+    assert_eq!(retained(cx, &page).len(), 3);
+}
+
+#[gpui_kit::test]
+async fn a_first_read_that_fails_says_so_with_retry(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    connected(cx, handle, &page, server.url.clone()).await;
+    for status in [403, 500] {
+        server.logs_status.store(status, Ordering::SeqCst);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                let app = page.applications[0].id.clone();
+                page.live_logs.forget();
+                page.open_app(app, Report::Logs, cx);
+            })
+        });
+        let observed = page.clone();
+        cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+            let page = observed.read(cx);
+            !page.live.view.is_loading()
+                && !page.live.logs.is_loading()
+                && page.live_logs.failure().is_some()
+        })
+        .await;
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let banner = window.find("obs-logs-failed");
+            let label = banner.label().unwrap_or_default();
+            assert!(!label.contains("last read"), "{status}: {label}");
+            if status == 403 {
+                assert!(label.contains("refused"), "{label}");
+            }
+            assert!(window.try_find("obs-logs-list").is_none());
+        })
+        .unwrap();
+    }
 }
