@@ -418,10 +418,12 @@ fn axis(
         ticks::log(base, low, high)
     } else {
         // Data that never goes below zero starts at zero. Whole values, as
-        // counts are, take whole ticks; a fraction unit's 1 is 100%.
-        let whole = !values.is_empty()
-            && values.iter().all(|v| v.fract() == 0.)
-            && field.unit.as_deref() != Some("percentunit");
+        // counts are, take whole ticks; a fraction unit's 1 is 100%, on
+        // any series that shares the axis.
+        let fraction = members
+            .iter()
+            .any(|&i| shown[i].field.unit.as_deref() == Some("percentunit"));
+        let whole = !values.is_empty() && values.iter().all(|v| v.fract() == 0.) && !fraction;
         let low = low.map_or(0., |low| low.min(0.));
         let high = high.unwrap_or(1.);
         ticks::linear(low, high, field.min, field.max, whole)

@@ -808,6 +808,27 @@ fn whole_values_take_whole_ticks() {
         .len(),
         5
     );
+    // Nor when the fraction shares the axis as its second series, placed
+    // there by hand: on its own it would take the other side.
+    let spec = panel(json!({
+        "type": "timeseries",
+        "title": "Chart",
+        "targets": [{"refId": "A", "expr": "up"}],
+        "fieldConfig": {"defaults": {}, "overrides": [{
+            "matcher": {"id": "byName", "options": "ratio"},
+            "properties": [
+                {"id": "unit", "value": "percentunit"},
+                {"id": "custom.axisPlacement", "value": "left"},
+            ],
+        }]},
+        "options": {},
+    }));
+    let shared = vec![
+        series("count", &[0., 1., 0., 1., 0., 1., 0.]),
+        series("ratio", &[1.; 7]),
+    ];
+    let chart = chart_of(&derive(&spec, frame(shared), window()));
+    assert_eq!(chart.axes[0].as_ref().unwrap().ticks.len(), 5);
 }
 
 #[test]

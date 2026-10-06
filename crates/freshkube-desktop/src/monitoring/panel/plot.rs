@@ -827,6 +827,29 @@ fn area_builder() -> PathBuilder {
 
 /// One bar per sample, in the series' place in its column.
 fn bars_path(series: &ChartSeries, xs: &[f32], frame: &Frame, place: BarSlot) -> Built {
+    let bases = series.bases.as_deref();
+    let mut path = PathBuilder::fill();
+    let mut any = false;
+    for bar in bars(&series.tops, bases, series.baseline, xs, frame, place) {
+        let (min, max) = (bar.origin, bar.bottom_right());
+        path.add_polygon(&[min, point(max.x, min.y), max, point(min.x, max.y)], true);
+        any = true;
+    }
+    finished(any, path)
+}
+
+/// Where each sample's bar stands: a slice of its column, a pixel short of
+/// the next one's when there is room, and never under a pixel wide or tall.
+/// A sample that reaches no height from its base has no bar, so a zero in a
+/// stack doesn't paint the edge of the bar below it.
+fn bars(
+    tops: &[f32],
+    bases: Option<&[f32]>,
+    baseline: f32,
+    xs: &[f32],
+    frame: &Frame,
+    place: BarSlot,
+) -> Vec<Bounds<Pixels>> {
     let step = xs
         .windows(2)
         .map(|pair| pair[1] - pair[0])
@@ -834,34 +857,26 @@ fn bars_path(series: &ChartSeries, xs: &[f32], frame: &Frame, place: BarSlot) ->
         .fold(f32::INFINITY, f32::min);
     let step = if step.is_finite() { step } else { 0.05 };
     let group = frame.width * step * 0.8;
-    let width = (group / place.count.max(1) as f32).max(px(1.));
-    let mut path = PathBuilder::fill();
-    let mut any = false;
-    for (index, (x, top)) in xs.iter().zip(&series.tops).enumerate() {
-        if !top.is_finite() {
-            continue;
-        }
-        let base = series
-            .bases
-            .as_ref()
-            .and_then(|bases| bases.get(index).copied())
-            .filter(|base| base.is_finite())
-            .unwrap_or(series.baseline);
-        let left = frame.x(*x) - group / 2. + width * place.index as f32;
-        let (y1, y2) = (frame.y(*top), frame.y(base));
-        let (y1, y2) = (y1.min(y2), y1.max(y2).max(y1.min(y2) + px(1.)));
-        path.add_polygon(
-            &[
-                point(left, y1),
-                point(left + width - px(1.), y1),
-                point(left + width - px(1.), y2),
-                point(left, y2),
-            ],
-            true,
-        );
-        any = true;
-    }
-    finished(any, path)
+    let slice = group / place.count.max(1) as f32;
+    let width = (slice - px(1.)).max(px(1.));
+    xs.iter()
+        .zip(tops)
+        .enumerate()
+        .filter_map(|(index, (x, top))| {
+            let base = bases
+                .and_then(|bases| bases.get(index).copied())
+                .filter(|base| base.is_finite())
+                .unwrap_or(baseline);
+            if !top.is_finite() || *top == base {
+                return None;
+            }
+            let left = frame.x(*x) - group / 2. + slice * place.index as f32;
+            let (y1, y2) = (frame.y(*top), frame.y(base));
+            let (y1, y2) = (y1.min(y2), y1.max(y2));
+            let height = (y2 - y1).max(px(1.));
+            Some(Bounds::new(point(left, y1), size(width, height)))
+        })
+        .collect()
 }
 
 fn text_width(text: &SharedString, font_size: Pixels, window: &mut Window) -> Pixels {
@@ -939,5 +954,58 @@ mod tests {
             })
             .sum();
         assert!((covered - 1000.).abs() < 1., "covered {covered}");
+    }
+
+    fn frame(width: f32) -> Frame {
+        Frame {
+            left: px(0.),
+            top: px(0.),
+            width: px(width),
+            height: px(100.),
+        }
+    }
+
+    /// A zero in a stack has no bar, so it can't tint the top of the bar
+    /// below; a small value still shows as a pixel.
+    #[test]
+    fn a_zero_in_a_stack_draws_no_bar() {
+        let xs = [0.25, 0.75];
+        let place = BarSlot { index: 0, count: 1 };
+        let below = [0.5, 0.5];
+        let zero = bars(&below, Some(&below), 0., &xs, &frame(200.), place);
+        assert!(zero.is_empty(), "{zero:?}");
+        let small = bars(&[0.501, 0.5], Some(&below), 0., &xs, &frame(200.), place);
+        assert_eq!(small.len(), 1);
+        assert_eq!(small[0].size.height, px(1.));
+        assert!((f32::from(small[0].origin.y) - 49.9).abs() < 0.01);
+        let unstacked = bars(&[0., 0.3], None, 0., &xs, &frame(200.), place);
+        assert_eq!(unstacked.len(), 1);
+        assert!((f32::from(unstacked[0].size.height) - 30.).abs() < 0.01);
+    }
+
+    /// Bars a pixel short of the next slice, but never narrower than a pixel,
+    /// so a dense chart keeps every bar.
+    #[test]
+    fn bars_stay_a_pixel_wide_however_dense() {
+        let xs: Vec<f32> = (0..100).map(|i| i as f32 / 100.).collect();
+        let tops = vec![0.5; xs.len()];
+        let roomy = bars(
+            &tops,
+            None,
+            0.,
+            &xs,
+            &frame(1000.),
+            BarSlot { index: 0, count: 1 },
+        );
+        assert!((f32::from(roomy[0].size.width) - 7.).abs() < 0.01);
+        for count in [1, 3] {
+            let place = BarSlot {
+                index: count - 1,
+                count,
+            };
+            let dense = bars(&tops, None, 0., &xs, &frame(100.), place);
+            assert_eq!(dense.len(), xs.len());
+            assert!(dense.iter().all(|bar| bar.size.width == px(1.)), "{count}");
+        }
     }
 }
