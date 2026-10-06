@@ -14,6 +14,11 @@ use crate::monitoring::colors::{Ink, Tier};
 
 const END: i64 = 1_700_003_600;
 
+/// [`super::derive`] with the cap a panel starts with.
+fn derive(spec: &PanelSpec, frame: Frame, window: TimeWindow) -> PanelData {
+    super::derive(spec, frame, window, SeriesCap::Top)
+}
+
 fn window() -> TimeWindow {
     TimeWindow::new(END, 3600, 7)
 }
@@ -141,7 +146,7 @@ fn many_series_get_a_table_legend_with_grey_overflow() {
     let many: Vec<Series> = (0..LEGEND_ROWS + 3)
         .map(|n| series(&format!("pod-{n}"), &[n as f64; 7]))
         .collect();
-    let chart = chart_of(&derive(&spec, frame(many), window()));
+    let chart = chart_of(&super::derive(&spec, frame(many), window(), SeriesCap::All));
     assert_eq!(chart.legend.mode, LegendMode::Table);
     assert_eq!(chart.legend.headings, ["last", "max"]);
     assert_eq!(chart.legend.rows.len(), LEGEND_ROWS);
@@ -244,6 +249,110 @@ fn a_second_unit_goes_to_the_right_axis() {
     assert_eq!(chart.series[1].tops[0], (50. / right.max) as f32);
     let left = chart.axes[0].as_ref().unwrap();
     assert_eq!(chart.series[0].tops[0], (1e9 / left.max) as f32);
+}
+
+/// `n` series named `pod-<i>`, each flat at `peak(i)`.
+fn flat(n: usize, peak: impl Fn(usize) -> f64) -> Vec<Series> {
+    (0..n)
+        .map(|i| series(&format!("pod-{i}"), &[peak(i); 7]))
+        .collect()
+}
+
+fn names(chart: &Chart) -> Vec<&str> {
+    chart.series.iter().map(|s| s.name.as_ref()).collect()
+}
+
+#[test]
+fn many_series_draw_the_highest_peaks_in_their_own_order() {
+    let spec = timeseries(json!({}), json!({}));
+    // pod-0 is low but for one spike, pod-1 is high all along, and the
+    // rest rise with their number.
+    let mut many = flat(67, |i| i as f64);
+    many[0].values = vec![0., 0., 0., 500., 0., 0., 0.];
+    many[1].values = vec![400.; 7];
+    let chart = chart_of(&derive(&spec, frame(many), window()));
+    assert_eq!(chart.capped, Some(Capped { of: 67, all: false }));
+    let mut kept = vec!["pod-0".to_owned(), "pod-1".to_owned()];
+    kept.extend((39..67).map(|i| format!("pod-{i}")));
+    assert_eq!(names(&chart), kept);
+    // The legend lists what is drawn, with nothing more to count, and the
+    // first two keep the colour slots.
+    assert_eq!(chart.legend.rows.len(), MOST_SERIES);
+    assert_eq!(chart.legend.more, 0);
+    assert_eq!(chart.series[0].ink, Ink::Slot(0));
+    assert_eq!(chart.series[2].ink, Ink::Overflow(2));
+}
+
+#[test]
+fn showing_all_draws_every_series_as_before() {
+    let spec = timeseries(json!({}), json!({}));
+    let all = || frame(flat(67, |i| i as f64));
+    let chart = chart_of(&super::derive(&spec, all(), window(), SeriesCap::All));
+    assert_eq!(chart.capped, Some(Capped { of: 67, all: true }));
+    assert_eq!(chart.series.len(), 67);
+    assert_eq!(chart.legend.more, 67 - LEGEND_ROWS);
+    let off = chart_of(&super::derive(&spec, all(), window(), SeriesCap::Off));
+    assert_eq!((off.series.len(), off.capped), (67, None));
+}
+
+#[test]
+fn thirty_series_are_not_capped() {
+    let spec = timeseries(json!({}), json!({}));
+    let chart = chart_of(&derive(
+        &spec,
+        frame(flat(MOST_SERIES, |i| i as f64)),
+        window(),
+    ));
+    assert_eq!((chart.series.len(), chart.capped), (MOST_SERIES, None));
+}
+
+#[test]
+fn a_peak_below_zero_ranks_by_its_size_and_no_values_rank_last() {
+    let spec = timeseries(json!({}), json!({}));
+    let mut many = flat(31, |_| 1.);
+    many[0].values = vec![-90.; 7];
+    many[1].values = vec![f64::NAN; 7];
+    let chart = chart_of(&derive(&spec, frame(many), window()));
+    let names = names(&chart);
+    assert_eq!(names.len(), MOST_SERIES);
+    assert!(names.contains(&"pod-0"));
+    assert!(!names.contains(&"pod-1"));
+}
+
+#[test]
+fn a_stacked_chart_is_never_capped() {
+    let spec = timeseries(
+        json!({"custom": {"stacking": {"mode": "normal"}, "fillOpacity": 30}}),
+        json!({}),
+    );
+    let chart = chart_of(&derive(&spec, frame(flat(67, |i| i as f64)), window()));
+    assert_eq!((chart.series.len(), chart.capped), (67, None));
+}
+
+#[test]
+fn a_series_hidden_from_the_legend_always_draws_and_is_not_counted() {
+    let spec = panel(json!({
+        "type": "timeseries",
+        "title": "Chart",
+        "targets": [{"refId": "A", "expr": "up"}],
+        "fieldConfig": {"defaults": {}, "overrides": [{
+            "matcher": {"id": "byName", "options": "limit"},
+            "properties": [{"id": "custom.hideFrom",
+                "value": {"legend": true, "tooltip": false, "viz": false}}],
+        }]},
+        "options": {},
+    }));
+    // The limit is the lowest series, so only its being hidden keeps it.
+    let mut many = flat(MOST_SERIES, |i| 10. + i as f64);
+    many.push(series("limit", &[1.; 7]));
+    let chart = chart_of(&derive(&spec, frame(many.clone()), window()));
+    assert_eq!((chart.series.len(), chart.capped), (MOST_SERIES + 1, None));
+    many.push(series("pod-extra", &[2.; 7]));
+    let chart = chart_of(&derive(&spec, frame(many), window()));
+    assert_eq!(chart.capped, Some(Capped { of: 31, all: false }));
+    let names = names(&chart);
+    assert!(names.contains(&"limit"));
+    assert!(!names.contains(&"pod-extra"));
 }
 
 #[test]

@@ -583,6 +583,7 @@ impl MonitoringPage {
             return;
         }
         *selection = value.to_string();
+        self.cap_again(cx);
         // Variables after this one may depend on it.
         self.resolve_variables(cx);
         cx.notify();
@@ -597,10 +598,25 @@ impl MonitoringPage {
         }
         board.span = span;
         board.range_label = range_label(span);
+        self.cap_again(cx);
+        let Some(board) = &self.board else {
+            return;
+        };
         if board.variables.is_some() {
             self.ask_again(cx);
         }
         cx.notify();
+    }
+
+    /// Charts showing all their series go back to the highest peaks once
+    /// the page asks for something else; a refresh keeps them.
+    fn cap_again(&self, cx: &mut Context<Self>) {
+        let Some(board) = &self.board else {
+            return;
+        };
+        for slot in &board.slots {
+            slot.view.update(cx, |panel, _| panel.cap_again());
+        }
     }
 
     pub(super) fn toggle_row(&mut self, section: usize, cx: &mut Context<Self>) {

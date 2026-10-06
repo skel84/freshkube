@@ -522,8 +522,8 @@ fn crowded_at(
     (handle, panels, result)
 }
 
-/// Forty series past the two colours: the grey lines draw as one path and
-/// the grey areas as another, not one of each per series.
+/// Thirty of forty series past the two colours: the grey lines draw as one
+/// path and the grey areas as another, not one of each per series.
 #[gpui_kit::test]
 fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) {
     let (handle, panels, result) = crowded(cx);
@@ -531,7 +531,7 @@ fn a_crowded_chart_draws_lines_of_one_look_as_one_path(cx: &mut TestAppContext) 
     cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(result, window_range(), cx)));
     frame(cx, handle);
     let series = cx.read(|cx| panels[0].read(cx).chart().unwrap().series.len());
-    assert_eq!(series, 40);
+    assert_eq!(series, derive::MOST_SERIES);
     // Two coloured series and the grey rest, each a line and an area.
     assert_eq!(probe::count("monitoring-path") - before, 3 * 2);
 }
@@ -580,6 +580,81 @@ fn a_group_past_the_vertex_limit_still_draws(cx: &mut TestAppContext) {
     assert_eq!(probe::count("monitoring-path-painted") - before, 3);
 }
 
+/// Forty series draw the thirty highest until Show all, which draws every
+/// one as before, the grey ones still sharing their paths; Top 30 returns.
+/// A refresh keeps Show all, and a query that picks its series with topk
+/// draws them all with no line to offer.
+#[gpui_kit::test]
+fn a_crowded_chart_draws_its_highest_peaks_until_show_all(cx: &mut TestAppContext) {
+    let (handle, panels, result) = crowded(cx);
+    let again = result.clone();
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(result, window_range(), cx)));
+    let drawn = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let chart = panels[0].read(cx).chart().unwrap();
+            (chart.series.len(), chart.capped)
+        })
+    };
+    assert!(shown(cx, handle, "monitoring-panel-0-cap"));
+    assert_eq!(drawn(cx), (30, Some(derive::Capped { of: 40, all: false })));
+    // The lowest pods are the ones left out.
+    let first = cx.read(|cx| panels[0].read(cx).chart().unwrap().series[0].name.clone());
+    assert_eq!(first, "app-10");
+
+    let before = probe::count("monitoring-path");
+    cx.update_window(handle, |_, window, cx| {
+        window.click("monitoring-panel-0-cap-toggle", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(drawn(cx), (40, Some(derive::Capped { of: 40, all: true })));
+    assert_eq!(probe::count("monitoring-path") - before, 3 * 2);
+
+    // A refresh answers again and keeps every series.
+    cx.update(|cx| {
+        panels[0].update(cx, |panel, cx| {
+            panel.set_result(again.clone(), window_range(), cx)
+        })
+    });
+    assert_eq!(drawn(cx).0, 40);
+
+    // Top 30.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("monitoring-panel-0-cap-toggle", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(drawn(cx).0, 30);
+
+    let mut picked = again;
+    picked.expressions = vec![("A".into(), "topk(40, go_goroutines)".into())];
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(picked, window_range(), cx)));
+    assert_eq!(drawn(cx), (40, None));
+    assert!(!shown(cx, handle, "monitoring-panel-0-cap"));
+}
+
+/// Show all lasts until the page asks for something else.
+#[gpui_kit::test]
+fn asking_again_returns_a_chart_to_its_highest_peaks(cx: &mut TestAppContext) {
+    let (handle, panels, result) = crowded(cx);
+    let again = result.clone();
+    cx.update(|cx| {
+        panels[0].update(cx, |panel, cx| {
+            panel.set_result(result, window_range(), cx);
+            panel.show_all_series(true, cx);
+        })
+    });
+    frame(cx, handle);
+    cx.update(|cx| {
+        panels[0].update(cx, |panel, cx| {
+            panel.cap_again();
+            panel.set_result(again, window_range(), cx);
+        })
+    });
+    let drawn = cx.read(|cx| panels[0].read(cx).chart().unwrap().series.len());
+    assert_eq!(drawn, 30);
+}
+
 /// Past what fits, the readout names the highest values and the picked
 /// series, and stays inside the plot.
 #[gpui_kit::test]
@@ -611,10 +686,11 @@ fn a_crowded_readout_ranks_the_highest_values_and_fits_the_plot(cx: &mut TestApp
     .unwrap();
     let cursor = cx.read(|cx| panels[0].read(cx).cursor.clone()).unwrap();
     let series: Vec<usize> = cursor.rows.iter().map(|row| row.series).collect();
+    // It ranks and counts only the thirty series drawn.
     let fit = series.len();
     assert!((3..=cursor::READOUT_ROWS).contains(&fit), "{series:?}");
-    assert_eq!(cursor.more, 40 - fit);
-    let mut expected: Vec<usize> = (0..fit - 1).map(|n| 39 - n).collect();
+    assert_eq!(cursor.more, 30 - fit);
+    let mut expected: Vec<usize> = (0..fit - 1).map(|n| 29 - n).collect();
     expected.push(2);
     assert_eq!(series, expected);
     cx.update_window(handle, |_, window, _| {

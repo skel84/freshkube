@@ -23,7 +23,7 @@ use std::rc::Rc;
 use freshkube_core::monitoring::{
     PanelResult, QueryError,
     markers::Marker,
-    model::{PanelSpec, time::TimeWindow},
+    model::{PanelSpec, data::Frame, time::TimeWindow},
 };
 use freshkube_ui::card::{CardHeader, ChartCard, StatCard};
 use gpui_kit::component::v_flex;
@@ -33,7 +33,7 @@ use gpui_kit::{
     TestSupportExt, Window, div,
 };
 
-use super::derive::{self, Body, PanelData};
+use super::derive::{self, Body, PanelData, SeriesCap};
 use crate::ui::{self, dp};
 
 pub(crate) use cursor::{Cursor, CursorOverlay, Linked};
@@ -82,6 +82,11 @@ pub(crate) struct PanelView {
     /// The page's markers, and those on this chart's window.
     markers: Rc<[Marker]>,
     placed: Rc<[markers::Placed]>,
+    /// The last answer and its window, kept to draw it again with more or
+    /// fewer series without asking again.
+    answer: Option<(Frame, TimeWindow)>,
+    /// How a timeseries with many series draws: the highest peaks, or all.
+    series: SeriesCap,
 }
 
 impl EventEmitter<PanelEvent> for PanelView {}
@@ -109,6 +114,8 @@ impl PanelView {
             overlay: None,
             markers: Rc::from([]),
             placed: Rc::from([]),
+            answer: None,
+            series: SeriesCap::Top,
         }
     }
 
@@ -120,9 +127,44 @@ impl PanelView {
         window: TimeWindow,
         cx: &mut Context<Self>,
     ) {
-        let data = derive::derive(&self.spec, result.frame, window);
         self.about = about(&self.spec, &result.expressions, &result.warnings);
         self.promql = promql(&self.spec, &result.expressions);
+        let picked = derive::picks_series(result.expressions.iter().map(|(_, e)| e.as_str()));
+        self.series = match (picked, self.series) {
+            (true, _) => SeriesCap::Off,
+            (false, SeriesCap::Off) => SeriesCap::Top,
+            (false, series) => series,
+        };
+        self.answer = Some((result.frame, window));
+        self.state = State::Ready;
+        self.stale = None;
+        self.draw_answer(cx);
+    }
+
+    /// Draws every series of a capped chart, or only those with the highest
+    /// peaks again, from the answer it has.
+    pub(crate) fn show_all_series(&mut self, all: bool, cx: &mut Context<Self>) {
+        let series = if all { SeriesCap::All } else { SeriesCap::Top };
+        if self.series == SeriesCap::Off || self.series == series {
+            return;
+        }
+        self.series = series;
+        self.draw_answer(cx);
+    }
+
+    /// Back to the highest peaks for the next answer, when the page asks for
+    /// something else: another variable or time range.
+    pub(crate) fn cap_again(&mut self) {
+        if self.series == SeriesCap::All {
+            self.series = SeriesCap::Top;
+        }
+    }
+
+    fn draw_answer(&mut self, cx: &mut Context<Self>) {
+        let Some((frame, window)) = &self.answer else {
+            return;
+        };
+        let data = derive::derive(&self.spec, frame.clone(), *window, self.series);
         self.plot = match &data.body {
             Body::Chart(chart) => Some(match self.plot.take() {
                 Some(plot) => {
@@ -159,8 +201,6 @@ impl PanelView {
             _ => None,
         };
         self.data = Some(data);
-        self.state = State::Ready;
-        self.stale = None;
         self.cursor = None;
         self.hovered = None;
         self.picked = None;
@@ -215,6 +255,12 @@ impl PanelView {
             self.state = State::Failed(message);
         }
         cx.notify();
+    }
+
+    /// Whether a capped chart draws all its series, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn shows_all_series(&self) -> bool {
+        self.series == SeriesCap::All
     }
 
     /// Whether an answer shows, for the page's tests.

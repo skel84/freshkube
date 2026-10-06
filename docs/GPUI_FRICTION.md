@@ -266,7 +266,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
   - The wgpu and DirectX renderers build theirs the same way: `gpui-pre-wgpu` 0.3.7 `src/wgpu_renderer.rs:1842-1845` and `gpui-pre-windows` 0.3.7 `src/directx_renderer.rs:636-639`. Only the Metal one was measured.
 - **Freshkube workaround:** draw fewer vertices.
   - Series that look the same unfocused share one path, so a crowded panel's grey series draw as one line and one area ([MONITORING.md](MONITORING.md)).
-  - Next, a cap on the series a chart draws: the 30 with the highest peaks, with the rest one click away.
+  - A cap on the series a chart draws: the 30 with the highest peaks, with the rest one click away ([MONITORING.md](MONITORING.md), The series cap).
   - Moving the cursor builds no path.
 - **Measured without the grey lines:** the profiled dashboard is the stress binary's `thirty.json`, whose crowded charts lost their shared grey path to [K25](#k25-a-path-past-65536-vertices-fails-to-build). These numbers need measuring again.
 - **Classification:** framework issue.
