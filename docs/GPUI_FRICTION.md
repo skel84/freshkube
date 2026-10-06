@@ -268,7 +268,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
   - Series that look the same unfocused share one path, so a crowded panel's grey series draw as one line and one area ([MONITORING.md](MONITORING.md)).
   - A cap on the series a chart draws: the 30 with the highest peaks, with the rest one click away ([MONITORING.md](MONITORING.md), The series cap).
   - Moving the cursor builds no path.
-- **Measured without the grey lines:** the profiled dashboard is the stress binary's `thirty.json`, whose crowded charts lost their shared grey path to [K25](#k25-a-path-past-65536-vertices-fails-to-build). These numbers need measuring again.
+- **Measured again with the grey lines:** the profile above ran on the stress binary's `thirty.json`, whose crowded charts had lost their shared grey path to [K25](#k25-a-path-past-65536-vertices-fails-to-build). With the greys drawn and each chart capped at 30 series, `MetalRenderer::draw` took 52–61% of the main thread's samples, the vertex `map` 38–49% and `finish_grow` about 1%. The window drew about 8 frames a second while the pointer moved, down from 24 ([PERFORMANCE.md](PERFORMANCE.md#the-hover-with-the-grey-lines-drawn-22)).
 - **Classification:** framework issue.
 - **Upstream:** not reported. Suggested fix, smallest first:
   1. Reserve the total up front: `Vec::with_capacity(paths.iter().map(|p| p.vertices.len()).sum())`.
