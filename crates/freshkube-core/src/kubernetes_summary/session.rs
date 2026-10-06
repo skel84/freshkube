@@ -56,6 +56,135 @@ impl Collection {
         self.staging = None;
         self.staging_bytes = 0;
     }
+
+    /// Checks one watch event against the limits, counts its bytes and applies
+    /// it to the store. `Ok(false)` when a publication would show no change.
+    fn reduce(
+        &mut self,
+        source: Source,
+        event: &Event<RetainedObject>,
+        totals: Totals,
+        limits: Limits,
+        now: DateTime<Utc>,
+    ) -> Result<bool, ObservationFailure> {
+        match event {
+            Event::Init => self.init(),
+            Event::InitApply(object) => self.init_apply(source, object, totals.staging, limits)?,
+            Event::InitDone => self.init_done(totals.live, limits, now)?,
+            Event::Apply(object) => self.apply_live(source, object, totals.live, limits, now)?,
+            Event::Delete(object) => {
+                if !self.delete_live(source, object, now)? {
+                    return Ok(false);
+                }
+            }
+        }
+        self.writer.apply_watcher_event(event);
+        Ok(!matches!(event, Event::InitApply(_)))
+    }
+
+    fn init(&mut self) {
+        self.staging = Some(BTreeMap::new());
+        self.staging_bytes = 0;
+        self.observation.syncing();
+    }
+
+    /// Stages one object of a replacement list within both limits.
+    fn init_apply(
+        &mut self,
+        source: Source,
+        object: &RetainedObject,
+        staging_total: usize,
+        limits: Limits,
+    ) -> Result<(), ObservationFailure> {
+        object.validate(source)?;
+        let staging = self
+            .staging
+            .as_mut()
+            .ok_or(ObservationFailure::InvalidObject)?;
+        let key = (object.namespace.clone(), object.name.clone());
+        let previous = staging.get(&key).copied().unwrap_or(0);
+        if staging.len() + usize::from(previous == 0) > limits.objects_per_kind
+            || staging_total - previous + object.bytes > limits.bytes_per_generation
+        {
+            return Err(ObservationFailure::Capacity);
+        }
+        staging.insert(key, object.bytes);
+        self.staging_bytes = self.staging_bytes - previous + object.bytes;
+        Ok(())
+    }
+
+    /// Commits the replacement list when its bytes fit beside the other
+    /// collections' live bytes.
+    fn init_done(
+        &mut self,
+        live_total: usize,
+        limits: Limits,
+        now: DateTime<Utc>,
+    ) -> Result<(), ObservationFailure> {
+        if self.staging.take().is_none() {
+            return Err(ObservationFailure::InvalidObject);
+        }
+        if live_total - self.live_bytes + self.staging_bytes > limits.bytes_per_generation {
+            return Err(ObservationFailure::Capacity);
+        }
+        self.live_bytes = self.staging_bytes;
+        self.staging_bytes = 0;
+        self.observation.success(now, true);
+        Ok(())
+    }
+
+    /// Counts a live change to a committed collection within both limits.
+    fn apply_live(
+        &mut self,
+        source: Source,
+        object: &RetainedObject,
+        live_total: usize,
+        limits: Limits,
+        now: DateTime<Utc>,
+    ) -> Result<(), ObservationFailure> {
+        object.validate(source)?;
+        if !self.observation.has_data() {
+            return Err(ObservationFailure::InvalidObject);
+        }
+        let old = self.reader.get(&object.to_object_ref(source));
+        let previous = old.as_ref().map_or(0, |o| o.bytes);
+        if self.reader.len() + usize::from(old.is_none()) > limits.objects_per_kind
+            || live_total - previous + object.bytes > limits.bytes_per_generation
+        {
+            return Err(ObservationFailure::Capacity);
+        }
+        self.live_bytes = self.live_bytes - previous + object.bytes;
+        self.observation.success(now, false);
+        Ok(())
+    }
+
+    /// Uncounts a deleted object. `Ok(false)` when the store doesn't hold it,
+    /// so the delete applies nothing.
+    fn delete_live(
+        &mut self,
+        source: Source,
+        object: &RetainedObject,
+        now: DateTime<Utc>,
+    ) -> Result<bool, ObservationFailure> {
+        object.validate(source)?;
+        let Some(old) = self.reader.get(&object.to_object_ref(source)) else {
+            return Ok(false);
+        };
+        // Reflector keys omit UID: a late delete must not erase a replacement.
+        if old.uid != object.uid {
+            return Ok(false);
+        }
+        self.live_bytes -= old.bytes;
+        self.observation.success(now, false);
+        Ok(true)
+    }
+}
+
+/// Bytes every collection holds when an event arrives.
+#[derive(Clone, Copy)]
+struct Totals {
+    live: usize,
+    staging: usize,
 }
 
 struct State {
@@ -229,78 +358,12 @@ impl Session {
         if state.generation != generation {
             return Ok(());
         }
-        let live_total: usize = state.collections.values().map(|c| c.live_bytes).sum();
-        let staging_total: usize = state.collections.values().map(|c| c.staging_bytes).sum();
+        let totals = Totals {
+            live: state.collections.values().map(|c| c.live_bytes).sum(),
+            staging: state.collections.values().map(|c| c.staging_bytes).sum(),
+        };
         let collection = state.collections.get_mut(&source).expect("watched source");
-        let result = (|| {
-            match &event {
-                Event::Init => {
-                    collection.staging = Some(BTreeMap::new());
-                    collection.staging_bytes = 0;
-                    collection.observation.syncing();
-                }
-                Event::InitApply(object) => {
-                    object.validate(source)?;
-                    let staging = collection
-                        .staging
-                        .as_mut()
-                        .ok_or(ObservationFailure::InvalidObject)?;
-                    let key = (object.namespace.clone(), object.name.clone());
-                    let previous = staging.get(&key).copied().unwrap_or(0);
-                    if staging.len() + usize::from(previous == 0) > self.limits.objects_per_kind
-                        || staging_total - previous + object.bytes
-                            > self.limits.bytes_per_generation
-                    {
-                        return Err(ObservationFailure::Capacity);
-                    }
-                    staging.insert(key, object.bytes);
-                    collection.staging_bytes = collection.staging_bytes - previous + object.bytes;
-                }
-                Event::InitDone => {
-                    if collection.staging.take().is_none() {
-                        return Err(ObservationFailure::InvalidObject);
-                    }
-                    if live_total - collection.live_bytes + collection.staging_bytes
-                        > self.limits.bytes_per_generation
-                    {
-                        return Err(ObservationFailure::Capacity);
-                    }
-                    collection.live_bytes = collection.staging_bytes;
-                    collection.staging_bytes = 0;
-                    collection.observation.success(now, true);
-                }
-                Event::Apply(object) => {
-                    object.validate(source)?;
-                    if !collection.observation.has_data() {
-                        return Err(ObservationFailure::InvalidObject);
-                    }
-                    let old = collection.reader.get(&object.to_object_ref(source));
-                    let previous = old.as_ref().map_or(0, |o| o.bytes);
-                    if collection.reader.len() + usize::from(old.is_none())
-                        > self.limits.objects_per_kind
-                        || live_total - previous + object.bytes > self.limits.bytes_per_generation
-                    {
-                        return Err(ObservationFailure::Capacity);
-                    }
-                    collection.live_bytes = collection.live_bytes - previous + object.bytes;
-                    collection.observation.success(now, false);
-                }
-                Event::Delete(object) => {
-                    object.validate(source)?;
-                    let Some(old) = collection.reader.get(&object.to_object_ref(source)) else {
-                        return Ok(false);
-                    };
-                    // Reflector keys omit UID: a late delete must not erase a replacement.
-                    if old.uid != object.uid {
-                        return Ok(false);
-                    }
-                    collection.live_bytes -= old.bytes;
-                    collection.observation.success(now, false);
-                }
-            }
-            collection.writer.apply_watcher_event(&event);
-            Ok(!matches!(event, Event::InitApply(_)))
-        })();
+        let result = collection.reduce(source, &event, totals, self.limits, now);
         if let Err(failure) = &result {
             collection.discard_staging();
             collection.observation.failed(failure.clone());

@@ -7,16 +7,13 @@ use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 
 use crate::workloads::{PodInfo, WorkloadCollectionOutcome};
 
-mod collect;
-mod derive;
 mod driver;
 mod observation;
 mod project;
 mod requests;
 mod retained;
 mod session;
-pub use collect::collect_kubernetes_summary;
-pub use derive::derive;
+mod summarize;
 pub use driver::DEBOUNCE;
 pub use observation::{
     Observation, ObservationFailure, Observations, ReadStatus, Scope, SessionIdentity, Source,
@@ -208,27 +205,6 @@ pub struct KubernetesSummary {
     pub available_volumes: Part<usize>,
     pub namespaces: Part<usize>,
 }
-
-impl<T> Part<T> {
-    fn map<U>(self, map: impl FnOnce(T) -> U) -> Part<U> {
-        match self {
-            Self::Loaded(value) => Part::Loaded(map(value)),
-            Self::Refused(error) => Part::Refused(Unavailable {
-                failure: error.failure,
-                message: error.message,
-                last_good: error.last_good.map(map),
-            }),
-            Self::Failed(error) => Part::Failed(Unavailable {
-                failure: error.failure,
-                message: error.message,
-                last_good: error.last_good.map(map),
-            }),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests;
 
 #[cfg(test)]
 mod session_tests;

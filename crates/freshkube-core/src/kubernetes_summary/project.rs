@@ -1,6 +1,7 @@
 //! Derive bounded display evidence from committed compact reflector objects.
 use std::{
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
     time::Duration,
 };
 
@@ -8,9 +9,10 @@ use chrono::{DateTime, Utc};
 use k8s_openapi::api::core::v1::Event;
 
 use super::{
-    ClaimSummary, ISSUE_LIMIT, KubernetesSummary, Part, PendingClaim, PodSummary, Session, Source,
-    retained::Facts, session::Evidence,
+    ClaimSummary, EventSummary, ISSUE_LIMIT, KubernetesSummary, NodeSummary, Observations, Part,
+    PendingClaim, PodSummary, RetainedObject, Session, Source, retained::Facts, session::Evidence,
 };
+use crate::resources::Amounts;
 use crate::workloads::{
     self, HealthState, NamespaceSummary, PodInfo, WorkloadCollectionOutcome, WorkloadSnapshot,
     WorkloadSource, WorkloadSourceError,
@@ -23,6 +25,63 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         version,
         ..
     } = evidence;
+    let mut nodes = node_facts(&objects);
+    let not_ready: BTreeSet<_> = nodes
+        .iter()
+        .filter(|n| !n.is_ready())
+        .map(|n| n.name.clone())
+        .collect();
+    let PodDerivation {
+        pods,
+        mut snapshot,
+        namespaces,
+        pod_counts,
+        requests,
+    } = derive_pods(&objects, &not_ready);
+    derive_nodes(&mut nodes, &pod_counts, &requests, &observations);
+    derive_workloads(&objects, &mut snapshot, namespaces);
+    let mut events = super::summarize::summarize_events(
+        objects[&Source::Events]
+            .iter()
+            .filter_map(|o| {
+                if let Facts::Event(event) = &o.facts {
+                    Some((**event).clone())
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        now,
+    );
+    let claims = derive_claims(&objects, &events, &observations);
+    events.newest.truncate(ISSUE_LIMIT);
+    let workloads = workload_outcome(snapshot, &observations);
+    let references = references(&objects, &pods, &claims);
+    let volumes = objects[&Source::Volumes]
+        .iter()
+        .filter(|o| matches!(&o.facts, Facts::Volume(true)))
+        .count();
+    KubernetesSummary {
+        references,
+        version,
+        nodes: Part::observed(nodes, &observations[&Source::Nodes]),
+        pods: Part::observed(pods, &observations[&Source::Pods]),
+        events: Part::observed(events, &observations[&Source::Events]),
+        claims: Part::observed(claims, &observations[&Source::Claims]),
+        available_volumes: Part::observed(volumes, &observations[&Source::Volumes]),
+        namespaces: Part::observed(
+            objects[&Source::Namespaces].len(),
+            &observations[&Source::Namespaces],
+        ),
+        workloads,
+        observations,
+    }
+}
+
+type Objects = BTreeMap<Source, Vec<Arc<RetainedObject>>>;
+
+/// Retained nodes, by name.
+fn node_facts(objects: &Objects) -> Vec<NodeSummary> {
     let mut nodes: Vec<_> = objects[&Source::Nodes]
         .iter()
         .filter_map(|object| {
@@ -34,11 +93,20 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         })
         .collect();
     nodes.sort_by(|left, right| left.name.cmp(&right.name));
-    let not_ready: BTreeSet<_> = nodes
-        .iter()
-        .filter(|n| !n.is_ready())
-        .map(|n| n.name.clone())
-        .collect();
+    nodes
+}
+
+/// What the pods give the summary, the workload snapshot and the nodes.
+struct PodDerivation {
+    pods: PodSummary,
+    snapshot: WorkloadSnapshot,
+    namespaces: BTreeMap<String, NamespaceSummary>,
+    pod_counts: BTreeMap<String, usize>,
+    requests: BTreeMap<String, Amounts>,
+}
+
+/// Pod counts, phases and issues, with each node's pod count and requests.
+fn derive_pods(objects: &Objects, not_ready: &BTreeSet<String>) -> PodDerivation {
     let mut pod_counts = BTreeMap::new();
     let mut requests = BTreeMap::new();
     let mut pods = PodSummary::default();
@@ -116,7 +184,24 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
             .problem_pods
             .push(pod.clone());
     }
-    for node in &mut nodes {
+    PodDerivation {
+        pods,
+        snapshot,
+        namespaces,
+        pod_counts,
+        requests,
+    }
+}
+
+/// Each node's pods, current only while the pods are, and its requests only
+/// when the pods were ever observed.
+fn derive_nodes(
+    nodes: &mut [NodeSummary],
+    pod_counts: &BTreeMap<String, usize>,
+    requests: &BTreeMap<String, Amounts>,
+    observations: &Observations,
+) {
+    for node in nodes {
         node.pods = pod_counts.get(&node.name).copied().unwrap_or_default();
         node.pods_current = observations[&Source::Pods].is_current();
         node.pods_observed = observations[&Source::Pods].has_data();
@@ -129,6 +214,14 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
             crate::resources::Amounts::default()
         };
     }
+}
+
+/// Workload totals, and every namespace folded into the snapshot.
+fn derive_workloads(
+    objects: &Objects,
+    snapshot: &mut WorkloadSnapshot,
+    mut namespaces: BTreeMap<String, NamespaceSummary>,
+) {
     for source in [
         Source::Deployments,
         Source::StatefulSets,
@@ -170,19 +263,15 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
     snapshot
         .namespaces
         .sort_by(|a, b| a.health.cmp(&b.health).then_with(|| a.name.cmp(&b.name)));
-    let mut events = super::derive::summarize_events(
-        objects[&Source::Events]
-            .iter()
-            .filter_map(|o| {
-                if let Facts::Event(event) = &o.facts {
-                    Some((**event).clone())
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        now,
-    );
+}
+
+/// Bound and pending claims, each pending one with its newest warning, marked
+/// last known while the events are not current.
+fn derive_claims(
+    objects: &Objects,
+    events: &EventSummary,
+    observations: &Observations,
+) -> ClaimSummary {
     let mut claims = ClaimSummary::default();
     for object in &objects[&Source::Claims] {
         match &object.facts {
@@ -219,7 +308,15 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
         .pending
         .sort_by_key(|claim| std::cmp::Reverse(claim.since));
     claims.pending.truncate(ISSUE_LIMIT);
-    events.newest.truncate(ISSUE_LIMIT);
+    claims
+}
+
+/// Complete, Partial with what failed, or Unavailable when all four workload
+/// sources failed and none has data to show.
+fn workload_outcome(
+    snapshot: WorkloadSnapshot,
+    observations: &Observations,
+) -> WorkloadCollectionOutcome {
     let errors: Vec<_> = [
         (Source::Pods, WorkloadSource::Pods),
         (Source::Deployments, WorkloadSource::Deployments),
@@ -240,7 +337,7 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
             })
     })
     .collect();
-    let workloads = if errors.is_empty() {
+    if errors.is_empty() {
         WorkloadCollectionOutcome::Complete(snapshot)
     } else if errors.len() == 4
         && [
@@ -261,7 +358,15 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
             snapshot,
             unavailable: errors,
         }
-    };
+    }
+}
+
+/// UIDs of the objects the summary shows as issues, for opening them.
+fn references(
+    objects: &Objects,
+    pods: &PodSummary,
+    claims: &ClaimSummary,
+) -> BTreeMap<(String, String, String), String> {
     let mut wanted = BTreeSet::new();
     for pod in &pods.issues {
         wanted.insert((Source::Pods.key(), pod.namespace.clone(), pod.name.clone()));
@@ -285,7 +390,7 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
             }
         }
     }
-    let references = objects
+    objects
         .iter()
         .flat_map(|(source, objects)| {
             objects.iter().filter_map(|object| {
@@ -297,26 +402,7 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
                 }
             })
         })
-        .collect();
-    let volumes = objects[&Source::Volumes]
-        .iter()
-        .filter(|o| matches!(&o.facts, Facts::Volume(true)))
-        .count();
-    KubernetesSummary {
-        references,
-        version,
-        nodes: Part::observed(nodes, &observations[&Source::Nodes]),
-        pods: Part::observed(pods, &observations[&Source::Pods]),
-        events: Part::observed(events, &observations[&Source::Events]),
-        claims: Part::observed(claims, &observations[&Source::Claims]),
-        available_volumes: Part::observed(volumes, &observations[&Source::Volumes]),
-        namespaces: Part::observed(
-            objects[&Source::Namespaces].len(),
-            &observations[&Source::Namespaces],
-        ),
-        workloads,
-        observations,
-    }
+        .collect()
 }
 
 pub(super) fn event_time(event: &Event) -> Option<DateTime<Utc>> {
