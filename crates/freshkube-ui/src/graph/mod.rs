@@ -13,7 +13,8 @@ use std::rc::Rc;
 
 use freshkube_graph::layout::{Node, Route, route};
 use gpui_kit::{
-    AnyElement, Context, ScrollStrategy, SharedString, UniformListScrollHandle, Window,
+    AnyElement, Context, ScrollHandle, ScrollStrategy, SharedString, UniformListScrollHandle,
+    Window,
 };
 
 use crate::ui::Tone;
@@ -153,13 +154,14 @@ pub struct GraphText {
 }
 
 /// The parts' element ids: `<prefix>-graph`, `-panel`, `-scroll`,
-/// `-previous`, `-next`, `-problems`, `-inspector`, `-connections` and
-/// `-empty`.
+/// `-scrollbar`, `-previous`, `-next`, `-problems`, `-inspector`,
+/// `-connections` and `-empty`.
 struct Ids {
     prefix: SharedString,
     graph: SharedString,
     panel: SharedString,
     scroll: SharedString,
+    scrollbar: SharedString,
     previous: SharedString,
     next: SharedString,
     problems: SharedString,
@@ -176,6 +178,7 @@ impl Ids {
             graph: id("graph"),
             panel: id("panel"),
             scroll: id("scroll"),
+            scrollbar: id("scrollbar"),
             previous: id("previous"),
             next: id("next"),
             problems: id("problems"),
@@ -199,6 +202,8 @@ pub struct GraphState<K> {
     problems: bool,
     text: GraphText,
     scroll: UniformListScrollHandle,
+    /// The graph's sideways scroll inside its card.
+    pan: ScrollHandle,
     ids: Ids,
     display: Display,
     /// How many times the page was derived, so tests can tell that
@@ -220,6 +225,7 @@ impl<K: Clone + Ord> GraphState<K> {
             problems: false,
             text,
             scroll: UniformListScrollHandle::new(),
+            pan: ScrollHandle::new(),
             ids: Ids::new(prefix),
             display: Display::default(),
             #[cfg(test)]

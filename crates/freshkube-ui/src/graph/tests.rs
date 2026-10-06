@@ -184,7 +184,6 @@ fn no_call_runs_through_a_box_on_any_page() {
 struct Map {
     graph: GraphState<usize>,
     opened: Vec<usize>,
-    width: f32,
 }
 
 impl GraphSource for Map {
@@ -224,11 +223,14 @@ impl GraphSource for Map {
 }
 
 impl Render for Map {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The content width in dp, inside the page's padding, as a page
+        // hands it over.
+        let available = window.viewport_size().width / crate::ui::dp_px(1., window) - 32.;
         div()
             .size_full()
             .p(dp(16.))
-            .child(GraphView::new(self.width).render(self, cx))
+            .child(GraphView::new(available).render(self, cx))
     }
 }
 
@@ -250,12 +252,9 @@ fn open(
     let mut view = None;
     // Tall enough to show the inspector stacked under the graph.
     let handle = cx.open_window(size(px(width), px(2000.)), |window, cx| {
-        // The content width in dp, as a page hands it over.
-        let available = (width - 32.) * crate::ui::BASE_TEXT / f32::from(window.rem_size());
         let map = cx.new(|_| Map {
             graph,
             opened: vec![],
-            width: available,
         });
         view = Some(map.clone());
         Root::new(map, window, cx)
@@ -342,8 +341,10 @@ fn a_narrow_graph_scrolls_inside_its_card_at_large_text(cx: &mut TestAppContext)
         let viewport = window.find("map-scroll").bounds();
         let before = window.find("map-graph").bounds();
         assert!(panel.right() <= px(760.));
-        assert!(viewport.left() >= panel.left());
-        assert!(viewport.right() <= panel.right());
+        // The graph is clipped inside the card's border, inset like its
+        // summary, not at the border itself.
+        assert!(viewport.left() - panel.left() >= px(14.));
+        assert!(panel.right() - viewport.right() >= px(14.));
         assert!(before.size.width > viewport.size.width);
         // Stacked: the inspector sits under the graph's card.
         assert!(window.find("map-inspector").bounds().top() >= panel.bottom());
@@ -359,6 +360,30 @@ fn a_narrow_graph_scrolls_inside_its_card_at_large_text(cx: &mut TestAppContext)
         window.scroll(node, ScrollDelta::Pixels(point(px(-1000.), px(0.))), cx);
         window.render_frame(cx);
         assert!(window.find("map-graph").bounds().left() < before.left());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_graph_that_fits_fills_its_card_without_an_inset(cx: &mut TestAppContext) {
+    let (handle, _) = open(cx, state(7, 8), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let panel = window.find("map-panel").bounds();
+        let viewport = window.find("map-scroll").bounds();
+        let graph = window.find("map-graph").bounds();
+        assert!(
+            graph.size.width <= viewport.size.width,
+            "graph {:?}, viewport {:?}, panel {:?}",
+            graph.size.width,
+            viewport.size.width,
+            panel.size.width
+        );
+        assert!(
+            viewport.left() - panel.left() < px(2.),
+            "viewport {viewport:?}, panel {panel:?}, graph {graph:?}"
+        );
+        assert!(panel.right() - viewport.right() < px(2.));
     })
     .unwrap();
 }

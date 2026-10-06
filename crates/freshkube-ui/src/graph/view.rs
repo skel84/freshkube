@@ -3,6 +3,7 @@
 //! card, or under it once the graph can't sit beside it.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -46,7 +47,10 @@ impl GraphView {
         }
         // The inspector moves below once the whole graph can't sit beside it.
         let stacked = self.available < state.display.width.max(560.) + 320.;
-        let panel = render_panel(source, stacked, cx);
+        // Beside the inspector the graph always fits; stacked, it scrolls
+        // when it is wider than the card (less its 1 px borders).
+        let scrolls = stacked && self.available < state.display.width + 2.;
+        let panel = render_panel(source, stacked, scrolls, cx);
         let inspector = render_inspector(source, stacked, cx);
         v_flex()
             .gap(dp(14.))
@@ -151,6 +155,7 @@ fn render_toolbar<S: GraphSource>(source: &S, cx: &mut Context<S>) -> Div {
 fn render_panel<S: GraphSource>(
     source: &S,
     stacked: bool,
+    scrolls: bool,
     cx: &mut Context<S>,
 ) -> impl IntoElement + use<S> {
     let state = source.graph();
@@ -172,14 +177,31 @@ fn render_panel<S: GraphSource>(
                 .p(dp(14.))
                 .child(muted(state.display.summary.clone(), cx)),
         )
+        // A graph wider than its card is inset like the summary, so it is
+        // clipped inside the card's border, with a scrollbar under it that
+        // says there is more. One that fits is drawn as it always was.
         .child(
             div()
-                .id(state.ids.scroll.clone())
-                .test_support()
-                .w_full()
+                .relative()
+                .when(scrolls, |this| this.mx(dp(14.)).pb(dp(10.)))
                 .min_w_0()
-                .overflow_x_scroll()
-                .child(graph),
+                .child(
+                    div()
+                        .id(state.ids.scroll.clone())
+                        .test_support()
+                        .track_scroll(&state.pan)
+                        .w_full()
+                        .min_w_0()
+                        .overflow_x_scroll()
+                        .child(graph),
+                )
+                .when(scrolls, |this| {
+                    this.child(
+                        Scrollbar::horizontal(&state.pan)
+                            .id(state.ids.scrollbar.clone())
+                            .mode(ScrollbarMode::Always),
+                    )
+                }),
         )
         .child(
             line()

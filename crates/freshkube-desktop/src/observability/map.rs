@@ -237,7 +237,8 @@ mod tests {
             let viewport = window.find("obs-map-scroll").bounds();
             let before = window.find("obs-map-graph").bounds();
             assert!(panel.right() <= px(760.));
-            assert!(viewport.right() <= panel.right());
+            assert!(viewport.left() - panel.left() >= px(14.));
+            assert!(panel.right() - viewport.right() >= px(14.));
             assert!(before.size.width > viewport.size.width);
             // The top-left box is in view before the map scrolls.
             let node = page
