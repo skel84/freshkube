@@ -30,6 +30,7 @@ use std::rc::Rc;
 impl Render for MonitoringPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("monitoring-page");
+        let _span = crate::perf::span("monitoring.page_render");
         let narrow = crate::screens::content_width(window) < NARROW;
         // A short window scrolls the page, header and all, as the only
         // scroller: the grid lays out at its full height inside it, so the
@@ -556,6 +557,7 @@ impl MonitoringPage {
                         .clone()
                         .cached(StyleRefinement::default().size_full()),
                 )
+                .children(board.linked.element(place.slot))
         });
         let (viewport, scroll, page) = (
             self.viewport.clone(),

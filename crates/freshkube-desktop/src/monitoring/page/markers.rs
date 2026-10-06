@@ -101,6 +101,7 @@ impl MarkerState {
 
     /// The markers the toggles and the dashboard's variables let through.
     fn filter(&self, board: Option<&Board>) -> Vec<Marker> {
+        crate::desktop::probe::hit("monitoring-derive");
         let namespaces = board.and_then(|board| chosen(board, &NAMESPACE_VARIABLES));
         let nodes = board.and_then(|board| chosen(board, &NODE_VARIABLES));
         let among = |list: &Option<Vec<String>>, value: &Option<String>| match (list, value) {

@@ -1,16 +1,24 @@
 //! The cursor over a timeseries: a crosshair at the nearest sample with a
 //! dot on each line, and the values at that time beside it. The readout is
-//! formatted when the pointer moves, never in `render`. The page passes a
-//! cursor from one chart to the others with [`PanelView::show_cursor`].
+//! formatted when the pointer moves, never in `render`.
+//!
+//! The view that lays charts out side by side passes one chart's cursor to
+//! the others through [`Linked`]: it keeps each other chart's [`Crosshair`]
+//! and draws it beside the cached panel, so a moving pointer redraws only
+//! the panel under it. A notify reaches every ancestor view, so a crosshair
+//! drawn inside each panel would redraw them all.
+use std::cell::Cell;
+use std::rc::Rc;
+
 use chrono::{Datelike, Local, TimeZone};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Bounds, Context, FontWeight, MouseMoveEvent, Pixels, SharedString, TestSupportExt,
-    Window, canvas, div, fill, point, px, size,
+    AnyElement, App, Bounds, Context, Entity, EntityId, FontWeight, Hsla, MouseMoveEvent, Pixels,
+    SharedString, TestSupportExt, Window, canvas, div, fill, point, px, size,
 };
 
-use super::{PanelEvent, PanelView, markers};
+use super::{Geometry, PanelEvent, PanelView, markers};
 use crate::monitoring::derive::{self, Chart};
 use crate::palette::palette;
 use crate::ui::{self, dp, dp_px};
@@ -35,9 +43,6 @@ pub(crate) struct Cursor {
     pub room: Pixels,
     /// The container's width when the cursor was placed.
     pub width: Pixels,
-    /// Whether the pointer is over this panel; only that one shows the
-    /// readout.
-    pub own: bool,
     pub time: SharedString,
     pub rows: Vec<Row>,
     /// Shown series past `rows`; when there are any, `rows` holds the
@@ -54,19 +59,122 @@ pub(crate) struct Row {
     pub name: SharedString,
 }
 
-impl PanelView {
-    /// The cursor another chart on the page is showing, at `time`.
-    pub(crate) fn show_cursor(&mut self, time: Option<f64>, cx: &mut Context<Self>) {
+/// Another chart's cursor on this one: its crosshair and dots, with no
+/// readout.
+#[derive(Clone)]
+pub(crate) struct Crosshair {
+    id: SharedString,
+    geometry: Rc<Cell<Geometry>>,
+    /// The sample's place across the plot, from 0 to 1.
+    pub(super) x: f32,
+    /// Each dot's height in the plot, from 0 to 1, and its colour.
+    dots: Vec<(f32, Hsla)>,
+    line: Hsla,
+    ring: Hsla,
+}
+
+impl Crosshair {
+    /// Drawn over the panel's slot, where the plot last painted.
+    fn element(self) -> AnyElement {
+        div()
+            .id(self.id.clone())
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        paint(
+                            self.geometry.get(),
+                            self.x,
+                            &self.dots,
+                            (self.line, self.ring),
+                            window,
+                        )
+                    },
+                )
+                .size_full(),
+            )
+            .test_support()
+            .into_any_element()
+    }
+}
+
+/// One chart's cursor shown on the others beside it, kept by the view that
+/// lays them out.
+#[derive(Default)]
+pub(crate) struct Linked {
+    /// The chart under the pointer, and the time there.
+    from: Option<(EntityId, f64)>,
+    /// Each panel's crosshair, in the view's order.
+    crosshairs: Vec<Option<Crosshair>>,
+}
+
+impl Linked {
+    /// `from`'s cursor moved to `time`, or left its plot.
+    pub(crate) fn show<'a>(
+        &mut self,
+        from: EntityId,
+        time: Option<f64>,
+        panels: impl IntoIterator<Item = &'a Entity<PanelView>>,
+        cx: &App,
+    ) {
+        self.from = time.map(|time| (from, time));
+        self.refresh(panels, cx);
+    }
+
+    /// Places the crosshairs again, on the panels' latest answers. Whether
+    /// any were placed before or now, so the view draws again.
+    pub(crate) fn refresh<'a>(
+        &mut self,
+        panels: impl IntoIterator<Item = &'a Entity<PanelView>>,
+        cx: &App,
+    ) -> bool {
         let _span = crate::perf::span("monitoring.cursor");
-        let cursor = time.and_then(|time| {
-            let chart = self.chart()?;
-            let index = nearest_time(&chart.times, time)?;
-            self.cursor_at(&chart, index, false, READOUT_ROWS)
-        });
-        if self.cursor != cursor {
-            self.cursor = cursor;
-            cx.notify();
-        }
+        let had = !self.crosshairs.is_empty();
+        self.crosshairs.clear();
+        let Some((from, time)) = self.from else {
+            return had;
+        };
+        self.crosshairs.extend(panels.into_iter().map(|panel| {
+            (panel.entity_id() != from)
+                .then(|| panel.read(cx).crosshair(time, cx))
+                .flatten()
+        }));
+        true
+    }
+
+    /// The crosshair over panel `index`, if another chart's cursor falls
+    /// on its samples.
+    pub(crate) fn element(&self, index: usize) -> Option<AnyElement> {
+        Some(self.crosshairs.get(index)?.clone()?.element())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn crosshair(&self, index: usize) -> Option<&Crosshair> {
+        self.crosshairs.get(index)?.as_ref()
+    }
+}
+
+impl PanelView {
+    /// Another chart's cursor at `time`, when it falls on this chart's
+    /// samples.
+    pub(crate) fn crosshair(&self, time: f64, cx: &App) -> Option<Crosshair> {
+        let chart = self.chart()?;
+        let index = nearest_time(&chart.times, time)?;
+        let x = *chart.xs.get(index)?;
+        let (named, _) = self.named(&chart, index, READOUT_ROWS);
+        let p = palette(cx);
+        Some(Crosshair {
+            id: self.element_id("crosshair"),
+            geometry: self.geometry.clone(),
+            x,
+            dots: self.dots(&chart, index, &named),
+            line: p.ink_2.opacity(0.35),
+            ring: p.surface,
+        })
     }
 
     /// Where the pointer is over the plot, in window coordinates.
@@ -92,11 +200,11 @@ impl PanelView {
         let marker = markers::nearest(&self.placed, x / geometry.width, reach);
         let fit = (room.max(0.) as usize).saturating_sub(usize::from(marker.is_some()));
         let mut cursor =
-            index.and_then(|index| self.cursor_at(&chart, index, true, fit.clamp(1, READOUT_ROWS)));
+            index.and_then(|index| self.cursor_at(&chart, index, fit.clamp(1, READOUT_ROWS)));
         if let Some(cursor) = &mut cursor {
             cursor.marker = marker;
         }
-        let key = |c: &Cursor| (c.index, c.own, c.marker);
+        let key = |c: &Cursor| (c.index, c.marker);
         if self.cursor.as_ref().map(key) == cursor.as_ref().map(key) {
             return;
         }
@@ -120,19 +228,38 @@ impl PanelView {
         }
     }
 
-    /// The cursor at sample `index`, naming at most `fit` series: all of them
-    /// in legend order when they fit, else the highest values and the
-    /// focused series.
-    fn cursor_at(&self, chart: &Chart, index: usize, own: bool, fit: usize) -> Option<Cursor> {
+    /// The cursor at sample `index`, naming at most `fit` series.
+    fn cursor_at(&self, chart: &Chart, index: usize, fit: usize) -> Option<Cursor> {
         let geometry = self.geometry.get();
         if geometry.width <= px(0.) {
             return None;
         }
         let x = geometry.left + geometry.width * *chart.xs.get(index)?;
-        let value = |series: usize| {
-            let line = &chart.series[series];
-            line.values.get(index).copied().unwrap_or(f64::NAN)
-        };
+        let (shown, more) = self.named(chart, index, fit);
+        let rows = shown.into_iter().map(|series| Row {
+            series,
+            value: derive::format(&chart.series[series].field, value(chart, series, index)).into(),
+            name: chart.series[series].name.clone(),
+        });
+        let flip = x > geometry.size.width / 2.;
+        Some(Cursor {
+            index,
+            x,
+            flip,
+            room: if flip { x } else { geometry.size.width - x },
+            width: geometry.size.width,
+            time: when(chart.times[index]).into(),
+            rows: rows.collect(),
+            more,
+            marker: None,
+        })
+    }
+
+    /// The series named at sample `index`, at most `fit`: all of them in
+    /// legend order when they fit, else the highest values and the focused
+    /// series. Then how many are left out.
+    fn named(&self, chart: &Chart, index: usize, fit: usize) -> (Vec<usize>, usize) {
+        let value = |series: usize| value(chart, series, index);
         let mut shown: Vec<usize> = (0..chart.series.len())
             .filter(|series| !chart.series[*series].unlisted)
             .collect();
@@ -150,24 +277,26 @@ impl PanelView {
                 shown[fit - 1] = focus;
             }
         }
-        let shown = shown.into_iter().map(|series| Row {
-            series,
-            value: derive::format(&chart.series[series].field, value(series)).into(),
-            name: chart.series[series].name.clone(),
-        });
-        let flip = x > geometry.size.width / 2.;
-        Some(Cursor {
-            index,
-            x,
-            flip,
-            room: if flip { x } else { geometry.size.width - x },
-            width: geometry.size.width,
-            own,
-            time: when(chart.times[index]).into(),
-            rows: shown.collect(),
-            more,
-            marker: None,
-        })
+        (shown, more)
+    }
+
+    /// A dot on each line, or past the readout's rows on the lines it
+    /// names and the focused one: hundreds of dots stacked on one
+    /// crosshair say nothing and cost every frame of the hover.
+    fn dots(&self, chart: &Chart, index: usize, named: &[usize]) -> Vec<(f32, Hsla)> {
+        let few = chart.series.len() <= READOUT_ROWS;
+        let focus = self.focus();
+        chart
+            .series
+            .iter()
+            .enumerate()
+            .filter(|(series, _)| few || focus == Some(*series) || named.contains(series))
+            .filter_map(|(series, line)| {
+                let y = *line.tops.get(index)?;
+                y.is_finite()
+                    .then(|| (y, line.ink.color(focus == Some(series))))
+            })
+            .collect()
     }
 
     /// The hover handlers for the plot's container, and the overlay drawn
@@ -198,56 +327,21 @@ impl PanelView {
                 .into_any_element();
         };
         let geometry = self.geometry.clone();
-        let (line, ring) = (
-            p.ink_2.opacity(if cursor.own { 0.7 } else { 0.35 }),
-            p.surface,
-        );
-        // A dot on each line, or past the readout's rows on the lines it
-        // names and the focused one: hundreds of dots stacked on one
-        // crosshair say nothing and cost every frame of the hover.
-        let few = chart.series.len() <= READOUT_ROWS;
-        let dots: Vec<(f32, gpui_kit::Hsla)> = chart
-            .series
-            .iter()
-            .enumerate()
-            .filter(|(series, _)| {
-                few || self.focus() == Some(*series)
-                    || cursor.rows.iter().any(|row| row.series == *series)
-            })
-            .filter_map(|(series, line)| {
-                let y = *line.tops.get(cursor.index)?;
-                let focused = self.focus() == Some(series);
-                y.is_finite().then(|| (y, line.ink.color(focused)))
-            })
-            .collect();
-        let at = cursor.x;
+        let colors = (p.ink_2.opacity(0.7), p.surface);
+        let named: Vec<usize> = cursor.rows.iter().map(|row| row.series).collect();
+        let dots = self.dots(chart, cursor.index, &named);
+        let x = chart.xs[cursor.index];
         overlay = overlay.child(
             canvas(
                 |_, _, _| {},
-                move |bounds: Bounds<Pixels>, _, window, _| {
-                    let g = geometry.get();
-                    let x = bounds.origin.x + at;
-                    let top = bounds.origin.y + g.top;
-                    window.paint_quad(fill(
-                        Bounds::new(point(x, top), size(px(1.), g.height)),
-                        line,
-                    ));
-                    let (outer, inner) = (dp_px(10., window), dp_px(7., window));
-                    for (y, color) in &dots {
-                        let center = point(x + px(0.5), top + g.height * (1. - *y));
-                        let ring_bounds = Bounds::centered_at(center, size(outer, outer));
-                        window.paint_quad(fill(ring_bounds, ring).corner_radii(outer / 2.));
-                        let dot = Bounds::centered_at(center, size(inner, inner));
-                        window.paint_quad(fill(dot, *color).corner_radii(inner / 2.));
-                    }
-                },
+                move |_, _, window, _| paint(geometry.get(), x, &dots, colors, window),
             )
             .absolute()
             .top_0()
             .left_0()
             .size_full(),
         );
-        if cursor.own && !cursor.rows.is_empty() {
+        if !cursor.rows.is_empty() {
             overlay = overlay.child(self.render_readout(chart, &cursor, window, cx));
         }
         overlay
@@ -366,6 +460,39 @@ impl PanelView {
             .test_support()
             .into_any_element()
     }
+}
+
+/// A crosshair at `x` across the plot `g` last painted, with a dot on
+/// each line.
+fn paint(
+    g: Geometry,
+    x: f32,
+    dots: &[(f32, Hsla)],
+    (line, ring): (Hsla, Hsla),
+    window: &mut Window,
+) {
+    if g.width <= px(0.) {
+        return;
+    }
+    let x = g.origin.x + g.left + g.width * x;
+    let top = g.origin.y + g.top;
+    window.paint_quad(fill(
+        Bounds::new(point(x, top), size(px(1.), g.height)),
+        line,
+    ));
+    let (outer, inner) = (dp_px(10., window), dp_px(7., window));
+    for (y, color) in dots {
+        let center = point(x + px(0.5), top + g.height * (1. - *y));
+        let ring_bounds = Bounds::centered_at(center, size(outer, outer));
+        window.paint_quad(fill(ring_bounds, ring).corner_radii(outer / 2.));
+        let dot = Bounds::centered_at(center, size(inner, inner));
+        window.paint_quad(fill(dot, *color).corner_radii(inner / 2.));
+    }
+}
+
+fn value(chart: &Chart, series: usize, index: usize) -> f64 {
+    let line = &chart.series[series];
+    line.values.get(index).copied().unwrap_or(f64::NAN)
 }
 
 /// The sample nearest `fraction` across the window.

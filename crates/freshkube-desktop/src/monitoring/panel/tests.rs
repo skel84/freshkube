@@ -300,7 +300,6 @@ fn the_cursor_reads_out_values_and_tells_the_page_without_rebuilding_paths(
         "the cursor rebuilt a path"
     );
     let cursor = cx.read(|cx| panels[cpu].read(cx).cursor.clone()).unwrap();
-    assert!(cursor.own);
     assert!(!cursor.rows.is_empty());
     assert!(!cursor.time.is_empty());
     assert!(shown(
@@ -313,13 +312,13 @@ fn the_cursor_reads_out_values_and_tells_the_page_without_rebuilding_paths(
         other => panic!("{other:?}"),
     };
 
-    // The page passes it on; the other chart shows a crosshair, no readout.
-    cx.update(|cx| panels[memory].update(cx, |panel, cx| panel.show_cursor(Some(time), cx)));
+    // The page passes it on: the other chart's crosshair falls on the same
+    // sample, and that chart shows no readout.
     let shared = cx
-        .read(|cx| panels[memory].read(cx).cursor.clone())
+        .read(|cx| panels[memory].read(cx).crosshair(time, cx))
         .unwrap();
-    assert!(!shared.own);
-    assert_eq!(shared.index, cursor.index);
+    let chart = cx.read(|cx| panels[memory].read(cx).chart()).unwrap();
+    assert_eq!(shared.x, chart.xs[cursor.index]);
     assert!(!shown(
         cx,
         handle,
@@ -921,6 +920,6 @@ fn a_narrow_readout_stays_inside_the_plot_on_either_side(cx: &mut TestAppContext
             );
         })
         .unwrap();
-        assert!(cx.read(|cx| panel.read(cx).cursor.as_ref().is_some_and(|c| c.own)));
+        assert!(cx.read(|cx| panel.read(cx).cursor.is_some()));
     }
 }

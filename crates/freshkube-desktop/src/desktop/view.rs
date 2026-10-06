@@ -10,11 +10,12 @@ impl Render for Pilot {
                 .clone()
                 .cached(cached_page_style())
                 .into_any_element(),
-            Page::Monitoring => self
-                .monitoring
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
+            // Not cached: a cached view that draws again makes every cached
+            // view inside it draw again, so a cursor moving over one chart
+            // would redraw all the panels. Drawn with the shell, the page
+            // only places its cached panels, and only the one under the
+            // pointer draws again.
+            Page::Monitoring => self.monitoring.clone().into_any_element(),
             Page::Resources => self
                 .resources
                 .clone()

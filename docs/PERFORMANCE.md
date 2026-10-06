@@ -52,7 +52,7 @@ The `stress` feature turns on spans around the work that matters (`freshkube_pro
 | `terminal.feed`, `terminal.bytes` | parsing a chunk of bytes into the terminal grid, and its size |
 | `terminal.snapshot` | copying the visible rows into style runs, at most once per batch of chunks |
 | `terminal.paint` | painting the grid; its count a second is the frame rate |
-| `monitoring.panel_render`, `monitoring.plot_paint`, `monitoring.cursor` | building a dashboard panel's tree, painting a timeseries' paths, and placing the cursor another chart passed on |
+| `monitoring.page_render`, `monitoring.panel_render`, `monitoring.plot_paint`, `monitoring.cursor` | building the Monitoring page's tree, building a dashboard panel's tree, painting a timeseries' paths, and placing the crosshairs one chart's cursor puts on the others |
 | `summary.tokio`, `summary.apply` | deriving compact reflector evidence on Tokio, then applying prepared display data on GPUI; before the watch migration, `summary.tokio` also included API collection |
 | `summary.lag` | first dirty-store notification to GPUI apply, including the 500 ms debounce; excludes network and producer backlog |
 | `summary.live_sources` | synchronized and current summary collections, from zero through nine; the first nine marks completed initial synchronization |
@@ -204,6 +204,23 @@ A reset now arrives ready to swap in. Where the list is read, on Tokio, core's r
 
 What is left is the projection's first sort, which is quick for the default order because a list arrives in it. A Refresh still drops the old rows on the main thread.
 
+
+### A pointer move redraws only the chart under it (#22)
+
+A sample profile of the 30-panel hover put three quarters of the main thread in GPUI laying out and painting panels. A move redrew all 30 panels for two reasons. The page passed the cursor on by notifying every other panel. And the shell drew the page as a cached view: while a cached view renders again, GPUI sets `window.refreshing`, and no cached view inside it may reuse its last frame, so the hovered panel's notify alone, which marks the page dirty, redrew them all. Now the page keeps the other charts' crosshairs and draws them beside the cached panels (`panel::Linked`), and the shell draws the page uncached. A move redraws the panel under the pointer, and the page places its panels and crosshairs and derives nothing. That page render runs with every frame the shell draws while Monitoring shows.
+
+Same settings as the baseline, with the saved #181 binary as before, and the runs alternated. The one-minute load average at each start was 13.1 (before), 13.0 (after), 13.8 (before) and 14.2 (after) for the 30-panel runs, and 11.2 (before) and 16.9 (after) for Cluster, with no cargo running.
+
+| Dashboard | Main-thread stall: median / 99th / total | Stall samples | `panel_render`: count, total | `plot_paint`: count, total | `page_render` total | Memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 30 timeseries, before | 73–75 / 93–97 / 25.7–25.8 s | 342–349 | 10,290–10,470, 1.7–1.8 s | 5,145–5,235, 1.0 s | — | 257–269 MB |
+| 30 timeseries, after | 36–37 / 45–56 / 23.5–23.7 s | 626–648 | 9,870–10,221, 0.6–0.7 s | 495–516, 0.2 s | 0.28–0.34 s | 226–227 MB |
+| Cluster, before | 58.5 / 72 / 24.5 s | 615 | 3,960, 0.9 s | 1,188, 0.45 s | — | 218 MB |
+| Cluster, after | 26.7 / 46 / 21.9 s | 963 | 720, 0.55 s | 720, 0.51 s | 0.32 s | 194 MB |
+
+- **The stall halves and the frame rate about doubles.** Cluster draws one panel a frame: its panel, plot, cursor and page counts are all about 720.
+- **The page's own render is about 1.3% of the busy time.** A profile of the after run puts the window's root layout, which now includes the page, at 7.5% of main-thread samples, and the panels' layout at 14%, down from 35%.
+- **The thread is still busy, because loading panels animate.** The page asks only the panels in or near the viewport, so about 16 of the 30 stay loading, and Kit's skeleton pulses with an animation that notifies its panel every frame, off screen too. Those are the 9,700 renders of 0.02 ms, and while any panel is unanswered the window never stops drawing. Drawing only the slots near the viewport, #22's next step, takes them out.
 
 ### Kubernetes summary
 

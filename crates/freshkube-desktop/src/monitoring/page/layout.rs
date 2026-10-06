@@ -55,6 +55,7 @@ impl Layout {
 }
 
 pub(super) fn layout(sections: &[SectionShape], narrow: bool) -> Layout {
+    crate::desktop::probe::hit("monitoring-derive");
     let columns = layout::COLUMNS as f32;
     let mut out = Layout::default();
     let mut top = 0.;
