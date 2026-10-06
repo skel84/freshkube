@@ -375,10 +375,11 @@ pub(crate) fn logs(node: &str, services: &[ServiceInfo]) -> Vec<LogEvent> {
                 return LogEvent::new(
                     "kubelet",
                     format!("{stamp} level=error msg=\"Failed to start healthz server\" err=\"listen tcp 127.0.0.1:10248: bind: address already in use\" node={node}"),
-                );
+                )
+                .talos();
             }
             let (service, line) = templates[(ix as usize * 7 + ix as usize / 3) % templates.len()];
-            LogEvent::new(*service, format!("{stamp} {line}"))
+            LogEvent::new(*service, format!("{stamp} {line}")).talos()
         })
         .collect()
 }

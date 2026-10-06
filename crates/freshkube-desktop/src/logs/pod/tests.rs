@@ -3,6 +3,7 @@ use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, App, AppContext, Entity, TestAppContext, px, size};
 use tokio::runtime::Runtime;
 
+use freshkube_core::logs::LogEvent;
 use freshkube_core::resources::{ContainerRole, PodContainers};
 
 use super::{EXAMPLE_INTERVAL, PodLogPanel, PodLogView, Stream, StreamState};
@@ -367,6 +368,24 @@ fn stop_keeps_what_was_read_and_resume_reads_on_without_repeating(cx: &mut TestA
     cx.run_until_parked();
     cx.update_window(handle, |_, _, cx| assert_eq!(lines(&view, cx), 41))
         .unwrap();
+}
+
+/// A pod's line shows whole, its caller and a name before a colon too.
+#[gpui_kit::test]
+fn a_pod_line_shows_its_message_whole(cx: &mut TestAppContext) {
+    let (_runtime, view, _handle) = mount(cx);
+    cx.update(|cx| {
+        show(&view, &running_pod(), cx);
+        let line = "main.go:94: cart-db: connection refused";
+        view.update(cx, |view, cx| {
+            view.ingest(
+                vec![LogEvent::new("app", format!("2026-01-09T16:40:59Z {line}"))],
+                cx,
+            )
+        });
+        let entries = view.read(cx).retained();
+        assert!(entries.iter().any(|entry| entry.message == line));
+    });
 }
 
 #[gpui_kit::test]
