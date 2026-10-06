@@ -265,6 +265,24 @@ Release build, same settings, with the build of the change above as before; runs
 - **The stall is read only in the seconds the pointer moves.** In each second the median is either about 1.2 ms, when the hover script paused, or 30–40 ms while it moved, so the median over a whole run swings with the mix: 4.9 ms before and 23 ms after here. Over the moving seconds alone it drops by about 13%.
 - The rest of the frame is GPUI's layout and paint of the whole window, which the page can't avoid while it draws every frame the pointer moves.
 
+### A chart draws no more samples than its pixels can show (#22)
+
+Thinning a chart's paths, so that each pixel column draws only its first, lowest, highest and last sample, keeps the peaks while it cuts vertices, but only where a column holds more than four samples. Every dashboard timeseries asks Prometheus for 200 samples per series (`monitoring/page/board.rs`), and the pod and node history charts ask for 120. A temporary page test measured the plot each panel draws, by grid width, at the default page width (1,048 pt: a 1,320 pt window less the rail and column) and at the narrow one (488 pt):
+
+| Timeseries plot | Default page | Narrow page |
+| --- | --- | --- |
+| Grid width 3 | 3.36 samples per px (60 px) | 1.28 |
+| Grid width 4 | 1.97 | 1.28 |
+| Grid width 6 | 1.08 | 1.28 |
+| Grid width 8 | 0.74 | 1.28 |
+| Grid width 12 | 0.46 | 0.53 |
+| Grid width 24 | 0.21 | 0.53 |
+| Cluster: CPU and memory by node | 0.47 | 0.54 |
+| Cluster: API server latency | 0.75 | 1.29 |
+| Pod and node history, 120 samples | about 0.84, from a capture | |
+
+The test's text is wider than the app's, so its value axis takes more room and these plots are a little narrower than on screen: the real ratios are a little lower. No panel reaches four samples per pixel, so thinning would draw every sample it draws today, and it isn't built. Lowering the sample count is no substitute, since Prometheus evaluates only at each step and a coarser step loses the peaks between. Revisit this only if a real dashboard shows plots above four samples per pixel. A 30-panel dashboard's vertices come from the number of series, up to 67 a panel in the stress dashboard, not from oversampling.
+
 ### Kubernetes summary
 
 Before the watch migration, the shell read the Kubernetes summary from the API server cache on its 15 s cycle on every page. `scripts/stress.sh summary-20k summary` served 20,000 pods, 2,000 deployments and 5,000 warning events through the real client. Typed objects were discarded on Tokio after deriving the summary and Health data. These historical measurements describe that polling implementation.
