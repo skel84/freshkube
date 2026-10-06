@@ -1,8 +1,16 @@
 use super::*;
+use freshkube_probe::first_frame::FirstFrame;
 
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
+        // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,
+        // whatever page it opens on and in release builds too: the release
+        // smoke check waits for this line.
+        static WINDOW: FirstFrame = FirstFrame::new("window");
+        if WINDOW.pending() {
+            window.on_next_frame(|_, _| WINDOW.mark());
+        }
         self.layout_chrome(window);
         let page = match self.page {
             Page::Observability => self

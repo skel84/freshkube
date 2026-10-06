@@ -67,7 +67,6 @@ struct Cli {
 
 fn main() -> Result<()> {
     // `FRESHKUBE_FIRST_FRAME=1` times the first drawn frame from here.
-    #[cfg(debug_assertions)]
     freshkube_probe::first_frame::start();
     let Cli {
         context,
