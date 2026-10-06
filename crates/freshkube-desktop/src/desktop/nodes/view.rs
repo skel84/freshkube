@@ -303,7 +303,9 @@ impl Pilot {
             NodeTab::Services => inset(self.render_services(window, cx)),
             NodeTab::Logs => {
                 // In a short window the log keeps the height it lays out
-                // in, and its body scrolls inside the inspector.
+                // in, and its body scrolls inside the inspector. The tab
+                // names it, so that height leaves out a title row, and the
+                // lines still fit the pane once the body has scrolled.
                 let short = freshkube_ui::page::is_short(window);
                 div()
                     .id("node-logs-scroll")
@@ -318,9 +320,11 @@ impl Pilot {
                         v_flex()
                             .size_full()
                             .when(short, |this| {
-                                this.min_h(dp(freshkube_ui::page::SHORT_HEIGHT))
+                                this.min_h(dp(freshkube_ui::page::SHORT_HEIGHT
+                                    - freshkube_ui::page::TOOLBAR_HEIGHT))
                             })
                             .px(dp(PANE_PADDING))
+                            .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
                             .child(self.logs.clone().cached(super::super::cached_page_style())),
                     )
