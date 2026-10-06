@@ -677,19 +677,7 @@ impl TalosClient {
     ) -> Result<Vec<EtcdMemberStatus>, TalosError> {
         let mut client = self.machine_client();
 
-        // Build request with node targeting if specific nodes provided
-        let request = if !nodes.is_empty() {
-            let mut req = Request::new(());
-            // Use proper multi-node targeting via "nodes" header
-            for node in nodes {
-                if let Ok(value) = node.parse() {
-                    req.metadata_mut().append("nodes", value);
-                }
-            }
-            req
-        } else {
-            Request::new(())
-        };
+        let request = with_listed_nodes(Request::new(()), nodes);
 
         let response = client.etcd_status(request).await?;
         let inner = response.into_inner();
@@ -1749,6 +1737,21 @@ impl TalosClient {
         }
         Ok(())
     }
+}
+
+/// Target each listed node through the "nodes" header, by host and without
+/// its port. With no listed node, the endpoint answers for itself.
+fn with_listed_nodes<T>(mut request: Request<T>, nodes: &[String]) -> Request<T> {
+    for node in nodes {
+        let host = target_host(node.trim());
+        if host.is_empty() {
+            continue;
+        }
+        if let Ok(value) = host.parse() {
+            request.metadata_mut().append("nodes", value);
+        }
+    }
+    request
 }
 
 /// A successful outer RPC is insufficient: each targeted reply must be usable.
@@ -3486,6 +3489,29 @@ mod tests {
                 ]
             )
         );
+    }
+
+    #[test]
+    fn etcd_status_targets_listed_nodes_by_host() {
+        let request = with_listed_nodes(
+            Request::new(()),
+            &[
+                "10.5.0.2:50000".to_string(),
+                "2001:db8::5".to_string(),
+                "[2001:db8::6]:50000".to_string(),
+                String::new(),
+            ],
+        );
+        let nodes: Vec<&str> = request
+            .metadata()
+            .get_all("nodes")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(nodes, ["10.5.0.2", "2001:db8::5", "2001:db8::6"]);
+        assert!(request.metadata().get("node").is_none());
+        let request = with_listed_nodes(Request::new(()), &[]);
+        assert!(request.metadata().get("nodes").is_none());
     }
 
     #[test]

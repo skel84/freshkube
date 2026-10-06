@@ -9,7 +9,7 @@ use gpui_kit::{
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use super::{ScreenPanel, ScreenSource, StorageScreen, ViewMode, example};
+use super::{ScreenPanel, ScreenSource, StorageRequest, StorageScreen, ViewMode, example};
 use crate::backend::Target;
 use crate::desktop::layout_check;
 use crate::desktop::nodes::NodeTab;
@@ -23,6 +23,19 @@ const STORAGE_FRAME: layout_check::PageFrame = layout_check::PageFrame {
     title_text: "Storage",
     content: "storage-split",
 };
+
+#[test]
+fn storage_asks_talosctl_for_the_host_without_its_port() {
+    let config = std::path::Path::new("/configs/talosconfig");
+    let node = |address: &str| {
+        StorageRequest::new("lab", address, Some(config)).map(|request| request.node)
+    };
+    assert_eq!(node("10.0.0.5:50000").as_deref(), Ok("10.0.0.5"));
+    assert_eq!(node("2001:db8::5").as_deref(), Ok("2001:db8::5"));
+    assert_eq!(node("[2001:db8::5]:50000").as_deref(), Ok("2001:db8::5"));
+    assert!(node("").is_err());
+    assert!(node("-flag").is_err());
+}
 
 #[test]
 fn read_only_is_expected_on_loop_devices_and_flagged_on_disks() {
