@@ -371,3 +371,135 @@ fn capped_issue_rows_preserve_health_of_every_namespace() {
             .contains_key("ns")
     );
 }
+
+#[test]
+fn pods_never_listed_leave_node_pods_and_requests_unknown() {
+    use k8s_openapi::api::core::v1::Node;
+    let session = session();
+    let node: Node = serde_json::from_value(
+        json!({"metadata":{"name":"node","uid":"node-uid","resourceVersion":"1"}}),
+    )
+    .unwrap();
+    sync(&session, vec![node]);
+    let publication = session.derive(now());
+    let node = &publication.summary.nodes.loaded().unwrap()[0];
+    assert!(!node.pods_current);
+    assert!(!node.pods_observed);
+    assert_eq!(node.requests, crate::resources::Amounts::default());
+}
+
+#[test]
+fn a_pending_claims_reason_is_last_known_while_events_are_stale() {
+    use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+    let session = session();
+    let claim: PersistentVolumeClaim = serde_json::from_value(json!({
+        "metadata":{"name":"data","namespace":"ns","uid":"claim-uid","resourceVersion":"1"},
+        "spec":{},"status":{"phase":"Pending"}
+    }))
+    .unwrap();
+    sync(&session, vec![claim]);
+    let reason = |session: &Session| {
+        session
+            .derive(now())
+            .summary
+            .claims
+            .loaded()
+            .unwrap()
+            .pending[0]
+            .reason
+            .clone()
+    };
+    assert_eq!(reason(&session), "");
+    let warning: KubeEvent = serde_json::from_value(json!({
+        "metadata":{"name":"warning","namespace":"ns","uid":"event-uid","resourceVersion":"1"},
+        "involvedObject":{"kind":"PersistentVolumeClaim","namespace":"ns","name":"data"},
+        "type":"Warning","message":"StorageClass fast not found",
+        "lastTimestamp":(now()-chrono::Duration::seconds(10)).to_rfc3339()
+    }))
+    .unwrap();
+    sync(&session, vec![warning]);
+    assert_eq!(reason(&session), "StorageClass fast not found");
+    session.fail(
+        0,
+        Source::Events,
+        ObservationFailure::Read(FailureKind::Timeout),
+    );
+    assert_eq!(
+        reason(&session),
+        "Last known warning: StorageClass fast not found"
+    );
+}
+
+#[test]
+fn workloads_are_unavailable_only_when_every_source_failed_without_data() {
+    use crate::workloads::{WorkloadCollectionOutcome, WorkloadSource};
+    use k8s_openapi::api::apps::v1::{DaemonSet, StatefulSet};
+    let workload_sources = [
+        Source::Pods,
+        Source::Deployments,
+        Source::StatefulSets,
+        Source::DaemonSets,
+    ];
+    let messages = |outcome: &WorkloadCollectionOutcome| match outcome {
+        WorkloadCollectionOutcome::Complete(_) => Vec::new(),
+        WorkloadCollectionOutcome::Partial { unavailable, .. }
+        | WorkloadCollectionOutcome::Unavailable {
+            errors: unavailable,
+            ..
+        } => unavailable
+            .iter()
+            .map(|error| (error.source, error.message.clone()))
+            .collect(),
+    };
+
+    let never_listed = session();
+    for source in workload_sources {
+        never_listed.fail(0, source, ObservationFailure::Read(FailureKind::Forbidden));
+    }
+    let outcome = never_listed.derive(now()).summary.workloads.clone();
+    assert!(matches!(
+        outcome,
+        WorkloadCollectionOutcome::Unavailable { .. }
+    ));
+    assert_eq!(messages(&outcome).len(), 4);
+    assert!(
+        messages(&outcome)
+            .iter()
+            .all(|(_, message)| message == "Not allowed to read this collection")
+    );
+
+    let session = session();
+    sync::<Pod>(&session, vec![]);
+    sync::<Deployment>(&session, vec![]);
+    sync::<StatefulSet>(&session, vec![]);
+    sync::<DaemonSet>(&session, vec![]);
+    assert!(matches!(
+        session.derive(now()).summary.workloads,
+        WorkloadCollectionOutcome::Complete(_)
+    ));
+    session.fail(
+        0,
+        Source::Deployments,
+        ObservationFailure::Read(FailureKind::Forbidden),
+    );
+    let outcome = session.derive(now()).summary.workloads.clone();
+    assert!(matches!(outcome, WorkloadCollectionOutcome::Partial { .. }));
+    assert_eq!(
+        messages(&outcome),
+        [(
+            WorkloadSource::Deployments,
+            "Not allowed to read this collection · showing last known data".to_string()
+        )]
+    );
+    for source in workload_sources {
+        session.fail(0, source, ObservationFailure::Read(FailureKind::Timeout));
+    }
+    let outcome = session.derive(now()).summary.workloads.clone();
+    assert!(matches!(outcome, WorkloadCollectionOutcome::Partial { .. }));
+    assert_eq!(messages(&outcome).len(), 4);
+    assert!(
+        messages(&outcome)
+            .iter()
+            .all(|(_, message)| message.ends_with(" · showing last known data"))
+    );
+}
