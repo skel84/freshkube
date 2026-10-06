@@ -1,6 +1,6 @@
 //! How long a process takes to draw its first frame of something, for
-//! comparing how fast a page or a story opens. Debug builds only, and
-//! silent unless `FRESHKUBE_FIRST_FRAME=1`:
+//! comparing how fast a page or a story opens, and for release smoke checks
+//! that the app draws at all. Silent unless `FRESHKUBE_FIRST_FRAME=1`:
 //!
 //! ```ignore
 //! // first thing in main

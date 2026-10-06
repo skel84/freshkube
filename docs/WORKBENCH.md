@@ -12,7 +12,7 @@ scripts/smoke.sh start --story data-table --theme dark --size 760x560
 
 The window has the story list at the left, and a strip above the story with the theme (Light, Dark), the text size (12 to 20) and the window's width (1280, 760). Nothing is saved. Debug builds also take the app's `FRESHKUBE_THEME`, `FRESHKUBE_WINDOW_SIZE` and `FRESHKUBE_TEXT_SIZE`, so `smoke.sh start --story` works like `--page` for theme and size. Release builds ignore them.
 
-`FRESHKUBE_FIRST_FRAME=1` prints the time from process start to a story's first frame with rows, in debug builds. The app prints the same for its first Pods frame with rows (`FRESHKUBE_KIND=pods FRESHKUBE_PAGE=resources cargo run -- --fixture`). `freshkube-probe`'s `first_frame` module isn't compiled into release builds.
+`FRESHKUBE_FIRST_FRAME=1` prints the time from process start to a story's first frame with rows, in debug builds. The app prints the same for its first Pods frame with rows (`FRESHKUBE_KIND=pods FRESHKUBE_PAGE=resources cargo run -- --fixture`). Every build also prints when its window first draws (`first frame: window after N ms`), release builds only that; the release smoke check waits for it.
 
 ## Stories
 
