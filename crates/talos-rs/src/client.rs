@@ -567,84 +567,10 @@ impl TalosClient {
         Ok(logs)
     }
 
-    /// Stream logs from a service (follow mode)
-    /// Returns a receiver that yields log lines as they arrive
-    pub async fn logs_stream(
-        &self,
-        service_id: &str,
-        tail_lines: i32,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<String>, TalosError> {
-        let mut client = self.machine_client();
-
-        let request = self.with_nodes(Request::new(LogsRequest {
-            namespace: "system".to_string(),
-            id: service_id.to_string(),
-            driver: 0,    // CONTAINERD
-            follow: true, // Enable streaming
-            tail_lines,
-        }));
-
-        let response = client.logs(request).await?;
-        let mut stream = response.into_inner();
-
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-        // Spawn a task to read from the stream and send to channel
-        tokio::spawn(async move {
-            // Buffer for incomplete lines that span chunk boundaries
-            let mut pending = String::new();
-
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(data) => {
-                        if let Ok(text) = String::from_utf8(data.bytes) {
-                            // Prepend any pending partial line from previous chunk
-                            let combined = if pending.is_empty() {
-                                text
-                            } else {
-                                std::mem::take(&mut pending) + &text
-                            };
-
-                            // Check if chunk ends with newline (complete line) or not (partial)
-                            let ends_with_newline = combined.ends_with('\n');
-
-                            // Split into lines
-                            let mut lines: Vec<&str> = combined.lines().collect();
-
-                            // If doesn't end with newline, last "line" is incomplete - save it
-                            if !ends_with_newline && !lines.is_empty() {
-                                pending = lines.pop().unwrap_or("").to_string();
-                            }
-
-                            // Send complete lines
-                            for line in lines {
-                                if !line.trim().is_empty() && tx.send(line.to_string()).is_err() {
-                                    // Receiver dropped, stop streaming
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Log stream error: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            // Send any remaining pending content when stream ends
-            if !pending.trim().is_empty() {
-                let _ = tx.send(pending);
-            }
-        });
-
-        Ok(rx)
-    }
-
     /// Follow a service's logs with caller-driven backpressure and cancellation.
     ///
-    /// Unlike [`Self::logs_stream`], this owns the gRPC stream directly: no
-    /// detached task or unbounded channel is created. Dropping the returned
+    /// This owns the gRPC stream directly: no detached task or unbounded
+    /// channel is created. Dropping the returned
     /// stream immediately drops the transport, even when no logs are arriving.
     /// Errors are yielded to the caller, partial UTF-8 lines span chunks, and
     /// lines exceeding 64 KiB terminate the stream with a resource-limit error.
