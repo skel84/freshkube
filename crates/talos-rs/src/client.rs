@@ -8,6 +8,7 @@ use crate::error::TalosError;
 use crate::proto::machine::machine_service_client::MachineServiceClient;
 use crate::proto::machine::{EtcdMemberListRequest, LogsRequest, NetstatRequest, netstat_request};
 use crate::proto::time::time_service_client::TimeServiceClient;
+use crate::target::{is_loopback, target_host};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_stream::StreamExt;
 use tonic::Request;
@@ -36,8 +37,6 @@ pub struct TalosClient {
     connection_id: u64,
     /// Target nodes for API requests
     nodes: Vec<String>,
-    /// Endpoints from configuration (used to filter out vIPs from node targeting)
-    endpoints: Vec<String>,
 }
 
 impl TalosClient {
@@ -45,13 +44,11 @@ impl TalosClient {
     pub async fn from_context(ctx: &Context) -> Result<Self, TalosError> {
         let channel = create_channel(ctx).await?;
         let nodes = ctx.target_nodes().to_vec();
-        let endpoints = ctx.endpoints.clone();
 
         Ok(Self {
             channel,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             nodes,
-            endpoints,
         })
     }
 
@@ -88,7 +85,6 @@ impl TalosClient {
             channel: self.channel.clone(),
             connection_id: self.connection_id,
             nodes: vec![node.to_string()],
-            endpoints: self.endpoints.clone(),
         }
     }
 
@@ -117,118 +113,65 @@ impl TalosClient {
             .unwrap_or_else(|| {
                 self.nodes
                     .get(index)
-                    .map(|n| n.split(':').next().unwrap_or(n).to_string())
-                    .unwrap_or_else(|| {
-                        self.nodes
-                            .first()
-                            .map(|n| n.split(':').next().unwrap_or(n).to_string())
-                            .unwrap_or_else(|| "node".to_string())
-                    })
+                    .or_else(|| self.nodes.first())
+                    .map_or_else(|| "node".to_string(), |n| target_host(n).to_string())
             })
     }
 
+    /// The configured targets as hosts apid can reach, without ports.
+    ///
+    /// Blank and port-only entries name no host, and loopback entries name
+    /// the machine making the request, not a node, so they are left out.
+    fn target_hosts(&self) -> Vec<&str> {
+        self.nodes
+            .iter()
+            .map(|node| target_host(node.trim()))
+            .filter(|host| !host.is_empty() && !is_loopback(host))
+            .collect()
+    }
+
     /// Add node targeting metadata to a request
-    /// If no explicit nodes are configured, don't add the header
+    /// If no node is left to target, don't add the header
     /// (Talos will respond from the endpoint node itself)
     ///
     /// Uses the correct Talos API metadata format:
     /// - "node" (singular) for single-node targeting (direct proxy)
     /// - "nodes" (plural) with multiple values for multi-node targeting (aggregated response)
     fn with_nodes<T>(&self, mut request: Request<T>) -> Request<T> {
-        // Only add nodes metadata if explicitly configured (not just endpoints)
-        // When nodes is empty or same as endpoints, skip the header
-        if !self.nodes.is_empty() {
-            // Identify vIPs: endpoints that are NOT in the nodes list
-            // These are load balancers/VIPs that shouldn't be targeted as nodes
-            // Endpoints that ARE also in nodes are real nodes and should be kept
-            let vips: std::collections::HashSet<&str> = self
-                .endpoints
-                .iter()
-                .filter_map(|e| {
-                    let endpoint_host = e.split(':').next().unwrap_or(e);
-                    // Check if this endpoint also appears in the nodes list
-                    let is_also_a_node = self.nodes.iter().any(|n| {
-                        let node_host = n.split(':').next().unwrap_or(n);
-                        node_host == endpoint_host
-                    });
-                    // It's a vIP only if it's NOT also a node
-                    if is_also_a_node {
-                        None
-                    } else {
-                        Some(endpoint_host)
-                    }
-                })
-                .collect();
-
-            // Filter out localhost and vIPs from nodes
-            let valid_nodes: Vec<String> = self
-                .nodes
-                .iter()
-                .filter(|n| {
-                    let is_localhost = n.starts_with("127.0.0.1") || n.starts_with("localhost");
-                    let node_host = n.split(':').next().unwrap_or(n);
-                    let is_vip = vips.contains(node_host);
-                    !is_localhost && !is_vip
-                })
-                .map(|n| n.split(':').next().unwrap_or(n).to_string())
-                .collect();
-
-            if valid_nodes.len() == 1 {
-                // Single node: use "node" header (direct proxy, no aggregation)
-                if let Ok(value) = valid_nodes[0].parse() {
-                    request.metadata_mut().insert("node", value);
-                }
-            } else if !valid_nodes.is_empty() {
-                // Multiple nodes: use "nodes" header with multiple values
-                // Each node must be appended as a separate metadata value (not comma-separated)
-                // This matches the Go client's behavior: md.Set("nodes", nodes...)
-                for node in &valid_nodes {
-                    if let Ok(value) = node.parse() {
-                        request.metadata_mut().append("nodes", value);
-                    }
+        let hosts = self.target_hosts();
+        if let [host] = hosts.as_slice() {
+            // Single node: use "node" header (direct proxy, no aggregation)
+            if let Ok(value) = host.parse() {
+                request.metadata_mut().insert("node", value);
+            }
+        } else {
+            // Multiple nodes: use "nodes" header with multiple values
+            // Each node must be appended as a separate metadata value (not comma-separated)
+            // This matches the Go client's behavior: md.Set("nodes", nodes...)
+            for host in hosts {
+                if let Ok(value) = host.parse() {
+                    request.metadata_mut().append("nodes", value);
                 }
             }
         }
         request
     }
 
-    /// Get the filtered target nodes that would be sent in API requests
+    /// Target a mutation, refusing when no node is left to target.
     ///
-    /// This filters out:
-    /// - localhost/127.0.0.1 entries (proxy endpoints)
-    /// - Entries that match vIPs (endpoints NOT also in nodes list)
-    ///
-    /// Returns the list of actual node hostnames (without ports).
-    #[doc(hidden)]
-    pub fn filtered_target_nodes(&self) -> Vec<String> {
-        // Identify vIPs: endpoints that are NOT in the nodes list
-        let vips: std::collections::HashSet<&str> = self
-            .endpoints
-            .iter()
-            .filter_map(|e| {
-                let endpoint_host = e.split(':').next().unwrap_or(e);
-                let is_also_a_node = self.nodes.iter().any(|n| {
-                    let node_host = n.split(':').next().unwrap_or(n);
-                    node_host == endpoint_host
-                });
-                if is_also_a_node {
-                    None
-                } else {
-                    Some(endpoint_host)
-                }
-            })
-            .collect();
-
-        self.nodes
-            .iter()
-            .filter(|n| {
-                let is_localhost = n.starts_with("127.0.0.1") || n.starts_with("localhost");
-                let node_host = n.split(':').next().unwrap_or(n);
-                let is_vip = vips.contains(node_host);
-                !is_localhost && !is_vip
-            })
-            .map(|n| n.split(':').next().unwrap_or(n).to_string())
-            .collect()
+    /// A read without a target falls back to the endpoint answering for
+    /// itself; a change must never land on a machine nobody named.
+    fn with_mutation_targets<T>(
+        &self,
+        request: Request<T>,
+        action: &str,
+    ) -> Result<Request<T>, TalosError> {
+        if self.target_hosts().is_empty() {
+            return Err(TalosError::Grpc(tonic::Status::failed_precondition(
+                format!("refusing to {action}: no Talos node is targeted"),
+            )));
+        }
+        Ok(self.with_nodes(request))
     }
 
     /// Get version information from all configured nodes
@@ -416,9 +359,12 @@ impl TalosClient {
         use crate::proto::machine::ServiceRestartRequest;
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(ServiceRestartRequest {
-            id: service_id.to_string(),
-        }));
+        let request = self.with_mutation_targets(
+            Request::new(ServiceRestartRequest {
+                id: service_id.to_string(),
+            }),
+            &format!("restart service {service_id}"),
+        )?;
 
         let response = client.service_restart(request).await?;
         self.decode_service_restart(response.into_inner(), service_id)
@@ -616,84 +562,10 @@ impl TalosClient {
         Ok(logs)
     }
 
-    /// Stream logs from a service (follow mode)
-    /// Returns a receiver that yields log lines as they arrive
-    pub async fn logs_stream(
-        &self,
-        service_id: &str,
-        tail_lines: i32,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<String>, TalosError> {
-        let mut client = self.machine_client();
-
-        let request = self.with_nodes(Request::new(LogsRequest {
-            namespace: "system".to_string(),
-            id: service_id.to_string(),
-            driver: 0,    // CONTAINERD
-            follow: true, // Enable streaming
-            tail_lines,
-        }));
-
-        let response = client.logs(request).await?;
-        let mut stream = response.into_inner();
-
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-        // Spawn a task to read from the stream and send to channel
-        tokio::spawn(async move {
-            // Buffer for incomplete lines that span chunk boundaries
-            let mut pending = String::new();
-
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(data) => {
-                        if let Ok(text) = String::from_utf8(data.bytes) {
-                            // Prepend any pending partial line from previous chunk
-                            let combined = if pending.is_empty() {
-                                text
-                            } else {
-                                std::mem::take(&mut pending) + &text
-                            };
-
-                            // Check if chunk ends with newline (complete line) or not (partial)
-                            let ends_with_newline = combined.ends_with('\n');
-
-                            // Split into lines
-                            let mut lines: Vec<&str> = combined.lines().collect();
-
-                            // If doesn't end with newline, last "line" is incomplete - save it
-                            if !ends_with_newline && !lines.is_empty() {
-                                pending = lines.pop().unwrap_or("").to_string();
-                            }
-
-                            // Send complete lines
-                            for line in lines {
-                                if !line.trim().is_empty() && tx.send(line.to_string()).is_err() {
-                                    // Receiver dropped, stop streaming
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Log stream error: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            // Send any remaining pending content when stream ends
-            if !pending.trim().is_empty() {
-                let _ = tx.send(pending);
-            }
-        });
-
-        Ok(rx)
-    }
-
     /// Follow a service's logs with caller-driven backpressure and cancellation.
     ///
-    /// Unlike [`Self::logs_stream`], this owns the gRPC stream directly: no
-    /// detached task or unbounded channel is created. Dropping the returned
+    /// This owns the gRPC stream directly: no detached task or unbounded
+    /// channel is created. Dropping the returned
     /// stream immediately drops the transport, even when no logs are arriving.
     /// Errors are yielded to the caller, partial UTF-8 lines span chunks, and
     /// lines exceeding 64 KiB terminate the stream with a resource-limit error.
@@ -1181,12 +1053,15 @@ impl TalosClient {
         };
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(ApplyConfigurationRequest {
-            data: config_yaml.as_bytes().to_vec(),
-            mode: proto_mode as i32,
-            dry_run,
-            try_mode_timeout: None,
-        }));
+        let request = self.with_mutation_targets(
+            Request::new(ApplyConfigurationRequest {
+                data: config_yaml.as_bytes().to_vec(),
+                mode: proto_mode as i32,
+                dry_run,
+                try_mode_timeout: None,
+            }),
+            "apply configuration",
+        )?;
 
         let response = client.apply_configuration(request).await?;
         self.decode_apply_configuration(response.into_inner(), dry_run)
@@ -1778,9 +1653,12 @@ impl TalosClient {
         };
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(RebootRequest {
-            mode: proto_mode as i32,
-        }));
+        let request = self.with_mutation_targets(
+            Request::new(RebootRequest {
+                mode: proto_mode as i32,
+            }),
+            "reboot",
+        )?;
 
         let response = client.reboot(request).await?;
         self.decode_reboot(response.into_inner())
@@ -1811,7 +1689,8 @@ impl TalosClient {
         use crate::proto::machine::ShutdownRequest;
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(ShutdownRequest { force }));
+        let request =
+            self.with_mutation_targets(Request::new(ShutdownRequest { force }), "shutdown")?;
         let response = client.shutdown(request).await?;
         self.decode_shutdown(response.into_inner())
     }
@@ -1846,41 +1725,15 @@ impl TalosClient {
         for (index, metadata) in messages.enumerate() {
             count += 1;
             let node = self.node_from_metadata(metadata, index);
-            if let Some(metadata) = metadata {
-                let status = metadata.status.as_ref().filter(|status| status.code != 0);
-                if !metadata.error.is_empty() || status.is_some() {
-                    let code = status.map_or(tonic::Code::Unknown, |status| {
-                        tonic::Code::from_i32(status.code)
-                    });
-                    failure_code.get_or_insert(code);
-                    let detail = match (metadata.error.is_empty(), status) {
-                        (false, Some(status)) => format!(
-                            "{} (upstream status {}: {})",
-                            metadata.error, status.code, status.message
-                        ),
-                        (false, None) => metadata.error.clone(),
-                        (true, Some(status)) => {
-                            format!("upstream status {}: {}", status.code, status.message)
-                        }
-                        (true, None) => unreachable!(),
-                    };
-                    failures.push(format!("{action} on {node}: {detail}"));
-                    continue;
-                }
+            if let Some((code, detail)) = metadata.and_then(crate::log_stream::metadata_failure) {
+                failure_code.get_or_insert(code);
+                failures.push(format!("{action} on {node}: {detail}"));
             }
         }
         if count == 0 {
             failure_code = Some(tonic::Code::DataLoss);
-            let targets = if self.nodes.is_empty() {
-                &self.endpoints
-            } else {
-                &self.nodes
-            };
-            let target = if targets.is_empty() {
-                "selected Talos endpoint".to_string()
-            } else {
-                targets.join(", ")
-            };
+            // A mutation is sent only with a target, so name it.
+            let target = self.target_hosts().join(", ");
             failures.push(format!(
                 "{action} on {target}: no acknowledgements returned"
             ));
@@ -2144,14 +1997,14 @@ pub struct EtcdMemberInfo {
 
 impl EtcdMemberInfo {
     /// Extract IP address from peer_urls
-    /// e.g., "https://10.5.0.2:2380" -> "10.5.0.2"
+    /// e.g., "https://10.5.0.2:2380" -> "10.5.0.2",
+    /// "https://[2001:db8::5]:2380" -> "2001:db8::5"
     pub fn ip_address(&self) -> Option<String> {
         self.peer_urls.first().and_then(|url| {
-            // Parse URL like "https://10.5.0.2:2380"
             url.split("://")
                 .nth(1)
-                .and_then(|host_port| host_port.split(':').next())
-                .map(|s| s.to_string())
+                .map(|authority| authority.split('/').next().unwrap_or(authority))
+                .map(|host_port| target_host(host_port).to_string())
         })
     }
 }
@@ -2897,10 +2750,14 @@ mod tests {
 
     #[tokio::test]
     async fn packet_capture_surfaces_proxy_metadata_errors_and_stops() {
-        for (error, code) in [
-            ("capture denied", Some(7)),
-            ("", Some(7)),
-            ("capture denied", None),
+        for (error, code, message) in [
+            (
+                "capture denied",
+                Some(7),
+                "capture denied (upstream status 7: permission denied)",
+            ),
+            ("", Some(7), "upstream status 7: permission denied"),
+            ("capture denied", None, "capture denied"),
         ] {
             let stream = packet_capture_chunks(futures::stream::iter(vec![
                 Ok(crate::proto::common::Data {
@@ -2932,14 +2789,7 @@ mod tests {
                     tonic::Code::Unknown
                 }
             );
-            assert_eq!(
-                status.message(),
-                if error.is_empty() {
-                    "permission denied"
-                } else {
-                    error
-                }
-            );
+            assert_eq!(status.message(), message);
             assert!(stream.next().await.is_none());
         }
     }
@@ -3093,7 +2943,7 @@ mod tests {
     use super::*;
 
     /// Helper to create a TalosClient for testing without a real connection
-    fn create_test_client(nodes: Vec<String>, endpoints: Vec<String>) -> TalosClient {
+    fn create_test_client(nodes: Vec<String>) -> TalosClient {
         // Create a dummy channel - we won't actually use it for these tests
         // This is a bit of a hack, but it allows us to test the filtering logic
         let channel = tonic::transport::Channel::from_static("http://[::1]:50000").connect_lazy();
@@ -3102,14 +2952,13 @@ mod tests {
             channel,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             nodes,
-            endpoints,
         }
     }
 
     #[tokio::test]
     async fn connection_id_is_shared_by_clones_and_node_copies_only() {
-        let first = create_test_client(vec![], vec![]);
-        let second = create_test_client(vec![], vec![]);
+        let first = create_test_client(vec![]);
+        let second = create_test_client(vec![]);
         assert_eq!(first.connection_id(), first.clone().connection_id());
         assert_eq!(
             first.connection_id(),
@@ -3120,7 +2969,7 @@ mod tests {
 
     #[tokio::test]
     async fn overview_decoders_reject_embedded_proxy_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["selected-node".into()], vec![]);
+        let client = create_test_client(vec!["selected-node".into()]);
         for (error, code) in [
             ("node unavailable", None),
             ("", Some(14)),
@@ -3179,7 +3028,7 @@ mod tests {
 
     #[tokio::test]
     async fn overview_decoders_accept_direct_node_and_successful_proxy_replies() {
-        let client = create_test_client(vec!["selected-node".into()], vec![]);
+        let client = create_test_client(vec!["selected-node".into()]);
         for metadata in [
             None,
             Some(crate::proto::common::Metadata {
@@ -3327,7 +3176,7 @@ mod tests {
 
     #[tokio::test]
     async fn service_restart_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         assert_mutation_response_protocol("restart service kubelet", |fixtures| {
             client
                 .decode_service_restart(
@@ -3348,7 +3197,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_configuration_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         for dry_run in [true, false] {
             let action = if dry_run {
                 "validate configuration (dry run)"
@@ -3377,7 +3226,7 @@ mod tests {
 
     #[tokio::test]
     async fn reboot_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         assert_mutation_response_protocol("reboot", |fixtures| {
             client
                 .decode_reboot(crate::proto::machine::RebootResponse {
@@ -3395,7 +3244,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_response_protocol_rejects_failures_and_empty_envelopes() {
-        let client = create_test_client(vec!["configured-node".to_string()], Vec::new());
+        let client = create_test_client(vec!["configured-node".to_string()]);
         assert_mutation_response_protocol("shutdown", |fixtures| {
             client
                 .decode_shutdown(crate::proto::machine::ShutdownResponse {
@@ -3413,10 +3262,10 @@ mod tests {
 
     #[tokio::test]
     async fn mutation_response_decoders_preserve_success_payloads_and_target_fallbacks() {
-        let client = create_test_client(
-            vec!["configured-node".to_string(), "second-node".to_string()],
-            Vec::new(),
-        );
+        let client = create_test_client(vec![
+            "configured-node".to_string(),
+            "second-node".to_string(),
+        ]);
         let services = client
             .decode_service_restart(
                 crate::proto::machine::ServiceRestartResponse {
@@ -3475,263 +3324,187 @@ mod tests {
         assert_eq!(shutdown.node, "fixture-node");
     }
 
-    #[tokio::test]
-    async fn test_filtered_nodes_removes_vip_only_endpoint() {
-        // Scenario: vIP is an endpoint but NOT in nodes list
-        // This is the correct config - vIP should be filtered if it accidentally ends up in nodes
-        let client = create_test_client(
-            vec![
-                "cluster.example.com".to_string(), // vIP accidentally in nodes
-                "kubec01".to_string(),
-                "kubec02".to_string(),
-            ],
-            vec!["cluster.example.com:50000".to_string()], // vIP endpoint ONLY (not a real node)
-        );
+    /// The `node` and `nodes` metadata `with_nodes` puts on a request.
+    fn targeting(client: &TalosClient) -> (Option<String>, Vec<String>) {
+        let request = client.with_nodes(Request::new(()));
+        let metadata = request.metadata();
+        let node = metadata
+            .get("node")
+            .map(|value| value.to_str().unwrap().to_string());
+        let nodes = metadata
+            .get_all("nodes")
+            .iter()
+            .map(|value| value.to_str().unwrap().to_string())
+            .collect();
+        (node, nodes)
+    }
 
-        let filtered = client.filtered_target_nodes();
-
-        // vIP should be filtered out (it's in endpoints but NOT in the nodes we're targeting)
-        // Wait - in this test, it IS in nodes. The logic is: endpoints NOT in nodes are vIPs.
-        // Here cluster.example.com IS in nodes, so it's not detected as a vIP.
-        // This test represents a misconfiguration - the correct behavior is to keep it
-        // because we can't distinguish a misconfigured vIP from a real node.
-        assert_eq!(filtered, vec!["cluster.example.com", "kubec01", "kubec02"]);
+    fn targeting_one(node: &str) -> (Option<String>, Vec<String>) {
+        targeting(&create_test_client(vec![node.to_string()]))
     }
 
     #[tokio::test]
-    async fn test_real_user_config_with_vip() {
-        // Scenario: Real user config with vIP + control plane nodes as endpoints
-        // endpoints: [cluster.example.com (vIP), kubec01, kubec02, kubec03]
-        // nodes: [kubec01, kubec02, kubec03, kubew01, kubew02]
-        let client = create_test_client(
-            vec![
-                "kubec01.example.com".to_string(),
-                "kubec02.example.com".to_string(),
-                "kubec03.example.com".to_string(),
-                "kubew01.example.com".to_string(),
-                "kubew02.example.com".to_string(),
-            ],
-            vec![
-                "cluster.example.com:50000".to_string(), // vIP - NOT in nodes
-                "kubec01.example.com:50000".to_string(), // CP node - also in nodes
-                "kubec02.example.com:50000".to_string(), // CP node - also in nodes
-                "kubec03.example.com:50000".to_string(), // CP node - also in nodes
-            ],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // All 5 nodes should remain - control plane nodes are endpoints AND nodes (real nodes)
-        // cluster.example.com is NOT filtered because it's not in the nodes list to begin with
-        assert_eq!(filtered.len(), 5);
-        assert!(filtered.contains(&"kubec01.example.com".to_string()));
-        assert!(filtered.contains(&"kubec02.example.com".to_string()));
-        assert!(filtered.contains(&"kubec03.example.com".to_string()));
-        assert!(filtered.contains(&"kubew01.example.com".to_string()));
-        assert!(filtered.contains(&"kubew02.example.com".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_vip_in_nodes_list_filtered() {
-        // Scenario: User accidentally adds vIP to nodes list
-        // This can happen when nodes defaults to endpoints
-        // The vIP (cluster.example.com) is in endpoints but NOT also listed as a real node endpoint
-        let client = create_test_client(
-            vec![
-                "cluster.example.com".to_string(), // vIP accidentally in nodes
-                "node1".to_string(),
-                "node2".to_string(),
-            ],
-            vec![
-                "cluster.example.com:50000".to_string(), // This is the only endpoint - a vIP
-            ],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // cluster.example.com IS in nodes, so by our logic it's treated as a real node
-        // This is a known limitation - we can't detect misconfigured vIPs in nodes
-        // The user should not add vIPs to their nodes list
-        assert_eq!(filtered, vec!["cluster.example.com", "node1", "node2"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_removes_localhost() {
-        // Scenario: local proxy endpoint
-        let client = create_test_client(
-            vec![
-                "127.0.0.1:50000".to_string(),
-                "node1".to_string(),
-                "node2".to_string(),
-            ],
-            vec!["127.0.0.1:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        assert_eq!(filtered, vec!["node1", "node2"]);
-        assert!(!filtered.iter().any(|n| n.starts_with("127.0.0.1")));
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_removes_localhost_variant() {
-        // Scenario: localhost hostname
-        let client = create_test_client(
-            vec!["localhost:50000".to_string(), "node1".to_string()],
-            vec!["localhost:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        assert_eq!(filtered, vec!["node1"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_strips_ports() {
-        // Ports should be stripped from node names
-        let client = create_test_client(
-            vec!["node1:50000".to_string(), "node2:50000".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        assert_eq!(filtered, vec!["node1", "node2"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_when_nodes_equal_endpoints() {
-        // Scenario: nodes = endpoints (e.g., nodes defaults to endpoints)
-        // Since the endpoint IS in the nodes list, it's treated as a real node
-        let client = create_test_client(
-            vec!["cluster.example.com:50000".to_string()], // same as endpoint
-            vec!["cluster.example.com:50000".to_string()],
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // Since the endpoint appears in nodes, it's treated as a real node, not a vIP
-        // This is intentional - if it's in nodes, we assume the user wants to target it
-        assert_eq!(filtered, vec!["cluster.example.com"]);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_nodes_vip_not_in_nodes() {
-        // Scenario: vIP is an endpoint but NOT in nodes list (correct config)
-        // This is the proper way to configure - vIP should not be in nodes
-        let client = create_test_client(
-            vec![
-                "actual-node-1.cluster.local".to_string(),
-                "actual-node-2.cluster.local".to_string(),
-            ],
-            vec!["vip.cluster.local:50000".to_string()], // vIP is only an endpoint
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // vIP is not in nodes list, so nothing to filter
-        // All nodes are kept
+    async fn targets_an_ipv4_host_without_its_port() {
         assert_eq!(
-            filtered,
-            vec!["actual-node-1.cluster.local", "actual-node-2.cluster.local"]
+            targeting_one("10.5.0.2:50000"),
+            (Some("10.5.0.2".to_string()), vec![])
         );
     }
 
     #[tokio::test]
-    async fn test_filtered_nodes_with_vip_accidentally_in_nodes() {
-        // Scenario: vIP accidentally included in nodes (misconfiguration)
-        // vIP is in endpoints but also in nodes
-        let client = create_test_client(
-            vec![
-                "vip.cluster.local".to_string(), // vIP accidentally in nodes
-                "actual-node-1.cluster.local".to_string(),
-                "actual-node-2.cluster.local".to_string(),
-            ],
-            vec!["vip.cluster.local:50000".to_string()],
+    async fn targets_a_bare_ipv6_address_whole() {
+        assert_eq!(
+            targeting_one("2001:db8::5"),
+            (Some("2001:db8::5".to_string()), vec![])
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // Since vip.cluster.local is in BOTH endpoints AND nodes, we can't tell it's a vIP
-        // We keep it because it's in the nodes list
-        assert_eq!(filtered.len(), 3);
-        assert!(filtered.contains(&"vip.cluster.local".to_string()));
     }
 
     #[tokio::test]
-    async fn test_filtered_nodes_multiple_endpoints_some_also_nodes() {
-        // Scenario: multiple endpoints, some are also nodes (control plane nodes)
-        // This is the real user config pattern
-        let client = create_test_client(
-            vec![
-                "node1".to_string(),   // in both endpoints and nodes - real node
-                "node2".to_string(),   // in both endpoints and nodes - real node
-                "worker1".to_string(), // only in nodes
-                "worker2".to_string(), // only in nodes
-            ],
-            vec![
-                "vip.example.com:50000".to_string(), // only in endpoints - vIP
-                "node1:50000".to_string(),           // also in nodes - real node
-                "node2:50000".to_string(),           // also in nodes - real node
-            ],
+    async fn targets_a_bracketed_ipv6_address_without_its_port() {
+        assert_eq!(
+            targeting_one("[2001:db8::5]:50000"),
+            (Some("2001:db8::5".to_string()), vec![])
         );
-
-        let filtered = client.filtered_target_nodes();
-
-        // All 4 nodes should be kept - vIP is not in nodes list anyway
-        assert_eq!(filtered, vec!["node1", "node2", "worker1", "worker2"]);
     }
 
     #[tokio::test]
-    async fn test_filtered_nodes_no_endpoints() {
-        // Scenario: no endpoints configured (edge case)
-        let client = create_test_client(vec!["node1".to_string(), "node2".to_string()], vec![]);
-
-        let filtered = client.filtered_target_nodes();
-
-        // With no endpoints to filter, all non-localhost nodes remain
-        assert_eq!(filtered, vec!["node1", "node2"]);
+    async fn targets_a_hostname_as_given() {
+        assert_eq!(
+            targeting_one("node1.example.com"),
+            (Some("node1.example.com".to_string()), vec![])
+        );
     }
 
     #[tokio::test]
-    async fn test_filtered_nodes_port_stripping() {
-        // Scenario: endpoint has port, nodes don't
-        // This tests the host extraction logic for comparison
-        let client = create_test_client(
-            vec![
-                "vip.example.com".to_string(), // in nodes
-                "node1".to_string(),
-                "node2".to_string(),
-            ],
-            vec!["vip.example.com:50000".to_string()], // matches after stripping port
-        );
-
-        let filtered = client.filtered_target_nodes();
-
-        // Since vip.example.com is in BOTH endpoints (after port strip) AND nodes,
-        // it's treated as a real node and kept
-        assert_eq!(filtered, vec!["vip.example.com", "node1", "node2"]);
+    async fn blank_targets_leave_the_endpoint_to_answer() {
+        for node in ["", " ", ":50000"] {
+            assert_eq!(targeting_one(node), (None, vec![]), "{node:?}");
+        }
     }
 
     #[tokio::test]
-    async fn test_vip_filtered_when_not_in_nodes() {
-        // Test that a vIP IS filtered when it somehow ends up in the nodes header
-        // but it's identified as a vIP (endpoint NOT in nodes list)
-        // This tests the core vIP detection logic
-        let client = create_test_client(
-            vec!["node1".to_string(), "node2".to_string()],
-            vec![
-                "vip.example.com:50000".to_string(), // NOT in nodes - this is a pure vIP
-                "node1:50000".to_string(),           // in nodes - real node endpoint
-            ],
+    async fn a_mutation_without_acknowledgements_names_its_target() {
+        let client = create_test_client(vec!["[2001:db8::5]:50000".to_string()]);
+        let Err(TalosError::Grpc(status)) =
+            client.decode_reboot(crate::proto::machine::RebootResponse { messages: vec![] })
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(status.code(), tonic::Code::DataLoss);
+        assert_eq!(
+            status.message(),
+            "reboot on 2001:db8::5: no acknowledgements returned"
         );
+    }
 
-        let filtered = client.filtered_target_nodes();
+    #[tokio::test]
+    async fn loopback_targets_leave_the_endpoint_to_answer() {
+        for node in [
+            "127.0.0.1:50000",
+            "localhost:50000",
+            "localhost",
+            "[::1]:50000",
+        ] {
+            assert_eq!(targeting_one(node), (None, vec![]), "{node}");
+        }
+    }
 
-        // vip.example.com is NOT in nodes, so it's identified as a vIP
-        // If it were accidentally added to nodes, it would be filtered
-        // But here, nodes only contains node1, node2 - both should remain
-        assert_eq!(filtered, vec!["node1", "node2"]);
+    #[tokio::test]
+    async fn loopback_targets_are_dropped_from_a_list() {
+        let client = create_test_client(vec![
+            "127.0.0.1:50000".to_string(),
+            "node1".to_string(),
+            "[2001:db8::6]:50000".to_string(),
+        ]);
+        assert_eq!(
+            targeting(&client),
+            (None, vec!["node1".to_string(), "2001:db8::6".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn mutations_refuse_when_no_node_is_targeted() {
+        for nodes in [
+            vec![],
+            vec!["127.0.0.1:50000".to_string()],
+            vec![String::new()],
+            vec![" ".to_string()],
+            vec![":50000".to_string()],
+        ] {
+            let client = create_test_client(nodes);
+            let refused = |result: Result<(), TalosError>| match result {
+                Err(TalosError::Grpc(status)) => {
+                    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+                    status.message().to_string()
+                }
+                other => panic!("expected a refusal, got {other:?}"),
+            };
+            assert!(refused(client.shutdown(false).await.map(drop)).contains("shutdown"));
+            assert!(refused(client.reboot(RebootMode::Default).await.map(drop)).contains("reboot"));
+            assert!(
+                refused(client.service_restart("kubelet").await.map(drop))
+                    .contains("restart service kubelet")
+            );
+            assert!(
+                refused(
+                    client
+                        .apply_configuration("", ApplyMode::Auto, true)
+                        .await
+                        .map(drop)
+                )
+                .contains("apply configuration")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_targeted_mutation_carries_its_node() {
+        let client = create_test_client(vec!["[2001:db8::5]:50000".to_string()]);
+        let request = client
+            .with_mutation_targets(Request::new(()), "reboot")
+            .unwrap();
+        assert_eq!(request.metadata().get("node").unwrap(), "2001:db8::5");
+    }
+
+    #[tokio::test]
+    async fn configured_nodes_are_sent_as_given() {
+        // talosctl sends `nodes` as given; an endpoint, VIP or not, only names
+        // where the connection goes, so no endpoint removes a node.
+        let client = create_test_client(vec![
+            "cluster.example.com".to_string(),
+            "kubec01".to_string(),
+            "kubew01:50000".to_string(),
+        ]);
+        assert_eq!(
+            targeting(&client),
+            (
+                None,
+                vec![
+                    "cluster.example.com".to_string(),
+                    "kubec01".to_string(),
+                    "kubew01".to_string()
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn etcd_member_address_keeps_ipv6_whole() {
+        let member = |url: &str| EtcdMemberInfo {
+            id: 1,
+            hostname: "cp1".to_string(),
+            peer_urls: vec![url.to_string()],
+            client_urls: vec![],
+            is_learner: false,
+        };
+        assert_eq!(
+            member("https://10.5.0.2:2380").ip_address().as_deref(),
+            Some("10.5.0.2")
+        );
+        assert_eq!(
+            member("https://[2001:db8::5]:2380").ip_address().as_deref(),
+            Some("2001:db8::5")
+        );
     }
 
     // =========================================================================
@@ -3750,10 +3523,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_single_node_uses_node_header() {
         // Single node should use "node" (singular) header
-        let client = create_test_client(
-            vec!["node1".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec!["node1".to_string()]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3774,14 +3544,11 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_multiple_nodes_uses_nodes_header() {
         // Multiple nodes should use "nodes" (plural) header
-        let client = create_test_client(
-            vec![
-                "node1".to_string(),
-                "node2".to_string(),
-                "node3".to_string(),
-            ],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec![
+            "node1".to_string(),
+            "node2".to_string(),
+            "node3".to_string(),
+        ]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3804,14 +3571,11 @@ mod tests {
         // Multiple nodes must be separate metadata values, NOT comma-separated
         // tonic's append() creates multiple values for the same key
         // This matches Talos Go client's md.Set("nodes", nodes...) behavior
-        let client = create_test_client(
-            vec![
-                "node1".to_string(),
-                "node2".to_string(),
-                "node3".to_string(),
-            ],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec![
+            "node1".to_string(),
+            "node2".to_string(),
+            "node3".to_string(),
+        ]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3852,7 +3616,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_empty_nodes_no_header() {
         // Empty nodes should not add any header
-        let client = create_test_client(vec![], vec!["vip.example.com:50000".to_string()]);
+        let client = create_test_client(vec![]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3872,10 +3636,7 @@ mod tests {
     async fn test_metadata_two_nodes_uses_nodes_header() {
         // Two nodes should use "nodes" (plural) header, not "node"
         // This is a boundary condition - even 2 nodes should use the plural form
-        let client = create_test_client(
-            vec!["node1".to_string(), "node2".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec!["node1".to_string(), "node2".to_string()]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
@@ -3901,10 +3662,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_preserves_node_names_without_ports() {
         // Port stripping happens before metadata is set
-        let client = create_test_client(
-            vec!["node1:50000".to_string(), "node2:50000".to_string()],
-            vec!["vip.example.com:50000".to_string()],
-        );
+        let client = create_test_client(vec!["node1:50000".to_string(), "node2:50000".to_string()]);
 
         let request: Request<()> = Request::new(());
         let request = client.with_nodes(request);
