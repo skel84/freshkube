@@ -244,3 +244,21 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn talos_logs_keep_the_shared_stream_wording(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    let label = cx
+        .update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.find("logs-panel").label().map(str::to_owned)
+        })
+        .unwrap();
+    assert_eq!(label.as_deref(), Some("Live logs panel"));
+    panel.read_with(cx, |view, _| {
+        assert_eq!(
+            <super::TalosLogs as super::LogSource>::follow_tooltip(view),
+            "Pause to review. Collection keeps running."
+        )
+    });
+}

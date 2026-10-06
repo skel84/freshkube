@@ -504,3 +504,21 @@ fn another_pod_or_none_cancels_the_stream_and_starts_over(cx: &mut TestAppContex
     cx.update_window(handle, |_, _, cx| assert_eq!(lines(&view, cx), 0))
         .unwrap();
 }
+
+#[gpui_kit::test]
+fn pod_logs_keep_the_shared_stream_wording(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let label = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find("logs-panel").label().map(str::to_owned)
+        })
+        .unwrap();
+    assert_eq!(label.as_deref(), Some("Live logs panel"));
+    view.read_with(cx, |view, _| {
+        assert_eq!(
+            <super::PodLogs as crate::logs::LogSource>::follow_tooltip(view),
+            "Pause to review. Collection keeps running."
+        )
+    });
+}

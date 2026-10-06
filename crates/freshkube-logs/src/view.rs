@@ -397,9 +397,9 @@ impl<S: LogSource> LogView<S> {
                                         "Paused"
                                     })
                                     .tooltip(if self.following {
-                                        "Pause to review. Collection keeps running."
+                                        S::follow_tooltip(self)
                                     } else {
-                                        "Jump to the newest line and keep following"
+                                        "Jump to the newest line and keep following".into()
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.set_following(!this.following, cx)
@@ -561,7 +561,7 @@ impl<S: LogSource> Render for LogView<S> {
         div()
             .id("logs-panel")
             .role(Role::Group)
-            .aria_label("Live logs panel")
+            .aria_label(S::panel_label(self))
             .test_support()
             .key_context(PANEL_CONTEXT)
             .on_action(
