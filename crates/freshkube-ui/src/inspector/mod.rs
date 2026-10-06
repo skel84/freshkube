@@ -4,6 +4,7 @@
 //! wide page, under it on a narrow one. The page keeps an
 //! [`InspectorSplit`], which remembers how wide the user made it.
 use std::cell::Cell;
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui_kit::base::ObservedElement as Observed;
@@ -13,11 +14,12 @@ use gpui_kit::component::resizable::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, Div, Entity, Pixels, SharedString, Stateful, Subscription,
-    TestSupportExt, Window, div,
+    AnyElement, App, AppContext, Div, ElementId, Entity, FontWeight, Pixels, Role, SharedString,
+    Stateful, Subscription, TestSupportExt, Window, div, transparent_black,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
+use crate::palette::palette;
 use crate::ui::{BASE_TEXT, dp, dp_px};
 
 /// The least page width, in dp, at which the inspector sits beside the
@@ -40,14 +42,25 @@ pub const MIN_HEIGHT: f32 = 220.;
 pub const SHORT_HEIGHT: f32 = 360.;
 /// Between the heading and the body's parts.
 const GAP: f32 = 12.;
+/// Between the heading and a banner or the tabs under it.
+const UNDER_HEADING: f32 = 8.;
+/// A tab's height, and the space at its sides.
+pub const TAB_HEIGHT: f32 = 28.;
+const TAB_PADDING: f32 = 10.;
 
 /// The inspector's frame: a heading, then a body that scrolls on its own,
-/// both padded 12, on whatever the split sits on. Its parts' ids are
-/// `<id>-heading` and `<id>-body`.
+/// both padded 12, on whatever the split sits on. A banner and a tab strip
+/// may sit between them, and a footer under the body. Its parts' ids are
+/// `<id>-heading`, `<id>-banner`, `<id>-tabs`, `<id>-body` (or
+/// `<id>-content`) and `<id>-footer`.
 pub struct Inspector {
     id: SharedString,
     heading: Option<AnyElement>,
+    banner: Option<AnyElement>,
+    tabs: Option<AnyElement>,
     body: Vec<AnyElement>,
+    content: Option<AnyElement>,
+    footer: Option<AnyElement>,
 }
 
 impl Inspector {
@@ -55,13 +68,29 @@ impl Inspector {
         Self {
             id: id.into(),
             heading: None,
+            banner: None,
+            tabs: None,
             body: vec![],
+            content: None,
+            footer: None,
         }
     }
 
     /// What the inspector shows, at the top: a title and its tags.
     pub fn heading(mut self, heading: impl IntoElement) -> Self {
         self.heading = Some(heading.into_any_element());
+        self
+    }
+
+    /// A notice under the heading, such as a stale or deleted banner.
+    pub fn banner(mut self, banner: Option<impl IntoElement>) -> Self {
+        self.banner = banner.map(IntoElement::into_any_element);
+        self
+    }
+
+    /// A row of [`tab`]s under the heading, with a hairline below.
+    pub fn tabs(mut self, tabs: impl IntoElement) -> Self {
+        self.tabs = Some(tabs.into_any_element());
         self
     }
 
@@ -77,9 +106,47 @@ impl Inspector {
         self
     }
 
-    pub fn render(self, _cx: &App) -> Observed<Stateful<Div>> {
+    /// In place of a body: one element that fills the rest and lays itself
+    /// out, unpadded and unscrolled, for a view that scrolls itself (a
+    /// virtual list, a log, a terminal). The parts given to [`child`] are
+    /// then not drawn.
+    ///
+    /// [`child`]: Self::child
+    pub fn content(mut self, content: impl IntoElement) -> Self {
+        self.content = Some(content.into_any_element());
+        self
+    }
+
+    /// A line under the body, with a hairline above.
+    pub fn footer(mut self, footer: Option<impl IntoElement>) -> Self {
+        self.footer = footer.map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn render(self, cx: &App) -> Observed<Stateful<Div>> {
+        let line = palette(cx).line;
         let part = |part: &str| SharedString::from(format!("{}-{part}", self.id));
-        let (heading, body) = (part("heading"), part("body"));
+        let body = match self.content {
+            Some(content) => div()
+                .id(part("content"))
+                .test_support()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .child(content),
+            None => v_flex()
+                .id(part("body"))
+                .test_support()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .overflow_y_scroll()
+                .gap(dp(GAP))
+                .p(dp(PANE_PADDING))
+                .children(self.body),
+        };
         v_flex()
             .id(self.id.clone())
             .test_support()
@@ -88,7 +155,7 @@ impl Inspector {
             .min_h_0()
             .children(self.heading.map(|content| {
                 h_flex()
-                    .id(heading)
+                    .id(part("heading"))
                     .test_support()
                     .flex_none()
                     .min_w_0()
@@ -97,18 +164,143 @@ impl Inspector {
                     .pt(dp(PANE_PADDING))
                     .child(content)
             }))
-            .child(
-                v_flex()
-                    .id(body)
+            .children(self.banner.map(|banner| {
+                div()
+                    .id(part("banner"))
                     .test_support()
-                    .flex_1()
-                    .min_h_0()
+                    .flex_none()
+                    .px(dp(PANE_PADDING))
+                    .pt(dp(UNDER_HEADING))
+                    .child(banner)
+            }))
+            .children(self.tabs.map(|tabs| {
+                h_flex()
+                    .id(part("tabs"))
+                    .test_support()
+                    .flex_none()
                     .min_w_0()
-                    .overflow_y_scroll()
-                    .gap(dp(GAP))
-                    .p(dp(PANE_PADDING))
-                    .children(self.body),
-            )
+                    .mt(dp(UNDER_HEADING))
+                    .px(dp(PANE_PADDING))
+                    .border_b_1()
+                    .border_color(line)
+                    .child(tabs)
+            }))
+            .child(body)
+            .children(self.footer.map(|footer| {
+                div()
+                    .id(part("footer"))
+                    .test_support()
+                    .flex_none()
+                    .px(dp(PANE_PADDING))
+                    .py(dp(6.))
+                    .border_t_1()
+                    .border_color(line)
+                    .child(footer)
+            }))
+    }
+}
+
+/// One of an inspector's tabs: 28 high, its label 12.5, and a 2 px accent
+/// underline with semibold ink when `active`, muted ink otherwise. The
+/// caller adds what it does: focus, a tooltip, a click, a count or mark.
+pub fn tab(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
+    let p = palette(cx);
+    let label = label.into();
+    h_flex()
+        .id(id.into())
+        .test_support()
+        .role(Role::Tab)
+        .aria_selected(active)
+        .aria_label(label.clone())
+        .focus_visible(|style| style.bg(p.hover))
+        .flex_none()
+        .h(dp(TAB_HEIGHT))
+        .px(dp(TAB_PADDING))
+        .gap(dp(6.))
+        .cursor_pointer()
+        .text_size(dp(12.5))
+        .border_b_2()
+        .map(|this| {
+            if active {
+                this.border_color(p.accent)
+                    .text_color(p.ink)
+                    .font_weight(FontWeight::SEMIBOLD)
+            } else {
+                this.border_color(transparent_black())
+                    .text_color(p.muted)
+                    .hover(|style| style.text_color(p.ink))
+            }
+        })
+        .child(label)
+}
+
+/// A stacked pane's height in dp: where it starts, the least it keeps and,
+/// if any, the most it takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pane {
+    pub start: f32,
+    pub least: f32,
+    pub most: Option<f32>,
+}
+
+impl Pane {
+    pub const fn new(start: f32) -> Self {
+        Self {
+            start,
+            least: 0.,
+            most: None,
+        }
+    }
+
+    pub const fn least(mut self, least: f32) -> Self {
+        self.least = least;
+        self
+    }
+
+    pub const fn most(mut self, most: f32) -> Self {
+        self.most = Some(most);
+        self
+    }
+
+    fn range(&self, window: &Window) -> Range<Pixels> {
+        let most = self.most.map_or(Pixels::MAX, |most| dp_px(most, window));
+        dp_px(self.least, window)..most
+    }
+}
+
+/// The heights of a stacked split's table (`lead`) and inspector
+/// (`trail`). The default shares the height one to two: 190 and 380,
+/// keeping 96 and 220.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stacked {
+    pub lead: Pane,
+    pub trail: Pane,
+}
+
+impl Default for Stacked {
+    fn default() -> Self {
+        Self {
+            lead: Pane::new(STACKED_LIST_HEIGHT).least(LIST_MIN_HEIGHT),
+            trail: Pane::new(STACKED_HEIGHT).least(MIN_HEIGHT),
+        }
+    }
+}
+
+impl Stacked {
+    /// How tall a split with these heights is on a page that scrolls its
+    /// frame, where it has no room to fill: the least heights stacked,
+    /// [`SHORT_HEIGHT`] beside, and a table alone keeps a few rows.
+    pub fn short_height(&self, beside: bool, open: bool) -> f32 {
+        match (open, beside) {
+            (true, false) => self.lead.least + self.trail.least,
+            (true, true) => SHORT_HEIGHT,
+            (false, _) => SHORT_LIST_HEIGHT,
+        }
     }
 }
 
@@ -119,7 +311,15 @@ pub struct InspectorSplit {
     beside: Entity<ResizableState>,
     stacked: Entity<ResizableState>,
     width: Rc<Cell<f32>>,
+    heights: Stacked,
+    /// The stacked table's height from [`Self::lead_start`], if the page
+    /// gives one.
+    lead: Cell<Option<f32>>,
+    /// Whether the user has dragged the stacked split, after which its
+    /// sizes are theirs.
+    dragged: Rc<Cell<bool>>,
     _resized: Subscription,
+    _dragged: Subscription,
 }
 
 impl InspectorSplit {
@@ -146,12 +346,49 @@ impl InspectorSplit {
                 remember(dp, cx);
             }
         });
+        let dragged = Rc::new(Cell::new(false));
+        let _dragged = cx.subscribe(&stacked, {
+            let dragged = dragged.clone();
+            move |_, _: &ResizablePanelEvent, _| dragged.set(true)
+        });
         Self {
             beside,
             stacked,
             width,
+            heights: Stacked::default(),
+            lead: Cell::new(None),
+            dragged,
             _resized,
+            _dragged,
         }
+    }
+
+    /// The heights of the table and the inspector when stacked, in place
+    /// of the default one to two.
+    pub fn stacked(mut self, heights: Stacked) -> Self {
+        self.heights = heights;
+        self
+    }
+
+    /// Stacked, the table starts `start` dp high, kept within its least and
+    /// most, and the inspector takes the rest: for a table whose height
+    /// follows its data, given while rendering. A new start lays the split
+    /// out again, until the user drags it; then their sizes win.
+    pub fn lead_start(&self, start: f32, cx: &mut App) {
+        let lead = self.heights.lead;
+        let start = start.min(lead.most.unwrap_or(f32::MAX)).max(lead.least);
+        if self.dragged.get() || self.lead.get() == Some(start) {
+            return;
+        }
+        self.lead.set(Some(start));
+        // Kit keeps the sizes it first laid out; forget them.
+        self.stacked.update(cx, |state, _| state.clear());
+    }
+
+    /// How tall this split is on a page that scrolls its frame; see
+    /// [`Stacked::short_height`].
+    pub fn short_height(&self, beside: bool, open: bool) -> f32 {
+        self.heights.short_height(beside, open)
     }
 
     /// The inspector's width beside the table, in dp.
@@ -164,6 +401,12 @@ impl InspectorSplit {
     pub fn beside_state(&self) -> &Entity<ResizableState> {
         &self.beside
     }
+
+    /// Kit's state for the stacked split, for tests that resize it.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn stacked_state(&self) -> &Entity<ResizableState> {
+        &self.stacked
+    }
 }
 
 /// A remembered width, or [`WIDTH`]; never narrower than [`MIN_WIDTH`].
@@ -174,16 +417,11 @@ fn start_width(width: Option<f32>) -> f32 {
     }
 }
 
-/// How tall a split is on a page that scrolls its frame, where it has no
-/// room to fill: the least heights stacked, [`SHORT_HEIGHT`] beside, and a
-/// table alone keeps a few rows. A page gives its split this height, or
-/// the panes take their contents' heights.
+/// How tall a split with the default heights is on a page that scrolls
+/// its frame. A page gives its split this height, or the panes take their
+/// contents' heights.
 pub fn short_height(beside: bool, open: bool) -> f32 {
-    match (open, beside) {
-        (true, false) => LIST_MIN_HEIGHT + MIN_HEIGHT,
-        (true, true) => SHORT_HEIGHT,
-        (false, _) => SHORT_LIST_HEIGHT,
-    }
+    Stacked::default().short_height(beside, open)
 }
 
 /// The table and its inspector, in a split with the id `id`: beside it,
@@ -191,7 +429,7 @@ pub fn short_height(beside: bool, open: bool) -> f32 {
 /// under it. Without an inspector the table fills the split. Both run edge
 /// to edge, and Kit's handle draws the hairline between them. The split
 /// fills its parent; on a page that scrolls its frame, the parent gives it
-/// [`short_height`].
+/// [`InspectorSplit::short_height`].
 pub fn split(
     id: impl Into<SharedString>,
     split: &InspectorSplit,
@@ -200,7 +438,7 @@ pub fn split(
     inspector: Option<AnyElement>,
     window: &Window,
 ) -> AnyElement {
-    let least = short_height(beside, inspector.is_some());
+    let least = split.short_height(beside, inspector.is_some());
     let frame = div()
         .id(id.into())
         .test_support()
@@ -230,18 +468,21 @@ pub fn split(
                     .child(inspector),
             )
     } else {
+        let Stacked { lead, trail } = split.heights;
+        // A table that gives its height keeps it, and the inspector fills.
+        let given = split.lead.get();
         v_resizable("inspector-split-stacked")
             .with_state(&split.stacked)
             .child(
                 resizable_panel()
-                    .size(dp(STACKED_LIST_HEIGHT))
-                    .size_range(dp(LIST_MIN_HEIGHT)..Pixels::MAX)
+                    .size(dp(given.unwrap_or(lead.start)))
+                    .size_range(lead.range(window))
                     .child(table),
             )
             .child(
                 resizable_panel()
-                    .size(dp(STACKED_HEIGHT))
-                    .size_range(dp(MIN_HEIGHT)..Pixels::MAX)
+                    .when(given.is_none(), |this| this.size(dp(trail.start)))
+                    .size_range(trail.range(window))
                     .child(inspector),
             )
     };

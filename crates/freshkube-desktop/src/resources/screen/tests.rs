@@ -43,6 +43,15 @@ fn mount_sized(
     context: Option<&str>,
     width: f32,
 ) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle) {
+    mount_window(cx, context, width, 800.)
+}
+
+fn mount_window(
+    cx: &mut TestAppContext,
+    context: Option<&str>,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -51,7 +60,7 @@ fn mount_sized(
     let runtime = Runtime::new().unwrap();
     let source = context.map(source);
     let mut screen = None;
-    let handle = cx.open_window(size(px(width), px(800.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             let mut view = ResourcesScreen::new(runtime.handle().clone(), window, cx);
             view.set_source(source, window, cx);
@@ -528,6 +537,14 @@ fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppC
                 assert!(pane.size.height >= px(220.), "{pane:?}");
             }
             assert!(pane.right() <= px(width), "{width}: {pane:?}");
+            crate::desktop::layout_check::assert_inspector(
+                window,
+                cx,
+                "resource-split",
+                "resource-body",
+                "detail-inspector",
+                "detail-title",
+            );
 
             // With no filter to clear, Escape closes the pane and drops
             // the selection it showed.
@@ -539,6 +556,83 @@ fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppC
         })
         .unwrap();
     }
+}
+
+/// Stacked, the pane takes two thirds of the height, as it did before the
+/// inspector.
+#[gpui_kit::test]
+fn the_stacked_pane_takes_two_thirds_of_the_height(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 760., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let first = identity_at(&screen, 0, cx);
+        window.within(row_id(&first)).click("name", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let list = window.find("resource-body").bounds();
+        let pane = window.find("detail-inspector").bounds();
+        let split = window.find("resource-split").bounds();
+        assert!(
+            (pane.size.height - list.size.height * 2.).abs() <= px(2.),
+            "{list:?} {pane:?}"
+        );
+        assert_eq!(pane.bottom(), split.bottom());
+    })
+    .unwrap();
+}
+
+fn open_first(
+    screen: &Entity<ResourcesScreen>,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::App,
+) {
+    window.render_frame(cx);
+    let first = identity_at(screen, 0, cx);
+    window.within(row_id(&first)).click("name", cx);
+    window.render_frame(cx);
+}
+
+/// The pane's width is the page's, for every kind, and comes back when
+/// the app opens again.
+#[gpui_kit::test]
+fn the_pane_width_survives_reopening(cx: &mut TestAppContext) {
+    use crate::navigation_file::NavigationFile;
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-resources-width-{}-{:?}",
+        std::process::id(),
+        std::time::SystemTime::now()
+    ));
+    let preferences = directory.join("preferences.json");
+    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        let state = screen.read(cx).split.beside_state().clone();
+        state.update(cx, |state, cx| {
+            state.resize_panel(1, crate::ui::dp_px(560., window), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reopened = NavigationFile::open(Some(&preferences));
+    assert_eq!(reopened.inspector_width("resources"), Some(560.));
+
+    cx.update(|cx| cx.set_global(reopened));
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        let width = window.find("detail-inspector").bounds().size.width;
+        let expected = crate::ui::dp_px(560., window);
+        assert!(
+            (width - expected).abs() <= px(1.),
+            "{width:?}, {expected:?}"
+        );
+    })
+    .unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[gpui_kit::test]
@@ -927,6 +1021,46 @@ fn running_row(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> usize {
             screen.read(cx).store.get(&identity).unwrap().cells[2] == "Running"
         })
         .unwrap()
+}
+
+/// Dragging the split resizes the shell's terminal, so a program in it
+/// draws at the pane's new width.
+#[gpui_kit::test]
+fn dragging_the_split_resizes_the_shell(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        let pod = identity_at(&screen, running_row(&screen, cx), cx);
+        window.within(row_id(&pod)).click("name", cx);
+    });
+    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
+    step(cx, &|window, cx| window.click("pod-shell-start", cx));
+    step(cx, &|_, _| {});
+    let columns = |cx: &mut TestAppContext| {
+        cx.read(|cx| screen.read(cx).detail.read(cx).terminal_size(cx).columns)
+    };
+    let before = columns(cx);
+    step(cx, &|window, cx| {
+        let pane = window.find("detail-inspector").bounds().size.width;
+        let state = screen.read(cx).split.beside_state().clone();
+        state.update(cx, |state, cx| {
+            state.resize_panel(1, pane + px(200.), window, cx)
+        });
+    });
+    // The terminal resizes at most every 100 ms.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    step(cx, &|_, _| {});
+    let after = columns(cx);
+    assert!(after > before + 10, "{before} → {after}");
 }
 
 #[gpui_kit::test]

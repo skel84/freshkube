@@ -434,65 +434,17 @@ impl Render for ResourcesScreen {
             })
             .unwrap_or_else(|| self.table(window, cx));
         let list = self.keyed(list, cx);
-        let short = page_width(window) < SPLIT_WIDTH && page::is_short(window);
-        let body = if self.detail.read(cx).target_identity().is_some() {
+        let beside = page_width(window) >= inspector::SPLIT_WIDTH;
+        // A short page scrolls its frame, and the split keeps its least
+        // heights in it.
+        let short = page::is_short(window);
+        let pane = self.detail.read(cx).target_identity().is_some().then(|| {
             // Cached: list updates and age ticks don't redraw the pane.
-            let pane =
-                AnyView::from(self.detail.clone()).cached(StyleRefinement::default().size_full());
-            let split = if page_width(window) >= SPLIT_WIDTH {
-                h_resizable("resource-split")
-                    .with_state(&self.split)
-                    .child(
-                        resizable_panel()
-                            .size_range(dp_px(LIST_MIN_WIDTH, window)..Pixels::MAX)
-                            .child(list),
-                    )
-                    .child(
-                        resizable_panel()
-                            .size(dp_px(PANE_WIDTH, window))
-                            .size_range(dp_px(PANE_MIN_WIDTH, window)..Pixels::MAX)
-                            .flex_none()
-                            .pl(dp(SPLIT_GAP))
-                            .pr(dp(page::PANE_PADDING))
-                            .py(dp(page::PANE_PADDING_Y))
-                            .child(pane),
-                    )
-            } else {
-                v_resizable("resource-split-stacked")
-                    .with_state(&self.stacked)
-                    .child(
-                        resizable_panel()
-                            .size(dp_px(STACKED_LIST_HEIGHT, window))
-                            .size_range(dp_px(LIST_MIN_HEIGHT, window)..Pixels::MAX)
-                            .child(list),
-                    )
-                    .child(
-                        resizable_panel()
-                            .size(dp_px(PANE_HEIGHT, window))
-                            .size_range(dp_px(PANE_MIN_HEIGHT, window)..Pixels::MAX)
-                            .pt(dp(SPLIT_GAP))
-                            .px(dp(page::PANE_PADDING))
-                            .pb(dp(page::PANE_PADDING_Y))
-                            .child(pane),
-                    )
-            };
-            v_flex()
-                .flex_1()
-                .min_h_0()
-                .when(short, |this| {
-                    this.min_h(dp(LIST_MIN_HEIGHT + PANE_MIN_HEIGHT + SPLIT_GAP))
-                })
-                .child(split)
+            AnyView::from(self.detail.clone())
+                .cached(StyleRefinement::default().size_full())
                 .into_any_element()
-        } else {
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
-                .child(list)
-                .into_any_element()
-        };
+        });
+        let body = inspector::split("resource-split", &self.split, beside, list, pane, window);
         page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| {

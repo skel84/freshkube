@@ -171,7 +171,15 @@ impl DetailPane {
             .size_full()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
-            .px_4()
+            // The node pane's card keeps its 16 until it moves to the
+            // inspector.
+            .map(|this| {
+                if self.embedded_node {
+                    this.px_4()
+                } else {
+                    this.px(dp(freshkube_ui::page::PANE_PADDING))
+                }
+            })
             .py_3()
             .child(v_flex().gap_3().children(stale).child(body))
             .into_any_element()

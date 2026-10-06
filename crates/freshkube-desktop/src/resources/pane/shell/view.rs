@@ -193,7 +193,7 @@ impl Render for ShellView {
             .child(
                 v_flex()
                     .gap_2()
-                    .px_3()
+                    .px(dp(freshkube_ui::page::PANE_PADDING))
                     .pt_2p5()
                     .pb_2()
                     .child(self.render_controls(cx))

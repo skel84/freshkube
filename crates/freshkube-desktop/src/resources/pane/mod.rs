@@ -302,6 +302,11 @@ impl DetailPane {
         self.logs.read(cx).selected_container()
     }
 
+    #[cfg(test)]
+    pub(crate) fn terminal_size(&self, cx: &App) -> crate::terminal::TerminalSize {
+        self.shell.read(cx).terminal.read(cx).size()
+    }
+
     pub(crate) fn target_identity(&self) -> Option<&ResourceIdentity> {
         self.detail.as_ref().map(|detail| &detail.target.identity)
     }

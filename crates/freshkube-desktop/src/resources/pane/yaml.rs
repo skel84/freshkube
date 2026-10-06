@@ -74,7 +74,14 @@ impl DetailPane {
         let selected = self.selection.map(|selection| selection.range().len());
         let toolbar = h_flex()
             .gap_1()
-            .px_3()
+            // The node pane's card keeps its padding until it moves.
+            .map(|this| {
+                if self.embedded_node {
+                    this.px_3()
+                } else {
+                    this.px(dp(freshkube_ui::page::PANE_PADDING))
+                }
+            })
             .py_2()
             .child(
                 div().flex_1().min_w_0().child(
