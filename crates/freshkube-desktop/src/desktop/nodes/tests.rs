@@ -1814,3 +1814,56 @@ fn node_logs_in_a_tall_window_keep_the_pane_still(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// The arrows walk the cards in order; one in a row out of view scrolls the
+/// grid to that row. At 400 high the list is shorter than a row of cards.
+#[gpui_kit::test]
+fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 400.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        crate::desktop::tests::settle_header(window, cx);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(super::cards::card_columns(window), 3);
+        let lines = pilot.read(cx).node_workspace.lines.len();
+        assert!(lines > 3, "only {lines} cards: no second row");
+        // The second row starts below the list, so isn't drawn.
+        let fourth = pilot.read(cx).node_workspace.lines[3];
+        let fourth = pilot.read(cx).node_workspace.rows[fourth].id.clone();
+        assert!(window.try_find(fourth.clone()).is_none());
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        for _ in 0..4 {
+            window.press("down", cx);
+            window.render_frame(cx);
+        }
+        let row = pilot.read(cx).node_workspace.row().unwrap().id.clone();
+        assert_eq!(row, fourth);
+        assert!(window.find(fourth).visible());
+    })
+    .unwrap();
+}
+
+/// At 760 wide and the largest text, the cards are one to a row, as wide as
+/// the list.
+#[gpui_kit::test]
+fn a_narrow_window_at_large_text_shows_one_card_to_a_row(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(super::cards::card_columns(window), 1);
+        let list = window.find("nodes-cards").bounds();
+        let first = pilot.read(cx).node_workspace.lines[0];
+        let first = pilot.read(cx).node_workspace.rows[first].id.clone();
+        let card = window.find(first).bounds();
+        assert_eq!(card.left(), list.left());
+        assert_eq!(card.right(), list.right());
+    })
+    .unwrap();
+}

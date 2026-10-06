@@ -49,33 +49,22 @@ impl Pilot {
         }
         // The pane's list is the full roster, one to a row; the cards are
         // the filtered lines.
-        let list = if compact {
-            uniform_list(
-                "nodes-cards-list",
-                count,
-                cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
-                    range
-                        .map(|index| {
-                            view.joined_node_row(&view.node_workspace.rows[index], true, cx)
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .track_scroll(&self.node_workspace.scroll)
-        } else {
-            freshkube_ui::grid::cards(
-                "nodes-cards-list",
-                count,
-                columns,
-                CARD_GAP,
-                &self.node_workspace.scroll,
-                move |view: &mut Self, item, _, cx| {
-                    let row = view.node_workspace.lines[item];
-                    view.joined_node_row(&view.node_workspace.rows[row], false, cx)
-                },
-                cx,
-            )
-        }
+        let list = freshkube_ui::grid::cards(
+            "nodes-cards-list",
+            count,
+            columns,
+            if compact { 0. } else { CARD_GAP },
+            &self.node_workspace.scroll,
+            move |view: &mut Self, item, _, cx| {
+                let row = if compact {
+                    item
+                } else {
+                    view.node_workspace.lines[item]
+                };
+                view.joined_node_row(&view.node_workspace.rows[row], compact, cx)
+            },
+            cx,
+        )
         .size_full();
         let rows = div()
             .id("nodes-cards")

@@ -191,11 +191,11 @@ Every page looks like Pods. The pieces Pods and Monitoring draw are shared compo
 | `SelectionBar` | `3 selected` (semibold), Copy names, Clear. | As `ShowingBar`. Id `<page>-marks`. |
 | `Legend` | The table's footer: what its marks mean, with live examples (meters, stripes). | Top hairline, 12 × 7 padding, 12 gap, 11 muted, wrapping. Under 600 content width it becomes one 26-high line ending in ⓘ, with the full legend as its tooltip. Id `<page>-meter-legend`. |
 | `Document` | A text document's lines (`document::lines`), such as a generated configuration under review. They are virtualised and never wrapped; the list is as wide as its widest line and scrolls sideways rather than clipping one. The page draws each line from `document::line` and adds what it needs: a gutter, highlights, a selection. | Lines 20 high (`document::LINE_HEIGHT`), monospace 12; the frame is the page's. Ids `<page>-<what>-lines` for the list and `<page>-<what>-line-<n>` for a line. |
-| `CardGrid` | Items `columns` to a row (`grid::cards`), virtualised by row, so a long list of cards draws only the rows in view. The page draws each item, all the same height; `grid::row_of` finds an item's row to scroll it into view. | The gap the page gives, between items and below each row. |
+| `CardGrid` | Items `columns` to a row (`grid::cards`), virtualised by row, so a long list of cards draws only the rows in view. The page draws each item, all the same height and a column's share of the row, even in a short last row; `grid::row_of` finds an item's row to scroll it into view. | The gap the page gives, between items and below each row. |
 | `StatCard` | A muted 12 bold title, then one figure (22, weight 900) or a wrap of named figures (18, each at least 96 wide, 20 × 8 apart), each with an optional tag, gauge, meter of parts (one per item in its tone, such as a cluster's nodes; above 24 items, a run per tone, problems first, each at least 4 wide) or sparkline, and an optional 12 muted detail line that wraps. A figure that is the status itself (Overview) is tinted: its value takes the tone's text colour instead of ink. | Card; header 28 with 14 left padding; body 14 × 10. |
 | `ChartCard` | A 13 bold title, the unit, an info mark with the query, the stale mark at the right; the plot, then its legend. | Card; header 32 with 12 left padding; plot padded 12, at least 64 high. |
 
-Nodes' Cards view draws on `freshkube_ui::grid`. Its compact two-line pane list is still a scoped virtualization exception in `desktop/nodes/cards.rs`.
+A virtualised grid of cards draws on `freshkube_ui::grid`: Nodes' Cards view, and its compact two-line pane list as a grid of one column.
 
 ### States
 

@@ -1,7 +1,8 @@
 //! `CardGrid`: items laid out `columns` to a row, as a virtualised list of
 //! rows, so a long list of cards draws only the rows in view. Every item is
-//! the same height (the list measures its first row); the caller draws each
-//! item, and the grid only places them
+//! the same height (the list measures its first row) and a column's width,
+//! however few items a row holds; the caller draws each item, and the grid
+//! only places them
 //! ([docs/DESIGN.md](../../docs/DESIGN.md#components)).
 use std::ops::Range;
 
@@ -32,7 +33,10 @@ pub fn cards<V: 'static>(
             rows.map(|row| {
                 let start = row * columns;
                 let end = (start + columns).min(count);
+                // Full width, so the columns share the list's width rather
+                // than each row's content.
                 div()
+                    .w_full()
                     .grid()
                     .grid_cols(columns as u16)
                     .gap(dp(gap))
@@ -96,18 +100,70 @@ mod tests {
         }
     }
 
-    #[gpui_kit::test]
-    fn seven_items_in_three_columns_fill_two_rows_and_start_a_third(cx: &mut TestAppContext) {
+    /// Items in two columns, the first wider than the second.
+    struct Uneven(UniformListScrollHandle);
+
+    impl Render for Uneven {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().id("uneven").test_support().size_full().child(
+                cards(
+                    "grid",
+                    3,
+                    2,
+                    10.,
+                    &self.0,
+                    |_, item, _, _| {
+                        div()
+                            .id(("item", item))
+                            .test_support()
+                            .h(px(40.))
+                            .child(div().w(px(if item == 0 { 120. } else { 40. })))
+                            .into_any_element()
+                    },
+                    cx,
+                )
+                .size_full(),
+            )
+        }
+    }
+
+    fn mount<V: Render>(
+        cx: &mut TestAppContext,
+        create: impl FnOnce(UniformListScrollHandle) -> V + 'static,
+    ) -> gpui_kit::WindowHandle<Root> {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
             crate::text_size::install(None, cx);
             cx.set_reduce_motion(true);
         });
-        let handle = cx.open_window(size(px(400.), px(600.)), |window, cx| {
-            let view = cx.new(|_| Grid(UniformListScrollHandle::new()));
+        cx.open_window(size(px(400.), px(600.)), |window, cx| {
+            let view = cx.new(|_| create(UniformListScrollHandle::new()));
             Root::new(view, window, cx)
-        });
+        })
+    }
+
+    #[gpui_kit::test]
+    fn a_rows_items_share_the_lists_width_evenly(cx: &mut TestAppContext) {
+        let handle = mount(cx, Uneven);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let list = window.find("uneven").bounds();
+            let item = |ix: usize| window.find(("item", ix)).bounds();
+            // The first row spans the list, its columns equal whatever their
+            // content, and the last row's lone item keeps a column's width.
+            assert_eq!(item(0).left(), list.left());
+            assert_eq!(item(1).right(), list.right());
+            assert_eq!(item(0).size.width, item(1).size.width);
+            assert_eq!(item(2).size.width, item(0).size.width);
+            assert_eq!(item(2).left(), list.left());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn seven_items_in_three_columns_fill_two_rows_and_start_a_third(cx: &mut TestAppContext) {
+        let handle = mount(cx, Grid);
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
             let item = |ix: usize| window.find(("item", ix)).bounds();
