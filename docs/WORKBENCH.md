@@ -18,7 +18,7 @@ The window has the story list at the left, and a strip above the story with the 
 
 - **`data-table`:** `DataTable` on invented pods (`shop-api`, `app-a`, `cluster-a`, `registry.example`). It shows group rows with status glyphs, a pinned glyph and name while the wider columns scroll sideways, and sorting by name, restarts or age. The header's chips filter by status. Its controls switch between rows, loading, empty and failed, and between 24 and 2,000 rows.
 
-- **`graph`:** `freshkube-graph`'s layout on invented services. Callers sit left of what they call, a line with an arrowhead joins each call, and a call with a problem is dashed. Its controls switch between a shop's calls, a fan-out whose column wraps, a cycle, and services with no calls. A second switch compares Curves, the single curves the service map in Observability draws today, with Routes, which cross columns through the gutters between boxes and bring a cycle's call back below them. The header counts how many times the calls cross.
+- **`graph`:** `freshkube-graph`'s layout on invented services. Callers sit left of what they call, a line with an arrowhead joins each call, and a call with a problem is dashed. Its controls switch between a shop's calls, a fan-out whose column wraps, a cycle, and services with no calls. Calls are routed as the service map in Observability routes them: they cross columns through the gutters between boxes, and a cycle's call comes back below them. The header counts how many times the calls cross.
 
 ## Add a story
 

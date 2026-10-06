@@ -1,12 +1,12 @@
 //! `freshkube-graph`'s layout on invented services: boxes in columns,
 //! callers left of what they call, and a line with an arrowhead for each
 //! call. Its shapes are the cases the layout handles: a chain, a fan-out
-//! that wraps, a cycle and boxes with no connection. Its routing switch
-//! compares the map's single curves with routes that keep clear of boxes.
+//! that wraps, a cycle and boxes with no connection. Every call keeps clear
+//! of the boxes, and the header counts where calls cross.
 
 use std::rc::Rc;
 
-use freshkube_graph::layout::{self, NODE_H, NODE_W, Node, Route, curve, layered};
+use freshkube_graph::layout::{self, NODE_H, NODE_W, Node, Route};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, MONO_FONT, Tone, dp};
@@ -41,22 +41,6 @@ pub enum Shape {
     Cycle,
     /// A few calls and services with none.
     Loose,
-}
-
-/// How the calls are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Routing {
-    /// One curve per call, as the service map draws today.
-    Curves,
-    /// Lanes through the gutters, and cycles brought back below.
-    Routes,
-}
-
-impl Routing {
-    const ALL: [(Routing, &'static str, &'static str); 2] = [
-        (Routing::Curves, "curves", "Curves"),
-        (Routing::Routes, "routes", "Routes"),
-    ];
 }
 
 impl Shape {
@@ -156,9 +140,7 @@ struct Call {
 
 pub struct GraphStory {
     shape: Shape,
-    routing: Routing,
-    /// Placed and routed when the shape or routing changes; drawing only
-    /// reads them.
+    /// Placed and routed when the shape changes; drawing only reads them.
     nodes: Rc<Vec<GraphNode>>,
     calls: Rc<Vec<Call>>,
     width: f32,
@@ -170,7 +152,6 @@ impl GraphStory {
     pub fn new() -> Self {
         let mut story = Self {
             shape: Shape::Shop,
-            routing: Routing::Routes,
             nodes: Rc::default(),
             calls: Rc::default(),
             width: 0.,
@@ -183,10 +164,6 @@ impl GraphStory {
 
     pub fn shape(&self) -> Shape {
         self.shape
-    }
-
-    pub fn routing(&self) -> Routing {
-        self.routing
     }
 
     /// How many times the drawn calls cross one another.
@@ -210,14 +187,6 @@ impl GraphStory {
         }
     }
 
-    fn set_routing(&mut self, routing: Routing, cx: &mut Context<Self>) {
-        if routing != self.routing {
-            self.routing = routing;
-            self.place();
-            cx.notify();
-        }
-    }
-
     fn place(&mut self) {
         let (nodes, calls) = self.shape.graph();
         let mut nodes: Vec<GraphNode> = nodes
@@ -233,20 +202,9 @@ impl GraphStory {
             })
             .collect();
         let links: Vec<_> = calls.iter().map(|&(from, to, _)| (from, to)).collect();
-        let routes = match self.routing {
-            Routing::Curves => {
-                (self.width, self.height) = layered(&mut nodes, &links);
-                links
-                    .iter()
-                    .map(|&(from, to)| Route::from_curve(curve(&nodes[from], &nodes[to])))
-                    .collect()
-            }
-            Routing::Routes => {
-                let placed = layout::route(&mut nodes, &links);
-                (self.width, self.height) = (placed.width, placed.height);
-                placed.routes
-            }
-        };
+        let placed = layout::route(&mut nodes, &links);
+        (self.width, self.height) = (placed.width, placed.height);
+        let routes = placed.routes;
         self.crossings = layout::crossings(&routes);
         self.nodes = Rc::new(nodes);
         self.calls = Rc::new(
@@ -269,23 +227,8 @@ impl GraphStory {
             .label(label)
             .on_click(cx.listener(move |this, _, _, cx| this.set_shape(shape, cx)))
         });
-        let routings = Routing::ALL.map(|(routing, id, label)| {
-            ui::segment(
-                Button::new(SharedString::from(format!("{PREFIX}-routing-{id}"))),
-                self.routing == routing,
-                cx,
-            )
-            .small()
-            .label(label)
-            .on_click(cx.listener(move |this, _, _, cx| this.set_routing(routing, cx)))
-        });
-        let controls = h_flex()
-            .gap(dp(12.))
-            .flex_wrap()
-            .child(track(shapes, cx))
-            .child(track(routings, cx));
         PageHeader::new(PREFIX, "Service map")
-            .secondary(controls)
+            .secondary(track(shapes, cx))
             .meta([div()
                 .child(format!(
                     "{} services · {} calls · {} crossings",
