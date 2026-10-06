@@ -101,7 +101,10 @@ credential stores and packaging remain separate work. The first uncached main ru
 Windows 32m42s); Linux becoming required will be reconsidered if its warm
 runtime approaches macOS's.
 
-Linux uses `Swatinem/rust-cache` with the `platform-check-Linux` key. Windows
+Linux uses `Swatinem/rust-cache` with the `platform-check-Linux-tests` key,
+named for the test dependencies it holds since the job runs the suite; the
+action never replaces an entry whose key already exists, so a change in what
+the job compiles needs a new key before main will save it. Windows
 remains uncached until an audit shows that adding it would preserve the macOS
 entries. Only successful `main` push, scheduled or manual runs save; PRs and
 dispatches on other branches restore without saving. The
