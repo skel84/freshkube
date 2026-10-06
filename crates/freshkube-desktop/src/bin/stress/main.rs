@@ -226,14 +226,17 @@ fn main() -> color_eyre::Result<()> {
              contexts:\n- name: stress\n  context:\n    cluster: stress\n    user: stress\n"
         ),
     )?;
-    let result = freshkube_desktop::run(
-        freshkube_desktop::GpuiOptions::kubernetes_only(
-            Some(kubeconfig),
-            Some("stress".into()),
-            100,
-        ),
-        runtime.handle().clone(),
+    let mut options = freshkube_desktop::GpuiOptions::kubernetes_only(
+        Some(kubeconfig),
+        Some("stress".into()),
+        100,
     );
+    if let Scenario::Monitoring { .. } = world.scenario {
+        // Monitoring reads its folder and remembered Service beside the
+        // preferences, which HOME puts in the run's own directory.
+        options = options.with_preferences(freshkube_desktop::preferences_path());
+    }
+    let result = freshkube_desktop::run(options, runtime.handle().clone());
     world.summary.report();
     let _ = std::fs::remove_dir_all(&dir);
     result
