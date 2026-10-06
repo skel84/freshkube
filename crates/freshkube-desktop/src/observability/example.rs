@@ -322,7 +322,7 @@ pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
         dependencies: if worker {
             vec![api::Dependency {
                 id: id("payments/ledger-db"),
-                status: api::Status::Warning,
+                status: api::Status::Critical,
                 connectivity: api::Status::Critical,
                 connectivity_message: "Connection refused".into(),
                 protocols: vec!["postgres".into()],
@@ -1128,7 +1128,8 @@ pub(super) fn profiling(app: &api::AppId, query: &api::ProfileQuery) -> api::Pro
                     x: f64::from(f.x),
                     width: f64::from(f.width),
                     total: totals[ix],
-                    self_value: totals[ix] - children,
+                    // Rounded widths can leave a frame a hair below its children.
+                    self_value: (totals[ix] - children).max(0),
                     change: query.compare.then(|| f64::from(f.delta) / 10.),
                 }
             })

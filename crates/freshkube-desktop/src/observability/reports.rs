@@ -209,8 +209,12 @@ fn evidence(health: &api::AppHealth, name: &str, prefix: &str) -> Evidence {
                 .check(""),
         );
     }
-    entries.extend(health.vitals.iter().map(|v| series("Vital", v)));
-    entries.extend(health.dependencies.iter().map(|d| {
+    // Calls and clients are the Net report's own evidence, as Coroot's Net
+    // tab lists them; the application-wide vitals belong to no tab.
+    let net = name.eq_ignore_ascii_case("Net");
+    let dependencies = health.dependencies.iter().filter(|_| net);
+    let clients = health.clients.iter().filter(|_| net);
+    entries.extend(dependencies.map(|d| {
         let connectivity = Status::from(d.connectivity);
         let mut entry = EvidenceEntry::new(d.status.into(), format!("Calls {}", d.id.short()))
             .detail(match d.connectivity_message.as_str() {
@@ -242,7 +246,7 @@ fn evidence(health: &api::AppHealth, name: &str, prefix: &str) -> Evidence {
         ));
         entry
     }));
-    entries.extend(health.clients.iter().map(|c| {
+    entries.extend(clients.map(|c| {
         let mut entry = EvidenceEntry::new(c.status.into(), format!("Called by {}", c.id.short()))
             .metrics([rps(c.rps), labelled("latency", c.latency_seconds, seconds)]);
         entry.link = Some((c.id.clone(), format!("obs-{prefix}-client-{}", c.id).into()));
@@ -670,6 +674,10 @@ mod tests {
                         .iter()
                         .any(|e| e.title.starts_with("Called by "))
                 );
+                // Another tab has nothing of its own, so it draws no card.
+                page.select_report("Instances".into(), cx);
+                let snapshot = page.report_snapshot.as_ref().unwrap();
+                assert!(snapshot.rest.as_ref().unwrap().entries.is_empty());
             })
         });
     }

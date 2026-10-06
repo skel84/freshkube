@@ -373,8 +373,13 @@ impl ObservabilityPage {
             return page.into_any_element();
         }
         page = page.child(self.profile_controls(cx));
-        if !profiles.note.is_empty() && profiles.note != "OK" {
+        let noted = !profiles.note.is_empty() && profiles.note != "OK";
+        if noted {
             page = page.child(muted(profiles.note.clone(), cx).whitespace_normal());
+        }
+        // Coroot's note already says why there is no graph; one message is enough.
+        if profiles.graph.is_none() && noted {
+            return page.into_any_element();
         }
         if profiles.graph.is_none() {
             return page
