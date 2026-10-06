@@ -238,7 +238,7 @@ contexts:
         );
 
         let ctx2 = Context {
-            endpoints: vec!["kharkiv".to_string()],
+            endpoints: vec!["node1.example.com".to_string()],
             nodes: vec![],
             ca: "YQ==".to_string(),
             crt: "Yg==".to_string(),
@@ -246,7 +246,7 @@ contexts:
         };
         assert_eq!(
             ctx2.endpoint_url(),
-            Some("https://kharkiv:50000".to_string())
+            Some("https://node1.example.com:50000".to_string())
         );
 
         let ctx3 = Context {
