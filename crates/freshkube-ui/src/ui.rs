@@ -26,15 +26,6 @@ pub const TITLE_WEIGHT: FontWeight = FontWeight::BLACK;
 /// Weight of section headings and uppercase captions.
 pub const HEADING_WEIGHT: FontWeight = FontWeight::BOLD;
 
-/// A page's title.
-pub fn page_title(text: impl Into<SharedString>) -> Div {
-    div()
-        .text_size(dp(20.))
-        .line_height(dp(28.))
-        .font_weight(TITLE_WEIGHT)
-        .child(text.into())
-}
-
 /// Weight of a toolbar's label, the page title on a page with a toolbar.
 pub const LABEL_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
 /// The height of a control in a toolbar: a button, field, select or segment.

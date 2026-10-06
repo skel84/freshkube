@@ -36,7 +36,7 @@ expect() {
 tree
 page clean.rs <<'EOF'
 fn card() -> Div {
-    div().rounded(px(12.)).text_size(dp(12.5)).child(ui::page_title("Pods"))
+    div().rounded(px(12.)).text_size(dp(12.5)).child(ui::caption("Pods", cx))
         .child(ui::status_glyph(ui::Tone::Good, cx))
 }
 EOF

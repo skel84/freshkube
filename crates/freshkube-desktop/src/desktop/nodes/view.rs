@@ -20,6 +20,14 @@ use gpui_kit::{
     prelude::*,
 };
 
+/// The node log's height in a short window. A page's log would take a short
+/// window's height; the tab names this one, so it leaves out the title row
+/// a page has, and its lines still fit the pane once the body has scrolled.
+const SHORT_LOG_HEIGHT: f32 = freshkube_ui::page::SHORT_HEIGHT - TITLE_ROW;
+
+/// The title row the tab stands in for, as tall as a toolbar row.
+const TITLE_ROW: f32 = freshkube_ui::page::TOOLBAR_HEIGHT;
+
 impl Pilot {
     pub(in crate::desktop) fn render_nodes(
         &mut self,
@@ -303,9 +311,7 @@ impl Pilot {
             NodeTab::Services => inset(self.render_services(window, cx)),
             NodeTab::Logs => {
                 // In a short window the log keeps the height it lays out
-                // in, and its body scrolls inside the inspector. The tab
-                // names it, so that height leaves out a title row, and the
-                // lines still fit the pane once the body has scrolled.
+                // in, and its body scrolls inside the inspector.
                 let short = freshkube_ui::page::is_short(window);
                 div()
                     .id("node-logs-scroll")
@@ -319,10 +325,7 @@ impl Pilot {
                     .child(
                         v_flex()
                             .size_full()
-                            .when(short, |this| {
-                                this.min_h(dp(freshkube_ui::page::SHORT_HEIGHT
-                                    - freshkube_ui::page::TOOLBAR_HEIGHT))
-                            })
+                            .when(short, |this| this.min_h(dp(SHORT_LOG_HEIGHT)))
                             .px(dp(PANE_PADDING))
                             .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
