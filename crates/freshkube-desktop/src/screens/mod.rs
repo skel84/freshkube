@@ -757,26 +757,6 @@ pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
     Some(skeleton(cx))
 }
 
-/// The whole page while [`gate`] applies: the header (when there is a
-/// target) above the gate's state. `None` means render the data.
-pub(crate) fn gated_page<V: ScreenPanel, T: Send + 'static>(
-    id: &'static str,
-    title: &'static str,
-    scope: Scope,
-    source: Option<&ScreenSource>,
-    loader: &Loader<T>,
-    what: &str,
-    cx: &mut Context<V>,
-) -> Option<AnyElement> {
-    let content = gate(source, loader, scope, what, cx)?;
-    let header = source.map(|source| header(title, source, scope, loader, cx));
-    Some(
-        page_scroll(id)
-            .child(page_body().children(header).child(content))
-            .into_any_element(),
-    )
-}
-
 /// Data is still shown, but the latest refresh failed.
 pub(crate) fn failure_banner<V: ScreenPanel, T: Send + 'static>(
     loader: &Loader<T>,

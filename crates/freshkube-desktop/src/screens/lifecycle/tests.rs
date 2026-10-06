@@ -3,7 +3,7 @@ use std::sync::Arc;
 use freshkube_core::security_lifecycle::SourceSnapshot;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{AppContext, ElementId, Entity, TestAppContext, WindowHandle, px, size};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -12,10 +12,14 @@ use super::{
     etcd_verdict, example, node_rows, presence,
 };
 use crate::backend::Target;
+use crate::desktop::layout_check;
+use crate::desktop::tests::fixture as app;
 use crate::ui::Tone;
 use crate::{fixture, presentation};
+use freshkube_core::HealthIndicator;
 use freshkube_core::indicators::QuorumState;
 use freshkube_core::security_lifecycle::EtcdPreOperationAudit;
+use freshkube_ui::status;
 
 fn source(node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -617,4 +621,126 @@ fn roster_presence_glyphs_never_show_a_failure() {
     assert_eq!(presence(Some(true)), Tone::Good);
     assert_eq!(presence(Some(false)), Tone::Warn);
     assert_eq!(presence(None), Tone::Unknown);
+}
+
+const LIFECYCLE_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+    page: "lifecycle-page",
+    title: "lifecycle-title",
+    title_text: "Lifecycle",
+    content: "lifecycle-body",
+};
+
+/// Lifecycle is a page of cards under the toolbar header, and its versions,
+/// etcd verdict and alerts are the status bar's segment, not a row of stats.
+#[gpui_kit::test]
+fn lifecycle_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, handle, _view) = app(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            window.press("secondary-9", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            layout_check::assert_page_frame(window, cx, &LIFECYCLE_FRAME);
+            window.find("lifecycle-refresh");
+            let scope = window.find("lifecycle-scope");
+            assert!(
+                scope.path().contains(&ElementId::from("status-bar")),
+                "the segment is in the status bar"
+            );
+            let line = scope.label().unwrap_or_default().to_owned();
+            for part in [
+                "example data",
+                "updated ",
+                "Talos v",
+                "kubelet v",
+                "etcd pre-check",
+            ] {
+                assert!(line.contains(part), "{part} in {line}");
+            }
+            // No row of stats; the alerts keep their card, which
+            // `kubelet_skew_alert_is_shown` finds.
+            assert!(window.try_find("lifecycle-summary").is_none());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn every_state_sits_under_the_header(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
+    let under_the_header = |window: &mut gpui_kit::Window| {
+        let toolbar = window.find("lifecycle-toolbar").bounds();
+        window.find("lifecycle-title");
+        let state = window.find("lifecycle-state").bounds();
+        assert!(state.top() >= toolbar.bottom(), "{state:?} {toolbar:?}");
+    };
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.find("screen-retry");
+        under_the_header(window);
+        // A target that failed still has its context in the status bar.
+        assert!(screen.update(cx, |screen, _| screen.status().is_some()));
+        screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
+        window.render_frame(cx);
+        under_the_header(window);
+    })
+    .unwrap();
+    // With no target there is nothing to report, so the shell draws no
+    // segment; `status()` derives it when the shell asks.
+    cx.update(|cx| screen.update(cx, |screen, _| assert!(screen.status().is_none())));
+}
+
+/// An unsafe etcd verdict and alerts to review are toned as warnings, and
+/// the tooltip's note gives the verdict's detail.
+#[test]
+fn the_status_warns_of_an_unsafe_etcd_and_alerts_to_review() {
+    let mut view = example_view();
+    view.snapshot.etcd_pre_operation = SourceSnapshot::Available(EtcdPreOperationAudit {
+        total_members: 3,
+        responding_members: 3,
+        quorum_required: 2,
+        can_lose: 0,
+        quorum: QuorumState::Degraded {
+            healthy: 2,
+            total: 3,
+        },
+    });
+    let view = view.prepare();
+    let status = &view.display.status;
+    assert_eq!(
+        status[2],
+        status::Part::new("etcd pre-check not safe").tone(Tone::Warn)
+    );
+    assert!(
+        view.display
+            .status_note
+            .starts_with("etcd pre-check: Not safe to take a control plane down. 3/3"),
+        "{}",
+        view.display.status_note
+    );
+    let alerts = &view.display.alerts;
+    let review = alerts
+        .iter()
+        .filter(|alert| {
+            matches!(
+                alert.health,
+                HealthIndicator::Warning | HealthIndicator::Error
+            )
+        })
+        .count();
+    assert!(review > 0, "the example has alerts to review");
+    let plural = if alerts.len() == 1 { "alert" } else { "alerts" };
+    let text = if review == alerts.len() {
+        format!("{} {plural} to review", alerts.len())
+    } else {
+        format!("{} {plural}, {review} to review", alerts.len())
+    };
+    assert_eq!(status[3], status::Part::new(text).tone(Tone::Warn));
 }

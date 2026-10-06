@@ -26,13 +26,15 @@ use tokio::runtime::Handle;
 
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gated_page, header, mono, panel, partial_notice, stat,
+    gate, mono, panel, partial_notice, refresh_control, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::status::{self, Segment};
 use freshkube_ui::table::TableState;
 
 const CONTEXT: &str = "TalosLifecycle";
+const PREFIX: &str = "lifecycle";
 /// The details pane, when it sits beside the lists.
 const DETAILS_WIDTH: f32 = 340.;
 const GAP: f32 = 14.;
@@ -75,7 +77,15 @@ pub(crate) struct LifecycleScreen {
     selected: Option<Item>,
     table: TableState,
     focus: FocusHandle,
+    /// The status bar's segment, and what it was derived from.
+    status: Option<Segment>,
+    status_key: Option<StatusKey>,
 }
+
+/// What the status bar's segment shows: the loader's revision, the Node
+/// observation merged into the data, and the context and whether it is
+/// example data.
+type StatusKey = (u64, Option<(SessionIdentity, u64)>, Option<(String, bool)>);
 
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
@@ -92,11 +102,13 @@ impl ScreenPanel for LifecycleScreen {
             runtime,
             source: None,
             summary_nodes: None,
-            _observation: cx.observe_self(Self::sync_shared_nodes),
+            _observation: cx.observe_self(|screen, cx| screen.sync_shared_nodes(cx)),
             loader: Loader::default(),
             selected: None,
             table: TableState::new("lifecycle"),
             focus: cx.focus_handle(),
+            status: None,
+            status_key: None,
         }
     }
 
@@ -119,6 +131,11 @@ impl ScreenPanel for LifecycleScreen {
 
     fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+    }
+
+    fn status(&mut self) -> Option<&Segment> {
+        self.sync_status();
+        self.status.as_ref()
     }
 
     fn manual_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -213,6 +230,36 @@ impl LifecycleScreen {
             *data = data.clone().with_nodes(&publication).prepare();
             cx.notify();
         }
+    }
+}
+
+impl LifecycleScreen {
+    /// Derives the status bar's segment again when the data, the Node
+    /// observation or the source changed; the shell asks for it before
+    /// the screen renders.
+    fn sync_status(&mut self) {
+        let key = (
+            self.loader.revision(),
+            self.loader
+                .data()
+                .and_then(|view| view.node_observation.clone()),
+            self.source
+                .as_ref()
+                .map(|source| (source.target.context.clone(), source.is_example())),
+        );
+        if self.status_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.status_key = Some(key);
+        let display = self.loader.data().map(|view| &view.display);
+        self.status = self.source.as_ref().map(|source| {
+            let parts = display.map(|display| display.status.clone());
+            let line = segment(Some(source), &self.loader, parts.unwrap_or_default());
+            match display {
+                Some(display) => line.note(display.status_note.clone()),
+                None => line,
+            }
+        });
     }
 }
 
@@ -863,7 +910,10 @@ struct LifecycleDisplay {
     width: f32,
     alerts: Vec<AlertRow>,
     missing: Vec<String>,
-    summary_labels: [String; 3],
+    /// The status bar's parts after the context, and the note its tooltip
+    /// adds with the etcd verdict and the alerts.
+    status: Vec<status::Part>,
+    status_note: String,
 }
 impl LifecycleView {
     fn prepare(mut self) -> Self {
@@ -892,27 +942,55 @@ impl LifecycleView {
                 )
             })
             .count();
-        self.display.summary_labels = [
-            distinct(
-                self.display
-                    .rows
-                    .iter()
-                    .filter_map(|row| row.talos.as_ref().ok().cloned()),
+        let talos = distinct(
+            self.display
+                .rows
+                .iter()
+                .filter_map(|row| row.talos.as_ref().ok().cloned()),
+        );
+        let kubelet = distinct(
+            self.display
+                .rows
+                .iter()
+                .filter_map(|row| row.kubelet.as_ref().ok().cloned()),
+        );
+        let etcd = etcd_verdict(&self.snapshot.etcd_pre_operation);
+        let etcd_part = match etcd.tone {
+            Tone::Good => status::Part::new("etcd pre-check safe"),
+            Tone::Warn => status::Part::new("etcd pre-check not safe").tone(Tone::Warn),
+            _ => status::Part::new("etcd pre-check not reported"),
+        };
+        let total = self.display.alerts.len();
+        let plural = if total == 1 { "alert" } else { "alerts" };
+        let (alerts_part, alerts_note) = match total {
+            0 => (
+                status::Part::new("no alerts"),
+                "No lifecycle alerts.".to_owned(),
             ),
-            distinct(
-                self.display
-                    .rows
-                    .iter()
-                    .filter_map(|row| row.kubelet.as_ref().ok().cloned()),
+            _ if warnings == 0 => (
+                status::Part::new(format!("{total} {plural}")),
+                format!("{total} {plural}, none to review; they're listed under Alerts."),
             ),
-            if self.display.alerts.is_empty() {
-                "none".into()
-            } else if warnings == self.display.alerts.len() {
-                warnings.to_string()
-            } else {
-                format!("{} ({warnings} to review)", self.display.alerts.len())
-            },
+            _ if warnings == total => (
+                status::Part::new(format!("{total} {plural} to review")).tone(Tone::Warn),
+                format!("{total} {plural} to review; they're listed under Alerts."),
+            ),
+            _ => (
+                status::Part::new(format!("{total} {plural}, {warnings} to review"))
+                    .tone(Tone::Warn),
+                format!("{total} {plural}, {warnings} to review; they're listed under Alerts."),
+            ),
+        };
+        self.display.status = vec![
+            status::Part::new(format!("Talos {talos}")),
+            status::Part::new(format!("kubelet {kubelet}")),
+            etcd_part,
+            alerts_part,
         ];
+        self.display.status_note = format!(
+            "etcd pre-check: {}. {}\n{alerts_note}",
+            etcd.label, etcd.detail
+        );
         self
     }
 }

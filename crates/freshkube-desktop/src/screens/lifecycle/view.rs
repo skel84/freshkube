@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::table::{DataTable, TableSource};
 
 impl LifecycleScreen {
@@ -12,29 +13,6 @@ impl LifecycleScreen {
             .on_click(cx.listener(move |_, _, _, cx| {
                 cx.emit(ScreenEvent::SelectNode(name.clone()));
             }))
-    }
-
-    fn summary(
-        &self,
-        view: &LifecycleView,
-        _rows: &[NodeRow],
-        _alerts: &[AlertRow],
-        cx: &App,
-    ) -> Stateful<Div> {
-        let etcd = etcd_verdict(&view.snapshot.etcd_pre_operation);
-        let etcd_short = match etcd.tone {
-            Tone::Good => "Safe",
-            Tone::Warn => "Not safe",
-            _ => "Not reported",
-        };
-        h_flex()
-            .id("lifecycle-summary")
-            .gap_2p5()
-            .flex_wrap()
-            .child(stat("Talos", view.display.summary_labels[0].clone(), cx))
-            .child(stat("Kubelet", view.display.summary_labels[1].clone(), cx))
-            .child(stat("etcd pre-check", etcd_short, cx))
-            .child(stat("Alerts", view.display.summary_labels[2].clone(), cx))
     }
 
     /// The roster as the shared table: carded among the page's cards, as
@@ -505,24 +483,72 @@ impl LifecycleScreen {
 
 impl Render for LifecycleScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(page) = gated_page(
-            "lifecycle-page",
-            "Lifecycle",
-            Scope::Cluster,
+        let header = self.render_header(window, cx);
+        let state = gate(
             self.source.as_ref(),
             &self.loader,
+            Scope::Cluster,
             "lifecycle status",
             cx,
-        ) {
-            return page;
-        }
-        let (Some(source), Some(view)) = (self.source.clone(), self.loader.data()) else {
-            return div().into_any_element();
+        );
+        let page = page::padded("lifecycle-page")
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(header);
+        let page = match state {
+            Some(state) => page.child(
+                div()
+                    .id("lifecycle-state")
+                    .test_support()
+                    .flex_none()
+                    .child(state),
+            ),
+            None => page.children(self.render_body(window, cx)),
         };
-        let rows = view.display.rows.clone();
+        // The keys live on a wrapper drawn in every state, so the page keeps
+        // them while a state shows.
+        div()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
+            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
+            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
+            .on_action(cx.listener(|view, _: &ClearSelection, _, cx| {
+                view.selected = None;
+                cx.notify();
+            }))
+            .child(page)
+    }
+}
+
+impl LifecycleScreen {
+    /// The header: the title and Refresh. The versions, the etcd verdict
+    /// and the alerts go in the status bar.
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "Lifecycle");
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh lifecycle status",
+            self.source.as_ref(),
+            &self.loader,
+            cx,
+        );
+        header.control(refresh).render(window, cx)
+    }
+
+    /// The banners and the cards: the roster, the alerts, etcd and the
+    /// sources, with the details beside them or under the roster.
+    fn render_body(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(view) = self.loader.data() else {
+            return Vec::new();
+        };
         let alerts = view.display.alerts.clone();
         let missing = view.display.missing.clone();
-        let summary = self.summary(view, &rows, &alerts, cx);
         let nodes = self.nodes_panel(window, cx);
         let alerts_panel = self.alerts_panel(&alerts, cx);
         let etcd = self.etcd_panel(view, cx);
@@ -534,64 +560,39 @@ impl Render for LifecycleScreen {
         let body = if wide {
             h_flex()
                 .items_start()
-                .gap(dp(14.))
+                .gap(dp(GAP))
                 .child(
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .gap(dp(14.))
+                        .gap(dp(GAP))
                         .child(nodes)
                         .child(alerts_panel)
                         .child(etcd)
                         .child(sources),
                 )
                 .child(div().w(dp(DETAILS_WIDTH)).flex_none().child(details))
-                .into_any_element()
         } else {
             v_flex()
-                .gap(dp(14.))
+                .gap(dp(GAP))
                 .child(nodes)
                 .child(details)
                 .child(alerts_panel)
                 .child(etcd)
                 .child(sources)
-                .into_any_element()
         };
-        v_flex()
-            .id("lifecycle-page")
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
-            .gap(dp(14.))
-            .child(header(
-                "Lifecycle",
-                &source,
-                Scope::Cluster,
-                &self.loader,
-                cx,
+        failure_banner(&self.loader, cx)
+            .map(IntoElement::into_any_element)
+            .into_iter()
+            .chain(partial_notice(missing, cx))
+            .chain(std::iter::once(
+                body.id("lifecycle-body")
+                    .test_support()
+                    .flex_none()
+                    .w_full()
+                    .into_any_element(),
             ))
-            .children(failure_banner(&self.loader, cx))
-            .children(partial_notice(missing, cx))
-            .child(summary)
-            .child(
-                div()
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
-                    .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
-                    .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
-                    .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
-                    .on_action(cx.listener(|view, _: &ClearSelection, _, cx| {
-                        view.selected = None;
-                        cx.notify();
-                    }))
-                    .child(body),
-            )
-            .into_any_element()
+            .collect()
     }
 }
 

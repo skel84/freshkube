@@ -368,7 +368,7 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| view.navigate(Page::Lifecycle, window, cx));
         window.render_frame(cx);
-        window.click("screen-refresh", cx);
+        window.click("lifecycle-refresh", cx);
     })
     .unwrap();
     cx.run_until_parked();
