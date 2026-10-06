@@ -685,13 +685,16 @@ fn every_state_sits_under_the_header(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.find("screen-retry");
         under_the_header(window);
+        // A target that failed still has its context in the status bar.
+        assert!(screen.update(cx, |screen, _| screen.status().is_some()));
         screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
         window.render_frame(cx);
         under_the_header(window);
     })
     .unwrap();
-    // The segment is derived once the change's notify has been observed.
-    cx.update(|cx| assert!(screen.read(cx).status.is_none()));
+    // With no target there is nothing to report, so the shell draws no
+    // segment; `status()` derives it when the shell asks.
+    cx.update(|cx| screen.update(cx, |screen, _| assert!(screen.status().is_none())));
 }
 
 /// An unsafe etcd verdict and alerts to review are toned as warnings, and
