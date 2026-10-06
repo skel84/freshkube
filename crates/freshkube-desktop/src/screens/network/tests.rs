@@ -776,6 +776,10 @@ fn network_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
             }
             open_node_tab(window, cx, NodeTab::Network);
             window.render_frame(cx);
+            // The node's inspector stacks under the table at 20; expanded,
+            // it has the page's room.
+            window.click("node-expand", cx);
+            window.render_frame(cx);
         })
         .unwrap();
         cx.run_until_parked();

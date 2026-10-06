@@ -18,7 +18,6 @@ use super::{
 };
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
-use crate::screens::panel;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::inspector::{self, Inspector};
 
@@ -343,27 +342,28 @@ impl Render for DetailPane {
                 .text_color(palette(cx).muted)
                 .child(feedback)
         });
-        let frame = if self.embedded_node {
-            // The node pane keeps its card, without the heading and tabs.
-            let line = palette(cx).line;
-            panel(cx)
-                .children(notice.map(|notice| div().px_4().pb_2().child(notice)))
-                .child(div().flex_1().min_h_0().child(body))
-                .children(
-                    feedback
-                        .map(|feedback| feedback.px_4().py_1p5().border_t_1().border_color(line)),
+        let frame =
+            if self.embedded_node {
+                // In the node's inspector, which draws the heading and tabs.
+                let line = palette(cx).line;
+                let pad = dp(freshkube_ui::page::PANE_PADDING);
+                v_flex()
+                    .children(notice.map(|notice| div().px(pad).pt(pad).child(notice)))
+                    .child(div().flex_1().min_h_0().child(body))
+                    .children(feedback.map(|feedback| {
+                        feedback.px(pad).py(dp(6.)).border_t_1().border_color(line)
+                    }))
+            } else {
+                div().flex().flex_col().child(
+                    Inspector::new("detail-inspector")
+                        .heading(self.header(detail, cx))
+                        .banner(notice)
+                        .tabs(self.tabs(detail, cx))
+                        .content(body)
+                        .footer(feedback)
+                        .render(cx),
                 )
-        } else {
-            div().flex().flex_col().child(
-                Inspector::new("detail-inspector")
-                    .heading(self.header(detail, cx))
-                    .banner(notice)
-                    .tabs(self.tabs(detail, cx))
-                    .content(body)
-                    .footer(feedback)
-                    .render(cx),
-            )
-        };
+            };
         frame
             .id("resource-detail")
             .test_support()

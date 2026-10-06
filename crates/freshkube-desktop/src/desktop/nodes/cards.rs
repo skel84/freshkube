@@ -206,9 +206,23 @@ impl Pilot {
                 this.when(selected, |this| this.bg(p.accent_soft))
                     .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
             })
+            // The roster marks the opened node as the table marks its
+            // selected row: the accent tint inside a 1 px accent outline.
             .when(!cards, |this| {
-                this.bg(if selected { p.surface } else { p.surface_2 })
-                    .hover(|style| style.bg(p.surface))
+                this.relative()
+                    .bg(if selected { p.accent_soft } else { p.surface_2 })
+                    .when(!selected, |this| this.hover(|style| style.bg(p.surface)))
+                    .when(selected, |this| {
+                        this.child(
+                            div()
+                                .id("nodes-roster-selected")
+                                .test_support()
+                                .absolute()
+                                .inset_0()
+                                .border_1()
+                                .border_color(p.accent),
+                        )
+                    })
             })
             .cursor_pointer()
             .child(content)

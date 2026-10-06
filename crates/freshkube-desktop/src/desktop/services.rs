@@ -270,7 +270,8 @@ impl Pilot {
                     }))
             }));
         let detail = self.service_detail(&node, cx);
-        let wide = Self::content_width(window) >= 760.;
+        // In the node inspector, by its own width.
+        let wide = crate::screens::embedded_width(window) >= 760.;
         let split = if wide {
             h_flex()
                 .items_start()

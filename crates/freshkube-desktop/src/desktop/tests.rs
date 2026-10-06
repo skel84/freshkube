@@ -17,7 +17,7 @@ pub(crate) fn fixture(
     mount(cx, GpuiOptions::fixture(), width, height)
 }
 
-fn mount(
+pub(super) fn mount(
     cx: &mut TestAppContext,
     options: GpuiOptions,
     width: f32,
@@ -94,6 +94,17 @@ fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize)
 pub(crate) fn open_kind(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, key: &str) {
     let view = root_pilot(window, cx);
     view.update(cx, |view, cx| view.open_builtin(key, window, cx));
+}
+
+/// Opens the node's Services tab and expands the inspector, so a selected
+/// service's details sit beside the list rather than under it.
+fn open_services_with_room(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    open_node_tab(window, cx, super::nodes::NodeTab::Services);
+    window.render_frame(cx);
+    if !root_pilot(window, cx).read(cx).node_workspace.expanded {
+        window.click("node-expand", cx);
+        window.render_frame(cx);
+    }
 }
 
 /// Old page coverage now follows the actual node-pane tab controls.
@@ -441,7 +452,7 @@ fn selected_service_opens_matching_log_collection(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        open_node_tab(window, cx, super::nodes::NodeTab::Services);
+        open_services_with_room(window, cx);
         window.render_frame(cx);
         window.within("services-region").click("containerd", cx);
     })
@@ -863,7 +874,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         open_node_tab(window, cx, super::nodes::NodeTab::Processes);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Nodes);
-        assert_eq!(window.find("node-tab-processes").checked(), Some(true));
+        assert_eq!(window.find("node-tab-processes").selected(), Some(true));
         assert!(window.find("processes-list").visible());
         // Rows are keyed by PID. Init leads the first sample, which has no
         // CPU deltas to sort by yet.
@@ -1327,7 +1338,7 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
-fn a_short_window_scrolls_the_node_pane_to_its_log_catalog_and_multiline_errors(
+fn a_short_window_scrolls_the_frame_to_the_node_log_catalog_and_multiline_errors(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
@@ -1364,9 +1375,10 @@ fn a_short_window_scrolls_the_node_pane_to_its_log_catalog_and_multiline_errors(
         for _ in 0..3 {
             window.render_frame(cx);
         }
-        // 560 px is short at the default text size, so the node pane scrolls
-        // on Logs. The log keeps its notices above a usable viewport inside
-        // its panel, and the status bar's log status stays below the pane.
+        // 560 px is short at the default text size, so the Logs body
+        // scrolls inside the node's inspector. The log keeps its notices
+        // above a usable viewport inside its panel, and the status bar's log
+        // status stays below the pane.
         let panel = window.find("logs-panel").bounds();
         let viewport = window.find("logs-viewport").bounds();
         let notices = window.find("logs-notices").bounds();
@@ -1378,35 +1390,25 @@ fn a_short_window_scrolls_the_node_pane_to_its_log_catalog_and_multiline_errors(
         assert!(viewport.right() <= px(760.));
         assert!(notices.size.height >= window.rem_size());
         assert!(notices.bottom() <= viewport.top());
-        assert!(window.find("logs-notices").visible());
         assert!(window.find("logs-collection").visible());
+        // Scrolling the body brings the notices into view, then the whole
+        // viewport, above the status bar's log status.
+        let body = view.read(cx).node_workspace.logs_scroll.clone();
+        let content = window.find("node-inspector-content").bounds();
+        let by = (content.bottom() - notices.bottom()).min(px(0.));
+        body.set_offset(point(px(0.), body.offset().y + by));
+        window.render_frame(cx);
+        assert!(window.find("logs-notices").visible());
+        body.set_offset(point(px(0.), -body.max_offset().y));
+        window.render_frame(cx);
+        let viewport = window.find("logs-viewport").bounds();
         let shown = window.find("node-pane").bounds();
         let status = window.find("logs-status");
         assert!(status.visible());
-        assert!(status.bounds().top() >= shown.bottom());
+        assert!(status.bounds().top() >= viewport.bottom());
         assert!(status.bounds().bottom() <= px(560.));
-
-        // The pane's scroll reaches every part of the log.
-        let pane = view.read(cx).node_workspace.pane_scroll.clone();
-        let max = pane.max_offset().y;
-        assert!(max > px(0.), "the short pane doesn't scroll");
-        for (name, part) in [("notices", notices), ("viewport", viewport)] {
-            assert!(
-                part.top() >= shown.top() && part.bottom() - max <= shown.bottom(),
-                "{name} at {part:?} is out of the pane's reach {shown:?} + {max:?}"
-            );
-        }
-
-        // Scrolled to the log, the whole viewport shows inside the pane,
-        // above the status bar.
-        pane.set_offset(point(px(0.), -max));
-        window.render_frame(cx);
-        let viewport = window.find("logs-viewport");
-        assert!(viewport.visible());
-        assert!(viewport.bounds().size.height >= window.rem_size() * 6.);
-        assert!(viewport.bounds().top() >= shown.top());
-        assert!(viewport.bounds().bottom() <= shown.bottom());
-        assert!(window.find("logs-status").bounds().top() >= viewport.bounds().bottom());
+        assert!(viewport.top() >= shown.top());
+        assert!(viewport.bottom() <= shown.bottom() + px(0.5));
     })
     .unwrap();
 }
@@ -1924,7 +1926,7 @@ fn a_dropped_ticket_frees_the_slot(cx: &mut TestAppContext) {
 fn open_restart(cx: &mut TestAppContext, handle: AnyWindowHandle, service: &'static str) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        open_node_tab(window, cx, super::nodes::NodeTab::Services);
+        open_services_with_room(window, cx);
         window.render_frame(cx);
         window.within("services-region").click(service, cx);
         window.render_frame(cx);
@@ -1934,12 +1936,59 @@ fn open_restart(cx: &mut TestAppContext, handle: AnyWindowHandle, service: &'sta
     crate::mutation::settle_confirmation(cx, handle);
 }
 
+/// The inspector as a node first opens, beside the table: Services stacks its
+/// detail under the list, and Restart scrolls into view there.
+#[gpui_kit::test]
+fn restart_is_reachable_in_the_unexpanded_inspector(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
+        window.render_frame(cx);
+        assert!(!view.read(cx).node_workspace.expanded);
+        assert!(window.try_find("nodes-table").is_some());
+        window.within("services-region").click("containerd", cx);
+        window.render_frame(cx);
+        let list = window.find("services-region").bounds();
+        let detail = window.find("selected-service").bounds();
+        assert!(
+            detail.top() >= list.bottom() - px(0.5),
+            "the detail {detail:?} isn't under the list {list:?}"
+        );
+        // The Services page fills the inspector's content and scrolls in it.
+        let shown = window.find("node-inspector-content").bounds();
+        for _ in 0..60 {
+            let restart = window.find("service-restart").bounds();
+            if restart.top() >= shown.top() && restart.bottom() <= shown.bottom() {
+                assert_eq!(
+                    window.find("service-restart").label(),
+                    Some("Restart containerd")
+                );
+                return;
+            }
+            use gpui_kit::InputEvent as _;
+            window.dispatch_event(
+                gpui_kit::ScrollWheelEvent {
+                    position: shown.center(),
+                    delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-40.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.render_frame(cx);
+        }
+        panic!("Restart never scrolled into {shown:?}");
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn restart_is_offered_only_for_a_selected_service_on_an_answering_node(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        open_node_tab(window, cx, super::nodes::NodeTab::Services);
+        open_services_with_room(window, cx);
         window.render_frame(cx);
         // Nothing selected yet: there is nothing to restart.
         assert!(window.try_find("service-restart").is_none());

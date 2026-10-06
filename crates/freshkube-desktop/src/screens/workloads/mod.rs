@@ -840,7 +840,7 @@ impl WorkloadsScreen {
     /// The table edge to edge, with the selection's details beside it on a
     /// wide page and below it on a narrow one.
     fn render_split(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window);
+        let beside = crate::screens::beside(window, false);
         let table = div()
             .id("workloads-table")
             .flex()
