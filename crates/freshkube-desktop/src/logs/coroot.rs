@@ -170,6 +170,13 @@ mod tests {
             local.offset().local_minus_utc()
         );
         assert_eq!(short.level, Some(LogLevel::Error));
+        // A name before a colon stays in the message the row shows.
+        let mut logs = freshkube_core::logs::MultiServiceLogs::new("app");
+        logs.append(event(&service, &line("cart-db: connection refused".into())));
+        assert_eq!(
+            logs.buffer().entries()[0].message,
+            "cart-db: connection refused"
+        );
         // At the bound the message is cut on a character, and says so.
         let long = event(&service, &line("é".repeat(40_000)));
         assert!(long.line.len() <= MOST_LINE_BYTES, "{}", long.line.len());

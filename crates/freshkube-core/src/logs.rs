@@ -81,6 +81,9 @@ pub struct LogEvent {
     /// The level the source states, such as a severity Coroot stored with
     /// the line. None guesses it from the line's words.
     pub level: Option<LogLevel>,
+    /// The line comes from a Talos service, whose message leaves out the
+    /// prefix such a service writes. See [`LogEvent::talos`].
+    pub talos: bool,
 }
 
 impl LogEvent {
@@ -90,7 +93,17 @@ impl LogEvent {
             line: line.into(),
             marker: false,
             level: None,
+            talos: false,
         }
+    }
+
+    /// A Talos service's line. Its message leaves out what the service writes
+    /// before it: a Go caller, as apid and trustd log with `log.Lshortfile`
+    /// (`main.go:94: `), or the service's own name and process id
+    /// (`udevd[812]: `). Only at the start, after the timestamp.
+    pub fn talos(mut self) -> Self {
+        self.talos = true;
+        self
     }
 
     /// The line at the level its source states, instead of one guessed from
@@ -116,6 +129,7 @@ impl LogEvent {
             ),
             marker: true,
             level: None,
+            talos: false,
         }
     }
 }
@@ -175,10 +189,11 @@ impl LogEntry {
 
 /// Parse one Talos, Kubernetes, klog, JSON, or containerd log line.
 pub fn parse_log_line(service: impl Into<ServiceId>, line: impl AsRef<str>) -> LogEntry {
-    parse_log_line_with_sequence(service.into(), line.as_ref(), 0)
+    parse_event(LogEvent::new(service, line.as_ref()), 0)
 }
 
-fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -> LogEntry {
+fn parse_line(event: &LogEvent, sequence: u64) -> LogEntry {
+    let line = event.line.as_str();
     let raw = line.trim().to_owned();
     // A leading RFC 3339 timestamp, as Kubernetes and Talos write, takes
     // precedence over any time the rest of the line carries.
@@ -191,10 +206,18 @@ fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -
         None => extract_timestamp(&raw),
     };
 
+    let level = event
+        .level
+        .clone()
+        .unwrap_or_else(|| classify_log_level(remainder));
+    let mut message = remainder.trim();
+    if event.talos {
+        message = without_talos_prefix(message, event.service.as_str());
+    }
     LogEntry {
-        service,
-        level: classify_log_level(remainder),
-        message: clean_message(remainder),
+        service: event.service.clone(),
+        message: without_level(message, &level).to_owned(),
+        level,
         search_text: raw.to_lowercase(),
         raw,
         timestamp,
@@ -205,10 +228,7 @@ fn parse_log_line_with_sequence(service: ServiceId, line: &str, sequence: u64) -
 }
 
 fn parse_event(event: LogEvent, sequence: u64) -> LogEntry {
-    let mut entry = parse_log_line_with_sequence(event.service, &event.line, sequence);
-    if let Some(level) = event.level {
-        entry.level = level;
-    }
+    let mut entry = parse_line(&event, sequence);
     if event.marker {
         entry.marker = true;
         entry.level = LogLevel::Unknown;
@@ -983,23 +1003,50 @@ fn time_sort_key(display: &str) -> i64 {
     hour * 3600 + minute * 60 + seconds
 }
 
-fn clean_message(text: &str) -> String {
-    let text = text.trim();
-    let text = match text.find(": ") {
-        Some(position) if position < 20 => text[position + 2..].trim(),
-        _ => text,
+/// `text` without a Talos service's prefix: a Go caller (`main.go:94: `), or
+/// the service's own name and process id (`udevd[812]: `).
+fn without_talos_prefix<'a>(text: &'a str, service: &str) -> &'a str {
+    let Some((head, rest)) = text.split_once(": ") else {
+        return text;
     };
-    text.trim_start_matches("[INFO]")
-        .trim_start_matches("[WARN]")
-        .trim_start_matches("[ERROR]")
-        .trim_start_matches("[DEBUG]")
-        .trim_start_matches("INFO")
-        .trim_start_matches("WARN")
-        .trim_start_matches("ERROR")
-        .trim_start_matches("DEBUG")
-        .trim_start_matches("OK")
-        .trim()
-        .to_owned()
+    let caller = head.split_once(".go:").is_some_and(|(file, line)| {
+        !file.is_empty()
+            && file
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'/'))
+            && !line.is_empty()
+            && line.bytes().all(|b| b.is_ascii_digit())
+    });
+    let own_name = head
+        .strip_prefix(service)
+        .and_then(|pid| pid.strip_prefix('['))
+        .and_then(|pid| pid.strip_suffix(']'))
+        .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()));
+    if caller || own_name {
+        rest.trim_start()
+    } else {
+        text
+    }
+}
+
+/// `text` without a leading word that names `level`, which the row's level
+/// column already shows: `INFO` or `[INFO]`, as a whole word.
+fn without_level<'a>(text: &'a str, level: &LogLevel) -> &'a str {
+    let (word, bracketed) = match level {
+        LogLevel::Error => ("ERROR", "[ERROR]"),
+        LogLevel::Warning => ("WARN", "[WARN]"),
+        LogLevel::Info => ("INFO", "[INFO]"),
+        LogLevel::Debug => ("DEBUG", "[DEBUG]"),
+        LogLevel::Unknown => return text,
+    };
+    for token in [bracketed, word] {
+        if let Some(rest) = text.strip_prefix(token)
+            && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+        {
+            return rest.trim_start();
+        }
+    }
+    text
 }
 
 #[cfg(test)]
@@ -1024,6 +1071,75 @@ mod tests {
         );
         assert_eq!(containerd.timestamp.unwrap().display, "16:42:01");
         assert_eq!(containerd.level, LogLevel::Warning);
+    }
+
+    fn message(event: LogEvent) -> String {
+        parse_event(event, 0).message
+    }
+
+    #[test]
+    fn a_talos_message_leaves_out_its_service_s_own_prefix() {
+        // apid and trustd log with Go's `log.Lshortfile`.
+        let apid = LogEvent::new(
+            "apid",
+            "2026/01/09 16:40:59.123456 main.go:94: cart-db: connection refused",
+        );
+        assert_eq!(message(apid.talos()), "cart-db: connection refused");
+        let udevd = LogEvent::new("udevd", "udevd[812]: rules file changed, reloading");
+        assert_eq!(message(udevd.talos()), "rules file changed, reloading");
+        let zap = LogEvent::new("machined", "2026-01-09T16:40:59.776940Z INFO started");
+        assert_eq!(message(zap.talos()), "started");
+    }
+
+    #[test]
+    fn a_name_before_a_colon_stays_in_the_message() {
+        for line in [
+            "cart-db: connection refused",
+            "kubelet: node not ready",
+            "Error: ENOENT: no such file",
+            "panic: runtime error: index out of range",
+            "[talos] task setupLogger: done",
+            // Another service's name, or a caller anywhere but the start.
+            "udevd[812]: rules file changed",
+            "retrying main.go:94: cart-db",
+        ] {
+            let stamped = format!("2026-01-09T16:40:59.776940Z {line}");
+            for event in [
+                LogEvent::new("kubelet", stamped.clone()).talos(),
+                LogEvent::new("app", stamped.clone()),
+                LogEvent::new("app", stamped.clone()).with_level(LogLevel::Error),
+            ] {
+                assert_eq!(message(event), line);
+            }
+        }
+        // A pod's or Coroot's caller is the app's, and it stays.
+        let pod = LogEvent::new("app", "2026-01-09T16:40:59Z main.go:94: cart-db: down");
+        assert_eq!(message(pod), "main.go:94: cart-db: down");
+    }
+
+    #[test]
+    fn only_a_whole_word_naming_the_row_s_level_is_left_out() {
+        let at =
+            |line: &str, level: LogLevel| message(LogEvent::new("app", line).with_level(level));
+        assert_eq!(
+            at("[WARN] disk 91% full", LogLevel::Warning),
+            "disk 91% full"
+        );
+        assert_eq!(
+            at("ERROR\tcart-db unreachable", LogLevel::Error),
+            "cart-db unreachable"
+        );
+        for (line, level) in [
+            ("OKTA login refused", LogLevel::Error),
+            ("OK", LogLevel::Unknown),
+            ("INFORMATION_SCHEMA ready", LogLevel::Info),
+            ("DEBUGGING on", LogLevel::Debug),
+            ("ERROR: disk full", LogLevel::Error),
+            // Coroot's severity says otherwise, so the word is news.
+            ("INFO retrying", LogLevel::Error),
+        ] {
+            assert_eq!(at(line, level), line);
+        }
     }
 
     #[test]

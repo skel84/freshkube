@@ -442,7 +442,7 @@ impl Collection for LogPanel {
                 continue;
             }
             match event.result {
-                Ok(line) => lines.push(LogEvent::new(event.service, line)),
+                Ok(line) => lines.push(LogEvent::new(event.service, line).talos()),
                 Err(error) => {
                     self.source_mut().errors.insert(event.service, error);
                 }
