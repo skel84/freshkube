@@ -3,6 +3,10 @@
 //! from the table by the resize handle's hairline: beside the table on a
 //! wide page, under it on a narrow one. The page keeps an
 //! [`InspectorSplit`], which remembers how wide the user made it.
+mod tabs;
+
+pub use tabs::{TAB_HEIGHT, tab};
+
 use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -14,8 +18,8 @@ use gpui_kit::component::resizable::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, Div, ElementId, Entity, FontWeight, Pixels, Role, SharedString,
-    Stateful, Subscription, TestSupportExt, Window, div, transparent_black,
+    AnyElement, App, AppContext, Div, Entity, Pixels, SharedString, Stateful, Subscription,
+    TestSupportExt, Window, div,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
@@ -44,9 +48,6 @@ pub const SHORT_HEIGHT: f32 = 360.;
 const GAP: f32 = 12.;
 /// Between the heading and a banner or the tabs under it.
 const UNDER_HEADING: f32 = 8.;
-/// A tab's height, and the space at its sides.
-pub const TAB_HEIGHT: f32 = 28.;
-const TAB_PADDING: f32 = 10.;
 
 /// The inspector's frame: a heading, then a body that scrolls on its own,
 /// both padded 12, on whatever the split sits on. A banner and a tab strip
@@ -198,45 +199,6 @@ impl Inspector {
                     .child(footer)
             }))
     }
-}
-
-/// One of an inspector's tabs: 28 high, its label 12.5, and a 2 px accent
-/// underline with semibold ink when `active`, muted ink otherwise. The
-/// caller adds what it does: focus, a tooltip, a click, a count or mark.
-pub fn tab(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    active: bool,
-    cx: &App,
-) -> Observed<Stateful<Div>> {
-    let p = palette(cx);
-    let label = label.into();
-    h_flex()
-        .id(id.into())
-        .test_support()
-        .role(Role::Tab)
-        .aria_selected(active)
-        .aria_label(label.clone())
-        .focus_visible(|style| style.bg(p.hover))
-        .flex_none()
-        .h(dp(TAB_HEIGHT))
-        .px(dp(TAB_PADDING))
-        .gap(dp(6.))
-        .cursor_pointer()
-        .text_size(dp(12.5))
-        .border_b_2()
-        .map(|this| {
-            if active {
-                this.border_color(p.accent)
-                    .text_color(p.ink)
-                    .font_weight(FontWeight::SEMIBOLD)
-            } else {
-                this.border_color(transparent_black())
-                    .text_color(p.muted)
-                    .hover(|style| style.text_color(p.ink))
-            }
-        })
-        .child(label)
 }
 
 /// A stacked pane's height in dp: where it starts, the least it keeps and,
