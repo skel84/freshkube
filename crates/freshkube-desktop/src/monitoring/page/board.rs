@@ -16,7 +16,7 @@ use gpui_kit::{AppContext, Context, Entity, SharedString, Subscription, point, p
 use super::connection::Connection;
 use super::layout::{self, Layout, SectionShape};
 use super::{EntryId, MonitoringEvent, MonitoringPage, Request};
-use crate::monitoring::panel::{PanelEvent, PanelView};
+use crate::monitoring::panel::{Linked, PanelEvent, PanelView};
 
 /// Samples a range is read at: Prometheus's step is the span over these.
 const POINTS: usize = 200;
@@ -69,6 +69,8 @@ pub(super) struct Board {
     /// The window of the generation asked last.
     pub(super) window: Option<TimeWindow>,
     pub(super) slots: Vec<Slot>,
+    /// One chart's cursor on the others, in `slots`' order.
+    pub(super) linked: Linked,
     pub(super) rows: Vec<Option<RowHeader>>,
     shapes: Vec<SectionShape>,
     /// The wide layout and the stacked one.
@@ -98,6 +100,7 @@ impl Board {
     /// failed, then when the last read answered. Returns whether it changed,
     /// so a page notifies only then, not on every answer.
     pub(super) fn derive_meta(&mut self) -> bool {
+        crate::desktop::probe::hit("monitoring-derive");
         let mut meta = match self.slots.len() {
             1 => "1 panel".to_owned(),
             count => format!("{count} panels"),
@@ -135,6 +138,7 @@ impl Board {
 
     /// Each shown variable's control, from the resolved values.
     fn derive_controls(&mut self) {
+        crate::desktop::probe::hit("monitoring-derive");
         let Some(variables) = &self.variables else {
             return;
         };
@@ -222,6 +226,7 @@ impl MonitoringPage {
             time,
             window: None,
             slots: Vec::new(),
+            linked: Linked::default(),
             rows: Vec::new(),
             shapes: Vec::new(),
             layouts: Default::default(),
@@ -488,10 +493,13 @@ impl MonitoringPage {
         });
         let now = (self.now)();
         let board = self.board.as_mut().unwrap();
+        let moved = board
+            .linked
+            .refresh(board.slots.iter().map(|slot| &slot.view), cx);
         if board.slots.iter().all(|slot| slot.request.is_none()) {
             board.answered_at = Some(now);
         }
-        if board.derive_meta() {
+        if board.derive_meta() | moved {
             cx.notify();
         }
     }
@@ -538,24 +546,25 @@ impl MonitoringPage {
                 Err(error) => panel.set_error(&error, cx),
             });
         }
+        board
+            .linked
+            .refresh(board.slots.iter().map(|slot| &slot.view), cx);
         board.answered_at = Some((self.now)());
         board.derive_meta();
         self.read_markers(window, cx);
         cx.notify();
     }
 
-    /// One chart's cursor shows on every other timeseries.
+    /// One chart's cursor shows on every other timeseries, drawn by the
+    /// page so that no other panel redraws.
     fn on_panel(&mut self, from: Entity<PanelView>, event: &PanelEvent, cx: &mut Context<Self>) {
         let PanelEvent::Cursor(time) = event;
-        let Some(board) = &self.board else {
+        let Some(board) = &mut self.board else {
             return;
         };
-        for slot in &board.slots {
-            if slot.view != from {
-                slot.view
-                    .update(cx, |panel, cx| panel.show_cursor(*time, cx));
-            }
-        }
+        let panels = board.slots.iter().map(|slot| &slot.view);
+        board.linked.show(from.entity_id(), *time, panels, cx);
+        cx.notify();
     }
 
     pub(super) fn set_variable(

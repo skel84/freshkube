@@ -27,7 +27,7 @@ use gpui_kit::{
 };
 use tokio::runtime::Handle;
 
-use super::panel::{PanelEvent, PanelView};
+use super::panel::{Linked, PanelEvent, PanelView};
 use crate::backend::{self, OwnedJob};
 use crate::resources::KubeAccess;
 use crate::ui::{self, dp};
@@ -108,6 +108,8 @@ pub(crate) struct HistoryView {
     visible: bool,
     /// The CPU and memory panels for the subject.
     panels: Vec<Entity<PanelView>>,
+    /// One panel's cursor on the other.
+    linked: Linked,
     /// When the panels were last asked, in Unix seconds.
     asked: Option<i64>,
     /// Each panel's read in flight.
@@ -130,6 +132,7 @@ impl HistoryView {
             subject: None,
             visible: false,
             panels: Vec::new(),
+            linked: Linked::default(),
             asked: None,
             requests: Vec::new(),
             timer: None,
@@ -214,6 +217,7 @@ impl HistoryView {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.forget();
         self.panels.clear();
+        self.linked = Linked::default();
         self._subscriptions.clear();
         let (Some(_), Some(subject)) = (&self.source, &self.subject) else {
             return;
@@ -230,18 +234,16 @@ impl HistoryView {
                 cx.new(|_| PanelView::new(id, spec))
             })
             .collect();
-        // One chart's cursor shows on the other.
+        // One chart's cursor shows on the other, drawn here so that the
+        // other panel doesn't redraw.
         self._subscriptions = self
             .panels
             .iter()
             .map(|panel| {
                 cx.subscribe(panel, |this, from, event: &PanelEvent, cx| {
                     let PanelEvent::Cursor(time) = event;
-                    for panel in &this.panels {
-                        if *panel != from {
-                            panel.update(cx, |panel, cx| panel.show_cursor(*time, cx));
-                        }
-                    }
+                    this.linked.show(from.entity_id(), *time, &this.panels, cx);
+                    cx.notify();
                 })
             })
             .collect();
@@ -330,6 +332,9 @@ impl HistoryView {
             Ok(result) => panel.set_result(result, window, cx),
             Err(error) => panel.set_error(&error, cx),
         });
+        if self.linked.refresh(&self.panels, cx) {
+            cx.notify();
+        }
     }
 
     /// Runs `work` where its source answers (Tokio for Prometheus, the
@@ -451,12 +456,14 @@ impl Render for HistoryView {
                 h_flex()
                     .flex_wrap()
                     .gap(dp(12.))
-                    .children(self.panels.iter().map(|panel| {
+                    .children(self.panels.iter().enumerate().map(|(index, panel)| {
                         div()
+                            .relative()
                             .flex_1()
                             .min_w(dp(180.))
                             .h(dp(184.))
                             .child(panel.clone().cached(StyleRefinement::default().size_full()))
+                            .children(self.linked.element(index))
                     })),
             )
             .test_support()

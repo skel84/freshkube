@@ -4,11 +4,12 @@ use freshkube_core::monitoring::{
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Entity, ScrollDelta, SharedString, TestAppContext, point, px, size,
+    AnyWindowHandle, AppContext, Bounds, Entity, Pixels, Point, ScrollDelta, SharedString,
+    TestAppContext, point, px, size,
 };
 
 use super::*;
-use crate::monitoring::panel::PanelEvent;
+use crate::desktop::probe;
 
 const NOW: i64 = 1_700_003_600;
 
@@ -58,6 +59,7 @@ fn mount_with(
             view
         });
         page = Some(view.clone());
+        // Uncached, as the shell holds it.
         Root::new(view, window, cx)
     });
     cx.run_until_parked();
@@ -468,27 +470,72 @@ fn a_time_range_change_asks_every_panel_over_the_new_window(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-fn the_cursor_on_one_chart_shows_on_the_others(cx: &mut TestAppContext) {
+fn the_cursor_on_one_chart_shows_on_the_others_and_redraws_no_other_panel(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));
     show(cx, handle, &page);
-    let (cpu, memory) = cx.read(|cx| {
+    let (plot, others) = cx.read(|cx| {
         let board = page.read(cx).board.as_ref().unwrap();
-        let find = |title: &str| {
-            board
-                .slots
-                .iter()
-                .find(|slot| slot.spec.title == title)
-                .unwrap()
-                .view
-                .clone()
-        };
-        (find("CPU usage by node"), find("Memory usage by node"))
+        let cpu = board
+            .slots
+            .iter()
+            .position(|slot| slot.spec.title == "CPU usage by node")
+            .unwrap();
+        let others: Vec<SharedString> = board
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(index, slot)| *index != cpu && slot.view.read(cx).is_chart())
+            .map(|(_, slot)| slot.view.read(cx).part("crosshair"))
+            .collect();
+        (board.slots[cpu].view.read(cx).part("plot"), others)
     });
-    let time = (NOW - 3600) as f64;
-    cx.update(|cx| cpu.update(cx, |_, cx| cx.emit(PanelEvent::Cursor(Some(time)))));
-    assert!(cx.read(|cx| memory.read(cx).has_cursor()));
-    cx.update(|cx| cpu.update(cx, |_, cx| cx.emit(PanelEvent::Cursor(None))));
-    assert!(!cx.read(|cx| memory.read(cx).has_cursor()));
+    assert!(others.len() >= 2, "{others:?}");
+    // Real moves and real frames, with the view caches on.
+    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let move_to = |cx: &mut TestAppContext, at: fn(Bounds<Pixels>) -> Point<Pixels>| {
+        let plot = plot.clone();
+        cx.update_window(handle, |_, window, cx| {
+            let bounds = window.find(plot).bounds();
+            window.dispatch_event(
+                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                    position: at(bounds),
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+    };
+    move_to(cx, |plot| plot.center());
+    let counts = || {
+        [
+            probe::count("monitoring-panel"),
+            probe::count("monitoring-page"),
+            probe::count("monitoring-derive"),
+        ]
+    };
+    let [panels, pages, derived] = counts();
+    move_to(cx, |plot| plot.center() + point(px(40.), px(0.)));
+    move_to(cx, |plot| plot.center() + point(px(80.), px(0.)));
+    // Only the panel under the pointer draws again. The page draws with
+    // the shell's frames to place the crosshairs, from what it derived
+    // before: a move derives nothing.
+    let [panels_now, pages_now, derived_now] = counts();
+    assert_eq!(panels_now, panels + 2, "a move redrew another panel");
+    assert!(pages_now > pages);
+    assert_eq!(derived_now, derived, "a move derived");
+    for id in &others {
+        assert!(shown(cx, handle, id), "no crosshair on {id}");
+    }
+
+    // Leaving the plot, for its card's title, takes them away.
+    move_to(cx, |plot| point(plot.center().x, plot.top() - px(16.)));
+    for id in &others {
+        assert!(!shown(cx, handle, id), "{id} kept its crosshair");
+    }
 }
 
 #[gpui_kit::test]

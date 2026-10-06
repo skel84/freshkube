@@ -1,0 +1,1 @@
+- Moving the pointer over a Monitoring chart redraws only that chart: the page draws the crosshair on the others, so a large dashboard keeps up with the pointer.

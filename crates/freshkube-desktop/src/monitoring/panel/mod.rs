@@ -4,6 +4,8 @@
 //!
 //! A timeseries draws its plot in a cached child view ([`PlotView`]), so a
 //! moving cursor or a hovered legend row redraws only the overlay above it.
+//! Another chart's cursor is drawn beside the panel ([`Linked`]), so it
+//! redraws no panel at all.
 //! A table is a child view too ([`TableView`]), which keeps its scroll.
 mod cursor;
 mod legend;
@@ -33,7 +35,7 @@ use gpui_kit::{
 use super::derive::{self, Body, PanelData};
 use crate::ui::{self, dp};
 
-pub(crate) use cursor::Cursor;
+pub(crate) use cursor::{Cursor, Linked};
 pub(crate) use markers::glyph as marker_glyph;
 pub(crate) use plot::{Geometry, PlotView};
 pub(crate) use table::TableView;
@@ -214,10 +216,16 @@ impl PanelView {
         self.table.clone()
     }
 
-    /// Whether a crosshair shows, for the page's tests.
+    /// Whether a timeseries shows, for the page's tests.
     #[cfg(test)]
-    pub(crate) fn has_cursor(&self) -> bool {
-        self.cursor.is_some()
+    pub(crate) fn is_chart(&self) -> bool {
+        self.chart().is_some()
+    }
+
+    /// The id of one of the panel's elements, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn part(&self, part: &str) -> SharedString {
+        self.element_id(part)
     }
 
     fn focus(&self) -> Option<usize> {

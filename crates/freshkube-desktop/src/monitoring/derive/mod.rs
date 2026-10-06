@@ -60,6 +60,7 @@ pub(super) struct Shown {
 
 /// Derives what `spec` shows of `frame`, read over `window`.
 pub(crate) fn derive(spec: &PanelSpec, frame: Frame, window: TimeWindow) -> PanelData {
+    crate::desktop::probe::hit("monitoring-derive");
     let plain = |body| PanelData { body, unit: None };
     match &spec.viz {
         Viz::Table => plain(summary::table(spec, &frame)),

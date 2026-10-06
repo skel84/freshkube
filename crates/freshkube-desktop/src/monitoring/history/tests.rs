@@ -237,7 +237,8 @@ fn the_cursor_on_one_chart_shows_on_the_other(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.read(|cx| {
-        assert!(panels[1].read(cx).has_cursor());
-        assert!(!panels[0].read(cx).has_cursor());
+        let linked = &history.read(cx).linked;
+        assert!(linked.crosshair(1).is_some());
+        assert!(linked.crosshair(0).is_none());
     });
 }
