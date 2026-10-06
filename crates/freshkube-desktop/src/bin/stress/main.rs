@@ -56,15 +56,35 @@ const TICK: Duration = Duration::from_millis(10);
 #[derive(Clone, Copy, Debug)]
 enum Scenario {
     Summary,
-    SummaryBurst { rate: u32, expire: bool },
-    Table { pods: usize },
-    Burst { pods: usize, rate: u32 },
-    PodLogs { rate: u32 },
-    TalosLogs { rate: u32 },
-    Terminal { rate: u32 },
+    SummaryBurst {
+        rate: u32,
+        expire: bool,
+    },
+    Table {
+        pods: usize,
+    },
+    Burst {
+        pods: usize,
+        rate: u32,
+    },
+    PodLogs {
+        rate: u32,
+    },
+    TalosLogs {
+        rate: u32,
+    },
+    Terminal {
+        rate: u32,
+    },
     TerminalTop,
     TerminalSample,
-    Monitoring { processes: usize },
+    /// `rows` are where the mouse sweeps, as fractions of the window's
+    /// height: across the first charts, then across charts again after
+    /// scrolling.
+    Monitoring {
+        processes: usize,
+        rows: (f32, f32),
+    },
 }
 
 impl Scenario {
@@ -100,6 +120,7 @@ impl Scenario {
             // The dashboard's path is the first argument; see `main`.
             "monitoring" if args.len() > 1 => Scenario::Monitoring {
                 processes: number(2, 67)? as usize,
+                rows: hover_rows(&args[1]),
             },
             _ => return None,
         })
@@ -134,21 +155,27 @@ impl Scenario {
             Scenario::Terminal { .. } | Scenario::TerminalTop | Scenario::TerminalSample => {
                 Vec::new()
             }
-            Scenario::Monitoring { .. } => vec![
+            Scenario::Monitoring {
+                rows: (top, scrolled),
+                ..
+            } => vec![
                 ("FRESHKUBE_PAGE", "monitoring".into()),
                 (
                     "FRESHKUBE_STRESS_KEYS",
-                    "wait:6000 \
-                     hover:0.3,0.3,0.6,0.3,2000 hover:0.6,0.3,0.3,0.3,2000 \
-                     hover:0.65,0.3,0.95,0.3,2000 hover:0.95,0.3,0.65,0.3,2000 \
-                     hover:0.3,0.3,0.6,0.3,2000 hover:0.6,0.3,0.3,0.3,2000 \
-                     scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
-                     scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
-                     scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
-                     wait:500 hover:0.3,0.5,0.6,0.5,2000 hover:0.6,0.5,0.3,0.5,2000"
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" "),
+                    format!(
+                        "wait:6000 \
+                         hover:0.3,{top},0.6,{top},2000 hover:0.6,{top},0.3,{top},2000 \
+                         hover:0.65,{top},0.95,{top},2000 hover:0.95,{top},0.65,{top},2000 \
+                         hover:0.3,{top},0.6,{top},2000 hover:0.6,{top},0.3,{top},2000 \
+                         scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
+                         scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
+                         scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 scroll:0.6,0.6,-40 \
+                         wait:500 hover:0.3,{scrolled},0.6,{scrolled},2000 \
+                         hover:0.6,{scrolled},0.3,{scrolled},2000"
+                    )
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" "),
                 ),
             ],
         }
@@ -398,7 +425,7 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
             "v1",
             rest @ ..,
         ] => {
-            let Scenario::Monitoring { processes } = world.scenario else {
+            let Scenario::Monitoring { processes, .. } = world.scenario else {
                 return json_response(json!({}));
             };
             prometheus(processes, rest, &query)
@@ -567,6 +594,28 @@ fn log_stream(world: &World) -> Response<Body> {
     stream_response(receiver, "text/plain")
 }
 
+/// Where the `monitoring` sweeps cross charts in the stress window
+/// (1320 x 860): a dashboard that opens on a timeseries has its charts at
+/// 0.3 of the height and, scrolled, at 0.5; one that opens on a row of stat
+/// cards, as Cluster does, has them at 0.48 and, scrolled, at 0.32.
+fn hover_rows(dashboard: &str) -> (f32, f32) {
+    let opens_on_chart = std::fs::read(dashboard)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|json| {
+            let panels = json.get("panels")?.as_array()?.clone();
+            Some(panels.iter().any(|panel| {
+                panel["gridPos"]["y"].as_u64() == Some(0) && panel["type"] == "timeseries"
+            }))
+        })
+        .unwrap_or(true);
+    if opens_on_chart {
+        (0.3, 0.5)
+    } else {
+        (0.48, 0.32)
+    }
+}
+
 /// The fake Prometheus the `monitoring` scenario reaches through the service
 /// proxy, as `monitoring/prometheus-operated:9090`.
 const PROMETHEUS: (&str, &str, u16) = ("monitoring", "prometheus-operated", 9090);
@@ -668,7 +717,10 @@ fn prometheus(processes: usize, rest: &[&str], query: &str) -> Response<Body> {
                     let at = |time: f64| {
                         let wave =
                             (time / 600. + seed).sin() * 0.3 + (time / 97. + seed * 3.).sin() * 0.1;
-                        let value = (1. + seed % 11.) * (1. + qx as f64) * (1.5 + wave);
+                        // Between 0.01 and 0.95, so a percentunit chart
+                        // with a fixed 0-100% axis, as Cluster's are,
+                        // draws every line inside its plot.
+                        let value = (1. + seed % 11.) * (1. + qx as f64) * (1.5 + wave) / 110.;
                         json!([time, format!("{value:.4}")])
                     };
                     let metric =
