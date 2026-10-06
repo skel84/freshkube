@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use freshkube_core::workloads::{HealthState, WorkloadSource, WorkloadSourceError};
+use freshkube_core::workloads::{HealthState, WorkloadKind, WorkloadSource, WorkloadSourceError};
 use freshkube_ui::table::{self, TableSource};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Entity, TestAppContext, Window, WindowHandle, px, size,
+    AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext, Window, WindowHandle, px,
+    size,
 };
 use tokio::runtime::{Builder, Runtime};
 
@@ -76,6 +77,11 @@ fn mount_sized(
     (runtime, screen.unwrap(), handle)
 }
 
+/// The element id of the visible row at `ix`.
+fn row_id(screen: &WorkloadsScreen, ix: usize) -> SharedString {
+    screen.row_element(ix)
+}
+
 fn row_key(screen: &WorkloadsScreen, ix: usize) -> ItemKey {
     let rows = screen.rows();
     rows[ix].key(&screen.loader.data().unwrap().snapshot)
@@ -105,19 +111,91 @@ fn keyboard_selects_rows_and_updates_details(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_some());
-        window.click(("workload-row", 0usize), cx);
+        window.click(row_id(screen.read(cx), 0), cx);
         assert_eq!(screen.read(cx).selected, Some(row_key(screen.read(cx), 0)));
         window.press("down", cx);
         window.render_frame(cx);
-        assert_eq!(window.find(("workload-row", 1usize)).selected(), Some(true));
+        assert_eq!(
+            window.find(row_id(screen.read(cx), 1)).selected(),
+            Some(true)
+        );
         assert_eq!(screen.read(cx).selected, Some(row_key(screen.read(cx), 1)));
         window.find("workload-detail-title");
         window.press("end", cx);
         window.render_frame(cx);
         let last = screen.read(cx).rows().len() - 1;
-        assert_eq!(window.find(("workload-row", last)).selected(), Some(true));
+        assert_eq!(
+            window.find(row_id(screen.read(cx), last)).selected(),
+            Some(true)
+        );
         window.press("home", cx);
         assert_eq!(screen.read(cx).selected, Some(row_key(screen.read(cx), 0)));
+    })
+    .unwrap();
+}
+
+/// A row's id names its item, not its place: a filter that moves the row
+/// keeps its id, and the id still selects that item.
+/// A row's ids carry their role in the prefix, so a namespace whose name
+/// ends like a role, such as `a-status`, shares no id with namespace `a`.
+#[test]
+fn no_two_rows_share_an_element_id() {
+    use super::source::element_ids;
+    let pod = |namespace: &str, name: &str| ItemKey::Pod {
+        namespace: namespace.into(),
+        name: name.into(),
+    };
+    let keys = [
+        ItemKey::Namespace("a".into()),
+        ItemKey::Namespace("a-status".into()),
+        ItemKey::Namespace("a-name".into()),
+        ItemKey::Namespace("a-row".into()),
+        ItemKey::Workload {
+            namespace: "a".into(),
+            name: "x".into(),
+            kind: WorkloadKind::Deployment,
+        },
+        pod("a", "x"),
+    ];
+    let ids: Vec<String> = keys.iter().flat_map(element_ids).collect();
+    let unique: std::collections::BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+}
+
+#[gpui_kit::test]
+fn a_row_id_follows_its_item_through_a_filter(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    let worker = ItemKey::Workload {
+        namespace: "shop".into(),
+        name: "worker".into(),
+        kind: WorkloadKind::Deployment,
+    };
+    let line_of = |screen: &WorkloadsScreen, key: &ItemKey| {
+        let snapshot = &screen.loader.data().unwrap().snapshot;
+        screen
+            .rows()
+            .iter()
+            .position(|row| row.key(snapshot) == *key)
+    };
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let before = line_of(screen.read(cx), &worker).unwrap();
+        let id = row_id(screen.read(cx), before);
+        assert_eq!(id.as_ref(), "workload-row-shop/deployment/worker");
+        let shop = line_of(screen.read(cx), &ItemKey::Namespace("shop".into())).unwrap();
+        assert_eq!(row_id(screen.read(cx), shop).as_ref(), "workload-row-shop");
+        let ids: std::collections::HashSet<_> = (0..screen.read(cx).line_count())
+            .map(|line| row_id(screen.read(cx), line))
+            .collect();
+        assert_eq!(ids.len(), screen.read(cx).line_count(), "ids are unique");
+
+        window.click("only-unhealthy", cx);
+        window.render_frame(cx);
+        let after = line_of(screen.read(cx), &worker).unwrap();
+        assert_ne!(after, before, "the filter moves the row");
+        assert_eq!(row_id(screen.read(cx), after), id);
+        window.click(id, cx);
+        assert_eq!(screen.read(cx).selected, Some(worker.clone()));
     })
     .unwrap();
 }
@@ -163,7 +241,7 @@ fn enter_collapses_a_namespace(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let before = screen.read(cx).rows().len();
-        window.click(("workload-row", 0usize), cx);
+        window.click(row_id(screen.read(cx), 0), cx);
         window.press("enter", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).rows().len() < before);
@@ -474,8 +552,8 @@ fn a_namespace_row_is_tinted_at_the_row_height(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(matches!(screen.read(cx).rows()[0], RowRef::Namespace(_)));
-        let row = window.find(("workload-row", 0usize)).bounds();
-        let name = window.find(("workload-name", 0usize)).bounds();
+        let row = window.find(row_id(screen.read(cx), 0)).bounds();
+        let name = window.find(screen.read(cx).name_element(0)).bounds();
         let height = f32::from(row.size.height);
         assert!((height - 26.).abs() < 0.5, "row {row:?}");
         // Inside the row's 1 px border, above and below.
@@ -492,7 +570,8 @@ fn a_namespace_row_is_tinted_at_the_row_height(cx: &mut TestAppContext) {
 /// holds the whole issue.
 #[gpui_kit::test]
 fn issue_truncates_beside_the_details(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = app(cx, 1280., 880.);
+    let (_runtime, handle, view) = app(cx, 1280., 880.);
+    let screen = cx.update(|cx| view.read(cx).workloads());
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-5", cx);
         window.render_frame(cx);
@@ -501,18 +580,21 @@ fn issue_truncates_beside_the_details(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(("workload-row", 1usize), cx);
+        window.click(row_id(screen.read(cx), 1), cx);
         window.render_frame(cx);
         let list = window.find("workload-list").bounds();
         let details = window.find("workload-details").bounds();
         assert!(details.left() >= list.right(), "{list:?} {details:?}");
         let scroll = window.find("workload-table-scroll").bounds();
         let mut rows = 0usize;
-        while let Some(row) = window.try_find(("workload-row", rows)) {
+        for line in 0..screen.read(cx).line_count() {
+            let Some(row) = window.try_find(row_id(screen.read(cx), line)) else {
+                continue;
+            };
             let row = row.bounds();
             assert!(
                 row.right() <= scroll.right() + px(0.5),
-                "row {rows} {row:?} runs past the table {scroll:?}"
+                "row {line} {row:?} runs past the table {scroll:?}"
             );
             rows += 1;
         }
