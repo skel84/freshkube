@@ -52,8 +52,63 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let node = match self.services_state(cx) {
+            Ok(node) => node,
+            Err(state) => return state,
+        };
+        let header = self.services_header(&node, cx);
+        let toolbar = self.services_toolbar(cx);
+        let list = self.services_list(cx);
+        let detail = self.service_detail(&node, cx);
+        // In the node inspector, by its own width.
+        let wide = crate::screens::embedded_width(window) >= 760.;
+        let split = if wide {
+            h_flex()
+                .items_start()
+                .gap(dp(14.))
+                .child(div().w(dp(LIST_WIDTH)).flex_none().child(list))
+                .child(div().flex_1().min_w_0().child(detail))
+                .into_any_element()
+        } else {
+            v_flex()
+                .gap(dp(14.))
+                .child(list)
+                .child(detail)
+                .into_any_element()
+        };
+        let body = self
+            .page_body()
+            .children(self.stale_banner(cx))
+            .child(header)
+            .children(
+                self.services
+                    .error()
+                    .filter(|_| !self.overview.is_stale())
+                    .map(|error| {
+                        ui::warning_banner(
+                            Some("Services didn't refresh.".into()),
+                            error.to_owned(),
+                            None,
+                            cx,
+                        )
+                    }),
+            )
+            .child(toolbar)
+            .child(split);
+        self.page_scroll("services-page")
+            .child(body)
+            .into_any_element()
+    }
+
+    /// The node whose services show, or what shows instead: a config
+    /// error, an unreachable cluster, the skeleton while loading, no node
+    /// or a node that isn't responding.
+    fn services_state(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Result<presentation::NodeSummary, AnyElement> {
         if let Some(error) = self.config_error.clone() {
-            return self.config_error_state(error, cx);
+            return Err(self.config_error_state(error, cx));
         }
         if self.overview.data().is_none() {
             if let Some(error) = self
@@ -61,13 +116,12 @@ impl Pilot {
                 .error()
                 .filter(|_| !self.overview.is_loading())
             {
-                return self.unreachable_state(error.to_owned(), cx);
+                return Err(self.unreachable_state(error.to_owned(), cx));
             }
-            return self.services_skeleton(cx);
+            return Err(self.services_skeleton(cx));
         }
-        let p = palette(cx);
         let Some(node) = self.selected_summary().cloned() else {
-            return ui::empty_state(
+            return Err(ui::empty_state(
                 IconName::Server,
                 "No node selected",
                 "Open a node in Nodes to see its services.",
@@ -75,10 +129,10 @@ impl Pilot {
                 Vec::new(),
                 cx,
             )
-            .into_any_element();
+            .into_any_element());
         };
         if !node.responding && self.services.data().is_none() && !self.services.is_loading() {
-            return ui::empty_state(
+            return Err(ui::empty_state(
                 IconName::Unplug,
                 format!("{} isn't responding", node.name),
                 format!(
@@ -96,11 +150,14 @@ impl Pilot {
                 ],
                 cx,
             )
-            .into_any_element();
+            .into_any_element());
         }
-        let all = self.services.data().cloned().unwrap_or_default();
-        let visible = self.service_display.visible.clone();
-        let header = h_flex()
+        Ok(node)
+    }
+
+    fn services_header(&self, node: &presentation::NodeSummary, cx: &mut Context<Self>) -> Div {
+        let p = palette(cx);
+        h_flex()
             .items_end()
             .gap_3()
             .flex_wrap()
@@ -139,9 +196,12 @@ impl Pilot {
                     .loading(self.services.is_loading())
                     .disabled(self.services.is_loading() || self.selected_node.is_none())
                     .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
-            );
+            )
+    }
+
+    fn services_toolbar(&self, cx: &mut Context<Self>) -> Div {
         let filter = self.health_filter;
-        let toolbar = h_flex()
+        h_flex()
             .gap_2p5()
             .flex_wrap()
             .child(
@@ -181,8 +241,14 @@ impl Pilot {
                         view.rebuild_service_rows(cx);
                         cx.notify();
                     })),
-            );
-        let list = v_flex()
+            )
+    }
+
+    fn services_list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let all = self.services.data().cloned().unwrap_or_default();
+        let visible = self.service_display.visible.clone();
+        v_flex()
             .id("services-region")
             .test_support()
             .aria_label("Services on the target node; use Up and Down to select")
@@ -268,45 +334,7 @@ impl Pilot {
                         window.focus(&view.service_focus, cx);
                         cx.notify();
                     }))
-            }));
-        let detail = self.service_detail(&node, cx);
-        // In the node inspector, by its own width.
-        let wide = crate::screens::embedded_width(window) >= 760.;
-        let split = if wide {
-            h_flex()
-                .items_start()
-                .gap(dp(14.))
-                .child(div().w(dp(LIST_WIDTH)).flex_none().child(list))
-                .child(div().flex_1().min_w_0().child(detail))
-                .into_any_element()
-        } else {
-            v_flex()
-                .gap(dp(14.))
-                .child(list)
-                .child(detail)
-                .into_any_element()
-        };
-        let body = self
-            .page_body()
-            .children(self.stale_banner(cx))
-            .child(header)
-            .children(
-                self.services
-                    .error()
-                    .filter(|_| !self.overview.is_stale())
-                    .map(|error| {
-                        ui::warning_banner(
-                            Some("Services didn't refresh.".into()),
-                            error.to_owned(),
-                            None,
-                            cx,
-                        )
-                    }),
-            )
-            .child(toolbar)
-            .child(split);
-        self.page_scroll("services-page")
-            .child(body)
+            }))
             .into_any_element()
     }
 
