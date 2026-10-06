@@ -297,10 +297,10 @@ A page's components should be checked without starting the app. [#53](https://gi
   - Rebuild after a one-line change in `freshkube-ui`'s `table/mod.rs`: `cargo build -p freshkube-workbench` 20.3 s (5.00), 30.2 s (3.79), 29.0 s (4.39); `cargo build` 32.6 s (4.51), 48.3 s (3.68), 48.7 s (4.64).
   - Process start to the first frame with rows (`FRESHKUBE_FIRST_FRAME=1`): the DataTable story 269 ms (4.50), 275 ms (5.40), 267 ms (5.66); `--fixture` on Pods 505 ms (4.19), 486 ms (4.72), 642 ms (5.27).
 - (b) Done in `ff8c7e8` and `8a66ef8`: `layered()` and `curve()` lay out through a `Node` trait, then move unchanged into `crates/freshkube-graph`'s `layout` module, which has no dependencies. Unit tests and a workbench graph story follow.
-- (c) A `GraphView<S: GraphSource>` in that crate, with the service map as its first source.
+- (c) A `GraphView` in `freshkube-ui/src/graph/`, with the service map as its first source; `freshkube-graph` stays free of GPUI.
   - Routing landed in `bfb23ea`: `route()` returns a `Layout` whose routes keep clear of every box. A call that spans columns takes a lane in the gutters, a wrapped column is an ordinary column, and a call that closes a cycle comes back below the boxes. In the story's Fan-out, the calls cross 0 times, against 43 with `curve()`, 4 of which ran through a box.
   - The service map switched to `route()` in `411c046`; `layered()` and `curve()` are gone. A test checks that no connection on any page of the 120-service fixture runs through a box.
-  - Next: `GraphView`.
+  - `GraphView` landed in `304372b`, `07c90b3` and `a6c5399`. It is shaped like the data table: a page implements `GraphSource` and owns a `GraphState`, which derives the page of boxes, routes, markers, filter and selection when they change. The service map and the workbench's graph story draw through it. A graph wider than its card now scrolls inside the card's border, with a scrollbar under it. The map's inspector keeps its card, its content apart from the frame, ready for the shared inspector.
 
 ## Next: Coroot observability
 

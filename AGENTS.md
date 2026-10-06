@@ -11,7 +11,7 @@ crates/
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
 ├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
 ├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
-├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame and table
+├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
 ├── freshkube-graph/     graph layout without GPUI: columns of boxes and the curves between them
 ├── freshkube-workbench/ the shared components on invented data, one story at a time; never shipped
 └── freshkube-desktop/   the GPUI Kit application (shell, screens, the log sources)
