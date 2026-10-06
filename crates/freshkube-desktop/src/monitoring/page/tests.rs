@@ -70,6 +70,31 @@ fn frame(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.run_until_parked();
 }
 
+/// The wheel over the top of the grid, where it shows on a short page whose
+/// grid runs below the window; `TestWindowExt::scroll` aims at its centre.
+fn wheel(window: &mut gpui_kit::Window, delta: ScrollDelta, cx: &mut gpui_kit::App) {
+    window.render_frame(cx);
+    let grid = window.find("monitoring-grid").bounds();
+    let position = point(grid.center().x, grid.top() + px(20.));
+    window.dispatch_event(
+        gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: Default::default(),
+        }),
+        cx,
+    );
+    window.dispatch_event(
+        gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+            position,
+            delta,
+            ..Default::default()
+        }),
+        cx,
+    );
+    window.render_frame(cx);
+}
+
 fn shown(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &str) -> bool {
     let id = SharedString::from(id.to_owned());
     cx.update_window(handle, move |_, window, cx| {
@@ -1131,7 +1156,7 @@ fn a_table_keeps_its_rows_in_its_card_when_the_page_and_table_scroll(cx: &mut Te
     cx.update_window(handle, |_, window, cx| {
         // The page to its end, then the wheel goes on over the table, as a
         // trackpad's does once the page stops.
-        window.scroll("monitoring-grid", down(40_000.), cx);
+        wheel(window, down(40_000.), cx);
         crate::desktop::tests::settle_header(window, cx);
         for _ in 0..3 {
             window.scroll(list.clone(), down(200.), cx);
@@ -1172,10 +1197,11 @@ fn the_firing_alerts_table_takes_the_shared_rows(cx: &mut TestAppContext) {
             .unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
-            // Bring the panel into view, wherever the grid puts it.
+            // Bring the panel into view, wherever the grid puts it; at 20 px
+            // the window is short and the page scrolls instead of the grid.
             let top = window.find(table.list).bounds().top();
             window.scroll(
-                "monitoring-grid",
+                "monitoring-page",
                 ScrollDelta::Pixels(point(px(0.), px(200.) - top)),
                 cx,
             );
@@ -1184,4 +1210,81 @@ fn the_firing_alerts_table_takes_the_shared_rows(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn a_short_window_scrolls_the_page_alone_header_and_all(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let down = |delta: f32| ScrollDelta::Pixels(point(px(0.), px(-delta)));
+    let panels = cx.read(|cx| page.read(cx).board.as_ref().unwrap().slots.len());
+    // Tall, the page stays put and the grid takes what the header leaves.
+    cx.update_window(handle, |_, window, cx| {
+        crate::desktop::tests::settle_header(window, cx);
+        let title = window.find("monitoring-title").bounds();
+        window.scroll("monitoring-page", down(400.), cx);
+        crate::desktop::tests::settle_header(window, cx);
+        assert_eq!(window.find("monitoring-title").bounds(), title);
+        let frame = window.find("monitoring-page").bounds();
+        let grid = window.find("monitoring-grid").bounds();
+        assert!(grid.top() > title.bottom(), "{grid:?} over {title:?}");
+        assert!(grid.bottom() <= frame.bottom(), "{grid:?} past {frame:?}");
+    })
+    .unwrap();
+    // 760 × 560 at 20 px with the column folded: 273 dp, under 620.
+    cx.simulate_window_resize(handle, size(px(600.), px(420.)));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        let unit = crate::ui::dp_px(1., window);
+        let frame = window.find("monitoring-page").bounds();
+        let grid = window.find("monitoring-grid").bounds();
+        // The grid is all its panels high, inside the page that scrolls.
+        assert!(
+            grid.size.height > frame.size.height,
+            "{grid:?} in {frame:?}"
+        );
+        // The wheel over the grid moves the header and the panels together:
+        // the page scrolls and the grid doesn't scroll inside it.
+        let title = window.find("monitoring-title").bounds();
+        let panel = window.find("monitoring-panel-0").bounds();
+        wheel(window, down(60.), cx);
+        crate::desktop::tests::settle_header(window, cx);
+        let moved = title.top() - window.find("monitoring-title").bounds().top();
+        let panel_moved = panel.top() - window.find("monitoring-panel-0").bounds().top();
+        assert!(moved > px(0.), "the page didn't scroll");
+        assert!(
+            (moved - panel_moved).abs() < px(0.5),
+            "the header moved {moved:?}, the panels {panel_moved:?}"
+        );
+        // To the page's end: the header gone and the last panel in it.
+        wheel(window, down(40_000.), cx);
+        crate::desktop::tests::settle_header(window, cx);
+        let title = window.find("monitoring-title").bounds();
+        assert!(
+            title.bottom() <= frame.top(),
+            "{title:?} still in {frame:?}"
+        );
+        let last = (0..panels)
+            .map(|n| {
+                window
+                    .find(format!("monitoring-panel-{n}"))
+                    .bounds()
+                    .bottom()
+            })
+            .fold(px(f32::MIN), |a, b| a.max(b));
+        assert!(last <= frame.bottom() + px(0.5), "{last:?} past {frame:?}");
+        assert!(
+            last > frame.bottom() - unit * 40.,
+            "{last:?} short of {frame:?}"
+        );
+        // The panels it asks for are the ones in the page's view.
+        let viewport = page.read(cx).viewport.get();
+        assert!(viewport.top > 0., "{viewport:?}");
+        assert!(
+            (viewport.height - frame.size.height / unit).abs() < 1.,
+            "asks for {viewport:?}, the page is {frame:?}"
+        );
+    })
+    .unwrap();
 }

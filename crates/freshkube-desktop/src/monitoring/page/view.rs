@@ -31,13 +31,31 @@ impl Render for MonitoringPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("monitoring-page");
         let narrow = crate::screens::content_width(window) < NARROW;
+        // A short window scrolls the page, header and all, as the only
+        // scroller: the grid lays out at its full height inside it, so the
+        // wheel never moves two things at once.
+        let short = page::is_short(window);
         page::padded("monitoring-page")
+            .when(short, |this| {
+                this.overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .track_scroll(&self.scroll)
+            })
             .key_context("Monitoring")
             .track_focus(&self.focus)
             .child(self.render_header(window, cx))
             .children(self.render_variables(cx))
             .children(self.render_variable_error(cx))
-            .child(div().flex_1().min_h_0().child(self.render_body(narrow, cx)))
+            .child(
+                div()
+                    .id("monitoring-body")
+                    .flex_1()
+                    .min_h_0()
+                    // A state still centres in the page's height.
+                    .when(short, |this| this.flex_none().min_h(relative(1.)))
+                    .child(self.render_body(narrow, short, cx))
+                    .test_support(),
+            )
     }
 }
 
@@ -363,7 +381,7 @@ impl MonitoringPage {
         )
     }
 
-    fn render_body(&mut self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_body(&mut self, narrow: bool, short: bool, cx: &mut Context<Self>) -> AnyElement {
         let page = cx.entity().downgrade();
         let retry = move |id: &'static str, label: &'static str| {
             let page = page.clone();
@@ -423,7 +441,7 @@ impl MonitoringPage {
                 cx,
             )
             .into_any_element(),
-            _ => self.render_grid(narrow, cx),
+            _ => self.render_grid(narrow, short, cx),
         }
     }
 
@@ -470,10 +488,11 @@ impl MonitoringPage {
         .into_any_element()
     }
 
-    /// The dashboard's rows and panels, scrolled as one. A canvas reports
-    /// what is in view once laid out, so the panels coming into it are
-    /// asked on the next frame.
-    fn render_grid(&mut self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+    /// The dashboard's rows and panels, scrolled as one: by the grid, or by
+    /// the page when the window is short. A canvas reports what is in view
+    /// of whichever holds the scroll handle once laid out, so the panels
+    /// coming into it are asked on the next frame.
+    fn render_grid(&mut self, narrow: bool, short: bool, cx: &mut Context<Self>) -> AnyElement {
         let Some(board) = &self.board else {
             return div().into_any_element();
         };
@@ -571,10 +590,13 @@ impl MonitoringPage {
         .size_full();
         div()
             .id("monitoring-grid")
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .track_scroll(&self.scroll)
+            .w_full()
+            .when(!short, |this| {
+                this.h_full()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .track_scroll(&self.scroll)
+            })
             .child(
                 div()
                     .relative()
