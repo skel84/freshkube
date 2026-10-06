@@ -882,6 +882,63 @@ fn chips_past_the_rows_end_in_more_which_lists_them_all(cx: &mut TestAppContext)
     .unwrap();
 }
 
+/// The list behind "+N" stays closed once dismissed, through new frames,
+/// new chips and another workload; it opens only when asked.
+#[gpui_kit::test]
+fn the_list_of_containers_stays_closed_once_dismissed(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount_sized(cx, 520., 820.);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    let open = |view: &Entity<WorkloadLogView>, cx: &App| view.read(cx).source().more_open;
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all[1..].to_vec(), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("workload-logs-more", cx);
+        window.render_frame(cx);
+        assert!(open(&view, cx));
+        assert!(window.find("workload-logs-list").visible());
+
+        // Dismissed by a click outside it.
+        window.click("workload-logs-status", cx);
+        window.render_frame(cx);
+        assert!(!open(&view, cx));
+        assert!(window.try_find("workload-logs-list").is_none());
+    })
+    .unwrap();
+    // New frames and new lines leave it closed.
+    cx.executor().advance_clock(EXAMPLE_INTERVAL * 2);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(!open(&view, cx));
+        assert!(window.try_find("workload-logs-list").is_none());
+
+        // Open again, then a pod joins: another set of chips closes it.
+        window.click("workload-logs-more", cx);
+        window.render_frame(cx);
+        assert!(open(&view, cx));
+        feed(&view, all.clone(), cx);
+        window.render_frame(cx);
+        assert!(!open(&view, cx));
+        assert!(window.try_find("workload-logs-list").is_none());
+
+        // Open again, then another workload: closed.
+        window.click("workload-logs-more", cx);
+        window.render_frame(cx);
+        assert!(open(&view, cx));
+        view.update(cx, |view, cx| {
+            view.show_workload(Some(deployment("ledger")), None, cx)
+        });
+        window.render_frame(cx);
+        assert!(!open(&view, cx));
+        assert!(window.try_find("workload-logs-list").is_none());
+    })
+    .unwrap();
+}
+
 #[test]
 fn chips_fit_their_rows_and_leave_room_for_more() {
     use gpui_kit::px;

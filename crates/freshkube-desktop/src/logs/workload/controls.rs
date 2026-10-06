@@ -305,6 +305,11 @@ impl Controls for WorkloadLogView {
             room,
             rows,
         );
-        self.source_mut().fits = fits;
+        let source = self.source_mut();
+        source.fits = fits;
+        // With every chip in its row there's no "+N" to hold the list open.
+        if fits >= chips.len() {
+            source.more_open = false;
+        }
     }
 }

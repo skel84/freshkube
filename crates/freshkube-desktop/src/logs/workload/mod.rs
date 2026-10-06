@@ -407,6 +407,15 @@ impl WorkloadLogs {
                 }
             })
             .collect();
+        // Another set of containers closes the list of them, so it never
+        // opens again by itself on a new set.
+        let same_set = chips
+            .iter()
+            .map(|chip| &chip.service)
+            .eq(self.chips.iter().map(|chip| &chip.service));
+        if !same_set {
+            self.more_open = false;
+        }
         self.chips = Rc::new(chips);
         self.chips_revision += 1;
         let pods = self.pods.len();
@@ -693,6 +702,7 @@ impl WorkloadLogPanel for WorkloadLogView {
         source.hidden.clear();
         source.seen.clear();
         source.errors.clear();
+        source.more_open = false;
         source.describe();
         self.clear_shown();
         cx.notify();
