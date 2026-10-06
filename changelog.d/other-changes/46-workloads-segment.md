@@ -1,0 +1,1 @@
+- Health's workload and pod counts show in the status bar, not under its header.

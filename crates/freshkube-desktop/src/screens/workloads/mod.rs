@@ -24,12 +24,13 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
-    panel, partial_notice, refresh_control, retry_button,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
+    panel, partial_notice, refresh_control, retry_button, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::page::{self, PageHeader};
+use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self, DataTable, TableState};
 use source::Derived;
 
@@ -209,8 +210,10 @@ pub(crate) struct WorkloadsScreen {
     query: Entity<InputState>,
     focus: FocusHandle,
     table: TableState,
-    /// The rows, columns and meta parts, derived by [`Self::sync`].
+    /// The rows and columns, derived by [`Self::sync`].
     derived: Option<Derived>,
+    /// The status bar's line and the loader revision it was derived at.
+    status: Option<(u64, Segment)>,
     _subscription: Subscription,
     /// Caret and selection changes redraw the filter; this view is cached, so
     /// it has to hear about them.
@@ -284,6 +287,7 @@ impl ScreenPanel for WorkloadsScreen {
             focus: cx.focus_handle(),
             table: TableState::new("workload"),
             derived: None,
+            status: None,
             _subscription: subscription,
         }
     }
@@ -310,6 +314,11 @@ impl ScreenPanel for WorkloadsScreen {
 
     fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+    }
+
+    fn status(&mut self) -> Option<&Segment> {
+        self.sync_status();
+        self.status.as_ref().map(|(_, line)| line)
     }
 
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -745,32 +754,27 @@ impl WorkloadsScreen {
             &self.loader,
             cx,
         );
-        let counts = self
-            .derived
-            .as_ref()
-            .map(|derived| derived.meta.clone())
-            .unwrap_or_default();
-        let mut parts = meta(
-            self.source.as_ref(),
-            Scope::Cluster,
-            &self.loader,
-            false,
-            counts.clone(),
-        );
-        // The first count, after the context and its separator, names them
-        // all for assistive technology; they wrap as the line's other parts.
-        if let (Some(_), Some(first), Some(slot)) =
-            (self.source.as_ref(), counts.first(), parts.get_mut(2))
-        {
-            *slot = div()
-                .id("workload-summary")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(counts.join(", "))
-                .child(first.clone())
-                .into_any_element();
+        header.control(refresh).render(window, cx)
+    }
+
+    /// Derives the status bar's line again when a new snapshot arrives:
+    /// the counts don't follow the filters.
+    fn sync_status(&mut self) {
+        let revision = self.loader.revision();
+        if self.status.as_ref().is_some_and(|(at, _)| *at == revision) {
+            return;
         }
-        header.control(refresh).meta(parts).render(window, cx)
+        let parts = self
+            .loader
+            .data()
+            .map(|data| source::status_parts(data))
+            .unwrap_or_default();
+        let line = segment(
+            self.source.as_ref(),
+            &self.loader,
+            parts.into_iter().map(Part::new),
+        );
+        self.status = Some((revision, line));
     }
 
     fn render_unhealthy(&self, cx: &mut Context<Self>) -> Button {
