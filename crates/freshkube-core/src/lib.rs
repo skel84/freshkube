@@ -28,6 +28,7 @@ pub mod cluster_overview;
 
 pub mod constants;
 pub mod coroot;
+pub mod delivery;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;

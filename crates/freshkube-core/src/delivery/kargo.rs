@@ -1,0 +1,288 @@
+//! Kargo's Warehouse, Freight, Stage and Promotion, read tolerantly: every
+//! field may be missing, and both the older single `currentFreight` and the
+//! newer `freightHistory` of a Stage are understood.
+
+use serde_json::Value;
+
+use super::digest::{Digest, text};
+use super::read::{ListRequest, Reader, Resource, Scope};
+use super::source::{Source, Truncation};
+use super::versions::resolve;
+use crate::resources::Failure;
+
+pub const GROUP: &str = "kargo.akuity.io";
+const VERSIONS: &[&str] = &["v1alpha1"];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FreightCommit {
+    pub repo_url: String,
+    pub id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FreightImage {
+    pub repo_url: String,
+    /// Shown, never joined on.
+    pub tag: Option<String>,
+    pub digest: Option<Digest>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Freight {
+    pub project: String,
+    /// Kargo's content hash, the object's name.
+    pub name: String,
+    pub alias: Option<String>,
+    pub warehouse: Option<String>,
+    pub commits: Vec<FreightCommit>,
+    pub images: Vec<FreightImage>,
+    /// Stages that verified it.
+    pub verified_in: Vec<String>,
+    /// Stages it was approved for.
+    pub approved_for: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage {
+    pub project: String,
+    pub name: String,
+    pub warehouses: Vec<String>,
+    /// Names of the freight the Stage says it currently runs.
+    pub current_freight: Vec<String>,
+    /// Digests of the images in that Freight, as the Stage's own record holds
+    /// them (`freightHistory` items, `currentFreight`, `lastPromotion`).
+    pub current_digests: Vec<Digest>,
+    pub last_promotion: Option<String>,
+    pub health: Option<String>,
+    pub phase: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Promotion {
+    pub project: String,
+    pub name: String,
+    pub stage: Option<String>,
+    pub freight: Option<String>,
+    pub phase: Option<String>,
+    pub message: Option<String>,
+    /// Digests of the Freight's images, as the Promotion's status records.
+    pub freight_digests: Vec<Digest>,
+    /// Commits its steps pushed (a step's `commit` output).
+    pub pushed_commits: Vec<String>,
+    /// Commits its steps checked out (a step's `commits` map), the source.
+    pub source_commits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Warehouse {
+    pub project: String,
+    pub name: String,
+    pub image_repos: Vec<String>,
+}
+
+fn names(value: &Value, pointer: &str) -> Vec<String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_object)
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn array<'a>(value: &'a Value, pointer: &str) -> impl Iterator<Item = &'a Value> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+pub fn parse_freight(value: &Value) -> Option<Freight> {
+    // Older Kargo keeps the origin and contents under `spec`, newer at the top.
+    let body = if value.get("images").is_some() || value.get("commits").is_some() {
+        value
+    } else {
+        value.get("spec").unwrap_or(value)
+    };
+    Some(Freight {
+        project: text(value, "/metadata/namespace")?,
+        name: text(value, "/metadata/name")?,
+        alias: text(value, "/metadata/labels/kargo.akuity.io~1alias")
+            .or_else(|| text(value, "/alias")),
+        warehouse: text(body, "/origin/name").or_else(|| text(value, "/origin/name")),
+        commits: array(body, "/commits")
+            .filter_map(|commit| {
+                Some(FreightCommit {
+                    repo_url: text(commit, "/repoURL")?,
+                    id: text(commit, "/id")?,
+                })
+            })
+            .collect(),
+        images: array(body, "/images")
+            .filter_map(|image| {
+                Some(FreightImage {
+                    repo_url: text(image, "/repoURL")?,
+                    tag: text(image, "/tag"),
+                    digest: text(image, "/digest").and_then(|digest| Digest::parse(&digest)),
+                })
+            })
+            .collect(),
+        verified_in: names(value, "/status/verifiedIn"),
+        approved_for: names(value, "/status/approvedFor"),
+    })
+}
+
+pub fn parse_stage(value: &Value) -> Option<Stage> {
+    let mut current: Vec<String> = Vec::new();
+    let mut digests: Vec<Digest> = Vec::new();
+    // Newer Kargo: the newest entry of `freightHistory` holds a map of
+    // origin -> freight.
+    if let Some(items) = value
+        .pointer("/status/freightHistory/0/items")
+        .and_then(Value::as_object)
+    {
+        current.extend(items.values().filter_map(|item| text(item, "/name")));
+        digests.extend(items.values().flat_map(image_digests));
+    }
+    // Older Kargo: one `currentFreight`.
+    if current.is_empty() {
+        if let Some(name) = text(value, "/status/currentFreight/name") {
+            current.push(name);
+        }
+        if let Some(name) = text(value, "/status/lastPromotion/freight/name")
+            && !current.contains(&name)
+        {
+            current.push(name);
+        }
+        for freight in ["/status/currentFreight", "/status/lastPromotion/freight"] {
+            if let Some(freight) = value.pointer(freight) {
+                digests.extend(image_digests(freight));
+            }
+        }
+    }
+    digests.dedup();
+    Some(Stage {
+        project: text(value, "/metadata/namespace")?,
+        name: text(value, "/metadata/name")?,
+        warehouses: array(value, "/spec/requestedFreight")
+            .filter_map(|request| text(request, "/origin/name"))
+            .collect(),
+        current_freight: current,
+        current_digests: digests,
+        last_promotion: text(value, "/status/lastPromotion/name"),
+        health: text(value, "/status/health/status"),
+        phase: text(value, "/status/phase"),
+    })
+}
+
+fn image_digests(freight: &Value) -> Vec<Digest> {
+    array(freight, "/images")
+        .filter_map(|image| text(image, "/digest").and_then(|digest| Digest::parse(&digest)))
+        .collect()
+}
+
+/// A commit id as a step reports it: hex, 7 to 64 characters.
+fn commit_id(value: &Value) -> Option<String> {
+    let id = value.as_str()?;
+    ((7..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| id.to_ascii_lowercase())
+}
+
+/// What a Promotion's steps recorded: commits pushed (`commit`) and commits
+/// checked out (`commits`, a map of path to commit), by step.
+fn step_commits(value: &Value) -> (Vec<String>, Vec<String>) {
+    let (mut pushed, mut source) = (Vec::new(), Vec::new());
+    if let Some(steps) = value.pointer("/status/state").and_then(Value::as_object) {
+        for step in steps.values() {
+            pushed.extend(step.get("commit").and_then(commit_id));
+            if let Some(checked_out) = step.get("commits").and_then(Value::as_object) {
+                source.extend(checked_out.values().filter_map(commit_id));
+            }
+        }
+    }
+    (pushed, source)
+}
+
+pub fn parse_promotion(value: &Value) -> Option<Promotion> {
+    let (pushed_commits, source_commits) = step_commits(value);
+    let mut freight_digests = value
+        .pointer("/status/freight")
+        .map(image_digests)
+        .unwrap_or_default();
+    for collected in value
+        .pointer("/status/freightCollection/items")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|items| items.values())
+    {
+        freight_digests.extend(image_digests(collected));
+    }
+    freight_digests.dedup();
+    Some(Promotion {
+        pushed_commits,
+        source_commits,
+        freight_digests,
+        project: text(value, "/metadata/namespace")?,
+        name: text(value, "/metadata/name")?,
+        stage: text(value, "/spec/stage"),
+        freight: text(value, "/spec/freight").or_else(|| text(value, "/status/freight/name")),
+        phase: text(value, "/status/phase"),
+        message: text(value, "/status/message"),
+    })
+}
+
+pub fn parse_warehouse(value: &Value) -> Option<Warehouse> {
+    Some(Warehouse {
+        project: text(value, "/metadata/namespace")?,
+        name: text(value, "/metadata/name")?,
+        image_repos: array(value, "/spec/subscriptions")
+            .filter_map(|subscription| text(subscription, "/image/repoURL"))
+            .collect(),
+    })
+}
+
+/// Everything Kargo knows about one project's delivery.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KargoProject {
+    pub warehouses: Vec<Warehouse>,
+    pub freight: Vec<Freight>,
+    pub stages: Vec<Stage>,
+    pub promotions: Vec<Promotion>,
+}
+
+async fn read_kind<R: Reader, T>(
+    reader: &R,
+    plural: &str,
+    project: &str,
+    parse: fn(&Value) -> Option<T>,
+) -> Result<(Vec<T>, Option<Truncation>), Failure> {
+    let resource: Resource = resolve(reader, GROUP, plural, VERSIONS, true).await?;
+    let listing = reader
+        .list(&ListRequest {
+            resource,
+            scope: Scope::Namespace(project.to_owned()),
+        })
+        .await?;
+    Ok(listing.parse(parse))
+}
+
+/// Reads one project's Kargo objects. Each kind is its own [`Source`], so a
+/// refused Promotion list doesn't hide the Freight.
+pub struct KargoRead {
+    pub warehouses: Source<Vec<Warehouse>>,
+    pub freight: Source<Vec<Freight>>,
+    pub stages: Source<Vec<Stage>>,
+    pub promotions: Source<Vec<Promotion>>,
+}
+
+pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
+    KargoRead {
+        warehouses: Source::from_listing(
+            read_kind(reader, "warehouses", project, parse_warehouse).await,
+        ),
+        freight: Source::from_listing(read_kind(reader, "freights", project, parse_freight).await),
+        stages: Source::from_listing(read_kind(reader, "stages", project, parse_stage).await),
+        promotions: Source::from_listing(
+            read_kind(reader, "promotions", project, parse_promotion).await,
+        ),
+    }
+}

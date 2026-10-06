@@ -1,0 +1,34 @@
+//! Read-only delivery joins: a commit to the pods that run it (#158).
+//!
+//! This is a spike. It reads Kargo, Argo CD, Argo Rollouts, Pipelines as
+//! Code and Tekton (with Chains and Conforma results), and pods, and joins
+//! them only on commit SHA and image digest, saying for each link whether it
+//! is confirmed, claimed or unknown. Every cluster call goes through
+//! [`read::ReadOnlyClient`], which can only GET; nothing here writes.
+
+pub mod argocd;
+pub mod collect;
+pub mod digest;
+pub mod github;
+pub mod join;
+pub mod kargo;
+pub mod pods;
+pub mod read;
+pub mod rollouts;
+pub mod source;
+pub mod tekton;
+mod versions;
+
+#[cfg(test)]
+mod fixtures;
+#[cfg(test)]
+mod tests;
+
+pub use argocd::StageNaming;
+pub use collect::{Clusters, Plan, collect, commit_of_pull_request};
+pub use digest::Digest;
+pub use github::{GhCli, GitHub, PullRequest};
+pub use join::{Confidence, Evidence, Hop, Key, Link, Trail, join, render};
+pub use read::{ListRequest, ReadOnlyClient, Reader, Resource, Scope};
+pub use source::{Source, printable, redact_identity, redact_location, shown};
+pub use tekton::{CommitNames, EvidenceResult};
