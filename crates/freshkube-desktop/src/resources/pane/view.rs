@@ -20,6 +20,7 @@ use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
 use crate::screens::panel;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::inspector::{self, Inspector};
 
 impl DetailPane {
     fn header(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
@@ -32,11 +33,10 @@ impl DetailPane {
             DocumentRead::Deleted => Some((Tone::Crit, "Deleted")),
         };
         h_flex()
+            .flex_1()
+            .min_w_0()
             .items_start()
             .gap_2()
-            .px_4()
-            .pt_3()
-            .pb_2()
             .child(
                 v_flex()
                     .flex_1()
@@ -146,48 +146,20 @@ impl DetailPane {
                 .id(id)
                 .test_support()
                 .role(Role::Status)
-                .px_4()
-                .pb_2()
                 .child(banner)
                 .into_any_element(),
         )
     }
 
     fn tabs(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
         let events = &detail.events;
         let tab = |id: &'static str,
                    tab: Tab,
                    label: SharedString,
                    extra: Option<AnyElement>,
                    tip: Option<SharedString>| {
-            let active = self.tab == tab;
-            h_flex()
-                .id(id)
-                .test_support()
-                .role(Role::Tab)
-                .aria_selected(active)
-                .aria_label(label.clone())
+            inspector::tab(id, label, self.tab == tab, cx)
                 .track_focus(&self.tab_focus[tab.index()])
-                .focus_visible(|style| style.bg(p.hover))
-                .h(dp(32.))
-                .px_2p5()
-                .gap_1p5()
-                .cursor_pointer()
-                .text_size(dp(12.5))
-                .border_b_2()
-                .map(|this| {
-                    if active {
-                        this.border_color(p.accent)
-                            .text_color(p.ink)
-                            .font_weight(FontWeight::SEMIBOLD)
-                    } else {
-                        this.border_color(ui::transparent())
-                            .text_color(p.muted)
-                            .hover(|style| style.text_color(p.ink))
-                    }
-                })
-                .child(label)
                 .children(extra)
                 .tooltip(move |window, cx| {
                     let m = ui::modifier();
@@ -212,10 +184,7 @@ impl DetailPane {
             .on_action(
                 cx.listener(|pane, _: &PreviousTab, window, cx| pane.move_tab(-1, window, cx)),
             )
-            .px_3()
             .gap_1()
-            .border_b_1()
-            .border_color(p.line)
             .child(tab(
                 "detail-tab-overview",
                 Tab::Overview,
@@ -339,17 +308,63 @@ impl Render for DetailPane {
         let Some(detail) = self.detail.as_ref() else {
             return div().into_any_element();
         };
-        let p = palette(cx);
         let body = match (self.tab, &detail.view, &self.summary) {
             (Tab::Overview, Some(_), Some(summary)) => self.overview(detail, summary, cx),
             (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
             (Tab::Events, ..) => self.events(detail, cx),
-            (Tab::Logs, ..) => self.logs.clone().into_any_element(),
+            // The log view draws to its edges; the card used to frame it.
+            (Tab::Logs, ..) => v_flex()
+                .size_full()
+                .min_h_0()
+                .px(dp(freshkube_ui::page::PANE_PADDING))
+                .pb(dp(freshkube_ui::page::PANE_PADDING))
+                .child(
+                    v_flex()
+                        .id("detail-logs")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .child(self.logs.clone()),
+                )
+                .into_any_element(),
             (Tab::Shell, ..) => self.shell.clone().into_any_element(),
             (Tab::Ports, ..) => self.ports.clone().into_any_element(),
             _ => self.document_state(detail, cx),
         };
-        panel(cx)
+        let notice = self.notice(detail, cx);
+        let feedback = self.feedback.clone().map(|feedback| {
+            div()
+                .id("detail-feedback")
+                .test_support()
+                .role(Role::Status)
+                .aria_label(feedback.clone())
+                .text_size(dp(12.))
+                .text_color(palette(cx).muted)
+                .child(feedback)
+        });
+        let frame = if self.embedded_node {
+            // The node pane keeps its card, without the heading and tabs.
+            let line = palette(cx).line;
+            panel(cx)
+                .children(notice.map(|notice| div().px_4().pb_2().child(notice)))
+                .child(div().flex_1().min_h_0().child(body))
+                .children(
+                    feedback
+                        .map(|feedback| feedback.px_4().py_1p5().border_t_1().border_color(line)),
+                )
+        } else {
+            div().flex().flex_col().child(
+                Inspector::new("detail-inspector")
+                    .heading(self.header(detail, cx))
+                    .banner(notice)
+                    .tabs(self.tabs(detail, cx))
+                    .content(body)
+                    .footer(feedback)
+                    .render(cx),
+            )
+        };
+        frame
             .id("resource-detail")
             .test_support()
             .key_context(if self.embedded_node {
@@ -370,28 +385,6 @@ impl Render for DetailPane {
             )
             .size_full()
             .overflow_hidden()
-            .when(!self.embedded_node, |this| {
-                this.child(self.header(detail, cx))
-            })
-            .children(self.notice(detail, cx))
-            .when(!self.embedded_node, |this| {
-                this.child(self.tabs(detail, cx))
-            })
-            .child(div().flex_1().min_h_0().child(body))
-            .children(self.feedback.clone().map(|feedback| {
-                div()
-                    .id("detail-feedback")
-                    .test_support()
-                    .role(Role::Status)
-                    .aria_label(feedback.clone())
-                    .px_4()
-                    .py_1p5()
-                    .border_t_1()
-                    .border_color(p.line)
-                    .text_size(dp(12.))
-                    .text_color(p.muted)
-                    .child(feedback)
-            }))
             .into_any_element()
     }
 }

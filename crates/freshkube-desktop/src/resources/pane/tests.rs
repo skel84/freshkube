@@ -758,3 +758,84 @@ fn a_healthy_pod_has_no_cause_and_logs_is_its_first_action(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+/// A pod's tabs are the inspector's: 28 high, at any text size, in one
+/// strip under the heading.
+#[gpui_kit::test]
+fn every_tab_is_28_high_at_any_text_size(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    cx.update(|cx| crate::text_size::install(None, cx));
+    let (pod, _) = crashing_pod();
+    cx.update(|cx| open(&pane, &pod, Duration::ZERO, cx));
+    cx.run_until_parked();
+    for text_size in [13., 20.] {
+        cx.update(|cx| crate::text_size::set(text_size, cx));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let strip = window.find("detail-inspector-tabs").bounds();
+            let heading = window.find("detail-inspector-heading").bounds();
+            assert!(strip.top() >= heading.bottom(), "{heading:?} {strip:?}");
+            let tall = crate::ui::dp_px(28., window);
+            for id in [
+                "detail-tab-overview",
+                "detail-tab-yaml",
+                "detail-tab-events",
+                "detail-tab-logs",
+                "detail-tab-shell",
+            ] {
+                let tab = window.find(id).bounds();
+                assert!(
+                    (tab.size.height - tall).abs() <= px(1.),
+                    "{text_size} {id}: {tab:?}"
+                );
+                assert!(tab.top() >= strip.top() && tab.bottom() <= strip.bottom());
+            }
+        })
+        .unwrap();
+    }
+}
+
+/// The tabs' content starts where the heading does: the Logs tab insets
+/// the log view, which draws to its edges, and YAML its find field.
+#[gpui_kit::test]
+fn the_logs_and_yaml_tabs_are_inset_like_the_heading(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = crashing_pod();
+    cx.update(|cx| open(&pane, &pod, Duration::ZERO, cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("detail-tab-logs", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let inspector = window.find("detail-inspector").bounds();
+        let logs = window.find("detail-logs").bounds();
+        let inset = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
+        assert!(
+            (logs.left() - inspector.left() - inset).abs() <= px(1.),
+            "{logs:?}"
+        );
+        assert!(
+            (inspector.right() - logs.right() - inset).abs() <= px(1.),
+            "{logs:?}"
+        );
+        window.click("detail-tab-yaml", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let inspector = window.find("detail-inspector").bounds();
+        let find = window.find("detail-find").bounds();
+        let inset = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
+        assert!(
+            (find.left() - inspector.left() - inset).abs() <= px(1.),
+            "{find:?}"
+        );
+    })
+    .unwrap();
+}

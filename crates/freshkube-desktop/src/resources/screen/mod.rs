@@ -9,13 +9,13 @@ use std::time::{Duration, SystemTime};
 use freshkube_core::resources::{
     ResourceKind, WatchBatch, WatchEvent, builtin, list_table, watch_collection,
 };
+use freshkube_ui::inspector::{self, InspectorSplit};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, IndexPath, Sizable,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
-    resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState},
     v_flex,
 };
@@ -38,7 +38,7 @@ use super::{example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::screens::{SCREEN_DEADLINE, page_width};
-use crate::ui::{self, clock, dp, dp_px};
+use crate::ui::{self, clock, dp};
 use freshkube_ui::{page, table};
 use layout::TableLayout;
 use pods::{ListView, NotReady, UsageState};
@@ -59,18 +59,6 @@ const WATCH_COALESCE: Duration = Duration::from_millis(100);
 const NAMESPACE_WIDTH: f32 = 132.;
 /// The table's header and a couple of rows.
 const LIST_MIN_HEIGHT: f32 = 96.;
-/// Below this content width the detail pane stacks under the list.
-const SPLIT_WIDTH: f32 = 900.;
-const LIST_MIN_WIDTH: f32 = 320.;
-const PANE_WIDTH: f32 = 460.;
-const PANE_MIN_WIDTH: f32 = 320.;
-/// Stacked, the list and the pane share the height one to two, so a short
-/// window still leaves the pane room for a few lines of YAML or logs.
-const STACKED_LIST_HEIGHT: f32 = 190.;
-const PANE_HEIGHT: f32 = 380.;
-const PANE_MIN_HEIGHT: f32 = 220.;
-/// Space between the list and the pane, where the resize handle sits.
-const SPLIT_GAP: f32 = 14.;
 const ALL_NAMESPACES: &str = "All namespaces";
 
 actions!(
@@ -238,8 +226,10 @@ pub(crate) struct ResourcesScreen {
     tick: Option<Task<()>>,
     /// The selected object in full, beside the list or below it.
     detail: Entity<DetailPane>,
-    split: Entity<ResizableState>,
-    stacked: Entity<ResizableState>,
+    /// The list and the pane: the pane's width, one for every kind, is
+    /// remembered in `navigation.json`; stacked, they share the height one
+    /// to two.
+    split: InspectorSplit,
     /// Pods: problems first, or all in one list.
     list_view: ListView,
     /// The healthy pods show under the problems.
@@ -386,8 +376,14 @@ impl ResourcesScreen {
             namespace_job: None,
             tick: None,
             detail,
-            split: cx.new(|_| ResizableState::default()),
-            stacked: cx.new(|_| ResizableState::default()),
+            split: {
+                let file = crate::navigation_file::NavigationFile::global(cx);
+                InspectorSplit::new(
+                    file.inspector_width("resources"),
+                    move |width, cx| file.set_inspector_width("resources", width, cx),
+                    cx,
+                )
+            },
             list_view: ListView::default(),
             healthy_open: false,
             not_ready: NotReady::new(),
