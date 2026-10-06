@@ -19,7 +19,7 @@
 #
 # Anywhere outside freshkube-ui's motion module, the shared components and
 # tests included, nothing may
-#   motion  animate with with_animation or with_spring: animations take their
+#   motion  animate with with_animation(s) or with_spring: animations take their
 #           timing from ui::motion's tokens and draw through its helpers.
 #
 # scripts/style-allowlist.txt names, per rule, the files that broke it when the
@@ -131,7 +131,7 @@ all_files() {
 
 motion_offences() {
   all_files | xargs perl -CSD -ne '
-    print "motion $ARGV:$.: ", s/^\s+//r if /\.with_(?:animation|spring)\s*\(/;
+    print "motion $ARGV:$.: ", s/^\s+//r if /\.with_(?:animations?|spring)\s*\(/;
     close ARGV if eof;
   '
 }

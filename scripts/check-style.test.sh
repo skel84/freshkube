@@ -180,6 +180,14 @@ EOF
 expect 1 "an animation outside ui::motion fails, in freshkube-ui too" "motion crates/freshkube-ui/src/table/loading.rs:2:"
 expect 1 "tests are not exempt from the motion rule" "motion crates/freshkube-desktop/src/tests.rs:1:"
 
+tree
+page steps.rs <<'EOF'
+fn steps() -> impl IntoElement {
+    div().with_animations("steps", vec![Animation::new(QUICK), Animation::new(FADE)], f)
+}
+EOF
+expect 1 "a chain of animations outside ui::motion fails" "motion crates/freshkube-desktop/src/steps.rs:2:"
+
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
   exit 1

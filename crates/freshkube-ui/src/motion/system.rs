@@ -44,8 +44,11 @@ pub fn follow_system(cx: &mut App) {
 
 /// Overrides the OS's setting, or follows it again with [`Choice::System`].
 pub fn choose(choice: Choice, cx: &mut App) {
-    cx.default_global::<Motion>().choice = choice;
-    apply(cx);
+    let motion = cx.default_global::<Motion>();
+    if motion.choice != choice {
+        motion.choice = choice;
+        apply(cx);
+    }
 }
 
 /// The choice in force.
@@ -61,10 +64,14 @@ pub fn system(cx: &App) -> Option<bool> {
     cx.try_global::<Motion>().and_then(|motion| motion.system)
 }
 
-/// A reader's answer.
+/// A reader's answer. One that repeats the last changes nothing: macOS
+/// announces every accessibility display change, such as contrast, alike.
 pub(super) fn reported(reduce: bool, cx: &mut App) {
-    cx.default_global::<Motion>().system = Some(reduce);
-    apply(cx);
+    let motion = cx.default_global::<Motion>();
+    if motion.system != Some(reduce) {
+        motion.system = Some(reduce);
+        apply(cx);
+    }
 }
 
 fn apply(cx: &mut App) {
@@ -74,10 +81,14 @@ fn apply(cx: &mut App) {
         Choice::Reduced => true,
         Choice::Full => false,
     };
-    cx.set_reduce_motion(reduce);
-    // A control showing the choice or the OS's answer draws again even when
-    // reduced motion stays as it was.
-    cx.refresh_windows();
+    if cx.reduce_motion() != reduce {
+        // Redraws every window.
+        cx.set_reduce_motion(reduce);
+    } else {
+        // The choice or the OS's answer changed without changing reduced
+        // motion; a control showing either draws again.
+        cx.refresh_windows();
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -125,15 +136,10 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use gpui_kit::App;
-    use std::time::Duration;
+    use gpui_kit::component::Root;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
     };
-
-    /// How often the setting is read again. Windows announces a change only
-    /// to a window's procedure (`WM_SETTINGCHANGE`), which GPUI keeps; the
-    /// read is one cheap call and changes nothing unless the answer does.
-    const AGAIN: Duration = Duration::from_secs(5);
 
     /// "Show animations in Windows": `SPI_GETCLIENTAREAANIMATION`.
     fn read() -> Option<bool> {
@@ -150,22 +156,27 @@ mod platform {
         (read != 0).then_some(animate == 0)
     }
 
+    /// Reads the setting now, and again whenever one of the app's windows
+    /// becomes active. Windows announces a change only to a window's
+    /// procedure (`WM_SETTINGCHANGE`), which GPUI keeps, and the setting is
+    /// changed in another app, so coming back is when it may have changed.
+    /// Every Kit window's root is a `Root`.
     pub(super) fn follow(cx: &mut App) {
-        let mut last = read();
-        if let Some(reduce) = last {
+        if let Some(reduce) = read() {
             super::reported(reduce, cx);
         }
-        cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor().timer(AGAIN).await;
-                let now = read();
-                if now != last {
-                    last = now;
-                    if let Some(reduce) = now {
-                        cx.update(|cx| super::reported(reduce, cx));
-                    }
+        cx.observe_new::<Root>(|_, window, cx| {
+            let Some(window) = window else {
+                return;
+            };
+            cx.observe_window_activation(window, |_, window, cx| {
+                if window.is_window_active()
+                    && let Some(reduce) = read()
+                {
+                    super::reported(reduce, cx);
                 }
-            }
+            })
+            .detach();
         })
         .detach();
     }
