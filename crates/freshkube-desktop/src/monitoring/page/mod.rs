@@ -24,12 +24,12 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
-use freshkube_core::monitoring::{ErrorKind, QueryError};
+use freshkube_core::monitoring::QueryError;
 use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task};
 use tokio::runtime::Handle;
 
+use super::request::{self, Request};
 use super::store::{MonitoringStore, Saved};
-use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource};
 
 use board::Board;
@@ -95,12 +95,6 @@ impl Viewport {
             ..self
         }
     }
-}
-
-/// A read in flight. Dropping it cancels the work and its answer.
-pub(super) struct Request {
-    _job: Option<OwnedJob>,
-    _task: Task<()>,
 }
 
 pub(crate) struct MonitoringPage {
@@ -285,8 +279,7 @@ impl MonitoringPage {
         .detach();
     }
 
-    /// Runs `work` where its source answers (Tokio for Prometheus, the
-    /// background executor for example data) and hands the result to
+    /// Runs `work` where its source answers and hands the result to
     /// `done`, unless the request is dropped first.
     fn run<T: Send + 'static>(
         &self,
@@ -294,35 +287,7 @@ impl MonitoringPage {
         cx: &mut Context<Self>,
         done: impl FnOnce(&mut Self, Result<T, QueryError>, &mut Context<Self>) + 'static,
     ) -> Request {
-        if self.example() {
-            let work = cx.background_spawn(work);
-            let task = cx.spawn(async move |this, cx| {
-                let result = work.await;
-                _ = this.update(cx, |this, cx| done(this, result, cx));
-            });
-            return Request {
-                _job: None,
-                _task: task,
-            };
-        }
-        let (job, receiver) = backend::spawn_job(
-            &self.runtime,
-            DEADLINE,
-            "Prometheus didn't answer in time".into(),
-            async move { Ok(work.await) },
-        );
-        let task = cx.spawn(async move |this, cx| {
-            let result = match receiver.await {
-                Ok(Ok(result)) => result,
-                Ok(Err(message)) => Err(QueryError::new(ErrorKind::TimedOut, message)),
-                Err(_) => return,
-            };
-            _ = this.update(cx, |this, cx| done(this, result, cx));
-        });
-        Request {
-            _job: Some(job),
-            _task: task,
-        }
+        request::run(self.example(), &self.runtime, DEADLINE, work, cx, done)
     }
 
     /// Asks again on the chosen interval while the page shows.
