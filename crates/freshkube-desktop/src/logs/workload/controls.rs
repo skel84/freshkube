@@ -15,7 +15,8 @@ use gpui_kit::{
     size,
 };
 
-use super::{Chip, MAX_STREAMS, PodsState, Streams, WorkloadLogView, chips_that_fit, plural};
+use super::{Chip, MAX_STREAMS, PodsState, Streams, WorkloadLogView, plural};
+use crate::logs::{chip_rows, chips_that_fit};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
@@ -38,21 +39,6 @@ pub(super) trait Controls: Sized + 'static {
     /// How many chips the rows have room for, from their widths, measured
     /// again only when the chips or the text size change.
     fn fit_chips(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>);
-}
-
-/// Chip rows by the panel's height: what's left of a short panel goes to
-/// the filters, the search and the log.
-fn chip_rows(panel: Option<Pixels>, window: &Window) -> usize {
-    let Some(panel) = panel else {
-        return 2;
-    };
-    if panel >= ui::dp_px(340., window) {
-        2
-    } else if panel >= ui::dp_px(290., window) {
-        1
-    } else {
-        0
-    }
 }
 
 /// One container's chip: click to show or hide its lines.

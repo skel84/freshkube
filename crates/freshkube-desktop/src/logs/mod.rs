@@ -18,6 +18,10 @@ mod workload;
 #[cfg(test)]
 mod tests;
 
+use gpui_kit::{Pixels, Window};
+
+use crate::ui;
+
 pub(crate) use coroot::{CorootLogView, CorootPanel};
 pub(crate) use freshkube_logs::{ClearSelection, Columns, LogSource, LogView};
 pub(crate) use pod::{PodLogPanel, PodLogView, choice_label, role_heading};
@@ -26,3 +30,61 @@ pub(crate) use workload::{WorkloadLogPanel, WorkloadLogView};
 
 /// The Talos Logs page.
 pub(crate) type LogPanel = LogView<TalosLogs>;
+
+// A source's chips, as the workload logs' containers: they take the rows
+// the panel has room for, and "+N" lists the rest.
+
+/// Chip rows by the panel's height: what's left of a short panel goes to
+/// the filters, the search and the log.
+fn chip_rows(panel: Option<Pixels>, window: &Window) -> usize {
+    let Some(panel) = panel else {
+        return 2;
+    };
+    if panel >= ui::dp_px(340., window) {
+        2
+    } else if panel >= ui::dp_px(290., window) {
+        1
+    } else {
+        0
+    }
+}
+
+/// How many chips fit in `rows` rows of `room`, leaving the last row room
+/// for the "+N" chip when some don't. Every chip fits when they all do.
+fn chips_that_fit(
+    widths: &[Pixels],
+    more: Pixels,
+    gap: Pixels,
+    room: Pixels,
+    rows: usize,
+) -> usize {
+    // Where each chip lands, packed left to right and row by row: its row
+    // and where it ends.
+    let mut placed: Vec<(usize, Pixels)> = Vec::with_capacity(widths.len());
+    for &width in widths {
+        let (row, end) = match placed.last() {
+            None => (0, width),
+            Some(&(row, end)) if end + gap + width <= room => (row, end + gap + width),
+            Some(&(row, _)) => (row + 1, width),
+        };
+        if row >= rows {
+            break;
+        }
+        placed.push((row, end));
+    }
+    if placed.len() == widths.len() {
+        return widths.len();
+    }
+    // Some don't fit: take chips off the end until "+N" fits after the
+    // last one, or alone at the start of its row.
+    while let Some(&(row, end)) = placed.last() {
+        if end + gap + more <= room {
+            break;
+        }
+        placed.pop();
+        if placed.last().is_none_or(|&(previous, _)| previous < row) {
+            break;
+        }
+    }
+    placed.len()
+}
