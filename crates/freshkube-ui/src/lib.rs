@@ -4,6 +4,7 @@
 
 pub mod card;
 pub mod document;
+pub mod grid;
 pub mod meters;
 pub mod page;
 pub mod palette;

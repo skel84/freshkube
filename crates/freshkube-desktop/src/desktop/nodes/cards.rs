@@ -12,6 +12,9 @@ use gpui_kit::{
     prelude::*,
 };
 
+/// The gap between cards and below each row of them.
+const CARD_GAP: f32 = 14.;
+
 pub(super) fn card_columns(window: &Window) -> usize {
     ((inset_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
 }
@@ -44,32 +47,35 @@ impl Pilot {
             .aria_label("No matching nodes")
             .into_any_element();
         }
-        let list = uniform_list(
-            "nodes-cards-list",
-            count.div_ceil(columns),
-            cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
-                range
-                    .map(|index| {
-                        if compact {
+        // The pane's list is the full roster, one to a row; the cards are
+        // the filtered lines.
+        let list = if compact {
+            uniform_list(
+                "nodes-cards-list",
+                count,
+                cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
+                    range
+                        .map(|index| {
                             view.joined_node_row(&view.node_workspace.rows[index], true, cx)
-                        } else {
-                            let start = index * columns;
-                            let end = (start + columns).min(view.node_workspace.lines.len());
-                            div()
-                                .grid()
-                                .grid_cols(columns as u16)
-                                .gap(dp(14.))
-                                .pb(dp(14.))
-                                .children(view.node_workspace.lines[start..end].iter().map(|ix| {
-                                    view.joined_node_row(&view.node_workspace.rows[*ix], false, cx)
-                                }))
-                                .into_any_element()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(&self.node_workspace.scroll)
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
+            .track_scroll(&self.node_workspace.scroll)
+        } else {
+            freshkube_ui::grid::cards(
+                "nodes-cards-list",
+                count,
+                columns,
+                CARD_GAP,
+                &self.node_workspace.scroll,
+                move |view: &mut Self, item, _, cx| {
+                    let row = view.node_workspace.lines[item];
+                    view.joined_node_row(&view.node_workspace.rows[row], false, cx)
+                },
+                cx,
+            )
+        }
         .size_full();
         let rows = div()
             .id("nodes-cards")
