@@ -41,7 +41,7 @@ async fn run_with(
 /// configure.
 fn naming() -> StageNaming {
     StageNaming {
-        annotation_key: "acme.example/kargo-project".into(),
+        project_key: "acme.example/kargo-project".into(),
         name_template: "{project}-{stage}".into(),
     }
 }
@@ -275,7 +275,7 @@ fn destinations_match_one_none_or_by_name() {
     let by_name = parse_application(&application(None)).unwrap();
     assert_eq!(
         match_destination(&by_name, &contexts),
-        DestinationMatch::ByName("env-beta".into())
+        DestinationMatch::ByName("env-dev".into())
     );
 }
 
@@ -344,7 +344,7 @@ fn freight_and_stage_are_read_in_both_kargo_shapes() {
     assert_eq!(new.alias.as_deref(), Some("wonky-otter"));
     assert_eq!(new.images[0].tag.as_deref(), Some("v1.4.0"));
     assert_eq!(new.images[0].digest.as_ref().map(|d| d.as_str()), Some(NEW));
-    assert_eq!(new.verified_in, ["beta"]);
+    assert_eq!(new.verified_in, ["dev"]);
     // Older Kargo: contents under `spec`, one currentFreight.
     let old = parse_freight(&serde_json::json!({
         "metadata": {"name": "f", "namespace": "storefront"},
@@ -688,19 +688,19 @@ async fn another_stages_application_at_the_same_revision_keeps_it_claimed() {
     let mut world = promoted(NEW, "Succeeded", PUSHED);
     // A later stage's Application of the same project, on the same branch, is at
     // the same commit: the commit cannot tell the two stages apart.
-    let mut gamma = application(Some("https://env-a.example:6443"));
-    gamma["metadata"]["name"] = serde_json::json!("storefront-gamma");
-    gamma["metadata"]["annotations"]["kargo.akuity.io/authorized-stage"] =
-        serde_json::json!("storefront:gamma");
-    gamma["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
-    let mut beta = application(Some("https://env-a.example:6443"));
-    beta["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
-    world.argocd = world.argocd.with("applications", vec![beta, gamma]);
+    let mut prod = application(Some("https://env-a.example:6443"));
+    prod["metadata"]["name"] = serde_json::json!("storefront-prod");
+    prod["metadata"]["annotations"]["kargo.akuity.io/authorized-stage"] =
+        serde_json::json!("storefront:prod");
+    prod["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    let mut dev = application(Some("https://env-a.example:6443"));
+    dev["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    world.argocd = world.argocd.with("applications", vec![dev, prod]);
     let trail = run(&world, &ENV).await;
     let app = link(&trail, Hop::Stage, Hop::Application)
         .into_iter()
-        .find(|l| l.subject == "argocd/storefront-beta")
-        .expect("the beta Application is linked");
+        .find(|l| l.subject == "argocd/storefront-dev")
+        .expect("the dev Application is linked");
     assert_eq!(app.confidence, Confidence::Claimed);
     assert!(
         app.reason
@@ -732,6 +732,26 @@ async fn the_naming_fallback_is_off_unless_configured() {
     assert!(app.reason.contains("no Application names this Stage"));
     // Nothing was read in the destination namespace for it either.
     assert!(world.environment.requests.borrow().is_empty());
+}
+
+#[tokio::test]
+async fn the_project_key_is_read_from_the_applications_labels_too() {
+    let mut app = unannotated_application();
+    let project = app["metadata"]["annotations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("acme.example/kargo-project")
+        .unwrap();
+    app["metadata"]["labels"] = serde_json::json!({"acme.example/kargo-project": project});
+    let world = without_rollouts_with(app);
+    let trail = run_configured(&world, &ENV, &FixtureGitHub::default(), None, |plan| {
+        plan.stage_naming = Some(naming())
+    })
+    .await;
+    assert_eq!(
+        one(&trail, Hop::Stage, Hop::Application).confidence,
+        Confidence::Claimed
+    );
 }
 
 #[tokio::test]

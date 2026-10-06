@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn secrets_are_refused_by_every_spelling_of_the_group() {
+    fn secrets_are_refused_whatever_the_case_of_the_plural() {
         assert!(refuse_secret(&Resource::new("", "v1", "secrets", true)).is_err());
         assert!(refuse_secret(&Resource::new("", "v1", "Secrets", true)).is_err());
         assert!(refuse_secret(&pods()).is_ok());

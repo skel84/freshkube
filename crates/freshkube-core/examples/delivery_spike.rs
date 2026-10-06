@@ -13,7 +13,7 @@
 //!     [--known-as alias=server] \
 //!     [--evidence-result NAME --evidence-commit POINTER --evidence-digest POINTER] \
 //!     [--commit-param NAME]... [--commit-result NAME]... \
-//!     [--stage-annotation KEY --stage-name 'TEMPLATE with {project} and {stage}'] \
+//!     [--stage-project-key KEY --stage-name 'TEMPLATE with {project} and {stage}'] \
 //!     [--repo owner/name] (--sha <sha> | --pr <number>) [--discover] [--probe]
 //! ```
 //!
@@ -26,8 +26,10 @@
 //!   a build records its commit under, besides upstream's `revision`
 //!   parameter and `CHAINS-GIT_COMMIT` and `commit` results.
 //! - `--stage-*`: for Applications without Kargo's authorized-stage
-//!   annotation, the kustomize annotation that names the Kargo project and a
-//!   template for the Application's name.
+//!   annotation, the key of an annotation (or label) on the Application that
+//!   names the Kargo project, and a template for the Application's name.
+//!
+//! A failure is printed with the requesting identity taken out.
 
 use std::collections::BTreeMap;
 
@@ -35,7 +37,7 @@ use freshkube_core::delivery::{
     Clusters, CommitNames, EvidenceResult, GhCli, Plan, ReadOnlyClient, Reader, Scope, StageNaming,
     collect, commit_of_pull_request, join, render,
 };
-use freshkube_core::delivery::{ListRequest, Resource, Source};
+use freshkube_core::delivery::{ListRequest, Resource, Source, redact_identity, shown};
 use freshkube_core::resources::{connect, kubeconfig_sources};
 
 /// `alias=context`.
@@ -63,7 +65,7 @@ struct Args {
     evidence_commit: Option<String>,
     evidence_digest: Option<String>,
     commit_names: CommitNames,
-    stage_annotation: Option<String>,
+    stage_project_key: Option<String>,
     stage_name: Option<String>,
     discover: bool,
     probe: bool,
@@ -101,7 +103,7 @@ fn parse() -> Args {
             "--evidence-digest" => args.evidence_digest = Some(value()),
             "--commit-param" => args.commit_names.params.push(value()),
             "--commit-result" => args.commit_names.results.push(value()),
-            "--stage-annotation" => args.stage_annotation = Some(value()),
+            "--stage-project-key" => args.stage_project_key = Some(value()),
             "--stage-name" => args.stage_name = Some(value()),
             "--env" => args.env = Some(named(&value())),
             "--known-as" => {
@@ -133,7 +135,11 @@ struct Cluster {
 async fn open(sources: &[std::path::PathBuf], named: &Named) -> Cluster {
     let connection = match connect(sources.to_vec(), named.context.clone()).await {
         Ok(connection) => connection,
-        Err(failure) => fail(&format!("{}: {}", named.alias, failure.message)),
+        Err(failure) => fail(&format!(
+            "{}: {}",
+            named.alias,
+            redact_identity(&failure.message)
+        )),
     };
     let server = server_of(sources, &named.context).unwrap_or_default();
     Cluster {
@@ -183,7 +189,7 @@ async fn discover(label: &str, reader: &ReadOnlyClient) {
         "operator.tekton.dev",
     ];
     match reader.groups().await {
-        Err(failure) => println!("  [{label}] discovery: {failure}"),
+        Err(failure) => println!("  [{label}] discovery: {}", shown(&failure)),
         Ok(served) => {
             for group in GROUPS {
                 match served.iter().find(|s| s.name == group) {
@@ -216,7 +222,7 @@ async fn probe(
                 ""
             }
         ),
-        Err(failure) => format!("{failure}"),
+        Err(failure) => shown(&failure),
     };
     println!("  [{label}] list {plural}.{group}/{version} in a namespace: {outcome}");
 }
@@ -357,13 +363,13 @@ async fn main() {
             _ => fail("--evidence-result, --evidence-commit and --evidence-digest go together"),
         },
         commit_names: args.commit_names.clone(),
-        stage_naming: match (&args.stage_annotation, &args.stage_name) {
-            (Some(annotation_key), Some(name_template)) => Some(StageNaming {
-                annotation_key: annotation_key.clone(),
+        stage_naming: match (&args.stage_project_key, &args.stage_name) {
+            (Some(project_key), Some(name_template)) => Some(StageNaming {
+                project_key: project_key.clone(),
                 name_template: name_template.clone(),
             }),
             (None, None) => None,
-            _ => fail("--stage-annotation and --stage-name go together"),
+            _ => fail("--stage-project-key and --stage-name go together"),
         },
         contexts,
     };

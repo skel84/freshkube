@@ -125,6 +125,11 @@ pub fn redact_identity(message: &str) -> String {
     }
 }
 
+/// A failure as it is printed, with the identity taken out.
+pub fn shown(failure: &Failure) -> String {
+    redact_identity(&failure.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +171,20 @@ mod tests {
             r#"users "<redacted>" is forbidden: User "<redacted>" in Group "<redacted>" and groups "<redacted>""#
         );
         assert_eq!(redact_identity("no identity here"), "no identity here");
+    }
+
+    #[test]
+    fn a_printed_failure_never_names_who_was_refused() {
+        let failure = Failure::new(
+            FailureKind::Forbidden,
+            r#"applications.argoproj.io is forbidden: User "jane@example.com" cannot list resource "applications""#,
+        );
+        let printed = shown(&failure);
+        assert!(!printed.contains("jane"), "{printed}");
+        assert!(printed.starts_with("Forbidden · "), "{printed}");
+        assert!(
+            printed.contains(r#"User "<redacted>" cannot list resource "applications""#),
+            "{printed}"
+        );
     }
 }

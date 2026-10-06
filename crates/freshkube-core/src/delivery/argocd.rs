@@ -1,6 +1,8 @@
 //! Argo CD Applications: sync, health, destination, the Kargo stage that is
 //! allowed to sync one, and the objects it manages.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use super::digest::text;
@@ -27,19 +29,20 @@ impl StageClaim {
         match self {
             Self::Annotation => "authorized-stage annotation",
             Self::NamedByConvention => {
-                "named by the configured template, with the Kargo project in its configured annotation; no authorized-stage annotation"
+                "named by the configured template, with the Kargo project under the configured key; no authorized-stage annotation"
             }
         }
     }
 }
 
-/// How a platform that doesn't set the authorized-stage annotation ties an
-/// Application to a Kargo stage, written by whoever runs the join: the
-/// kustomize `commonAnnotations` key that holds the Kargo project, and a name
-/// template using `{project}` and `{stage}`. Off unless configured.
+/// How a setup that doesn't set the authorized-stage annotation ties an
+/// Application to a Kargo stage, written by whoever runs the join: an
+/// annotation the setup names (or a label of that key) on the Application,
+/// holding the Kargo project, and a name template using `{project}` and
+/// `{stage}`. Off unless configured.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StageNaming {
-    pub annotation_key: String,
+    pub project_key: String,
     pub name_template: String,
 }
 
@@ -75,9 +78,10 @@ pub struct Application {
     pub health: Option<String>,
     /// `<project>:<stage>` from the Kargo annotation, a claim.
     pub authorized_stage: Option<(String, String)>,
-    /// The kustomize `commonAnnotations`, where a platform may name the Kargo
-    /// project.
-    pub annotations: std::collections::BTreeMap<String, String>,
+    /// The Application's own `metadata.annotations` and `metadata.labels`,
+    /// where a setup may name the Kargo project.
+    pub metadata_annotations: BTreeMap<String, String>,
+    pub metadata_labels: BTreeMap<String, String>,
     pub managed: Vec<ManagedObject>,
     /// Images Argo CD summarises, shown only.
     pub images: Vec<String>,
@@ -98,10 +102,9 @@ pub fn parse_application(value: &Value) -> Option<Application> {
             .map(str::to_owned),
     );
     revisions.dedup();
-    let authorized_stage = value
-        .pointer("/metadata/annotations")
-        .and_then(|annotations| annotations.get(AUTHORIZED_STAGE))
-        .and_then(Value::as_str)
+    let metadata_annotations = strings(value, "/metadata/annotations");
+    let authorized_stage = metadata_annotations
+        .get(AUTHORIZED_STAGE)
         .and_then(|stage| stage.split_once(':'))
         .map(|(project, stage)| (project.to_owned(), stage.to_owned()));
     Some(Application {
@@ -115,16 +118,8 @@ pub fn parse_application(value: &Value) -> Option<Application> {
         sync_revisions: revisions,
         health: text(value, "/status/health/status"),
         authorized_stage,
-        annotations: value
-            .pointer("/spec/source/kustomize/commonAnnotations")
-            .and_then(Value::as_object)
-            .map(|annotations| {
-                annotations
-                    .iter()
-                    .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        metadata_annotations,
+        metadata_labels: strings(value, "/metadata/labels"),
         managed: value
             .pointer("/status/resources")
             .and_then(Value::as_array)
@@ -150,7 +145,27 @@ pub fn parse_application(value: &Value) -> Option<Application> {
     })
 }
 
+/// The string values of the object at `pointer`.
+fn strings(value: &Value, pointer: &str) -> BTreeMap<String, String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+        .collect()
+}
+
 impl Application {
+    /// The Kargo project under the setup's key: the annotation, else the
+    /// label.
+    fn named_project(&self, naming: &StageNaming) -> Option<&str> {
+        self.metadata_annotations
+            .get(&naming.project_key)
+            .or_else(|| self.metadata_labels.get(&naming.project_key))
+            .map(String::as_str)
+    }
+
     /// How this Application claims the Kargo stage `project:stage`, if it
     /// does. The annotation names the stage outright. Where `naming` is
     /// configured, an Application whose annotation names the project and whose
@@ -166,29 +181,20 @@ impl Application {
             Some(_) => None,
             None => {
                 let naming = naming?;
-                (self
-                    .annotations
-                    .get(&naming.annotation_key)
-                    .map(String::as_str)
-                    == Some(project)
+                (self.named_project(naming) == Some(project)
                     && self.name == naming.name_for(project, stage))
                 .then_some(StageClaim::NamedByConvention)
             }
         }
     }
 
-    /// Whether the Application is of the Kargo project, by annotation or by the
-    /// configured annotation.
+    /// Whether the Application is of the Kargo project, by the authorized-stage
+    /// annotation or under the configured key.
     pub fn is_of_project(&self, project: &str, naming: Option<&StageNaming>) -> bool {
         self.authorized_stage
             .as_ref()
             .is_some_and(|(p, _)| p == project)
-            || naming.is_some_and(|naming| {
-                self.annotations
-                    .get(&naming.annotation_key)
-                    .map(String::as_str)
-                    == Some(project)
-            })
+            || naming.is_some_and(|naming| self.named_project(naming) == Some(project))
     }
 
     /// Digests of the images Argo CD's summary lists, which it writes as

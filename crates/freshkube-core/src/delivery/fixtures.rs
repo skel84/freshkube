@@ -159,7 +159,7 @@ pub fn freight(name: &str, digest: &str, commit: &str) -> Value {
         "origin": {"kind": "Warehouse", "name": "storefront"},
         "commits": [{"repoURL": "https://git.example/acme/storefront.git", "id": commit}],
         "images": [{"repoURL": REPO, "tag": "v1.4.0", "digest": digest}],
-        "status": {"verifiedIn": {"beta": {}}}
+        "status": {"verifiedIn": {"dev": {}}}
     })
 }
 
@@ -174,7 +174,7 @@ pub fn stage(current: &[&str]) -> Value {
         })
         .collect();
     json!({
-        "metadata": {"name": "beta", "namespace": "storefront"},
+        "metadata": {"name": "dev", "namespace": "storefront"},
         "spec": {"requestedFreight": [{"origin": {"kind": "Warehouse", "name": "storefront"}}]},
         "status": {"freightHistory": [{"id": "x", "items": items}],
                     "health": {"status": "Healthy"}}
@@ -186,8 +186,8 @@ pub fn stage(current: &[&str]) -> Value {
 pub fn promotion_pushing(freight: &str, digest: &str, phase: &str, pushed: &str) -> Value {
     let images = json!([{"repoURL": REPO, "tag": "v1.4.0", "digest": digest}]);
     json!({
-        "metadata": {"name": "beta.02.def", "namespace": "storefront"},
-        "spec": {"stage": "beta", "freight": freight},
+        "metadata": {"name": "dev.02.def", "namespace": "storefront"},
+        "spec": {"stage": "dev", "freight": freight},
         "status": {
             "phase": phase,
             "freight": {"name": freight, "images": images},
@@ -201,7 +201,7 @@ pub fn promotion_pushing(freight: &str, digest: &str, phase: &str, pushed: &str)
 /// A Stage whose record of its current Freight carries the image digest.
 pub fn stage_holding(current: &str, digest: &str) -> Value {
     json!({
-        "metadata": {"name": "beta", "namespace": "storefront"},
+        "metadata": {"name": "dev", "namespace": "storefront"},
         "spec": {"requestedFreight": [{"origin": {"kind": "Warehouse", "name": "storefront"}}]},
         "status": {"freightHistory": [{"id": "x", "items": {
             "Warehouse/storefront": {"name": current,
@@ -212,8 +212,8 @@ pub fn stage_holding(current: &str, digest: &str) -> Value {
 
 pub fn promotion(freight: &str) -> Value {
     json!({
-        "metadata": {"name": "beta.01.abc", "namespace": "storefront"},
-        "spec": {"stage": "beta", "freight": freight},
+        "metadata": {"name": "dev.01.abc", "namespace": "storefront"},
+        "spec": {"stage": "dev", "freight": freight},
         "status": {"phase": "Succeeded"}
     })
 }
@@ -221,11 +221,11 @@ pub fn promotion(freight: &str) -> Value {
 pub fn application(server: Option<&str>) -> Value {
     let destination = match server {
         Some(server) => json!({"server": server, "namespace": "shop"}),
-        None => json!({"name": "env-beta", "namespace": "shop"}),
+        None => json!({"name": "env-dev", "namespace": "shop"}),
     };
     json!({
-        "metadata": {"name": "storefront-beta", "namespace": "argocd",
-                      "annotations": {"kargo.akuity.io/authorized-stage": "storefront:beta"}},
+        "metadata": {"name": "storefront-dev", "namespace": "argocd",
+                      "annotations": {"kargo.akuity.io/authorized-stage": "storefront:dev"}},
         "spec": {"project": "storefront", "destination": destination},
         "status": {"sync": {"status": "Synced", "revision": "cccccccccccccccccccccccccccccccccccccccc"},
                     "health": {"status": "Healthy"},
@@ -364,25 +364,32 @@ pub fn healthy() -> World {
 }
 
 /// A setup without Argo Rollouts: the Application carries no authorized-stage
-/// annotation, names its Kargo project in a kustomize annotation and its stage
-/// in its own name, and manages an invented custom kind the join doesn't
-/// look inside. The environment cluster serves only core kinds.
+/// annotation, names its Kargo project in an annotation of the setup's choosing
+/// and its stage in its own name, and manages a plain Deployment, which the
+/// join doesn't look inside. The environment cluster serves only core kinds.
 pub fn without_rollouts() -> World {
+    without_rollouts_with(unannotated_application())
+}
+
+/// The Application of [`without_rollouts`].
+pub fn unannotated_application() -> Value {
+    json!({
+        "metadata": {"name": "storefront-dev", "namespace": "argocd",
+                      "annotations": {"acme.example/kargo-project": "storefront"}},
+        "spec": {"destination": {"server": "https://env-a.example:6443", "namespace": "shop"}},
+        "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"},
+                    "summary": {"images": [format!("{REPO}@{NEW}")]},
+                    "resources": [{"group": "apps", "kind": "Deployment",
+                                   "namespace": "shop", "name": "storefront"}]}
+    })
+}
+
+/// [`without_rollouts`] with another Application.
+pub fn without_rollouts_with(application: Value) -> World {
     let mut world = healthy();
     world.argocd = FixtureReader::default()
         .serves("argoproj.io", "v1alpha1", &["applications"])
-        .with(
-            "applications",
-            vec![json!({
-                "metadata": {"name": "storefront-beta", "namespace": "argocd"},
-                "spec": {
-                    "destination": {"server": "https://env-a.example:6443", "namespace": "shop"},
-                    "source": {"kustomize": {"commonAnnotations": {"acme.example/kargo-project": "storefront"}}}},
-                "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"},
-                            "summary": {"images": [format!("{REPO}@{NEW}")]},
-                            "resources": [{"group": "example.test", "kind": "AppBundle", "name": "storefront"}]}
-            })],
-        );
+        .with("applications", vec![application]);
     world.environment = FixtureReader::default().with(
         "pods",
         vec![pod(

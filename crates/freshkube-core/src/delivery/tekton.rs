@@ -231,6 +231,8 @@ pub fn evidence_record(
     })
 }
 
+/// `TEST_OUTPUT` is the result name upstream Konflux and Conforma tasks
+/// write their verdict under.
 pub fn conforma(results: &BTreeMap<String, String>) -> Option<Conforma> {
     let output: Value = serde_json::from_str(results.get("TEST_OUTPUT")?).ok()?;
     Some(Conforma {
