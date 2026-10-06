@@ -15,7 +15,7 @@ use freshkube_core::monitoring::model::{
 use gpui_kit::SharedString;
 
 use super::ticks::{self, Tick, TickSet};
-use super::{Body, PanelData, Shown, format};
+use super::{Body, Capped, PanelData, Shown, format};
 use crate::monitoring::colors::{self, Ink, Tier};
 
 /// Legend rows drawn at most; the rest are counted.
@@ -47,6 +47,8 @@ pub(crate) struct Chart {
     pub bands: Vec<Band>,
     pub curve: Curve,
     pub legend: Legend,
+    /// More series than the cap: how many, and whether all draw.
+    pub capped: Option<Capped>,
 }
 
 #[derive(Clone, Debug)]
@@ -147,6 +149,7 @@ pub(super) fn chart(
     shown: Vec<Shown>,
     options: &TimeSeriesOptions,
     window: TimeWindow,
+    capped: Option<Capped>,
 ) -> PanelData {
     let end = window.end as f64;
     let start = end - window.span as f64;
@@ -285,6 +288,7 @@ pub(super) fn chart(
             bands,
             curve: options.curve,
             legend,
+            capped,
         })),
         unit,
     }

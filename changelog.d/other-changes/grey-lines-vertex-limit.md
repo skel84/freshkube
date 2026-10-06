@@ -1,0 +1,1 @@
+- **Monitoring:** a crowded chart draws its grey lines again. With many series, such as 65 at the 600 points a panel asks for, the grey lines together passed the most one GPUI path holds, and the chart drew none of them.

@@ -2,13 +2,20 @@
 //! per heading, in two columns where they fit. Hovering a row fades the
 //! other lines; a click keeps that series in front until clicked again. A
 //! series that stopped before the window's end shows its last value muted,
-//! with the time in the row's tooltip.
-use gpui_kit::component::{h_flex, tooltip::Tooltip, v_flex};
+//! with the time in the row's tooltip. A chart with more series than the
+//! cap ends with a line saying how many it draws, and a way to draw all.
+use gpui_kit::component::{
+    Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
+    tooltip::Tooltip,
+    v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Div, Stateful, TestSupportExt, div, px, relative};
 
 use super::PanelView;
-use crate::monitoring::derive::{Chart, LegendMode, LegendRow};
+use crate::monitoring::derive::{Capped, Chart, LegendMode, LegendRow, MOST_SERIES};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 
@@ -16,7 +23,14 @@ pub(super) fn legend(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView
     #[cfg(test)]
     crate::desktop::probe::hit("monitoring-legend");
     match chart.legend.mode {
-        LegendMode::Hidden => div().into_any_element(),
+        LegendMode::Hidden => match chart.capped {
+            Some(capped) => div()
+                .px(dp(12.))
+                .pb(dp(10.))
+                .child(cap_line(view, capped, cx))
+                .into_any_element(),
+            None => div().into_any_element(),
+        },
         LegendMode::Inline => inline(view, chart, cx),
         LegendMode::Table => table(view, chart, cx),
     }
@@ -105,7 +119,52 @@ fn table(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEle
                 })
                 .test_support(),
         )
+        .when_some(chart.capped, |this, capped| {
+            this.child(
+                div()
+                    .px(dp(12.))
+                    .pt(dp(2.))
+                    .child(cap_line(view, capped, cx)),
+            )
+        })
         .into_any_element()
+}
+
+/// How many series a capped chart draws, and the switch between the
+/// highest peaks and all of them.
+fn cap_line(view: &PanelView, capped: Capped, cx: &mut Context<PanelView>) -> impl IntoElement {
+    let p = palette(cx);
+    let (said, action) = if capped.all {
+        (
+            format!("Drawing all {}", capped.of),
+            format!("Top {MOST_SERIES}"),
+        )
+    } else {
+        (
+            format!(
+                "Drawing {MOST_SERIES} of {}, highest peaks first",
+                capped.of
+            ),
+            "Show all".into(),
+        )
+    };
+    let all = !capped.all;
+    h_flex()
+        .id(view.element_id("cap"))
+        .gap(dp(6.))
+        .px(dp(4.))
+        .text_size(dp(11.))
+        .text_color(p.muted)
+        .child(said)
+        .child("·")
+        .child(
+            Button::new(view.element_id("cap-toggle"))
+                .link()
+                .xsmall()
+                .label(action)
+                .on_click(cx.listener(move |view, _, _, cx| view.show_all_series(all, cx))),
+        )
+        .test_support()
 }
 
 fn table_row(

@@ -1,0 +1,1 @@
+- **Monitoring:** a chart with more than 30 series draws the 30 with the highest peaks, and its legend offers Show all. Charts whose queries use topk or bottomk, and stacked charts, still draw every series.

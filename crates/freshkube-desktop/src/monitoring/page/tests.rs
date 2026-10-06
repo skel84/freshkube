@@ -864,6 +864,38 @@ fn choose(cx: &mut TestAppContext, page: &Entity<MonitoringPage>, variable: &str
 
 const CPU: &str = "CPU usage by node";
 
+/// A chart drawing all its series keeps them through a refresh, and goes
+/// back to the highest peaks when a variable or the time range changes.
+#[gpui_kit::test]
+fn show_all_series_lasts_until_the_page_asks_for_something_else(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let panel = cx.read(|cx| {
+        let board = page.read(cx).board.as_ref().unwrap();
+        let slot = board.slots.iter().find(|slot| slot.spec.title == CPU);
+        slot.unwrap().view.clone()
+    });
+    let all = |cx: &mut TestAppContext| cx.read(|cx| panel.read(cx).shows_all_series());
+    let show_all = |cx: &mut TestAppContext| {
+        cx.update(|cx| panel.update(cx, |panel, cx| panel.show_all_series(true, cx)));
+        assert!(all(cx));
+    };
+
+    show_all(cx);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    cx.run_until_parked();
+    frame(cx, handle);
+    assert!(all(cx), "a refresh dropped Show all");
+
+    cx.update(|cx| page.update(cx, |page, cx| page.set_range(3600, cx)));
+    cx.run_until_parked();
+    assert!(!all(cx), "a new range kept Show all");
+
+    show_all(cx);
+    choose(cx, &page, "node", "worker-2");
+    assert!(!all(cx), "a new variable kept Show all");
+}
+
 #[gpui_kit::test]
 fn every_chart_draws_the_example_deploys_and_node_events(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));

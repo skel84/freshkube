@@ -6,6 +6,7 @@
 //! The order of work follows grafaui-desktop's `panel::derive` (MIT, the
 //! user's own code): transformations, then overrides that hide and rename
 //! series, then stacking. Every colour the dashboard names is dropped here.
+mod cap;
 mod chart;
 mod summary;
 #[cfg(test)]
@@ -24,6 +25,7 @@ use freshkube_core::monitoring::model::{
 };
 use gpui_kit::SharedString;
 
+pub(crate) use cap::{Capped, MOST_SERIES, SeriesCap, picks_series};
 pub(crate) use chart::{Axis, Chart, ChartSeries, LegendMode, LegendRow};
 pub(crate) use summary::{BarRow, FOLDED_ROWS, RowKey, Stat, TableData, TableRow};
 pub(crate) use ticks::fitting;
@@ -58,8 +60,14 @@ pub(super) struct Shown {
     pub style: freshkube_core::monitoring::model::overrides::SeriesStyle,
 }
 
-/// Derives what `spec` shows of `frame`, read over `window`.
-pub(crate) fn derive(spec: &PanelSpec, frame: Frame, window: TimeWindow) -> PanelData {
+/// Derives what `spec` shows of `frame`, read over `window`, a timeseries
+/// with as many series as `series` says.
+pub(crate) fn derive(
+    spec: &PanelSpec,
+    frame: Frame,
+    window: TimeWindow,
+    series: SeriesCap,
+) -> PanelData {
     crate::desktop::probe::hit("monitoring-derive");
     let plain = |body| PanelData { body, unit: None };
     match &spec.viz {
@@ -74,7 +82,8 @@ pub(crate) fn derive(spec: &PanelSpec, frame: Frame, window: TimeWindow) -> Pane
             if no_values(&shown) {
                 return plain(Body::NoData);
             }
-            chart::chart(&frame.times, shown, options, window)
+            let (shown, capped) = cap::cap(shown, series, options);
+            chart::chart(&frame.times, shown, options, window, capped)
         }
         Viz::Stat(_) | Viz::Gauge(_) | Viz::BarGauge(_) | Viz::Pie(_) | Viz::BarChart(_) => {
             let shown = shown(spec, frame, |field, context| {
