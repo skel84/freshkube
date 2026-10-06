@@ -4,11 +4,13 @@
 //!
 //! A timeseries draws its plot in a cached child view ([`PlotView`]), so a
 //! moving cursor or a hovered legend row redraws only the overlay above it.
+//! A table is a child view too ([`TableView`]), which keeps its scroll.
 mod cursor;
 mod legend;
 mod markers;
 mod plot;
 mod summary;
+mod table;
 #[cfg(test)]
 mod tests;
 
@@ -34,6 +36,7 @@ use crate::ui::{self, dp};
 pub(crate) use cursor::Cursor;
 pub(crate) use markers::glyph as marker_glyph;
 pub(crate) use plot::{Geometry, PlotView};
+pub(crate) use table::TableView;
 
 /// What a panel tells its page.
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +67,7 @@ pub(crate) struct PanelView {
     /// Just the PromQL, which a click on the info icon copies.
     promql: SharedString,
     plot: Option<Entity<PlotView>>,
+    table: Option<Entity<TableView>>,
     /// The plot's inner rectangle, set when the plot paints.
     geometry: Rc<Cell<Geometry>>,
     /// The legend row under the pointer, and the one picked by a click.
@@ -92,6 +96,7 @@ impl PanelView {
             about,
             promql,
             plot: None,
+            table: None,
             geometry: Rc::default(),
             hovered: None,
             picked: None,
@@ -122,6 +127,22 @@ impl PanelView {
                     let (chart, geometry) = (chart.clone(), self.geometry.clone());
                     let id = self.id.clone();
                     cx.new(|_| PlotView::new(id, chart, geometry))
+                }
+            }),
+            _ => None,
+        };
+        self.table = match &data.body {
+            Body::Table(rows) => Some(match self.table.take() {
+                Some(table) => {
+                    table.update(cx, |table, cx| {
+                        table.set_data(rows.clone());
+                        cx.notify();
+                    });
+                    table
+                }
+                None => {
+                    let (id, title) = (self.id.clone(), self.spec.title.clone());
+                    cx.new(|_| TableView::new(&id, title.into(), rows.clone()))
                 }
             }),
             _ => None,
@@ -185,6 +206,12 @@ impl PanelView {
     #[cfg(test)]
     pub(crate) fn is_ready(&self) -> bool {
         self.state == State::Ready
+    }
+
+    /// The table's view, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn table(&self) -> Option<Entity<TableView>> {
+        self.table.clone()
     }
 
     /// Whether a crosshair shows, for the page's tests.
@@ -298,7 +325,10 @@ impl PanelView {
                 Body::Chart(chart) => self.render_chart(&chart, window, cx),
                 Body::Stats(stats) => summary::stats(&stats, cx),
                 Body::Bars(rows) => summary::bars(self.element_id("bars"), &rows, cx),
-                Body::Table(table) => summary::table(self.element_id("table"), &table, cx),
+                Body::Table(_) => self
+                    .table
+                    .clone()
+                    .map_or_else(|| div().into_any_element(), IntoElement::into_any_element),
                 Body::Text(text) => summary::text(text, cx),
                 Body::NoData => {
                     summary::message(self.element_id("empty"), None, "No data".into(), cx)

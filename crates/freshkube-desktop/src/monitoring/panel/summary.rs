@@ -1,17 +1,17 @@
-//! The bodies of panels that aren't plots: stats, bar lists, tables, text,
+//! The bodies of panels that aren't plots or tables: stats, bar lists, text,
 //! and the loading, empty and failed states. Everything they show was
 //! derived when the answer arrived.
 use freshkube_ui::card::{self, Figure};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, FontWeight, SharedString, TestSupportExt, div, relative};
+use gpui_kit::{AnyElement, App, SharedString, TestSupportExt, div, relative};
 
 use crate::monitoring::colors::{Ink, Tier};
-use crate::monitoring::derive::{BarRow, Stat, TableData};
+use crate::monitoring::derive::{BarRow, Stat};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 
-fn tone(tier: Tier) -> ui::Tone {
+pub(super) fn tone(tier: Tier) -> ui::Tone {
     match tier {
         Tier::Warn => ui::Tone::Warn,
         Tier::Crit => ui::Tone::Crit,
@@ -132,77 +132,6 @@ pub(super) fn bars(id: SharedString, rows: &[BarRow], cx: &App) -> AnyElement {
                 )
         }))
         .test_support()
-        .into_any_element()
-}
-
-pub(super) fn table(id: SharedString, table: &TableData, cx: &App) -> AnyElement {
-    let p = palette(cx);
-    let cell = |numeric: bool| {
-        div()
-            .flex_1()
-            .min_w(dp(64.))
-            .truncate()
-            .when(numeric, |this| this.text_right().font_family(ui::MONO_FONT))
-    };
-    let header = h_flex()
-        .flex_none()
-        .h(dp(28.))
-        .gap(dp(12.))
-        .px(dp(14.))
-        .children(table.columns.iter().map(|column| {
-            cell(false)
-                .when(column.numeric, |this| this.text_right())
-                .text_size(dp(11.5))
-                .font_weight(FontWeight::BOLD)
-                .text_color(p.muted)
-                .child(column.name.clone())
-        }));
-    let rows = table.rows.iter().map(|row| {
-        h_flex()
-            .flex_none()
-            .h(dp(28.))
-            .gap(dp(12.))
-            .px(dp(14.))
-            .border_t_1()
-            .border_color(p.line)
-            .text_size(dp(12.))
-            .text_color(p.ink_2)
-            .children(
-                row.iter()
-                    .zip(&table.columns)
-                    .map(|(value, column)| cell(column.numeric).child(value.clone())),
-            )
-    });
-    v_flex()
-        .size_full()
-        .child(header)
-        .child(
-            v_flex()
-                .id(id)
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .restrict_scroll_to_axis()
-                .children(rows)
-                .when(table.total > table.rows.len(), |this| {
-                    this.child(
-                        div()
-                            .flex_none()
-                            .px(dp(14.))
-                            .py(dp(6.))
-                            .border_t_1()
-                            .border_color(p.line)
-                            .text_size(dp(11.5))
-                            .text_color(p.muted)
-                            .child(format!(
-                                "Showing {} of {} rows",
-                                table.rows.len(),
-                                table.total
-                            )),
-                    )
-                })
-                .test_support(),
-        )
         .into_any_element()
 }
 

@@ -464,7 +464,106 @@ fn a_table_drops_hidden_columns_and_counts_rows_past_the_cap() {
     assert!(table.columns[1].numeric);
     assert_eq!(table.rows.len(), summary::MAX_ROWS);
     assert_eq!(table.total, summary::MAX_ROWS + 5);
-    assert_eq!(table.rows[0][0], "alert-0");
+    assert_eq!(table.rows[0].cells[0], "alert-0");
+    assert_eq!(summary::MAX_ROWS, 1_000, "MONITORING.md names the cap");
+}
+
+fn alerts(rows: &[(&str, &str)]) -> Rc<summary::TableData> {
+    let spec = panel(json!({
+        "type": "table",
+        "title": "Firing alerts",
+        "targets": [{"refId": "A", "expr": "ALERTS", "format": "table", "instant": true}],
+        "transformations": [{"id": "organize", "options": {
+            "excludeByName": {"Time": true},
+            "renameByName": {"alertname": "Alert"},
+        }}],
+    }));
+    let series = rows
+        .iter()
+        .enumerate()
+        .map(|(n, (name, severity))| {
+            labelled(
+                "ALERTS",
+                &[("alertname", name), ("severity", severity)],
+                &[n as f64; 7],
+            )
+        })
+        .collect();
+    let Body::Table(table) = derive(&spec, frame(series), window()).body else {
+        panic!("not a table")
+    };
+    table
+}
+
+#[test]
+fn table_rows_are_keyed_by_their_labels_and_which_of_the_same_they_are() {
+    let table = alerts(&[
+        ("disk", "warning"),
+        ("cpu", "critical"),
+        ("disk", "warning"),
+    ]);
+    let keys: Vec<_> = table.rows.iter().map(|row| row.key.clone()).collect();
+    // Two rows share every label: the second is told apart by its turn.
+    assert_eq!(keys[0].labels, keys[2].labels);
+    assert_eq!((keys[0].occurrence, keys[2].occurrence), (0, 1));
+    assert_ne!(keys[0], keys[2]);
+    // The values aren't part of the key, and another order keeps each key.
+    assert_eq!(&*keys[1].labels, ["cpu", "critical"]);
+    let moved = alerts(&[
+        ("cpu", "critical"),
+        ("disk", "warning"),
+        ("disk", "warning"),
+    ]);
+    assert_eq!(moved.rows[0].key, keys[1]);
+    assert_eq!(moved.rows[1].key, keys[0]);
+    assert_eq!(moved.rows[2].key, keys[2]);
+}
+
+#[test]
+fn a_severity_column_gives_rows_a_status_only_when_it_is_a_problem() {
+    let table = alerts(&[
+        ("a", "critical"),
+        ("b", "Error"),
+        ("c", "warning"),
+        ("d", "WARN"),
+        ("e", "info"),
+        ("f", "none"),
+        ("g", "debug"),
+        ("h", "page-me"),
+    ]);
+    assert!(table.severity);
+    let tiers: Vec<_> = table.rows.iter().map(|row| row.tier).collect();
+    use crate::monitoring::colors::Tier::{Crit, Warn};
+    assert_eq!(
+        tiers,
+        [
+            Some(Crit),
+            Some(Crit),
+            Some(Warn),
+            Some(Warn),
+            None,
+            None,
+            None,
+            None
+        ]
+    );
+    // Without a severity column no row carries one.
+    let spec = panel(json!({
+        "type": "table",
+        "title": "Pods",
+        "targets": [{"refId": "A", "expr": "up", "format": "table", "instant": true}],
+    }));
+    let Body::Table(plain) = derive(
+        &spec,
+        frame(vec![labelled("up", &[("pod", "critical")], &[1.; 7])]),
+        window(),
+    )
+    .body
+    else {
+        panic!("not a table")
+    };
+    assert!(!plain.severity);
+    assert!(plain.rows.iter().all(|row| row.tier.is_none()));
 }
 
 #[test]

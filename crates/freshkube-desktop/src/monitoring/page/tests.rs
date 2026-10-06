@@ -3,7 +3,9 @@ use freshkube_core::monitoring::{
 };
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext, px, size};
+use gpui_kit::{
+    AnyWindowHandle, AppContext, Entity, ScrollDelta, SharedString, TestAppContext, point, px, size,
+};
 
 use super::*;
 use crate::monitoring::panel::PanelEvent;
@@ -173,7 +175,7 @@ fn the_page_takes_the_shared_frame_and_its_last_panel_ends_at_the_padding(cx: &m
 }
 
 #[gpui_kit::test]
-fn a_narrow_header_puts_the_controls_under_the_breadcrumb(cx: &mut TestAppContext) {
+fn a_narrow_header_folds_the_controls_beside_the_breadcrumb(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));
     show(cx, handle, &page);
     // The page's width at 760 × 560 and 20 px, beside the rail and column.
@@ -183,25 +185,32 @@ fn a_narrow_header_puts_the_controls_under_the_breadcrumb(cx: &mut TestAppContex
         crate::desktop::tests::settle_header(window, cx);
         let toolbar = window.find("monitoring-toolbar").bounds();
         let title = window.find("monitoring-title").bounds();
-        let refresh = window.find("monitoring-refresh").bounds();
-        // None of the controls folds, so they take a row of their own
-        // rather than run over the title.
+        let more = window.find("monitoring-more").bounds();
+        // The controls fold into "…" on the title's row instead of taking a
+        // row of their own or running over the title.
+        assert!(window.try_find("monitoring-range").is_none());
+        assert!(window.try_find("monitoring-auto-refresh").is_none());
         assert!(
-            refresh.top() >= toolbar.bottom(),
-            "{refresh:?} on {toolbar:?}"
+            more.bottom() <= toolbar.bottom(),
+            "{more:?} under {toolbar:?}"
         );
         assert!(
-            title.right() <= toolbar.right(),
-            "{title:?} past {toolbar:?}"
+            more.right() <= toolbar.right() + px(1.),
+            "{more:?} past {toolbar:?}"
         );
-        assert!(refresh.right() <= toolbar.right() + px(1.), "{refresh:?}");
+        assert!(title.right() < more.left(), "{title:?} meets {more:?}");
+        // Where the data comes from is on the meta line, not the toolbar.
+        let scope = window.find("monitoring-scope").bounds();
+        let source = window.find("monitoring-source").bounds();
+        assert!(scope.contains(&source.center()), "{source:?} off {scope:?}");
     })
     .unwrap();
-    // Wide, they share the title's row.
+    // Wide, nothing folds and the controls share the title's row.
     cx.simulate_window_resize(handle, size(px(1200.), px(900.)));
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(13., cx);
         crate::desktop::tests::settle_header(window, cx);
+        assert!(window.try_find("monitoring-more").is_none());
         let toolbar = window.find("monitoring-toolbar").bounds();
         let title = window.find("monitoring-title").bounds();
         let refresh = window.find("monitoring-refresh").bounds();
@@ -213,6 +222,73 @@ fn a_narrow_header_puts_the_controls_under_the_breadcrumb(cx: &mut TestAppContex
             title.right() < refresh.left(),
             "{title:?} meets {refresh:?}"
         );
+        assert!(
+            window
+                .find("monitoring-scope")
+                .bounds()
+                .contains(&window.find("monitoring-source").bounds().center())
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_folded_time_range_picks_a_range_as_its_picker_does(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let (ranges, current) = cx.read(|cx| {
+        let board = page.read(cx).board.as_ref().unwrap();
+        (board.ranges.clone(), board.span)
+    });
+    let (index, (span, _)) = ranges
+        .iter()
+        .enumerate()
+        .find(|(_, (span, _))| *span != current)
+        .expect("another range");
+    cx.simulate_window_resize(handle, size(px(560.), px(560.)));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        window.click("monitoring-more", cx);
+        window.render_frame(cx);
+        // Time range, Refresh, Auto-refresh: the controls' order.
+        window.within("popup-menu").click(0usize, cx);
+        window.render_frame(cx);
+        window
+            .within("submenu")
+            .within("popup-menu")
+            .click(index, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| page.read(cx).board.as_ref().unwrap().span),
+        *span
+    );
+}
+
+#[gpui_kit::test]
+fn the_annotations_stay_inside_a_narrow_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    // 760 × 560 at 20 px with the column open leaves the page about 410 px.
+    cx.simulate_window_resize(handle, size(px(410.), px(560.)));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+        let page = window.find("monitoring-page").bounds();
+        for id in [
+            "monitoring-annotations",
+            "monitoring-markers-deploys",
+            "monitoring-markers-nodes",
+        ] {
+            let bounds = window.find(id).bounds();
+            assert!(
+                bounds.right() <= page.right() + px(0.5),
+                "{id} {bounds:?} past {page:?}"
+            );
+        }
     })
     .unwrap();
 }
@@ -987,4 +1063,125 @@ fn the_form_says_why_it_cannot_be_saved(cx: &mut TestAppContext) {
             crate::monitoring::history::HistoryKind::Remembered { service: ref s, .. } if *s == service
         ));
     });
+}
+
+/// The Firing alerts table's view, once every panel has answered.
+fn alerts_table(
+    cx: &mut TestAppContext,
+    page: &Entity<MonitoringPage>,
+) -> Entity<crate::monitoring::panel::TableView> {
+    cx.update(|cx| page.update(cx, |page, cx| page.answer_example_now(cx)));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let board = page.read(cx).board.as_ref().unwrap();
+        let slot = board
+            .slots
+            .iter()
+            .find(|slot| slot.spec.title == "Firing alerts")
+            .unwrap();
+        slot.view.read(cx).table().expect("a table view")
+    })
+}
+
+#[gpui_kit::test]
+fn another_dashboard_or_source_starts_each_table_again(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let first = alerts_table(cx, &page);
+    cx.update(|cx| first.update(cx, |table, cx| table.show_all(cx)));
+    // A refresh answers the same table, which keeps its scroll and Show all.
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    cx.run_until_parked();
+    assert_eq!(alerts_table(cx, &page).entity_id(), first.entity_id());
+    assert!(cx.read(|cx| first.read(cx).shows_all()));
+    // Another dashboard and back: a new table, with nothing carried over.
+    for id in ["freshkube-workloads", "freshkube-cluster"] {
+        cx.update(|cx| page.update(cx, |page, cx| page.open(EntryId::Builtin(id), cx)));
+        cx.run_until_parked();
+    }
+    frame(cx, handle);
+    let second = alerts_table(cx, &page);
+    assert_ne!(second.entity_id(), first.entity_id());
+    assert!(!cx.read(|cx| second.read(cx).shows_all()));
+    // Another source: a new table again.
+    let other = KubeSource {
+        id: "example-2".into(),
+        ..example_source()
+    };
+    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(other), cx)));
+    cx.run_until_parked();
+    frame(cx, handle);
+    assert_ne!(alerts_table(cx, &page).entity_id(), second.entity_id());
+}
+
+#[gpui_kit::test]
+fn a_table_keeps_its_rows_in_its_card_when_the_page_and_table_scroll(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    // 760 × 560 at 20 px with the column folded.
+    cx.simulate_window_resize(handle, size(px(600.), px(420.)));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        crate::desktop::tests::settle_header(window, cx);
+    })
+    .unwrap();
+    let table = alerts_table(cx, &page);
+    let (list, row) = cx.read(|cx| table.read(cx).test_ids());
+    let down = |delta: f32| ScrollDelta::Pixels(point(px(0.), px(-delta)));
+    cx.update_window(handle, |_, window, cx| {
+        // The page to its end, then the wheel goes on over the table, as a
+        // trackpad's does once the page stops.
+        window.scroll("monitoring-grid", down(40_000.), cx);
+        crate::desktop::tests::settle_header(window, cx);
+        for _ in 0..3 {
+            window.scroll(list.clone(), down(200.), cx);
+            window.simulate_next_frame(cx);
+        }
+        window.scroll(
+            list.clone(),
+            ScrollDelta::Pixels(point(px(0.), px(200.))),
+            cx,
+        );
+        window.simulate_next_frame(cx);
+        let list = window.find(list.clone()).bounds();
+        let row = window.find(row.clone()).bounds();
+        // Scrolled, the first row may start above the list; never below
+        // its top, which would leave the rows' room blank.
+        assert!(
+            row.top() <= list.top() + px(0.5),
+            "the first row {row:?} starts below its list {list:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_firing_alerts_table_takes_the_shared_rows(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{Table, assert_table};
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    let table = alerts_table(cx, &page);
+    let (list, _) = cx.read(|cx| table.read(cx).test_ids());
+    let scroll = list.replace("-list", "-table-scroll");
+    let table = Table {
+        table: Some(Box::leak(scroll.into_boxed_str())),
+        list: Box::leak(list.to_string().into_boxed_str()),
+    };
+    for text_size in [crate::ui::BASE_TEXT, 20.] {
+        cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            // Bring the panel into view, wherever the grid puts it.
+            let top = window.find(table.list).bounds().top();
+            window.scroll(
+                "monitoring-grid",
+                ScrollDelta::Pixels(point(px(0.), px(200.) - top)),
+                cx,
+            );
+            let rows = assert_table(window, cx, &table);
+            assert!(rows.header.is_some(), "{rows:#?}");
+        })
+        .unwrap();
+    }
 }
