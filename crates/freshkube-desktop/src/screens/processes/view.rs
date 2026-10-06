@@ -4,7 +4,7 @@ use super::*;
 
 impl ProcessesScreen {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let header = PageHeader::new(PREFIX, "Processes");
+        let header = PageHeader::new(PREFIX, "Processes").untitled(self.embedded);
         let header = match &self.derived {
             Some(derived) => {
                 let filter = div().child(

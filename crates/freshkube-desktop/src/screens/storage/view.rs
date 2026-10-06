@@ -10,7 +10,7 @@ impl StorageScreen {
     /// The toolbar: the title, the Disks / Volumes segment, which folds into
     /// checked items, and Refresh; the counts go in the meta line.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let header = PageHeader::new(PREFIX, "Storage");
+        let header = PageHeader::new(PREFIX, "Storage").untitled(self.embedded);
         let data = self.loader.data();
         let header = match data {
             Some(data) => {

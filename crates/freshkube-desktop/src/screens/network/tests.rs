@@ -785,7 +785,7 @@ fn network_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            layout_check::assert_edge_frame(window, cx, &NETWORK_FRAME);
+            layout_check::assert_untitled_edge_frame(window, cx, &NETWORK_FRAME, None);
             let rows = layout_check::assert_table(
                 window,
                 cx,

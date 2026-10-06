@@ -7,7 +7,7 @@ impl NetworkScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let header = PageHeader::new(PREFIX, "Network");
+        let header = PageHeader::new(PREFIX, "Network").untitled(self.embedded);
         let header = match data {
             Some(data) => {
                 let sockets = matches!(self.view, View::Connections | View::Listeners);

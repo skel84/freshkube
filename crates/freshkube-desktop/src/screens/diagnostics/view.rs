@@ -263,7 +263,7 @@ impl DiagnosticsScreen {
     /// The toolbar: the title, the status chips and Refresh; the CNI and
     /// the addons go in the meta line.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let header = PageHeader::new(PREFIX, "Diagnostics");
+        let header = PageHeader::new(PREFIX, "Diagnostics").untitled(self.embedded);
         let chips = self.derived.as_ref().map(|derived| {
             let shown = self.shown;
             table::status_chips(
