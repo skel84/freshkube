@@ -395,6 +395,12 @@ pub(crate) struct Pilot {
 }
 
 impl Pilot {
+    /// The Workloads screen, for its tests to read its rows.
+    #[cfg(test)]
+    pub(crate) fn workloads(&self) -> Entity<WorkloadsScreen> {
+        self.health.clone()
+    }
+
     fn new(
         options: GpuiOptions,
         runtime: Handle,

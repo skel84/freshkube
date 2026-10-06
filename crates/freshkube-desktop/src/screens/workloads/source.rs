@@ -59,7 +59,11 @@ impl TableColumn for Column {
 #[derive(Debug)]
 pub(crate) struct WorkloadRow {
     pub(super) key: ItemKey,
-    index: usize,
+    /// The row's element id, from its key: it follows the item, not its
+    /// position, across refreshes and filters.
+    id: SharedString,
+    status_id: SharedString,
+    name_id: SharedString,
     namespace: bool,
     nested: bool,
     chevron: Option<IconName>,
@@ -75,7 +79,7 @@ pub(crate) struct WorkloadRow {
 }
 
 impl WorkloadRow {
-    fn new(index: usize, view: RowView, key: ItemKey) -> Self {
+    fn new(view: RowView, key: ItemKey) -> Self {
         let status = health_label(view.health);
         let label = format!(
             "{} {} · {status} · {} · {}",
@@ -86,10 +90,13 @@ impl WorkloadRow {
         } else {
             format!("{} · {}", view.name, view.issue)
         };
+        let id = row_id(&key);
         Self {
             namespace: matches!(key, ItemKey::Namespace(_)),
             key,
-            index,
+            status_id: format!("{id}-status").into(),
+            name_id: format!("{id}-name").into(),
+            id: id.into(),
             nested: view.nested,
             chevron: view.chevron,
             tone: view.tone,
@@ -101,6 +108,28 @@ impl WorkloadRow {
             label: label.into(),
             tooltip: tooltip.into(),
         }
+    }
+}
+
+/// A row's element id: `workload-row-<namespace>` for a namespace, and
+/// `workload-row-<namespace>/<kind>/<name>` for a workload or a pod.
+/// Kubernetes names never hold a `/`, so no two items share one.
+pub(super) fn row_id(key: &ItemKey) -> String {
+    match key {
+        ItemKey::Namespace(name) => format!("workload-row-{name}"),
+        ItemKey::Workload {
+            namespace,
+            name,
+            kind,
+        } => {
+            let kind = match kind {
+                WorkloadKind::Deployment => "deployment",
+                WorkloadKind::StatefulSet => "statefulset",
+                WorkloadKind::DaemonSet => "daemonset",
+            };
+            format!("workload-row-{namespace}/{kind}/{name}")
+        }
+        ItemKey::Pod { namespace, name } => format!("workload-row-{namespace}/pod/{name}"),
     }
 }
 
@@ -248,10 +277,7 @@ impl WorkloadsScreen {
         let refs = self.compute_rows(&data, &settings.query);
         let rows: Vec<WorkloadRow> = refs
             .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                WorkloadRow::new(index, self.describe(*row, &data), row.key(&data.snapshot))
-            })
+            .map(|row| WorkloadRow::new(self.describe(*row, &data), row.key(&data.snapshot)))
             .collect();
         let columns = columns(&rows);
         let width = columns.iter().map(|column| column.width).sum();
@@ -273,6 +299,12 @@ impl WorkloadsScreen {
             .as_ref()
             .map(|derived| derived.refs.clone())
             .unwrap_or_default()
+    }
+
+    /// The element id of the visible row at `line`.
+    #[cfg(test)]
+    pub(super) fn row_element(&self, line: usize) -> SharedString {
+        self.row_list()[line].id.clone()
     }
 
     fn row_list(&self) -> &[WorkloadRow] {
@@ -320,7 +352,7 @@ impl TableSource for WorkloadsScreen {
         let row = self.row_list().get(line)?;
         Some(Line::Row(TableRow {
             key: row.key.clone(),
-            id: ("workload-row", line).into(),
+            id: row.id.clone().into(),
             label: row.label.clone(),
             tooltip: Some(row.tooltip.clone()),
             marked: false,
@@ -356,14 +388,14 @@ impl TableSource for WorkloadsScreen {
         match column.field {
             Field::Glyph => frame(table::glyph_cell(column))
                 .child(ui::status_mark(
-                    ("workload-status", row.index),
+                    row.status_id.clone(),
                     row.tone,
                     row.status,
                     cx,
                 ))
                 .into_any_element(),
             Field::Name => cell
-                .id(("workload-name", row.index))
+                .id(row.name_id.clone())
                 .test_support()
                 .flex()
                 .items_center()
