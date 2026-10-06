@@ -946,6 +946,12 @@ mod tests {
         );
         // Generous, for a loaded machine and an unoptimised build.
         assert!(took < std::time::Duration::from_secs(2), "{took:?}");
+        // One page of the service map: 24 boxes and the selected ends.
+        let links = generated(26, 78);
+        let mut nodes = vec![Box::default(); 26];
+        let start = std::time::Instant::now();
+        route(&mut nodes, &links);
+        eprintln!("route: 26 boxes, 78 calls in {:?}", start.elapsed());
     }
 
     #[test]
