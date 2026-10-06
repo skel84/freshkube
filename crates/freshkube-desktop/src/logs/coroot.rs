@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Local, SecondsFormat, Utc};
+use chrono::{DateTime, FixedOffset, Local, SecondsFormat, TimeZone, Utc};
 use freshkube_core::coroot as api;
 use freshkube_core::logs::{LogEvent, ServiceId};
 use gpui_kit::{AnyElement, Context, SharedString, Window};
@@ -100,11 +100,7 @@ impl CorootPanel for CorootLogView {
         cx: &mut Context<Self>,
     ) {
         let service = self.source().service.clone();
-        let events: Vec<LogEvent> = gap
-            .map(|(at, text)| LogEvent::marker(service.clone(), at, text))
-            .into_iter()
-            .chain(lines.iter().map(|line| event(&service, line)))
-            .collect();
+        let events = events(&service, gap, lines, &Local);
         if !events.is_empty() {
             self.ingest(events, cx);
         }
@@ -116,15 +112,33 @@ impl CorootPanel for CorootLogView {
     }
 }
 
-/// One message as one line: Coroot's time in local time, as the page's
-/// charts show it, then the message whole, however many lines it spans, at
-/// Coroot's severity rather than one its words suggest. A message too long
-/// for the view is cut, and says so.
-pub(crate) fn event(service: &ServiceId, line: &api::LogLine) -> LogEvent {
-    let time = DateTime::from_timestamp_millis(line.time_ms)
-        .unwrap_or_default()
-        .with_timezone(&Local)
-        .to_rfc3339_opts(SecondsFormat::Millis, false);
+/// The note on what may be missing, then Coroot's messages, all with their
+/// times in `zone`: the app's local time.
+fn events<Tz: TimeZone>(
+    service: &ServiceId,
+    gap: Option<(DateTime<Utc>, String)>,
+    lines: &[api::LogLine],
+    zone: &Tz,
+) -> Vec<LogEvent> {
+    gap.map(|(at, text)| LogEvent::marker(service.clone(), in_zone(at, zone), text))
+        .into_iter()
+        .chain(lines.iter().map(|line| event(service, line, zone)))
+        .collect()
+}
+
+/// A time in `zone`, as both Coroot's rows and its gap note show it, so the
+/// two read on one clock.
+fn in_zone<Tz: TimeZone>(time: DateTime<Utc>, zone: &Tz) -> DateTime<FixedOffset> {
+    time.with_timezone(zone).fixed_offset()
+}
+
+/// One message as one line: Coroot's time in `zone`, local time as the
+/// page's charts show it, then the message whole, however many lines it
+/// spans, at Coroot's severity rather than one its words suggest. A message
+/// too long for the view is cut, and says so.
+fn event<Tz: TimeZone>(service: &ServiceId, line: &api::LogLine, zone: &Tz) -> LogEvent {
+    let time = DateTime::from_timestamp_millis(line.time_ms).unwrap_or_default();
+    let time = in_zone(time, zone).to_rfc3339_opts(SecondsFormat::Millis, false);
     let mut text = format!("{time} {}", line.message);
     if text.len() > MOST_LINE_BYTES {
         let cut = format!(" … [cut: {} bytes more]", text.len() - MOST_LINE_BYTES);
@@ -157,7 +171,7 @@ mod tests {
     #[test]
     fn a_message_keeps_coroot_s_time_and_severity_and_fits_the_view() {
         let service = ServiceId::from("app");
-        let short = event(&service, &line("ready, serving\n  on :8080".into()));
+        let short = event(&service, &line("ready, serving\n  on :8080".into()), &Local);
         let (time, message) = short.line.split_once(' ').unwrap();
         assert_eq!(message, "ready, serving\n  on :8080");
         let time = DateTime::parse_from_rfc3339(time).unwrap();
@@ -172,18 +186,43 @@ mod tests {
         assert_eq!(short.level, Some(LogLevel::Error));
         // A name before a colon stays in the message the row shows.
         let mut logs = freshkube_core::logs::MultiServiceLogs::new("app");
-        logs.append(event(&service, &line("cart-db: connection refused".into())));
+        logs.append(event(
+            &service,
+            &line("cart-db: connection refused".into()),
+            &Local,
+        ));
         assert_eq!(
             logs.buffer().entries()[0].message,
             "cart-db: connection refused"
         );
         // At the bound the message is cut on a character, and says so.
-        let long = event(&service, &line("é".repeat(40_000)));
+        let long = event(&service, &line("é".repeat(40_000)), &Local);
         assert!(long.line.len() <= MOST_LINE_BYTES, "{}", long.line.len());
         assert!(
             long.line.ends_with("bytes more]"),
             "{}",
             &long.line[long.line.len() - 40..]
         );
+    }
+
+    /// A gap's note reads on the rows' clock, in any offset.
+    #[test]
+    fn a_gap_reads_in_the_same_zone_as_the_messages() {
+        let service = ServiceId::from("app");
+        let east = FixedOffset::east_opt(2 * 3600).unwrap();
+        // 05:55:00 UTC, 07:55 at +02:00.
+        let at = DateTime::from_timestamp_millis(1_790_834_100_000).unwrap();
+        let mut message = line("ready".into());
+        message.time_ms = at.timestamp_millis() + 30_000;
+        let gap = Some((at, "Some messages may be missing".into()));
+        let mut logs = freshkube_core::logs::MultiServiceLogs::new("app");
+        logs.append_batch(events(&service, gap, &[message], &east));
+        let times: Vec<_> = logs
+            .buffer()
+            .entries()
+            .iter()
+            .map(|entry| entry.timestamp.as_ref().unwrap().display.clone())
+            .collect();
+        assert_eq!(times, ["07:55:00", "07:55:30"]);
     }
 }

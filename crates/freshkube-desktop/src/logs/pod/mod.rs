@@ -331,10 +331,15 @@ impl PodLogs {
         self.empty = empty.into();
     }
 
-    /// A note between lines, placed after the last line read.
+    /// A note between lines, placed after the last line read. In UTC, as
+    /// Kubernetes writes the lines' times.
     fn marker(&self, text: String) -> LogEvent {
         let at = self.position.time().unwrap_or_else(Utc::now);
-        LogEvent::marker(self.container.clone().unwrap_or_default(), at, text)
+        LogEvent::marker(
+            self.container.clone().unwrap_or_default(),
+            at.fixed_offset(),
+            text,
+        )
     }
 }
 

@@ -4,7 +4,7 @@
 //! worker can turn received Talos log lines into [`LogEvent`] values, while a UI
 //! owns one of the buffers and applies those immutable events on its own thread.
 
-use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use std::collections::BTreeSet;
 
 use crate::{constants::MAX_LOG_ENTRIES, types::LogLevel};
@@ -70,6 +70,16 @@ pub struct LogTimestamp {
     pub sort_key: i64,
 }
 
+impl LogTimestamp {
+    /// A time as a row shows it: its clock in the offset it was given in.
+    pub fn at(time: &DateTime<FixedOffset>) -> Self {
+        Self {
+            display: time.format("%H:%M:%S").to_string(),
+            sort_key: time.timestamp(),
+        }
+    }
+}
+
 /// An immutable line delivered by a log worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEvent {
@@ -84,6 +94,8 @@ pub struct LogEvent {
     /// The line comes from a Talos service, whose message leaves out the
     /// prefix such a service writes. See [`LogEvent::talos`].
     pub talos: bool,
+    /// A marker's time. A line carries its own in its text.
+    pub time: Option<DateTime<FixedOffset>>,
 }
 
 impl LogEvent {
@@ -94,6 +106,7 @@ impl LogEvent {
             marker: false,
             level: None,
             talos: false,
+            time: None,
         }
     }
 
@@ -114,22 +127,21 @@ impl LogEvent {
     }
 
     /// A note placed among the lines at `time`, which keeps it in order with
-    /// them. It has no level, never matches a search and is never copied.
+    /// them. Its time shows in `time`'s offset, so a caller gives it in the
+    /// offset its lines are written in. It has no level, never matches a
+    /// search and is never copied.
     pub fn marker(
         service: impl Into<ServiceId>,
-        time: DateTime<Utc>,
-        text: impl AsRef<str>,
+        time: DateTime<FixedOffset>,
+        text: impl Into<String>,
     ) -> Self {
         Self {
             service: service.into(),
-            line: format!(
-                "{} {}",
-                time.to_rfc3339_opts(SecondsFormat::Nanos, true),
-                text.as_ref()
-            ),
+            line: text.into(),
             marker: true,
             level: None,
             talos: false,
+            time: Some(time),
         }
     }
 }
@@ -228,13 +240,21 @@ fn parse_line(event: &LogEvent, sequence: u64) -> LogEntry {
 }
 
 fn parse_event(event: LogEvent, sequence: u64) -> LogEntry {
-    let mut entry = parse_line(&event, sequence);
     if event.marker {
-        entry.marker = true;
-        entry.level = LogLevel::Unknown;
-        entry.message = entry.text_without_timestamp().to_owned();
+        let raw = event.line.trim().to_owned();
+        return LogEntry {
+            service: event.service,
+            message: raw.clone(),
+            raw,
+            timestamp: event.time.as_ref().map(LogTimestamp::at),
+            level: LogLevel::Unknown,
+            search_text: String::new(),
+            sequence,
+            body: 0,
+            marker: true,
+        };
     }
-    entry
+    parse_line(&event, sequence)
 }
 
 /// Classify a line with the same precedence as the existing log viewers.
@@ -861,13 +881,7 @@ fn extract_rfc3339_prefix(line: &str) -> Option<(LogTimestamp, usize)> {
     let token = line.split(' ').next()?;
     let time = DateTime::parse_from_rfc3339(token).ok()?;
     let body = (token.len() + 1).min(line.len());
-    Some((
-        LogTimestamp {
-            display: time.format("%H:%M:%S").to_string(),
-            sort_key: time.timestamp(),
-        },
-        body,
-    ))
+    Some((LogTimestamp::at(&time), body))
 }
 
 fn extract_leading_timestamp(line: &str) -> (Option<LogTimestamp>, &str) {
@@ -1052,6 +1066,7 @@ fn without_level<'a>(text: &'a str, level: &LogLevel) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[test]
     fn parses_talos_klog_json_and_containerd_timestamps() {
@@ -1193,11 +1208,44 @@ mod tests {
         assert_eq!(spaced.text_without_timestamp(), spaced.raw);
     }
 
+    /// A marker reads in the offset it's given, as the lines around it do,
+    /// and keeps its place by the instant.
+    #[test]
+    fn a_marker_reads_in_the_offset_of_the_lines_around_it() {
+        let east = FixedOffset::east_opt(2 * 3600).unwrap();
+        let gap = DateTime::parse_from_rfc3339("2026-10-01T05:55:30Z")
+            .unwrap()
+            .with_timezone(&east);
+        let mut logs = MultiServiceLogs::new("app");
+        logs.append_batch([
+            LogEvent::new("app", "2026-10-01T07:56:00+02:00 after"),
+            LogEvent::marker("app", gap, "Some messages may be missing"),
+            LogEvent::new("app", "2026-10-01T07:55:00+02:00 before"),
+        ]);
+        let rows: Vec<_> = logs
+            .buffer()
+            .entries()
+            .iter()
+            .map(|entry| {
+                (
+                    entry.timestamp.as_ref().unwrap().display.as_str(),
+                    entry.message.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("07:55:00", "before"),
+                ("07:55:30", "Some messages may be missing"),
+                ("07:56:00", "after"),
+            ]
+        );
+    }
+
     #[test]
     fn markers_keep_their_place_but_never_match_count_or_filter() {
-        let time = DateTime::parse_from_rfc3339("2026-10-01T12:00:01Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let time = DateTime::parse_from_rfc3339("2026-10-01T12:00:01Z").unwrap();
         let mut logs = MultiServiceLogs::new("pod");
         let outcome = logs.append_bounded(
             [
@@ -1323,7 +1371,8 @@ mod tests {
             // A severity Coroot stored outranks the words in the line.
             LogEvent::new("app", "retrying after error").with_level(LogLevel::Info),
             LogEvent::new("app", "a plain line").with_level(LogLevel::Unknown),
-            LogEvent::marker("app", Utc::now(), "a note").with_level(LogLevel::Error),
+            LogEvent::marker("app", Utc::now().fixed_offset(), "a note")
+                .with_level(LogLevel::Error),
         ]);
         let levels: Vec<_> = buffer.entries().iter().map(|e| e.level.clone()).collect();
         assert_eq!(
