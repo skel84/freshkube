@@ -16,6 +16,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "io.github.skel84.freshkube"
 MINIMUM_MACOS = "15.0"
+# Made from packaging/icon/freshkube.svg by scripts/app-icon.sh.
+ICON = ROOT / "packaging/icon/freshkube.icns"
+ICON_FILE = "Freshkube.icns"
 ARCHITECTURES = {
     "aarch64-apple-darwin": "arm64",
     "x86_64-apple-darwin": "x86_64",
@@ -79,6 +82,10 @@ def stray_executables(app):
 
 def verify_bundle(app, target, version):
     run("plutil", "-lint", str(app / "Contents/Info.plist"))
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    icon = app / "Contents/Resources" / info.get("CFBundleIconFile", "")
+    if not icon.is_file() or icon.read_bytes()[:4] != b"icns":
+        raise ValueError(f"CFBundleIconFile does not name an icon in Resources: {icon}")
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app))
     stray = stray_executables(app)
     if stray:
@@ -130,6 +137,7 @@ def package(args):
             "CFBundleDisplayName": "Freshkube",
             "CFBundleName": "Freshkube",
             "CFBundleExecutable": "freshkube",
+            "CFBundleIconFile": ICON_FILE,
             "CFBundleIdentifier": BUNDLE_ID,
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundlePackageType": "APPL",
@@ -151,6 +159,7 @@ def package(args):
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         for name in ("LICENSE", "NOTICE"):
             shutil.copy2(ROOT / name, resources / name)
+        shutil.copy2(ICON, resources / ICON_FILE)
         shutil.copytree(ROOT / "licenses", resources / "licenses")
         # Preserve the licence paths referenced by NOTICE. Fonts, themes, icons
         # and Metal shaders are also embedded in the executable by Rust/GPUI.
