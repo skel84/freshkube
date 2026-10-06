@@ -41,7 +41,7 @@ The retained `ObservabilityPage` owns selections, request handles, `Snapshot` va
 
 Every request captures the opaque Coroot provider identity, project, optional cluster association, current Freshkube access key, absolute time interval and subject. A separate page request generation guards delivery, and each `Snapshot` checks its identity and generation. Creating a connection gives it a new provider identity even when the URL and credential text are unchanged. An ordinary retry retains the provider identity.
 
-Only the visible destination starts ordinary reads. Hiding, changing destination or replacing the source drops its jobs; there is no background Coroot refresh timer. A report requests REST and MCP evidence independently, so one unavailable source cannot erase the other.
+Only the visible destination starts ordinary reads. Hiding, changing destination or replacing the source drops its jobs; there is no background Coroot refresh timer. The Application page reads Coroot's own view of the application and nothing beside it.
 
 Refresh and reopening capture a new Last N hours interval. Destination/report navigation and **Retry** retain the captured absolute interval, shown with local dates and times. Data from a different interval or source is cleared. A failed retry for the same interval can retain successful evidence, marked **stale**, with the last successful local time and the read error. Source failures, loading, successful empty results, application health and unsupported capabilities remain distinct.
 
@@ -52,16 +52,14 @@ Refresh and reopening capture a new Last N hours interval. Destination/report na
 | Applications | Coroot aggregate health, type, category and 12 named signal columns. Healthy checks without a figure read “ok”; empty unknown checks retain the outlined circle; absent signals show “—”. Full captions and compact values are measured when data or text size changes; wide tables scroll sideways. Failing upstreams show a count, with the original names and state retained in their tooltip and accessibility label. Coroot's status is never recalculated from strings or local thresholds. |
 | Signal/report mapping | Errors and latency → SLO; upstreams and network → Net; instances and restarts → Instances; disk usage and disk I/O → Storage; CPU, memory, DNS and logs use their named report. Dynamic report tabs also expose other report names returned by the source. |
 | Service map | Stable AppId nodes and directed endpoint-pair links, prepared layered layout (callers left of callees), source status and available request/latency/traffic metrics. Missing metrics say Not reported. Statistics derived by the library from rounded Coroot display values are identified as potentially rounded. |
-| Application reports | REST evidence, then only what MCP adds, in one card whose footer keeps each source's state and Retry: Coroot report statuses/issues, dependencies/clients, and available vitals, labeled chart summaries and log patterns. Dependency health and connection health remain separate. Summaries identify missing points and omitted series; complete histories are not implied. |
-| Capabilities | API-key presence allows an MCP attempt but does not prove server support. Session/anonymous access keeps REST available and reports richer evidence as unsupported. Authentication, refusal, missing subjects, unreachable sources, decoding failures, timeouts and size-limit failures have separate messages. |
+| Application reports | Coroot's own application view: its map, report tabs, checks and widgets, as Coroot's page shows them and with nothing added. [DESIGN.md](DESIGN.md) H3 describes how each widget draws. |
+| Capabilities | Every read uses Coroot's HTTP API; Freshkube calls no MCP tool. Authentication, refusal, missing subjects, unreachable sources, decoding failures, timeouts and size-limit failures have separate messages. |
 | Incidents | Bounded latest-project sample, stable key/application selection, source-reported SLO objective/compliance and burn values, RCA source text and problem-propagation application links. No mutation, invented charts or ruled-out evidence. |
 | Traces | One application's latency and error heatmap, the latest 100 matching spans, and the selected trace as a waterfall with each span's status, details, attributes and events. A heatmap cell lists that bucket's requests; Failed requests lists the window's errors; OpenTelemetry and eBPF are chosen when Coroot has both. |
 | Profiling | One application's profile types, instances and flame graph, optionally compared with the window before it. Frames show their share of the total and, when compared, the change in that share; Biggest increases lists the frames that gained most. |
 | Later destinations | Live Deployments shows the current integration limitation. Its fixture screen remains a preview. |
 
 Application and link selections use stable domain identities and survive response reorder. Removing the selected subject clears the selection safely. Sorting, filtering, group counts, labels and graph layout are prepared when observations or controls change. The applications list is virtualized. The map displays prepared pages of 24 applications, adding at most two endpoints for the selected connection. It states the displayed/retained counts; the first 24 connection markers plus the selection are shown on the graph. Every retained connection remains available in the virtualized inspector, including links between different pages. Category and namespace menus show at most 100 choices with an explicit hint; text search searches all retained applications.
-
-Report evidence is paged at 24 entries or about 16 KiB of prepared text, with a single long entry kept together. Every bounded entry remains available with its complete source text. A late answer from one report source preserves the other source's page for the same provider/access, application, report and time interval; changed identity resets it, and shorter evidence clamps it.
 
 A Coroot AppId is not a Kubernetes UID. Supported Pod, Service, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job and CronJob links carry the explicit access, API/kind, namespace and name. The shell verifies that the event still belongs to the displayed source and access, then uses its existing `open_object` path. That path respects running-shell confirmation and resolves missing UIDs with metadata-only reads. Access is checked again after delayed confirmation and metadata completion.
 
@@ -76,8 +74,6 @@ This slice is read-only. Live pages do not offer threshold, mute, rollback or co
 | Time interval | One minute to seven days in core; the desktop offers its existing hour ranges |
 | Projects / applications | 100 projects / 2,000 applications |
 | Map | 2,000 nodes / 20,000 directed links (paged 24 nodes at a time) |
-| Report evidence | 32 reports, 200 total issue/log entries, 128 summarized series, 32 vitals, 300 dependency/client links |
-| Series | 512 summary points, 32 labels per series |
 | Application view | `GET api/project/{p}/app/{app}`, Coroot's own page for one application: 2,000 instances, 1,000 clients and dependencies, 32 reports of 64 checks and 128 widgets each; 512 charts, 4,096 series of 4,096 points, and 50,000 table cells per page. Read by `Provider::app_view` for the Application page. |
 | Incidents | Latest 100 across all states; 10 list rows and 10 propagation applications per rendered page; 100 retained propagation applications / 200 issue entries / 32 burn conditions |
 | Incident text | 64 KiB total RCA/propagation text, with individual bounds (root/fixes 16 KiB each, detailed analysis 32 KiB, issue 4 KiB) |
@@ -101,7 +97,7 @@ Maximum-data debug probes on `1b16b42`, run individually after compilation and o
 | 120 map nodes / 300 links | 5.09 ms | 189.07 ms |
 | 200 long report issues | 3.40 ms | 57.69 ms |
 
-The earlier unpaged map took 2,927.92 ms for ten frames while compilation was active; representative paged-map runs under build contention measured 261 and 443 ms. These debug observations have different load conditions, and forced frames bypass normal view caching. They are not release frame-time acceptance; #22's independent Table/summary targets remain open. Reproduce with the `bounded_projection_measurement` and `large_report_evidence_is_paged_without_losing_source_text` desktop tests using `--nocapture --test-threads=1`.
+The earlier unpaged map took 2,927.92 ms for ten frames while compilation was active; representative paged-map runs under build contention measured 261 and 443 ms. These debug observations have different load conditions, and forced frames bypass normal view caching. They are not release frame-time acceptance; #22's independent Table/summary targets remain open. Reproduce with the `bounded_projection_measurement` desktop test using `--nocapture --test-threads=1`.
 
 The optional anonymous HTTPS check reached the explicitly selected Coroot endpoint; `/api/user` returned HTTP 401. Live authenticated data has not been checked by this branch.
 

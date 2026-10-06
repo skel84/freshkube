@@ -13,7 +13,6 @@ use tokio::runtime::Handle;
 pub(super) enum Subject {
     Applications,
     Map,
-    Report(api::AppId, bool),
     /// Coroot's own view of an application.
     View(api::AppId),
     Incidents,
@@ -58,8 +57,6 @@ pub(super) struct Live {
     pub error: Option<String>,
     pub apps: Snapshot<Vec<api::Application>, ReadIdentity>,
     pub map: Snapshot<api::ServiceMap, ReadIdentity>,
-    pub rest: Snapshot<api::AppHealth, ReadIdentity>,
-    pub extended: Snapshot<api::AppHealth, ReadIdentity>,
     pub view: Snapshot<api::AppView, ReadIdentity>,
     /// The view's last read was refused, rather than failed.
     pub view_refused: bool,
@@ -68,7 +65,8 @@ pub(super) struct Live {
     pub tracing: Snapshot<api::Tracing, ReadIdentity>,
     pub trace: Snapshot<api::Tracing, ReadIdentity>,
     pub profiling: Snapshot<api::Profiling, ReadIdentity>,
-    pub capabilities: [api::Capability; 4],
+    /// What reading the applications and the service map showed of access.
+    pub capabilities: [api::Capability; 2],
 }
 impl Live {
     pub(super) fn identity(&self, subject: Subject) -> Option<ReadIdentity> {
@@ -105,8 +103,6 @@ impl Live {
             error: None,
             apps: Snapshot::default(),
             map: Snapshot::default(),
-            rest: Snapshot::default(),
-            extended: Snapshot::default(),
             view: Snapshot::default(),
             view_refused: false,
             incidents: Snapshot::default(),
@@ -114,7 +110,7 @@ impl Live {
             tracing: Snapshot::default(),
             trace: Snapshot::default(),
             profiling: Snapshot::default(),
-            capabilities: [api::Capability::Unchecked; 4],
+            capabilities: [api::Capability::Unchecked; 2],
         }
     }
     fn cancel(&mut self) {
@@ -130,8 +126,6 @@ impl Live {
         self.cancel();
         self.apps = Snapshot::default();
         self.map = Snapshot::default();
-        self.rest = Snapshot::default();
-        self.extended = Snapshot::default();
         self.view = Snapshot::default();
         self.view_refused = false;
         self.incidents = Snapshot::default();
@@ -139,7 +133,7 @@ impl Live {
         self.tracing = Snapshot::default();
         self.trace = Snapshot::default();
         self.profiling = Snapshot::default();
-        self.capabilities = [api::Capability::Unchecked; 4];
+        self.capabilities = [api::Capability::Unchecked; 2];
     }
 }
 fn range(hours: u32, to: chrono::DateTime<chrono::Utc>) -> api::TimeRange {
@@ -485,41 +479,12 @@ impl ObservabilityPage {
                 );
             }
             Destination::Application => {
-                let Some(app) = self.selected_app.clone() else {
+                if self.selected_app.is_none() {
                     cx.notify();
                     return;
-                };
+                }
                 self.read_view(provider.clone(), source.clone(), cx);
                 self.read_embedded(cx);
-                for extended in [false, true] {
-                    let key = ReadIdentity {
-                        subject: Subject::Report(app.clone(), extended),
-                        ..identity.clone()
-                    };
-                    let request = if extended {
-                        self.live.extended.begin(key)
-                    } else {
-                        self.live.rest.begin(key)
-                    };
-                    let (provider, source, app) = (provider.clone(), source.clone(), app.clone());
-                    self.spawn_read(
-                        async move { provider.reports(&source, range, &app, extended).await },
-                        move |this, result, cx| {
-                            let capability = api::Capability::from_result(&result);
-                            let snapshot = if extended {
-                                &mut this.live.extended
-                            } else {
-                                &mut this.live.rest
-                            };
-                            if snapshot.apply(&request, result.map_err(|e| e.to_string())) {
-                                this.live.capabilities[if extended { 3 } else { 2 }] = capability;
-                                this.prepare_report();
-                                cx.notify();
-                            }
-                        },
-                        cx,
-                    );
-                }
             }
             _ => {}
         }
@@ -583,7 +548,7 @@ mod tests {
             source: provider.source(&project),
             access: Some("access:a".into()),
             range: TimeRange::between(end - chrono::Duration::hours(1), end),
-            subject: Subject::Report(AppId::new("c:ns:Deployment:a"), false),
+            subject: Subject::View(AppId::new("c:ns:Deployment:a")),
         };
         let credential = Provider::new(
             "https://coroot.example.com",
@@ -626,11 +591,11 @@ mod tests {
                 ..original.clone()
             },
             ReadIdentity {
-                subject: Subject::Report(AppId::new("c:ns:Deployment:b"), false),
+                subject: Subject::View(AppId::new("c:ns:Deployment:b")),
                 ..original.clone()
             },
             ReadIdentity {
-                subject: Subject::Report(AppId::new("c:ns:Deployment:a"), true),
+                subject: Subject::Map,
                 ..original.clone()
             },
             original.clone(), // a new generation with the same identity

@@ -18,10 +18,9 @@ pub use app_view::{
 pub use chart_panel::ChartPanel;
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
-    AppHealth, AppId, Application, BurnRate, Chart, ClientLink, Credentials, Dependency, Incident,
-    IncidentQuery, IncidentState, IncidentView, Issue, LogPatternSummary, MapEdge, MapNode,
-    ProjectInfo, Rca, Report, SeriesSummary, ServiceMap, Signal, Slo, SloObjective, StateFilter,
-    Status, TimeRange,
+    AppHealth, AppId, Application, BurnRate, Credentials, Incident, IncidentQuery, IncidentState,
+    IncidentView, Issue, MapEdge, MapNode, ProjectInfo, Rca, Report, ServiceMap, Signal, Slo,
+    SloObjective, StateFilter, Status, TimeRange,
 };
 pub use coroot_rs::{Span, SpanEvent};
 pub use profiling::{FlameGraph, Frame, ProfileKind, ProfileQuery, ProfileUnit, Profiling};

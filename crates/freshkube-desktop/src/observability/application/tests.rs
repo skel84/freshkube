@@ -451,3 +451,35 @@ fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn no_tab_adds_evidence_beside_coroots_view(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| page.update(cx, |page, cx| page.open_app(worker(), Report::Net, cx)));
+    let tabs: Vec<_> = cx.update(|cx| {
+        let page = page.read(cx);
+        let view = page.app_page.as_ref().unwrap();
+        view.tabs.iter().map(|t| t.id.clone()).collect()
+    });
+    assert!(tabs.len() > 8, "{tabs:?}");
+    let ledger = example::id("payments/ledger-db");
+    let api = example::id("payments/api");
+    cx.update_window(handle, |_, window, cx| {
+        for tab in tabs {
+            window.click(tab.clone(), cx);
+            window.render_frame(cx);
+            assert!(window.find("obs-app-map-app").visible(), "{tab}");
+            // The card's calls, clients, pager and Retry are gone with it.
+            for id in [
+                format!("obs-rest-dependency-{ledger}"),
+                format!("obs-rest-client-{api}"),
+                "obs-evidence-false-true".into(),
+                "obs-retry-rest".into(),
+                "obs-retry-extended".into(),
+            ] {
+                assert!(window.try_find(id.clone()).is_none(), "{tab}: {id}");
+            }
+        }
+    })
+    .unwrap();
+}
