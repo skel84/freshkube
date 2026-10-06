@@ -201,14 +201,12 @@ fn compact_signal(report: Report, state: Status, raw: &str) -> String {
 pub(super) fn map(
     raw: &api::ServiceMap,
 ) -> (std::rc::Rc<Vec<MapNode>>, std::rc::Rc<Vec<Connection>>) {
-    // Stable, bounded grid. No iterative force simulation on the UI thread.
+    // Sorted by id, so the graph's pages are stable; the graph places them.
     let mut ordered: Vec<_> = raw.nodes.iter().collect();
     ordered.sort_by(|a, b| a.id.cmp(&b.id));
-    let rows = ordered.len().div_ceil(4).max(1);
     let nodes: Vec<_> = ordered
         .iter()
-        .enumerate()
-        .map(|(ix, node)| MapNode {
+        .map(|node| MapNode {
             app: node.id.clone(),
             label: node.id.name().into(),
             tooltip: format!(
@@ -218,18 +216,15 @@ pub(super) fn map(
             ),
             namespace: node.id.namespace().unwrap_or("External / unmapped").into(),
             status: node.status.into(),
-            x: (ix % 4) as f32 * 0.25,
-            y: (ix / 4) as f32 / rows as f32,
             element_id: format!("obs-map-node-{}", node.id).into(),
         })
         .collect();
-    let positions: BTreeMap<_, _> = nodes
-        .iter()
-        .enumerate()
-        .map(|(ix, n)| (&n.app, ix))
-        .collect();
+    // A connection is kept only when both its ends are on the map.
+    let known: std::collections::BTreeSet<_> = nodes.iter().map(|n| &n.app).collect();
     let connections = raw.edges.iter().filter_map(|edge| {
-        let (from,to) = (*positions.get(&edge.from)?, *positions.get(&edge.to)?);
+        if !known.contains(&edge.from) || !known.contains(&edge.to) {
+            return None;
+        }
         let number = |v: Option<f64>, unit: &str| v.filter(|v| v.is_finite()).map_or_else(
             || "Not reported".into(), |v| format!("{v:.3} {unit}"));
         let label = format!("{} → {}",edge.from.short(),edge.to.short());
@@ -238,7 +233,7 @@ pub(super) fn map(
             number(edge.rps,"rps"),number(edge.latency_seconds,"s"),
             number(edge.sent_bytes_per_second,"B/s"),number(edge.received_bytes_per_second,"B/s"));
         Some(Connection {
-            id: LinkId(edge.from.clone(),edge.to.clone()), from,to, status: edge.status.into(),
+            id: LinkId(edge.from.clone(),edge.to.clone()), status: edge.status.into(),
             element_id: format!("obs-map-edge-{}--{}", edge.from,edge.to).into(),
             button_id: format!("obs-map-link-{}--{}", edge.from,edge.to).into(),
             traffic: edge.sent_bytes_per_second.filter(|v| v.is_finite() && *v > 0.).map_or(1., |v| (v.log10() as f32).clamp(1.,4.)),

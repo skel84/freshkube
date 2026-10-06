@@ -201,13 +201,13 @@ fn map_selection_survives_reordering_and_clears_on_removal(cx: &mut TestAppConte
     cx.update_window(handle,|_,window,cx| {
         window.render_frame(cx);
         window.click("obs-map-link-fixture:payments:Deployment:worker--fixture:payments:Deployment:ledger-db",cx);
-        let selected=page.read(cx).selected_link.clone();assert!(selected.is_some());
+        let selected=page.read(cx).map_display.selected().cloned();assert!(selected.is_some());
         page.update(cx,|page,_| {
             let mut raw=example::map();raw.nodes.reverse();raw.edges.reverse();
             (page.nodes,page.connections)=super::projection::map(&raw);page.prepare_map();
-            assert_eq!(page.selected_link,selected);
+            assert_eq!(page.map_display.selected().cloned(),selected);
             raw.edges.clear();(page.nodes,page.connections)=super::projection::map(&raw);page.prepare_map();
-            assert!(page.selected_link.is_none());
+            assert!(page.map_display.selected().is_none());
         });
     }).unwrap();
 }

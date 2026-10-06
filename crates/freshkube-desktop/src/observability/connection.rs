@@ -203,10 +203,8 @@ impl ObservabilityPage {
             self.nodes = Default::default();
             self.connections = Default::default();
             self.map_display = Default::default();
-            self.map_page = 0;
             self.matrix.clear();
             self.selected_app = None;
-            self.selected_link = None;
             self.report_snapshot = None;
             self.categories = Default::default();
             self.namespaces = Default::default();
@@ -236,8 +234,7 @@ impl ObservabilityPage {
             self.applications.clear();
             self.nodes = Default::default();
             self.connections = Default::default();
-            self.map_display = Default::default();
-            self.map_page = 0;
+            self.map_display.reload();
             self.project();
             self.prepare_application_columns();
             self.report_snapshot = None;

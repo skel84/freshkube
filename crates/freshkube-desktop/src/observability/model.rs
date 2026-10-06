@@ -252,8 +252,6 @@ pub(super) struct MapNode {
     pub tooltip: String,
     pub namespace: String,
     pub element_id: gpui_kit::SharedString,
-    pub x: f32,
-    pub y: f32,
     pub status: Status,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -263,8 +261,6 @@ pub(super) struct Connection {
     pub id: LinkId,
     pub element_id: gpui_kit::SharedString,
     pub button_id: gpui_kit::SharedString,
-    pub from: usize,
-    pub to: usize,
     pub status: Status,
     pub traffic: f32,
     pub label: String,

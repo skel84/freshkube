@@ -7,9 +7,11 @@ publish = false
 description = "Freshkube's look: theme, palette, text size and the shared components every page draws"
 
 # Depends on neither freshkube-desktop nor freshkube-core, so a page can
-# use only what this crate exports (docs/DESIGN.md#components).
+# use only what this crate exports (docs/DESIGN.md#components). The graph
+# view lays out with freshkube-graph, which depends on nothing.
 [dependencies]
 gpui-kit = "=0.7.0"
+freshkube-graph.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 
