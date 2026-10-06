@@ -6,6 +6,7 @@ impl Render for ObservabilityPage {
         self.sync_app_select(window, cx);
         self.sync_namespace_select(window, cx);
         self.sync_app_tables(cx);
+        self.sync_app_charts(cx);
         let p = palette(cx);
         let unavailable =
             !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());

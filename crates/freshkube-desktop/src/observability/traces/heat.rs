@@ -37,7 +37,7 @@ pub(in crate::observability) fn bind_keys(cx: &mut App) {
 /// Heatmap columns drawn; Coroot's points are summed into them.
 const COLUMNS: usize = 48;
 
-pub(super) struct Heat {
+pub(in crate::observability) struct Heat {
     /// Failed requests first, then slowest to fastest.
     lines: Vec<HeatLine>,
     /// Each column's start and end, in epoch milliseconds.
@@ -184,6 +184,93 @@ pub(super) fn heat(heatmap: &api::Heatmap) -> Heat {
         columns: bounds,
         start: time(heatmap.from_ms),
         end: time(heatmap.to_ms),
+    }
+}
+
+/// A heatmap from Coroot's application view, read as the traces heatmap
+/// is: Coroot names each row by its bound and its last row `errors`.
+pub(in crate::observability) fn app_heat(heatmap: &api::AppHeatmap) -> Heat {
+    heat(&api::Heatmap {
+        from_ms: heatmap.from_ms,
+        to_ms: heatmap.to_ms,
+        step_ms: heatmap.step_ms,
+        rows: heatmap
+            .rows
+            .iter()
+            .map(|row| api::HeatRow {
+                name: if row.title.is_empty() {
+                    row.name.clone()
+                } else {
+                    row.title.clone()
+                },
+                value: if row.name == "errors" {
+                    "err".into()
+                } else {
+                    row.name.clone()
+                },
+                points: row.points.clone(),
+            })
+            .collect(),
+    })
+}
+
+impl ObservabilityPage {
+    /// A report's heatmap: the traces heatmap's cells, without its cursor,
+    /// since a report's cells list nothing.
+    pub(in crate::observability) fn static_heatmap(
+        &self,
+        id: SharedString,
+        title: SharedString,
+        heat: &Heat,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let grid = v_flex()
+            .gap(dp(3.))
+            .children(heat.lines.iter().map(|line_data| {
+                line()
+                    .gap(dp(3.))
+                    .h(dp(16.))
+                    .child(
+                        muted(line_data.label.clone(), cx)
+                            .w(dp(56.))
+                            .flex_none()
+                            .text_right(),
+                    )
+                    .children(
+                        line_data
+                            .levels
+                            .iter()
+                            .zip(&line_data.cells)
+                            .enumerate()
+                            .map(|(column, (&level, label))| {
+                                let label = label.clone();
+                                div()
+                                    .id(column)
+                                    .aria_label(label.clone())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .rounded(px(3.))
+                                    .bg(crate::palette::heat_color(level, line_data.errors))
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(label.clone()).build(window, cx)
+                                    })
+                            }),
+                    )
+            }));
+        card(title, cx)
+            .id(id)
+            .test_support()
+            .child(
+                body().pt_0().child(grid).child(
+                    line()
+                        .justify_between()
+                        .pl(dp(59.))
+                        .child(muted(heat.start.clone(), cx))
+                        .child(muted(heat.end.clone(), cx)),
+                ),
+            )
+            .into_any_element()
     }
 }
 

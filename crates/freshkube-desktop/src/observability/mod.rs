@@ -148,6 +148,10 @@ pub(crate) struct ObservabilityPage {
     app_page: Option<application::AppPage>,
     /// One entity per table the chosen report shows.
     app_tables: Vec<Entity<application::ReportTable>>,
+    /// A panel for each chart the chosen report shows, and no other.
+    app_charts: Vec<application::ShownChart>,
+    /// The chart each group shows, where the reader picked one.
+    app_picks: BTreeMap<application::ChartKey, SharedString>,
     threshold: Entity<InputState>,
     thresholds: BTreeMap<(String, Report), String>,
     charts: [Chart; 3],
@@ -338,6 +342,8 @@ impl ObservabilityPage {
             report_snapshot: None,
             app_page: None,
             app_tables: vec![],
+            app_charts: vec![],
+            app_picks: BTreeMap::new(),
             threshold,
             thresholds: BTreeMap::new(),
             charts: [
