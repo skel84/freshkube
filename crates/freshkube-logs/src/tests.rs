@@ -774,3 +774,114 @@ fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut Tes
     })
     .unwrap();
 }
+
+/// Delivers `count` lines and lets the executor's clock pass, as a
+/// stream's next batch would.
+fn deliver_more(cx: &mut TestAppContext, panel: &Entity<LogPanel>, from: usize, count: usize) {
+    let lines = (from..from + count)
+        .map(|ix| format!("info later line {ix}"))
+        .collect();
+    cx.update(|cx| deliver(panel, lines, cx));
+    cx.executor().advance_clock(super::HIDDEN_APPLY_INTERVAL);
+    cx.run_until_parked();
+}
+
+fn wheel(cx: &mut TestAppContext, handle: WindowHandle<Root>, x: f32, y: f32) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.scroll(
+            "logs-viewport",
+            ScrollDelta::Pixels(point(px(x), px(y))),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn at_the_end_a_wheel_down_or_none_at_all_keeps_following(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    settle(cx, &panel, handle);
+    let tail = cx.read(|cx| panel.read(cx).scroll.offset());
+    assert!(cx.read(|cx| panel.read(cx).following));
+
+    wheel(cx, handle, 0., -300.);
+    cx.read(|cx| {
+        assert!(panel.read(cx).following, "a wheel down at the end paused");
+        assert_eq!(panel.read(cx).scroll.offset(), tail);
+    });
+    wheel(cx, handle, 0., 0.);
+    assert!(
+        cx.read(|cx| panel.read(cx).following),
+        "an empty wheel paused"
+    );
+
+    deliver_more(cx, &panel, 0, 30);
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(panel.read(cx).following);
+        assert!(
+            panel.read(cx).scroll.offset().y < tail.y,
+            "the tail moved on"
+        );
+        assert!(window.find(SharedString::from("log-line-1-149")).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_wheel_up_pauses_follow_and_new_lines_leave_the_list_where_it_is(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    settle(cx, &panel, handle);
+    let tail = cx.read(|cx| panel.read(cx).scroll.offset());
+
+    wheel(cx, handle, 0., 300.);
+    let paused = cx.read(|cx| {
+        assert!(!panel.read(cx).following, "a wheel up kept following");
+        panel.read(cx).scroll.offset()
+    });
+    assert!(paused.y > tail.y, "the list didn't scroll up");
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find(SharedString::from("log-line-1-99")).visible());
+    })
+    .unwrap();
+
+    deliver_more(cx, &panel, 0, 30);
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(!panel.read(cx).following);
+        assert_eq!(panel.read(cx).scroll.offset(), paused);
+        assert!(window.find(SharedString::from("log-line-1-99")).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_sideways_wheel_keeps_following(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("logs-wrap", cx);
+        assert!(!panel.read(cx).wrapped);
+    })
+    .unwrap();
+    // A wide newest line, so the list has somewhere to go sideways.
+    cx.update(|cx| {
+        deliver(
+            &panel,
+            vec![format!("info wide {}", "東京 ".repeat(200))],
+            cx,
+        )
+    });
+    settle(cx, &panel, handle);
+    let tail = cx.read(|cx| panel.read(cx).scroll.offset());
+    assert!(cx.read(|cx| panel.read(cx).following));
+
+    wheel(cx, handle, -200., 0.);
+    cx.read(|cx| {
+        let offset = panel.read(cx).scroll.offset();
+        assert!(panel.read(cx).following, "a sideways wheel paused");
+        assert_eq!(offset.y, tail.y);
+        assert!(offset.x < tail.x, "the wheel didn't reach the list");
+    });
+}

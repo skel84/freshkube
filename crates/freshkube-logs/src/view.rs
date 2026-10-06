@@ -424,6 +424,18 @@ impl<S: LogSource> LogView<S> {
     }
 }
 
+impl<S: LogSource> LogView<S> {
+    /// Whether the wheel moved the list off its newest line. The list adds
+    /// a wheel's delta unclamped and clamps it when it next lays out, so a
+    /// wheel down at the end, a sideways one or one on a list too short to
+    /// scroll all still read as the end.
+    fn wheel_left_end(&self) -> bool {
+        let end = -self.scroll.max_offset().y;
+        let offset = self.scroll.offset().y.clamp(end, px(0.));
+        offset > end + px(0.5)
+    }
+}
+
 /// Renders `view` again once this frame is drawn. A notify while the
 /// window prepaints only marks the view dirty and schedules no frame, so
 /// a geometry learned in prepaint would wait for the next input event.
@@ -511,9 +523,12 @@ impl<S: LogSource> Render for LogView<S> {
             .border_1().border_color(p.line)
             .focus_visible(|style| style.border_color(cx.theme().ring))
             // The list has scrolled by now; a frame that scrolls around the
-            // log, as a short node pane does, stays where it is.
+            // log, as a short node pane does, stays where it is. Follow
+            // pauses only when the list left its newest line.
             .on_scroll_wheel(cx.listener(|this, _, _, cx| {
-                this.set_following(false, cx);
+                if this.following && this.wheel_left_end() {
+                    this.set_following(false, cx);
+                }
                 cx.stop_propagation();
             }))
             .on_action(cx.listener(|this, _: &CopySelected, _, cx| this.copy(cx)))

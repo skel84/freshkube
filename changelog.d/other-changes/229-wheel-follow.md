@@ -1,0 +1,1 @@
+- A mouse wheel or trackpad over a log pauses Follow only when the log really scrolls up from its newest line; a wheel down at the end, or a sideways one, keeps following.
