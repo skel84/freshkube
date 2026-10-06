@@ -13,5 +13,9 @@ gpui-kit = "=0.7.0"
 chrono.workspace = true
 serde_json.workspace = true
 
+[features]
+# UI tests read which of a segment's lines the bar drew (`status::shown`).
+testing = []
+
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }

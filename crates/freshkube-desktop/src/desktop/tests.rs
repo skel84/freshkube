@@ -3810,6 +3810,68 @@ fn etcd_and_security_fill_the_status_bar(cx: &mut TestAppContext) {
     }
 }
 
+/// In the narrowest window, a page's segment drops its minor parts and
+/// then its other parts before its warnings. Example mode's bar is about
+/// 200 px narrower than a live one, for Simulate failure and Example data:
+/// at the largest text the first part goes there, and even the warnings
+/// are cut, but the first one still leads.
+#[gpui_kit::test]
+fn a_narrow_status_bar_drops_minor_parts_and_keeps_the_toned_ones(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    for text_size in [13., 20.] {
+        for (page, id, lead, warnings) in [
+            (
+                Page::Health,
+                "health-scope",
+                "deployments",
+                &["degraded", "failing"][..],
+            ),
+            // No alerts in the example: nothing outranks the first part.
+            (Page::Lifecycle, "lifecycle-scope", "Talos ", &[]),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(text_size, cx);
+                view.update(cx, |view, cx| view.navigate(page, window, cx));
+                window.render_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let line = segment(window, id).unwrap_or_else(|| panic!("{id} in the bar"));
+                let shown = freshkube_ui::status::shown(id).expect("a drawn line");
+                let room = format!(
+                    "{shown:?} of {line:?} in {:?} of a {:?} bar at {text_size}",
+                    window.find(id).bounds().size.width,
+                    window.find("status-bar").bounds().size.width,
+                );
+                // The label and tooltip keep the whole line.
+                assert!(line.ends_with("example data"), "{line}");
+                assert!(!shown.contains("example data"), "{room}");
+                assert!(!shown.contains("updated"), "{room}");
+                assert!(!shown.contains("no alerts"), "a count of none goes: {room}");
+                let Some(first) = warnings.first() else {
+                    assert!(shown.starts_with(lead), "{room}");
+                    return;
+                };
+                assert!(shown.contains(first), "{room}");
+                if text_size == 13. {
+                    // Room for the first part beside the warnings.
+                    assert!(shown.contains(lead), "{room}");
+                    assert!(warnings.iter().all(|part| shown.contains(part)), "{room}");
+                    assert!(!shown.ends_with('…'), "the warnings fit whole: {room}");
+                } else {
+                    assert!(
+                        !shown.contains(lead),
+                        "warnings outrank the first part: {room}"
+                    );
+                }
+            })
+            .unwrap();
+        }
+    }
+}
+
 #[gpui_kit::test]
 fn a_compact_status_bar_keeps_the_shells_glyph_and_gives_the_page_the_room(
     cx: &mut TestAppContext,

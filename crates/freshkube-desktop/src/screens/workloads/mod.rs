@@ -30,7 +30,7 @@ use super::{
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::page::{self, PageHeader};
-use freshkube_ui::status::{Part, Segment};
+use freshkube_ui::status::Segment;
 use freshkube_ui::table::{self, DataTable, TableState};
 use source::Derived;
 
@@ -769,11 +769,7 @@ impl WorkloadsScreen {
             .data()
             .map(|data| source::status_parts(data))
             .unwrap_or_default();
-        let line = segment(
-            self.source.as_ref(),
-            &self.loader,
-            parts.into_iter().map(Part::new),
-        );
+        let line = segment(self.source.as_ref(), &self.loader, parts);
         self.status = Some((revision, line));
     }
 

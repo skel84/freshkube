@@ -964,7 +964,7 @@ impl LifecycleView {
         let plural = if total == 1 { "alert" } else { "alerts" };
         let (alerts_part, alerts_note) = match total {
             0 => (
-                status::Part::new("no alerts"),
+                status::Part::new("no alerts").minor(),
                 "No lifecycle alerts.".to_owned(),
             ),
             _ if warnings == 0 => (
