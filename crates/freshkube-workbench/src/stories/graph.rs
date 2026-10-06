@@ -1,11 +1,12 @@
 //! `freshkube-graph`'s layout on invented services: boxes in columns,
-//! callers left of what they call, and a curve with an arrowhead for each
+//! callers left of what they call, and a line with an arrowhead for each
 //! call. Its shapes are the cases the layout handles: a chain, a fan-out
-//! that wraps, a cycle and boxes with no connection.
+//! that wraps, a cycle and boxes with no connection. Its routing switch
+//! compares the map's single curves with routes that keep clear of boxes.
 
 use std::rc::Rc;
 
-use freshkube_graph::layout::{ARROW, NODE_H, NODE_W, Node, curve, layered};
+use freshkube_graph::layout::{self, NODE_H, NODE_W, Node, Route, curve, layered};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, MONO_FONT, Tone, dp};
@@ -40,6 +41,22 @@ pub enum Shape {
     Cycle,
     /// A few calls and services with none.
     Loose,
+}
+
+/// How the calls are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Routing {
+    /// One curve per call, as the service map draws today.
+    Curves,
+    /// Lanes through the gutters, and cycles brought back below.
+    Routes,
+}
+
+impl Routing {
+    const ALL: [(Routing, &'static str, &'static str); 2] = [
+        (Routing::Curves, "curves", "Curves"),
+        (Routing::Routes, "routes", "Routes"),
+    ];
 }
 
 impl Shape {
@@ -131,31 +148,34 @@ impl Node for GraphNode {
     }
 }
 
-/// A call between two boxes, by their index.
-#[derive(Clone, Copy)]
+/// A call's line and tone.
 struct Call {
-    from: usize,
-    to: usize,
+    route: Route,
     tone: Tone,
 }
 
 pub struct GraphStory {
     shape: Shape,
-    /// Placed when the shape changes; drawing only reads them.
+    routing: Routing,
+    /// Placed and routed when the shape or routing changes; drawing only
+    /// reads them.
     nodes: Rc<Vec<GraphNode>>,
     calls: Rc<Vec<Call>>,
     width: f32,
     height: f32,
+    crossings: usize,
 }
 
 impl GraphStory {
     pub fn new() -> Self {
         let mut story = Self {
             shape: Shape::Shop,
+            routing: Routing::Routes,
             nodes: Rc::default(),
             calls: Rc::default(),
             width: 0.,
             height: 0.,
+            crossings: 0,
         };
         story.place();
         story
@@ -163,6 +183,15 @@ impl GraphStory {
 
     pub fn shape(&self) -> Shape {
         self.shape
+    }
+
+    pub fn routing(&self) -> Routing {
+        self.routing
+    }
+
+    /// How many times the drawn calls cross one another.
+    pub fn crossings(&self) -> usize {
+        self.crossings
     }
 
     /// Each box's label and top-left corner, in dp.
@@ -176,6 +205,14 @@ impl GraphStory {
     fn set_shape(&mut self, shape: Shape, cx: &mut Context<Self>) {
         if shape != self.shape {
             self.shape = shape;
+            self.place();
+            cx.notify();
+        }
+    }
+
+    fn set_routing(&mut self, routing: Routing, cx: &mut Context<Self>) {
+        if routing != self.routing {
+            self.routing = routing;
             self.place();
             cx.notify();
         }
@@ -196,50 +233,75 @@ impl GraphStory {
             })
             .collect();
         let links: Vec<_> = calls.iter().map(|&(from, to, _)| (from, to)).collect();
-        (self.width, self.height) = layered(&mut nodes, &links);
+        let routes = match self.routing {
+            Routing::Curves => {
+                (self.width, self.height) = layered(&mut nodes, &links);
+                links
+                    .iter()
+                    .map(|&(from, to)| Route::from_curve(curve(&nodes[from], &nodes[to])))
+                    .collect()
+            }
+            Routing::Routes => {
+                let placed = layout::route(&mut nodes, &links);
+                (self.width, self.height) = (placed.width, placed.height);
+                placed.routes
+            }
+        };
+        self.crossings = layout::crossings(&routes);
         self.nodes = Rc::new(nodes);
         self.calls = Rc::new(
-            calls
+            routes
                 .into_iter()
-                .map(|(from, to, tone)| Call { from, to, tone })
+                .zip(calls)
+                .map(|(route, (_, _, tone))| Call { route, tone })
                 .collect(),
         );
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let shapes = h_flex()
-            .gap(dp(2.))
-            .p(dp(3.))
-            .rounded(px(8.))
-            .bg(p.surface_2)
-            .children(Shape::ALL.map(|(shape, id, label)| {
-                ui::segment(
-                    Button::new(SharedString::from(format!("{PREFIX}-shape-{id}"))),
-                    self.shape == shape,
-                    cx,
-                )
-                .small()
-                .label(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.set_shape(shape, cx)))
-            }));
+        let shapes = Shape::ALL.map(|(shape, id, label)| {
+            ui::segment(
+                Button::new(SharedString::from(format!("{PREFIX}-shape-{id}"))),
+                self.shape == shape,
+                cx,
+            )
+            .small()
+            .label(label)
+            .on_click(cx.listener(move |this, _, _, cx| this.set_shape(shape, cx)))
+        });
+        let routings = Routing::ALL.map(|(routing, id, label)| {
+            ui::segment(
+                Button::new(SharedString::from(format!("{PREFIX}-routing-{id}"))),
+                self.routing == routing,
+                cx,
+            )
+            .small()
+            .label(label)
+            .on_click(cx.listener(move |this, _, _, cx| this.set_routing(routing, cx)))
+        });
+        let controls = h_flex()
+            .gap(dp(12.))
+            .flex_wrap()
+            .child(track(shapes, cx))
+            .child(track(routings, cx));
         PageHeader::new(PREFIX, "Service map")
-            .secondary(shapes)
+            .secondary(controls)
             .meta([div()
                 .child(format!(
-                    "{} services · {} calls",
+                    "{} services · {} calls · {} crossings",
                     self.nodes.len(),
-                    self.calls.len()
+                    self.calls.len(),
+                    self.crossings
                 ))
                 .into_any_element()])
             .render(window, cx)
     }
 
-    /// The calls, under the boxes: a curve and an arrowhead each, dashed
+    /// The calls, under the boxes: a line and an arrowhead each, dashed
     /// when the call has a problem.
     fn render_calls(&self, cx: &App) -> impl IntoElement + use<> {
         let p = palette(cx);
-        let (nodes, calls) = (self.nodes.clone(), self.calls.clone());
+        let calls = self.calls.clone();
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -247,7 +309,6 @@ impl GraphStory {
                 let at =
                     |(x, y): (f32, f32)| point(bounds.left() + unit * x, bounds.top() + unit * y);
                 for call in calls.iter() {
-                    let [a, b, c, d] = curve(&nodes[call.from], &nodes[call.to]);
                     let color = match call.tone {
                         Tone::Crit => p.crit,
                         Tone::Warn => p.warn,
@@ -258,15 +319,18 @@ impl GraphStory {
                         let dash = unit * 5.;
                         path = path.dash_array(&[dash, dash * 0.6]);
                     }
-                    path.move_to(at(a));
-                    path.cubic_bezier_to(at(d), at(b), at(c));
+                    path.move_to(at(call.route.segments[0][0]));
+                    for &[_, b, c, d] in &call.route.segments {
+                        path.cubic_bezier_to(at(d), at(b), at(c));
+                    }
                     if let Ok(path) = path.build() {
                         window.paint_path(path, color);
                     }
+                    let [tip, left, right] = call.route.head();
                     let mut head = PathBuilder::fill();
-                    head.move_to(at((d.0 + ARROW, d.1)));
-                    head.line_to(at((d.0, d.1 - ARROW * 0.6)));
-                    head.line_to(at((d.0, d.1 + ARROW * 0.6)));
+                    head.move_to(at(tip));
+                    head.line_to(at(left));
+                    head.line_to(at(right));
                     head.close();
                     if let Ok(head) = head.build() {
                         window.paint_path(head, color);
@@ -351,6 +415,16 @@ impl GraphStory {
             ),
         )
     }
+}
+
+/// Segmented options on a track.
+fn track<const N: usize>(options: [Button; N], cx: &App) -> Div {
+    h_flex()
+        .gap(dp(2.))
+        .p(dp(3.))
+        .rounded(px(8.))
+        .bg(palette(cx).surface_2)
+        .children(options)
 }
 
 impl Default for GraphStory {

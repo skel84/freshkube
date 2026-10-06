@@ -1,5 +1,5 @@
 use super::stories::data_table::{DataTableStory, Sort, State};
-use super::stories::graph::{GraphStory, Shape};
+use super::stories::graph::{GraphStory, Routing, Shape};
 use super::{STORIES, Workbench, window_size};
 use freshkube_ui::table::SortOrder;
 use freshkube_ui::text_size;
@@ -215,6 +215,34 @@ fn the_graph_story_lays_out_each_shape(cx: &mut TestAppContext) {
                 );
             }
         }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_graph_story_compares_curves_with_routes(cx: &mut TestAppContext) {
+    let graph = super::stories::find("graph").unwrap();
+    let (handle, workbench) = open(cx, graph);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let story = workbench
+            .read(cx)
+            .view()
+            .clone()
+            .downcast::<GraphStory>()
+            .unwrap();
+        assert_eq!(story.read(cx).routing(), Routing::Routes);
+        window.click("graph-shape-fan-out", cx);
+        window.render_frame(cx);
+        let routes = story.read(cx).crossings();
+        window.click("graph-routing-curves", cx);
+        window.render_frame(cx);
+        assert_eq!(story.read(cx).routing(), Routing::Curves);
+        let curves = story.read(cx).crossings();
+        assert_eq!(routes, 0);
+        assert!(curves > routes, "{curves} → {routes}");
+        // Both draw every service.
+        assert!(window.find("graph-node-12").visible());
     })
     .unwrap();
 }
