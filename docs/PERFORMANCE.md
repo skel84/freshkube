@@ -265,23 +265,56 @@ Release build, same settings, with the build of the change above as before; runs
 - **The stall is read only in the seconds the pointer moves.** In each second the median is either about 1.2 ms, when the hover script paused, or 30–40 ms while it moved, so the median over a whole run swings with the mix: 4.9 ms before and 23 ms after here. Over the moving seconds alone it drops by about 13%.
 - The rest of the frame is GPUI's layout and paint of the whole window, which the page can't avoid while it draws every frame the pointer moves.
 
+### The hover with the grey lines drawn (#22)
+
+Every `thirty.json` measurement above ran without its charts' grey lines. Each chart's grey series share one path, and with 65 of them that path passed GPUI's vertex limit, so it failed to build and drew nothing ([K25](GPUI_FRICTION.md#k25-a-path-past-65536-vertices-fails-to-build)). Since #245, a chart draws its 30 highest series by default, 28 of them grey, and builds a group too large for one path in chunks.
+
+Release build of `main` at 16ba2c7, the same hover-and-scroll script, run three times with no cargo or rustc running. The third run clicked Show all on Panel 1 during the opening wait, so that chart drew all 67 series. Each run was sampled (`sample`, 1 ms) for 10 s on the main thread from its 7th second, while the pointer moved. Sampling didn't change the frame rate, but it raised the stall in the seconds it ran, so the stall below is read from the moving seconds outside the sample. "No greys" is the "After" row of [A pointer move redraws no panel](#a-pointer-move-redraws-no-panel-22).
+
+| 30 timeseries, hover and scroll | Load | Frames | `panel_render` | Stall median, moving seconds | CPU | Peak memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| No greys (before #245) | 8.6–9.8 | 621–622 | 0 | 32.3–32.6 ms | 80–81% | 215–230 MB |
+| Greys, capped 1 | 7.2 | 226 | 0 | 98.9 ms | 101% | 478 MB |
+| Greys, capped 2 | 5.5 | 202 | 0 | 112.7 ms | 95% | 472 MB |
+| Greys, Panel 1 shows all 67 | 4.9 | 201 | 1 | 112.5 ms | 99% | 662 MB |
+
+| Main-thread samples | `MetalRenderer::draw` | Its vertex `map` | `memmove` under it | `finish_grow` under it |
+| --- | --- | --- | --- | --- |
+| No greys (the profile in [K24](GPUI_FRICTION.md#k24-path-vertices-are-copied-into-a-fresh-vector-every-frame)) | 22.9% | 8.1% | 1.5% | 11.4% |
+| Greys, capped 1 | 52.4% | 43.2% | 6.1% | 0.7% |
+| Greys, capped 2 | 61.3% | 38.1% | 20.9% | 0.9% |
+| Greys, Panel 1 shows all 67 | 58.3% | 48.7% | 6.6% | 1.4% |
+
+- **With its grey lines, the dashboard draws a third as many frames while the pointer moves,** about 8 a second instead of 24, and the main thread is busy throughout. A move still renders no panel; the cost is in drawing what is already built.
+- **Half or more of the main thread is the Metal renderer copying path vertices.** The share is `MetalRenderer::draw`, and most of it is the `map` that turns each `PathVertex` into a `PathRasterizationVertex` (`gpui-pre-apple` 0.3.7 `src/metal_renderer.rs:768-778`). The vector's regrowth, which was the larger part before, is now about 1%.
+- **Show all on one panel changes little:** 201 frames against 202–226 capped.
+- Peak memory is about 250 MB higher with the greys, and about 190 MB higher again with Show all on one panel. This hasn't been traced.
+
 ### A chart draws no more samples than its pixels can show (#22)
 
-Thinning a chart's paths, so that each pixel column draws only its first, lowest, highest and last sample, keeps the peaks while it cuts vertices, but only where a column holds more than four samples. Every dashboard timeseries asks Prometheus for 200 samples per series (`monitoring/page/board.rs`), and the pod and node history charts ask for 120. A temporary page test measured the plot each panel draws, by grid width, at the default page width (1,048 pt: a 1,320 pt window less the rail and column) and at the narrow one (488 pt):
+Thinning a chart's paths, so that each pixel column draws only its first, lowest, highest and last sample, keeps the peaks while it cuts vertices, but only where a column holds more than four samples.
 
-| Timeseries plot | Default page | Narrow page |
+**How many samples a series holds.** A dashboard query's step is the range over the panel's `maxDataPoints`, 600 when the dashboard doesn't set it, and never less than the scrape interval (grafaui-prometheus's `query::requests`; the app's scrape interval is 30 s unless Prometheus reports another). A series therefore holds about 121 samples over 1 h, 361 over 3 h, and 601 over 6 h or longer. The 200 in `monitoring/page/board.rs` is the chart window's own point count, not the query's; an earlier version of this section took it for the sample count. The pod and node history charts read 1 h, so about 121 samples.
+
+A temporary page test measured the plot each panel draws, by grid width, at the default page width (1,048 pt: a 1,320 pt window less the rail and column) and at the narrow one (488 pt). The figures below are those plot widths with 601 samples a series, a 6 h range such as Cluster's and the stress dashboard's; over 1 h they are a fifth as large.
+
+| Timeseries plot, 6 h | Default page | Narrow page |
 | --- | --- | --- |
-| Grid width 3 | 3.36 samples per px (60 px) | 1.28 |
-| Grid width 4 | 1.97 | 1.28 |
-| Grid width 6 | 1.08 | 1.28 |
-| Grid width 8 | 0.74 | 1.28 |
-| Grid width 12 | 0.46 | 0.53 |
-| Grid width 24 | 0.21 | 0.53 |
-| Cluster: CPU and memory by node | 0.47 | 0.54 |
-| Cluster: API server latency | 0.75 | 1.29 |
-| Pod and node history, 120 samples | about 0.84, from a capture | |
+| Grid width 3 | 10.1 samples per px (60 px) | 3.85 |
+| Grid width 4 | 5.92 | 3.85 |
+| Grid width 6 | 3.25 | 3.85 |
+| Grid width 8 | 2.22 | 3.85 |
+| Grid width 12 | 1.38 | 1.59 |
+| Grid width 24 | 0.63 | 1.59 |
+| Cluster: CPU and memory by node | 1.41 | 1.62 |
+| Cluster: API server latency | 2.25 | 3.88 |
+| Pod and node history, 1 h, 121 samples | about 0.84, from a capture | |
 
-The test's text is wider than the app's, so its value axis takes more room and these plots are a little narrower than on screen: the real ratios are a little lower. No panel reaches four samples per pixel, so thinning would draw every sample it draws today, and it isn't built. Lowering the sample count is no substitute, since Prometheus evaluates only at each step and a coarser step loses the peaks between. Revisit this only if a real dashboard shows plots above four samples per pixel. A 30-panel dashboard's vertices come from the number of series, up to 67 a panel in the stress dashboard, not from oversampling.
+The test's text is wider than the app's, so its value axis takes more room and these plots are a little narrower than on screen: the real ratios are a little lower.
+
+- **Over 6 h, narrow panels pass four samples per pixel.** Grid widths 3 and 4 at the default page, about 10 and 6, would draw fewer vertices thinned. Every other plot stays under four, where thinning would draw every sample it draws today.
+- **Thinning isn't built; whether it should be is open.** Lowering the sample count is no substitute, since Prometheus evaluates only at each step and a coarser step loses the peaks between.
+- A 30-panel dashboard's vertices come mostly from the number of series, up to 67 a panel in the stress dashboard, before any oversampling.
 
 ### Kubernetes summary
 
