@@ -33,7 +33,7 @@ scripts/stress.sh terminal-50k terminal 50000
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
-| `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again |
+| `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span |
 
 A run lasts `FRESHKUBE_STRESS_SECONDS` (30) and leaves the first `FRESHKUBE_STRESS_WARMUP` (5) seconds out of its summary. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
 
@@ -144,6 +144,26 @@ Against the spike's 60 frames a second at 5 MB/s and about 2 ms of paint:
 - **The spike's flood repeated itself.** It sent the same numbered lines every tick, so GPUI's line cache shaped almost nothing. Fed those repeating lines, the view paints in 1.2 ms median and 2.1 ms at the 99th percentile, at 40% CPU. New text each frame, as real output brings, costs about 5 ms more for shaping.
 - **Ligatures doubled the cost of shaping.** JetBrains Mono's contextual alternates were most of the paint in a profile of `terminal-top` (9.8 ms median, 75% CPU). The terminal draws without them, as the user chose, which halved both.
 - Shaping each row once, rather than each style run, could cut the remaining cost. It isn't needed for the frame rate, so it waits until a real session shows a need.
+
+### Monitoring dashboards
+
+`monitoring` in the stress window (1320 × 860) at the default text size, against 67 Go processes. Release build, 30 s runs with the first 5 left out, four runs of the 30-panel dashboard and two of the built-in Cluster, on 6 October 2026 (#181):
+
+```sh
+scripts/stress.sh mon-30 monitoring crates/freshkube-desktop/src/bin/stress/dashboards/thirty.json
+scripts/stress.sh mon-cluster monitoring crates/freshkube-core/src/monitoring/builtin/cluster.json
+```
+
+The load average was between 8 and 24 with no cargo running, so the absolute numbers are noisy; read the medians, not single values. Times are in milliseconds unless marked; the 30-panel row gives the median of its first three runs, Cluster's the range of its two.
+
+| Dashboard | Main-thread stall: median / 99th / total | `panel_render`: count, median / 99th / total | `plot_paint`: count, median / 99th / total | `cursor` total | CPU | Memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 30 timeseries, 67 series each | 81 / 114 / 26.0 s | 9,330, 0.20 / 1.96 / 1.7 s | 4,665, 0.11 / 3.08 / 1.0 s | 0.13 s | 86% | 267 MB |
+| Cluster (10 panels) | 58 / 77–84 / 24.2–24.4 s | 3,870–3,960, 0.17–0.18 / 2.7–3.0 / 0.9 s | 1,161–1,188, 0.25–0.28 / 3.3 / 0.4 s | 0.04 s | 86% | 213 MB |
+
+- **Thirty charts saturate the main thread while the mouse moves.** It never rests: the stall totals more than the 25 s measured, about 12 frames a second. The page's own spans account for under 3 s of that. The rest is GPUI laying out and painting the 30 panels, their legends and their readouts, which is where #22 should look first.
+- **Ten panels saturate it too.** Cluster's three timeseries of 67 series each, with their legends, keep the thread busy for 24 of the 25 s measured, at about 16 frames a second. Its spans account for about 1.4 s.
+- The fake Prometheus answers between 0.01 and 0.95, so Cluster's fixed 0–100% charts draw every line inside the plot. A dashboard that opens on a row of stat cards, as Cluster does, is swept lower (`hover_rows` in the stress binary), so the mouse crosses its charts. The 30-panel dashboard's fourth run, after the values were scaled, gave 78 / 110 / 26.0 s, within the spread of the first three.
 
 ## Fixes
 

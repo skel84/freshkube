@@ -1,0 +1,1 @@
+- The stress run's Monitoring workload now opens its dashboard and asks its Prometheus, so it measures Monitoring; a run that never draws a panel fails instead of printing only the app's numbers.
