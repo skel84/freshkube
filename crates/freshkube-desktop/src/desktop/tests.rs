@@ -2965,7 +2965,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
         window.render_frame(cx);
         area(window, cx, "nav-k8s-group-workloads");
         window.click("nav-health", cx);
-        window.click("workloads-refresh", cx);
+        window.click("screen-refresh", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -3698,7 +3698,7 @@ impl crate::screens::ScreenPanel for SegmentScreen {
 
     fn refresh(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
 
-    fn status(&self) -> Option<&freshkube_ui::status::Segment> {
+    fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
         self.0.as_ref()
     }
 }
@@ -3754,8 +3754,8 @@ fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContex
     })
     .unwrap();
 
-    // Hidden, the screen's segment never shows, even when it changes; the
-    // visible page's screen has none, so the bar has no segment.
+    // Hidden, the screen's segment never shows, even when it changes: the
+    // bar shows the visible page's own.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| view.navigate(Page::Security, window, cx));
         window.render_frame(cx);
@@ -3771,16 +3771,43 @@ fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContex
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("etcd-scope").is_none());
-        // Security's own line under its header shares the id, so look in
-        // the bar alone.
-        let in_bar = |element: gpui_kit::test::ElementSnapshot| {
-            element
-                .path()
-                .contains(&gpui_kit::ElementId::from("status-bar"))
-        };
-        assert!(!window.try_find("security-scope").is_some_and(in_bar));
+        let line = segment(window, "security-scope");
+        assert!(
+            line.as_ref().is_none_or(|line| !line.contains("member")),
+            "{line:?}"
+        );
     })
     .unwrap();
+}
+
+/// etcd and Security hand their line to the status bar, and their headers
+/// keep none: the quorum and leader, then where the audit read from.
+#[gpui_kit::test]
+fn etcd_and_security_fill_the_status_bar(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    for (page, id, expect) in [
+        (Page::Etcd, "etcd-scope", ["3 members", "Quorum", "leader "]),
+        (
+            Page::Security,
+            "security-scope",
+            ["endpoints ", "volume target ", "example data"],
+        ),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let line = segment(window, id).unwrap_or_else(|| panic!("{id} in the bar"));
+            for part in expect {
+                assert!(line.contains(part), "{part:?} in {line}");
+            }
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]

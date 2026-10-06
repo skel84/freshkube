@@ -9,9 +9,7 @@ use freshkube_ui::table::{self, DataTable};
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
-    h_flex,
-    tooltip::Tooltip,
-    v_flex,
+    h_flex, v_flex,
 };
 
 impl Render for EtcdScreen {
@@ -106,48 +104,7 @@ impl EtcdScreen {
             .loading(loading)
             .disabled(loading || self.source.is_none())
             .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx)));
-        header
-            .chips(chips)
-            .control(refresh)
-            .meta(self.render_meta(cx))
-            .render(window, cx)
-    }
-
-    /// Context and members, the quorum, then leader, alarms and time.
-    fn render_meta(&self, cx: &App) -> Vec<AnyElement> {
-        let derived = &self.derived;
-        let quorum = derived.quorum.as_ref().map(|quorum| {
-            let detail = SharedString::from(quorum.detail.clone());
-            h_flex()
-                .id("etcd-quorum")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(format!("{} · {}", quorum.label, quorum.detail))
-                .gap(dp(4.))
-                .children(ui::status_glyph(quorum.tone, cx))
-                .child(quorum.label)
-                .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
-                .into_any_element()
-        });
-        let parts = derived
-            .meta_before
-            .iter()
-            .map(|part| part.clone().into_any_element())
-            .chain(quorum)
-            .chain(
-                derived
-                    .meta_after
-                    .iter()
-                    .map(|part| part.clone().into_any_element()),
-            );
-        let mut meta = Vec::new();
-        for part in parts {
-            if !meta.is_empty() {
-                meta.push(" · ".into_any_element());
-            }
-            meta.push(part);
-        }
-        meta
+        header.chips(chips).control(refresh).render(window, cx)
     }
 
     fn render_quorum_banner(&self, cx: &App) -> Option<AnyElement> {

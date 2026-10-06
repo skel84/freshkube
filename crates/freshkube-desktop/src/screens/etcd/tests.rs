@@ -44,6 +44,23 @@ fn row(screen: &Entity<EtcdScreen>, ix: usize, cx: &gpui_kit::App) -> SharedStri
     format!("etcd-member-{:x}", screen.read(cx).members()[ix].info.id).into()
 }
 
+/// The quorum's label and detail, as the status bar's line and its tooltip
+/// show them.
+fn quorum(screen: &Entity<EtcdScreen>, cx: &gpui_kit::App) -> String {
+    let derived = &screen.read(cx).derived;
+    let quorum = derived.quorum.as_ref().expect("a quorum");
+    let line = derived.status.as_ref().expect("a segment").text(None);
+    assert!(line.contains(quorum.label), "{line}");
+    format!("{} · {}", quorum.label, quorum.detail)
+}
+
+/// The status bar's line, read from the screen: the shell draws it.
+fn status_line(screen: &Entity<EtcdScreen>, cx: &mut gpui_kit::App) -> SharedString {
+    screen.update(cx, |screen, _| {
+        screen.status().expect("a segment").text(None).clone()
+    })
+}
+
 fn role(id: u64) -> SharedString {
     format!("etcd-role-{id:x}").into()
 }
@@ -196,7 +213,7 @@ fn leader_is_marked_and_quorum_is_healthy(cx: &mut TestAppContext) {
         assert_eq!(window.find(role(ids[0])).label(), Some("Leader"));
         assert_eq!(window.find(role(ids[1])).label(), Some("Follower"));
         assert_eq!(window.find(role(ids[2])).label(), Some("Follower"));
-        let label = window.find("etcd-quorum").label().unwrap().to_owned();
+        let label = quorum(&screen, cx);
         assert!(
             label.contains("tolerates 1 additional member failure"),
             "{label}"
@@ -207,9 +224,9 @@ fn leader_is_marked_and_quorum_is_healthy(cx: &mut TestAppContext) {
         // A calm quorum and no alarms: no banners, the meta says so.
         assert!(window.try_find("etcd-quorum-banner").is_none());
         assert!(window.try_find("etcd-alarms").is_none());
-        window.find("etcd-scope");
-        let meta = &screen.read(cx).derived.meta_after;
-        assert!(meta.iter().any(|part| part == "no alarms"), "{meta:?}");
+        let line = status_line(&screen, cx);
+        assert!(line.contains("3 members · Quorum"), "{line}");
+        assert!(line.contains("· no alarms ·"), "{line}");
     })
     .unwrap();
 }
@@ -237,7 +254,7 @@ fn silent_member_is_not_reported_rather_than_failed(cx: &mut TestAppContext) {
         assert!(!row.to_lowercase().contains("down"), "{row}");
         window.find("partial-notice");
         // Two of three still answer: degraded, never "no quorum".
-        let quorum = window.find("etcd-quorum").label().unwrap().to_owned();
+        let quorum = quorum(&screen, cx);
         assert!(quorum.starts_with("Degraded"), "{quorum}");
         assert!(
             quorum.contains("tolerates 0 additional member failures"),
