@@ -1,7 +1,12 @@
 use super::stories::data_table::{DataTableStory, Sort, State};
 use super::stories::graph::{GraphStory, Shape};
+use super::stories::motion::flash::{BURST, FlashStory, PODS, Rate};
+use super::stories::motion::loading::LoadingStory;
 use super::{STORIES, Workbench, window_size};
+use freshkube_probe::probe;
+use freshkube_ui::motion::{self, Choice};
 use freshkube_ui::table::SortOrder;
+use freshkube_ui::table::{Look, Reduced};
 use freshkube_ui::text_size;
 use gpui_kit::component::{ActiveTheme, Root, Theme, ThemeMode};
 use gpui_kit::test::TestWindowExt;
@@ -267,4 +272,177 @@ fn the_graph_story_selects_a_call_and_filters_problems(cx: &mut TestAppContext) 
         assert!(window.try_find("graph-call-2--6").is_some());
     })
     .unwrap();
+}
+
+fn story<T: 'static>(workbench: &Entity<Workbench>, cx: &gpui_kit::App) -> Entity<T> {
+    workbench.read(cx).view().clone().downcast::<T>().unwrap()
+}
+
+/// The workbench on the change flash with its timer off, at `motion`.
+fn open_flash(cx: &mut TestAppContext, motion: Choice) -> (AnyWindowHandle, Entity<FlashStory>) {
+    let (handle, workbench) = open(cx, super::stories::find("change-flash").unwrap());
+    cx.update_window(handle, |_, window, cx| {
+        motion::choose(motion, cx);
+        window.render_frame(cx);
+        window.click("change-flash-rate-off", cx);
+    })
+    .unwrap();
+    let story = cx.read(|cx| story::<FlashStory>(&workbench, cx));
+    cx.read(|cx| assert_eq!(story.read(cx).rate(), Rate::Off));
+    (handle, story)
+}
+
+/// Delivers the next frame and draws it; returns how many frame requests
+/// it answered.
+fn next_frame(handle: AnyWindowHandle, cx: &mut TestAppContext) -> usize {
+    let asked = cx
+        .update_window(handle, |_, window, cx| window.simulate_next_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+    asked
+}
+
+#[gpui_kit::test]
+fn the_strip_overrides_reduced_motion(cx: &mut TestAppContext) {
+    let (handle, _) = open(cx, 0);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("workbench-motion-full", cx);
+        assert_eq!(motion::choice(cx), Choice::Full);
+        assert!(!cx.reduce_motion());
+        window.click("workbench-motion-reduced", cx);
+        assert!(cx.reduce_motion());
+        // Nothing read the OS here, so System keeps motion on.
+        window.click("workbench-motion-system", cx);
+        assert_eq!(motion::choice(cx), Choice::System);
+        assert!(!cx.reduce_motion());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_flash_draws_only_its_layer_and_the_views_above(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Full);
+    cx.update_window(handle, |_, _, cx| {
+        story.update(cx, |story, cx| story.change(1, cx));
+    })
+    .unwrap();
+    let flashing = cx.read(|cx| story.read(cx).layer().read(cx).flashing(cx));
+    assert_eq!(flashing.len(), 1);
+    // The change itself drew the table once; the fade's frames don't.
+    let table = probe::count("workbench.change-flash-table");
+    let layer = probe::count("table.flash-layer");
+    let root = probe::count("workbench.change-flash");
+    for _ in 0..5 {
+        assert!(next_frame(handle, cx) > 0, "the fade asks for frames");
+    }
+    assert_eq!(probe::count("workbench.change-flash-table"), table);
+    assert_eq!(probe::count("table.flash-layer"), layer + 5);
+    // The layer's ancestors draw with it: the story's root, and the window's.
+    assert_eq!(probe::count("workbench.change-flash"), root + 5);
+}
+
+#[gpui_kit::test]
+fn a_heavy_root_still_leaves_the_table_alone(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Full);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("change-flash-root-heavy", cx);
+        story.update(cx, |story, cx| story.change(1, cx));
+    })
+    .unwrap();
+    cx.read(|cx| assert!(story.read(cx).heavy()));
+    let table = probe::count("workbench.change-flash-table");
+    for _ in 0..3 {
+        assert!(next_frame(handle, cx) > 0);
+    }
+    assert_eq!(probe::count("workbench.change-flash-table"), table);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.find("change-flash-heavy").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn under_reduced_motion_a_flash_asks_no_frames(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Reduced);
+    cx.update_window(handle, |_, _, cx| {
+        story.update(cx, |story, cx| story.change(1, cx));
+    })
+    .unwrap();
+    assert_eq!(next_frame(handle, cx), 0);
+    // The change is still recorded, and with No tint draws nothing.
+    let flashing = cx.read(|cx| story.read(cx).layer().read(cx).flashing(cx));
+    assert_eq!(flashing.len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_held_tint_clears_at_once_when_the_fade_would_end(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Reduced);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("change-flash-reduced-held", cx);
+        story.update(cx, |story, cx| story.change(1, cx));
+    })
+    .unwrap();
+    let layer = cx.read(|cx| story.read(cx).layer().clone());
+    cx.read(|cx| assert_eq!(layer.read(cx).reduced(), Reduced::Held));
+    assert_eq!(next_frame(handle, cx), 0, "a held tint doesn't animate");
+    let renders = probe::count("table.flash-layer");
+    cx.background_executor.advance_clock(motion::FADE);
+    cx.run_until_parked();
+    cx.read(|cx| assert!(layer.read(cx).flashing(cx).is_empty()));
+    // One redraw clears it.
+    assert_eq!(probe::count("table.flash-layer"), renders + 1);
+    assert_eq!(next_frame(handle, cx), 0);
+}
+
+#[gpui_kit::test]
+fn a_burst_changes_rows_without_flashing_them(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Full);
+    let before = cx.read(|cx| story.read(cx).table().read(cx).states());
+    cx.update_window(handle, |_, window, cx| {
+        window.click("change-flash-burst", cx);
+    })
+    .unwrap();
+    cx.read(|cx| {
+        let after = story.read(cx).table().read(cx).states();
+        assert_eq!(
+            before.iter().zip(&after).filter(|(a, b)| a != b).count(),
+            BURST.min(PODS)
+        );
+        assert!(story.read(cx).layer().read(cx).flashing(cx).is_empty());
+    });
+    // Right after a burst a single change is still part of it.
+    cx.update_window(handle, |_, window, cx| window.click("change-flash-one", cx))
+        .unwrap();
+    cx.read(|cx| assert!(story.read(cx).layer().read(cx).flashing(cx).is_empty()));
+    cx.background_executor.advance_clock(motion::FADE * 2);
+    cx.update_window(handle, |_, window, cx| window.click("change-flash-one", cx))
+        .unwrap();
+    cx.read(|cx| assert_eq!(story.read(cx).layer().read(cx).flashing(cx).len(), 1));
+}
+
+#[gpui_kit::test]
+fn the_loading_rows_move_with_motion_and_stand_still_without(cx: &mut TestAppContext) {
+    let (handle, workbench) = open(cx, super::stories::find("loading").unwrap());
+    let story = cx.read(|cx| story::<LoadingStory>(&workbench, cx));
+    let rows = cx.read(|cx| story.read(cx).table().read(cx).rows().clone());
+    for (look, id) in [(Look::Pulse, "pulse"), (Look::Shimmer, "shimmer")] {
+        cx.update_window(handle, |_, window, cx| {
+            motion::choose(Choice::Reduced, cx);
+            window.click(format!("loading-look-{id}"), cx);
+            assert_eq!(rows.read(cx).look(), look);
+            assert!(window.find("loading-pods-loading").visible());
+            // The table's real header shows above the rows.
+            assert!(window.find(("loading-pods-sort", 1usize)).visible());
+        })
+        .unwrap();
+        // The frame asked before reduced motion ran out; none follows it.
+        next_frame(handle, cx);
+        assert_eq!(next_frame(handle, cx), 0, "{id} stands still");
+        cx.update(|cx| motion::choose(Choice::Full, cx));
+        cx.run_until_parked();
+        let drawn = probe::count("table.loading-rows");
+        assert!(next_frame(handle, cx) > 0, "{id} moves");
+        assert!(probe::count("table.loading-rows") > drawn);
+    }
 }

@@ -21,3 +21,5 @@ freshkube-ui.workspace = true
 
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+# The motion tests count renders (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }

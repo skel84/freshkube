@@ -7,6 +7,7 @@ use gpui_kit::{AnyView, App, Window};
 
 pub mod data_table;
 pub mod graph;
+pub mod motion;
 
 /// A story the list offers.
 pub struct Story {
@@ -33,6 +34,18 @@ pub const STORIES: &[Story] = &[
         title: "Graph layout",
         icon: || IconName::Network,
         build: graph::build,
+    },
+    Story {
+        slug: "loading",
+        title: "Loading",
+        icon: || IconName::Loader,
+        build: motion::loading::build,
+    },
+    Story {
+        slug: "change-flash",
+        title: "Change flash",
+        icon: || IconName::Zap,
+        build: motion::flash::build,
     },
 ];
 
