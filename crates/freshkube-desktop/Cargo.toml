@@ -68,3 +68,5 @@ freshkube-terminal = { workspace = true, features = ["testing"] }
 freshkube-logs = { workspace = true, features = ["testing"] }
 # The status bar tests read which line a segment drew (`status::shown`).
 freshkube-ui = { workspace = true, features = ["testing"] }
+# Operations' tests run the example on a paused Tokio clock (`start_paused`).
+tokio = { workspace = true, features = ["test-util"] }
