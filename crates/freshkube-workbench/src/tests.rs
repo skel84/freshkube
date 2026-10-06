@@ -1,4 +1,5 @@
 use super::stories::data_table::{DataTableStory, Sort, State};
+use super::stories::graph::{GraphStory, Shape};
 use super::{STORIES, Workbench, window_size};
 use freshkube_ui::table::SortOrder;
 use freshkube_ui::text_size;
@@ -159,4 +160,61 @@ fn window_sizes_read_as_the_app_reads_them() {
     assert_eq!(window_size("1280x880"), Some(size(px(1280.), px(880.))));
     assert_eq!(window_size("700x880"), None);
     assert_eq!(window_size("wide"), None);
+}
+
+#[gpui_kit::test]
+fn the_list_switches_stories(cx: &mut TestAppContext) {
+    let (handle, workbench) = open(cx, 0);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("story-data-table").selected(), Some(true));
+        window.click("story-graph", cx);
+        window.render_frame(cx);
+        assert_eq!(STORIES[workbench.read(cx).story()].slug, "graph");
+        assert_eq!(window.find("story-graph").selected(), Some(true));
+        assert!(window.find("graph-page").visible());
+        assert!(window.try_find("data-table-page").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_graph_story_lays_out_each_shape(cx: &mut TestAppContext) {
+    let graph = super::stories::find("graph").unwrap();
+    let (handle, workbench) = open(cx, graph);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let story = workbench
+            .read(cx)
+            .view()
+            .clone()
+            .downcast::<GraphStory>()
+            .unwrap();
+        let canvas = window.find("graph-canvas").bounds();
+        // shop-web calls shop-api: the caller sits left of the callee.
+        let web = window.find("graph-node-0").bounds();
+        let api = window.find("graph-node-1").bounds();
+        assert!(web.right() < api.left());
+        assert!(canvas.contains(&web.origin) && canvas.contains(&api.origin));
+        for (shape, id) in [
+            (Shape::FanOut, "fan-out"),
+            (Shape::Cycle, "cycle"),
+            (Shape::Loose, "loose"),
+            (Shape::Shop, "shop"),
+        ] {
+            window.click(format!("graph-shape-{id}"), cx);
+            window.render_frame(cx);
+            assert_eq!(story.read(cx).shape(), shape);
+            let positions = story.read(cx).positions();
+            for (ix, (label, x, y)) in positions.iter().enumerate() {
+                assert!(
+                    positions[ix + 1..]
+                        .iter()
+                        .all(|(_, x2, y2)| (x, y) != (x2, y2)),
+                    "{label} shares its place in {id}"
+                );
+            }
+        }
+    })
+    .unwrap();
 }

@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-graph.workspace = true
 freshkube-logs.workspace = true
 freshkube-probe.workspace = true
 freshkube-terminal.workspace = true
