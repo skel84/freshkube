@@ -2,11 +2,15 @@
 //! dot on each line, and the values at that time beside it. The readout is
 //! formatted when the pointer moves, never in `render`.
 //!
-//! The view that lays charts out side by side passes one chart's cursor to
-//! the others through [`Linked`]: it keeps each other chart's [`Crosshair`]
-//! and draws it beside the cached panel, so a moving pointer redraws only
-//! the panel under it. A notify reaches every ancestor view, so a crosshair
-//! drawn inside each panel would redraw them all.
+//! The chart's own cursor is a view of its own, [`CursorOverlay`], which
+//! the view that lays the panel out draws beside the cached panel: a notify
+//! reaches every ancestor view, so a cursor drawn inside the panel would
+//! lay out its header and legend and paint its plot again on every move.
+//! The panel keeps the pointer's handlers and tells the overlay what to show.
+//!
+//! That view also passes one chart's cursor to the others through
+//! [`Linked`]: it keeps each other chart's [`Crosshair`] and draws it beside
+//! the cached panel too.
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -14,8 +18,9 @@ use chrono::{Datelike, Local, TimeZone};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, Context, Entity, EntityId, FontWeight, Hsla, MouseMoveEvent, Pixels,
-    SharedString, TestSupportExt, Window, canvas, div, fill, point, px, size,
+    AnyElement, App, Bounds, Context, Entity, EntityId, FontWeight, Hsla, IntoElement,
+    MouseMoveEvent, Pixels, Point, Render, SharedString, TestSupportExt, Window, canvas, div, fill,
+    point, px, size,
 };
 
 use super::{Geometry, PanelEvent, PanelView, markers};
@@ -99,6 +104,51 @@ impl Crosshair {
             )
             .test_support()
             .into_any_element()
+    }
+}
+
+/// A chart's own cursor: the crosshair with its dots, and the readout.
+/// The panel sets what it shows when the pointer moves, the focus changes
+/// or the markers move; the view that lays the panel out draws it over the
+/// panel's slot.
+pub(crate) struct CursorOverlay {
+    id: SharedString,
+    geometry: Rc<Cell<Geometry>>,
+    /// Where this view was laid out last, in the window: the readout sits
+    /// at the plot's place from there.
+    origin: Rc<Cell<Point<Pixels>>>,
+    shown: Option<Shown>,
+}
+
+/// What the overlay draws, taken from the panel when it changes.
+struct Shown {
+    cursor: Cursor,
+    /// The sample's place across the plot, from 0 to 1.
+    x: f32,
+    dots: Vec<(f32, Hsla)>,
+    /// Each readout row's colour, and whether its series has the focus.
+    inks: Vec<(Hsla, bool)>,
+    /// The marker under the pointer.
+    marker: Option<markers::Placed>,
+}
+
+impl CursorOverlay {
+    /// The series the readout names, and the focused one among them.
+    #[cfg(test)]
+    pub(crate) fn named(&self) -> Option<(Vec<usize>, Option<usize>)> {
+        let shown = self.shown.as_ref()?;
+        let rows = shown.cursor.rows.iter().map(|row| row.series);
+        let focused = rows.clone().zip(&shown.inks).find(|(_, (_, f))| *f);
+        Some((rows.collect(), focused.map(|(series, _)| series)))
+    }
+
+    fn new(id: SharedString, geometry: Rc<Cell<Geometry>>) -> Self {
+        Self {
+            id,
+            geometry,
+            origin: Rc::default(),
+            shown: None,
+        }
     }
 }
 
@@ -210,15 +260,63 @@ impl PanelView {
         }
         let time = cursor.as_ref().map(|cursor| chart.times[cursor.index]);
         self.cursor = cursor;
+        self.show_cursor(cx);
         cx.emit(PanelEvent::Cursor(time));
-        cx.notify();
     }
 
     fn pointer_left(&mut self, cx: &mut Context<Self>) {
         if self.cursor.take().is_some() {
+            self.show_cursor(cx);
             cx.emit(PanelEvent::Cursor(None));
-            cx.notify();
         }
+    }
+
+    /// The chart's own cursor, for the view that lays the panel out to draw
+    /// beside it.
+    pub(crate) fn cursor_overlay(&self) -> Option<Entity<CursorOverlay>> {
+        self.overlay.clone()
+    }
+
+    /// A chart's overlay, made with its plot.
+    pub(super) fn new_overlay(&self, cx: &mut Context<Self>) -> Entity<CursorOverlay> {
+        let (id, geometry) = (self.id.clone(), self.geometry.clone());
+        cx.new(|_| CursorOverlay::new(id, geometry))
+    }
+
+    /// Hands the cursor, the focus and the marker under the pointer to the
+    /// overlay, which alone draws again.
+    pub(super) fn show_cursor(&self, cx: &mut Context<Self>) {
+        let Some(overlay) = &self.overlay else {
+            return;
+        };
+        let shown = self
+            .cursor
+            .clone()
+            .zip(self.chart())
+            .map(|(cursor, chart)| {
+                let focus = self.focus();
+                let named: Vec<usize> = cursor.rows.iter().map(|row| row.series).collect();
+                Shown {
+                    x: chart.xs[cursor.index],
+                    dots: self.dots(&chart, cursor.index, &named),
+                    inks: named
+                        .iter()
+                        .map(|series| {
+                            let focused = focus == Some(*series);
+                            (chart.series[*series].ink.color(focused), focused)
+                        })
+                        .collect(),
+                    marker: cursor
+                        .marker
+                        .and_then(|marker| self.placed.get(marker))
+                        .cloned(),
+                    cursor,
+                }
+            });
+        overlay.update(cx, |overlay, cx| {
+            overlay.shown = shown;
+            cx.notify();
+        });
     }
 
     pub(super) fn chart(&self) -> Option<std::rc::Rc<Chart>> {
@@ -299,53 +397,18 @@ impl PanelView {
             .collect()
     }
 
-    /// The hover handlers for the plot's container, and the overlay drawn
-    /// above the cached plot.
-    pub(super) fn render_cursor(
-        &mut self,
-        chart: &std::rc::Rc<Chart>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let p = palette(cx);
-        let mut overlay = div()
+    /// The hover handlers over the plot's container. The cursor itself is
+    /// the [`CursorOverlay`]'s, so a move never draws the panel again.
+    pub(super) fn render_cursor(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id(self.element_id("cursor"))
             .absolute()
             .top_0()
             .left_0()
             .size_full()
             .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, window, cx| {
                 view.pointer_moved(event.position, window, cx)
-            }));
-        let Some(cursor) = self.cursor.clone() else {
-            return overlay
-                .id(self.element_id("cursor"))
-                .on_hover(cx.listener(|view, hovered: &bool, _, cx| {
-                    if !hovered {
-                        view.pointer_left(cx)
-                    }
-                }))
-                .into_any_element();
-        };
-        let geometry = self.geometry.clone();
-        let colors = (p.ink_2.opacity(0.7), p.surface);
-        let named: Vec<usize> = cursor.rows.iter().map(|row| row.series).collect();
-        let dots = self.dots(chart, cursor.index, &named);
-        let x = chart.xs[cursor.index];
-        overlay = overlay.child(
-            canvas(
-                |_, _, _| {},
-                move |_, _, window, _| paint(geometry.get(), x, &dots, colors, window),
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full(),
-        );
-        if !cursor.rows.is_empty() {
-            overlay = overlay.child(self.render_readout(chart, &cursor, window, cx));
-        }
-        overlay
-            .id(self.element_id("cursor"))
+            }))
             .on_hover(cx.listener(|view, hovered: &bool, _, cx| {
                 if !hovered {
                     view.pointer_left(cx)
@@ -353,19 +416,59 @@ impl PanelView {
             }))
             .into_any_element()
     }
+}
 
+impl Render for CursorOverlay {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let origin = self.origin.clone();
+        let overlay = div().absolute().top_0().left_0().size_full().child(
+            canvas(
+                move |bounds, _, _| origin.set(bounds.origin),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        );
+        let Some(shown) = &self.shown else {
+            return overlay;
+        };
+        let p = palette(cx);
+        let geometry = self.geometry.clone();
+        let g = geometry.get();
+        let at = g.origin - self.origin.get();
+        let colors = (p.ink_2.opacity(0.7), p.surface);
+        let (x, dots) = (shown.x, shown.dots.clone());
+        overlay.child(
+            div()
+                .absolute()
+                .left(at.x)
+                .top(at.y)
+                .w(g.size.width)
+                .h(g.size.height)
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, window, _| paint(geometry.get(), x, &dots, colors, window),
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+                .when(!shown.cursor.rows.is_empty(), |this| {
+                    this.child(self.render_readout(shown, window, cx))
+                }),
+        )
+    }
+}
+
+impl CursorOverlay {
     /// The time, then a row a series in three aligned columns: swatch,
     /// value and name. When rows are left out, the time line says how many
     /// it ranks from.
-    fn render_readout(
-        &self,
-        chart: &Chart,
-        cursor: &Cursor,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> AnyElement {
+    fn render_readout(&self, shown: &Shown, window: &Window, cx: &Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let focus = self.focus();
+        let cursor = &shown.cursor;
         let gap = dp(12.);
         // Within the room on its side, less its gap to the crosshair; names
         // truncate to fit.
@@ -375,10 +478,7 @@ impl PanelView {
         let mut swatches = Vec::with_capacity(cursor.rows.len());
         let mut values = Vec::with_capacity(cursor.rows.len());
         let mut names = Vec::with_capacity(cursor.rows.len());
-        for row in &cursor.rows {
-            let color = chart.series[row.series]
-                .ink
-                .color(focus == Some(row.series));
+        for (row, (color, focused)) in cursor.rows.iter().zip(shown.inks.iter().copied()) {
             swatches.push(
                 cell()
                     .child(div().w(dp(12.)).h(px(2.)).rounded(px(3.)).bg(color))
@@ -398,17 +498,13 @@ impl PanelView {
                 cell()
                     .max_w(dp(240.))
                     .text_size(dp(11.))
-                    .text_color(if focus == Some(row.series) {
-                        p.ink
-                    } else {
-                        p.muted
-                    })
+                    .text_color(if focused { p.ink } else { p.muted })
                     .child(div().min_w_0().truncate().child(row.name.clone()))
                     .into_any_element(),
             );
         }
         v_flex()
-            .id(self.element_id("readout"))
+            .id(SharedString::from(format!("{}-readout", self.id)))
             .absolute()
             .top(dp(10.))
             .map(|this| {
@@ -444,9 +540,9 @@ impl PanelView {
                     }),
             )
             .children(
-                cursor
+                shown
                     .marker
-                    .and_then(|marker| self.placed.get(marker))
+                    .as_ref()
                     .map(|marker| markers::readout_row(marker, &p)),
             )
             .child(

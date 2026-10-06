@@ -525,7 +525,7 @@ fn a_time_range_change_asks_every_panel_over_the_new_window(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-fn the_cursor_on_one_chart_shows_on_the_others_and_redraws_no_other_panel(cx: &mut TestAppContext) {
+fn the_cursor_on_one_chart_shows_on_the_others_and_redraws_no_panel(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));
     show(cx, handle, &page);
     let (plot, others) = cx.read(|cx| {
@@ -575,11 +575,11 @@ fn the_cursor_on_one_chart_shows_on_the_others_and_redraws_no_other_panel(cx: &m
     let [panels, pages, derived] = counts();
     move_to(cx, |plot| plot.center() + point(px(40.), px(0.)));
     move_to(cx, |plot| plot.center() + point(px(80.), px(0.)));
-    // Only the panel under the pointer draws again. The page draws with
-    // the shell's frames to place the crosshairs, from what it derived
-    // before: a move derives nothing.
+    // No panel draws again, not even the one under the pointer: its cursor
+    // is a view of its own. The page draws with the shell's frames to place
+    // the crosshairs, from what it derived before: a move derives nothing.
     let [panels_now, pages_now, derived_now] = counts();
-    assert_eq!(panels_now, panels + 2, "a move redrew another panel");
+    assert_eq!(panels_now, panels, "a move redrew a panel");
     assert!(pages_now > pages);
     assert_eq!(derived_now, derived, "a move derived");
     for id in &others {

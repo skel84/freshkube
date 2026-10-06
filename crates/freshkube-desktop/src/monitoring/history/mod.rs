@@ -463,6 +463,7 @@ impl Render for HistoryView {
                             .min_w(dp(180.))
                             .h(dp(184.))
                             .child(panel.clone().cached(StyleRefinement::default().size_full()))
+                            .children(panel.read(cx).cursor_overlay())
                             .children(self.linked.element(index))
                     })),
             )

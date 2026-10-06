@@ -13,6 +13,8 @@ use crate::palette::palette;
 use crate::ui::{self, dp};
 
 pub(super) fn legend(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyElement {
+    #[cfg(test)]
+    crate::desktop::probe::hit("monitoring-legend");
     match chart.legend.mode {
         LegendMode::Hidden => div().into_any_element(),
         LegendMode::Inline => inline(view, chart, cx),

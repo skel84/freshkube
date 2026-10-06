@@ -218,12 +218,14 @@ impl ObservabilityPage {
             Some(kept) => div()
                 .id(charts.id.clone())
                 .test_support()
+                .relative()
                 .h(dp(HEIGHT))
                 .child(
                     kept.view
                         .clone()
                         .cached(StyleRefinement::default().size_full()),
                 )
+                .children(kept.view.read(cx).cursor_overlay())
                 .into_any_element(),
             None => card(choice.title.clone(), cx)
                 .id(charts.empty_id.clone())

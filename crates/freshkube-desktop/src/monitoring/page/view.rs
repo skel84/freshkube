@@ -587,6 +587,7 @@ impl MonitoringPage {
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
             )
+            .children(slot.view.read(cx).cursor_overlay())
             .children(board.linked.element(place.slot))
         });
         let (viewport, scroll, page) = (
