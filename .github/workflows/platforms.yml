@@ -110,7 +110,7 @@ jobs:
         if: runner.os == 'Linux'
         # GPUI's test platform needs no display; the workspace run includes
         # the terminal keyboard tests.
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
       - name: Terminal keyboard UI tests
         if: runner.os == 'Windows'
         run: cargo test -p freshkube-terminal --lib keyboard --locked
