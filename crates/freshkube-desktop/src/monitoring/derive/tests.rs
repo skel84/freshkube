@@ -754,16 +754,59 @@ fn value_ticks_are_round() {
     assert_eq!(nice_step(7., 4.), 2.);
     assert_eq!(nice_step(0., 4.), 1.);
     assert_eq!(
-        linear(3., 97., None, None),
+        linear(3., 97., None, None, false),
         (0., 100., vec![0., 25., 50., 75., 100.])
     );
-    let (min, max, values) = linear(-0.3, 0.2, None, None);
+    let (min, max, values) = linear(-0.3, 0.2, None, None, false);
     assert_eq!((min, max), (-0.4, 0.2));
     assert!(values.contains(&0.) && values.iter().all(|v| !v.is_sign_negative() || *v < 0.));
-    assert_eq!(linear(10., 20., Some(0.), Some(1.)).1, 1.);
+    assert_eq!(linear(10., 20., Some(0.), Some(1.), false).1, 1.);
     assert_eq!(
         log(10., 3., 2000.),
         (1., 10000., vec![1., 10., 100., 1000., 10000.])
+    );
+}
+
+#[test]
+fn whole_values_take_whole_ticks() {
+    assert_eq!(
+        linear(0., 1., None, None, false).2,
+        [0., 0.25, 0.5, 0.75, 1.]
+    );
+    assert_eq!(linear(0., 1., None, None, true).2, [0., 1.]);
+    assert_eq!(linear(0., 2., None, None, true).2, [0., 1., 2.]);
+    assert_eq!(
+        linear(0., 10., None, None, true).2,
+        [0., 2., 4., 6., 8., 10.]
+    );
+    assert_eq!(
+        linear(3., 97., None, None, true).2,
+        [0., 25., 50., 75., 100.]
+    );
+
+    let labels = |defaults: Value, values: &[f64]| -> Vec<String> {
+        let spec = timeseries(defaults, json!({}));
+        let chart = chart_of(&derive(&spec, frame(vec![series("a", values)]), window()));
+        let axis = chart.axes[0].as_ref().unwrap();
+        axis.ticks
+            .iter()
+            .map(|tick| tick.label.to_string())
+            .collect()
+    };
+    // A count of one or two messages a column.
+    assert_eq!(
+        labels(json!({}), &[0., 1., 2., 1., 0., 1., 2.]),
+        ["0", "1", "2"]
+    );
+    // A fraction of one stays a fraction, and so does 100% of one.
+    assert_eq!(labels(json!({}), &[0., 0.5, 1., 0.5, 0., 0.5, 1.]).len(), 5);
+    assert_eq!(
+        labels(
+            json!({"unit": "percentunit"}),
+            &[0., 1., 1., 0., 1., 0., 1.]
+        )
+        .len(),
+        5
     );
 }
 

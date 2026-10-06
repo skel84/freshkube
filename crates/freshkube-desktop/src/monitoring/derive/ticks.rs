@@ -110,18 +110,22 @@ pub(crate) fn nice_step(range: f64, intervals: f64) -> f64 {
 }
 
 /// A linear axis around `low..high`: rounded out to whole steps unless the
-/// dashboard fixes an end, and the values to label.
+/// dashboard fixes an end, and the values to label. An axis of `whole`
+/// numbers, such as counts, labels only whole numbers.
 pub(crate) fn linear(
     low: f64,
     high: f64,
     fixed_min: Option<f64>,
     fixed_max: Option<f64>,
+    whole: bool,
 ) -> (f64, f64, Vec<f64>) {
     let (mut low, mut high) = (fixed_min.unwrap_or(low), fixed_max.unwrap_or(high));
     if high <= low {
         high = low + low.abs().max(1.);
     }
     let step = nice_step(high - low, 4.);
+    // 1 for a step under 1, and 2 for 2.5; larger round steps are whole.
+    let step = if whole { step.max(1.).floor() } else { step };
     if fixed_min.is_none() {
         low = (low / step).floor() * step;
     }

@@ -407,7 +407,7 @@ fn axis(
     let (min, max, marks) = if percent {
         let low = if low.unwrap_or(0.) < 0. { -100. } else { 0. };
         let high = if high.unwrap_or(0.) > 0. { 100. } else { 0. };
-        ticks::linear(low, high, Some(low), Some(high))
+        ticks::linear(low, high, Some(low), Some(high), false)
     } else if let AxisScale::Log(base) = scale {
         let low = field.min.filter(|v| *v > 0.).or(low).unwrap_or(1.);
         let high = field
@@ -417,10 +417,14 @@ fn axis(
             .unwrap_or(low * base);
         ticks::log(base, low, high)
     } else {
-        // Data that never goes below zero starts at zero.
+        // Data that never goes below zero starts at zero. Whole values, as
+        // counts are, take whole ticks; a fraction unit's 1 is 100%.
+        let whole = !values.is_empty()
+            && values.iter().all(|v| v.fract() == 0.)
+            && field.unit.as_deref() != Some("percentunit");
         let low = low.map_or(0., |low| low.min(0.));
         let high = high.unwrap_or(1.);
-        ticks::linear(low, high, field.min, field.max)
+        ticks::linear(low, high, field.min, field.max, whole)
     };
     let mut axis = Axis {
         min,
