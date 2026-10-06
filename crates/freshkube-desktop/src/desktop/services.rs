@@ -9,7 +9,7 @@ use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Disableable, Icon, Selectable, Sizable,
+    Disableable, ElementExt, Icon, Selectable, Sizable,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::Input,
@@ -52,8 +52,106 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let node = match self.services_state(cx) {
+            Ok(node) => node,
+            Err(state) => {
+                // Nothing to reveal; a later list mustn't jump for it.
+                self.reveal_service = false;
+                return state;
+            }
+        };
+        let header = self.services_header(&node, cx);
+        let toolbar = self.services_toolbar(cx);
+        let list = self.services_list(cx);
+        let detail = self.service_detail(&node, cx);
+        // In the node inspector, by its own width.
+        let wide = crate::screens::embedded_width(window) >= 760.;
+        // Stacked, the details sit under the list: a new selection brings
+        // them into view, or nothing would show that it changed.
+        let reveal = std::mem::take(&mut self.reveal_service) && !wide;
+        let detail = if reveal {
+            self.revealing(detail, cx)
+        } else {
+            detail
+        };
+        let split = if wide {
+            h_flex()
+                .items_start()
+                .gap(dp(14.))
+                .child(div().w(dp(LIST_WIDTH)).flex_none().child(list))
+                .child(div().flex_1().min_w_0().child(detail))
+                .into_any_element()
+        } else {
+            v_flex()
+                .gap(dp(14.))
+                .child(list)
+                .child(detail)
+                .into_any_element()
+        };
+        let body = self
+            .page_body()
+            .children(self.stale_banner(cx))
+            .child(header)
+            .children(
+                self.services
+                    .error()
+                    .filter(|_| !self.overview.is_stale())
+                    .map(|error| {
+                        ui::warning_banner(
+                            Some("Services didn't refresh.".into()),
+                            error.to_owned(),
+                            None,
+                            cx,
+                        )
+                    }),
+            )
+            .child(toolbar)
+            .child(split);
+        self.page_scroll("services-page")
+            .track_scroll(&self.service_scroll)
+            .test_support()
+            .child(body)
+            .into_any_element()
+    }
+
+    /// Wraps the stacked details so that, once laid out, the page scrolls
+    /// the least that shows them whole, or their top when they are taller
+    /// than the page.
+    fn revealing(&self, detail: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let scroll = self.service_scroll.clone();
+        let view = cx.entity().downgrade();
+        div()
+            .on_prepaint(move |details, window, _| {
+                let shown = scroll.bounds();
+                let by = if details.size.height > shown.size.height || details.top() < shown.top() {
+                    details.top() - shown.top()
+                } else {
+                    (details.bottom() - shown.bottom()).max(px(0.))
+                };
+                if by == px(0.) {
+                    return;
+                }
+                let offset = scroll.offset();
+                let y = (offset.y - by).clamp(-scroll.max_offset().y, px(0.));
+                scroll.set_offset(point(offset.x, y));
+                let view = view.clone();
+                window.on_next_frame(move |_, cx| {
+                    let _ = view.update(cx, |_, cx| cx.notify());
+                });
+            })
+            .child(detail)
+            .into_any_element()
+    }
+
+    /// The node whose services show, or what shows instead: a config
+    /// error, an unreachable cluster, the skeleton while loading, no node
+    /// or a node that isn't responding.
+    fn services_state(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Result<presentation::NodeSummary, AnyElement> {
         if let Some(error) = self.config_error.clone() {
-            return self.config_error_state(error, cx);
+            return Err(self.config_error_state(error, cx));
         }
         if self.overview.data().is_none() {
             if let Some(error) = self
@@ -61,13 +159,12 @@ impl Pilot {
                 .error()
                 .filter(|_| !self.overview.is_loading())
             {
-                return self.unreachable_state(error.to_owned(), cx);
+                return Err(self.unreachable_state(error.to_owned(), cx));
             }
-            return self.services_skeleton(cx);
+            return Err(self.services_skeleton(cx));
         }
-        let p = palette(cx);
         let Some(node) = self.selected_summary().cloned() else {
-            return ui::empty_state(
+            return Err(ui::empty_state(
                 IconName::Server,
                 "No node selected",
                 "Open a node in Nodes to see its services.",
@@ -75,10 +172,10 @@ impl Pilot {
                 Vec::new(),
                 cx,
             )
-            .into_any_element();
+            .into_any_element());
         };
         if !node.responding && self.services.data().is_none() && !self.services.is_loading() {
-            return ui::empty_state(
+            return Err(ui::empty_state(
                 IconName::Unplug,
                 format!("{} isn't responding", node.name),
                 format!(
@@ -96,11 +193,14 @@ impl Pilot {
                 ],
                 cx,
             )
-            .into_any_element();
+            .into_any_element());
         }
-        let all = self.services.data().cloned().unwrap_or_default();
-        let visible = self.service_display.visible.clone();
-        let header = h_flex()
+        Ok(node)
+    }
+
+    fn services_header(&self, node: &presentation::NodeSummary, cx: &mut Context<Self>) -> Div {
+        let p = palette(cx);
+        h_flex()
             .items_end()
             .gap_3()
             .flex_wrap()
@@ -139,9 +239,12 @@ impl Pilot {
                     .loading(self.services.is_loading())
                     .disabled(self.services.is_loading() || self.selected_node.is_none())
                     .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
-            );
+            )
+    }
+
+    fn services_toolbar(&self, cx: &mut Context<Self>) -> Div {
         let filter = self.health_filter;
-        let toolbar = h_flex()
+        h_flex()
             .gap_2p5()
             .flex_wrap()
             .child(
@@ -181,8 +284,14 @@ impl Pilot {
                         view.rebuild_service_rows(cx);
                         cx.notify();
                     })),
-            );
-        let list = v_flex()
+            )
+    }
+
+    fn services_list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let visible = &self.service_display.visible;
+        let reported = self.services.data().is_some_and(|all| !all.is_empty());
+        v_flex()
             .id("services-region")
             .test_support()
             .aria_label("Services on the target node; use Up and Down to select")
@@ -200,7 +309,7 @@ impl Pilot {
                 this.child(div().px_2p5().py_3p5().text_color(p.muted).child(
                     if self.services.is_loading() {
                         "Loading services…"
-                    } else if all.is_empty() {
+                    } else if !reported {
                         "This node didn't report any services."
                     } else {
                         "No services match this filter."
@@ -265,48 +374,11 @@ impl Pilot {
                     )
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.selected_service = Some(id.clone());
+                        view.reveal_service = true;
                         window.focus(&view.service_focus, cx);
                         cx.notify();
                     }))
-            }));
-        let detail = self.service_detail(&node, cx);
-        // In the node inspector, by its own width.
-        let wide = crate::screens::embedded_width(window) >= 760.;
-        let split = if wide {
-            h_flex()
-                .items_start()
-                .gap(dp(14.))
-                .child(div().w(dp(LIST_WIDTH)).flex_none().child(list))
-                .child(div().flex_1().min_w_0().child(detail))
-                .into_any_element()
-        } else {
-            v_flex()
-                .gap(dp(14.))
-                .child(list)
-                .child(detail)
-                .into_any_element()
-        };
-        let body = self
-            .page_body()
-            .children(self.stale_banner(cx))
-            .child(header)
-            .children(
-                self.services
-                    .error()
-                    .filter(|_| !self.overview.is_stale())
-                    .map(|error| {
-                        ui::warning_banner(
-                            Some("Services didn't refresh.".into()),
-                            error.to_owned(),
-                            None,
-                            cx,
-                        )
-                    }),
-            )
-            .child(toolbar)
-            .child(split);
-        self.page_scroll("services-page")
-            .child(body)
+            }))
             .into_any_element()
     }
 
@@ -597,6 +669,8 @@ impl Pilot {
                     ),
             );
         self.page_scroll("services-page")
+            .track_scroll(&self.service_scroll)
+            .test_support()
             .child(body)
             .into_any_element()
     }
