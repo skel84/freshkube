@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::page::{self, PageHeader};
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -961,17 +962,50 @@ impl OperationsScreen {
 
 impl Render for OperationsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(source) = self.source.clone() else {
-            return ui::empty_state(
-                IconName::Server,
-                "No node selected",
-                "Pick a target node in the title bar.",
-                None,
-                Vec::new(),
-                cx,
-            )
-            .into_any_element();
-        };
+        let header = self.render_header(window, cx);
+        let page = page::padded("ops-page")
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(header);
+        match self.source.clone() {
+            Some(source) => page.child(self.render_body(&source, window, cx)),
+            None => page.child(div().id("ops-state").test_support().flex_none().child(
+                ui::empty_state(
+                    IconName::Server,
+                    "No node selected",
+                    "Pick a target node in the title bar.",
+                    None,
+                    Vec::new(),
+                    cx,
+                ),
+            )),
+        }
+    }
+}
+
+impl OperationsScreen {
+    /// The toolbar: the title and Refresh, which reads the preview and the
+    /// audit log again. Where it reads and when is the status bar's segment.
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = PageHeader::new(PREFIX, "Operations");
+        let refresh = refresh_control(
+            header.id("refresh"),
+            "Refresh the preview and the audit log",
+            self.source.as_ref(),
+            &self.audit,
+            cx,
+        );
+        header.control(refresh).render(window, cx)
+    }
+
+    /// Everything under the header while there is a target: the notices,
+    /// the operation, its options, the nodes and plan, a run and the audit.
+    fn render_body(
+        &self,
+        source: &ScreenSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let roster = self.roster();
         let p = palette(cx);
         let busy = Operations::current(cx);
@@ -1030,24 +1064,19 @@ impl Render for OperationsScreen {
                 .child(plan)
                 .into_any_element()
         };
-        let run = match self.run.as_ref() {
-            Some(run) => Some(self.run_panel(run, &source.target.context, cx)),
-            None => None,
-        };
+        let run = self
+            .run
+            .as_ref()
+            .map(|run| self.run_panel(run, &source.target.context, cx));
         let audit = self.audit_panel(cx);
         let kinds = self.kinds_panel(cx);
         let options = self.options_panel(cx);
         v_flex()
-            .id("ops-page")
-            .size_full()
-            .min_h_0()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(crate::desktop::PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(18.))
+            .id("ops-body")
+            .test_support()
             .gap(dp(GAP))
-            .child(header("Operations", &source, Scope::Cluster, &self.audit, cx))
+            .flex_none()
+            .w_full()
             .children(busy_banner)
             .children(notice)
             .child(
@@ -1089,6 +1118,5 @@ impl Render for OperationsScreen {
             )
             .children(run)
             .child(audit)
-            .into_any_element()
     }
 }

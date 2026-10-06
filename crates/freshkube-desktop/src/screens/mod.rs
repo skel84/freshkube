@@ -550,55 +550,6 @@ pub(crate) fn mono(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// Title, what it covers, when it was last updated, and the screen's refresh.
-pub(crate) fn header<V: ScreenPanel, T: Send + 'static>(
-    title: &'static str,
-    source: &ScreenSource,
-    scope: Scope,
-    loader: &Loader<T>,
-    cx: &mut Context<V>,
-) -> Div {
-    let p = palette(cx);
-    let target = &source.target;
-    let scope_line = match scope {
-        Scope::Node => h_flex()
-            .child("on")
-            .child(mono(target.node.clone()))
-            .child("·")
-            .child(mono(target.address.clone())),
-        Scope::Cluster => h_flex().child("in").child(mono(target.context.clone())),
-    }
-    .gap_1p5()
-    .text_size(dp(12.5))
-    .text_color(p.muted)
-    .when_some(loader.last_successful(), |this, time| {
-        this.child("·").child(format!("updated {}", clock(time)))
-    })
-    .when(source.is_example(), |this| this.child("· example data"));
-    let loading = loader.is_loading();
-    h_flex()
-        .items_end()
-        .gap_3()
-        .flex_wrap()
-        .child(
-            v_flex()
-                .gap(dp(7.))
-                .child(ui::page_title(title))
-                .child(scope_line),
-        )
-        .child(div().flex_1())
-        .child(
-            Button::new("screen-refresh")
-                .outline()
-                .small()
-                .icon(IconName::RefreshCw)
-                .label("Refresh")
-                .loading(loading)
-                .disabled(loading)
-                .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx))),
-        )
-}
-
 /// A screen's meta line under its `PageHeader`: where it reads, unless the
 /// node pane around it already names the node, then the screen's own
 /// `parts`, when it last updated and whether the data is an example, with a
