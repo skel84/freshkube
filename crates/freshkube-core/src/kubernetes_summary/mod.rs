@@ -8,15 +8,14 @@ use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use crate::workloads::{PodInfo, WorkloadCollectionOutcome};
 
 mod collect;
-mod derive;
 mod driver;
 mod observation;
 mod project;
 mod requests;
 mod retained;
 mod session;
+mod summarize;
 pub use collect::collect_kubernetes_summary;
-pub use derive::derive;
 pub use driver::DEBOUNCE;
 pub use observation::{
     Observation, ObservationFailure, Observations, ReadStatus, Scope, SessionIdentity, Source,
@@ -24,6 +23,7 @@ pub use observation::{
 };
 pub use retained::{RetainedObject, SummaryResource};
 pub use session::{Limits, Publication, Session, Subscription};
+pub use summarize::derive;
 
 pub const ISSUE_LIMIT: usize = 200;
 

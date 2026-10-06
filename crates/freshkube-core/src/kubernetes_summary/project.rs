@@ -40,7 +40,7 @@ pub(super) fn derive(evidence: Evidence, now: DateTime<Utc>) -> KubernetesSummar
     } = derive_pods(&objects, &not_ready);
     derive_nodes(&mut nodes, &pod_counts, &requests, &observations);
     derive_workloads(&objects, &mut snapshot, namespaces);
-    let mut events = super::derive::summarize_events(
+    let mut events = super::summarize::summarize_events(
         objects[&Source::Events]
             .iter()
             .filter_map(|o| {

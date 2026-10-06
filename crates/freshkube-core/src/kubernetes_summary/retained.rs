@@ -143,7 +143,7 @@ impl SummaryResource for Pod {
 impl SummaryResource for Node {
     const SOURCE: Source = Source::Nodes;
     fn retain(&self) -> RetainedObject {
-        let node = super::derive::summarize_nodes(vec![self.clone()], &[])
+        let node = super::summarize::summarize_nodes(vec![self.clone()], &[])
             .pop()
             .expect("one node");
         let bytes = size_of::<NodeSummary>()
