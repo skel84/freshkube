@@ -111,6 +111,8 @@ pub(crate) struct ObservabilityPage {
     nodes: std::rc::Rc<Vec<MapNode>>,
     connections: std::rc::Rc<Vec<Connection>>,
     map_display: map::MapDisplay,
+    /// The map and its Connections inspector, with its remembered width.
+    map_split: InspectorSplit,
     incident_observations: incidents::Incidents,
     incident_table: freshkube_ui::table::TableState,
     /// The incidents and their inspector, with its remembered width.
@@ -201,6 +203,14 @@ impl ObservabilityPage {
             )
         };
         let (incident_split, trace_split) = (split("incidents"), split("traces"));
+        let map_split = freshkube_ui::graph::inspector_split(
+            navigation.inspector_width("map"),
+            {
+                let file = navigation.clone();
+                move |width, cx| file.set_inspector_width("map", width, cx)
+            },
+            cx,
+        );
         let subscriptions = vec![
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
                 if this.application_metrics.sync(cx) {
@@ -321,6 +331,7 @@ impl ObservabilityPage {
             nodes,
             connections,
             map_display: Default::default(),
+            map_split,
             incident_observations: Default::default(),
             incident_table: freshkube_ui::table::TableState::new("obs-incidents"),
             incident_split,

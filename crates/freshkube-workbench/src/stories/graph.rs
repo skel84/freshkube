@@ -6,7 +6,10 @@
 //! header counts where calls cross.
 
 use freshkube_graph::layout;
-use freshkube_ui::graph::{GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView};
+use freshkube_ui::graph::{
+    GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView, inspector_split,
+};
+use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, MONO_FONT, Tone, dp};
@@ -19,7 +22,7 @@ use gpui_kit::{AnyElement, AnyView, App, Context, Div, SharedString, Window, div
 const PREFIX: &str = "graph";
 
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
-    cx.new(|_| GraphStory::new()).into()
+    cx.new(GraphStory::new).into()
 }
 
 /// A service by name, namespace and tone.
@@ -113,13 +116,15 @@ impl Shape {
 pub struct GraphStory {
     shape: Shape,
     graph: GraphState<usize>,
+    /// The graph and its inspector; a dragged width isn't saved.
+    split: InspectorSplit,
     /// Placed and counted when the shape changes; drawing only reads them.
     crossings: usize,
     meta: SharedString,
 }
 
 impl GraphStory {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let mut story = Self {
             shape: Shape::Shop,
             graph: GraphState::new(
@@ -131,6 +136,7 @@ impl GraphStory {
                     caption: "Callers on the left · dashed lines have a problem".into(),
                 },
             ),
+            split: inspector_split(None, |_, _| {}, cx),
             crossings: 0,
             meta: SharedString::default(),
         };
@@ -231,6 +237,10 @@ impl GraphSource for GraphStory {
         &mut self.graph
     }
 
+    fn graph_split(&self) -> &InspectorSplit {
+        &self.split
+    }
+
     /// The story has nothing to open; a box shows only its hover.
     fn open(&mut self, _: &usize, _: &mut Window, _: &mut Context<Self>) {}
 
@@ -267,12 +277,6 @@ fn track<const N: usize>(options: [Button; N], cx: &App) -> Div {
         .children(options)
 }
 
-impl Default for GraphStory {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Render for GraphStory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(debug_assertions)]
@@ -284,11 +288,11 @@ impl Render for GraphStory {
             }
         }
         let header = self.render_header(window, cx);
-        // The story's width, inside the list of stories and the inset.
-        let available = window.viewport_size().width / ui::dp_px(1., window)
-            - crate::LIST_WIDTH
-            - page::PANE_PADDING * 2.;
-        let graph = GraphView::new(available).render(self, cx);
+        // The story's width beside the list of stories, and inside its inset.
+        let width = window.viewport_size().width / ui::dp_px(1., window) - crate::LIST_WIDTH;
+        let graph = GraphView::new(width - page::PANE_PADDING * 2.)
+            .page_width(width)
+            .render(self, window, cx);
         page::page(SharedString::from(format!("{PREFIX}-page")))
             .child(page::toolbar(cx).child(header))
             .child(

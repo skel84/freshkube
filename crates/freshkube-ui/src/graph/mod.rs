@@ -13,10 +13,11 @@ use std::rc::Rc;
 
 use freshkube_graph::layout::{Node, Route, route};
 use gpui_kit::{
-    AnyElement, Context, ScrollHandle, ScrollStrategy, SharedString, UniformListScrollHandle,
+    AnyElement, App, Context, ScrollHandle, ScrollStrategy, SharedString, UniformListScrollHandle,
     Window,
 };
 
+use crate::inspector::{self, InspectorSplit, Pane, Stacked};
 use crate::ui::Tone;
 
 mod view;
@@ -27,6 +28,24 @@ pub use view::GraphView;
 pub const PER_PAGE: usize = 24;
 /// Calls on a page that carry a marker; the selected call always does.
 pub const MARKERS: usize = 24;
+/// Stacked, the graph starts as tall as it draws, within 300 and 700, and
+/// the inspector under it starts 380 high, keeping 220.
+pub const STACKED: Stacked = Stacked {
+    lead: Pane::new(300.).least(300.).most(700.),
+    trail: Pane::new(inspector::STACKED_HEIGHT).least(inspector::MIN_HEIGHT),
+};
+
+/// The split a graph's source keeps: its inspector starts `width` dp wide,
+/// the width the user left it at, or the least an inspector keeps, so a
+/// graph of three columns still fits beside it at 1280. `remember` hears a
+/// dragged width once, to save it.
+pub fn inspector_split(
+    width: Option<f32>,
+    remember: impl Fn(f32, &mut App) + 'static,
+    cx: &mut App,
+) -> InspectorSplit {
+    InspectorSplit::new(width.or(Some(inspector::MIN_WIDTH)), remember, cx).stacked(STACKED)
+}
 
 /// A box: what it is, its id and how it reads.
 #[derive(Clone, Debug)]
@@ -79,6 +98,9 @@ pub trait GraphSource: Sized + 'static {
 
     fn graph(&self) -> &GraphState<Self::Key>;
     fn graph_mut(&mut self) -> &mut GraphState<Self::Key>;
+    /// The split between the graph and its inspector, from
+    /// [`inspector_split`].
+    fn graph_split(&self) -> &InspectorSplit;
 
     /// A box drawn with the accent border, such as the page's selection.
     fn highlighted(&self) -> Option<&Self::Key> {
@@ -95,6 +117,16 @@ pub trait GraphSource: Sized + 'static {
         selected: Option<&GraphEdge<Self::Key>>,
         cx: &mut Context<Self>,
     ) -> AnyElement;
+
+    /// The inspector's footer for the selected call, such as its one
+    /// action; none by default.
+    fn inspector_footer(
+        &self,
+        _selected: Option<&GraphEdge<Self::Key>>,
+        _cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        None
+    }
 
     /// What the graph shows when it has no boxes.
     fn empty(&self, cx: &mut Context<Self>) -> AnyElement;
@@ -155,13 +187,18 @@ pub struct GraphText {
     pub caption: SharedString,
 }
 
-/// The parts' element ids: `<prefix>-graph`, `-panel`, `-scroll`,
-/// `-scrollbar`, `-previous`, `-next`, `-problems`, `-inspector`,
-/// `-connections` and `-empty`.
+/// The parts' element ids: `<prefix>-graph`, `-panel` (the card),
+/// `-split`, `-lead` (the graph's side of it), `-scroll`, `-scrollbar`,
+/// `-legend`, `-previous`, `-next`, `-problems`, `-inspector` (with the
+/// inspector's `-heading`, `-content` and `-footer`), `-connections` and
+/// `-empty`.
 struct Ids {
     prefix: SharedString,
     graph: SharedString,
     panel: SharedString,
+    split: SharedString,
+    lead: SharedString,
+    legend: SharedString,
     scroll: SharedString,
     scrollbar: SharedString,
     previous: SharedString,
@@ -179,6 +216,9 @@ impl Ids {
             prefix: prefix.to_string().into(),
             graph: id("graph"),
             panel: id("panel"),
+            split: id("split"),
+            lead: id("lead"),
+            legend: id("legend"),
             scroll: id("scroll"),
             scrollbar: id("scrollbar"),
             previous: id("previous"),
