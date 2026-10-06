@@ -7,7 +7,7 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use gpui_kit::{Context, Window, component::VirtualListScrollHandle, px};
+use gpui_kit::{Context, Window, component::VirtualListScrollHandle, point, px};
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
@@ -84,6 +84,7 @@ impl<S: LogSource> LogView<S> {
         self.row_widths.clear();
         self.row_exact.clear();
         self.scroll = VirtualListScrollHandle::new();
+        self.panel_scroll.set_offset(point(px(0.), px(0.)));
         self.manual_review = Rc::new(Cell::new(false));
         self.review.query = query;
     }

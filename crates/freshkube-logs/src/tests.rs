@@ -568,9 +568,13 @@ fn a_short_panel_keeps_its_controls_whole_and_scrolls_to_the_list(cx: &mut TestA
         let (_runtime, panel, handle) = mount_sized(cx, 620., height);
         panel.update(cx, |view, cx| {
             view.source_mut().banner = true;
-            view.source_mut()
-                .errors
-                .insert("apid".into(), "connection refused".into());
+            // More errors than the notices' share of the panel holds.
+            for ix in 0..12 {
+                view.source_mut().errors.insert(
+                    format!("service-{ix:02}").into(),
+                    "connection refused".into(),
+                );
+            }
             cx.notify();
         });
         cx.update_window(handle.into(), |_, window, cx| {
@@ -588,17 +592,27 @@ fn a_short_panel_keeps_its_controls_whole_and_scrolls_to_the_list(cx: &mut TestA
                     "{height}: {id} at {control:?} is cut by the toolbar at {toolbar:?}"
                 );
             }
+            // The notices take at most a quarter of the panel and scroll
+            // inside it.
             assert!(
-                toolbar.bottom() <= notices.top() && notices.bottom() <= viewport.top(),
-                "{height}: {toolbar:?}, {notices:?} and {viewport:?} overlap"
+                notices.size.height <= shown.size.height * 0.25 + px(0.5),
+                "{height}: the notices {notices:?} take more than a quarter of {shown:?}"
             );
-            let least = (window.rem_size() * 6.).min(shown.size.height * 0.5);
+            // The list keeps its least height, 6 rem, at either height.
+            let least = window.rem_size() * 6.;
             assert!(
                 viewport.size.height >= least - px(0.5),
                 "{height}: the list {viewport:?} is shorter than {least:?}"
             );
-            let scroll = panel.read(cx).panel_scroll.clone();
             let short = height < 300.;
+            if !short {
+                // A tall panel's list takes all the room left.
+                assert!(
+                    (viewport.bottom() - shown.bottom()).abs() <= px(0.5),
+                    "{height}: the list {viewport:?} doesn't reach the panel's end {shown:?}"
+                );
+            }
+            let scroll = panel.read(cx).panel_scroll.clone();
             assert_eq!(
                 scroll.max_offset().y > px(0.),
                 short,
@@ -615,6 +629,12 @@ fn a_short_panel_keeps_its_controls_whole_and_scrolls_to_the_list(cx: &mut TestA
             );
         })
         .unwrap();
+        // Another source's lines start at the panel's top again.
+        panel.update(cx, |view, _| view.reset_lines("another"));
+        assert_eq!(
+            panel.read_with(cx, |view, _| view.panel_scroll.offset()),
+            point(px(0.), px(0.))
+        );
     }
 }
 
@@ -861,6 +881,8 @@ fn level_toggles_draw_the_shared_glyphs() {
 struct Frame {
     panel: Entity<LogPanel>,
     scroll: gpui_kit::ScrollHandle,
+    /// The log's height inside the frame.
+    height: f32,
 }
 
 impl gpui_kit::Render for Frame {
@@ -877,13 +899,21 @@ impl gpui_kit::Render for Frame {
                     .test_support()
                     .h(px(120.)),
             )
-            .child(gpui_kit::div().h(px(560.)).child(self.panel.clone()))
-            .child(gpui_kit::div().h(px(400.)))
+            .child(gpui_kit::div().h(px(self.height)).child(self.panel.clone()))
+            .child(gpui_kit::div().h(px(600.)))
     }
 }
 
-#[gpui_kit::test]
-fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut TestAppContext) {
+/// A log `height` tall in a [`Frame`] that scrolls around it.
+fn mount_framed(
+    cx: &mut TestAppContext,
+    height: f32,
+) -> (
+    Runtime,
+    Entity<LogPanel>,
+    gpui_kit::ScrollHandle,
+    WindowHandle<Root>,
+) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -902,10 +932,69 @@ fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut Tes
         let frame = cx.new(|_| Frame {
             panel: view,
             scroll: scroll.clone(),
+            height,
         });
         Root::new(frame, window, cx)
     });
-    let panel = panel.unwrap();
+    (runtime, panel.unwrap(), scroll, handle)
+}
+
+#[gpui_kit::test]
+fn a_wheel_over_a_short_logs_controls_scrolls_the_log_and_not_the_frame(cx: &mut TestAppContext) {
+    let (_runtime, panel, scroll, handle) = mount_framed(cx, 240.);
+    panel.update(cx, |view, cx| {
+        view.source_mut().banner = true;
+        cx.notify();
+    });
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let panel_scroll = panel.read(cx).panel_scroll.clone();
+        assert!(
+            panel_scroll.max_offset().y > px(0.),
+            "the log doesn't scroll"
+        );
+        window.scroll(
+            "frame-header",
+            ScrollDelta::Pixels(point(px(0.), px(-60.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let framed = scroll.offset().y;
+        assert!(
+            framed < px(-1.),
+            "the header's wheel didn't scroll the frame"
+        );
+        // Down to the lines, then back up to the banner.
+        for by in [-400., 400.] {
+            window.scroll(
+                "logs-toolbar",
+                ScrollDelta::Pixels(point(px(0.), px(by))),
+                cx,
+            );
+            window.render_frame(cx);
+            let expected = if by < 0. {
+                -panel_scroll.max_offset().y
+            } else {
+                px(0.)
+            };
+            assert_eq!(
+                panel_scroll.offset().y,
+                expected,
+                "the log didn't scroll by {by}"
+            );
+            assert_eq!(
+                scroll.offset().y,
+                framed,
+                "the log's wheel by {by} scrolled the frame"
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_wheel_over_the_log_scrolls_the_log_and_not_the_frame_around_it(cx: &mut TestAppContext) {
+    let (_runtime, panel, scroll, handle) = mount_framed(cx, 560.);
     settle(cx, &panel, handle);
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(scroll.max_offset().y > px(0.), "the frame doesn't scroll");

@@ -620,6 +620,14 @@ impl<S: LogSource> Render for LogView<S> {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .track_scroll(&self.panel_scroll)
+            // The panel has scrolled by now; while it can scroll at all, a
+            // frame that scrolls around it, as a short Resources page or
+            // node pane does, stays where it is, as it does for the list.
+            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                if this.panel_scroll.max_offset().y > px(0.) {
+                    cx.stop_propagation();
+                }
+            }))
             .on_prepaint(move |bounds, window, cx| {
                 let changed = root_entity.update(cx, |this, _| {
                     let changed = this.panel_height != Some(bounds.size.height);
