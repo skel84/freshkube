@@ -483,3 +483,51 @@ fn no_tab_adds_evidence_beside_coroots_view(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_narrow_page_keeps_charts_and_checks_inside_its_margin(cx: &mut TestAppContext) {
+    for text_size in [13., 20.] {
+        let (_runtime, handle, page) = super::super::tests::mount_geometry(cx, 760., 560.);
+        cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| page.update(cx, |page, cx| page.open_app(worker(), Report::Errors, cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let card = window.find("obs-app-checks").bounds();
+            let inside = |id: &'static str, window: &gpui_kit::Window| {
+                let bounds = window.find(id).bounds();
+                assert!(
+                    bounds.right() <= card.right() + gpui_kit::px(0.5),
+                    "{text_size}: {id} {bounds:?} runs past the margin {card:?}"
+                );
+                bounds
+            };
+            // The half-width pair can't share a row, so each takes its own.
+            let requests = inside("obs-chart-slo-0", window);
+            let errors = inside("obs-chart-slo-1", window);
+            inside("obs-heatmap-slo-2", window);
+            assert!(errors.top() >= requests.bottom(), "{text_size}");
+            assert!(
+                (requests.right() - card.right()).abs() < gpui_kit::px(1.),
+                "{text_size}: a lone chart fills the row"
+            );
+            // Coroot's long words wrap inside the Checks card.
+            window.click("obs-report-net", cx);
+            window.render_frame(cx);
+            let card = window.find("obs-app-checks").bounds();
+            for id in [
+                "obs-app-check-0",
+                "obs-app-check-0-condition",
+                "obs-app-check-1",
+            ] {
+                let bounds = window.find(id).bounds();
+                assert!(
+                    bounds.right() <= card.right(),
+                    "{text_size}: {id} {bounds:?} runs past the card {card:?}"
+                );
+            }
+        })
+        .unwrap();
+    }
+}

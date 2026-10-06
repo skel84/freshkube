@@ -39,6 +39,9 @@ struct Tab {
 }
 
 struct CheckLine {
+    /// `obs-app-check-<place>` on its verdict, `…-condition` on its condition.
+    id: SharedString,
+    condition_id: SharedString,
     status: Status,
     /// `Title: verdict`, as Coroot words it.
     title: SharedString,
@@ -64,7 +67,7 @@ enum BlockKind {
     Tracing,
 }
 
-fn check(check: &api::Check) -> CheckLine {
+fn check(ix: usize, check: &api::Check) -> CheckLine {
     let condition = check.condition.contains("<threshold>").then(|| {
         let (head, threshold, tail) = check.condition();
         [
@@ -74,6 +77,8 @@ fn check(check: &api::Check) -> CheckLine {
         ]
     });
     CheckLine {
+        id: format!("obs-app-check-{ix}").into(),
+        condition_id: format!("obs-app-check-{ix}-condition").into(),
         status: check.status.into(),
         title: check.title.clone().into(),
         verdict: if check.message.is_empty() {
@@ -123,7 +128,12 @@ impl AppPage {
         if let Some(report) = view.reports.iter().find(|r| r.name == report) {
             let slug = report.name.to_lowercase().replace(' ', "-");
             let key = |ix: usize| (view.map.app.id.clone(), report.name.clone(), ix);
-            page.checks = report.checks.iter().map(check).collect();
+            page.checks = report
+                .checks
+                .iter()
+                .enumerate()
+                .map(|(ix, c)| check(ix, c))
+                .collect();
             for (ix, widget) in report.widgets.iter().enumerate() {
                 let kind = match &widget.kind {
                     api::WidgetKind::Chart(chart) => {
@@ -142,7 +152,9 @@ impl AppPage {
                     }
                     // Coroot judges logs in their widget; its check joins the others.
                     api::WidgetKind::Logs(logs) => {
-                        page.checks.extend(logs.iter().map(check));
+                        let start = page.checks.len();
+                        page.checks
+                            .extend(logs.iter().enumerate().map(|(ix, c)| check(start + ix, c)));
                         continue;
                     }
                     api::WidgetKind::Profiling => BlockKind::Profiling,
@@ -401,15 +413,29 @@ impl ObservabilityPage {
             .id("obs-app-checks")
             .test_support()
             .child(body().pt_0().children(page.checks.iter().map(|check| {
+                // Coroot's words wrap inside the card, however narrow it is.
+                let words = |words: SharedString| div().min_w_0().whitespace_normal().child(words);
                 v_flex()
                     .gap(dp(2.))
                     .child(
                         line()
-                            .child(status(check.status, cx))
+                            .items_start()
                             .child(
-                                text(format!("{}:", check.title)).font_weight(ui::HEADING_WEIGHT),
+                                h_flex()
+                                    .h(dp(20.))
+                                    .flex_none()
+                                    .child(status(check.status, cx)),
                             )
-                            .child(text(check.verdict.clone()).whitespace_normal()),
+                            .child(
+                                text(format!("{}:", check.title))
+                                    .flex_none()
+                                    .font_weight(ui::HEADING_WEIGHT),
+                            )
+                            .child(
+                                words(check.verdict.clone())
+                                    .id(check.id.clone())
+                                    .test_support(),
+                            ),
                     )
                     .children(check.condition.as_ref().map(|[head, threshold, tail]| {
                         line()
@@ -418,7 +444,11 @@ impl ObservabilityPage {
                             .pl(dp(18.))
                             .text_size(dp(12.))
                             .text_color(p.muted)
-                            .child(format!("Condition: {head}"))
+                            .child(
+                                words(format!("Condition: {head}").into())
+                                    .id(check.condition_id.clone())
+                                    .test_support(),
+                            )
                             .when(!threshold.is_empty(), |this| {
                                 this.child(
                                     div()
@@ -427,7 +457,7 @@ impl ObservabilityPage {
                                         .child(threshold.clone()),
                                 )
                             })
-                            .when(!tail.is_empty(), |this| this.child(tail.clone()))
+                            .when(!tail.is_empty(), |this| this.child(words(tail.clone())))
                     }))
             })))
     }
@@ -441,6 +471,9 @@ impl ObservabilityPage {
         if page.blocks.is_empty() {
             return None;
         }
+        // A chart narrower than this is hard to read, so it takes a row
+        // alone; a page narrower than it gives each chart the whole row.
+        let roomy = crate::screens::content_width(window) >= MIN_CHART_WIDTH;
         // Coroot's widths are shares of a row; the margins make the gaps.
         let mut grid = div().flex().flex_wrap().mx(dp(-4.)).my(dp(-4.));
         for block in &page.blocks {
@@ -463,10 +496,11 @@ impl ObservabilityPage {
             // A half-width chart pairs with the next, and takes the row
             // alone when the page is too narrow for two.
             let cell = match block.kind {
-                BlockKind::Charts(_) | BlockKind::Heatmap(_) => cell
+                BlockKind::Charts(_) | BlockKind::Heatmap(_) if roomy => cell
                     .flex_grow(1.)
                     .flex_basis(relative(block.width.clamp(0.1, 1.)))
                     .min_w(dp(MIN_CHART_WIDTH)),
+                BlockKind::Charts(_) | BlockKind::Heatmap(_) => cell.w_full(),
                 _ => cell.w(relative(block.width.clamp(0.1, 1.))),
             };
             grid = grid.child(cell.child(content));

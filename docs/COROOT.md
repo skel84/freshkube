@@ -95,7 +95,6 @@ Maximum-data debug probes on `1b16b42`, run individually after compilation and o
 | --- | --- | --- |
 | 2,000 applications, distinct categories/namespaces | 74.50 ms | 267.84 ms |
 | 120 map nodes / 300 links | 5.09 ms | 189.07 ms |
-| 200 long report issues | 3.40 ms | 57.69 ms |
 
 The earlier unpaged map took 2,927.92 ms for ten frames while compilation was active; representative paged-map runs under build contention measured 261 and 443 ms. These debug observations have different load conditions, and forced frames bypass normal view caching. They are not release frame-time acceptance; #22's independent Table/summary targets remain open. Reproduce with the `bounded_projection_measurement` desktop test using `--nocapture --test-threads=1`.
 
