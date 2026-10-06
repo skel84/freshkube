@@ -145,6 +145,18 @@ Against the spike's 60 frames a second at 5 MB/s and about 2 ms of paint:
 - **Ligatures doubled the cost of shaping.** JetBrains Mono's contextual alternates were most of the paint in a profile of `terminal-top` (9.8 ms median, 75% CPU). The terminal draws without them, as the user chose, which halved both.
 - Shaping each row once, rather than each style run, could cut the remaining cost. It isn't needed for the frame rate, so it waits until a real session shows a need.
 
+### Monitoring dashboards
+
+`monitoring` in the stress window (1320 × 860) at the default text size, against 67 Go processes. Release build, 30 s runs with the first 5 left out, three runs of the 30-panel dashboard and two of the built-in Cluster, on 6 October 2026 (#181). The load average was between 8 and 18 throughout, so read the medians, not single values. Times are in milliseconds unless marked; the 30-panel row gives the median of its runs, Cluster's the range of its two.
+
+| Dashboard | Main-thread stall: median / 99th / total | `panel_render`: count, median / 99th / total | `plot_paint`: count, median / 99th / total | `cursor` total | CPU | Memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 30 timeseries, 67 series each | 81 / 114 / 26.0 s | 9,330, 0.20 / 1.96 / 1.7 s | 4,665, 0.11 / 3.08 / 1.0 s | 0.13 s | 86% | 267 MB |
+| Cluster (10 panels) | 1.1–1.2 / 4.5–4.8 / 7.6–7.7 s | 210, 0.21 / 0.7–3.2 / 0.05 s | 63, 0.18–0.19 / 0.38–0.44 / 0.01 s | none | 6% | 200 MB |
+
+- **Thirty charts saturate the main thread while the mouse moves.** It never rests: the stall totals more than the 25 s measured, about 12 frames a second. The page's own spans account for under 3 s of that. The rest is GPUI laying out and painting the 30 panels, their legends and their readouts, which is where #22 should look first.
+- **Cluster is light here, but not because it is cheap.** Its CPU and memory charts have a fixed 0–100% axis, and the fake Prometheus answers values above 1. Their lines fall outside the plot, and its first hover row crosses stat cards, not charts. Its numbers prove the page draws and asks; they are not a measure of a busy dashboard.
+
 ## Fixes
 
 Each fix is its own commit, with the workload that showed the problem run again after it.
