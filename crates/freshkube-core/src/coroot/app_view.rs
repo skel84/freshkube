@@ -368,7 +368,7 @@ struct RawContext {
 }
 
 #[derive(Deserialize)]
-struct RawChart {
+pub(super) struct RawChart {
     ctx: RawContext,
     #[serde(default)]
     title: String,
@@ -685,7 +685,7 @@ fn context(ctx: &RawContext) -> Result<(i64, i64, i64), ReadError> {
     }
 }
 
-fn chart(raw: RawChart) -> Result<Chart, ReadError> {
+pub(super) fn chart(raw: RawChart) -> Result<Chart, ReadError> {
     let (from_ms, to_ms, step_ms) = context(&raw.ctx)?;
     Ok(Chart {
         title: plain(&raw.title),

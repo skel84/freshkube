@@ -4,6 +4,7 @@ mod app_view;
 mod chart_panel;
 mod connection;
 mod limits;
+mod logs;
 mod profiling;
 mod subject;
 #[cfg(test)]
@@ -23,6 +24,10 @@ pub use coroot_rs::{
     SloObjective, StateFilter, Status, TimeRange,
 };
 pub use coroot_rs::{Span, SpanEvent};
+pub use logs::{
+    Fresh, LOG_LIMITS, LogCursor, LogLine, LogOrigin, LogPattern, LogQuery, LogsMode, LogsView,
+    severity_level,
+};
 pub use profiling::{FlameGraph, Frame, ProfileKind, ProfileQuery, ProfileUnit, Profiling};
 pub use subject::ObjectSubject;
 pub use tracing::{HeatRow, Heatmap, TraceSelection, TraceSource, Tracing};
