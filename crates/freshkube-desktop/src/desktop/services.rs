@@ -54,7 +54,11 @@ impl Pilot {
     ) -> AnyElement {
         let node = match self.services_state(cx) {
             Ok(node) => node,
-            Err(state) => return state,
+            Err(state) => {
+                // Nothing to reveal; a later list mustn't jump for it.
+                self.reveal_service = false;
+                return state;
+            }
         };
         let header = self.services_header(&node, cx);
         let toolbar = self.services_toolbar(cx);

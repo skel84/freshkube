@@ -419,63 +419,112 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
 }
 
 /// Stacked under the list, a newly selected service's details scroll into
-/// view, by pointer and by keyboard; beside the list, nothing scrolls (#238).
+/// view, by pointer and by keyboard; beside the list, nothing scrolls, and
+/// a refresh never reveals again (#238).
 #[gpui_kit::test]
 fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppContext) {
     // The node's inspector stacks them beside the table and in a narrow
-    // window; expanded in a wide one, it sets them side by side.
-    for (case, width, expanded, stacked) in [
-        ("beside the table", 1280., false, true),
-        ("narrow window", 760., false, true),
-        ("expanded", 1280., true, false),
+    // window; expanded in a wide one, it sets them side by side, and a
+    // short window lets that page scroll too.
+    for (case, width, height, expanded, stacked) in [
+        ("beside the table", 1280., 820., false, true),
+        ("narrow window", 760., 820., false, true),
+        ("expanded", 1280., 560., true, false),
     ] {
-        let (_runtime, handle, view) = fixture(cx, width, 820.);
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        let scroll = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                open_node_tab(window, cx, super::nodes::NodeTab::Services);
+                if expanded {
+                    view.update(cx, |view, cx| view.toggle_node_expanded(cx));
+                }
+                let scroll = view.read(cx).service_scroll.clone();
+                // Draws until no view asks for another frame, so the count
+                // after an action is the reveal's alone.
+                let settle = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+                    for _ in 0..10 {
+                        window.render_frame(cx);
+                        if window.simulate_next_frame(cx) == 0 {
+                            return;
+                        }
+                    }
+                    panic!("{case}: frames never settled");
+                };
+                let check = |window: &mut gpui_kit::Window,
+                             cx: &mut gpui_kit::App,
+                             step: &str,
+                             before: gpui_kit::Pixels| {
+                    // The frame that drew the selection laid the details out and
+                    // moved the page; it asks for the next frame, which draws
+                    // them there.
+                    let asked = window.simulate_next_frame(cx);
+                    assert_eq!(
+                        asked > 0,
+                        stacked,
+                        "{case}, {step}: {asked} frames asked for"
+                    );
+                    window.render_frame(cx);
+                    let page = window.find("services-page").bounds();
+                    let details = window.find("selected-service").bounds();
+                    let list = window.find("services-region").bounds();
+                    assert_eq!(
+                        details.top() >= list.bottom(),
+                        stacked,
+                        "{case}: the details {details:?} and the list {list:?}"
+                    );
+                    if !stacked {
+                        assert_eq!(scroll.offset().y, before, "{case}, {step}: scrolled");
+                        return;
+                    }
+                    assert!(
+                        details.top() >= page.top() - px(0.5),
+                        "{case}, {step}: the details' top {details:?} is above {page:?}"
+                    );
+                    for id in ["service-logs", "service-restart"] {
+                        let action = window.find(id).bounds();
+                        assert!(
+                            action.bottom() <= page.bottom() + px(0.5),
+                            "{case}, {step}: {id} at {action:?} is below {page:?}"
+                        );
+                    }
+                };
+                settle(window, cx);
+                if !stacked {
+                    // Side by side, a page already scrolled stays where it is.
+                    let max = scroll.max_offset().y;
+                    assert!(max > px(0.), "{case}: the page doesn't scroll");
+                    scroll.set_offset(gpui_kit::point(px(0.), -max.min(px(40.))));
+                    settle(window, cx);
+                }
+                let before = scroll.offset().y;
+                window.within("services-region").click("apid", cx);
+                check(window, cx, "pointer", before);
+                // Stacked, back to the top first; then a key moves the selection.
+                if stacked {
+                    scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
+                }
+                settle(window, cx);
+                let before = scroll.offset().y;
+                window.press("down", cx);
+                check(window, cx, "keyboard", before);
+                assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
+                assert!(view.read(cx).service_focus.is_focused(window));
+                // A refresh keeps the selection and reveals nothing.
+                scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
+                settle(window, cx);
+                window.click("refresh-services", cx);
+                assert_eq!(window.simulate_next_frame(cx), 0, "{case}: refresh");
+                scroll
+            })
+            .unwrap();
+        cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            open_node_tab(window, cx, super::nodes::NodeTab::Services);
-            if expanded {
-                view.update(cx, |view, cx| view.toggle_node_expanded(cx));
-            }
+            window.simulate_next_frame(cx);
             window.render_frame(cx);
-            let scroll = view.read(cx).service_scroll.clone();
-            let check = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, step: &str| {
-                // The frame that lays the details out moves the page; the
-                // next one, which it asks for, draws them there.
-                window.render_frame(cx);
-                window.simulate_next_frame(cx);
-                let page = window.find("services-page").bounds();
-                let details = window.find("selected-service").bounds();
-                let list = window.find("services-region").bounds();
-                assert_eq!(
-                    details.top() >= list.bottom(),
-                    stacked,
-                    "{case}: the details {details:?} and the list {list:?}"
-                );
-                if !stacked {
-                    assert_eq!(scroll.offset().y, px(0.), "{case}, {step}: scrolled");
-                    return;
-                }
-                assert!(
-                    details.top() >= page.top() - px(0.5),
-                    "{case}, {step}: the details' top {details:?} is above {page:?}"
-                );
-                for id in ["service-logs", "service-restart"] {
-                    let action = window.find(id).bounds();
-                    assert!(
-                        action.bottom() <= page.bottom() + px(0.5),
-                        "{case}, {step}: {id} at {action:?} is below {page:?}"
-                    );
-                }
-            };
-            window.within("services-region").click("apid", cx);
-            check(window, cx, "pointer");
-            // Back to the top, then a key moves the selection.
-            scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
-            window.render_frame(cx);
-            window.press("down", cx);
-            check(window, cx, "keyboard");
             assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
-            assert!(view.read(cx).service_focus.is_focused(window));
+            assert_eq!(scroll.offset().y, px(0.), "{case}: the refresh revealed");
         })
         .unwrap();
     }
