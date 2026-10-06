@@ -1740,7 +1740,9 @@ impl TalosClient {
 }
 
 /// Target each listed node through the "nodes" header, by host and without
-/// its port. With no listed node, the endpoint answers for itself.
+/// its port. With no listed node, or only blank ones, no header goes out and
+/// the endpoint answers for itself: a caller that asked about one node must
+/// not attribute that answer to it.
 fn with_listed_nodes<T>(mut request: Request<T>, nodes: &[String]) -> Request<T> {
     for node in nodes {
         let host = target_host(node.trim());
