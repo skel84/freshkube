@@ -56,35 +56,16 @@ const TICK: Duration = Duration::from_millis(10);
 #[derive(Clone, Copy, Debug)]
 enum Scenario {
     Summary,
-    SummaryBurst {
-        rate: u32,
-        expire: bool,
-    },
-    Table {
-        pods: usize,
-    },
-    Burst {
-        pods: usize,
-        rate: u32,
-    },
-    PodLogs {
-        rate: u32,
-    },
-    TalosLogs {
-        rate: u32,
-    },
-    Terminal {
-        rate: u32,
-    },
+    SummaryBurst { rate: u32, expire: bool },
+    Table { pods: usize },
+    Burst { pods: usize, rate: u32 },
+    PodLogs { rate: u32 },
+    TalosLogs { rate: u32 },
+    Terminal { rate: u32 },
     TerminalTop,
     TerminalSample,
-    /// `rows` are where the mouse sweeps, as fractions of the window's
-    /// height: across the first charts, then across charts again after
-    /// scrolling.
-    Monitoring {
-        processes: usize,
-        rows: (f32, f32),
-    },
+    // `rows`: see `hover_rows`.
+    Monitoring { processes: usize, rows: (f32, f32) },
 }
 
 impl Scenario {
