@@ -10,7 +10,7 @@ use gpui_kit::component::{Root, Theme, ThemeMode, v_flex};
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, AppContext, Context, Entity, IntoElement, ParentElement, Render,
-    StyleRefinement, Styled, TestAppContext, Window, div, px, size,
+    StyleRefinement, Styled, TestAppContext, Window, div, point, px, size,
 };
 
 use super::*;
@@ -477,6 +477,18 @@ fn crowded(
     Vec<Entity<PanelView>>,
     freshkube_core::monitoring::PanelResult,
 ) {
+    crowded_at(cx, 640.)
+}
+
+/// [`crowded`], `width` wide.
+fn crowded_at(
+    cx: &mut TestAppContext,
+    width: f32,
+) -> (
+    AnyWindowHandle,
+    Vec<Entity<PanelView>>,
+    freshkube_core::monitoring::PanelResult,
+) {
     use freshkube_core::monitoring::model::data::{Frame, Series};
     let dashboard = Dashboard::parse(
         r#"{
@@ -491,7 +503,7 @@ fn crowded(
     )
     .unwrap();
     let specs: Vec<Rc<PanelSpec>> = dashboard.panels.iter().cloned().map(Rc::new).collect();
-    let (handle, panels) = mount(cx, specs);
+    let (handle, panels) = mount_at(cx, specs, width);
     let times: Vec<f64> = (0..72).map(|n| (END - 6 * 3600 + n * 300) as f64).collect();
     let series = (0..40)
         .map(|pod| Series {
@@ -566,6 +578,86 @@ fn a_crowded_readout_ranks_the_highest_values_and_fits_the_plot(cx: &mut TestApp
         assert!(readout.bottom() <= plot.bottom(), "{readout:?} in {plot:?}");
     })
     .unwrap();
+}
+
+/// In a narrow chart, a readout flipped left of the crosshair stays off the
+/// value axis, keeps its time and values whole, and its "top N of M" never
+/// spills out of its box.
+#[gpui_kit::test]
+fn a_narrow_readout_keeps_off_the_axis_and_inside_its_box(cx: &mut TestAppContext) {
+    let (readout, plot_left) = narrow_readout(cx, 260.);
+    // Layout rounds to the test window's half-pixel grid.
+    assert!(
+        readout.left() >= plot_left - px(0.5),
+        "{readout:?} left of {plot_left:?}"
+    );
+}
+
+/// Where the plot has no room for the time and values, the readout crosses
+/// onto the axis rather than cut them off.
+#[gpui_kit::test]
+fn a_readout_too_wide_for_the_plot_keeps_its_time_and_values_whole(cx: &mut TestAppContext) {
+    let (readout, plot_left) = narrow_readout(cx, 160.);
+    assert!(readout.left() < plot_left, "{readout:?} fits after all");
+}
+
+/// Hovers three quarters across a crowded chart `width` wide and checks what
+/// holds at any width: the readout is at least its time and values wide,
+/// draws them whole and keeps its count inside. Returns the readout's bounds
+/// and the plot's left edge.
+fn narrow_readout(
+    cx: &mut TestAppContext,
+    width: f32,
+) -> (gpui_kit::Bounds<gpui_kit::Pixels>, gpui_kit::Pixels) {
+    let (handle, panels, result) = crowded_at(cx, width);
+    cx.update(|cx| panels[0].update(cx, |panel, cx| panel.set_result(result, window_range(), cx)));
+    frame(cx, handle);
+    let geometry = cx.read(|cx| panels[0].read(cx).geometry.get());
+    let plot_left = geometry.origin.x + geometry.left;
+    cx.update_window(handle, |_, window, cx| {
+        let position = point(
+            plot_left + geometry.width * 0.75,
+            geometry.origin.y + px(60.),
+        );
+        window.dispatch_event(
+            gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: Default::default(),
+            }),
+            cx,
+        );
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    let cursor = cx.read(|cx| panels[0].read(cx).cursor.clone()).unwrap();
+    assert!(cursor.flip && cursor.more > 0, "{cursor:?}");
+    cx.update_window(handle, |_, window, _| {
+        let readout = window.find("monitoring-panel-0-readout").bounds();
+        assert!(readout.size.width >= cursor.least - px(0.5), "{readout:?}");
+        // The time and every value are drawn whole, inside the box.
+        let mut whole = vec!["monitoring-panel-0-readout-time".to_owned()];
+        whole.extend(
+            (0..cursor.rows.len()).map(|n| format!("monitoring-panel-0-readout-value-{n}")),
+        );
+        for id in whole {
+            let text = window
+                .find(gpui_kit::SharedString::from(id.clone()))
+                .bounds();
+            assert!(
+                text.left() >= readout.left() && text.right() <= readout.right() + px(0.5),
+                "{id}: {text:?} out of {readout:?}"
+            );
+        }
+        // The count gives way to the time: it fits, or shrinks to nothing.
+        let more = window.find("monitoring-panel-0-readout-more").bounds();
+        assert!(
+            more.size.width == px(0.) || more.right() <= readout.right(),
+            "{more:?} out of {readout:?}"
+        );
+        (readout, plot_left)
+    })
+    .unwrap()
 }
 
 /// A series picked in the legend while the cursor shows is marked in the
