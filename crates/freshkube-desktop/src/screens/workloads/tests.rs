@@ -469,14 +469,16 @@ fn workloads_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_narrow_table_scrolls_sideways_with_its_name_pinned(cx: &mut TestAppContext) {
     use gpui_kit::{ScrollDelta, point};
-    for (width, height, text) in [
-        (1280., 880., None),
-        (760., 560., Some(20.)),
-        (760., 560., Some(14.)),
-        (1024., 700., Some(18.)),
-        (900., 600., Some(16.)),
+    // Window, text size, and whether the table runs past its list.
+    for (width, height, text, overflows) in [
+        (1280., 880., None, false),
+        (760., 560., Some(20.), true),
+        (760., 560., Some(14.), true),
+        (1024., 700., Some(18.), true),
+        (900., 600., Some(16.), true),
     ] {
-        let (_runtime, handle, _view) = app(cx, width, height);
+        let (_runtime, handle, app_view) = app(cx, width, height);
+        let screen = cx.update(|cx| app_view.read(cx).workloads());
         cx.update_window(handle, |_, window, cx| {
             if let Some(text) = text {
                 crate::text_size::set(text, cx);
@@ -488,6 +490,7 @@ fn a_narrow_table_scrolls_sideways_with_its_name_pinned(cx: &mut TestAppContext)
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
+            let case = format!("{width}/{text:?}");
             let rows = layout_check::assert_table(
                 window,
                 cx,
@@ -496,26 +499,57 @@ fn a_narrow_table_scrolls_sideways_with_its_name_pinned(cx: &mut TestAppContext)
                     list: "workload-list",
                 },
             );
-            assert!(rows.header.is_some(), "{width}: {rows:#?}");
+            assert!(rows.header.is_some(), "{case}: {rows:#?}");
             let view = window.find("workload-table-scroll").bounds();
-            let name = window.find(("workload-sort", 1usize)).bounds().left();
+            let header =
+                |window: &Window, column: usize| window.find(("workload-sort", column)).bounds();
+            // A workload's row, not a namespace's, whose line always stays.
+            let line = (screen.read(cx).rows().iter())
+                .position(|row| !matches!(row, RowRef::Namespace(_)))
+                .expect("a workload row");
+            let cell = screen.read(cx).name_element(line);
+            let name = header(window, 1).left();
+            let row_name = window.find(cell.clone()).bounds().left();
+            // The last column, which never passes under the pinned run; a
+            // cell that does reports its bounds clipped at the pinned edge.
+            let last = header(window, 4).right();
+            let overflow = last - view.right();
+            assert_eq!(
+                overflow > px(1.5),
+                overflows,
+                "{case}: the table {view:?}, its last column ends at {last:?}"
+            );
             window.scroll(
                 "workload-table-scroll",
                 ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
                 cx,
             );
             window.render_frame(cx);
-            let last = window.find(("workload-sort", 4usize)).bounds();
+            let moved = last - header(window, 4).right();
             assert!(
-                last.right() <= view.right() + px(1.5) && last.left() >= view.left(),
-                "{width}: the last column {last:?} is outside its table {view:?}"
+                (moved - overflow.max(px(0.))).abs() <= px(1.5),
+                "{case}: the last column moved {moved:?}, not {overflow:?}"
             );
             // `find` fails on an id that resolves twice, so the pinned
-            // header's name is found once, at its place.
-            let kept = window.find(("workload-sort", 1usize)).bounds().left();
+            // name is found once, at its place.
+            let pinned = header(window, 1);
             assert!(
-                (kept - name).abs() <= px(1.5),
-                "{width}: the name moved from {name:?} to {kept:?}"
+                (pinned.left() - name).abs() <= px(1.5),
+                "{case}: the name moved from {name:?} to {:?}",
+                pinned.left()
+            );
+            let kept = window.find(cell).bounds().left();
+            assert!(
+                (kept - row_name).abs() <= px(1.5),
+                "{case}: the row's name moved from {row_name:?} to {kept:?}"
+            );
+            // The last column shows whole, clear of the pinned glyph and name.
+            let last = header(window, 4);
+            assert!(
+                last.right() <= view.right() + px(1.5) && last.left() >= pinned.right() - px(1.5),
+                "{case}: the last column {last:?} isn't clear of the pinned run, \
+                 which ends at {:?}, inside {view:?}",
+                pinned.right()
             );
         })
         .unwrap();
@@ -533,7 +567,10 @@ fn the_name_narrows_only_in_a_narrow_list() {
     // 760 at text 20, with the details below.
     let narrow = name_most(378.);
     assert!(narrow < 220., "{narrow}");
-    assert!((narrow + table::GLYPH_WIDTH) * 1.5 <= 378., "{narrow}");
+    assert!(
+        narrow + table::GLYPH_WIDTH <= table::widest_pinned_run(378.),
+        "{narrow}"
+    );
     assert_eq!(name_most(100.), 120.);
 }
 

@@ -15,9 +15,9 @@ use table::{
 const NESTED_INDENT: f32 = 20.;
 /// The chevron after a namespace's name, with its gap.
 const CHEVRON: f32 = 19.;
-/// Glyph and name pin while 1.5 times their width fits the table
-/// (`freshkube_ui::table`), so the Name column narrows to stay under that
-/// in a narrow list; this much is kept for the table's own edges.
+/// Glyph and name pin while they fit [`table::widest_pinned_run`] of the
+/// table, so the Name column narrows to stay under that in a narrow list;
+/// this much is kept for the table's own edges.
 const PIN_SLACK: f32 = 8.;
 /// The narrowest the Name column gets for pinning's sake.
 const NAME_LEAST: f32 = 120.;
@@ -198,7 +198,7 @@ impl Derived {
 /// and name still pin when the table scrolls sideways. A long name
 /// truncates, and its row's tooltip and the details hold all of it.
 pub(super) fn name_most(list: f32) -> f32 {
-    (list / 1.5 - table::GLYPH_WIDTH - PIN_SLACK).max(NAME_LEAST)
+    (table::widest_pinned_run(list) - table::GLYPH_WIDTH - PIN_SLACK).max(NAME_LEAST)
 }
 
 /// The Name column's width from its names, with room for the indent or

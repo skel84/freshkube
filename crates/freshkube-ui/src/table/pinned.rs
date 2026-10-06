@@ -18,12 +18,20 @@ pub(super) fn scrolled_by(scroll: &ScrollHandle) -> Option<Pixels> {
     (shift >= px(0.5)).then_some(shift)
 }
 
+/// The widest pinned run that stays at the left edge of a table `visible`
+/// wide, in the same unit: two thirds of it. Wider, pinned cells would
+/// hide what the scroll is for; they scroll with the rest. A source that
+/// sizes its leading columns to the window keeps them under this.
+pub fn widest_pinned_run(visible: f32) -> f32 {
+    visible / 1.5
+}
+
 /// Whether a pinned run `run` dp wide stays at the left edge: the table is
-/// scrolled, and the run takes at most two thirds of its visible width.
-/// Wider, pinned cells would hide what the scroll is for; they scroll with
-/// the rest.
+/// scrolled, and the run is at most [`widest_pinned_run`] of its visible
+/// width.
 pub(super) fn pins(scroll: &ScrollHandle, run: f32, window: &Window) -> bool {
-    scrolled_by(scroll).is_some() && dp_px(run, window) * 1.5 <= scroll.bounds().size.width
+    scrolled_by(scroll).is_some()
+        && f32::from(dp_px(run, window)) <= widest_pinned_run(f32::from(scroll.bounds().size.width))
 }
 
 /// A child that stays at the scroll's left edge.
