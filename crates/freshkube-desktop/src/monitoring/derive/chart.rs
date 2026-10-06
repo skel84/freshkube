@@ -12,7 +12,7 @@ use freshkube_core::monitoring::model::{
     time::TimeWindow,
     units,
 };
-use gpui_kit::SharedString;
+use gpui_kit::{Hsla, SharedString};
 
 use super::ticks::{self, Tick, TickSet};
 use super::{Body, Capped, PanelData, Shown, format};
@@ -40,6 +40,9 @@ pub(crate) struct Chart {
     pub start: f64,
     pub end: f64,
     pub series: Vec<ChartSeries>,
+    /// The lines and areas that look alike, by series, each drawn as one
+    /// path; in drawing order, the last series' group first.
+    pub groups: Vec<Vec<usize>>,
     /// The left and right value axes.
     pub axes: [Option<Axis>; 2],
     pub time_ticks: Vec<TickSet>,
@@ -85,12 +88,22 @@ pub(crate) struct ChartSeries {
     /// The area's opacity, 0 for none.
     pub fill: f32,
     pub dashes: Option<Vec<f32>>,
+    /// A bar series' place in its column.
+    pub bar: Option<BarSlot>,
     pub points: bool,
     /// The values as answered, for the cursor.
     pub values: Rc<[f64]>,
     pub field: Rc<FieldSpec>,
     /// Hidden from the legend, and so from the cursor's readout.
     pub unlisted: bool,
+}
+
+/// Where a bar series stands in each column: series that stack together
+/// share one place, the others stand side by side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BarSlot {
+    pub index: usize,
+    pub count: usize,
 }
 
 /// A dashed threshold line.
@@ -261,6 +274,7 @@ pub(super) fn chart(
                     LineStyle::Solid => None,
                     LineStyle::Dashed(dashes) => Some(dashes.clone()),
                 },
+                bar: None,
                 points: s.style.show_points.unwrap_or(options.show_points)
                     || draw == DrawStyle::Points,
                 values: s.values.clone().into(),
@@ -269,6 +283,9 @@ pub(super) fn chart(
             }
         })
         .collect();
+    let mut series = series;
+    place_bars(&mut series, &stackings, &right);
+    let groups = groups(&series);
 
     let (thresholds, bands) = thresholds(&shown, &right, options, &axes);
     let mut legend = legend(&shown, options, times);
@@ -282,6 +299,7 @@ pub(super) fn chart(
             start,
             end,
             series,
+            groups,
             axes,
             time_ticks: ticks::time_ticks(start, end),
             thresholds,
@@ -292,6 +310,69 @@ pub(super) fn chart(
         })),
         unit,
     }
+}
+
+/// Gives each bar series its place in a column, the last series first.
+/// Bars that stack together (one group, mode and axis) share a place, so a
+/// stacked chart's bars take the whole column.
+fn place_bars(series: &mut [ChartSeries], stackings: &[Stacking], right: &[bool]) {
+    let mut places: Vec<Option<(&Stacking, bool)>> = Vec::new();
+    let mut slots = vec![None; series.len()];
+    for (i, s) in series.iter().enumerate().rev() {
+        if s.draw != DrawStyle::Bars {
+            continue;
+        }
+        let stack = (stackings[i].mode != StackMode::None).then_some((&stackings[i], right[i]));
+        let index = match stack.and_then(|stack| places.iter().position(|p| *p == Some(stack))) {
+            Some(index) => index,
+            None => {
+                places.push(stack);
+                places.len() - 1
+            }
+        };
+        slots[i] = Some(index);
+    }
+    for (s, index) in series.iter_mut().zip(slots) {
+        s.bar = index.map(|index| BarSlot {
+            index,
+            count: places.len(),
+        });
+    }
+}
+
+/// The lines and areas that draw alike: one colour, fill, baseline, line
+/// and dashes. Past the sixth series every line is the same grey, and the
+/// GPU rasterises each path batch in a pass of its own, so hundreds of
+/// series as hundreds of paths cost a frame dearly. The first series draws
+/// last, on top, as the legend lists it; a group draws where its topmost
+/// member would. The baseline is part of the look: an area winds one way
+/// above its baseline and the other way below, so areas on one baseline
+/// overlap only where they wind alike, and the non-zero fill draws their
+/// union.
+fn groups(series: &[ChartSeries]) -> Vec<Vec<usize>> {
+    fn look(s: &ChartSeries) -> (Hsla, f32, f32, bool, Option<&[f32]>) {
+        (
+            s.ink.color(false),
+            s.fill,
+            s.baseline,
+            s.draw == DrawStyle::Line,
+            s.dashes.as_deref(),
+        )
+    }
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, s) in series.iter().enumerate().rev() {
+        if s.draw == DrawStyle::Bars {
+            continue;
+        }
+        match groups
+            .iter_mut()
+            .find(|group| look(&series[group[0]]) == look(s))
+        {
+            Some(group) => group.push(i),
+            None => groups.push(vec![i]),
+        }
+    }
+    groups
 }
 
 /// The axis for one side, or `None` when no series uses it.
@@ -326,7 +407,7 @@ fn axis(
     let (min, max, marks) = if percent {
         let low = if low.unwrap_or(0.) < 0. { -100. } else { 0. };
         let high = if high.unwrap_or(0.) > 0. { 100. } else { 0. };
-        ticks::linear(low, high, Some(low), Some(high))
+        ticks::linear(low, high, Some(low), Some(high), false)
     } else if let AxisScale::Log(base) = scale {
         let low = field.min.filter(|v| *v > 0.).or(low).unwrap_or(1.);
         let high = field
@@ -336,10 +417,16 @@ fn axis(
             .unwrap_or(low * base);
         ticks::log(base, low, high)
     } else {
-        // Data that never goes below zero starts at zero.
+        // Data that never goes below zero starts at zero. Whole values, as
+        // counts are, take whole ticks; a fraction unit's 1 is 100%, on
+        // any series that shares the axis.
+        let fraction = members
+            .iter()
+            .any(|&i| shown[i].field.unit.as_deref() == Some("percentunit"));
+        let whole = !values.is_empty() && values.iter().all(|v| v.fract() == 0.) && !fraction;
         let low = low.map_or(0., |low| low.min(0.));
         let high = high.unwrap_or(1.);
-        ticks::linear(low, high, field.min, field.max)
+        ticks::linear(low, high, field.min, field.max, whole)
     };
     let mut axis = Axis {
         min,

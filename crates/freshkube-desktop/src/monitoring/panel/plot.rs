@@ -19,7 +19,7 @@ use gpui_kit::{
 
 use super::markers::{self, Placed};
 use crate::monitoring::colors::{FADED_OPACITY, Tier};
-use crate::monitoring::derive::{Axis, Chart, ChartSeries, fitting};
+use crate::monitoring::derive::{Axis, BarSlot, Chart, ChartSeries, fitting};
 use crate::palette::{Palette, palette};
 use crate::ui::{self, dp_px};
 
@@ -147,22 +147,46 @@ impl Frame {
     }
 }
 
-/// What a series' line and area look like; series that share it draw as
-/// one path. The baseline is part of it: an area winds one way above its
-/// baseline and the other way below, so areas on one baseline overlap only
-/// where they wind alike, and the non-zero fill draws their union.
-#[derive(PartialEq)]
+/// How a group's line and area draw (`Chart::groups`).
 struct Look<'a> {
     color: Hsla,
     fill: f32,
-    baseline: f32,
     line: bool,
     dashes: Option<&'a [f32]>,
 }
 
-struct Group<'a> {
-    look: Look<'a>,
-    members: Vec<&'a ChartSeries>,
+impl<'a> Look<'a> {
+    fn of(series: &'a ChartSeries, focused: bool) -> Self {
+        Self {
+            color: series.ink.color(focused),
+            fill: series.fill,
+            line: series.draw == DrawStyle::Line,
+            dashes: series.dashes.as_deref(),
+        }
+    }
+}
+
+/// Where a shape keeps its path in the chart's [`PathCaches`].
+#[derive(Clone, Copy)]
+enum Slot {
+    /// A bar series, by its index.
+    Bar(usize),
+    /// A group's area, and its line in the slot after.
+    Group(usize),
+    /// The focused series' area and line, drawn again on top.
+    Focus(usize),
+}
+
+impl Slot {
+    /// Bars by series, then two per group, then two per series for focus;
+    /// `series` is how many the chart has, so no two shapes share a slot.
+    fn index(self, series: usize) -> usize {
+        match self {
+            Slot::Bar(index) => index,
+            Slot::Group(number) => series + number * 2,
+            Slot::Focus(index) => series * 3 + index * 2,
+        }
+    }
 }
 
 impl Paint {
@@ -340,6 +364,7 @@ impl Paint {
         }
     }
 
+    /// Bars first, then the lines and areas, then the dots on top.
     fn paint_series(
         &self,
         frame: &Frame,
@@ -347,67 +372,175 @@ impl Paint {
         caches: &mut PathCaches,
         window: &mut Window,
     ) {
-        let surface = self.palette.surface;
-        let bars = self
-            .chart
-            .series
-            .iter()
-            .filter(|s| s.draw == DrawStyle::Bars)
-            .count();
-        let mut bar_slot = 0;
-        let key = |id: (u64, usize, u8)| {
-            let mut key = ShapeKey::new(id);
-            key.f32(frame.width.into())
-                .f32(frame.height.into())
-                .f32(frame.left.into());
-            key.finish()
+        self.paint_bars(frame, bounds, caches, window);
+        self.paint_groups(frame, bounds, caches, window);
+        self.paint_dots(frame, bounds, window);
+    }
+
+    /// A cached shape's key: the chart's revision, its slot and its kind,
+    /// and the plot's size.
+    fn shape_key(&self, frame: &Frame, slot: usize, kind: u8) -> u64 {
+        let mut key = ShapeKey::new((self.revision, slot, kind));
+        key.f32(frame.width.into())
+            .f32(frame.height.into())
+            .f32(frame.left.into());
+        key.finish()
+    }
+
+    /// Whether series `index` is focused, and how faded it draws.
+    fn emphasis(&self, index: usize) -> (bool, f32) {
+        let focused = self.focus == Some(index);
+        let fade = if self.focus.is_some() && !focused {
+            FADED_OPACITY
+        } else {
+            1.
         };
-        // Lines and areas of one look draw as one path. Past the sixth
-        // series every line is the same grey, and the GPU rasterises each
-        // path batch in a pass of its own, so hundreds of series as hundreds
-        // of paths cost a frame dearly. The first series draws last, on top,
-        // as the legend lists it; a group draws where its topmost member
-        // would. While one series is focused every group fades and that
-        // series draws again on top, so the groups never change with focus
-        // and their paths are built once per answer.
-        let mut groups: Vec<Group> = Vec::new();
+        (focused, fade)
+    }
+
+    /// Each bar series as one path, in its place in the column.
+    fn paint_bars(
+        &self,
+        frame: &Frame,
+        bounds: Bounds<Pixels>,
+        caches: &mut PathCaches,
+        window: &mut Window,
+    ) {
+        for (index, series) in self.chart.series.iter().enumerate().rev() {
+            let Some(place) = series.bar else {
+                continue;
+            };
+            let (focused, fade) = self.emphasis(index);
+            let slot = Slot::Bar(index).index(self.chart.series.len());
+            let path = caches.slot(slot).get(
+                self.shape_key(frame, slot, 0),
+                bounds.origin,
+                built(|| self.reported(bars_path(series, &self.chart.xs, frame, place))),
+            );
+            if let Some(path) = path {
+                crate::desktop::probe::hit("monitoring-path-painted");
+                window.paint_path(path, series.ink.color(focused).opacity(0.7 * fade));
+            }
+        }
+    }
+
+    /// The groups of lines and areas, as one path each. While one series is
+    /// focused every group fades and that series draws again on top, so
+    /// the groups never change with focus and their paths are built once
+    /// per answer.
+    fn paint_groups(
+        &self,
+        frame: &Frame,
+        bounds: Bounds<Pixels>,
+        caches: &mut PathCaches,
+        window: &mut Window,
+    ) {
+        let fade = if self.focus.is_some() {
+            FADED_OPACITY
+        } else {
+            1.
+        };
+        for (number, members) in self.chart.groups.iter().enumerate() {
+            let look = Look::of(&self.chart.series[members[0]], false);
+            self.paint_shape(
+                Slot::Group(number),
+                &look,
+                members,
+                fade,
+                frame,
+                bounds,
+                caches,
+                window,
+            );
+        }
+        let focused = self.focus.filter(|index| {
+            self.chart
+                .series
+                .get(*index)
+                .is_some_and(|series| series.bar.is_none())
+        });
+        if let Some(index) = focused {
+            let look = Look::of(&self.chart.series[index], true);
+            self.paint_shape(
+                Slot::Focus(index),
+                &look,
+                &[index],
+                1.,
+                frame,
+                bounds,
+                caches,
+                window,
+            );
+        }
+    }
+
+    /// One look's area and line over `members`, built only when its slot
+    /// holds no path for this answer and size.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_shape(
+        &self,
+        slot: Slot,
+        look: &Look,
+        members: &[usize],
+        fade: f32,
+        frame: &Frame,
+        bounds: Bounds<Pixels>,
+        caches: &mut PathCaches,
+        window: &mut Window,
+    ) {
+        let slot = slot.index(self.chart.series.len());
+        let members =
+            || -> Vec<&ChartSeries> { members.iter().map(|&i| &self.chart.series[i]).collect() };
+        if look.fill > 0. {
+            let path = caches.slot(slot).get(
+                self.shape_key(frame, slot, 1),
+                bounds.origin,
+                built(|| {
+                    self.reported(area_path(
+                        &members(),
+                        &self.chart.xs,
+                        self.chart.curve,
+                        frame,
+                    ))
+                }),
+            );
+            if let Some(path) = path {
+                crate::desktop::probe::hit("monitoring-path-painted");
+                window.paint_path(path, look.color.opacity(look.fill * fade));
+            }
+        }
+        if look.line {
+            let path = caches.slot(slot + 1).get(
+                self.shape_key(frame, slot + 1, 2),
+                bounds.origin,
+                built(|| {
+                    self.reported(line_path(
+                        &members(),
+                        look.dashes,
+                        &self.chart.xs,
+                        self.chart.curve,
+                        frame,
+                    ))
+                }),
+            );
+            if let Some(path) = path {
+                crate::desktop::probe::hit("monitoring-path-painted");
+                window.paint_path(path, look.color.opacity(fade));
+            }
+        }
+    }
+
+    /// A series' points, or the dot that ends a line short of the window's
+    /// end; after every path, so they don't split the paths' batches.
+    fn paint_dots(&self, frame: &Frame, bounds: Bounds<Pixels>, window: &mut Window) {
+        let surface = self.palette.surface;
         let mut dots = Vec::new();
         for (index, series) in self.chart.series.iter().enumerate().rev() {
-            let focused = self.focus == Some(index);
-            let fade = if self.focus.is_some() && !focused {
-                FADED_OPACITY
-            } else {
-                1.
-            };
-            let color = series.ink.color(focused);
-            if series.draw == DrawStyle::Bars {
-                let slot = bar_slot;
-                bar_slot += 1;
-                let path = caches.slot(index).get(
-                    key((self.revision, index, 0)),
-                    bounds.origin,
-                    built(|| self.reported(bars_path(series, &self.chart.xs, frame, slot, bars))),
-                );
-                if let Some(path) = path {
-                    crate::desktop::probe::hit("monitoring-path-painted");
-                    window.paint_path(path, color.opacity(0.7 * fade));
-                }
+            if series.bar.is_some() {
                 continue;
             }
-            let look = Look {
-                color: series.ink.color(false),
-                fill: series.fill,
-                baseline: series.baseline,
-                line: series.draw == DrawStyle::Line,
-                dashes: series.dashes.as_deref(),
-            };
-            match groups.iter_mut().find(|group| group.look == look) {
-                Some(group) => group.members.push(series),
-                None => groups.push(Group {
-                    look,
-                    members: vec![series],
-                }),
-            }
+            let (focused, fade) = self.emphasis(index);
+            let color = series.ink.color(focused);
             if series.points || series.draw == DrawStyle::Points || self.chart.xs.len() == 1 {
                 let r = px(if focused { 3. } else { 2.5 });
                 for (x, y) in self.chart.xs.iter().zip(&series.tops) {
@@ -428,71 +561,6 @@ impl Paint {
                 ));
             }
         }
-        let fade = if self.focus.is_some() {
-            FADED_OPACITY
-        } else {
-            1.
-        };
-        let focused = self
-            .focus
-            .and_then(|index| Some((index, self.chart.series.get(index)?)))
-            .filter(|(_, series)| series.draw != DrawStyle::Bars);
-        let first = self.chart.series.len();
-        let groups = groups
-            .iter()
-            .map(|group| (&group.look, &group.members[..], fade));
-        let focused = focused.map(|(index, series)| {
-            let look = Look {
-                color: series.ink.color(true),
-                fill: series.fill,
-                baseline: series.baseline,
-                line: series.draw == DrawStyle::Line,
-                dashes: series.dashes.as_deref(),
-            };
-            (index, look, [series])
-        });
-        let focused = focused
-            .as_ref()
-            .map(|(index, look, members)| (*index, (look, &members[..], 1.)));
-        let shapes = groups
-            .enumerate()
-            .map(|(number, group)| (first + number * 2, group))
-            .chain(focused.map(|(index, group)| (first * 3 + index * 2, group)));
-        for (slot, (look, members, fade)) in shapes {
-            if look.fill > 0. {
-                let path = caches.slot(slot).get(
-                    key((self.revision, slot, 1)),
-                    bounds.origin,
-                    built(|| {
-                        self.reported(area_path(members, &self.chart.xs, self.chart.curve, frame))
-                    }),
-                );
-                if let Some(path) = path {
-                    crate::desktop::probe::hit("monitoring-path-painted");
-                    window.paint_path(path, look.color.opacity(look.fill * fade));
-                }
-            }
-            if look.line {
-                let path = caches.slot(slot + 1).get(
-                    key((self.revision, slot + 1, 2)),
-                    bounds.origin,
-                    built(|| {
-                        self.reported(line_path(
-                            members,
-                            look.dashes,
-                            &self.chart.xs,
-                            self.chart.curve,
-                            frame,
-                        ))
-                    }),
-                );
-                if let Some(path) = path {
-                    crate::desktop::probe::hit("monitoring-path-painted");
-                    window.paint_path(path, look.color.opacity(fade));
-                }
-            }
-        }
-        // Dots after every path, so they don't split the paths' batches.
         for (center, diameter, ring, color) in dots {
             if let Some(ring) = ring {
                 window.paint_quad(
@@ -757,8 +825,31 @@ fn area_builder() -> PathBuilder {
     ))
 }
 
-/// One bar per sample, side by side with the panel's other bar series.
-fn bars_path(series: &ChartSeries, xs: &[f32], frame: &Frame, slot: usize, count: usize) -> Built {
+/// One bar per sample, in the series' place in its column.
+fn bars_path(series: &ChartSeries, xs: &[f32], frame: &Frame, place: BarSlot) -> Built {
+    let bases = series.bases.as_deref();
+    let mut path = PathBuilder::fill();
+    let mut any = false;
+    for bar in bars(&series.tops, bases, series.baseline, xs, frame, place) {
+        let (min, max) = (bar.origin, bar.bottom_right());
+        path.add_polygon(&[min, point(max.x, min.y), max, point(min.x, max.y)], true);
+        any = true;
+    }
+    finished(any, path)
+}
+
+/// Where each sample's bar stands: a slice of its column, a pixel short of
+/// the next one's when there is room, and never under a pixel wide or tall.
+/// A sample that reaches no height from its base has no bar, so a zero in a
+/// stack doesn't paint the edge of the bar below it.
+fn bars(
+    tops: &[f32],
+    bases: Option<&[f32]>,
+    baseline: f32,
+    xs: &[f32],
+    frame: &Frame,
+    place: BarSlot,
+) -> Vec<Bounds<Pixels>> {
     let step = xs
         .windows(2)
         .map(|pair| pair[1] - pair[0])
@@ -766,34 +857,26 @@ fn bars_path(series: &ChartSeries, xs: &[f32], frame: &Frame, slot: usize, count
         .fold(f32::INFINITY, f32::min);
     let step = if step.is_finite() { step } else { 0.05 };
     let group = frame.width * step * 0.8;
-    let width = (group / count.max(1) as f32).max(px(1.));
-    let mut path = PathBuilder::fill();
-    let mut any = false;
-    for (index, (x, top)) in xs.iter().zip(&series.tops).enumerate() {
-        if !top.is_finite() {
-            continue;
-        }
-        let base = series
-            .bases
-            .as_ref()
-            .and_then(|bases| bases.get(index).copied())
-            .filter(|base| base.is_finite())
-            .unwrap_or(series.baseline);
-        let left = frame.x(*x) - group / 2. + width * slot as f32;
-        let (y1, y2) = (frame.y(*top), frame.y(base));
-        let (y1, y2) = (y1.min(y2), y1.max(y2).max(y1.min(y2) + px(1.)));
-        path.add_polygon(
-            &[
-                point(left, y1),
-                point(left + width - px(1.), y1),
-                point(left + width - px(1.), y2),
-                point(left, y2),
-            ],
-            true,
-        );
-        any = true;
-    }
-    finished(any, path)
+    let slice = group / place.count.max(1) as f32;
+    let width = (slice - px(1.)).max(px(1.));
+    xs.iter()
+        .zip(tops)
+        .enumerate()
+        .filter_map(|(index, (x, top))| {
+            let base = bases
+                .and_then(|bases| bases.get(index).copied())
+                .filter(|base| base.is_finite())
+                .unwrap_or(baseline);
+            if !top.is_finite() || *top == base {
+                return None;
+            }
+            let left = frame.x(*x) - group / 2. + slice * place.index as f32;
+            let (y1, y2) = (frame.y(*top), frame.y(base));
+            let (y1, y2) = (y1.min(y2), y1.max(y2));
+            let height = (y2 - y1).max(px(1.));
+            Some(Bounds::new(point(left, y1), size(width, height)))
+        })
+        .collect()
 }
 
 fn text_width(text: &SharedString, font_size: Pixels, window: &mut Window) -> Pixels {
@@ -871,5 +954,58 @@ mod tests {
             })
             .sum();
         assert!((covered - 1000.).abs() < 1., "covered {covered}");
+    }
+
+    fn frame(width: f32) -> Frame {
+        Frame {
+            left: px(0.),
+            top: px(0.),
+            width: px(width),
+            height: px(100.),
+        }
+    }
+
+    /// A zero in a stack has no bar, so it can't tint the top of the bar
+    /// below; a small value still shows as a pixel.
+    #[test]
+    fn a_zero_in_a_stack_draws_no_bar() {
+        let xs = [0.25, 0.75];
+        let place = BarSlot { index: 0, count: 1 };
+        let below = [0.5, 0.5];
+        let zero = bars(&below, Some(&below), 0., &xs, &frame(200.), place);
+        assert!(zero.is_empty(), "{zero:?}");
+        let small = bars(&[0.501, 0.5], Some(&below), 0., &xs, &frame(200.), place);
+        assert_eq!(small.len(), 1);
+        assert_eq!(small[0].size.height, px(1.));
+        assert!((f32::from(small[0].origin.y) - 49.9).abs() < 0.01);
+        let unstacked = bars(&[0., 0.3], None, 0., &xs, &frame(200.), place);
+        assert_eq!(unstacked.len(), 1);
+        assert!((f32::from(unstacked[0].size.height) - 30.).abs() < 0.01);
+    }
+
+    /// Bars a pixel short of the next slice, but never narrower than a pixel,
+    /// so a dense chart keeps every bar.
+    #[test]
+    fn bars_stay_a_pixel_wide_however_dense() {
+        let xs: Vec<f32> = (0..100).map(|i| i as f32 / 100.).collect();
+        let tops = vec![0.5; xs.len()];
+        let roomy = bars(
+            &tops,
+            None,
+            0.,
+            &xs,
+            &frame(1000.),
+            BarSlot { index: 0, count: 1 },
+        );
+        assert!((f32::from(roomy[0].size.width) - 7.).abs() < 0.01);
+        for count in [1, 3] {
+            let place = BarSlot {
+                index: count - 1,
+                count,
+            };
+            let dense = bars(&tops, None, 0., &xs, &frame(100.), place);
+            assert_eq!(dense.len(), xs.len());
+            assert!(dense.iter().all(|bar| bar.size.width == px(1.)), "{count}");
+        }
     }
 }
