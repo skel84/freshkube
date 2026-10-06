@@ -340,6 +340,7 @@ impl Paint {
         }
     }
 
+    /// Bars first, then the lines and areas, then the dots on top.
     fn paint_series(
         &self,
         frame: &Frame,
@@ -347,7 +348,40 @@ impl Paint {
         caches: &mut PathCaches,
         window: &mut Window,
     ) {
-        let surface = self.palette.surface;
+        self.paint_bars(frame, bounds, caches, window);
+        self.paint_groups(frame, bounds, caches, window);
+        self.paint_dots(frame, bounds, window);
+    }
+
+    /// A cached shape's key: the chart's revision, its slot and its kind,
+    /// and the plot's size.
+    fn shape_key(&self, frame: &Frame, slot: usize, kind: u8) -> u64 {
+        let mut key = ShapeKey::new((self.revision, slot, kind));
+        key.f32(frame.width.into())
+            .f32(frame.height.into())
+            .f32(frame.left.into());
+        key.finish()
+    }
+
+    /// Whether series `index` is focused, and how faded it draws.
+    fn emphasis(&self, index: usize) -> (bool, f32) {
+        let focused = self.focus == Some(index);
+        let fade = if self.focus.is_some() && !focused {
+            FADED_OPACITY
+        } else {
+            1.
+        };
+        (focused, fade)
+    }
+
+    /// Each bar series as one path, side by side with the others.
+    fn paint_bars(
+        &self,
+        frame: &Frame,
+        bounds: Bounds<Pixels>,
+        caches: &mut PathCaches,
+        window: &mut Window,
+    ) {
         let bars = self
             .chart
             .series
@@ -355,43 +389,44 @@ impl Paint {
             .filter(|s| s.draw == DrawStyle::Bars)
             .count();
         let mut bar_slot = 0;
-        let key = |id: (u64, usize, u8)| {
-            let mut key = ShapeKey::new(id);
-            key.f32(frame.width.into())
-                .f32(frame.height.into())
-                .f32(frame.left.into());
-            key.finish()
-        };
-        // Lines and areas of one look draw as one path. Past the sixth
-        // series every line is the same grey, and the GPU rasterises each
-        // path batch in a pass of its own, so hundreds of series as hundreds
-        // of paths cost a frame dearly. The first series draws last, on top,
-        // as the legend lists it; a group draws where its topmost member
-        // would. While one series is focused every group fades and that
-        // series draws again on top, so the groups never change with focus
-        // and their paths are built once per answer.
-        let mut groups: Vec<Group> = Vec::new();
-        let mut dots = Vec::new();
         for (index, series) in self.chart.series.iter().enumerate().rev() {
-            let focused = self.focus == Some(index);
-            let fade = if self.focus.is_some() && !focused {
-                FADED_OPACITY
-            } else {
-                1.
-            };
+            if series.draw != DrawStyle::Bars {
+                continue;
+            }
+            let (focused, fade) = self.emphasis(index);
             let color = series.ink.color(focused);
+            let slot = bar_slot;
+            bar_slot += 1;
+            let path = caches.slot(index).get(
+                self.shape_key(frame, index, 0),
+                bounds.origin,
+                built(|| self.reported(bars_path(series, &self.chart.xs, frame, slot, bars))),
+            );
+            if let Some(path) = path {
+                crate::desktop::probe::hit("monitoring-path-painted");
+                window.paint_path(path, color.opacity(0.7 * fade));
+            }
+        }
+    }
+
+    /// Lines and areas of one look draw as one path. Past the sixth series
+    /// every line is the same grey, and the GPU rasterises each path batch
+    /// in a pass of its own, so hundreds of series as hundreds of paths
+    /// cost a frame dearly. The first series draws last, on top, as the
+    /// legend lists it; a group draws where its topmost member would. While
+    /// one series is focused every group fades and that series draws again
+    /// on top, so the groups never change with focus and their paths are
+    /// built once per answer.
+    fn paint_groups(
+        &self,
+        frame: &Frame,
+        bounds: Bounds<Pixels>,
+        caches: &mut PathCaches,
+        window: &mut Window,
+    ) {
+        let mut groups: Vec<Group> = Vec::new();
+        for series in self.chart.series.iter().rev() {
             if series.draw == DrawStyle::Bars {
-                let slot = bar_slot;
-                bar_slot += 1;
-                let path = caches.slot(index).get(
-                    key((self.revision, index, 0)),
-                    bounds.origin,
-                    built(|| self.reported(bars_path(series, &self.chart.xs, frame, slot, bars))),
-                );
-                if let Some(path) = path {
-                    crate::desktop::probe::hit("monitoring-path-painted");
-                    window.paint_path(path, color.opacity(0.7 * fade));
-                }
                 continue;
             }
             let look = Look {
@@ -407,25 +442,6 @@ impl Paint {
                     look,
                     members: vec![series],
                 }),
-            }
-            if series.points || series.draw == DrawStyle::Points || self.chart.xs.len() == 1 {
-                let r = px(if focused { 3. } else { 2.5 });
-                for (x, y) in self.chart.xs.iter().zip(&series.tops) {
-                    if y.is_finite() {
-                        let center = bounds.origin + point(frame.x(*x), frame.y(*y));
-                        dots.push((center, r * 2., None, color.opacity(fade)));
-                    }
-                }
-            } else if let Some(last) = early_end(&series.tops) {
-                // A line that stops before the window's end ends in a dot.
-                let center =
-                    bounds.origin + point(frame.x(self.chart.xs[last]), frame.y(series.tops[last]));
-                dots.push((
-                    center,
-                    dp_px(7., window),
-                    Some(dp_px(10., window)),
-                    color.opacity(fade),
-                ));
             }
         }
         let fade = if self.focus.is_some() {
@@ -461,7 +477,7 @@ impl Paint {
         for (slot, (look, members, fade)) in shapes {
             if look.fill > 0. {
                 let path = caches.slot(slot).get(
-                    key((self.revision, slot, 1)),
+                    self.shape_key(frame, slot, 1),
                     bounds.origin,
                     built(|| {
                         self.reported(area_path(members, &self.chart.xs, self.chart.curve, frame))
@@ -474,7 +490,7 @@ impl Paint {
             }
             if look.line {
                 let path = caches.slot(slot + 1).get(
-                    key((self.revision, slot + 1, 2)),
+                    self.shape_key(frame, slot + 1, 2),
                     bounds.origin,
                     built(|| {
                         self.reported(line_path(
@@ -492,7 +508,39 @@ impl Paint {
                 }
             }
         }
-        // Dots after every path, so they don't split the paths' batches.
+    }
+
+    /// A series' points, or the dot that ends a line short of the window's
+    /// end; after every path, so they don't split the paths' batches.
+    fn paint_dots(&self, frame: &Frame, bounds: Bounds<Pixels>, window: &mut Window) {
+        let surface = self.palette.surface;
+        let mut dots = Vec::new();
+        for (index, series) in self.chart.series.iter().enumerate().rev() {
+            if series.draw == DrawStyle::Bars {
+                continue;
+            }
+            let (focused, fade) = self.emphasis(index);
+            let color = series.ink.color(focused);
+            if series.points || series.draw == DrawStyle::Points || self.chart.xs.len() == 1 {
+                let r = px(if focused { 3. } else { 2.5 });
+                for (x, y) in self.chart.xs.iter().zip(&series.tops) {
+                    if y.is_finite() {
+                        let center = bounds.origin + point(frame.x(*x), frame.y(*y));
+                        dots.push((center, r * 2., None, color.opacity(fade)));
+                    }
+                }
+            } else if let Some(last) = early_end(&series.tops) {
+                // A line that stops before the window's end ends in a dot.
+                let center =
+                    bounds.origin + point(frame.x(self.chart.xs[last]), frame.y(series.tops[last]));
+                dots.push((
+                    center,
+                    dp_px(7., window),
+                    Some(dp_px(10., window)),
+                    color.opacity(fade),
+                ));
+            }
+        }
         for (center, diameter, ring, color) in dots {
             if let Some(ring) = ring {
                 window.paint_quad(
