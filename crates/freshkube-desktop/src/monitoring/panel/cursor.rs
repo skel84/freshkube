@@ -18,9 +18,9 @@ use chrono::{Datelike, Local, TimeZone};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, Context, Entity, EntityId, FontWeight, Hsla, IntoElement,
-    MouseMoveEvent, Pixels, Point, Render, SharedString, TestSupportExt, Window, canvas, div, fill,
-    point, px, size,
+    AnyElement, App, Bounds, Context, Entity, EntityId, Font, FontWeight, Hsla, IntoElement,
+    MouseMoveEvent, Pixels, Point, Render, SharedString, TestSupportExt, TextRun, Window, canvas,
+    div, fill, point, px, size,
 };
 
 use super::{Geometry, PanelEvent, PanelView, markers};
@@ -43,11 +43,14 @@ pub(crate) struct Cursor {
     /// The readout sits left of the crosshair when there is more room
     /// that side.
     pub flip: bool,
-    /// The room beside the crosshair on the readout's side, which caps its
-    /// width so it never leaves the plot.
+    /// The room between the crosshair and the plot's edge on the readout's
+    /// side, which caps its width so it never leaves the plot.
     pub room: Pixels,
     /// The container's width when the cursor was placed.
     pub width: Pixels,
+    /// The narrowest the readout may be: its time and every value whole,
+    /// even where that crosses the plot's edge.
+    pub least: Pixels,
     pub time: SharedString,
     pub rows: Vec<Row>,
     /// Shown series past `rows`; when there are any, `rows` holds the
@@ -253,6 +256,7 @@ impl PanelView {
             index.and_then(|index| self.cursor_at(&chart, index, fit.clamp(1, READOUT_ROWS)));
         if let Some(cursor) = &mut cursor {
             cursor.marker = marker;
+            cursor.least = least_width(cursor, window);
         }
         let key = |c: &Cursor| (c.index, c.marker);
         if self.cursor.as_ref().map(key) == cursor.as_ref().map(key) {
@@ -339,13 +343,20 @@ impl PanelView {
             value: derive::format(&chart.series[series].field, value(chart, series, index)).into(),
             name: chart.series[series].name.clone(),
         });
-        let flip = x > geometry.size.width / 2.;
+        // Measured from the plot's own rectangle, so a flipped readout never
+        // covers the value axis.
+        let flip = x > geometry.left + geometry.width / 2.;
         Some(Cursor {
             index,
             x,
             flip,
-            room: if flip { x } else { geometry.size.width - x },
+            room: if flip {
+                x - geometry.left
+            } else {
+                geometry.left + geometry.width - x
+            },
             width: geometry.size.width,
+            least: px(0.),
             time: when(chart.times[index]).into(),
             rows: rows.collect(),
             more,
@@ -418,6 +429,41 @@ impl PanelView {
     }
 }
 
+/// The width of the readout's time line and of its widest swatch and value
+/// row, with its padding and border, as `render_readout` lays them out.
+fn least_width(cursor: &Cursor, window: &Window) -> Pixels {
+    let font = Font {
+        family: ui::MONO_FONT.into(),
+        ..window.text_style().font()
+    };
+    let measure = |text: &SharedString, size: f32, weight: FontWeight| {
+        let run = TextRun {
+            len: text.len(),
+            font: Font {
+                weight,
+                ..font.clone()
+            },
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_line(text.clone(), dp_px(size, window), &[run], None)
+            .width()
+    };
+    let time = measure(&cursor.time, 11., FontWeight::NORMAL);
+    let value = cursor
+        .rows
+        .iter()
+        .map(|row| measure(&row.value, 12., FontWeight::SEMIBOLD))
+        .fold(px(0.), Pixels::max);
+    // Swatch, then a gap either side of the values.
+    let row = dp_px(12. + 8. + 8., window) + value;
+    time.max(row) + dp_px(2. * 10., window) + px(2.)
+}
+
 impl Render for CursorOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let origin = self.origin.clone();
@@ -427,6 +473,8 @@ impl Render for CursorOverlay {
                 |_, _, _, _| {},
             )
             .absolute()
+            .top_0()
+            .left_0()
             .size_full(),
         );
         let Some(shown) = &self.shown else {
@@ -471,14 +519,15 @@ impl CursorOverlay {
         let cursor = &shown.cursor;
         let gap = dp(12.);
         // Within the room on its side, less its gap to the crosshair; names
-        // truncate to fit.
-        let widest = (cursor.room - dp_px(12., window)).max(px(0.));
+        // and the count truncate to fit, but the time and values stay whole.
+        let widest = (cursor.room - dp_px(12., window)).max(cursor.least);
         let cell = || h_flex().h(dp(ROW)).flex_none();
         let column = |rows: Vec<AnyElement>| v_flex().flex_none().children(rows);
         let mut swatches = Vec::with_capacity(cursor.rows.len());
         let mut values = Vec::with_capacity(cursor.rows.len());
         let mut names = Vec::with_capacity(cursor.rows.len());
-        for (row, (color, focused)) in cursor.rows.iter().zip(shown.inks.iter().copied()) {
+        let rows = cursor.rows.iter().zip(shown.inks.iter().copied());
+        for (n, (row, (color, focused))) in rows.enumerate() {
             swatches.push(
                 cell()
                     .child(div().w(dp(12.)).h(px(2.)).rounded(px(3.)).bg(color))
@@ -491,7 +540,12 @@ impl CursorOverlay {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(p.ink)
                     .whitespace_nowrap()
-                    .child(row.value.clone())
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("{}-readout-value-{n}", self.id)))
+                            .child(row.value.clone())
+                            .test_support(),
+                    )
                     .into_any_element(),
             );
             names.push(
@@ -515,6 +569,7 @@ impl CursorOverlay {
                 }
             })
             .max_w(widest)
+            .overflow_hidden()
             .px(dp(10.))
             .py(dp(8.))
             .rounded(px(8.))
@@ -529,14 +584,30 @@ impl CursorOverlay {
                     .mb(dp(4.))
                     .gap(dp(16.))
                     .justify_between()
+                    .min_w_0()
                     .text_size(dp(11.))
-                    .child(div().text_color(p.muted).child(cursor.time.clone()))
+                    .text_color(p.muted)
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("{}-readout-time", self.id)))
+                            .flex_none()
+                            .child(cursor.time.clone())
+                            .test_support(),
+                    )
                     .when(cursor.more > 0, |this| {
-                        this.child(div().text_color(p.muted).child(format!(
-                            "top {} of {}",
-                            cursor.rows.len(),
-                            cursor.rows.len() + cursor.more
-                        )))
+                        // The count gives way to the time in a narrow plot.
+                        this.child(
+                            div()
+                                .id(SharedString::from(format!("{}-readout-more", self.id)))
+                                .min_w_0()
+                                .truncate()
+                                .child(format!(
+                                    "top {} of {}",
+                                    cursor.rows.len(),
+                                    cursor.rows.len() + cursor.more
+                                ))
+                                .test_support(),
+                        )
                     }),
             )
             .children(
