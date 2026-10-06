@@ -162,6 +162,11 @@ pub(crate) struct Dock {
     save: Option<Task<()>>,
     /// The selected tab's least height when the dock last heard of it.
     last_least: Option<Pixels>,
+    /// The selected tab's notice above its lines, in dp, as last measured.
+    notice_height: f32,
+    /// The tab body's width, as last laid out, which the notice is
+    /// measured at.
+    body_width: Option<Pixels>,
 }
 
 impl Dock {
@@ -195,6 +200,8 @@ impl Dock {
             restore: None,
             save: None,
             last_least: None,
+            notice_height: 0.,
+            body_width: None,
         };
         if let Some(restore) = restore {
             dock.height = restore.height.max(MIN_HEIGHT);
@@ -232,13 +239,14 @@ impl Dock {
     }
 
     /// The least an open dock keeps: [`MIN_HEIGHT`], or the bar, the
-    /// selected log's whole toolbar and three lines when they need more.
+    /// selected tab's notice, and its log's whole toolbar and three lines
+    /// when they need more.
     fn least_height(&self, window: &Window, cx: &App) -> f32 {
         let log = self
             .selected_tab()
             .map(|tab| tab.least_height(cx) / dp_px(1., window))
             .unwrap_or(0.);
-        MIN_HEIGHT.max(BAR_HEIGHT + 1. + view::BODY_PADDING + log)
+        MIN_HEIGHT.max(BAR_HEIGHT + 1. + view::BODY_PADDING + self.notice_height + log)
     }
 
     pub(crate) fn has_tabs(&self) -> bool {

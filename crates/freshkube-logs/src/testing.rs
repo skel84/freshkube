@@ -47,4 +47,10 @@ impl<S: LogSource> LogView<S> {
     pub fn scroll_offset(&self) -> Point<Pixels> {
         self.scroll.offset()
     }
+
+    /// How far the whole panel can scroll: zero when its host gave it the
+    /// least height it asked for.
+    pub fn panel_max_offset(&self) -> Pixels {
+        self.panel_scroll.max_offset().y
+    }
 }

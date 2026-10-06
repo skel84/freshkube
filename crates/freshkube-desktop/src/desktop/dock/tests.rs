@@ -403,6 +403,53 @@ fn the_dock_resizes_minimizes_below_its_least_and_fits_the_window(cx: &mut TestA
     assert_eq!(cx.update(|cx| dock.read(cx).height()), 420.);
 }
 
+/// Lets the dock settle at its least height: the log and the dock measure
+/// themselves as they draw and ask for a frame when that changes.
+fn settle(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+    for _ in 0..4 {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+}
+
+/// In a small window, the selected tab's notices and its log's controls
+/// show whole above at least the list's least height, with no wheel: the
+/// log's panel has nowhere to scroll.
+fn assert_whole_without_scrolling(
+    handle: AnyWindowHandle,
+    view: &Entity<PodLogView>,
+    notice: &'static str,
+    cx: &mut TestAppContext,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        let dock = window.find("dock").bounds();
+        let panel = window.within("dock").find("logs-panel").bounds();
+        let notice = window.within("dock").find(notice).bounds();
+        assert!(
+            notice.top() >= dock.top() && notice.bottom() <= panel.bottom(),
+            "{notice:?} {dock:?}"
+        );
+        assert_eq!(view.read(cx).panel_max_offset(), px(0.));
+        let lines = window.within("dock").find("logs-viewport").bounds();
+        let least = window.rem_size() * freshkube_logs::LIST_LEAST_REMS;
+        assert!(lines.size.height + px(1.) >= least, "{lines:?}");
+        assert!(lines.top() >= notice.bottom(), "{lines:?} {notice:?}");
+        assert!(
+            lines.bottom() <= panel.bottom() + px(1.),
+            "{lines:?} {panel:?}"
+        );
+        assert!(
+            panel.bottom() <= dock.bottom() + px(1.),
+            "{panel:?} {dock:?}"
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_crash_looping_pod_shows_its_notice_and_three_lines_in_a_small_window(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
@@ -418,28 +465,51 @@ fn a_crash_looping_pod_shows_its_notice_and_three_lines_in_a_small_window(cx: &m
     })
     .unwrap();
     open_logs(handle, &pilot, "pods", &crashing[0], cx);
-    // The least height is measured as the tab draws, and asks for a frame.
-    for _ in 0..4 {
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            window.simulate_next_frame(cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-    }
-    cx.update_window(handle, |_, window, _| {
-        let body = window.find("dock").bounds();
-        let hint = window.find("pod-logs-hint").bounds();
-        assert!(
-            hint.top() >= body.top() && hint.bottom() <= body.bottom(),
-            "{hint:?} {body:?}"
-        );
-        let lines = window.find("logs-viewport").bounds();
-        let rows = window.rem_size() * ((0.86 * 1.5 + 0.28) * 3.);
-        assert!(lines.size.height + px(1.) >= rows, "{lines:?}");
-        assert!(lines.bottom() <= body.bottom() + px(1.));
+    settle(handle, cx);
+    let view = pod_view(&dock, 0, cx);
+    assert_whole_without_scrolling(handle, &view, "pod-logs-hint", cx);
+}
+
+#[gpui_kit::test]
+fn a_gone_pods_notice_counts_in_the_docks_least_height(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    let dock = dock(&pilot, cx);
+    let mut gone = running_pods(&pilot, cx).remove(0);
+    gone.name = format!("{}-gone", gone.name);
+    gone.uid = String::new();
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| dock.resize(MIN_HEIGHT, window, cx))
     })
     .unwrap();
+    // No pane opens an object that isn't there; ask the dock as a link
+    // to a pod that has since gone would.
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            let target = crate::resources::detail::DetailTarget {
+                identity: gone,
+                kind: builtin("pods").unwrap(),
+            };
+            dock.open_logs(
+                crate::resources::LogsRequest { target, at: None },
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    settle(handle, cx);
+    let view = pod_view(&dock, 0, cx);
+    assert_whole_without_scrolling(handle, &view, "dock-tab-notice", cx);
+    // Settled: another frame changes nothing.
+    let height = cx
+        .update_window(handle, |_, window, _| window.find("dock").bounds())
+        .unwrap();
+    settle(handle, cx);
+    let again = cx
+        .update_window(handle, |_, window, _| window.find("dock").bounds())
+        .unwrap();
+    assert_eq!(height, again);
 }
 
 #[gpui_kit::test]

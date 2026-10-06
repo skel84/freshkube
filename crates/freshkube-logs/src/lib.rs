@@ -138,7 +138,7 @@ impl MeanHeight {
 
 /// The list's least height in rems, room for three lines: below it, with
 /// the controls whole above, the panel scrolls.
-const LIST_LEAST_REMS: f32 = 6.;
+pub const LIST_LEAST_REMS: f32 = 6.;
 /// How long a wrapped pane's width, or a stream of new lines, must hold
 /// before rows off screen are measured. Until then a frame lays out only the
 /// rows it shows.

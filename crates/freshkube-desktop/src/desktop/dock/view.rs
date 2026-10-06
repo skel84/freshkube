@@ -7,7 +7,7 @@ use std::rc::Rc;
 use freshkube_ui::dock::{self, Frame};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{Sizable as _, v_flex};
+use gpui_kit::component::{ElementExt as _, Sizable as _, v_flex};
 
 use super::feed::FeedState;
 use super::*;
@@ -108,8 +108,9 @@ impl Dock {
         ]
     }
 
-    /// The selected tab: what its object's read says, then its lines.
-    fn render_body(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// What the selected tab's object read says above its lines, if
+    /// anything: the pod is gone, or the object couldn't be read.
+    fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tab = self.selected_tab()?;
         let id = tab.id;
         let notice = match &tab.feed.state {
@@ -134,7 +135,52 @@ impl Dock {
                 cx,
             )),
             FeedState::Idle | FeedState::Reading | FeedState::Ready => None,
+        }?;
+        Some(
+            div()
+                .id("dock-tab-notice")
+                .test_support()
+                .role(Role::Status)
+                .flex_none()
+                .pt(dp(BODY_PADDING))
+                .child(notice)
+                .into_any_element(),
+        )
+    }
+
+    /// Measures the notice at the body's width and keeps its height for
+    /// the least height; a change asks for a frame, so the shell, which
+    /// sizes the dock, sees it.
+    fn measure_notice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let height = match self.render_notice(cx) {
+            Some(mut notice) => {
+                let width = self
+                    .body_width
+                    .unwrap_or_else(|| window.viewport_size().width)
+                    - dp_px(2. * BODY_PADDING, window);
+                let size = notice.layout_as_root(
+                    size(AvailableSpace::Definite(width), AvailableSpace::MinContent),
+                    window,
+                    cx,
+                );
+                size.height / dp_px(1., window)
+            }
+            None => 0.,
         };
+        if (self.notice_height - height).abs() >= 0.5 {
+            self.notice_height = height;
+            let dock = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| {
+                _ = dock.update(cx, |_, cx| cx.notify());
+            });
+        }
+    }
+
+    /// The selected tab: what its object's read says, then its lines.
+    fn render_body(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tab = self.selected_tab()?;
+        let notice = self.render_notice(cx);
+        let this = cx.entity().downgrade();
         let lines = match &tab.kind {
             TabKind::Pod(view) => view.clone().into_any_element(),
             TabKind::Workload(view) => view.clone().into_any_element(),
@@ -147,15 +193,20 @@ impl Dock {
                 .min_h_0()
                 .px(dp(BODY_PADDING))
                 .pb(dp(BODY_PADDING))
-                .children(notice.map(|notice| {
-                    div()
-                        .id("dock-tab-notice")
-                        .test_support()
-                        .role(Role::Status)
-                        .flex_none()
-                        .pt(dp(BODY_PADDING))
-                        .child(notice)
-                }))
+                .relative()
+                .on_prepaint(move |bounds, window, cx| {
+                    let changed = this
+                        .update(cx, |dock, _| {
+                            dock.body_width.replace(bounds.size.width) != Some(bounds.size.width)
+                        })
+                        .unwrap_or(false);
+                    if changed {
+                        window.on_next_frame(move |_, cx| {
+                            _ = this.update(cx, |_, cx| cx.notify());
+                        });
+                    }
+                })
+                .children(notice)
                 .child(v_flex().flex_1().min_h_0().w_full().child(lines))
                 .into_any_element(),
         )
@@ -167,6 +218,9 @@ impl Render for Dock {
         crate::desktop::probe::hit("dock");
         if self.tabs.is_empty() || self.hidden {
             return div().into_any_element();
+        }
+        if self.open {
+            self.measure_notice(window, cx);
         }
         let this = cx.entity().downgrade();
         let frame = Frame {
