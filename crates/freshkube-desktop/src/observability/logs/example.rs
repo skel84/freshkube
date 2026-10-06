@@ -202,6 +202,7 @@ fn histogram(lines: &[api::LogLine], from_ms: i64, to_ms: i64) -> api::AppChart 
             }
             any.then(|| api::Series {
                 name: severity.into(),
+                color: color(severity).into(),
                 points,
                 ..Default::default()
             })
@@ -215,6 +216,17 @@ fn histogram(lines: &[api::LogLine], from_ms: i64, to_ms: i64) -> api::AppChart 
         column: true,
         stacked: true,
         ..Default::default()
+    }
+}
+
+/// Coroot's colour for a severity (`model/severity.go`).
+fn color(severity: &str) -> &'static str {
+    match severity {
+        "error" => "red-darken1",
+        "warning" => "orange-lighten1",
+        "info" => "blue-lighten2",
+        "debug" => "green-lighten2",
+        _ => "grey-lighten1",
     }
 }
 
@@ -268,6 +280,7 @@ fn patterns(lines: &[api::LogLine], from_ms: i64, to_ms: i64) -> Vec<api::LogPat
 fn not_configured(from_ms: i64, to_ms: i64) -> api::LogsView {
     let wave = |phase: usize| api::Series {
         name: "error".into(),
+        color: color("error").into(),
         points: (0..COLUMNS as usize)
             .map(|p| Some(((p + phase) % 5) as f32))
             .collect(),

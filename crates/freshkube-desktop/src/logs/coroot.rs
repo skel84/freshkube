@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Local, SecondsFormat, Utc};
 use freshkube_core::coroot as api;
 use freshkube_core::logs::{LogEvent, ServiceId};
 use gpui_kit::{AnyElement, Context, SharedString, Window};
@@ -116,13 +116,15 @@ impl CorootPanel for CorootLogView {
     }
 }
 
-/// One message as one line: Coroot's time, then the message whole, however
-/// many lines it spans, at Coroot's severity rather than one its words
-/// suggest. A message too long for the view is cut, and says so.
+/// One message as one line: Coroot's time in local time, as the page's
+/// charts show it, then the message whole, however many lines it spans, at
+/// Coroot's severity rather than one its words suggest. A message too long
+/// for the view is cut, and says so.
 pub(crate) fn event(service: &ServiceId, line: &api::LogLine) -> LogEvent {
     let time = DateTime::from_timestamp_millis(line.time_ms)
         .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true);
+        .with_timezone(&Local)
+        .to_rfc3339_opts(SecondsFormat::Millis, false);
     let mut text = format!("{time} {}", line.message);
     if text.len() > MOST_LINE_BYTES {
         let cut = format!(" … [cut: {} bytes more]", text.len() - MOST_LINE_BYTES);
@@ -156,9 +158,16 @@ mod tests {
     fn a_message_keeps_coroot_s_time_and_severity_and_fits_the_view() {
         let service = ServiceId::from("app");
         let short = event(&service, &line("ready, serving\n  on :8080".into()));
+        let (time, message) = short.line.split_once(' ').unwrap();
+        assert_eq!(message, "ready, serving\n  on :8080");
+        let time = DateTime::parse_from_rfc3339(time).unwrap();
+        assert_eq!(time.timestamp_millis(), 1_789_999_000_250);
+        let local = DateTime::from_timestamp_millis(1_789_999_000_250)
+            .unwrap()
+            .with_timezone(&Local);
         assert_eq!(
-            short.line,
-            "2026-09-21T13:56:40.250Z ready, serving\n  on :8080"
+            time.offset().local_minus_utc(),
+            local.offset().local_minus_utc()
         );
         assert_eq!(short.level, Some(LogLevel::Error));
         // At the bound the message is cut on a character, and says so.

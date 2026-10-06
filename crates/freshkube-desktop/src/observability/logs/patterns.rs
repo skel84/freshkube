@@ -65,6 +65,7 @@ fn group_digits(count: u64) -> String {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
+    Glyph,
     Level,
     Count,
     Sample,
@@ -118,6 +119,11 @@ impl PatternTable {
             label: label.to_owned().into(),
         };
         self.columns = vec![
+            Column {
+                kind: Kind::Glyph,
+                label: SharedString::default(),
+                width: shared::GLYPH_WIDTH,
+            },
             column(
                 Kind::Level,
                 "Level",
@@ -221,17 +227,13 @@ impl TableSource for PatternTable {
         column: &Column,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let frame = shared::cell(column)
-            .h_full()
-            .flex()
-            .items_center()
-            .gap(dp(6.));
+        let frame = shared::cell(column).h_full().flex().items_center();
         let pattern = row.data;
         match column.kind {
-            Kind::Level => frame
+            Kind::Glyph => shared::glyph_cell(column)
                 .children(ui::status_glyph(pattern.tone, cx))
-                .child(text(pattern.level.clone()))
                 .into_any_element(),
+            Kind::Level => frame.child(text(pattern.level.clone())).into_any_element(),
             Kind::Count => frame.child(mono(pattern.count.clone())).into_any_element(),
             Kind::Sample => frame
                 .child(
