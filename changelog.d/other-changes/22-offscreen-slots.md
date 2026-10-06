@@ -1,0 +1,1 @@
+- A large Monitoring dashboard draws only the panels in or near view, so it stops drawing once those have answered, and scrolling to a panel draws it in place without moving the page.

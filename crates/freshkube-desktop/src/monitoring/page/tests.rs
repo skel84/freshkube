@@ -130,6 +130,61 @@ fn ready(cx: &mut TestAppContext, page: &Entity<MonitoringPage>) -> Vec<String> 
     })
 }
 
+/// Where slot `n` is drawn: its panel, or the empty card in its place.
+fn slot_bounds(window: &mut gpui_kit::Window, n: usize) -> Bounds<Pixels> {
+    window
+        .try_find(SharedString::from(format!("monitoring-panel-{n}")))
+        .unwrap_or_else(|| window.find(format!("monitoring-placeholder-{n}")))
+        .bounds()
+}
+
+/// Opens the stress run's 30 panels from a folder of its own, which the
+/// caller removes.
+fn open_thirty(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    page: &Entity<MonitoringPage>,
+) -> std::path::PathBuf {
+    let folder = std::env::temp_dir().join(format!(
+        "freshkube-monitoring-thirty-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("thirty.json"),
+        include_str!("../../bin/stress/dashboards/thirty.json"),
+    )
+    .unwrap();
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.saved.folder = Some(folder.clone());
+            page.read_folder(cx);
+        })
+    });
+    cx.run_until_parked();
+    let id = cx.read(|cx| match &page.read(cx).catalog.folder {
+        FolderState::Read { entries, .. } => entries[0].id.clone(),
+        _ => panic!("the folder wasn't read"),
+    });
+    show(cx, handle, page);
+    cx.update(|cx| page.update(cx, |page, cx| page.open(id, cx)));
+    cx.run_until_parked();
+    // The header folds from what it measured on the frame before; a page
+    // that never stops asking for frames is the caller's to find.
+    cx.update_window(handle, |_, window, cx| {
+        for _ in 0..4 {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(slot_count(cx, page), 30);
+    folder
+}
+
 fn slot_count(cx: &mut TestAppContext, page: &Entity<MonitoringPage>) -> usize {
     cx.read(|cx| {
         page.read(cx)
@@ -536,6 +591,103 @@ fn the_cursor_on_one_chart_shows_on_the_others_and_redraws_no_other_panel(cx: &m
     for id in &others {
         assert!(!shown(cx, handle, id), "{id} kept its crosshair");
     }
+}
+
+#[gpui_kit::test]
+fn only_panels_in_reach_draw_and_one_scrolled_in_takes_its_card_place(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    let folder = open_thirty(cx, handle, &page);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Each slot is its panel or an empty card, never both or neither.
+        let drawn: Vec<bool> = (0..30)
+            .map(|n| {
+                let panel = window
+                    .try_find(SharedString::from(format!("monitoring-panel-{n}")))
+                    .is_some();
+                let card = window
+                    .try_find(SharedString::from(format!("monitoring-placeholder-{n}")))
+                    .is_some();
+                assert_ne!(panel, card, "slot {n}");
+                panel
+            })
+            .collect();
+        assert!(drawn[0], "the first panel isn't drawn");
+        let far = drawn
+            .iter()
+            .position(|drawn| !drawn)
+            .expect("every panel is drawn");
+        let grid = window.find("monitoring-grid").bounds();
+        let card = window
+            .find(format!("monitoring-placeholder-{far}"))
+            .bounds();
+        let first = slot_bounds(window, 0);
+        // Scrolled until the card's top meets the grid's: drawn in the same
+        // frame, at the card's place and size, with nothing else moved.
+        let by = card.top() - grid.top();
+        wheel(window, ScrollDelta::Pixels(point(px(0.), -by)), cx);
+        let panel = window.find(format!("monitoring-panel-{far}")).bounds();
+        assert_eq!(panel.size, card.size);
+        assert!(
+            (panel.top() - grid.top()).abs() < px(0.5),
+            "{panel:?} after scrolling {by:?} to {grid:?}"
+        );
+        assert!(
+            (slot_bounds(window, 0).top() - (first.top() - by)).abs() < px(0.5),
+            "the first slot moved from {first:?} to {:?}",
+            slot_bounds(window, 0)
+        );
+        assert!(
+            window.try_find("monitoring-panel-0").is_none(),
+            "the first panel is still drawn far above the view"
+        );
+    })
+    .unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[gpui_kit::test]
+fn with_the_panels_in_reach_answered_the_page_asks_for_no_frame(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    // A loading panel pulses only with motion on.
+    cx.update(|cx| cx.set_reduce_motion(false));
+    let folder = open_thirty(cx, handle, &page);
+    let generation = cx.read(|cx| page.read(cx).generation);
+    let ready = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let board = page.read(cx).board.as_ref().unwrap();
+            // What is drawn is what was asked, and the rest is still loading.
+            for (n, slot) in board.slots.iter().enumerate() {
+                let drawn = window
+                    .try_find(SharedString::from(format!("monitoring-panel-{n}")))
+                    .is_some();
+                assert_eq!(drawn, slot.asked == Some(generation), "slot {n}");
+                assert_eq!(drawn, slot.view.read(cx).is_ready(), "slot {n}");
+            }
+            board
+                .slots
+                .iter()
+                .filter(|slot| slot.asked.is_some())
+                .count()
+        })
+        .unwrap();
+    assert!((1..30).contains(&ready), "{ready} of 30 answered");
+    cx.update_window(handle, |_, window, cx| {
+        // The header folds from what it measured on the frame before.
+        for _ in 0..4 {
+            window.draw(cx).clear(cx);
+            window.simulate_next_frame(cx);
+        }
+        let panels = probe::count("monitoring-panel");
+        for _ in 0..3 {
+            window.draw(cx).clear(cx);
+            assert_eq!(window.simulate_next_frame(cx), 0, "a frame is asked for");
+        }
+        assert_eq!(probe::count("monitoring-panel"), panels);
+    })
+    .unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
 }
 
 #[gpui_kit::test]
@@ -1313,12 +1465,7 @@ fn a_short_window_scrolls_the_page_alone_header_and_all(cx: &mut TestAppContext)
             "{title:?} still in {frame:?}"
         );
         let last = (0..panels)
-            .map(|n| {
-                window
-                    .find(format!("monitoring-panel-{n}"))
-                    .bounds()
-                    .bottom()
-            })
+            .map(|n| slot_bounds(window, n).bottom())
             .fold(px(f32::MIN), |a, b| a.max(b));
         assert!(last <= frame.bottom() + px(0.5), "{last:?} past {frame:?}");
         assert!(

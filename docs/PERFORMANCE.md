@@ -222,6 +222,32 @@ Same settings as the baseline, with the saved #181 binary as before, and the run
 - **The page's own render is about 1.3% of the busy time.** A profile of the after run puts the window's root layout, which now includes the page, at 7.5% of main-thread samples, and the panels' layout at 14%, down from 35%.
 - **The thread is still busy, because loading panels animate.** The page asks only the panels in or near the viewport, so about 16 of the 30 stay loading, and Kit's skeleton pulses with an animation that notifies its panel every frame, off screen too. Those are the 9,700 renders of 0.02 ms, and while any panel is unanswered the window never stops drawing. Drawing only the slots near the viewport, #22's next step, takes them out.
 
+### A dashboard draws only the panels near the view (#22)
+
+After the change above, the 30-panel run still rendered about 16 panels a frame. The page asks only the panels in or near the viewport, so the rest stayed loading, and Kit's skeleton pulses with an animation that notifies its panel every frame, off screen too. With a dashboard open, the window never stopped drawing. Now the page draws the same panels it asks (`Viewport::reach`: what is in view, half a screen above and a screen below) and an empty card at each other slot's fixed place. GPUI redraws a window only for the views it drew in the last frame, so a panel that isn't drawn can't make it draw.
+
+Release build, same settings, with the build of the change above as before; runs alternated, with no cargo, rustc or clang running. The one-minute load average at each start is in the table; WindowServer was the busiest other process, at about 40%.
+
+| 30 timeseries, hover and scroll | Load | Main-thread stall: median / 99th | Stall samples | `panel_render`: count, total | `page_render` count | CPU |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before 1 | 31.1 | 43.6 / 66.1 ms | 554 | 8,759, 604 ms | 554 | 85% |
+| After 1 | 21.4 | 29.7 / 46.7 ms | 1,070 | 557, 361 ms | 555 | 83% |
+| Before 2 | 22.9 | 36.2 / 45.7 ms | 643 | 10,154, 696 ms | 643 | 85% |
+| After 2 | 18.7 | 25.8 / 49.8 ms | 1,066 | 544, 419 ms | 543 | 82% |
+
+The idle runs open the same dashboard and touch nothing (`FRESHKUBE_STRESS_KEYS=wait:30000`). The frame rate is `page_render`'s count each second after the first five, since the shell draws the page with every frame.
+
+| 30 timeseries, idle | Load | Frames a second | CPU | Main-thread stall median |
+| --- | --- | --- | --- | --- |
+| Before 1 | 21.4 | 24–31 | 84% | 32.6 ms |
+| After 1 | 15.4 | 0 after the 4th second | 5% | 1.2 ms |
+| Before 2 | 18.7 | 26–31 | 83% | 32.8 ms |
+| After 2 | 15.2 | 0 after the 5th second | 5% | 1.2 ms |
+
+- **Idle, the window stops drawing** once the panels in reach have answered. Before, it drew for as long as the dashboard showed, at most of a core.
+- **Moving, a frame renders one panel instead of about 16.** The main thread is free twice as often, but CPU and frame rate hardly change: the hover script moves every 16 ms, and each frame's cost is now the window's own layout and drawing.
+- The reporter exits 1 on an idle run of this build with "No monitoring.* span: the dashboard never drew", because nothing drew after the warmup it leaves out. Its per-second lines show the dashboard drawing in the first seconds.
+
 ### Kubernetes summary
 
 Before the watch migration, the shell read the Kubernetes summary from the API server cache on its 15 s cycle on every page. `scripts/stress.sh summary-20k summary` served 20,000 pods, 2,000 deployments and 5,000 warning events through the real client. Typed objects were discarded on Tokio after deriving the summary and Health data. These historical measurements describe that polling implementation.
