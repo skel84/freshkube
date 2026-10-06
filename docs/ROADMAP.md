@@ -294,6 +294,8 @@ A page's components should be checked without starting the app. [#53](https://gi
   - Process start to the first frame with rows (`FRESHKUBE_FIRST_FRAME=1`): the DataTable story 269 ms (4.50), 275 ms (5.40), 267 ms (5.66); `--fixture` on Pods 505 ms (4.19), 486 ms (4.72), 642 ms (5.27).
 - (b) Done in `ff8c7e8` and `8a66ef8`: `layered()` and `curve()` lay out through a `Node` trait, then move unchanged into `crates/freshkube-graph`'s `layout` module, which has no dependencies. Unit tests and a workbench graph story follow.
 - (c) A `GraphView<S: GraphSource>` in that crate, with the service map as its first source.
+  - Routing landed in `bfb23ea`: `route()` returns a `Layout` whose routes keep clear of every box. A call that spans columns takes a lane in the gutters, a wrapped column is an ordinary column, and a call that closes a cycle comes back below the boxes. In the story's Fan-out, the calls cross 0 times, against 43 with `curve()`, 4 of which ran through a box.
+  - Next: after coroot-view's Observability work lands, the service map switches to `route()`, and `layered()` and `curve()` go. Then `GraphView`.
 
 ## Next: Coroot observability
 
