@@ -26,6 +26,7 @@ pub use data::{
 };
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look};
+pub use pinned::widest_pinned_run;
 
 /// Every table's row height. Group rows take the same height, so the list
 /// stays uniform; the text size scales it for anyone who wants it larger.

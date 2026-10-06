@@ -15,6 +15,12 @@ use table::{
 const NESTED_INDENT: f32 = 20.;
 /// The chevron after a namespace's name, with its gap.
 const CHEVRON: f32 = 19.;
+/// Glyph and name pin while they fit [`table::widest_pinned_run`] of the
+/// table, so the Name column narrows to stay under that in a narrow list;
+/// this much is kept for the table's own edges.
+const PIN_SLACK: f32 = 8.;
+/// The narrowest the Name column gets for pinning's sake.
+const NAME_LEAST: f32 = 120.;
 /// The Issue column's least width. It truncates there rather than push the
 /// table wider than the list beside the details; the row's tooltip and the
 /// details hold the whole issue.
@@ -168,20 +174,48 @@ pub(super) struct Derived {
     #[cfg(test)]
     refs: Rc<Vec<RowRef>>,
     rows: Vec<WorkloadRow>,
+    /// The Name column's width from its text, before any narrowing.
+    name: f32,
     columns: Vec<Column>,
     width: f32,
 }
 
-fn columns(rows: &[WorkloadRow]) -> Vec<Column> {
+impl Derived {
+    /// Narrows the Name column to `most` dp, or widens it back to its
+    /// text's width; the table's width follows.
+    fn fit_name(&mut self, most: f32) {
+        let width = self.name.min(most);
+        if let Some(column) = (self.columns.iter_mut()).find(|column| column.field == Field::Name)
+            && column.width != width
+        {
+            column.width = width;
+            self.width = self.columns.iter().map(|column| column.width).sum();
+        }
+    }
+}
+
+/// The most the Name column may take in a list `list` dp wide, so the glyph
+/// and name still pin when the table scrolls sideways. A long name
+/// truncates, and its row's tooltip and the details hold all of it.
+pub(super) fn name_most(list: f32) -> f32 {
+    (table::widest_pinned_run(list) - table::GLYPH_WIDTH - PIN_SLACK).max(NAME_LEAST)
+}
+
+/// The Name column's width from its names, with room for the indent or
+/// the chevron.
+fn name_width(rows: &[WorkloadRow]) -> f32 {
+    fit("Name", rows.iter().map(|row| &row.name), WIDEST) + NESTED_INDENT.max(CHEVRON)
+}
+
+fn columns(rows: &[WorkloadRow], name: f32) -> Vec<Column> {
     let column = |field, label: &str, width| Column {
         field,
         label: label.to_owned().into(),
         width,
     };
-    let names = fit("Name", rows.iter().map(|row| &row.name), WIDEST);
     vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
-        column(Field::Name, "Name", names + NESTED_INDENT.max(CHEVRON)),
+        column(Field::Name, "Name", name),
         column(
             Field::Kind,
             "Kind",
@@ -288,7 +322,8 @@ impl WorkloadsScreen {
             .iter()
             .map(|row| WorkloadRow::new(self.describe(*row, &data), row.key(&data.snapshot)))
             .collect();
-        let columns = columns(&rows);
+        let name = name_width(&rows);
+        let columns = columns(&rows, name.min(self.name_most));
         let width = columns.iter().map(|column| column.width).sum();
         self.derived = Some(Derived {
             data,
@@ -296,9 +331,20 @@ impl WorkloadsScreen {
             #[cfg(test)]
             refs: Rc::new(refs),
             rows,
+            name,
             columns,
             width,
         });
+    }
+
+    /// Fits the Name column to a list `list` dp wide; render calls it, and
+    /// it changes the columns only when the list's width calls for another
+    /// Name width.
+    pub(super) fn fit_name_column(&mut self, list: f32) {
+        self.name_most = name_most(list);
+        if let Some(derived) = self.derived.as_mut() {
+            derived.fit_name(self.name_most);
+        }
     }
 
     /// The visible rows, as derived by the last [`sync`](Self::sync).

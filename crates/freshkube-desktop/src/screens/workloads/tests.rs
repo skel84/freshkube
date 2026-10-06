@@ -463,6 +463,117 @@ fn workloads_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
     }
 }
 
+/// Narrow and at a large text size the table scrolls sideways, as Nodes'
+/// does: its glyph and name stay at the left edge, and the last column can
+/// be brought fully into view (#150's follow-up).
+#[gpui_kit::test]
+fn a_narrow_table_scrolls_sideways_with_its_name_pinned(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    // Window, text size, and whether the table runs past its list.
+    for (width, height, text, overflows) in [
+        (1280., 880., None, false),
+        (760., 560., Some(20.), true),
+        (760., 560., Some(14.), true),
+        (1024., 700., Some(18.), true),
+        (900., 600., Some(16.), true),
+    ] {
+        let (_runtime, handle, app_view) = app(cx, width, height);
+        let screen = cx.update(|cx| app_view.read(cx).workloads());
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            window.press("secondary-5", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let case = format!("{width}/{text:?}");
+            let rows = layout_check::assert_table(
+                window,
+                cx,
+                &layout_check::Table {
+                    table: Some("workload-table-scroll"),
+                    list: "workload-list",
+                },
+            );
+            assert!(rows.header.is_some(), "{case}: {rows:#?}");
+            let view = window.find("workload-table-scroll").bounds();
+            let header =
+                |window: &Window, column: usize| window.find(("workload-sort", column)).bounds();
+            // A workload's row, not a namespace's, whose line always stays.
+            let line = (screen.read(cx).rows().iter())
+                .position(|row| !matches!(row, RowRef::Namespace(_)))
+                .expect("a workload row");
+            let cell = screen.read(cx).name_element(line);
+            let name = header(window, 1).left();
+            let row_name = window.find(cell.clone()).bounds().left();
+            // The last column, which never passes under the pinned run; a
+            // cell that does reports its bounds clipped at the pinned edge.
+            let last = header(window, 4).right();
+            let overflow = last - view.right();
+            assert_eq!(
+                overflow > px(1.5),
+                overflows,
+                "{case}: the table {view:?}, its last column ends at {last:?}"
+            );
+            window.scroll(
+                "workload-table-scroll",
+                ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let moved = last - header(window, 4).right();
+            assert!(
+                (moved - overflow.max(px(0.))).abs() <= px(1.5),
+                "{case}: the last column moved {moved:?}, not {overflow:?}"
+            );
+            // `find` fails on an id that resolves twice, so the pinned
+            // name is found once, at its place.
+            let pinned = header(window, 1);
+            assert!(
+                (pinned.left() - name).abs() <= px(1.5),
+                "{case}: the name moved from {name:?} to {:?}",
+                pinned.left()
+            );
+            let kept = window.find(cell).bounds().left();
+            assert!(
+                (kept - row_name).abs() <= px(1.5),
+                "{case}: the row's name moved from {row_name:?} to {kept:?}"
+            );
+            // The last column shows whole, clear of the pinned glyph and name.
+            let last = header(window, 4);
+            assert!(
+                last.right() <= view.right() + px(1.5) && last.left() >= pinned.right() - px(1.5),
+                "{case}: the last column {last:?} isn't clear of the pinned run, \
+                 which ends at {:?}, inside {view:?}",
+                pinned.right()
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// The Name column narrows only where pinning needs it: a list wide enough
+/// keeps any name up to the table's widest column, and a narrow one never
+/// goes below its least width.
+#[test]
+fn the_name_narrows_only_in_a_narrow_list() {
+    use super::source::name_most;
+    // 1280 at text 13, with the details beside the list.
+    assert!(name_most(654.) > table::WIDEST + 20.);
+    // 760 at text 20, with the details below.
+    let narrow = name_most(378.);
+    assert!(narrow < 220., "{narrow}");
+    assert!(
+        narrow + table::GLYPH_WIDTH <= table::widest_pinned_run(378.),
+        "{narrow}"
+    );
+    assert_eq!(name_most(100.), 120.);
+}
+
 /// The state in the table's place sits under the toolbar, which keeps the
 /// title and Refresh.
 fn under_the_toolbar(window: &Window, id: &'static str) {

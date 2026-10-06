@@ -449,6 +449,17 @@ pub(crate) fn split_narrow(
     split_at(id, beside, NARROW_PANE_WIDTH, table, pane)
 }
 
+/// The width of [`split_fill`]'s list in `dp`, with its pane beside it or
+/// below it.
+pub(crate) fn split_fill_list_width(window: &Window, beside: bool) -> f32 {
+    page_width(window)
+        - if beside {
+            NARROW_PANE_WIDTH + SPLIT_GAP
+        } else {
+            0.
+        }
+}
+
 /// [`split_narrow`] for a list that fills the page's height and scrolls its
 /// own rows, such as Processes': the pane runs beside it at its height, or
 /// `below` dp high under it. The split keeps the list at least
