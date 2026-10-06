@@ -1,0 +1,1 @@
+- Monitoring's chart readout no longer runs off the card's left edge: it sits on the side of the cursor with more room and shortens long series names to fit.

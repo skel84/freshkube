@@ -27,8 +27,12 @@ pub(crate) struct Cursor {
     pub index: usize,
     /// The crosshair, from the plot container's left edge.
     pub x: Pixels,
-    /// The readout sits left of the crosshair near the right edge.
+    /// The readout sits left of the crosshair when there is more room
+    /// that side.
     pub flip: bool,
+    /// The room beside the crosshair on the readout's side, which caps its
+    /// width so it never leaves the plot.
+    pub room: Pixels,
     /// The container's width when the cursor was placed.
     pub width: Pixels,
     /// Whether the pointer is over this panel; only that one shows the
@@ -151,10 +155,12 @@ impl PanelView {
             value: derive::format(&chart.series[series].field, value(series)).into(),
             name: chart.series[series].name.clone(),
         });
+        let flip = x > geometry.size.width / 2.;
         Some(Cursor {
             index,
             x,
-            flip: x > geometry.size.width * 0.6,
+            flip,
+            room: if flip { x } else { geometry.size.width - x },
             width: geometry.size.width,
             own,
             time: when(chart.times[index]).into(),
@@ -169,7 +175,7 @@ impl PanelView {
     pub(super) fn render_cursor(
         &mut self,
         chart: &std::rc::Rc<Chart>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
@@ -242,7 +248,7 @@ impl PanelView {
             .size_full(),
         );
         if cursor.own && !cursor.rows.is_empty() {
-            overlay = overlay.child(self.render_readout(chart, &cursor, cx));
+            overlay = overlay.child(self.render_readout(chart, &cursor, window, cx));
         }
         overlay
             .id(self.element_id("cursor"))
@@ -257,10 +263,19 @@ impl PanelView {
     /// The time, then a row a series in three aligned columns: swatch,
     /// value and name. When rows are left out, the time line says how many
     /// it ranks from.
-    fn render_readout(&self, chart: &Chart, cursor: &Cursor, cx: &Context<Self>) -> AnyElement {
+    fn render_readout(
+        &self,
+        chart: &Chart,
+        cursor: &Cursor,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
         let focus = self.focus();
         let gap = dp(12.);
+        // Within the room on its side, less its gap to the crosshair; names
+        // truncate to fit.
+        let widest = (cursor.room - dp_px(12., window)).max(px(0.));
         let cell = || h_flex().h(dp(ROW)).flex_none();
         let column = |rows: Vec<AnyElement>| v_flex().flex_none().children(rows);
         let mut swatches = Vec::with_capacity(cursor.rows.len());
@@ -294,7 +309,7 @@ impl PanelView {
                     } else {
                         p.muted
                     })
-                    .child(div().truncate().child(row.name.clone()))
+                    .child(div().min_w_0().truncate().child(row.name.clone()))
                     .into_any_element(),
             );
         }
@@ -309,6 +324,7 @@ impl PanelView {
                     this.left(cursor.x).ml(gap)
                 }
             })
+            .max_w(widest)
             .px(dp(10.))
             .py(dp(8.))
             .rounded(px(8.))
@@ -345,7 +361,7 @@ impl PanelView {
                     .gap(dp(8.))
                     .child(column(swatches))
                     .child(column(values))
-                    .child(column(names).min_w_0()),
+                    .child(column(names).flex_shrink(1.).min_w_0()),
             )
             .test_support()
             .into_any_element()
