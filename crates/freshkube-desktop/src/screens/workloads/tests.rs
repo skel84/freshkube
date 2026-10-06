@@ -188,7 +188,13 @@ fn example_reflects_the_degraded_worker(cx: &mut TestAppContext) {
             .find(|pod| pod.name.starts_with("kube-flannel"))
             .expect("flannel pod on the degraded worker");
         assert_eq!(flannel.node.as_deref(), Some("talos-wk-fra1-02"));
-        window.find("workload-summary");
+        // The counts go to the status bar's line; the header keeps none.
+        let line = screen.update(cx, |screen, _| {
+            screen.status().expect("a segment").text(None).clone()
+        });
+        assert!(line.contains(" deployments · "), "{line}");
+        assert!(line.contains("pods "), "{line}");
+        assert!(line.ends_with("example data"), "{line}");
         assert!(window.try_find("screen-retry").is_none());
     })
     .unwrap();
@@ -368,7 +374,12 @@ fn workloads_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
                 },
             );
             assert!(rows.header.is_some(), "{rows:#?}");
-            window.find("workload-summary");
+            let line = window.find("health-scope");
+            assert!(
+                line.path()
+                    .contains(&gpui_kit::ElementId::from("status-bar")),
+                "the counts are in the status bar"
+            );
         })
         .unwrap();
     }

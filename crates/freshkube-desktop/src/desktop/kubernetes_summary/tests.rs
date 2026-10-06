@@ -111,7 +111,7 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
         .update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| view.navigate(Page::Health, window, cx));
             window.render_frame(cx);
-            window.find("workload-summary").label().unwrap().to_owned()
+            window.find("health-scope").label().unwrap().to_owned()
         })
         .unwrap();
     let (session, count) = cx.update(|cx| {
@@ -152,7 +152,7 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
         window.render_frame(cx);
         window.find("workload-list");
         assert_ne!(
-            window.find("workload-summary").label().unwrap(),
+            window.find("health-scope").label().unwrap(),
             previous_health
         );
     })

@@ -1,6 +1,6 @@
 //! The namespaces, workloads and pods as a `TableSource`: the visible rows
-//! and what they show, the columns and the meta line's counts, derived when
-//! the snapshot or the filters change, and each row's cells.
+//! and what they show and the columns, derived when the snapshot or the
+//! filters change, each row's cells, and the status bar's counts.
 use super::*;
 use crate::palette::Palette;
 use gpui_kit::component::ActiveTheme;
@@ -121,7 +121,7 @@ pub(super) struct RowSettings {
     pub(super) collapsed: HashSet<String>,
 }
 
-/// The rows, columns and meta parts for one snapshot and set of filters.
+/// The rows and columns for one snapshot and set of filters.
 pub(super) struct Derived {
     data: Arc<WorkloadData>,
     settings: RowSettings,
@@ -131,7 +131,6 @@ pub(super) struct Derived {
     rows: Vec<WorkloadRow>,
     columns: Vec<Column>,
     width: f32,
-    pub(super) meta: Vec<SharedString>,
 }
 
 fn columns(rows: &[WorkloadRow]) -> Vec<Column> {
@@ -166,9 +165,9 @@ fn columns(rows: &[WorkloadRow]) -> Vec<Column> {
     ]
 }
 
-/// The counts for the meta line; a list that didn't answer is unknown, not
-/// zero.
-fn meta_parts(data: &WorkloadData) -> Vec<SharedString> {
+/// The counts for the status bar's line; a list that didn't answer is
+/// unknown, not zero.
+pub(super) fn status_parts(data: &WorkloadData) -> Vec<SharedString> {
     let snapshot = &data.snapshot;
     let count = |value: usize, source: WorkloadSource| {
         if data.missing(source) {
@@ -238,7 +237,6 @@ impl WorkloadsScreen {
         let columns = columns(&rows);
         let width = columns.iter().map(|column| column.width).sum();
         self.derived = Some(Derived {
-            meta: meta_parts(&data),
             data,
             settings,
             #[cfg(test)]
