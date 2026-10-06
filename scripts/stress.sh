@@ -36,9 +36,7 @@ screen_acquire stress $$
 trap screen_release EXIT
 "$stress_binary" "$@" 2> $out/$label.log
 /usr/bin/grep -E '^(summary|stress server)' $out/$label.log || true
-# A Monitoring run that never reached its panels prints only the app's
-# numbers, which would pass for a measurement.
-if [[ $1 == monitoring ]] && ! /usr/bin/grep -q '^summary monitoring\.' $out/$label.log; then
-    echo "No monitoring.* span: the dashboard never drew. See $out/$label.log." >&2
-    exit 1
+if [[ $1 == monitoring ]]; then
+    . $root/scripts/stress/report.sh
+    monitoring_verdict $out/$label.log "${FRESHKUBE_STRESS_KEYS:-}"
 fi
