@@ -5,10 +5,9 @@ use std::{
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, Pixels, Role, SharedString, Task, TestSupportExt, Toggled,
-    Window,
+    AnyElement, AvailableSpace, Context, Pixels, Role, SharedString, Task, Window,
     component::{
-        Disableable, Icon, Sizable,
+        Disableable, Sizable,
         button::{Button, ButtonVariants},
         h_flex,
         scroll::ScrollableElement,
@@ -27,6 +26,8 @@ use super::{LogPanel, LogSource};
 use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
 use crate::palette::palette;
 use crate::ui;
+
+mod catalog;
 
 /// The Logs page's source: one Talos node's service catalog, the services
 /// being collected, their stream and their failures.
@@ -96,7 +97,7 @@ impl LogSource for TalosLogs {
         window: &mut Window,
         cx: &mut Context<LogPanel>,
     ) {
-        let mut catalog_content = view.render_catalog_content(cx).into_any_element();
+        let mut catalog_content = catalog::catalog(view, cx).into_any_element();
         let catalog_size = catalog_content.layout_as_root(
             size(
                 AvailableSpace::Definite((width - ui::dp_px(90., window)).max(px(0.))),
@@ -407,8 +408,6 @@ pub(super) trait Collection: Sized + 'static {
 
     /// The service catalog: what to collect, and what to show.
     fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
-
-    fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
 }
 
 impl Collection for LogPanel {
@@ -662,123 +661,13 @@ impl Collection for LogPanel {
                     .h(catalog_height)
                     .min_h_0()
                     .child(
-                        self.render_catalog_content(cx)
+                        catalog::catalog(self, cx)
                             .h_full()
                             .min_h_0()
                             .overflow_y_scrollbar()
                             .id("logs-services-scroll"),
                     ),
             )
-    }
-
-    fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let p = palette(cx);
-        h_flex()
-            .flex_wrap()
-            .gap(ui::dp(6.))
-            .children(self.source().services.iter().map(|service| {
-                let collect_service = service.clone();
-                let show_service = service.clone();
-                let collecting = self.source().collecting.contains(service);
-                let showing = self.shown().contains(service);
-                let count = self.service_count(service);
-                let full = !collecting && self.source().collecting.len() >= 16;
-                h_flex()
-                    .h(ui::dp(26.))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(if collecting {
-                        p.accent_line
-                    } else {
-                        p.line_strong
-                    })
-                    .bg(if collecting { p.accent_soft } else { p.surface })
-                    .overflow_hidden()
-                    .child(
-                        h_flex()
-                            .id(SharedString::from(format!("collect-{}", service.as_str())))
-                            .test_support()
-                            .role(Role::CheckBox)
-                            .aria_toggled(if collecting {
-                                Toggled::True
-                            } else {
-                                Toggled::False
-                            })
-                            .aria_label(format!("Collect {}", service.as_str()))
-                            .tab_index(0)
-                            .h_full()
-                            .pl(ui::dp(10.))
-                            .pr(ui::dp(if collecting || count > 0 { 4. } else { 10. }))
-                            .gap(ui::dp(5.))
-                            .when(!full, |this| this.cursor_pointer())
-                            .when(full, |this| this.opacity(0.5))
-                            .font_family(ui::MONO_FONT)
-                            .text_size(ui::dp(12.))
-                            .text_color(if collecting { p.ink } else { p.muted })
-                            .when(collecting, |this| {
-                                this.child(
-                                    Icon::new(IconName::Check)
-                                        .size(ui::dp(13.))
-                                        .text_color(p.accent),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .when(!showing, |this| this.line_through().text_color(p.muted))
-                                    .child(service.as_str().to_owned()),
-                            )
-                            .when(count > 0, |this| {
-                                this.child(
-                                    div()
-                                        .text_size(ui::dp(10.5))
-                                        .text_color(p.muted)
-                                        .child(count.to_string()),
-                                )
-                            })
-                            .when(!full, |this| {
-                                this.on_click(cx.listener(move |this, _, _, cx| {
-                                    let checked =
-                                        !this.source().collecting.contains(&collect_service);
-                                    this.toggle_collection(collect_service.clone(), checked, cx)
-                                }))
-                            }),
-                    )
-                    .when(collecting || count > 0, |this| {
-                        this.child(
-                            h_flex()
-                                .id(SharedString::from(format!("show-{}", service.as_str())))
-                                .test_support()
-                                .role(Role::CheckBox)
-                                .aria_toggled(if showing {
-                                    Toggled::True
-                                } else {
-                                    Toggled::False
-                                })
-                                .aria_label(format!(
-                                    "{} {} lines",
-                                    if showing { "Hide" } else { "Show" },
-                                    service.as_str()
-                                ))
-                                .tab_index(0)
-                                .h_full()
-                                .pl(ui::dp(4.))
-                                .pr(ui::dp(9.))
-                                .cursor_pointer()
-                                .child(
-                                    Icon::new(if showing {
-                                        IconName::Eye
-                                    } else {
-                                        IconName::EyeOff
-                                    })
-                                    .size(ui::dp(13.))
-                                    .text_color(p.muted),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.toggle_shown(&show_service, cx);
-                                })),
-                        )
-                    })
-            }))
     }
 }
 
