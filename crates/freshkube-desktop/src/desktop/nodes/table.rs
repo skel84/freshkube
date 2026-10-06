@@ -3,6 +3,7 @@ use super::*;
 use freshkube_ui::table::{
     self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::prelude::*;
 use std::collections::BTreeSet;
 
@@ -293,9 +294,7 @@ impl TableSource for Pilot {
                     .text_color(style.p.muted)
                     .children(ui::status_glyph(row.service_status.tone, cx))
                     .child(row.service_status.count.clone())
-                    .tooltip(move |window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
-                    })
+                    .follow_tooltip(label)
                     .into_any_element()
             }
             field => {

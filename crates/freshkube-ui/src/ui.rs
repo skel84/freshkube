@@ -6,9 +6,7 @@ use gpui_kit::component::{
     empty::{
         EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
     },
-    h_flex,
-    tooltip::Tooltip,
-    v_flex,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -18,6 +16,7 @@ use gpui_kit::{
 };
 
 use crate::palette::{Palette, palette};
+use crate::tooltip::FollowTooltip as _;
 
 /// Monospace face for resource names, hostnames, addresses, numbers and
 /// logs. The interface face, Figtree, is the theme's `font.family`.
@@ -220,7 +219,7 @@ pub fn status_mark(
         .role(Role::Image)
         .aria_label(tooltip.clone())
         .children(status_glyph(tone, cx))
-        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .follow_tooltip(tooltip)
         .test_support()
         .into_any_element()
 }

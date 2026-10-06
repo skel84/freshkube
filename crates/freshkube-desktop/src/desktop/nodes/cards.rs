@@ -4,8 +4,8 @@ use crate::{
     screens::inset_width,
     ui::{MONO_FONT, dp},
 };
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     assets::IconName,
     component::{button::Button, h_flex, v_flex},
@@ -185,7 +185,6 @@ impl Pilot {
                 )
                 .into_any_element()
         };
-        let name = row.name.clone();
         let frame = if cards {
             freshkube_ui::page::card(cx)
         } else {
@@ -197,7 +196,7 @@ impl Pilot {
             .role(gpui_kit::Role::ListBoxOption)
             .aria_selected(selected)
             .aria_label(row.name.clone())
-            .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+            .follow_tooltip(row.name.clone())
             .when(cards, |this| this.h(dp(232.)).overflow_hidden())
             .px(dp(12.))
             .py(dp(if cards { 14. } else { 10. }))
