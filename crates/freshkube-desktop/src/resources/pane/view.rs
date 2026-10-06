@@ -219,20 +219,22 @@ impl DetailPane {
                 }),
                 None,
             ))
+            .when(Tab::of(&detail.target.kind).contains(&Tab::Logs), |this| {
+                this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None, None))
+            })
             .when(detail.target.kind.is_pod(), |this| {
                 let shell = self.shell.read(cx);
                 let running = shell.running().then(|| {
                     ui::status_mark("detail-shell-running", Tone::Good, "A shell runs", cx)
                 });
                 let title = shell.title().cloned();
-                this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None, None))
-                    .child(tab(
-                        "detail-tab-shell",
-                        Tab::Shell,
-                        "Shell".into(),
-                        running,
-                        title,
-                    ))
+                this.child(tab(
+                    "detail-tab-shell",
+                    Tab::Shell,
+                    "Shell".into(),
+                    running,
+                    title,
+                ))
             })
             .when(Tab::of(&detail.target.kind).contains(&Tab::Ports), |this| {
                 this.child(tab(
@@ -330,7 +332,13 @@ impl Render for DetailPane {
                         .flex_1()
                         .min_h_0()
                         .w_full()
-                        .child(self.logs.clone()),
+                        .map(|this| {
+                            if self.shows_workload_logs() {
+                                this.child(self.workload_logs.clone())
+                            } else {
+                                this.child(self.logs.clone())
+                            }
+                        }),
                 )
                 .into_any_element(),
             (Tab::Shell, ..) => self.shell.clone().into_any_element(),

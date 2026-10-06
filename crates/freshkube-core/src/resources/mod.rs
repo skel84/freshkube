@@ -7,7 +7,8 @@
 //! object is read in full on demand ([`get_object`]), with its events
 //! ([`watch_object_events`]). Custom kinds come from discovery
 //! ([`list_custom_groups`], [`list_group_kinds`]). A pod's containers come with its
-//! overview, and their logs from [`follow_pod_log`]. Pods' use comes from
+//! overview, and their logs from [`follow_pod_log`]. A workload's pods, to
+//! read their logs together, come from [`follow_workload_pods`]. Pods' use comes from
 //! metrics-server ([`list_pod_usage`]).
 //! Nothing here changes the cluster, except [`start_exec`], which runs a
 //! shell in a container only when the user starts one, and
@@ -29,6 +30,7 @@ mod pod_logs;
 mod pod_row;
 mod table;
 mod watch;
+mod workload_pods;
 
 pub use connection::{Connection, connect};
 pub use contexts::{KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources};
@@ -60,6 +62,9 @@ pub use pod_row::{
 };
 pub use table::{OwnerReference, RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
+pub use workload_pods::{
+    WorkloadPod, WorkloadPods, follow_workload_pods, runs_pods, workload_selector,
+};
 
 pub use metadata::{MetadataNames, get_metadata, list_metadata};
 

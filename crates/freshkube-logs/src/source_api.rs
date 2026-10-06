@@ -23,6 +23,12 @@ impl<S: LogSource> LogView<S> {
         &mut self.source
     }
 
+    /// The panel's height when it last drew, for a source that fits its
+    /// controls to the room the log leaves them.
+    pub fn panel_height(&self) -> Option<gpui_kit::Pixels> {
+        self.panel_height
+    }
+
     /// Applies the lines held while hidden.
     pub fn flush_backlog(&mut self, cx: &mut Context<Self>) {
         if self.backlog.is_empty() {

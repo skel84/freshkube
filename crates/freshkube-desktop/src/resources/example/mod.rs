@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use freshkube_core::resources::{
     Amounts, ApiGroup, ContainerFacts, Failure, FailureKind, GroupKinds, ObjectDocument,
-    ObjectEvent, PodFacts, PodLogUpdate, PodUsage, ResourceKind, SecretValue, Termination, builtin,
-    object_from_yaml,
+    ObjectEvent, PodFacts, PodLogUpdate, PodUsage, ResourceKind, SecretValue, Termination,
+    WorkloadPod, builtin, object_from_yaml,
 };
 
 use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
@@ -492,6 +492,44 @@ pub(crate) fn ready_pod(context: &str, namespace: &str, app: &str) -> Option<Str
                 && row.cells[2] == "Running"
         })
         .map(|row| row.identity.name)
+}
+
+/// The example pods `selector` picks in `workload`'s namespace, as a
+/// workload's Logs tab watches them. Only `key=value` terms match, which is
+/// all the example workloads use.
+pub(crate) fn workload_pods(
+    workload: &ResourceIdentity,
+    selector: &str,
+    now: i64,
+) -> Vec<WorkloadPod> {
+    let Some(context) = workload.connection.strip_prefix("example:") else {
+        return Vec::new();
+    };
+    let Some(terms) = selector
+        .split(',')
+        .map(|term| term.split_once('='))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Vec::new();
+    };
+    let Some((_, rows)) = read(context, "pods", None, now) else {
+        return Vec::new();
+    };
+    rows.into_iter()
+        .enumerate()
+        .filter(|(_, row)| row.identity.namespace == workload.namespace)
+        .filter_map(|(ix, row)| {
+            let yaml = objects::pod_yaml(&row, ix, row.created.unwrap_or(now), now);
+            let object: serde_yaml::Value = serde_yaml::from_str(&yaml).ok()?;
+            let labels = object.get("metadata")?.get("labels")?;
+            terms
+                .iter()
+                .all(|(key, value)| {
+                    labels.get(*key).and_then(serde_yaml::Value::as_str) == Some(*value)
+                })
+                .then(|| WorkloadPod::of_object(&object))
+        })
+        .collect()
 }
 
 pub(crate) fn deployment_columns() -> Vec<ResourceColumn> {
