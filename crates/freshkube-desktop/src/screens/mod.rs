@@ -595,10 +595,10 @@ pub(crate) fn segment<T: Send + 'static>(
     use freshkube_ui::status::{Part, Segment};
     let updated = loader
         .last_successful()
-        .map(|time| Part::new(format!("updated {}", clock(time))));
+        .map(|time| Part::new(format!("updated {}", clock(time))).minor());
     let example = source
         .filter(|source| source.is_example())
-        .map(|_| Part::new("example data"));
+        .map(|_| Part::new("example data").minor());
     Segment::new(
         source.map(|source| source.target.context.clone()),
         parts.into_iter().chain(updated).chain(example),

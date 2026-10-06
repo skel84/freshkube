@@ -66,3 +66,5 @@ freshkube-probe = { workspace = true, features = ["counting"] }
 freshkube-terminal = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }
+# The status bar tests read which line a segment drew (`status::shown`).
+freshkube-ui = { workspace = true, features = ["testing"] }

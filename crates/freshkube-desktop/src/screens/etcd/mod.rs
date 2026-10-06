@@ -640,10 +640,10 @@ impl EtcdScreen {
             toned(plural(alarms.len(), "alarm", "alarms"), alarm_tone)
         });
         if let Some(time) = self.loader.last_successful() {
-            parts.push(Part::new(format!("updated {}", clock(time))));
+            parts.push(Part::new(format!("updated {}", clock(time))).minor());
         }
         if self.source.as_ref().is_some_and(ScreenSource::is_example) {
-            parts.push(Part::new("example data"));
+            parts.push(Part::new("example data").minor());
         }
         let context = self
             .source

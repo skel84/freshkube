@@ -3,6 +3,7 @@
 //! filters change, each row's cells, and the status bar's counts.
 use super::*;
 use crate::palette::Palette;
+use freshkube_ui::status::Part;
 use gpui_kit::component::ActiveTheme;
 #[cfg(test)]
 use std::rc::Rc;
@@ -166,39 +167,57 @@ fn columns(rows: &[WorkloadRow]) -> Vec<Column> {
 }
 
 /// The counts for the status bar's line; a list that didn't answer is
-/// unknown, not zero.
-pub(super) fn status_parts(data: &WorkloadData) -> Vec<SharedString> {
+/// unknown, not zero. Degraded and failing pods are toned, so a narrow bar
+/// keeps them; a count of none is the first a narrow bar drops.
+pub(super) fn status_parts(data: &WorkloadData) -> Vec<Part> {
     let snapshot = &data.snapshot;
-    let count = |value: usize, source: WorkloadSource| {
+    let count = |value: usize, source: WorkloadSource, noun: &str, tone: Option<Tone>| {
         if data.missing(source) {
-            "unknown".to_owned()
-        } else {
-            value.to_string()
+            return Part::new(format!("unknown {noun}"));
+        }
+        let part = Part::new(format!("{value} {noun}"));
+        match tone {
+            _ if value == 0 => part.minor(),
+            Some(tone) => part.tone(tone),
+            None => part,
         }
     };
     vec![
-        format!(
-            "{} deployments",
-            count(snapshot.total_deployments, WorkloadSource::Deployments)
-        )
-        .into(),
-        format!(
-            "{} statefulsets",
-            count(snapshot.total_statefulsets, WorkloadSource::StatefulSets)
-        )
-        .into(),
-        format!(
-            "{} daemonsets",
-            count(snapshot.total_daemonsets, WorkloadSource::DaemonSets)
-        )
-        .into(),
-        format!(
-            "pods {} healthy, {} degraded, {} failing",
-            count(snapshot.total_pods_healthy, WorkloadSource::Pods),
-            count(snapshot.total_pods_degraded, WorkloadSource::Pods),
-            count(snapshot.total_pods_failing, WorkloadSource::Pods),
-        )
-        .into(),
+        count(
+            snapshot.total_deployments,
+            WorkloadSource::Deployments,
+            "deployments",
+            None,
+        ),
+        count(
+            snapshot.total_statefulsets,
+            WorkloadSource::StatefulSets,
+            "statefulsets",
+            None,
+        ),
+        count(
+            snapshot.total_daemonsets,
+            WorkloadSource::DaemonSets,
+            "daemonsets",
+            None,
+        ),
+        if data.missing(WorkloadSource::Pods) {
+            Part::new("pods unknown")
+        } else {
+            Part::new(format!("{} pods healthy", snapshot.total_pods_healthy))
+        },
+        count(
+            snapshot.total_pods_degraded,
+            WorkloadSource::Pods,
+            "degraded",
+            Some(Tone::Warn),
+        ),
+        count(
+            snapshot.total_pods_failing,
+            WorkloadSource::Pods,
+            "failing",
+            Some(Tone::Crit),
+        ),
     ]
 }
 
