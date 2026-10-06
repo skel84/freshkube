@@ -162,6 +162,23 @@ impl TalosClient {
         request
     }
 
+    /// Target a mutation, refusing when no node is left to target.
+    ///
+    /// A read without a target falls back to the endpoint answering for
+    /// itself; a change must never land on a machine nobody named.
+    fn with_mutation_targets<T>(
+        &self,
+        request: Request<T>,
+        action: &str,
+    ) -> Result<Request<T>, TalosError> {
+        if self.target_hosts().is_empty() {
+            return Err(TalosError::Grpc(tonic::Status::failed_precondition(
+                format!("refusing to {action}: no Talos node is targeted"),
+            )));
+        }
+        Ok(self.with_nodes(request))
+    }
+
     /// Get version information from all configured nodes
     pub async fn version(&self) -> Result<Vec<VersionInfo>, TalosError> {
         let mut client = self.machine_client();
@@ -347,9 +364,12 @@ impl TalosClient {
         use crate::proto::machine::ServiceRestartRequest;
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(ServiceRestartRequest {
-            id: service_id.to_string(),
-        }));
+        let request = self.with_mutation_targets(
+            Request::new(ServiceRestartRequest {
+                id: service_id.to_string(),
+            }),
+            &format!("restart service {service_id}"),
+        )?;
 
         let response = client.service_restart(request).await?;
         self.decode_service_restart(response.into_inner(), service_id)
@@ -1112,12 +1132,15 @@ impl TalosClient {
         };
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(ApplyConfigurationRequest {
-            data: config_yaml.as_bytes().to_vec(),
-            mode: proto_mode as i32,
-            dry_run,
-            try_mode_timeout: None,
-        }));
+        let request = self.with_mutation_targets(
+            Request::new(ApplyConfigurationRequest {
+                data: config_yaml.as_bytes().to_vec(),
+                mode: proto_mode as i32,
+                dry_run,
+                try_mode_timeout: None,
+            }),
+            "apply configuration",
+        )?;
 
         let response = client.apply_configuration(request).await?;
         self.decode_apply_configuration(response.into_inner(), dry_run)
@@ -1709,9 +1732,12 @@ impl TalosClient {
         };
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(RebootRequest {
-            mode: proto_mode as i32,
-        }));
+        let request = self.with_mutation_targets(
+            Request::new(RebootRequest {
+                mode: proto_mode as i32,
+            }),
+            "reboot",
+        )?;
 
         let response = client.reboot(request).await?;
         self.decode_reboot(response.into_inner())
@@ -1742,7 +1768,8 @@ impl TalosClient {
         use crate::proto::machine::ShutdownRequest;
 
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(ShutdownRequest { force }));
+        let request =
+            self.with_mutation_targets(Request::new(ShutdownRequest { force }), "shutdown")?;
         let response = client.shutdown(request).await?;
         self.decode_shutdown(response.into_inner())
     }
@@ -3483,6 +3510,44 @@ mod tests {
             targeting(&client),
             (None, vec!["node1".to_string(), "2001:db8::6".to_string()])
         );
+    }
+
+    #[tokio::test]
+    async fn mutations_refuse_when_no_node_is_targeted() {
+        for nodes in [vec![], vec!["127.0.0.1:50000".to_string()]] {
+            let client = create_test_client(nodes, vec!["127.0.0.1:50000".to_string()]);
+            let refused = |result: Result<(), TalosError>| match result {
+                Err(TalosError::Grpc(status)) => {
+                    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+                    status.message().to_string()
+                }
+                other => panic!("expected a refusal, got {other:?}"),
+            };
+            assert!(refused(client.shutdown(false).await.map(drop)).contains("shutdown"));
+            assert!(refused(client.reboot(RebootMode::Default).await.map(drop)).contains("reboot"));
+            assert!(
+                refused(client.service_restart("kubelet").await.map(drop))
+                    .contains("restart service kubelet")
+            );
+            assert!(
+                refused(
+                    client
+                        .apply_configuration("", ApplyMode::Auto, true)
+                        .await
+                        .map(drop)
+                )
+                .contains("apply configuration")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_targeted_mutation_carries_its_node() {
+        let client = create_test_client(vec!["[2001:db8::5]:50000".to_string()], vec![]);
+        let request = client
+            .with_mutation_targets(Request::new(()), "reboot")
+            .unwrap();
+        assert_eq!(request.metadata().get("node").unwrap(), "2001:db8::5");
     }
 
     #[tokio::test]
