@@ -159,6 +159,8 @@ pub(crate) struct DetailPane {
     tab: Tab,
     /// One per tab, in `Tab::ALL` order, so the arrows can move between them.
     tab_focus: [FocusHandle; 6],
+    /// How far the tabs scrolled when the pane is too narrow for them.
+    tab_strip: freshkube_ui::inspector::TabStrip,
     find: Entity<InputState>,
     query: String,
     matches: Vec<(usize, Range<usize>)>,
@@ -274,6 +276,7 @@ impl DetailPane {
             timer: None,
             tab: Tab::Overview,
             tab_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
+            tab_strip: Default::default(),
             find,
             query: String::new(),
             matches: Vec::new(),
@@ -378,6 +381,8 @@ impl DetailPane {
             .update(cx, |logs, cx| logs.show_pod(pod, Some(access), cx));
         self.title = target.identity.address().into();
         self.detail = Some(Detail::new(target));
+        // Another object may have other tabs, so its strip starts unscrolled.
+        self.tab_strip = Default::default();
         self.follow = Follow::new(version);
         self.summary = None;
         self.cross_links = Default::default();

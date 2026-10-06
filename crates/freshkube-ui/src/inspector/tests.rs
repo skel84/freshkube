@@ -2,7 +2,9 @@ use std::cell::RefCell;
 
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AnyWindowHandle, Context, Render, ScrollDelta, TestAppContext, point, px, size};
+use gpui_kit::{
+    AnyWindowHandle, Bounds, Context, Render, ScrollDelta, TestAppContext, point, px, size,
+};
 
 use super::*;
 
@@ -315,7 +317,7 @@ fn a_page_sets_the_stacked_heights(cx: &mut TestAppContext) {
 
 /// An inspector with tabs: a heading, a banner, the tab strip, content
 /// that lays itself out, and a footer.
-struct Tabbed;
+struct Tabbed(TabStrip);
 
 impl Render for Tabbed {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -323,7 +325,9 @@ impl Render for Tabbed {
             .heading(div().id("inspector-title").test_support().child("api-7d9"))
             .banner(Some(div().h(px(30.)).child("Showing it as last read.")))
             .tabs(
-                h_flex()
+                &self.0,
+                self.0
+                    .row("tabs-row", 0)
                     .child(tab("tab-overview", "Overview", true, cx))
                     .child(tab("tab-yaml", "YAML", false, cx)),
             )
@@ -345,7 +349,7 @@ impl Render for Tabbed {
 fn tabs_sit_under_the_heading_and_the_content_fills_the_rest(cx: &mut TestAppContext) {
     install(cx);
     let handle = cx.open_window(size(px(600.), px(500.)), |window, cx| {
-        let view = cx.new(|_| Tabbed);
+        let view = cx.new(|_| Tabbed(TabStrip::default()));
         Root::new(view, window, cx)
     });
     let handle: AnyWindowHandle = handle.into();
@@ -437,4 +441,264 @@ fn a_given_start_applies_until_the_user_drags(cx: &mut TestAppContext) {
     cx.run_until_parked();
     close("dragged", table_after(900., cx), px(450.));
     close("still the user's", table_after(400., cx), px(450.));
+}
+
+/// An inspector `width` wide whose strip holds seven tabs, `active` shown.
+struct Strip {
+    strip: TabStrip,
+    width: f32,
+    active: usize,
+}
+
+const LABELS: [&str; 7] = [
+    "Overview", "YAML", "Events", "Logs", "Shell", "Ports", "Metrics",
+];
+
+impl Render for Strip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let row = self
+            .strip
+            .row("strip-row", self.active)
+            .children(LABELS.iter().enumerate().map(|(ix, label)| {
+                tab(
+                    SharedString::from(format!("strip-tab-{ix}")),
+                    *label,
+                    ix == self.active,
+                    cx,
+                )
+            }));
+        div().size_full().child(
+            div().w(px(self.width)).h_full().child(
+                Inspector::new("inspector")
+                    .heading(div().child("api-7d9"))
+                    .tabs(&self.strip, row)
+                    .content(div())
+                    .render(cx),
+            ),
+        )
+    }
+}
+
+fn open_strip(
+    cx: &mut TestAppContext,
+    width: f32,
+    active: usize,
+) -> (AnyWindowHandle, Entity<Strip>) {
+    install(cx);
+    let mut page = None;
+    let handle = cx.open_window(size(px(1000.), px(400.)), |window, cx| {
+        let view = cx.new(|_| Strip {
+            strip: TabStrip::default(),
+            width,
+            active,
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    (handle.into(), page.unwrap())
+}
+
+/// Draws until the strip stops asking for frames.
+fn settle(window: &mut Window, cx: &mut App) {
+    for _ in 0..4 {
+        window.render_frame(cx);
+        if window.simulate_next_frame(cx) == 0 {
+            return;
+        }
+    }
+    panic!("the tab strip keeps moving");
+}
+
+fn strip_tab(window: &mut Window, ix: usize) -> Bounds<Pixels> {
+    window
+        .find(SharedString::from(format!("strip-tab-{ix}")))
+        .bounds()
+}
+
+/// Whether tab `ix` shows whole in the row.
+fn whole(window: &mut Window, ix: usize) -> bool {
+    let row = window.find("strip-row").bounds();
+    let item = strip_tab(window, ix);
+    item.left() >= row.left() - px(0.5) && item.right() <= row.right() + px(0.5)
+}
+
+/// Whether tab `ix` shows whole and clear of the cut ends' fades.
+fn clear(window: &mut Window, ix: usize) -> bool {
+    let item = strip_tab(window, ix);
+    whole(window, ix)
+        && window
+            .try_find("inspector-tabs-earlier")
+            .is_none_or(|end| item.left() >= end.bounds().right() - px(0.5))
+        && window
+            .try_find("inspector-tabs-later")
+            .is_none_or(|end| item.right() <= end.bounds().left() + px(0.5))
+}
+
+#[gpui_kit::test]
+fn a_strip_with_room_shows_every_tab_and_no_chevron(cx: &mut TestAppContext) {
+    let (handle, view) = open_strip(cx, 900., 0);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        for ix in 0..LABELS.len() {
+            assert!(whole(window, ix), "tab {ix} is cut");
+        }
+        assert!(window.try_find("inspector-tabs-earlier").is_none());
+        assert!(window.try_find("inspector-tabs-later").is_none());
+        assert_eq!(view.read(cx).strip.edges(), Edges::default());
+    })
+    .unwrap();
+}
+
+/// A strip learns it is cut while drawing, and asks for the frame that
+/// shows its chevron itself: nothing else would draw one.
+#[gpui_kit::test]
+fn a_narrow_strip_marks_its_cut_end_without_input(cx: &mut TestAppContext) {
+    let (handle, view) = open_strip(cx, 260., 0);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        assert_eq!(
+            view.read(cx).strip.edges(),
+            Edges {
+                earlier: false,
+                later: true
+            }
+        );
+        assert!(window.try_find("inspector-tabs-earlier").is_none());
+        let tabs = window.find("inspector-tabs").bounds();
+        let later = window.find("inspector-tabs-later").bounds();
+        close("chevron at the edge", later.right(), tabs.right());
+        close(
+            "chevron as tall as a tab",
+            later.size.height,
+            dp_px(TAB_HEIGHT, window),
+        );
+        // The hairline under the strip stays drawn.
+        assert!(
+            later.bottom() <= tabs.bottom() - px(1.) + px(0.5),
+            "{later:?} {tabs:?}"
+        );
+        assert!(whole(window, 0));
+        assert!(!whole(window, LABELS.len() - 1));
+    })
+    .unwrap();
+    // Unlike a test's frame, an app's frame only comes when asked for.
+    view.update(cx, |strip, cx| {
+        strip.strip = TabStrip::default();
+        cx.notify();
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.simulate_next_frame(cx) > 0,
+            "the strip asked for no frame"
+        );
+    })
+    .unwrap();
+}
+
+/// The arrows and Command-Shift-] move the active tab; the strip brings
+/// it in clear of the fades, wherever it is.
+#[gpui_kit::test]
+fn the_active_tab_comes_into_view_when_the_keyboard_moves_to_it(cx: &mut TestAppContext) {
+    let (handle, view) = open_strip(cx, 260., 0);
+    cx.update_window(handle, |_, window, cx| settle(window, cx))
+        .unwrap();
+    for active in [5, LABELS.len() - 1, 2, 0] {
+        view.update(cx, |strip, cx| {
+            strip.active = active;
+            cx.notify();
+        });
+        cx.update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            assert!(clear(window, active), "tab {active} isn't in view");
+        })
+        .unwrap();
+    }
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("inspector-tabs-earlier").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_active_tab_comes_back_into_view_after_a_resize(cx: &mut TestAppContext) {
+    let (handle, view) = open_strip(cx, 900., 5);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        assert!(clear(window, 5));
+    })
+    .unwrap();
+    for width in [260., 200., 320.] {
+        view.update(cx, |strip, cx| {
+            strip.width = width;
+            cx.notify();
+        });
+        cx.update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            assert!(clear(window, 5), "tab 5 isn't in view at {width}");
+            assert!(window.try_find("inspector-tabs-earlier").is_some());
+        })
+        .unwrap();
+    }
+}
+
+/// A chevron brings in the first tab cut at its end, and leaves the active
+/// tab as it was; clicking back reaches the first tab and drops the chevron.
+#[gpui_kit::test]
+fn a_chevron_brings_in_the_next_cut_tab(cx: &mut TestAppContext) {
+    let (handle, view) = open_strip(cx, 260., 0);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        let next = (0..LABELS.len())
+            .find(|ix| !clear(window, *ix))
+            .expect("a cut tab");
+        window.click("inspector-tabs-later", cx);
+        settle(window, cx);
+        assert!(clear(window, next), "tab {next} isn't in view");
+        assert!(window.try_find("inspector-tabs-earlier").is_some());
+        for _ in 0..LABELS.len() {
+            if window.try_find("inspector-tabs-earlier").is_none() {
+                break;
+            }
+            window.click("inspector-tabs-earlier", cx);
+            settle(window, cx);
+        }
+        assert!(window.try_find("inspector-tabs-earlier").is_none());
+        assert!(whole(window, 0));
+        assert_eq!(window.find("strip-tab-0").selected(), Some(true));
+    })
+    .unwrap();
+    assert_eq!(view.read_with(cx, |strip, _| strip.active), 0);
+}
+
+/// A plain wheel scrolls the strip sideways, and it stays where it was
+/// left until the active tab or the width changes.
+#[gpui_kit::test]
+fn a_wheel_scroll_stays_until_the_active_tab_changes(cx: &mut TestAppContext) {
+    let (handle, view) = open_strip(cx, 260., 0);
+    let left = cx
+        .update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            let left = strip_tab(window, 0).left();
+            window.scroll(
+                "strip-row",
+                ScrollDelta::Pixels(point(px(0.), px(-80.))),
+                cx,
+            );
+            settle(window, cx);
+            assert!(
+                strip_tab(window, 0).left() < left - px(40.),
+                "the wheel moved nothing"
+            );
+            assert!(window.try_find("inspector-tabs-earlier").is_some());
+            strip_tab(window, 0).left()
+        })
+        .unwrap();
+    view.update(cx, |_, cx| cx.notify());
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        close("left as it was", strip_tab(window, 0).left(), left);
+    })
+    .unwrap();
 }

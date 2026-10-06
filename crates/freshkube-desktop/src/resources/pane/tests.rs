@@ -839,3 +839,52 @@ fn the_logs_and_yaml_tabs_are_inset_like_the_heading(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// Draws until the tab strip stops asking for frames.
+fn settle(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    for _ in 0..4 {
+        window.render_frame(cx);
+        if window.simulate_next_frame(cx) == 0 {
+            return;
+        }
+    }
+    panic!("the tab strip keeps moving");
+}
+
+/// A pane too narrow for its tabs cuts the strip and marks the cut end;
+/// the arrows still land on a tab in view, Ports included (#232).
+#[gpui_kit::test]
+fn the_keyboard_reaches_the_tabs_a_narrow_pane_cuts(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    cx.update(|cx| crate::text_size::install(None, cx));
+    cx.update(|cx| crate::text_size::set(20., cx));
+    let (pod, _) = running_pod();
+    let in_view = |window: &mut gpui_kit::Window, id: &'static str| {
+        let row = window.find("detail-tabs").bounds();
+        let tab = window.find(id).bounds();
+        tab.left() >= row.left() - px(0.5) && tab.right() <= row.right() + px(0.5)
+    };
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        settle(window, cx);
+        assert!(
+            window.try_find("detail-inspector-tabs-later").is_some(),
+            "the pane fits all its tabs"
+        );
+        assert!(!in_view(window, "detail-tab-ports"));
+        window.click("detail-tab-overview", cx);
+        // Left from Overview wraps round to Ports, the last tab.
+        window.press("left", cx);
+        settle(window, cx);
+        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-ports").focused(), Some(true));
+        assert!(in_view(window, "detail-tab-ports"));
+        assert!(window.try_find("detail-inspector-tabs-earlier").is_some());
+        window.press("right", cx);
+        settle(window, cx);
+        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert!(in_view(window, "detail-tab-overview"));
+        assert!(window.try_find("detail-inspector-tabs-earlier").is_none());
+    })
+    .unwrap();
+}

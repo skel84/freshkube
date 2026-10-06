@@ -1,0 +1,1 @@
+- A detail pane too narrow for its tabs now scrolls them sideways: a cut end fades under an arrow that brings the next tab in, and the tab you're on, or move to with the keyboard, is always in view.

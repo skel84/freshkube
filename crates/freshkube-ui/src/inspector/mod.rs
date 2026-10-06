@@ -5,7 +5,7 @@
 //! [`InspectorSplit`], which remembers how wide the user made it.
 mod tabs;
 
-pub use tabs::{TAB_HEIGHT, tab};
+pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -58,7 +58,7 @@ pub struct Inspector {
     id: SharedString,
     heading: Option<AnyElement>,
     banner: Option<AnyElement>,
-    tabs: Option<AnyElement>,
+    tabs: Option<(TabStrip, AnyElement)>,
     body: Vec<AnyElement>,
     content: Option<AnyElement>,
     footer: Option<AnyElement>,
@@ -89,9 +89,11 @@ impl Inspector {
         self
     }
 
-    /// A row of [`tab`]s under the heading, with a hairline below.
-    pub fn tabs(mut self, tabs: impl IntoElement) -> Self {
-        self.tabs = Some(tabs.into_any_element());
+    /// A row of [`tab`]s under the heading, with a hairline below: `row`
+    /// is `strip`'s [`TabStrip::row`] with the tabs in it. It scrolls
+    /// sideways when the inspector is too narrow for it.
+    pub fn tabs(mut self, strip: &TabStrip, row: impl IntoElement) -> Self {
+        self.tabs = Some((strip.clone(), row.into_any_element()));
         self
     }
 
@@ -174,18 +176,10 @@ impl Inspector {
                     .pt(dp(UNDER_HEADING))
                     .child(banner)
             }))
-            .children(self.tabs.map(|tabs| {
-                h_flex()
-                    .id(part("tabs"))
-                    .test_support()
-                    .flex_none()
-                    .min_w_0()
-                    .mt(dp(UNDER_HEADING))
-                    .px(dp(PANE_PADDING))
-                    .border_b_1()
-                    .border_color(line)
-                    .child(tabs)
-            }))
+            .children(
+                self.tabs
+                    .map(|(strip, row)| tabs::strip(part("tabs"), &strip, row, cx)),
+            )
             .child(body)
             .children(self.footer.map(|footer| {
                 div()
