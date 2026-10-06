@@ -1,1 +1,0 @@
-- Operations' interaction tests step the example run on a virtual clock instead of waiting on the wall clock, so they no longer slow down or time out on a loaded machine.

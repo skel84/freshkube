@@ -1,1 +1,0 @@
-- Tables show how many rows are selected or showing in their footer, beside the legend, instead of in a blue strip above the rows: Pods, Nodes, Applications, Incidents, Traces and Monitoring's table panels.

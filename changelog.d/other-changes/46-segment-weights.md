@@ -1,1 +1,0 @@
-- A status bar too narrow for a page's whole line now drops the refresh time and counts of none first, then other parts from the end, and always keeps warnings and failures in view.

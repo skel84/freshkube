@@ -1,1 +1,0 @@
-- A tooltip no longer appears over another node card or table row when a scroll moves its own row away from a still pointer.

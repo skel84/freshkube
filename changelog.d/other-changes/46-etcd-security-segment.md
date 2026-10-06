@@ -1,1 +1,0 @@
-- etcd and Security show their context, quorum or audit sources and update time in the status bar, not under their header.

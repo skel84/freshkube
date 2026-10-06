@@ -1,1 +1,0 @@
-- In a short window, Monitoring's header, variables and annotations scroll away with the page, and the panels get the whole window instead of the strip the header left them.

@@ -1,1 +1,0 @@
-- A narrow Monitoring chart's readout, such as a pod's last-hour CPU, stays inside the plot: it no longer covers the value axis or spills its "top N of M" past its box.

@@ -1,1 +1,0 @@
-- Maintenance mode lists the install disks in the shared table, with a column each for the device, ID, size, model and serial. The disk is still chosen only with its Select install disk button.

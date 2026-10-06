@@ -1,1 +1,0 @@
-- Maintenance mode tags an optical drive, and an optical drive's read-only flag, in a neutral tone rather than a warning, as Storage does: they are read-only by design.

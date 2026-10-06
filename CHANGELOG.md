@@ -4,6 +4,152 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.6.0 (2026-10-06)
+
+### Coroot
+
+- **Application charts:** each report on the Application page draws Coroot's
+  charts and heatmaps with Monitoring's chart: stacked and column charts, limits
+  as dashed lines, rollouts as deploy markers, and chart groups with a picker that
+  opens on Coroot's featured chart.
+- **Narrow Application page:** at a narrow window or a large text size, charts
+  take the whole row inside the page's margin, and a check's long condition
+  wraps inside the Checks card.
+- **Application page:** an application opens on Coroot's own view of it: a map of
+  its clients, instances and dependencies with links coloured by status, Coroot's
+  report tabs with their glyphs, each report's checks with their conditions and
+  thresholds, and its tables. The Tracing and Profiling reports show the Traces
+  and Profiling views in place.
+- **Application page as Coroot shows it:** the evidence card is gone, along with
+  its REST and MCP report reads, so the page shows Coroot's own view and nothing
+  more. CPU delay and throttled time now read in seconds, as in 2 ms.
+- **Coroot logs read:** core reads an application's messages and patterns
+  from Coroot, at the severity Coroot stored, and refreshes without adding a
+  message twice. The Application page's Logs tab will draw them.
+- **Coroot logs tab:** the Application page's Logs report shows Coroot's
+  histogram and its messages, at the severity Coroot stored, or its patterns.
+  Choose the origin, messages or patterns and a limit; search, filter by level
+  and copy as on a pod's logs. A refresh adds only newer messages and marks
+  where some may be missing.
+
+### Other changes
+
+- The stress run's Monitoring workload now opens its dashboard and asks its Prometheus, so it measures Monitoring; a run that never draws a panel fails instead of printing only the app's numbers.
+- A tooltip no longer appears over another node card or table row when a scroll moves its own row away from a still pointer.
+- On Linux, a stopped port forward's local port is free again at once, instead of staying taken for up to a minute.
+- A narrow Monitoring chart's readout, such as a pod's last-hour CPU, stays inside the plot: it no longer covers the value axis or spills its "top N of M" past its box.
+- Moving the pointer over a Monitoring chart redraws only its crosshair and readout, not the chart's card, legend and plot, so a large dashboard follows the pointer more smoothly.
+- Moving the pointer over a Monitoring chart redraws only that chart: the page draws the crosshair on the others, so a large dashboard keeps up with the pointer.
+- A large Monitoring dashboard draws only the panels in or near view, so it stops drawing once those have answered, and scrolling to a panel draws it in place without moving the page.
+- **Log messages no longer lose their start:** a line such as
+  `cart-db: connection refused` shows whole in pod, node and Coroot logs. Only
+  a Talos service's own prefix (`main.go:94: `, `udevd[812]: `) and a leading
+  level word the row already shows are left out.
+- **Log notes on the rows' clock:** a Coroot log's "Some messages may be
+  missing" note shows its time in local time, as the messages around it do,
+  instead of in UTC.
+- A mouse wheel or trackpad over a log pauses Follow only when the log really scrolls up from its newest line; a wheel down at the end, or a sideways one, keeps following.
+- Nodes' cards share the page's width evenly, a lone card in the last row as wide as the rest; the cards and the pane's node list are drawn with a shared virtualised card grid.
+- **Diagnostics as a table:** a node's Diagnostics tab lists its checks in the same edge-to-edge
+  table as Pods, grouped by category, each group marked with its worst status and counting its
+  checks and problems. Passing, Warnings, Failing and Unknown become chips in the header that
+  filter to that status; P still shows only the problems. The CNI and the addons move into the
+  line under the header, and a long result no longer runs out of the table: it ends with "…",
+  and hovering the row or opening the check shows all of it.
+- etcd and Security show their context, quorum or audit sources and update time in the status bar, not under their header.
+- Tables show how many rows are selected or showing in their footer, beside the legend, instead of in a blue strip above the rows: Pods, Nodes, Applications, Incidents, Traces and Monitoring's table panels.
+- The detail pane on Resources is an inspector, not a card: its tabs are 28 high, it runs to the window's edge beside the list or under it, and the width you drag it to is remembered.
+- Incidents and Traces show the selection in an inspector beside a bare table, instead of in a card: drag the hairline between them to resize it, and each page remembers its width.
+- **Lifecycle takes the shared header and fills the status bar:** the page opens with the same 38
+  dp header as the others, with Refresh as an icon. The Talos and kubelet versions, the etcd
+  pre-check and the alert count move from the row of stats into the status bar, where an unsafe
+  etcd pre-check and alerts to review show as warnings. The bar's tooltip gives the etcd verdict and
+  the alerts in words, and the alerts keep their card on the page.
+- Maintenance mode lists the install disks in the shared table, with a column each for the device, ID, size, model and serial. The disk is still chosen only with its Select install disk button.
+- Maintenance mode tags an optical drive, and an optical drive's read-only flag, in a neutral tone rather than a warning, as Storage does: they are read-only by design.
+- **Meter tooltips:** Pods and Nodes word their CPU and memory meters the same way,
+  and the tooltip now says why a bar stands out: above request, or at least 85% of
+  its limit or the node's allocatable.
+- Monitoring's legend entries and series swatches, and the chart cursor's swatches, use the design's 3 px data-mark radius.
+- **Network takes the toolbar header:** a node's Network tab opens with the same 38 dp header as
+  Pods and Processes. Interfaces / Connections / Listeners / KubeSpan, the connection filter, the
+  interface being followed and the connection states sit in it and move into the "…" menu when the
+  pane is narrow. Throughput, errors, drops and connection counts move into the line below the
+  header with the update time. The table runs edge to edge and fills the pane, with the selection's
+  details beside or below it; notices, KubeSpan's status and a node that isn't responding show
+  under the header, and packet capture under the table.
+- **Operations takes the shared header:** the page opens with the same header as the others, with
+  Refresh as an icon. Its context, when it last read the audit log and whether it shows example data
+  move to the status bar.
+- **Processes takes the toolbar header:** a node's Processes tab opens with the same 38 dp header as
+  Pods and etcd. The filter, Tree and the All / Running / Disk wait / Zombie switch sit in it and
+  move into the "…" menu when the pane is narrow, as does the subtree's button. CPU, memory, load
+  and the process counts move into the line below the header with the update time. The table runs
+  edge to edge and fills the pane, with the selection's details beside or below it; a node that
+  isn't responding, or a read that failed, shows its message under the header.
+- Screens can fill the status bar's page segment, which the next change uses for etcd and Security; nothing changes on screen yet.
+- **Security takes the toolbar header:** the Security page opens with the same 38 dp header as Pods
+  and etcd, with Refresh as an icon. The context, the Talos endpoints and the volume target move
+  into the line below the header with the update time. The certificate, RBAC and volume summary
+  and the audit list sit under it as before; a target that isn't responding, or an audit that
+  failed, shows its message under the header.
+- A status bar too narrow for a page's whole line now drops the refresh time and counts of none first, then other parts from the end, and always keeps warnings and failures in view.
+- **Page details in the status bar:** Resources, System services, Nodes and
+  Observability no longer draw a line under their header; where the data
+  comes from, how much there is, its state and when it last changed now sit
+  in the status bar after the connection, with a stale or failed read in its
+  warning colour. In a narrow window the connection shrinks to its glyph so
+  the page's details keep the room.
+- **Workloads takes the toolbar header and the shared table:** the Health page's workloads open
+  with the same 38 dp header as Pods, with the filter beside the title, Only unhealthy (folded into
+  "…" on a narrow window) and Refresh as an icon. The deployment, statefulset, daemonset and pod
+  counts move into the line below it. Namespaces, workloads and pods list in the shared table, edge
+  to edge, with a status glyph per row; a namespace still opens and closes with Enter or a second
+  click, and the details sit beside the table or below it.
+- Health's workload and pod counts show in the status bar, not under its header.
+- The detail pane's YAML tab draws on the shared document view, like the maintenance review.
+- **Graph layout:** the service map's layout is its own crate, `freshkube-graph`, with
+  tests, and the developer workbench shows it on invented services. The map looks
+  the same.
+- **Graph routing:** `freshkube-graph` can route each call around the boxes, so no line
+  runs through a service and a cycle's call comes back below the row. The workbench's
+  graph story shows it on invented services and counts where calls cross.
+- **Service map:** a map wider than its card scrolls inside the card's border, with a
+  scrollbar under it, instead of running to the edge at narrow windows and large text.
+- **Service map:** calls are routed around the boxes, so no line runs through a service,
+  a call that skips a column passes between boxes, and a call that closes a cycle comes
+  back below the row.
+- **Workbench:** a developer tool, `freshkube-workbench`, shows the shared components on
+  invented data in both themes, every text size and both window widths; it is not
+  shipped in the app.
+- **Monitoring legends line up:** every legend row takes half the width, an odd last row too,
+  and a long legend stops short of the card's bottom edge. A series that stopped before the end
+  of the range shows its last value muted, with the time in the row's tooltip, so its name is no
+  longer cut short.
+- **Monitoring tables and a header that fits:** dashboard tables and Firing alerts are now the
+  same table as Pods, inside their panel: each column as wide as its contents, numbers on the
+  right, and a status glyph for a critical or warning severity. A long table shows its first
+  100 rows under "Showing 100 of N" until Show all. In a narrow window the time range, Refresh
+  and Auto-refresh fold into the header's More menu, the data source moves into the line under
+  the title, and the Annotations toggles wrap instead of running off the page.
+- Monitoring's chart readout no longer runs off the card's left edge: it sits on the side of the cursor with more room and shortens long series names to fit.
+- The advisory Linux platform check caches its test dependencies under a new key, so its test step no longer compiles them on every run.
+- The advisory Linux platform check now runs the whole test suite, headless UI tests included, after compiling and linting.
+- The app has its own icon, a skull over two crossed decks, in Finder, the Dock and the app switcher.
+- `scripts/changelog.sh` runs its Python from `scripts/changelog.py` instead of a here-document, never reads the caller's input, and fails if it reports fewer fragments than `changelog.d` holds.
+- **Monitoring:** a crowded chart draws its grey lines again. With many series, such as 65 at the 600 points a panel asks for, the grey lines together passed the most one GPUI path holds, and the chart drew none of them.
+- The service map's Connections is now the shared inspector, inside the map's card: beside the map when it fits and under it otherwise. Drag the divider to resize it, and the width is remembered. Open application sits at its foot.
+- In a short window, Monitoring's header, variables and annotations scroll away with the page, and the panels get the whole window instead of the strip the header left them.
+- Operations' interaction tests step the example run on a virtual clock instead of waiting on the wall clock, so they no longer slow down or time out on a loaded machine.
+- **Operations' plan stays inside its card:** at narrow widths and large text, each node's etcd
+  verdict wraps beside its chip instead of running past the card's edge.
+- **First frame in release builds:** `FRESHKUBE_FIRST_FRAME=1` now prints when the
+  window first draws in release builds too, for the Linux and Windows release checks.
+- **Monitoring:** a chart with more than 30 series draws the 30 with the highest peaks, and its legend offers Show all. Charts whose queries use topk or bottomk, and stacked charts, still draw every series.
+- `scripts/smoke.sh hover X Y` moves the pointer without a click or a wheel event, so a smoke test can check a tooltip; `scroll X Y 0` sends wheel events, which hide a tooltip already shown.
+- The status bar's line-fitting check is written the way newer clippy versions accept, so builds with a newer stable toolchain stay free of warnings.
+- The node pane on Nodes is an inspector, as on Resources: the node table stays beside it (or above it in a narrow window), its tabs are 28 high, Expand still gives it the whole page, and the width you drag it to is remembered. The node's details wrap rather than cut off, the opened node is highlighted in the card view's list, the opened row stays in view above a stacked pane, and Expand in a short window keeps the node's name and Collapse in view.
+
 ## 0.5.0 (2026-10-06)
 
 ### Metrics sources

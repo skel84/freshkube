@@ -1,1 +1,0 @@
-- The detail pane on Resources is an inspector, not a card: its tabs are 28 high, it runs to the window's edge beside the list or under it, and the width you drag it to is remembered.
