@@ -2528,6 +2528,12 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
 fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
     let path = kubeconfig_file("talos-pages");
     let (_runtime, handle, view) = kubernetes_only(cx, path.clone(), None);
+    // Settings lists the files read, and the read runs on Tokio, which
+    // `run_until_parked` doesn't wait for.
+    let read = view.clone();
+    wait_until(cx, handle, "the kubeconfig to be read", move |_, cx| {
+        !read.read(cx).config_loading
+    });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         for page in Page::ALL.into_iter().filter(|page| {
