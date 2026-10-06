@@ -28,7 +28,7 @@ impl ObservabilityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let header = self.source_header(self.page_header(), cx);
+        let header = self.source_header(self.page_header(cx), cx);
         let segment = ButtonGroup::new("obs-view")
             .outline()
             .small()

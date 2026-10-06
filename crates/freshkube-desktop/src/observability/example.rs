@@ -18,7 +18,7 @@ pub(super) fn applications() -> Vec<api::Application> {
         ("payments/api", "Go", 0, api::Status::Critical),
         (WORKER, "Go", 0, api::Status::Critical),
         ("payments/ledger", "Java", 0, api::Status::Warning),
-        ("payments/ledger-db", "Postgres", 0, api::Status::Warning),
+        ("payments/ledger-db", "Postgres", 0, api::Status::Critical),
         ("platform/keycloak", "Java", 0, api::Status::Warning),
         ("platform/oauth2-proxy", "Go", 0, api::Status::Warning),
         ("cache/redis-cache", "Redis", 0, api::Status::Warning),
@@ -64,12 +64,12 @@ pub(super) fn applications() -> Vec<api::Application> {
         (0, Report::Upstreams, api::Status::Critical, "worker"),
         (0, Report::Logs, api::Status::Warning, "1.9k"),
         (1, Report::Upstreams, api::Status::Critical, "ledger-db"),
-        (1, Report::Instances, api::Status::Critical, "0/1"),
+        (1, Report::Instances, api::Status::Critical, "1/2"),
         (1, Report::Restarts, api::Status::Warning, "14"),
         (1, Report::Net, api::Status::Critical, "refused"),
         (1, Report::Logs, api::Status::Warning, "212"),
         (2, Report::Instances, api::Status::Warning, "1/2"),
-        (3, Report::Instances, api::Status::Warning, "1/2"),
+        (3, Report::Instances, api::Status::Critical, "0/1"),
         (3, Report::Disk, api::Status::Unknown, "required"),
         (4, Report::Instances, api::Status::Warning, "1/2"),
         (4, Report::Memory, api::Status::Warning, "76%"),
@@ -322,7 +322,7 @@ pub(super) fn health(app: &api::AppId, extended: bool) -> api::AppHealth {
         dependencies: if worker {
             vec![api::Dependency {
                 id: id("payments/ledger-db"),
-                status: api::Status::Warning,
+                status: api::Status::Critical,
                 connectivity: api::Status::Critical,
                 connectivity_message: "Connection refused".into(),
                 protocols: vec!["postgres".into()],
@@ -1034,5 +1034,116 @@ pub(super) fn tracing(
         spans,
         limited,
         ..Default::default()
+    }
+}
+
+/// A flame frame: name, left, width, depth, change, CPU and parent.
+type FlameRow = (
+    &'static str,
+    f32,
+    f32,
+    usize,
+    i8,
+    &'static str,
+    Option<usize>,
+);
+
+/// A worker's CPU profile: where its time goes while ledger-db refuses it.
+const WORKER_FLAME: [FlameRow; 12] = [
+    ("total", 0., 1., 0, 0, "410m", None),
+    ("runtime.goexit", 0., 0.86, 1, 0, "353m", Some(0)),
+    ("runtime.gcBgMarkWorker", 0.86, 0.14, 1, 3, "57m", Some(0)),
+    ("main.(*Worker).settle", 0., 0.58, 2, 14, "238m", Some(1)),
+    ("queue.(*Consumer).poll", 0.58, 0.28, 2, -4, "115m", Some(1)),
+    ("runtime.gcDrain", 0.86, 0.14, 2, 3, "57m", Some(2)),
+    ("ledger.(*Client).Post", 0., 0.41, 3, 16, "168m", Some(3)),
+    ("json.Marshal", 0.41, 0.17, 3, 6, "70m", Some(3)),
+    ("redis.(*Client).Get", 0.58, 0.2, 3, -6, "82m", Some(4)),
+    ("http.(*Client).Do", 0., 0.33, 4, 15, "135m", Some(6)),
+    ("tls.(*Conn).Write", 0., 0.19, 5, 9, "78m", Some(9)),
+    (
+        "net.(*Dialer).DialContext",
+        0.19,
+        0.14,
+        5,
+        21,
+        "57m",
+        Some(9),
+    ),
+];
+
+/// Coroot's profiling answer for an example application. The worker and
+/// the Argo CD controller have CPU profiles; any other has none.
+pub(super) fn profiling(app: &api::AppId, query: &api::ProfileQuery) -> api::Profiling {
+    let (frames, instances): (Vec<FlameFrame>, Vec<String>) = if *app == id(WORKER) {
+        (
+            WORKER_FLAME
+                .into_iter()
+                .map(|(name, x, width, depth, delta, cpu, parent)| FlameFrame {
+                    name,
+                    x,
+                    width,
+                    depth,
+                    delta,
+                    cpu,
+                    parent,
+                })
+                .collect(),
+            vec![POD.into(), "worker-6c4f8da0-x2k9q".into()],
+        )
+    } else if *app == id("argocd/argocd-application-controller") {
+        (flame(), vec!["argocd-application-controller-0".into()])
+    } else {
+        return api::Profiling {
+            status: api::Status::Unknown,
+            message: "Coroot found no profiles for this application in the window.".into(),
+            kinds: vec![],
+            instances: vec![],
+            graph: None,
+        };
+    };
+    // A window of CPU time, in nanoseconds, that the shares divide.
+    const WINDOW: f64 = 3.0e12;
+    let totals: Vec<i64> = frames
+        .iter()
+        .map(|f| (f64::from(f.width) * WINDOW) as i64)
+        .collect();
+    let graph = api::FlameGraph {
+        kind: "ebpf:cpu:nanoseconds".into(),
+        compared: query.compare,
+        frames: frames
+            .iter()
+            .enumerate()
+            .map(|(ix, f)| {
+                let children: i64 = frames
+                    .iter()
+                    .zip(&totals)
+                    .filter(|(c, _)| c.parent == Some(ix))
+                    .map(|(_, t)| t)
+                    .sum();
+                api::Frame {
+                    name: f.name.into(),
+                    parent: f.parent,
+                    depth: f.depth,
+                    x: f64::from(f.x),
+                    width: f64::from(f.width),
+                    total: totals[ix],
+                    // Rounded widths can leave a frame a hair below its children.
+                    self_value: (totals[ix] - children).max(0),
+                    change: query.compare.then(|| f64::from(f.delta) / 10.),
+                }
+            })
+            .collect(),
+        omitted: 0,
+    };
+    api::Profiling {
+        status: api::Status::Ok,
+        message: String::new(),
+        kinds: vec![api::ProfileKind {
+            id: graph.kind.clone(),
+            name: "CPU (eBPF)".into(),
+        }],
+        instances,
+        graph: Some(graph),
     }
 }

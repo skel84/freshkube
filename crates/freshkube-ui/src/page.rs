@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 
 use crate::palette::palette;
-use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, toolbar_label};
+use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, status_glyph, toolbar_label};
 
 /// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
@@ -310,18 +310,34 @@ struct Parent {
     id: SharedString,
     label: SharedString,
     on_click: OnClick,
+    /// Muted crumbs between the parent and the title, such as a namespace.
+    trail: Vec<SharedString>,
+    /// The title's status glyph.
+    glyph: Option<Tone>,
+}
+
+/// A crumb after the parent, then its faint "/".
+fn crumb(text: SharedString, cx: &App) -> [Div; 2] {
+    let p = palette(cx);
+    [
+        div().flex_none().text_color(p.muted).child(text),
+        div().flex_none().text_color(p.faint).child("/"),
+    ]
 }
 
 /// A breadcrumb's parts as [`title`] draws them, without ids or a click,
 /// at their full width.
-fn breadcrumb(parent: SharedString, text: SharedString, cx: &App) -> Div {
+fn breadcrumb(parent: &Parent, text: SharedString, cx: &App) -> Div {
     h_flex()
         .gap(dp(6.))
+        .items_center()
         .text_size(dp(13.))
         .line_height(dp(18.))
         .whitespace_nowrap()
-        .child(div().flex_none().child(parent))
+        .child(div().flex_none().child(parent.label.clone()))
         .child(div().flex_none().child("/"))
+        .children(parent.trail.iter().flat_map(|t| crumb(t.clone(), cx)))
+        .children(parent.glyph.and_then(|tone| status_glyph(tone, cx)))
         .child(toolbar_label(text, cx))
 }
 
@@ -335,6 +351,8 @@ fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App)
     let p = palette(cx);
     let accent = p.accent;
     let on_click = parent.on_click;
+    let trail = parent.trail.into_iter().flat_map(|t| crumb(t, cx));
+    let glyph = parent.glyph.and_then(|tone| status_glyph(tone, cx));
     h_flex()
         .gap(dp(6.))
         .items_center()
@@ -353,6 +371,8 @@ fn title(parent: Option<Parent>, text: SharedString, id: SharedString, cx: &App)
                 .test_support(),
         )
         .child(div().flex_none().text_color(p.faint).child("/"))
+        .children(trail)
+        .children(glyph)
         // The label's own box hugs its text, so it measures as it does
         // without a breadcrumb; the wrapper keeps 120 of it in view.
         .child(
@@ -579,7 +599,27 @@ impl PageHeader {
             id: self.id(part),
             label: label.into(),
             on_click: Box::new(on_click),
+            trail: Vec::new(),
+            glyph: None,
         });
+        self
+    }
+
+    /// A muted crumb after the parent and before the title, such as an
+    /// application's namespace. Needs a [`parent`](Self::parent) first.
+    pub fn crumb(mut self, text: impl Into<SharedString>) -> Self {
+        if let Some(parent) = &mut self.parent {
+            parent.trail.push(text.into());
+        }
+        self
+    }
+
+    /// A status glyph just before the title, for a page about one thing
+    /// whose health the breadcrumb states. Needs a [`parent`](Self::parent).
+    pub fn glyph(mut self, tone: Tone) -> Self {
+        if let Some(parent) = &mut self.parent {
+            parent.glyph = Some(tone);
+        }
         self
     }
 
@@ -613,7 +653,7 @@ impl PageHeader {
                 let slot = move |width: Pixels, window: &Window| {
                     state.label.set(width / window.rem_size())
                 };
-                match self.parent.as_ref().map(|parent| parent.label.clone()) {
+                match self.parent.as_ref() {
                     None => measured(
                         toolbar_label(self.title, cx).id(title_id).test_support(),
                         slot,

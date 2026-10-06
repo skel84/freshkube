@@ -16,6 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{collections::BTreeMap, rc::Rc};
+mod application;
 mod applications;
 use applications::{columns as application_columns, header as applications_header};
 mod connection;
@@ -143,6 +144,10 @@ pub(crate) struct ObservabilityPage {
     flame_query_text: String,
     flame_matches: Vec<bool>,
     report_snapshot: Option<reports::ReportSnapshot>,
+    /// Coroot's own view of the selected application, as the page shows it.
+    app_page: Option<application::AppPage>,
+    /// One entity per table the chosen report shows.
+    app_tables: Vec<Entity<application::ReportTable>>,
     threshold: Entity<InputState>,
     thresholds: BTreeMap<(String, Report), String>,
     charts: [Chart; 3],
@@ -331,6 +336,8 @@ impl ObservabilityPage {
             flame_query_text: String::new(),
             flame_matches: vec![],
             report_snapshot: None,
+            app_page: None,
+            app_tables: vec![],
             threshold,
             thresholds: BTreeMap::new(),
             charts: [
@@ -416,6 +423,7 @@ impl ObservabilityPage {
         self.report = report;
         self.report_name = report.server_name().into();
         self.report_snapshot = None;
+        self.app_page = None;
         self.open(Destination::Application, cx);
     }
     fn edit_threshold(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -5,6 +5,7 @@ impl Render for ObservabilityPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_app_select(window, cx);
         self.sync_namespace_select(window, cx);
+        self.sync_app_tables(cx);
         let p = palette(cx);
         let unavailable =
             !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());
@@ -40,7 +41,7 @@ impl Render for ObservabilityPage {
             Destination::Incidents => self.incidents_header(window, cx),
             Destination::Traces => self.traces_header(window, cx),
             _ => self
-                .source_controls(self.page_header(), cx)
+                .source_controls(self.page_header(cx), cx)
                 .render(window, cx),
         };
         let frame = if edge {

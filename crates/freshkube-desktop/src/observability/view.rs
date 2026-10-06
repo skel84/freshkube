@@ -1,21 +1,22 @@
 //! Shared Fog presentation, with normal Kit controls for interactive content.
 use super::*;
 
-pub(super) fn status(state: Status, cx: &App) -> AnyElement {
-    let p = palette(cx);
+/// A status's glyph tone; an absent signal has none.
+pub(super) fn tone(state: Status) -> Option<Tone> {
     match state {
-        Status::Absent => text("—").text_color(p.muted).into_any_element(),
-        _ => div()
-            .children(ui::status_glyph(
-                match state {
-                    Status::Ok => Tone::Good,
-                    Status::Warning => Tone::Warn,
-                    Status::Critical => Tone::Crit,
-                    Status::LogError | Status::Info => Tone::Info,
-                    _ => Tone::Unknown,
-                },
-                cx,
-            ))
+        Status::Absent => None,
+        Status::Ok => Some(Tone::Good),
+        Status::Warning => Some(Tone::Warn),
+        Status::Critical => Some(Tone::Crit),
+        Status::LogError | Status::Info => Some(Tone::Info),
+        _ => Some(Tone::Unknown),
+    }
+}
+pub(super) fn status(state: Status, cx: &App) -> AnyElement {
+    match tone(state) {
+        None => text("—").text_color(palette(cx).muted).into_any_element(),
+        Some(tone) => div()
+            .children(ui::status_glyph(tone, cx))
             .into_any_element(),
     }
 }
@@ -87,37 +88,6 @@ impl ObservabilityPage {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::Dashboards)))))
             .into_any_element()
     }
-    pub(super) fn breadcrumbs(
-        &self,
-        root: &'static str,
-        destination: Destination,
-        cx: &Context<Self>,
-    ) -> Div {
-        let app = self.selected_app.as_ref();
-        line()
-            .child(
-                Button::new("obs-breadcrumb")
-                    .ghost()
-                    .group("fog-control")
-                    .small()
-                    .label(root)
-                    .text_color(palette(cx).accent)
-                    .on_click(cx.listener(move |this, _, _, cx| this.open(destination, cx))),
-            )
-            .child(muted("/", cx))
-            .child(muted(
-                app.and_then(|a| a.namespace())
-                    .unwrap_or("External / unmapped")
-                    .to_string(),
-                cx,
-            ))
-            .child(muted("/", cx))
-            .child(status(
-                self.selected_application()
-                    .map_or(Status::Unknown, |a| a.status),
-                cx,
-            ))
-    }
 }
 
 /// An application as the pickers name it: namespace / name.
@@ -132,6 +102,10 @@ pub(super) fn app_label(id: &freshkube_core::coroot::AppId) -> String {
 impl ObservabilityPage {
     /// A live evidence page's application picker and a way back to its report.
     pub(super) fn evidence_header(&self, id: &'static str, cx: &Context<Self>) -> Div {
+        // Embedded in an application's report, the page already names it.
+        if self.destination == Destination::Application {
+            return div();
+        }
         // Kit's Select fills its parent, so a box sets its size in the row.
         let picker = div().w(dp(300.)).flex_none().child(
             Select::new(&self.app_select)
@@ -199,6 +173,7 @@ impl ObservabilityPage {
         }
         self.selected_app = Some(id);
         self.report_snapshot = None;
+        self.app_page = None;
         self.refresh(cx);
     }
 }

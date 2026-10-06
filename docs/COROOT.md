@@ -78,7 +78,7 @@ This slice is read-only. Live pages do not offer threshold, mute, rollback or co
 | Map | 2,000 nodes / 20,000 directed links (paged 24 nodes at a time) |
 | Report evidence | 32 reports, 200 total issue/log entries, 128 summarized series, 32 vitals, 300 dependency/client links |
 | Series | 512 summary points, 32 labels per series |
-| Application view | `GET api/project/{p}/app/{app}`, Coroot's own page for one application: 2,000 instances, 1,000 clients and dependencies, 32 reports of 64 checks and 128 widgets each; 512 charts, 4,096 series of 4,096 points, and 50,000 table cells per page. Read by `Provider::app_view`, not yet shown. |
+| Application view | `GET api/project/{p}/app/{app}`, Coroot's own page for one application: 2,000 instances, 1,000 clients and dependencies, 32 reports of 64 checks and 128 widgets each; 512 charts, 4,096 series of 4,096 points, and 50,000 table cells per page. Read by `Provider::app_view` for the Application page. |
 | Incidents | Latest 100 across all states; 10 list rows and 10 propagation applications per rendered page; 100 retained propagation applications / 200 issue entries / 32 burn conditions |
 | Incident text | 64 KiB total RCA/propagation text, with individual bounds (root/fixes 16 KiB each, detailed analysis 32 KiB, issue 4 KiB) |
 | Strings | Individually bounded IDs, labels, messages, log samples, connectivity text and protocols before display preparation |
