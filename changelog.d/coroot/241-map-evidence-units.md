@@ -1,0 +1,1 @@
+- A service map connection's evidence reads in its own units, such as 12 rps, 3 ms and 2.4 KB/s, instead of three fixed decimals.

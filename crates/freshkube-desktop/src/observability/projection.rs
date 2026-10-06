@@ -225,13 +225,11 @@ pub(super) fn map(
         if !known.contains(&edge.from) || !known.contains(&edge.to) {
             return None;
         }
-        let number = |v: Option<f64>, unit: &str| v.filter(|v| v.is_finite()).map_or_else(
-            || "Not reported".into(), |v| format!("{v:.3} {unit}"));
         let label = format!("{} → {}",edge.from.short(),edge.to.short());
         let detail = format!("{}\nRequests: {}\nLatency: {}\nSent: {}\nReceived: {}\nStatistics may be rounded by Coroot.",
             if edge.issue.is_empty() { "No connection issue reported" } else { &edge.issue },
-            number(edge.rps,"rps"),number(edge.latency_seconds,"s"),
-            number(edge.sent_bytes_per_second,"B/s"),number(edge.received_bytes_per_second,"B/s"));
+            format::requests(edge.rps),format::seconds(edge.latency_seconds),
+            format::bytes_per_second(edge.sent_bytes_per_second),format::bytes_per_second(edge.received_bytes_per_second));
         Some(Connection {
             id: LinkId(edge.from.clone(),edge.to.clone()), status: edge.status.into(),
             element_id: format!("obs-map-edge-{}--{}", edge.from,edge.to).into(),

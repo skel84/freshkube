@@ -211,6 +211,21 @@ fn map_selection_survives_reordering_and_clears_on_removal(cx: &mut TestAppConte
         });
     }).unwrap();
 }
+/// A connection's evidence reads in each value's own unit, in its inspector
+/// and its tooltip alike (#241).
+#[test]
+fn map_connection_evidence_reads_in_its_units() {
+    let (_, connections) = super::projection::map(&example::map());
+    let connection = &connections[0];
+    for text in [&connection.detail, &connection.tooltip] {
+        assert!(
+            text.contains(
+                "Requests: 12 rps\nLatency: 3 ms\nSent: 2.4 KB/s\nReceived: Not reported"
+            ),
+            "{text}"
+        );
+    }
+}
 #[gpui_kit::test]
 fn threshold_edits_validate_and_remain_local(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
