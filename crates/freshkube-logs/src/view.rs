@@ -1,7 +1,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, FontWeight, ListSizingBehavior, Pixels, Render, Role,
-    ScrollStrategy, SharedString, TestSupportExt, Window,
+    AnyElement, AvailableSpace, Context, FontWeight, ListSizingBehavior, Render, Role,
+    SharedString, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants, Toggle, ToggleVariants},
@@ -15,7 +15,7 @@ use gpui_kit::{
     px, relative, rems, size,
 };
 
-use freshkube_core::types::LogLevel;
+use freshkube_core::{logs::LogEntry, types::LogLevel};
 
 use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
@@ -25,11 +25,33 @@ use super::{
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, Tone, dp};
 
+/// What a row's message column shows: its message, or the whole line when
+/// the message is blank.
+pub(super) fn shown_message(entry: &LogEntry) -> &str {
+    if entry.message.trim().is_empty() {
+        entry.selectable_text()
+    } else {
+        &entry.message
+    }
+}
+
 impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
         &self,
         row_ix: usize,
         measuring: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.render_row_showing(row_ix, measuring, None, cx)
+    }
+
+    /// Row `row_ix` as the list draws it, or with `message` in its message
+    /// column instead, which a reveal lays out to find a line within it.
+    pub(super) fn render_row_showing(
+        &self,
+        row_ix: usize,
+        measuring: bool,
+        message: Option<&str>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entry = self.review.entry(row_ix);
@@ -39,7 +61,7 @@ impl<S: LogSource> LogView<S> {
         }
         let columns = self.columns;
         let selected = self.review.selected.contains(&id);
-        let matched = !self.review.query.is_empty() && entry.matches_query(&self.review.query);
+        let matched = self.review.is_match(row_ix);
         let current = self.review.current_match == Some(id);
         let p = palette(cx);
         let (level, level_color, stripe) = match entry.level {
@@ -54,11 +76,7 @@ impl<S: LogSource> LogView<S> {
             .as_ref()
             .map(|time| time.display.clone())
             .unwrap_or_else(|| "—".into());
-        let message = if entry.message.trim().is_empty() {
-            entry.selectable_text().to_owned()
-        } else {
-            entry.message.clone()
-        };
+        let message = message.unwrap_or_else(|| shown_message(entry)).to_owned();
         // What the row shows, as Copy would copy it.
         let mut label = String::new();
         if columns.time {
@@ -455,7 +473,7 @@ impl<S: LogSource> Render for LogView<S> {
         drop(measuring);
         if self.following {
             self.pending_reveal = None;
-            let height: Pixels = self.sizes.iter().map(|row| row.height).sum();
+            let height = self.sizes_height();
             // Request beyond the tail; VirtualList prepaint clamps against
             // its *inner* viewport. Nearest would expose the top, not the
             // latest text, when the last wrapped row exceeds the viewport.
@@ -464,8 +482,9 @@ impl<S: LogSource> Render for LogView<S> {
         } else if let Some(id) = self.pending_reveal.take()
             && let Some(ix) = self.review.row_for_id(id)
         {
-            self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+            self.reveal_row(ix, window, cx);
         }
+        self.reveal_matched_line = false;
         let p = palette(cx);
         let empty = S::empty_message(self);
         let entity = cx.entity().downgrade();

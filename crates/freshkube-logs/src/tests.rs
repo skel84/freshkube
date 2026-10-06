@@ -346,6 +346,18 @@ fn deliver(panel: &Entity<LogPanel>, lines: Vec<String>, cx: &mut gpui_kit::App)
     });
 }
 
+/// The total height kept beside `sizes` is their heights added up.
+fn assert_total_height<S: LogSource>(view: &LogView<S>) {
+    let sum: f64 = (view.sizes.iter())
+        .map(|row| f64::from(f32::from(row.height)))
+        .sum();
+    let kept = view.sizes_height;
+    assert!(
+        (kept - sum).abs() < 1e-6,
+        "kept {kept}, rows add up to {sum}"
+    );
+}
+
 #[gpui_kit::test]
 fn a_flood_lays_out_the_rows_on_screen_and_the_rest_once_it_stops(cx: &mut TestAppContext) {
     let (_runtime, panel, handle) = mount(cx);
@@ -407,6 +419,7 @@ fn a_flood_lays_out_the_rows_on_screen_and_the_rest_once_it_stops(cx: &mut TestA
         let view = panel.read(cx);
         assert!(view.settled);
         assert_eq!(view.sizes.len(), 920);
+        assert_total_height(view);
         // Following keeps the newest row in view after the estimates settle.
         let last = view.review.id(view.sizes.len() - 1);
         assert!(
@@ -436,6 +449,7 @@ fn evicted_lines_drop_their_measurements(cx: &mut TestAppContext) {
                 .collect();
             deliver(&panel, lines, cx);
             window.render_frame(cx);
+            assert_total_height(panel.read(cx));
         }
         let view = panel.read(cx);
         assert!(view.review.evicted > 120);
@@ -451,6 +465,78 @@ fn evicted_lines_drop_their_measurements(cx: &mut TestAppContext) {
         assert!(view.row_measurements.keys().all(|id| retained.contains(id)));
     })
     .unwrap();
+}
+
+/// A stack trace in one message: 200 lines, the first naming the panic
+/// and the last naming the function the search looks for (#225).
+fn stack_trace() -> String {
+    let mut lines = vec!["error panic: settlement queue closed".to_owned()];
+    lines.extend((1..199).map(|ix| format!("    frame {ix}(0x0, 0x0, 0xc000123456)")));
+    lines.push("    payments/worker.drainSettlementQueue()".to_owned());
+    lines.join("\n")
+}
+
+/// A search moves to the matched line within a row taller than the list,
+/// not to the row's middle, wrapped or not; a match on the row's first
+/// line shows the row's top.
+#[gpui_kit::test]
+fn a_search_shows_the_matched_line_within_a_tall_row(cx: &mut TestAppContext) {
+    for wrapped in [true, false] {
+        let (_runtime, panel, handle) = mount(cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            deliver(&panel, vec![stack_trace()], cx);
+            if !wrapped {
+                window.click("logs-wrap", cx);
+            }
+            window.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx, &panel, handle);
+        for (query, end) in [
+            ("drainSettlementQueue", true),
+            ("settlement queue closed", false),
+        ] {
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.click("logs-search", cx);
+                window.press("secondary-a", cx);
+                window.input(query, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.click("logs-search-next", cx);
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let view = panel.read(cx);
+                let id = view.review.current_match.expect("a match");
+                let row = window
+                    .find(SharedString::from(format!("log-line-1-{id}")))
+                    .bounds();
+                let list = window.find("logs-viewport").bounds();
+                let case = format!("wrapped {wrapped}, {query}");
+                assert!(
+                    row.size.height > list.size.height * 3.,
+                    "{case}: the row {row:?} isn't tall"
+                );
+                if end {
+                    // The matched last line ends the row: its bottom shows.
+                    assert!(
+                        row.bottom() > list.top() && row.bottom() <= list.bottom(),
+                        "{case}: the row's end {:?} is outside the list {list:?}",
+                        row.bottom()
+                    );
+                } else {
+                    assert!(
+                        row.top() >= list.top() && row.top() < list.bottom(),
+                        "{case}: the row's top {:?} is outside the list {list:?}",
+                        row.top()
+                    );
+                }
+            })
+            .unwrap();
+        }
+    }
 }
 
 #[gpui_kit::test]

@@ -1,0 +1,1 @@
+- Log search shows the matched line within a long multi-line message, such as a stack trace, instead of the message's middle.
