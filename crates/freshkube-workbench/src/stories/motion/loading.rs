@@ -143,6 +143,8 @@ pub struct LoadingTable {
     table: TableState,
     columns: Vec<Column>,
     rows: LoadingRows,
+    /// Whether the first read has answered.
+    loaded: bool,
 }
 
 impl LoadingTable {
@@ -151,7 +153,15 @@ impl LoadingTable {
             table: TableState::new("loading-pods"),
             columns: columns(),
             rows: LoadingRows::new("loading-pods"),
+            loaded: false,
         }
+    }
+
+    /// The first read answers, with no pods.
+    #[cfg(test)]
+    pub fn answer(&mut self, cx: &mut Context<Self>) {
+        self.loaded = true;
+        cx.notify();
     }
 }
 
@@ -213,7 +223,7 @@ impl TableSource for LoadingTable {
     }
 
     fn loading(&self) -> Option<&LoadingRows> {
-        Some(&self.rows)
+        (!self.loaded).then_some(&self.rows)
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

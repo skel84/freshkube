@@ -64,16 +64,22 @@ struct Epoch(Instant);
 
 impl Global for Epoch {}
 
+/// Sets the moment every loop counts from, unless one is set:
+/// [`follow_system`] does it at startup, so no render sets a global.
+pub(crate) fn start_clock(cx: &mut App) {
+    if !cx.has_global::<Epoch>() {
+        let now = cx.background_executor().now();
+        cx.set_global(Epoch(now));
+    }
+}
+
 /// Where a loop of `period` is now, from 0 to 1, on the executor's clock.
+/// Test harnesses don't call [`follow_system`]; there the first loop sets
+/// the moment.
 pub fn phase(period: Duration, cx: &mut App) -> f32 {
+    start_clock(cx);
     let now = cx.background_executor().now();
-    let epoch = match cx.try_global::<Epoch>() {
-        Some(epoch) => epoch.0,
-        None => {
-            cx.set_global(Epoch(now));
-            now
-        }
-    };
+    let epoch = cx.global::<Epoch>().0;
     let period = period.as_secs_f64();
     let elapsed = now.saturating_duration_since(epoch).as_secs_f64();
     ((elapsed % period) / period) as f32

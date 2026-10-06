@@ -17,9 +17,9 @@ use std::rc::Rc;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, ContentMask, Context, Corners, Hsla, Pixels, Role, SharedString,
-    TestSupportExt, Window, canvas, div, fill, linear_color_stop, linear_gradient, point, px, size,
-    white,
+    AnyElement, App, Bounds, ContentMask, Context, Corners, EntityId, Hsla, Pixels, Role,
+    SharedString, TestSupportExt, Window, canvas, div, fill, linear_color_stop, linear_gradient,
+    point, px, size, white,
 };
 
 use super::{CELL_PAD, GLYPH_WIDTH, ROW_HEIGHT, TableColumn};
@@ -62,6 +62,13 @@ struct Bar {
 /// Where the table last painted its loading bars, which the motion reads.
 #[derive(Default)]
 struct Painted {
+    /// Whether a table draws these rows now: set when it renders them and
+    /// cleared, with the bars, when it renders without them.
+    showing: bool,
+    /// The motion's view, which the table wakes when it starts showing the
+    /// rows: a cached table renders after the views beside it, so the
+    /// motion's first render can come before the rows show.
+    motion: Option<EntityId>,
     bars: Vec<Bar>,
     /// The rows' region and the part of it that shows.
     region: Bounds<Pixels>,
@@ -97,13 +104,38 @@ impl LoadingRows {
         }
     }
 
+    /// Whether `other` is these rows.
+    pub(super) fn same(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.painted, &other.painted)
+    }
+
+    /// The table no longer draws these rows: forget their bars, so the
+    /// motion stops and veils nothing over the rows that replaced them.
+    pub(super) fn hide(&self) {
+        let mut painted = self.painted.borrow_mut();
+        *painted = Painted {
+            motion: painted.motion,
+            ..Painted::default()
+        };
+    }
+
     /// The rows in `columns`, on `surface`, filling the list's room.
     pub(super) fn render<C: TableColumn>(
         &self,
         columns: &[C],
         surface: Hsla,
+        window: &Window,
         cx: &App,
     ) -> AnyElement {
+        let wake = {
+            let mut painted = self.painted.borrow_mut();
+            let started = !painted.showing;
+            painted.showing = true;
+            painted.motion.filter(|_| started)
+        };
+        if let Some(motion) = wake {
+            window.on_next_frame(move |_, cx| cx.notify(motion));
+        }
         let slots: Vec<Slot> = columns
             .iter()
             .map(|column| Slot {
@@ -132,7 +164,10 @@ impl LoadingRows {
                             );
                         }
                         let viewport = window.content_mask().bounds.intersect(&region);
-                        *painted.borrow_mut() = Painted {
+                        let mut painted = painted.borrow_mut();
+                        *painted = Painted {
+                            showing: true,
+                            motion: painted.motion,
                             bars,
                             region,
                             viewport,
@@ -196,6 +231,8 @@ fn place(slots: &[Slot], region: Bounds<Pixels>, window: &Window) -> Vec<Bar> {
 
 /// The moving half of the loading rows: a small view over the table that
 /// moves the bars the table painted, so its frames never redraw the table.
+/// Once the table draws its rows instead, it draws nothing and asks no
+/// frames.
 pub struct LoadingMotion {
     id: SharedString,
     painted: Rc<RefCell<Painted>>,
@@ -218,14 +255,20 @@ impl LoadingMotion {
 impl Render for LoadingMotion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         freshkube_probe::probe::hit("table.loading-motion");
-        let reduce = cx.reduce_motion();
+        let showing = {
+            let mut painted = self.painted.borrow_mut();
+            painted.motion = Some(cx.entity_id());
+            painted.showing
+        };
         let look = self.look;
         // Where the motion is now; nothing moves under reduced motion.
-        let at = (!reduce).then(|| match look {
+        let at = (showing && !cx.reduce_motion()).then(|| match look {
             Look::Pulse => motion::pulse_dim(cx),
             Look::Shimmer => motion::shimmer_at(cx),
         });
-        motion::next_frame(window, cx);
+        if showing {
+            motion::next_frame(window, cx);
+        }
         let band = white().opacity(if cx.theme().mode.is_dark() { 0.09 } else { 0.6 });
         let painted = self.painted.clone();
         div()

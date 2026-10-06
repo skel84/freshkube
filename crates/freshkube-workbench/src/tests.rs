@@ -437,6 +437,24 @@ fn full_motion_mid_flash_takes_the_fade_up_where_it_is(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
+fn full_motion_after_no_tint_shows_the_fade_where_it_is(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Reduced);
+    cx.update_window(handle, |_, _, cx| {
+        story.update(cx, |story, cx| story.change(1, cx));
+    })
+    .unwrap();
+    assert_eq!(strength(&story, cx), None, "no tint while reduced");
+    cx.background_executor.advance_clock(motion::FADE / 2);
+    cx.update(|cx| motion::choose(Choice::Full, cx));
+    let left = strength(&story, cx).unwrap();
+    assert!(
+        (left - motion::fade_left(motion::FADE / 2)).abs() < 1e-3,
+        "{left}"
+    );
+    assert!(next_frame(handle, cx) > 0, "and fades on from there");
+}
+
+#[gpui_kit::test]
 fn a_burst_changes_rows_without_flashing_them(cx: &mut TestAppContext) {
     let (handle, story) = open_flash(cx, Choice::Full);
     let before = cx.read(|cx| story.read(cx).table().read(cx).states());
@@ -484,6 +502,11 @@ fn the_flash_finds_its_rows_after_both_scrolls(cx: &mut TestAppContext) {
         let table = story.read(cx).table().read(cx);
         let rows = table.rows_at();
         let list = window.find("flash-pods-list").bounds();
+        // What shows of the rows: the list, inside the sideways scroll.
+        let shown = window
+            .find("flash-pods-table-scroll")
+            .bounds()
+            .intersect(&list);
         let (first, _) = rows.line(0, window).unwrap();
         assert!(first.top() < list.top(), "the rows scrolled down");
         let mut seen = 0;
@@ -503,8 +526,9 @@ fn the_flash_finds_its_rows_after_both_scrolls(cx: &mut TestAppContext) {
                 (f32::from(tint.size.height - row.size.height)).abs() < 0.5,
                 "line {line}"
             );
-            assert_eq!(tint.left(), viewport.left());
-            assert_eq!(tint.size.width, viewport.size.width);
+            assert_eq!(viewport, shown, "line {line}");
+            assert_eq!(tint.left(), shown.left());
+            assert_eq!(tint.size.width, shown.size.width);
             seen += 1;
         }
         assert!(seen > 5, "{seen} rows checked");
@@ -545,4 +569,24 @@ fn the_loading_motion_leaves_the_table_alone(cx: &mut TestAppContext) {
             "{id}'s frames leave the table alone"
         );
     }
+}
+
+#[gpui_kit::test]
+fn the_story_answers_with_the_loading_rows_gone(cx: &mut TestAppContext) {
+    let (handle, workbench) = open(cx, super::stories::find("loading").unwrap());
+    let story = cx.read(|cx| story::<LoadingStory>(&workbench, cx));
+    let table = cx.read(|cx| story.read(cx).table().clone());
+    cx.update(|cx| table.update(cx, |table, cx| table.answer(cx)));
+    cx.run_until_parked();
+    // Under reduced motion nothing asks frames, so the story's own Kit
+    // skeleton doesn't hide what the motion does; freshkube-ui's table
+    // tests count the motion's frames on their own.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("loading-pods-loading").is_none());
+        // The wake the table asked when the rows first showed, then none.
+        window.simulate_next_frame(cx);
+        assert_eq!(window.simulate_next_frame(cx), 0);
+    })
+    .unwrap();
 }

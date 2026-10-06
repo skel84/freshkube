@@ -90,6 +90,12 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
     /// A layer over the rows `rows` places, with the id `<prefix>-flash`.
     /// `line_of` finds the line a key's row is on; it runs when a row
     /// flashes and when [`rows_changed`](Self::rows_changed) says so.
+    ///
+    /// It runs inside [`changed`](Self::changed) and `rows_changed`, so
+    /// call them outside any update of what `line_of` reads, such as the
+    /// table's entity: update the table, then report to the layer.
+    /// Reporting from inside the table's own update panics on a double
+    /// lease.
     pub fn new(
         prefix: &str,
         rows: RowsAt,
@@ -211,7 +217,14 @@ impl<K: Clone + Eq + Hash + 'static> Render for FlashLayer<K> {
         let now = cx.background_executor().now();
         let reduce = cx.reduce_motion();
         let shown = !reduce || self.reduced == Reduced::Held;
-        if !reduce && self.flashes.live(now).next().is_some() {
+        // Only a flash the layer can draw keeps the frames coming: one whose
+        // row is filtered out or doesn't show asks none.
+        if !reduce
+            && self
+                .flashes
+                .live(now)
+                .any(|flash| self.lines.contains_key(&flash.key))
+        {
             motion::next_frame(window, cx);
         }
         let tints = self

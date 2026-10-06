@@ -34,6 +34,7 @@ impl Global for Motion {}
 /// Reads the OS's setting now and follows its changes, for the app's life.
 /// Calling it again does nothing.
 pub fn follow_system(cx: &mut App) {
+    super::start_clock(cx);
     let motion = cx.default_global::<Motion>();
     if motion.following {
         return;
