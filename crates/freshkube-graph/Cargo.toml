@@ -1,0 +1,12 @@
+[package]
+name = "freshkube-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependencies: the layout works on positions, never on GPUI or Coroot types.
+[dependencies]
+
+[lib]
+doctest = false
