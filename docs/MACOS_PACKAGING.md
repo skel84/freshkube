@@ -50,7 +50,14 @@ host, then extracts and verifies the actual ZIP and compares every bundled file.
 It rejects non-system dynamic libraries rather than quietly depending on a
 Homebrew installation. Cross builds need the Rust target installed and a suitable
 SDK; their CLI smoke test is skipped. CI uses native hosts for both architectures.
-The app currently uses the system's generic application icon.
+
+The app icon is `packaging/icon/freshkube.icns`, which the bundle carries as
+`Contents/Resources/Freshkube.icns` and names in `CFBundleIconFile`; the bundle
+check fails without it. It is made from `packaging/icon/freshkube.svg`, which
+draws its own rounded tile. After changing the SVG, run `scripts/app-icon.sh`
+(it needs `brew install librsvg`) and check in both files. The script places the
+tile on Apple's grid, 824 of a 1024 canvas with 100 clear on each side, and
+draws every size from 16 to 512 points, with @2x, from the vector.
 
 ## CI
 
