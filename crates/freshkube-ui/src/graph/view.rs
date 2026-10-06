@@ -300,7 +300,9 @@ fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyElement {
                 .rounded_full()
                 .bg(p.surface)
                 .child(glyph(edge.tone, cx))
-                .tooltip(edge.tooltip.clone())
+                .when(!edge.tooltip.is_empty(), |this| {
+                    this.tooltip(edge.tooltip.clone())
+                })
                 .on_click(cx.listener(move |this: &mut S, _, _, cx| {
                     this.graph_mut().select(&from, &to);
                     cx.notify();
@@ -340,7 +342,9 @@ fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyElement {
                         )
                         .child(muted(node.detail.clone(), cx).w_full().truncate()),
                 )
-                .tooltip(node.tooltip.clone())
+                .when(!node.tooltip.is_empty(), |this| {
+                    this.tooltip(node.tooltip.clone())
+                })
                 .on_click(
                     cx.listener(move |this: &mut S, _, window, cx| this.open(&key, window, cx)),
                 )
@@ -432,7 +436,9 @@ fn render_row<S: GraphSource>(
                     .child(glyph(edge.tone, cx))
                     .child(mono(edge.label.clone()).flex_1().truncate()),
             )
-            .tooltip(edge.tooltip.clone())
+            .when(!edge.tooltip.is_empty(), |this| {
+                this.tooltip(edge.tooltip.clone())
+            })
             .on_click(cx.listener(move |this: &mut S, _, _, cx| {
                 this.graph_mut().select(&from, &to);
                 cx.notify();
