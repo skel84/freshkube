@@ -408,9 +408,22 @@ const NARROW_PANE_WIDTH: f32 = 340.;
 const PANE_MIN_WIDTH: f32 = 320.;
 const SPLIT_GAP: f32 = 14.;
 
-/// Whether a list's detail fits beside it.
-pub(crate) fn beside(window: &Window) -> bool {
-    content_width(window) >= SPLIT_WIDTH
+/// Whether a list's detail fits beside it: on the page, or in the node
+/// inspector when the screen is `embedded` there.
+pub(crate) fn beside(window: &Window, embedded: bool) -> bool {
+    let width = if embedded {
+        embedded_width(window)
+    } else {
+        content_width(window)
+    };
+    width >= SPLIT_WIDTH
+}
+
+/// The width inside the node inspector's tab body in `dp`, where embedded
+/// screens choose between side-by-side and stacked layouts.
+pub(crate) fn embedded_width(window: &Window) -> f32 {
+    let pane = NODE_PANE_WIDTH.get().min(page_width(window));
+    (pane - freshkube_ui::page::PANE_PADDING * 2.).max(240.)
 }
 
 /// A list with its detail beside it on a wide page and below it on a narrow
@@ -525,6 +538,16 @@ thread_local! {
 
 pub(crate) fn set_chrome_width(width: f32) {
     CHROME_WIDTH.set(width);
+}
+
+thread_local! {
+    /// The node inspector's width in dp, which Nodes sets as it draws the
+    /// inspector: the page's when it stacks or fills the page.
+    static NODE_PANE_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::MAX) };
+}
+
+pub(crate) fn set_node_pane_width(width: f32) {
+    NODE_PANE_WIDTH.set(width);
 }
 
 pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {

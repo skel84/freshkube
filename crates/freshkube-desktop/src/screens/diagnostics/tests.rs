@@ -647,15 +647,17 @@ fn diagnostics_has_the_edge_frame_at_both_text_sizes(cx: &mut TestAppContext) {
     }
 }
 
-/// In the node pane at 1280 one text size up, the details beside the table
-/// leave room for every column, so Result truncates rather than scrolling
-/// out of view.
+/// In the node's expanded inspector at 1280 one text size up, the details
+/// beside the table leave room for every column, so Result truncates
+/// rather than scrolling out of view.
 #[gpui_kit::test]
 fn the_columns_fit_beside_the_details(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = app(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(14., cx);
         open_node_tab(window, cx, NodeTab::Diagnostics);
+        window.render_frame(cx);
+        window.click("node-expand", cx);
         window.render_frame(cx);
     })
     .unwrap();

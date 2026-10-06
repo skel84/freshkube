@@ -312,7 +312,7 @@ impl DiagnosticsScreen {
     /// The checks, with the selection's details beside them on a wide page
     /// and below them on a narrow one.
     fn render_split(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window);
+        let beside = crate::screens::beside(window, self.embedded);
         let table = div()
             .id("diagnostic-table")
             .w_full()

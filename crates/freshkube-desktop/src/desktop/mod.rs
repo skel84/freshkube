@@ -43,7 +43,7 @@ use crate::{
     },
     state::Snapshot,
     text_size, theme,
-    ui::{clock, dp},
+    ui::clock,
 };
 use freshkube_core::cluster_overview::{
     ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
@@ -1350,16 +1350,6 @@ impl Pilot {
     /// counts.
     fn content_width(window: &Window) -> f32 {
         crate::screens::content_width(window)
-    }
-
-    fn render_logs_page(&self) -> AnyElement {
-        div()
-            .size_full()
-            .min_h_0()
-            .pt(dp(22.))
-            .px(dp(PAGE_PADDING))
-            .child(self.logs.clone().cached(cached_page_style()))
-            .into_any_element()
     }
 
     /// Marks every cached view dirty, for state they read from outside their

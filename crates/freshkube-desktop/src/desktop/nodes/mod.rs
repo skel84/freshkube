@@ -17,10 +17,7 @@ use crate::{
 };
 use freshkube_core::monitoring::history::Subject;
 use gpui_kit::{
-    component::{
-        input::{InputEvent, InputState},
-        resizable::ResizableState,
-    },
+    component::input::{InputEvent, InputState},
     *,
 };
 pub(crate) use join::{NodeKey, NodeRow};
@@ -122,9 +119,12 @@ pub(super) struct Nodes {
     scroll: UniformListScrollHandle,
     /// The frame's scroll, used while the window is short.
     pub(super) page_scroll: ScrollHandle,
-    /// The node pane's scroll, used while the window is short on Logs.
-    pub(super) pane_scroll: ScrollHandle,
-    split: Entity<ResizableState>,
+    /// The table and the node's inspector; the inspector's width is
+    /// remembered in `navigation.json`.
+    split: freshkube_ui::inspector::InspectorSplit,
+    /// The Logs tab's body, which scrolls inside the inspector while the
+    /// window is short: Talos' toolbar can take most of its height.
+    pub(super) logs_scroll: ScrollHandle,
     pub(super) document: Entity<DetailPane>,
 }
 
@@ -202,8 +202,15 @@ impl Nodes {
             tab_scroll: ScrollHandle::new(),
             scroll: UniformListScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
-            pane_scroll: ScrollHandle::new(),
-            split: cx.new(|_| ResizableState::default()),
+            logs_scroll: ScrollHandle::new(),
+            split: {
+                let file = crate::navigation_file::NavigationFile::global(cx);
+                freshkube_ui::inspector::InspectorSplit::new(
+                    file.inspector_width("nodes"),
+                    move |width, cx| file.set_inspector_width("nodes", width, cx),
+                    cx,
+                )
+            },
             document: cx.new(|cx| DetailPane::new(runtime, window, cx)),
         }
     }
@@ -360,13 +367,16 @@ impl Pilot {
         if self.node_workspace.view == NodeView::Table {
             self.node_workspace.show_selected_healthy();
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
+            // Only a stacked inspector shrinks the table it opens under.
+            if crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+                reveal_when_settled(cx.entity().downgrade(), None, false, 6, window);
+            }
         }
         self.node_workspace.open = true;
+        // A short page scrolls its frame down to the inspector.
+        self.node_workspace.page_scroll.scroll_to_bottom();
         self.node_workspace
-            .page_scroll
-            .set_offset(point(px(0.), px(0.)));
-        self.node_workspace
-            .pane_scroll
+            .logs_scroll
             .set_offset(point(px(0.), px(0.)));
         self.node_workspace.sync_tabs();
         self.navigate(Page::Nodes, window, cx);
@@ -378,15 +388,30 @@ impl Pilot {
         self.node_workspace
             .page_scroll
             .set_offset(point(px(0.), px(0.)));
-        self.node_workspace
-            .pane_scroll
-            .set_offset(point(px(0.), px(0.)));
         if self.node_workspace.view == NodeView::Table {
             self.node_workspace.show_selected_healthy();
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
         }
         self.sync_node_visibility(window, cx);
         window.focus(&self.node_focus, cx);
+        cx.notify();
+    }
+
+    pub(super) fn toggle_node_expanded(&mut self, cx: &mut Context<Self>) {
+        if !self.node_workspace.open {
+            return;
+        }
+        let expanded = !self.node_workspace.expanded;
+        self.node_workspace.expanded = expanded;
+        // A short page keeps its heading in view: expanded from the top,
+        // collapsed down to the inspector, as opening a node does.
+        if expanded {
+            self.node_workspace
+                .page_scroll
+                .set_offset(point(px(0.), px(0.)));
+        } else {
+            self.node_workspace.page_scroll.scroll_to_bottom();
+        }
         cx.notify();
     }
 
@@ -401,7 +426,7 @@ impl Pilot {
         }
         self.node_workspace.tab = tab;
         self.node_workspace
-            .pane_scroll
+            .logs_scroll
             .set_offset(point(px(0.), px(0.)));
         if let Some(index) = self
             .node_workspace
@@ -568,3 +593,34 @@ gpui_kit::actions!(
         OpenNode
     ]
 );
+
+/// Reveals the selected row on each of the next frames until the table's
+/// height has changed and then held: a stacked inspector's split learns its
+/// heights while drawing and applies them on a later frame, and a row
+/// revealed in the taller table would end up under it. Each reveal asks for
+/// the next frame, so the split's change is drawn; `frames` bounds the wait
+/// when the height never changes.
+fn reveal_when_settled(
+    view: WeakEntity<Pilot>,
+    last: Option<Pixels>,
+    changed: bool,
+    frames: usize,
+    window: &Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        let height = view
+            .update(cx, |pilot, cx| {
+                freshkube_ui::table::reveal(pilot, ScrollStrategy::Nearest);
+                cx.notify();
+                (pilot.node_workspace.table.scroll.0.borrow().last_item_size)
+                    .map(|size| size.item.height)
+            })
+            .ok()
+            .flatten();
+        let settled = changed && height == last;
+        if frames > 1 && !settled {
+            let changed = changed || (last.is_some() && height != last);
+            reveal_when_settled(view, height, changed, frames - 1, window);
+        }
+    });
+}
