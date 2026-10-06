@@ -1,13 +1,15 @@
 //! Loading: today's skeleton bars, as each page draws its own, beside the
 //! one loading state every table would share, skeleton rows at the real
-//! row height under the real header, pulsing or shimmering.
+//! row height under the real header, pulsing or shimmering. The table draws
+//! the bars still and its `LoadingMotion` moves them from beside it, so the
+//! table isn't drawn again for each frame.
 
 use super::{Column, Kind, columns, option, segments};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::table::{
-    self, Line, LoadingRows, Look, RowStyle, SortOrder, TableColumn, TableRow, TableSource,
-    TableState,
+    self, Line, LoadingMotion, LoadingRows, Look, RowStyle, SortOrder, TableColumn, TableRow,
+    TableSource, TableState,
 };
 use freshkube_ui::ui::{self, dp};
 use gpui_kit::component::v_flex;
@@ -23,18 +25,23 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(LoadingStory::new).into()
 }
 
-/// The story's frame: the header and the two loading states, each its own
-/// view, so only they animate.
+/// The story's frame: the header and the two loading states. Today's bars
+/// are their own view; the shared rows are a cached table and the motion
+/// over it, so a frame draws the motion and the views above it only.
 pub struct LoadingStory {
     today: Entity<TodayBars>,
     table: Entity<LoadingTable>,
+    motion: Entity<LoadingMotion>,
 }
 
 impl LoadingStory {
     fn new(cx: &mut Context<Self>) -> Self {
+        let table = cx.new(|_| LoadingTable::new());
+        let motion = cx.new(|cx| table.read(cx).rows.motion(Look::Pulse));
         Self {
             today: cx.new(|_| TodayBars),
-            table: cx.new(LoadingTable::new),
+            table,
+            motion,
         }
     }
 
@@ -42,10 +49,13 @@ impl LoadingStory {
         &self.table
     }
 
+    pub fn motion(&self) -> &Entity<LoadingMotion> {
+        &self.motion
+    }
+
     fn set_look(&mut self, look: Look, cx: &mut Context<Self>) {
-        self.table.update(cx, |table, cx| {
-            table.rows.update(cx, |rows, cx| rows.set_look(look, cx))
-        });
+        self.motion
+            .update(cx, |motion, cx| motion.set_look(look, cx));
         cx.notify();
     }
 }
@@ -53,7 +63,7 @@ impl LoadingStory {
 impl Render for LoadingStory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         freshkube_probe::probe::hit("workbench.loading");
-        let look = self.table.read(cx).rows.read(cx).look();
+        let look = self.motion.read(cx).look();
         let looks = segments(
             [
                 (Look::Pulse, "pulse", "Pulse"),
@@ -95,9 +105,17 @@ impl Render for LoadingStory {
                 "Shared: the table's loading rows under its header",
                 cx,
             )))
-            .child(div().flex_1().min_h_0().child(
-                AnyView::from(self.table.clone()).cached(StyleRefinement::default().size_full()),
-            ))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        AnyView::from(self.table.clone())
+                            .cached(StyleRefinement::default().size_full()),
+                    )
+                    .child(self.motion.clone()),
+            )
     }
 }
 
@@ -124,22 +142,16 @@ impl Render for TodayBars {
 pub struct LoadingTable {
     table: TableState,
     columns: Vec<Column>,
-    rows: Entity<LoadingRows>,
+    rows: LoadingRows,
 }
 
 impl LoadingTable {
-    fn new(cx: &mut Context<Self>) -> Self {
-        let columns = columns();
-        let rows = cx.new(|_| LoadingRows::new("loading-pods", &columns, Look::Pulse));
+    fn new() -> Self {
         Self {
             table: TableState::new("loading-pods"),
-            columns,
-            rows,
+            columns: columns(),
+            rows: LoadingRows::new("loading-pods"),
         }
-    }
-
-    pub fn rows(&self) -> &Entity<LoadingRows> {
-        &self.rows
     }
 }
 
@@ -200,8 +212,8 @@ impl TableSource for LoadingTable {
         None
     }
 
-    fn loading(&self) -> Option<AnyView> {
-        Some(self.rows.clone().into())
+    fn loading(&self) -> Option<&LoadingRows> {
+        Some(&self.rows)
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

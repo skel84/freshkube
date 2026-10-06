@@ -121,10 +121,13 @@ impl FlashStory {
     pub fn change(&mut self, count: usize, cx: &mut Context<Self>) {
         let pods: Vec<usize> = (0..count).map(|n| (self.next + n * 7) % PODS).collect();
         self.next = (self.next + 3) % PODS;
-        self.table.update(cx, |table, cx| table.change(&pods, cx));
-        let flashed = self
-            .layer
-            .update(cx, |layer, cx| layer.changed(pods.iter().copied(), cx));
+        let revision = self.table.update(cx, |table, cx| table.change(&pods, cx));
+        // A page tells the layer when its rows change, so it finds the
+        // flashing rows' lines then rather than on every frame.
+        let flashed = self.layer.update(cx, |layer, cx| {
+            layer.rows_changed(revision, cx);
+            layer.changed(pods.iter().copied(), cx)
+        });
         self.last = Some((count, flashed));
         cx.notify();
     }
@@ -344,6 +347,8 @@ pub struct FlashTable {
     columns: Vec<Column>,
     /// By name, which a change doesn't move.
     pods: Vec<Pod>,
+    /// Counts the rows' changes, for the flash layer.
+    revision: u64,
     renders: Rc<Cell<usize>>,
 }
 
@@ -355,8 +360,19 @@ impl FlashTable {
             table: TableState::new(TABLE),
             columns: columns(),
             pods,
+            revision: 0,
             renders,
         }
+    }
+
+    /// Where the table's rows are, as the layer reads them.
+    pub fn rows_at(&self) -> table::RowsAt {
+        self.table.rows_at()
+    }
+
+    /// The pod on `line`.
+    pub fn pod_at(&self, line: usize) -> Option<usize> {
+        self.pods.get(line).map(|pod| pod.id)
     }
 
     /// The pods' states, by id.
@@ -370,11 +386,14 @@ impl FlashTable {
         states
     }
 
-    fn change(&mut self, ids: &[usize], cx: &mut Context<Self>) {
+    /// Changes the pods `ids` and returns the rows' new revision.
+    fn change(&mut self, ids: &[usize], cx: &mut Context<Self>) -> u64 {
         for pod in self.pods.iter_mut().filter(|pod| ids.contains(&pod.id)) {
             pod.change();
         }
+        self.revision += 1;
         cx.notify();
+        self.revision
     }
 }
 

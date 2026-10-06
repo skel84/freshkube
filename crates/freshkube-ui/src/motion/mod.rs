@@ -1,15 +1,19 @@
-//! Motion: the durations and easings every animation uses, the few
-//! animations a page may draw, the change flash's burst rule, and the OS's
-//! reduced-motion setting ([docs/DESIGN.md](../../../docs/DESIGN.md#motion)).
+//! Motion: the durations and easings every animation uses, where a moving
+//! thing is now, the change flash's burst rule, and the OS's reduced-motion
+//! setting ([docs/DESIGN.md](../../../docs/DESIGN.md#motion)).
 //!
-//! `with_animation` is called only here (`scripts/check-style.sh`), so every
-//! animation takes its timing from these tokens. GPUI draws each one still
-//! while `cx.reduce_motion()` is set: a one-shot at its end, a loop at its
-//! start, and asks no frames for it.
+//! Animations here run on the executor's clock, not GPUI's `with_animation`
+//! (which times itself by the wall clock from its first frame): a view reads
+//! where its motion is now ([`phase`], [`pulse_dim`], [`shimmer_at`],
+//! [`fade_left`]) and asks for the next frame with [`next_frame`], which does
+//! nothing while `cx.reduce_motion()` is set. Tests then step motion with
+//! `advance_clock`, and `with_animation` appears nowhere else
+//! (`scripts/check-style.sh`).
 //!
-//! An animation asks frames for the view that draws it, and GPUI marks that
-//! view's ancestors dirty too. Draw one in a small view whose ancestors are
-//! cheap or cached, never inside a page's table.
+//! A frame redraws the view that asked for it, and GPUI marks that view's
+//! ancestors dirty too. Draw motion in a small view whose ancestors are cheap
+//! or cached, never inside a page's table: the table's `FlashLayer` and
+//! `LoadingMotion` are its siblings.
 
 mod flash;
 mod system;
@@ -17,9 +21,8 @@ mod system;
 pub use flash::{Flash, Flashes};
 pub use system::{Choice, choice, choose, follow_system, system};
 
-use gpui_kit::prelude::*;
-use gpui_kit::{Animation, AnimationElement, AnimationExt as _, ElementId, bounce, ease_in_out};
-use std::time::Duration;
+use gpui_kit::{App, Global, Window, bounce, ease_in_out};
+use std::time::{Duration, Instant};
 
 /// No motion: the change shows at once.
 pub const INSTANT: Duration = Duration::ZERO;
@@ -55,55 +58,52 @@ pub fn shimmer_easing(delta: f32) -> f32 {
     delta
 }
 
-/// The loading pulse: dims to [`PULSE_DIM`] and back over [`PULSE`], on
-/// repeat. Synced, so every bar in a view dims together; still at full
-/// strength under reduced motion.
-pub fn pulse<E>(id: impl Into<ElementId>, element: E) -> AnimationElement<E>
-where
-    E: Styled + IntoElement + 'static,
-{
-    element.with_animation(
-        id,
-        Animation::new(PULSE)
-            .repeat_synced()
-            .with_easing(bounce(ease_in_out)),
-        |element, delta| element.opacity(1. - delta * PULSE_DIM),
-    )
+/// The moment every loop counts from, so loops in different views move
+/// together.
+struct Epoch(Instant);
+
+impl Global for Epoch {}
+
+/// Where a loop of `period` is now, from 0 to 1, on the executor's clock.
+pub fn phase(period: Duration, cx: &mut App) -> f32 {
+    let now = cx.background_executor().now();
+    let epoch = match cx.try_global::<Epoch>() {
+        Some(epoch) => epoch.0,
+        None => {
+            cx.set_global(Epoch(now));
+            now
+        }
+    };
+    let period = period.as_secs_f64();
+    let elapsed = now.saturating_duration_since(epoch).as_secs_f64();
+    ((elapsed % period) / period) as f32
 }
 
-/// The loading shimmer: `sweep` places the element at `phase` (0 to 1) of
-/// its pass over [`SHIMMER`], on repeat. Synced, so every bar's band is
-/// one sweep. Under reduced motion it stays at phase 0, so a band should
-/// start out of sight.
-pub fn shimmer<E>(
-    id: impl Into<ElementId>,
-    element: E,
-    sweep: impl Fn(E, f32) -> E + 'static,
-) -> AnimationElement<E>
-where
-    E: IntoElement + 'static,
-{
-    element.with_animation(
-        id,
-        Animation::new(SHIMMER)
-            .repeat_synced()
-            .with_easing(shimmer_easing),
-        sweep,
-    )
+/// How far loading bars are dimmed now, from 0 to [`PULSE_DIM`] and back
+/// over [`PULSE`], as Kit's skeleton pulses.
+pub fn pulse_dim(cx: &mut App) -> f32 {
+    bounce(ease_in_out)(phase(PULSE, cx)) * PULSE_DIM
 }
 
-/// The change flash's fade: from full to clear over [`FADE`], once. The id
-/// must be new for each change, or the fade won't start again. Under reduced
-/// motion it draws its end, clear.
-pub fn fade_out<E>(id: impl Into<ElementId>, element: E) -> AnimationElement<E>
-where
-    E: Styled + IntoElement + 'static,
-{
-    element.with_animation(
-        id,
-        Animation::new(FADE).with_easing(fade_easing),
-        |element, delta| element.opacity(1. - delta),
-    )
+/// Where the loading shimmer is in its sweep now, from 0 to 1 over
+/// [`SHIMMER`].
+pub fn shimmer_at(cx: &mut App) -> f32 {
+    shimmer_easing(phase(SHIMMER, cx))
+}
+
+/// How much of the change flash is left `since` its change: 1 at the
+/// change, 0 from [`FADE`] on.
+pub fn fade_left(since: Duration) -> f32 {
+    let delta = (since.as_secs_f32() / FADE.as_secs_f32()).min(1.);
+    1. - fade_easing(delta)
+}
+
+/// Asks the next frame for the view drawing now, unless motion is reduced.
+/// Call it from `render` while that view's motion moves.
+pub fn next_frame(window: &Window, cx: &App) {
+    if !cx.reduce_motion() {
+        window.request_animation_frame();
+    }
 }
 
 #[cfg(test)]

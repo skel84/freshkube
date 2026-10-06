@@ -8,9 +8,8 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AnyView, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle,
-    ScrollStrategy, SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px,
-    uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle, ScrollStrategy,
+    SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -201,10 +200,11 @@ pub trait TableSource: Sized + 'static {
         _cx: &mut Context<Self>,
     ) {
     }
-    /// What replaces the rows until the first answer: a
-    /// [`super::LoadingRows`] view the page keeps, under the real header.
-    /// While it shows, [`empty`](Self::empty) isn't asked.
-    fn loading(&self) -> Option<AnyView> {
+    /// What replaces the rows until the first answer: the
+    /// [`super::LoadingRows`] the page keeps, drawn still under the real
+    /// header; the page draws their [`super::LoadingMotion`] over the table.
+    /// While they show, [`empty`](Self::empty) isn't asked.
+    fn loading(&self) -> Option<&super::LoadingRows> {
         None
     }
     /// What replaces the rows when there are none, such as a line or a
@@ -351,7 +351,7 @@ impl DataTable {
                 None => this.flex_1().min_h_0(),
             })
             .map(|this| match (loading, empty) {
-                (Some(rows), _) => this.child(rows),
+                (Some(rows), _) => this.child(rows.render(source.columns(), fill, cx)),
                 (None, Some(empty)) => this.child(
                     div()
                         .id(ids.empty.clone())

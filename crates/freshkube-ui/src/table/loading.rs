@@ -1,22 +1,30 @@
 //! The loading state every table shares: skeleton rows at the row height,
-//! one bar per column, under the table's real header. A source returns it
-//! from [`TableSource::loading`](super::TableSource::loading) until its
-//! first answer.
+//! one bar per column, under the table's real header, in two halves.
 //!
-//! The rows are their own small view, so their animation asks frames for
-//! them and their ancestors only. The bars pulse as Kit's skeleton does, or
-//! a band sweeps across them; under reduced motion they stand still.
+//! The table draws the bars still: a source returns its [`LoadingRows`]
+//! from [`TableSource::loading`](super::TableSource::loading) until its
+//! first answer, and the table paints them and records where. Their motion
+//! is a [`LoadingMotion`], the table's sibling drawn over it, as the change
+//! flash is: a frame redraws the view that asked for it and every view
+//! around it, so motion inside the table would redraw the table on every
+//! frame. The motion dims the bars (Pulse) or sweeps a light band across
+//! them (Shimmer) where the table's last frame put them, on the executor's
+//! clock, and under reduced motion draws nothing and asks no frames.
 
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Context, Div, ElementId, Hsla, Role, SharedString, TestSupportExt, Window, div,
-    linear_color_stop, linear_gradient, px, white,
+    AnyElement, App, Bounds, ContentMask, Context, Corners, Hsla, Pixels, Role, SharedString,
+    TestSupportExt, Window, canvas, div, fill, linear_color_stop, linear_gradient, point, px, size,
+    white,
 };
 
 use super::{CELL_PAD, GLYPH_WIDTH, ROW_HEIGHT, TableColumn};
 use crate::motion;
-use crate::ui::dp;
+use crate::ui::dp_px;
 
 /// How the bars move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +39,10 @@ pub enum Look {
 pub const LOADING_ROWS: usize = 14;
 /// A bar's height in a row.
 const BAR: f32 = 8.;
+/// A glyph column's dot.
+const DOT: f32 = BAR + 2.;
+/// A bar's corners, in px as every radius is.
+const RADIUS: f32 = 5.;
 /// The shimmer's band, in dp.
 const BAND: f32 = 120.;
 /// How far each row's band trails the one above, so the sweep leans.
@@ -39,49 +51,158 @@ const SLANT: f32 = 6.;
 /// rows read as text rather than a grid.
 const FILL: [f32; 7] = [0.72, 0.48, 0.86, 0.6, 0.78, 0.54, 0.66];
 
-/// One column's bar: where it starts in the row and how wide its cell is.
+/// One bar as the table last painted it.
+#[derive(Clone, Copy)]
+struct Bar {
+    bounds: Bounds<Pixels>,
+    radius: Pixels,
+    row: usize,
+}
+
+/// Where the table last painted its loading bars, which the motion reads.
+#[derive(Default)]
+struct Painted {
+    bars: Vec<Bar>,
+    /// The rows' region and the part of it that shows.
+    region: Bounds<Pixels>,
+    viewport: Bounds<Pixels>,
+    /// What the bars sit on, which the pulse dims them towards.
+    fill: Hsla,
+}
+
+/// The still half: the bars a table draws while it loads, with the id
+/// `<prefix>-loading`. A glyph column (unlabelled, [`GLYPH_WIDTH`] wide)
+/// shows a dot, the others a bar.
+#[derive(Clone)]
+pub struct LoadingRows {
+    id: SharedString,
+    painted: Rc<RefCell<Painted>>,
+}
+
+impl LoadingRows {
+    pub fn new(prefix: &str) -> Self {
+        Self {
+            id: format!("{prefix}-loading").into(),
+            painted: Rc::default(),
+        }
+    }
+
+    /// The moving half, to draw after the table over it. Mount it while
+    /// the table shows these rows: it asks for every frame while it shows.
+    pub fn motion(&self, look: Look) -> LoadingMotion {
+        LoadingMotion {
+            id: format!("{}-motion", self.id).into(),
+            painted: self.painted.clone(),
+            look,
+        }
+    }
+
+    /// The rows in `columns`, on `surface`, filling the list's room.
+    pub(super) fn render<C: TableColumn>(
+        &self,
+        columns: &[C],
+        surface: Hsla,
+        cx: &App,
+    ) -> AnyElement {
+        let slots: Vec<Slot> = columns
+            .iter()
+            .map(|column| Slot {
+                width: column.width(),
+                glyph: column.label().is_empty() && column.width() == GLYPH_WIDTH,
+                flexible: column.flexible(),
+            })
+            .collect();
+        let bar = cx.theme().skeleton;
+        let painted = self.painted.clone();
+        div()
+            .id(self.id.clone())
+            .test_support()
+            .role(Role::Status)
+            .aria_label("Loading")
+            .size_full()
+            .overflow_hidden()
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |region, _, window, _| {
+                        let bars = place(&slots, region, window);
+                        for bar_at in &bars {
+                            window.paint_quad(
+                                fill(bar_at.bounds, bar).corner_radii(Corners::all(bar_at.radius)),
+                            );
+                        }
+                        let viewport = window.content_mask().bounds.intersect(&region);
+                        *painted.borrow_mut() = Painted {
+                            bars,
+                            region,
+                            viewport,
+                            fill: surface,
+                        };
+                    },
+                )
+                .size_full(),
+            )
+            .into_any_element()
+    }
+}
+
+/// One column's cell, in dp.
 struct Slot {
-    x: f32,
     width: f32,
     glyph: bool,
     flexible: bool,
 }
 
-/// Skeleton rows in a table's columns.
-pub struct LoadingRows {
+/// Where each bar goes in `region`, row by row: the rows the region has
+/// room for, at most [`LOADING_ROWS`]. Flexible columns share the room the
+/// others leave, as the real rows' cells do.
+fn place(slots: &[Slot], region: Bounds<Pixels>, window: &Window) -> Vec<Bar> {
+    let unit = dp_px(1., window);
+    let total: f32 = slots.iter().map(|slot| slot.width).sum();
+    let flexible = slots.iter().filter(|slot| slot.flexible).count().max(1);
+    let spare = (region.size.width / unit - total).max(0.) / flexible as f32;
+    let row_height = dp_px(ROW_HEIGHT, window);
+    let rows = ((region.size.height / row_height).ceil() as usize).min(LOADING_ROWS);
+    let mut bars = Vec::with_capacity(rows * slots.len());
+    for row in 0..rows {
+        let top = region.top() + row_height * row as f32;
+        let mut x = 0.;
+        for (column, slot) in slots.iter().enumerate() {
+            let (offset, width, height) = if slot.glyph {
+                ((slot.width - DOT) / 2., DOT, DOT)
+            } else {
+                let share = FILL[(row * 3 + column) % FILL.len()];
+                let width = ((slot.width - 2. * CELL_PAD) * share).max(BAR);
+                (CELL_PAD, width, BAR)
+            };
+            let origin = point(
+                region.left() + unit * (x + offset),
+                top + (row_height - unit * height) / 2.,
+            );
+            bars.push(Bar {
+                bounds: Bounds::new(origin, size(unit * width, unit * height)),
+                radius: if slot.glyph {
+                    unit * DOT / 2.
+                } else {
+                    px(RADIUS)
+                },
+                row,
+            });
+            x += slot.width + if slot.flexible { spare } else { 0. };
+        }
+    }
+    bars
+}
+
+/// The moving half of the loading rows: a small view over the table that
+/// moves the bars the table painted, so its frames never redraw the table.
+pub struct LoadingMotion {
     id: SharedString,
-    slots: Vec<Slot>,
-    /// The row's width in dp: where the band leaves.
-    sweep: f32,
+    painted: Rc<RefCell<Painted>>,
     look: Look,
 }
 
-impl LoadingRows {
-    /// Rows in `columns`, with the id `<prefix>-loading`. A glyph column
-    /// (unlabelled, [`GLYPH_WIDTH`] wide) shows a dot, the others a bar.
-    pub fn new<C: TableColumn>(prefix: &str, columns: &[C], look: Look) -> Self {
-        let mut x = 0.;
-        let slots = columns
-            .iter()
-            .map(|column| {
-                let slot = Slot {
-                    x,
-                    width: column.width(),
-                    glyph: column.label().is_empty() && column.width() == GLYPH_WIDTH,
-                    flexible: column.flexible(),
-                };
-                x += column.width();
-                slot
-            })
-            .collect();
-        Self {
-            id: format!("{prefix}-loading").into(),
-            slots,
-            sweep: x,
-            look,
-        }
-    }
-
+impl LoadingMotion {
     pub fn look(&self) -> Look {
         self.look
     }
@@ -92,102 +213,91 @@ impl LoadingRows {
             cx.notify();
         }
     }
-
-    fn render_row(&self, row: usize, colors: &Colors) -> Div {
-        h_flex()
-            .w_full()
-            .h(dp(ROW_HEIGHT))
-            .flex_none()
-            .border_1()
-            .border_color(gpui_kit::transparent_black())
-            .children(
-                self.slots
-                    .iter()
-                    .enumerate()
-                    .map(|(column, slot)| self.render_cell(row, column, slot, colors)),
-            )
-    }
-
-    fn render_cell(&self, row: usize, column: usize, slot: &Slot, colors: &Colors) -> Div {
-        let cell = div().h_full().flex().items_center();
-        let cell = if slot.flexible {
-            cell.flex_1().min_w(dp(slot.width))
-        } else {
-            cell.flex_none().w(dp(slot.width))
-        };
-        let (offset, width) = if slot.glyph {
-            let dot = BAR + 2.;
-            ((slot.width - dot) / 2., dot)
-        } else {
-            let fill = FILL[(row * 3 + column) % FILL.len()];
-            (CELL_PAD, ((slot.width - 2. * CELL_PAD) * fill).max(BAR))
-        };
-        let bar = div()
-            .ml(dp(offset))
-            .w(dp(width))
-            .h(dp(if slot.glyph { width } else { BAR }))
-            .rounded(px(if slot.glyph { width } else { 5. }))
-            .bg(colors.bar);
-        let id = ElementId::from((self.id.clone(), row * self.slots.len() + column));
-        cell.child(match self.look {
-            Look::Pulse => motion::pulse(id, bar).into_any_element(),
-            Look::Shimmer => {
-                // The band's place in the bar: where the sweep is, less the
-                // bar's start in the row and this row's lag.
-                let start = slot.x + offset + row as f32 * SLANT;
-                let travel = self.sweep + BAND + LOADING_ROWS as f32 * SLANT;
-                let band = band(colors);
-                bar.relative()
-                    .overflow_hidden()
-                    .child(motion::shimmer(id, band, move |band, phase| {
-                        band.left(dp(phase * travel - BAND - start))
-                    }))
-                    .into_any_element()
-            }
-        })
-    }
 }
 
-/// The band: clear, light at its middle, clear again.
-fn band(colors: &Colors) -> Div {
-    let half = |from: Hsla, to: Hsla| {
-        div().h_full().w(dp(BAND / 2.)).bg(linear_gradient(
-            90.,
-            linear_color_stop(from, 0.),
-            linear_color_stop(to, 1.),
-        ))
-    };
-    let clear = colors.band.opacity(0.);
-    h_flex()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .left(dp(-BAND))
-        .w(dp(BAND))
-        .child(half(clear, colors.band))
-        .child(half(colors.band, clear))
-}
-
-struct Colors {
-    bar: Hsla,
-    band: Hsla,
-}
-
-impl Render for LoadingRows {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        freshkube_probe::probe::hit("table.loading-rows");
-        let theme = cx.theme();
-        let colors = Colors {
-            bar: theme.skeleton,
-            band: white().opacity(if theme.mode.is_dark() { 0.09 } else { 0.6 }),
-        };
-        v_flex()
+impl Render for LoadingMotion {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        freshkube_probe::probe::hit("table.loading-motion");
+        let reduce = cx.reduce_motion();
+        let look = self.look;
+        // Where the motion is now; nothing moves under reduced motion.
+        let at = (!reduce).then(|| match look {
+            Look::Pulse => motion::pulse_dim(cx),
+            Look::Shimmer => motion::shimmer_at(cx),
+        });
+        motion::next_frame(window, cx);
+        let band = white().opacity(if cx.theme().mode.is_dark() { 0.09 } else { 0.6 });
+        let painted = self.painted.clone();
+        div()
             .id(self.id.clone())
-            .test_support()
-            .role(Role::Status)
-            .aria_label("Loading")
-            .size_full()
-            .overflow_hidden()
-            .children((0..LOADING_ROWS).map(|row| self.render_row(row, &colors)))
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_0()
+            .children(at.map(|at| {
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        let painted = painted.borrow();
+                        match look {
+                            Look::Pulse => paint_pulse(&painted, at, window),
+                            Look::Shimmer => paint_shimmer(&painted, at, band, window),
+                        }
+                    },
+                )
+                .size_0()
+            }))
+    }
+}
+
+/// Dims every bar by `dim` towards what it sits on: the same as drawing it
+/// at `1 - dim` opacity.
+fn paint_pulse(painted: &Painted, dim: f32, window: &mut Window) {
+    let veil = painted.fill.opacity(dim);
+    let mask = ContentMask {
+        bounds: painted.viewport,
+    };
+    window.with_content_mask(Some(mask), |window| {
+        for bar in &painted.bars {
+            window.paint_quad(fill(bar.bounds, veil).corner_radii(Corners::all(bar.radius)));
+        }
+    });
+}
+
+/// The band at `at` of its sweep, on each bar it crosses. Each half is a
+/// quad the bar's shape, its gradient's stops set where the half lies in
+/// the bar, cut at the band's middle; so the bar's round ends stay round.
+fn paint_shimmer(painted: &Painted, at: f32, band: Hsla, window: &mut Window) {
+    let unit = dp_px(1., window);
+    let region = painted.region;
+    let travel = region.size.width / unit + BAND + LOADING_ROWS as f32 * SLANT;
+    let clear = band.opacity(0.);
+    for bar in &painted.bars {
+        let start = region.left() + unit * (at * travel - BAND - bar.row as f32 * SLANT);
+        let middle = start + unit * (BAND / 2.);
+        let end = start + unit * BAND;
+        for (from, to, colors) in [(start, middle, (clear, band)), (middle, end, (band, clear))] {
+            let left = from.max(bar.bounds.left());
+            let right = to.min(bar.bounds.right());
+            if left >= right {
+                continue;
+            }
+            let width = bar.bounds.size.width;
+            let stop = |x: Pixels| (x - bar.bounds.left()) / width;
+            let gradient = linear_gradient(
+                90.,
+                linear_color_stop(colors.0, stop(from)),
+                linear_color_stop(colors.1, stop(to)),
+            );
+            let cut = Bounds::new(
+                point(left, bar.bounds.top()),
+                size(right - left, bar.bounds.size.height),
+            )
+            .intersect(&painted.viewport);
+            window.with_content_mask(Some(ContentMask { bounds: cut }), |window| {
+                window
+                    .paint_quad(fill(bar.bounds, gradient).corner_radii(Corners::all(bar.radius)));
+            });
+        }
     }
 }
