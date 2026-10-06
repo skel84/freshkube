@@ -14,8 +14,10 @@ use table::{
 const NESTED_INDENT: f32 = 20.;
 /// The chevron after a namespace's name, with its gap.
 const CHEVRON: f32 = 19.;
-/// The Issue column's least width.
-const ISSUE_WIDTH: f32 = 200.;
+/// The Issue column's least width. It truncates there rather than push the
+/// table wider than the list beside the details; the row's tooltip and the
+/// details hold the whole issue.
+const ISSUE_WIDTH: f32 = 120.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Field {
@@ -67,6 +69,8 @@ pub(crate) struct WorkloadRow {
     ready: SharedString,
     issue: SharedString,
     label: SharedString,
+    /// The name, and the issue a narrow Issue column may cut short.
+    tooltip: SharedString,
 }
 
 impl WorkloadRow {
@@ -76,6 +80,11 @@ impl WorkloadRow {
             "{} {} · {status} · {} · {}",
             view.kind, view.name, view.ready, view.issue
         );
+        let tooltip = if view.issue.is_empty() {
+            view.name.clone()
+        } else {
+            format!("{} · {}", view.name, view.issue)
+        };
         Self {
             namespace: matches!(key, ItemKey::Namespace(_)),
             key,
@@ -89,6 +98,7 @@ impl WorkloadRow {
             ready: view.ready.into(),
             issue: view.issue.into(),
             label: label.into(),
+            tooltip: tooltip.into(),
         }
     }
 }
@@ -295,7 +305,7 @@ impl TableSource for WorkloadsScreen {
             key: row.key.clone(),
             id: ("workload-row", line).into(),
             label: row.label.clone(),
-            tooltip: Some(row.name.clone()),
+            tooltip: Some(row.tooltip.clone()),
             marked: false,
             muted: false,
             data: row,

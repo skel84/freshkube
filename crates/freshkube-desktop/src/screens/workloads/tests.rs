@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use freshkube_core::workloads::{HealthState, WorkloadSource, WorkloadSourceError};
+use freshkube_ui::table::{self, TableSource};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
@@ -471,6 +472,61 @@ fn a_namespace_row_is_tinted_at_the_row_height(cx: &mut TestAppContext) {
             (f32::from(name.size.height) - (height - 2.)).abs() < 0.5,
             "the tinted name cell {name:?} doesn't fill its row {row:?}"
         );
+    })
+    .unwrap();
+}
+
+/// At 1280 with the details beside it, the table fits its list: the Issue
+/// column truncates rather than run past the edge, and each row's tooltip
+/// holds the whole issue.
+#[gpui_kit::test]
+fn issue_truncates_beside_the_details(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = app(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-5", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("workload-row", 1usize), cx);
+        window.render_frame(cx);
+        let list = window.find("workload-list").bounds();
+        let details = window.find("workload-details").bounds();
+        assert!(details.left() >= list.right(), "{list:?} {details:?}");
+        let scroll = window.find("workload-table-scroll").bounds();
+        let mut rows = 0usize;
+        while let Some(row) = window.try_find(("workload-row", rows)) {
+            let row = row.bounds();
+            assert!(
+                row.right() <= scroll.right() + px(0.5),
+                "row {rows} {row:?} runs past the table {scroll:?}"
+            );
+            rows += 1;
+        }
+        assert!(rows > 0);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_row_tooltip_holds_its_issue(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let screen = screen.read(cx);
+        let tips: Vec<String> = (0..screen.line_count())
+            .filter_map(|line| match screen.line(line, cx)? {
+                table::Line::Row(row) => row.tooltip.map(|tip| tip.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tips.iter().any(|tip| tip.ends_with(" · CrashLoopBackOff")),
+            "{tips:?}"
+        );
+        assert!(tips.iter().any(|tip| tip == "coredns"), "{tips:?}");
     })
     .unwrap();
 }
