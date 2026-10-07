@@ -83,8 +83,9 @@ requests a continuous animation. The shell's render marks when each frame
 starts and the indicator's paint when it ends. A frame that starts within 20 ms
 of the last paint counts the gap between the two paints; a frame whose own time
 passes 33 ms counts that time, however long the app waited before it. A second
-with less than 150 ms counted reads idle, so sparse, quick frames, such as a
-followed log's, never read as a frame rate (#312). The label refreshes at most
+with less than 150 ms counted and no slow frame reads idle, so sparse, quick
+frames, such as a followed log's, never read as a frame rate (#312), while one
+120 ms frame in a quiet second reads 8. The label refreshes at most
 once a second: green at 55+, amber at 30–54, red below 30. This is the frame
 rate while the app draws continuously or slowly, not a GPU throughput benchmark.
 

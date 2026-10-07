@@ -27,7 +27,8 @@ const BACK_TO_BACK: Duration = Duration::from_millis(20);
 const SLOW_FRAME: Duration = Duration::from_millis(33);
 /// The counted time a second needs before it reads anything: about nine
 /// frames at 60 FPS. A followed log's few pairs of frames, a new line
-/// measured and then drawn, stay idle.
+/// measured and then drawn, stay idle. A slow frame reads whatever the
+/// time, so a lone hitch shows.
 const ACTIVE: Duration = Duration::from_millis(150);
 
 #[derive(Default)]
@@ -36,6 +37,7 @@ struct Frames {
     last: Option<Instant>,
     elapsed: Duration,
     intervals: u32,
+    slow: bool,
 }
 
 impl Frames {
@@ -61,13 +63,12 @@ impl Frames {
         // sparse, quick frames say nothing about the frame rate. Ignore
         // duplicate paints at one instant in headless tests, too.
         let waited = started.map_or(gap, |started| started.saturating_duration_since(last));
-        let interval = if waited < BACK_TO_BACK {
-            gap
-        } else {
-            match work {
-                Some(work) if work > SLOW_FRAME => work,
-                _ => return,
-            }
+        let slow = work.is_some_and(|work| work > SLOW_FRAME);
+        self.slow |= slow;
+        let interval = match work {
+            _ if waited < BACK_TO_BACK => gap,
+            Some(work) if slow => work,
+            _ => return,
         };
         if !interval.is_zero() {
             self.elapsed += interval;
@@ -76,10 +77,11 @@ impl Frames {
     }
 
     fn sample(&mut self) -> Option<u32> {
-        let fps = (self.elapsed >= ACTIVE)
+        let fps = (self.elapsed >= ACTIVE || self.slow)
             .then(|| (f64::from(self.intervals) / self.elapsed.as_secs_f64()).round() as u32);
         self.elapsed = Duration::ZERO;
         self.intervals = 0;
+        self.slow = false;
         fps
     }
 }
@@ -255,6 +257,45 @@ mod tests {
         }
         assert_eq!(frames.sample(), Some(3));
         assert_eq!(frames.sample(), None);
+    }
+
+    #[test]
+    fn one_slow_frame_in_a_quiet_second_reads_red() {
+        let mut frames = Frames::default();
+        let start = Instant::now();
+        frames.paint(start);
+        frames.start(start + Duration::from_millis(400));
+        frames.paint(start + Duration::from_millis(520));
+        let fps = frames.sample();
+        assert_eq!(fps, Some(8));
+        assert_eq!(tone(fps), Tone::Crit);
+        // Two frames just over the line read too.
+        frames.start(start + Duration::from_millis(1100));
+        frames.paint(start + Duration::from_millis(1134));
+        frames.start(start + Duration::from_millis(1500));
+        frames.paint(start + Duration::from_millis(1534));
+        assert_eq!(frames.sample(), Some(29));
+        assert_eq!(frames.sample(), None);
+    }
+
+    #[test]
+    fn a_hitch_every_second_reads_red_every_second() {
+        // A timer that redraws once a second in 50 ms, among quick frames
+        // a followed log draws every 100 ms.
+        let mut frames = Frames::default();
+        let start = Instant::now();
+        frames.paint(start);
+        for second in 0..5 {
+            for tick in 1..=10 {
+                let painted = start + Duration::from_millis(second * 1000 + tick * 100);
+                let work = if tick == 5 { 50 } else { 6 };
+                frames.start(painted - Duration::from_millis(work));
+                frames.paint(painted);
+            }
+            let fps = frames.sample();
+            assert_eq!(fps, Some(20), "second {second}");
+            assert_eq!(tone(fps), Tone::Crit);
+        }
     }
 
     #[gpui_kit::test]
