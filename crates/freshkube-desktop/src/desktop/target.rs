@@ -66,6 +66,7 @@ impl Pilot {
             let request = self.overview.begin(self.applied.clone());
             self.overview
                 .apply(&request, Err("Node changed; refresh cancelled".into()));
+            self.publish_reading(cx);
         }
         self.selected_node = selected;
         self.selected_service = None;

@@ -82,6 +82,7 @@ impl Pilot {
         if changed {
             self.invalidate_target(window, cx);
             request = self.overview.begin(self.applied.clone());
+            self.publish_reading(cx);
         }
         self.access_configuration = Some(collected.configuration);
         if collected.access.is_some() {

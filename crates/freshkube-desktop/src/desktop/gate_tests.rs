@@ -181,3 +181,54 @@ fn the_node_panes_screens_follow_the_same_rule(cx: &mut TestAppContext) {
     pane_screen::<NetworkScreen>(cx);
     pane_screen::<DiagnosticsScreen>(cx);
 }
+
+/// Retry after a failed first read shows the loading state while the new
+/// read is in flight, then the data.
+#[gpui_kit::test]
+async fn retry_after_a_failed_first_read_waits_and_then_shows_data(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    cx.update_window(handle, |_, _, cx| {
+        view.update(cx, |pilot, cx| pilot.simulate_failure(cx))
+    })
+    .unwrap();
+    show_page(cx, handle, &view, Page::Etcd);
+    assert_eq!(state(cx, handle, "failure"), [false, true, false]);
+
+    // The hold keeps the new read in flight.
+    cx.update_window(handle, |_, window, cx| window.click("screen-retry", cx))
+        .unwrap();
+    assert_eq!(state(cx, handle, "retrying"), [true, false, false]);
+
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.fixture_hold = false;
+            view.overview = crate::state::Snapshot::default();
+            view.refresh_now(window, cx);
+        })
+    })
+    .unwrap();
+    cx.wait_for(handle, PATIENCE, |window, _| {
+        settled(window) && window.try_find(data_of(Page::Etcd)).is_some()
+    })
+    .await;
+}
+
+/// A new talosconfig path doesn't show the old path's error while it loads.
+#[gpui_kit::test]
+async fn a_new_talosconfig_path_does_not_show_the_old_error(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    // Never the user's default talosconfig: a missing file.
+    let missing = std::env::temp_dir().join(format!("freshkube-tests-{}-gate", std::process::id()));
+    let (_runtime, handle, view) =
+        mount(cx, GpuiOptions::new(Some(missing), None, 100), 1280., 820.);
+    cx.wait_for(handle, Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    cx.update(|cx| assert!(matches!(crate::screens::reading(cx), Reading::Failed(_))));
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.load_configuration(window, cx));
+        assert_eq!(crate::screens::reading(cx), Reading::Waiting);
+    })
+    .unwrap();
+}

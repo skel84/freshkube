@@ -669,10 +669,10 @@ struct ClusterReading(Reading);
 
 impl Global for ClusterReading {}
 
-/// The overview's state; `Answered` where no shell has published one.
+/// The overview's state; `Waiting` until a shell has published one.
 pub(crate) fn reading(cx: &App) -> Reading {
     cx.try_global::<ClusterReading>()
-        .map_or(Reading::Answered, |global| global.0.clone())
+        .map_or(Reading::Waiting, |global| global.0.clone())
 }
 
 /// Publishes the overview's state. Returns whether it changed, so the
@@ -756,7 +756,7 @@ pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
                 IconName::Unplug,
                 format!("{} isn't responding", target.node),
                 format!(
-                    "{} needs the Talos API at {}:50000. Pick another target node in the title bar, or retry.",
+                    "{} needs the Talos API at {}:50000. Open another node in Nodes, or retry.",
                     capitalized(what),
                     target.address
                 ),

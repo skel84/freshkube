@@ -1022,11 +1022,13 @@ impl Pilot {
         self.config_job = None;
         self.config_generation = self.config_generation.wrapping_add(1);
         let generation = self.config_generation;
+        // Before the reset publishes the overview's state, so the old
+        // error isn't shown for the new path.
+        self.config_error = None;
         self.invalidate_target(window, cx);
         self.contexts.clear();
         self.context_nodes.clear();
         self.loaded_config_path = None;
-        self.config_error = None;
         self.config_loading = true;
         let (job, receiver) = backend::load_contexts(self.runtime.clone(), self.applied.clone());
         self.config_job = Some(job);
@@ -1366,6 +1368,7 @@ impl Pilot {
         }
         self.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
+        self.publish_reading(cx);
         if self.fixture && self.fixture_hold {
             // Loading until the hold is released, which only a test does.
             cx.notify();
