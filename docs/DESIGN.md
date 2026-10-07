@@ -179,7 +179,20 @@ FRESHKUBE_THEME=dark FRESHKUBE_TEXT_SIZE=13 FRESHKUBE_WINDOW_SIZE=1280x880 \
 
 Use 2 px series lines, solid hairline grids, recessive axes and legends for multiple series. Deploy markers are blue and node events coral: a fine vertical line and bottom triangle. Text stays neutral.
 
-Two series use `#5E93E6` and `#CC7C4A`. Additional dashboard series remain neutral until focused in the existing legend; this avoids introducing an unreviewed larger categorical palette. Ordered quantiles use a blue ramp (`#5379BB`, `#7AA0E6`, `#B3CEFA`).
+Two series use the two slots. Additional dashboard series remain neutral until focused in the existing legend; this avoids introducing an unreviewed larger categorical palette. Ordered quantiles use a blue ramp, lowest darkest. Each theme has its own chart inks (`ChartInks` in the palette): every ink reaches 3:1 on its card at full opacity, as lines and bars draw it, and a threshold's at the 0.8 its dashed line draws at. A unit test (`every_ink_reaches_three_to_one_on_the_card`) checks both sets.
+
+| Ink | Dark, on `#2C3037` | Light, on `#FFFFFF` |
+|---|---|---|
+| Slot 1 | `#5E93E6` | `#2F6BD6` |
+| Slot 2 | `#CC7C4A` | `#B45A1E` |
+| Further series | `#737A85` | `#737A85` |
+| Ramp | `#5379BB`, `#7AA0E6`, `#B3CEFA` | `#1F4A9E`, `#3D6FD1`, `#6890DE` |
+| Critical | `#F28B82` | `#D03B3B` |
+| Warning | `#F2C46D` | `#917300` |
+| OK | `#82D4AB` | `#1E8A3E` |
+| Purple | `#B7AAF7` | `#7560B9` |
+
+The light warning is a dark amber, not the status `#FAB219`, which reaches only 1.8:1 on white. It sits in the family of GitHub's light attention ink (`#9A6700`), and stays as far from Slot 2's orange as the dark pair does. Critical, warning, OK and purple draw only where colour is status: log severities and thresholds.
 
 Heatmap levels: `#323845`, `#33466A`, `#3D5C92`, `#5379BB`, `#7AA0E6`, `#B3CEFA`; errors use coral steps from `#3A3036` to `#F28B82`. Flame differences: less `#3F65A0` / `#3F5A80`, same `#454B56`, more `#7E4A49` / `#A64B46`, with white labels. Status colours never stand in for ordinary chart series. The one exception is a Coroot chart of log severities, whose levels are status: fatal and error draw critical, warning amber ([MONITORING.md](MONITORING.md)).
 

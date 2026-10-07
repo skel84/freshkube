@@ -1,6 +1,7 @@
-//! The Fog chart palette (docs/MONITORING.md, Colours). Every colour a
-//! dashboard asks for is ignored: palette modes, fixed and named colours,
-//! overrides, continuous schemes and threshold colours. A series' colour
+//! The chart inks (docs/MONITORING.md, Colours), with each theme's values in
+//! the palette's `ChartInks`. Every colour a dashboard asks for is ignored:
+//! palette modes, fixed and named colours, overrides, continuous schemes
+//! and threshold colours. A series' colour
 //! follows only from its position, or from its level when the series read
 //! as quantiles or histogram buckets. A threshold step's colour gives only
 //! its meaning: of several steps the highest is critical and the rest are
@@ -10,16 +11,14 @@ use freshkube_core::coroot::SeriesColor;
 use freshkube_core::monitoring::model::{color::Rgba, spec::Step};
 use gpui_kit::{Hsla, rgb};
 
-/// The two series slots, in their fixed order.
-pub(crate) const SLOTS: [u32; 2] = [0x5E93E6, 0xCC7C4A];
-/// Ordered levels (p50, p95, p99; le buckets), lowest level darkest.
-pub(crate) const RAMP: [u32; 3] = [0x5379BB, 0x7AA0E6, 0xB3CEFA];
-/// Series past the second, until hovered or picked.
-pub(crate) const OVERFLOW: u32 = 0x737A85;
+use crate::palette::{ChartInks, Palette};
+
 /// Opacity of an area under its line.
 pub(crate) const AREA_OPACITY: f32 = 0.14;
 /// Opacity of the other series while one is hovered or picked.
 pub(crate) const FADED_OPACITY: f32 = 0.15;
+/// Opacity of a threshold's dashed line.
+pub(crate) const THRESHOLD_OPACITY: f32 = 0.8;
 
 /// How a series is coloured.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,29 +33,61 @@ pub(crate) enum Ink {
     Named(SeriesColor),
 }
 
+/// The chart ink a series draws in, the same whatever the theme: two
+/// series with the same swatch draw alike in both.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Swatch {
+    Slot(usize),
+    Overflow,
+    Level(f32),
+    Critical,
+    Warning,
+    Ok,
+    Purple,
+}
+
 impl Ink {
-    /// The colour drawn, given whether the series is hovered or picked.
-    pub(crate) fn color(self, focused: bool) -> Hsla {
+    /// The swatch drawn, given whether the series is hovered or picked.
+    pub(crate) fn swatch(self, focused: bool) -> Swatch {
         match self {
-            Ink::Slot(slot) => hex(SLOTS[slot % SLOTS.len()]),
-            Ink::Overflow(slot) if focused => hex(SLOTS[slot % SLOTS.len()]),
-            Ink::Overflow(_) => hex(OVERFLOW),
-            Ink::Level(level) => ramp(level),
-            Ink::Named(color) => hex(named(color)),
+            Ink::Slot(slot) => Swatch::Slot(slot % 2),
+            Ink::Overflow(slot) if focused => Swatch::Slot(slot % 2),
+            Ink::Overflow(_) => Swatch::Overflow,
+            Ink::Level(level) => Swatch::Level(level),
+            Ink::Named(color) => named(color),
+        }
+    }
+
+    /// The colour drawn in the palette's theme.
+    pub(crate) fn color(self, palette: &Palette, focused: bool) -> Hsla {
+        self.swatch(focused).color(&palette.chart)
+    }
+}
+
+impl Swatch {
+    pub(crate) fn color(self, inks: &ChartInks) -> Hsla {
+        match self {
+            Swatch::Slot(slot) => hex(inks.slots[slot % inks.slots.len()]),
+            Swatch::Overflow => hex(inks.overflow),
+            Swatch::Level(level) => ramp(inks, level),
+            Swatch::Critical => hex(inks.critical),
+            Swatch::Warning => hex(inks.warning),
+            Swatch::Ok => hex(inks.ok),
+            Swatch::Purple => hex(inks.purple),
         }
     }
 }
 
-/// The Console colour drawn for a severity (docs/DESIGN.md, Tokens).
-fn named(color: SeriesColor) -> u32 {
+/// The Console colour drawn for a severity (docs/DESIGN.md, Charts).
+fn named(color: SeriesColor) -> Swatch {
     match color {
-        SeriesColor::Critical => 0xF28B82,
-        SeriesColor::Warning => 0xF2C46D,
-        SeriesColor::Ok => 0x82D4AB,
-        SeriesColor::Blue => SLOTS[0],
-        SeriesColor::Orange => SLOTS[1],
-        SeriesColor::Purple => 0xB7AAF7,
-        SeriesColor::Grey => OVERFLOW,
+        SeriesColor::Critical => Swatch::Critical,
+        SeriesColor::Warning => Swatch::Warning,
+        SeriesColor::Ok => Swatch::Ok,
+        SeriesColor::Blue => Swatch::Slot(0),
+        SeriesColor::Orange => Swatch::Slot(1),
+        SeriesColor::Purple => Swatch::Purple,
+        SeriesColor::Grey => Swatch::Overflow,
     }
 }
 
@@ -65,13 +96,14 @@ fn hex(value: u32) -> Hsla {
 }
 
 /// A colour along the ramp; its three stops at 0, ½ and 1.
-pub(crate) fn ramp(level: f32) -> Hsla {
-    let level = level.clamp(0., 1.) * (RAMP.len() - 1) as f32;
-    let low = (level.floor() as usize).min(RAMP.len() - 2);
+fn ramp(inks: &ChartInks, level: f32) -> Hsla {
+    let stops = &inks.ramp;
+    let level = level.clamp(0., 1.) * (stops.len() - 1) as f32;
+    let low = (level.floor() as usize).min(stops.len() - 2);
     let t = level - low as f32;
     let channel = |value: u32, shift: u32| ((value >> shift) & 0xff) as f32;
     let mix = |shift: u32| {
-        let (a, b) = (channel(RAMP[low], shift), channel(RAMP[low + 1], shift));
+        let (a, b) = (channel(stops[low], shift), channel(stops[low + 1], shift));
         ((a + (b - a) * t).round() as u32) << shift
     };
     hex(mix(16) | mix(8) | mix(0))
@@ -87,7 +119,7 @@ pub(crate) fn inks(
     let ordered = levels(series).unwrap_or_else(|| {
         (0..series.len())
             .map(|index| {
-                if index < SLOTS.len() {
+                if index < 2 {
                     Ink::Slot(index)
                 } else {
                     Ink::Overflow(index)
@@ -170,6 +202,17 @@ pub(crate) enum Tier {
     Crit,
 }
 
+impl Tier {
+    /// The ink a threshold's line and band draw in.
+    pub(crate) fn color(self, palette: &Palette) -> Hsla {
+        match self {
+            Tier::Warn => Swatch::Warning,
+            Tier::Crit => Swatch::Critical,
+        }
+        .color(&palette.chart)
+    }
+}
+
 /// Tiers for `count` ascending thresholds, whatever colours they name: the
 /// highest is critical when there are several, the rest are warnings.
 pub(crate) fn tiers(count: usize) -> Vec<Tier> {
@@ -232,6 +275,7 @@ pub(crate) fn step_tiers(steps: &[Step]) -> Vec<Option<Tier>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::palette::{dark, light};
 
     fn named(names: &[&str]) -> Vec<Ink> {
         let series: Vec<(&str, &[(String, String)])> =
@@ -246,21 +290,21 @@ mod tests {
         let inks = named(&names);
         assert_eq!(&inks[..2], &(0..2).map(Ink::Slot).collect::<Vec<_>>()[..]);
         assert_eq!(inks[6], Ink::Overflow(6));
-        assert_eq!(inks[0].color(false), hex(0x5E93E6));
-        assert_eq!(inks[5].color(false), hex(OVERFLOW));
+        assert_eq!(inks[0].color(&dark(), false), hex(0x5E93E6));
+        assert_eq!(inks[5].color(&dark(), false), hex(0x737A85));
         // Grey until focused, then its own slot (the first again).
-        assert_eq!(inks[6].color(false), hex(OVERFLOW));
-        assert_eq!(inks[6].color(true), hex(0x5E93E6));
-        assert_eq!(inks[7].color(true), hex(0xCC7C4A));
+        assert_eq!(inks[6].color(&dark(), false), hex(0x737A85));
+        assert_eq!(inks[6].color(&dark(), true), hex(0x5E93E6));
+        assert_eq!(inks[7].color(&dark(), true), hex(0xCC7C4A));
     }
 
     #[test]
     fn quantiles_take_the_ramp_lowest_darkest() {
         let inks = named(&["p99", "p50", "p95"]);
         assert_eq!(inks, [Ink::Level(1.), Ink::Level(0.), Ink::Level(0.5)]);
-        assert_eq!(inks[1].color(false), hex(0x5379BB));
-        assert_eq!(inks[2].color(false), hex(0x7AA0E6));
-        assert_eq!(inks[0].color(false), hex(0xB3CEFA));
+        assert_eq!(inks[1].color(&dark(), false), hex(0x5379BB));
+        assert_eq!(inks[2].color(&dark(), false), hex(0x7AA0E6));
+        assert_eq!(inks[0].color(&dark(), false), hex(0xB3CEFA));
         assert_eq!(
             named(&["P50 latency", "99th percentile"]),
             [Ink::Level(0.), Ink::Level(1.)]
@@ -307,17 +351,20 @@ mod tests {
             ]
         );
         // Drawn in its colour whether focused or not, unlike grey.
-        assert_eq!(inks[0].color(false), hex(0xF28B82));
-        assert_eq!(inks[0].color(true), hex(0xF28B82));
-        assert_eq!(Ink::Named(SeriesColor::Warning).color(false), hex(0xF2C46D));
-        assert_eq!(inks[2].color(false), hex(0x82D4AB));
+        assert_eq!(inks[0].color(&dark(), false), hex(0xF28B82));
+        assert_eq!(inks[0].color(&dark(), true), hex(0xF28B82));
+        assert_eq!(
+            Ink::Named(SeriesColor::Warning).color(&dark(), false),
+            hex(0xF2C46D)
+        );
+        assert_eq!(inks[2].color(&dark(), false), hex(0x82D4AB));
     }
 
     #[test]
     fn the_ramp_interpolates_between_its_stops() {
-        assert_eq!(ramp(0.), hex(0x5379BB));
-        assert_eq!(ramp(1.), hex(0xB3CEFA));
-        assert_eq!(ramp(0.25), hex(0x678DD1));
+        assert_eq!(ramp(&dark().chart, 0.), hex(0x5379BB));
+        assert_eq!(ramp(&dark().chart, 1.), hex(0xB3CEFA));
+        assert_eq!(ramp(&dark().chart, 0.25), hex(0x678DD1));
     }
 
     #[test]
@@ -354,5 +401,83 @@ mod tests {
             step_tiers(&steps),
             [None, Some(Tier::Warn), Some(Tier::Crit)]
         );
+    }
+
+    /// WCAG contrast of `ink` over `ground`, both `0xRRGGBB`, with `ink`
+    /// drawn at `opacity`.
+    fn contrast(ink: u32, ground: u32, opacity: f32) -> f32 {
+        let channel = |value: u32, shift: u32| ((value >> shift) & 0xff) as f32 / 255.;
+        let luminance = |rgb: [f32; 3]| {
+            let lin = |c: f32| {
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
+        };
+        let over = [16, 8, 0]
+            .map(|shift| channel(ink, shift) * opacity + channel(ground, shift) * (1. - opacity));
+        let (a, b) = (
+            luminance(over),
+            luminance([16, 8, 0].map(|s| channel(ground, s))),
+        );
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    fn rgb(color: Hsla) -> u32 {
+        let c = color.to_rgb();
+        [c.r, c.g, c.b]
+            .map(|v| (v * 255.).round() as u32)
+            .into_iter()
+            .fold(0, |acc, v| acc << 8 | v)
+    }
+
+    /// Every series ink reaches 3:1 on the card in both themes, as bars and
+    /// lines draw it, and each threshold at the opacity its line draws at.
+    #[test]
+    fn every_ink_reaches_three_to_one_on_the_card() {
+        for (theme, palette) in [("light", light()), ("dark", dark())] {
+            let card = rgb(palette.surface);
+            let inks = palette.chart;
+            let mut series: Vec<(String, u32)> = vec![
+                ("slot 1".into(), inks.slots[0]),
+                ("slot 2".into(), inks.slots[1]),
+                ("overflow".into(), inks.overflow),
+                ("critical".into(), inks.critical),
+                ("warning".into(), inks.warning),
+                ("ok".into(), inks.ok),
+                ("purple".into(), inks.purple),
+            ];
+            for level in [0., 0.25, 0.5, 0.75, 1.] {
+                series.push((format!("ramp {level}"), rgb(ramp(&inks, level))));
+            }
+            for (name, ink) in series {
+                let ratio = contrast(ink, card, 1.);
+                assert!(ratio >= 3., "{theme} {name} {ink:06X}: {ratio:.2}");
+            }
+            for tier in [Tier::Warn, Tier::Crit] {
+                let ink = rgb(tier.color(&palette));
+                let ratio = contrast(ink, card, THRESHOLD_OPACITY);
+                assert!(ratio >= 3., "{theme} {tier:?} {ink:06X}: {ratio:.2}");
+            }
+        }
+    }
+
+    /// Light draws its own, darker inks; the same swatch draws alike in
+    /// both themes, so lines group the same way in either.
+    #[test]
+    fn light_draws_darker_inks_by_the_same_swatch() {
+        let ink = Ink::Named(SeriesColor::Blue);
+        assert_eq!(ink.swatch(false), Ink::Slot(0).swatch(false));
+        assert_eq!(ink.color(&light(), false), hex(0x2F6BD6));
+        assert_eq!(ink.color(&dark(), false), hex(0x5E93E6));
+        assert_eq!(
+            Ink::Named(SeriesColor::Warning).color(&light(), false),
+            hex(0x917300)
+        );
+        assert_eq!(Tier::Warn.color(&dark()), dark().warn);
+        assert_eq!(Tier::Crit.color(&dark()), dark().crit);
     }
 }

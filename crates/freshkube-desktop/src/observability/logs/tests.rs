@@ -1,6 +1,7 @@
 use super::super::{Report, example, tests::mount};
 use super::LEAST_LIST_HEIGHT;
 use freshkube_core::types::LogLevel;
+use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext};
 use std::time::Duration;
@@ -94,13 +95,15 @@ fn the_histogram_draws_each_severity_in_its_coroot_colour(cx: &mut TestAppContex
     let (_runtime, handle, page) = mount(cx, true);
     open(cx, &page, example::WORKER);
     draw(cx, handle);
-    let colors = cx.read(|cx| {
-        let logs = &page.read(cx).live_logs;
-        let histogram = logs.histogram.as_ref().expect("a histogram");
-        histogram.read(cx).series_colors()
-    });
+    let colors = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let logs = &page.read(cx).live_logs;
+            let histogram = logs.histogram.as_ref().expect("a histogram");
+            histogram.read(cx).series_colors(cx)
+        })
+    };
     let hex = |value: u32| gpui_kit::Hsla::from(gpui_kit::rgb(value));
-    let color = |name: &str| {
+    let color = |colors: &[(SharedString, gpui_kit::Hsla)], name: &str| {
         colors
             .iter()
             .find(|(series, _)| series == name)
@@ -109,11 +112,21 @@ fn the_histogram_draws_each_severity_in_its_coroot_colour(cx: &mut TestAppContex
     };
     // Coroot's red-darken1 and orange-lighten1 are Console's critical and
     // warning colours, not the first two series slots (#226).
-    assert_eq!(color("error"), hex(0xF28B82));
-    assert_eq!(color("warning"), hex(0xF2C46D));
-    assert_eq!(color("info"), hex(0x5E93E6));
-    assert_eq!(color("debug"), hex(0x82D4AB));
-    assert_eq!(color("unknown"), hex(0x737A85));
+    let dark = colors(cx);
+    assert_eq!(color(&dark, "error"), hex(0xF28B82));
+    assert_eq!(color(&dark, "warning"), hex(0xF2C46D));
+    assert_eq!(color(&dark, "info"), hex(0x5E93E6));
+    assert_eq!(color(&dark, "debug"), hex(0x82D4AB));
+    assert_eq!(color(&dark, "unknown"), hex(0x737A85));
+    // Light draws the same severities in its darker inks, each 3:1 or more
+    // on the white card (#346).
+    cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+    let light = colors(cx);
+    assert_eq!(color(&light, "error"), hex(0xD03B3B));
+    assert_eq!(color(&light, "warning"), hex(0x917300));
+    assert_eq!(color(&light, "info"), hex(0x2F6BD6));
+    assert_eq!(color(&light, "debug"), hex(0x1E8A3E));
+    assert_eq!(color(&light, "unknown"), hex(0x737A85));
 }
 
 #[gpui_kit::test]

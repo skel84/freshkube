@@ -25,7 +25,7 @@ use gpui_kit::{
 
 use super::{Geometry, PanelEvent, PanelView, markers};
 use crate::monitoring::derive::{self, Chart};
-use crate::palette::palette;
+use crate::palette::{Palette, palette};
 use crate::ui::{self, dp, dp_px};
 
 /// Readout rows drawn at most; the rest are counted.
@@ -224,7 +224,7 @@ impl PanelView {
             id: self.element_id("crosshair"),
             geometry: self.geometry.clone(),
             x,
-            dots: self.dots(&chart, index, &named),
+            dots: self.dots(&chart, index, &named, &p),
             line: p.ink_2.opacity(0.35),
             ring: p.surface,
         })
@@ -293,6 +293,7 @@ impl PanelView {
         let Some(overlay) = &self.overlay else {
             return;
         };
+        let p = palette(cx);
         let shown = self
             .cursor
             .clone()
@@ -302,12 +303,12 @@ impl PanelView {
                 let named: Vec<usize> = cursor.rows.iter().map(|row| row.series).collect();
                 Shown {
                     x: chart.xs[cursor.index],
-                    dots: self.dots(&chart, cursor.index, &named),
+                    dots: self.dots(&chart, cursor.index, &named, &p),
                     inks: named
                         .iter()
                         .map(|series| {
                             let focused = focus == Some(*series);
-                            (chart.series[*series].ink.color(focused), focused)
+                            (chart.series[*series].ink.color(&p, focused), focused)
                         })
                         .collect(),
                     marker: cursor
@@ -392,7 +393,7 @@ impl PanelView {
     /// A dot on each line, or past the readout's rows on the lines it
     /// names and the focused one: hundreds of dots stacked on one
     /// crosshair say nothing and cost every frame of the hover.
-    fn dots(&self, chart: &Chart, index: usize, named: &[usize]) -> Vec<(f32, Hsla)> {
+    fn dots(&self, chart: &Chart, index: usize, named: &[usize], p: &Palette) -> Vec<(f32, Hsla)> {
         let few = chart.series.len() <= READOUT_ROWS;
         let focus = self.focus();
         chart
@@ -403,7 +404,7 @@ impl PanelView {
             .filter_map(|(series, line)| {
                 let y = *line.tops.get(index)?;
                 y.is_finite()
-                    .then(|| (y, line.ink.color(focus == Some(series))))
+                    .then(|| (y, line.ink.color(p, focus == Some(series))))
             })
             .collect()
     }
