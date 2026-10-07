@@ -30,8 +30,8 @@ impl LifecycleScreen {
             .render(self, window, cx)
             .w_full()
             .flex_none()
-            // Over the table, as System services has it.
-            .child(self.loading_motion.clone())
+            // The motion over its loading rows goes beside the page, in
+            // the shell (`loading_motion`).
             .into_any_element()
     }
 

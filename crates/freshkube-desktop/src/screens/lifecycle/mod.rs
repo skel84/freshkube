@@ -891,6 +891,36 @@ impl LifecycleScreen {
         cx.notify();
     }
 
+    /// The motion over the roster's loading rows, which the shell mounts
+    /// beside the page while they show.
+    pub(crate) fn loading_motion(&self) -> &Entity<data_table::LoadingMotion> {
+        &self.loading_motion
+    }
+
+    /// Forgets the answer and waits for another, as a first read does, for
+    /// the shell's tests of the loading rows.
+    #[cfg(test)]
+    pub(crate) fn wait_again(&mut self, cx: &mut Context<Self>) {
+        let target = self.source.as_ref().expect("a target").target.clone();
+        self.loader.reset();
+        self.loader.state.begin(target);
+        cx.notify();
+    }
+
+    /// Answers the read [`wait_again`](Self::wait_again) began: the example
+    /// data, or a failure.
+    #[cfg(test)]
+    pub(crate) fn answer(&mut self, ok: bool, cx: &mut Context<Self>) {
+        let source = self.source.clone().expect("a target");
+        let result = if ok {
+            example(&source)
+        } else {
+            Err("example failure".into())
+        };
+        self.resolve(source.target, result);
+        cx.notify();
+    }
+
     /// Whether the first answer for the target is still to come: the table
     /// shows its loading rows rather than a state.
     fn waiting(&self) -> bool {

@@ -198,6 +198,12 @@ impl Pilot {
                     .is_some()
                     .then(|| services.loading_motion().clone())
             }
+            Page::Lifecycle => {
+                let lifecycle = self.lifecycle.read(cx);
+                freshkube_ui::table::TableSource::loading(lifecycle)
+                    .is_some()
+                    .then(|| lifecycle.loading_motion().clone())
+            }
             _ => None,
         }
     }
