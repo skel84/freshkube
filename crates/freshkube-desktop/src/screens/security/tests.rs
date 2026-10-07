@@ -57,6 +57,14 @@ fn mount(
     cx: &mut TestAppContext,
     node: &str,
 ) -> (Runtime, Entity<SecurityScreen>, WindowHandle<Root>) {
+    mount_sized(cx, node, 1100.)
+}
+
+fn mount_sized(
+    cx: &mut TestAppContext,
+    node: &str,
+    width: f32,
+) -> (Runtime, Entity<SecurityScreen>, WindowHandle<Root>) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -64,11 +72,12 @@ fn mount(
         .unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
         crate::theme::install(cx);
     });
     let source = source(node);
     let mut screen = None;
-    let handle = cx.open_window(size(px(1100.), px(760.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(760.)), |window, cx| {
         let view = cx.new(|cx| {
             let mut view = SecurityScreen::new(runtime.handle().clone(), window, cx);
             view.set_source(Some(source), window, cx);
@@ -113,6 +122,85 @@ fn keyboard_selection_updates_the_details(cx: &mut TestAppContext) {
         assert!(selected(window, &keys[0]));
     })
     .unwrap();
+}
+
+/// The Inspector shows only with a selection: beside the table on a wide
+/// page and under it on a narrow one. Escape closes it and clears the
+/// selection; the arrows select again.
+#[gpui_kit::test]
+fn the_inspector_opens_with_a_selection_and_escape_closes_it(cx: &mut TestAppContext) {
+    for width in [1500., 1000.] {
+        let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("security-detail").is_none(), "{width}");
+            window.click(keys(&screen, cx)[1].clone(), cx);
+            window.render_frame(cx);
+            layout_check::assert_inspector(
+                window,
+                cx,
+                "security-split",
+                "security-table",
+                "security-detail",
+                "security-detail-title",
+            );
+            let table = window.find("security-table").bounds();
+            let detail = window.find("security-detail").bounds();
+            let beside = crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+            assert_eq!(width > 1200., beside, "{width}");
+            if beside {
+                assert!(detail.left() >= table.right(), "{width}: {detail:?}");
+            } else {
+                assert!(detail.top() >= table.bottom(), "{width}: {detail:?}");
+            }
+            window.press("escape", cx);
+            window.render_frame(cx);
+            assert!(screen.read(cx).selected.is_none());
+            assert!(window.try_find("security-detail").is_none());
+            window.press("down", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("security-detail-title").label(),
+                Some("Talos CA")
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// A width dragged to is saved under `security` in `navigation.json`, and
+/// the next page opens its Inspector at it.
+#[gpui_kit::test]
+fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
+    use crate::navigation_file::NavigationFile;
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-security-inspector-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let preferences = directory.join("preferences.json");
+    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(keys(&screen, cx)[0].clone(), cx);
+        window.render_frame(cx);
+        let state = screen.read(cx).split.beside_state().clone();
+        state.update(cx, |state, cx| {
+            state.resize_panel(1, crate::ui::dp_px(520., window), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reopened = NavigationFile::open(Some(&preferences));
+    assert_eq!(reopened.inspector_width("security"), Some(520.));
+    cx.update(|cx| cx.set_global(reopened));
+    let (_runtime, screen, _handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.read(|cx| assert_eq!(screen.read(cx).split.width(), 520.));
+    let _ = std::fs::remove_dir_all(&directory);
 }
 
 /// The three groups head their rows: Certificates, RBAC role and Volume

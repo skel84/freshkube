@@ -18,14 +18,14 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
-use freshkube_ui::inspector;
+use freshkube_ui::inspector::{self, Inspector, InspectorSplit};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::TableState;
 
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    panel, partial_notice, refresh_control, segment, stat,
+    partial_notice, refresh_control, segment, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
@@ -33,12 +33,10 @@ use crate::ui::{self, Tone, dp};
 const CONTEXT: &str = "TalosSecurity";
 /// The page header's id prefix.
 const PREFIX: &str = "security";
-/// The details' height under the table.
-const DETAILS_HEIGHT: f32 = 260.;
 
 actions!(
     talos_security,
-    [NextItem, PreviousItem, FirstItem, LastItem]
+    [NextItem, PreviousItem, FirstItem, LastItem, CloseDetails]
 );
 
 mod audit;
@@ -63,6 +61,8 @@ pub(crate) struct SecurityScreen {
     table: TableState,
     /// The table's columns for the derived rows, and their total width.
     columns: (Vec<table::Column>, f32),
+    /// The Inspector's width beside the table, saved under `security`.
+    split: InspectorSplit,
     /// The meta line's parts for the audit at a loader revision.
     status: Option<(u64, Segment)>,
     /// The audit's rows and counts at a loader revision.
@@ -78,6 +78,7 @@ impl ScreenPanel for SecurityScreen {
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
             KeyBinding::new("home", FirstItem, Some(CONTEXT)),
             KeyBinding::new("end", LastItem, Some(CONTEXT)),
+            KeyBinding::new("escape", CloseDetails, Some(CONTEXT)),
         ]);
         Self {
             runtime,
@@ -87,6 +88,14 @@ impl ScreenPanel for SecurityScreen {
             focus: cx.focus_handle(),
             table: TableState::new(PREFIX),
             columns: table::columns(&[]),
+            split: {
+                let file = crate::navigation_file::NavigationFile::global(cx);
+                InspectorSplit::new(
+                    file.inspector_width(PREFIX),
+                    move |width, cx| file.set_inspector_width(PREFIX, width, cx),
+                    cx,
+                )
+            },
             status: None,
             display: (u64::MAX, Display::default()),
         }
@@ -191,6 +200,16 @@ impl SecurityScreen {
         self.selected = Some(key);
         freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
         cx.notify();
+    }
+
+    /// Escape closes the Inspector by clearing the selection; with nothing
+    /// selected it goes on to whatever handles it next.
+    fn close_details(&mut self, cx: &mut Context<Self>) {
+        if self.selected.take().is_some() {
+            cx.notify();
+        } else {
+            cx.propagate();
+        }
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
