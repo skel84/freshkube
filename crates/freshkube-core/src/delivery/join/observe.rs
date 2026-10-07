@@ -13,7 +13,7 @@ use crate::delivery::github::PullRequest;
 use crate::delivery::kargo::{Freight, Promotion, Stage};
 use crate::delivery::observation::{Meta, ObjectRef, Observation, pointer_segment, role};
 use crate::delivery::pods::RunningImage;
-use crate::delivery::rollouts::{ReplicaSet, Rollout};
+use crate::delivery::rollouts::{POD_HASH_LABEL, ReplicaSet, Rollout};
 use crate::delivery::tekton::{
     Build, CHAINS_SIGNED, CommitNames, SHA_LABEL, WitnessSource, built_images,
 };
@@ -242,7 +242,7 @@ pub(super) fn stage_names(stage: &Stage, freight: &str) -> Vec<Observation> {
     vec![Observation::reported(
         role::KARGO,
         stage.object_ref(),
-        "/status",
+        stage.freight_at,
         Some(freight),
     )]
 }
@@ -355,6 +355,29 @@ pub(super) fn rollout_state(rollout: &Rollout, pinned: Option<&Digest>) -> Vec<O
         ));
     }
     seen
+}
+
+/// The join's comparison of the pod-template hash the Rollout reports as
+/// current with the hash label of a pod read for it, both reported.
+pub(super) fn hashes_agree(rollout: &Rollout, pods: &[RunningImage]) -> Vec<Observation> {
+    let Some(hash) = rollout.current_pod_hash.as_deref() else {
+        return Vec::new();
+    };
+    let Some(pod) = pods
+        .iter()
+        .find(|pod| pod.pod_hash.as_deref() == Some(hash))
+    else {
+        return Vec::new();
+    };
+    vec![
+        Observation::reported(
+            role::ENVIRONMENT,
+            pod.object_ref(),
+            &format!("/metadata/labels/{}", pointer_segment(POD_HASH_LABEL)),
+            Some(hash),
+        ),
+        concluded("currentPodHash == pod-template-hash", hash),
+    ]
 }
 
 /// What ties a Rollout to the pods read for it: the pod-template hash it

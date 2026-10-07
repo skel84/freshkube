@@ -69,6 +69,8 @@ pub struct Stage {
     pub current_digests: Vec<Digest>,
     /// The pointer `current_digests` were read from.
     pub digests_at: &'static str,
+    /// The pointer `current_freight` was read from.
+    pub freight_at: &'static str,
     pub last_promotion: Option<String>,
     pub health: Option<String>,
     /// Why the Stage is not healthy, as Kargo's health checks say.
@@ -226,6 +228,7 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut digests: Vec<Digest> = Vec::new();
     let mut digests_at = "/status/freightHistory/0/items";
+    let mut freight_at = "/status/freightHistory/0/items";
     // Newer Kargo: the newest entry of `freightHistory` holds a map of
     // origin -> freight.
     if let Some(items) = value
@@ -237,8 +240,11 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
     }
     // Older Kargo: one `currentFreight`.
     if current.is_empty() {
+        freight_at = "/status/currentFreight/name";
         if let Some(name) = text(value, "/status/currentFreight/name") {
             current.push(name);
+        } else if text(value, "/status/lastPromotion/freight/name").is_some() {
+            freight_at = "/status/lastPromotion/freight/name";
         }
         if let Some(name) = text(value, "/status/lastPromotion/freight/name")
             && !current.contains(&name)
@@ -271,6 +277,7 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         current_freight: current,
         current_digests: digests,
         digests_at,
+        freight_at,
         last_promotion: text(value, "/status/lastPromotion/name"),
         health: text(value, "/status/health/status"),
         health_issues: array(value, "/status/health/issues")

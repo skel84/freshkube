@@ -21,6 +21,8 @@ pub struct RunningImage {
     pub image: Option<String>,
     pub digest: Option<Digest>,
     pub ready: bool,
+    /// The pod's `rollouts-pod-template-hash` label.
+    pub pod_hash: Option<String>,
 }
 
 impl RunningImage {
@@ -43,6 +45,12 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
     };
     let namespace = text(value, "/metadata/namespace");
     let meta = Meta::parse(value);
+    let pod_hash = value
+        .pointer("/metadata/labels")
+        .and_then(|labels| labels.get(POD_HASH_LABEL))
+        .and_then(Value::as_str)
+        .filter(|hash| !hash.is_empty())
+        .map(str::to_owned);
     // Init containers don't keep running; only the app containers count.
     value
         .pointer("/status/containerStatuses")
@@ -54,6 +62,7 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
                 pod: pod.clone(),
                 namespace: namespace.clone(),
                 meta: meta.clone(),
+                pod_hash: pod_hash.clone(),
                 container: text(status, "/name")?,
                 image: text(status, "/image"),
                 digest: text(status, "/imageID").and_then(|id| Digest::from_reference(&id)),

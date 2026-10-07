@@ -8,8 +8,8 @@ use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
 use super::observe::{
-    manages, pods_running, pods_running_other, rollout_pods, rollout_state as rollout_seen,
-    summary_images,
+    hashes_agree, manages, pods_running, pods_running_other, rollout_pods,
+    rollout_state as rollout_seen, summary_images,
 };
 use super::*;
 
@@ -180,6 +180,11 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
         from,
     );
     link.reason = format!("{}; {which}", link.reason);
+    if link.confidence == Confidence::Confirmed
+        && matches!(read.map(|read| &read.set), Some(PodSet::Current(_)))
+    {
+        link.evidence.extend(hashes_agree(rollout, pods));
+    }
     link
 }
 

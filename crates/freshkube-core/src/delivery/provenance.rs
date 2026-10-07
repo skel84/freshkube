@@ -39,14 +39,15 @@ fn key_text(key: &Key) -> String {
 }
 
 /// Whether the link has, on `hop`'s side, an observation of a read object
-/// that is reported, never merely declared, and carries the link's key. What
-/// the join concluded counts for nothing.
+/// that is reported, never declared or derived, and carries the link's key.
 fn stands_on(link: &Link, hop: Hop) -> bool {
     let key = key_text(&link.key);
     link.evidence.iter().any(|seen| {
         kinds(hop).contains(&seen.object.kind.as_str())
-            && seen.cluster != role::JOIN
-            && seen.fact != Fact::Declared
+            // Only what a controller reported stands for a side. A derived
+            // observation does not; the change is the Commit side's one input.
+            && (seen.fact == Fact::Reported
+                || (hop == Hop::Commit && seen.cluster == role::CHANGE))
             && seen
                 .value
                 .as_deref()
@@ -57,7 +58,7 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
 /// The sides of confirmed links that no read object stands on: `(from, to,
 /// side)`. Each is a confirmed link, on main, whose evidence on that side is
 /// declared only, or absent. Provenance shows them as they are; whether they
-/// stay confirmed is for the confidence slice (#266).
+/// stay confirmed is for the confidence slice (#387).
 const KNOWN_GAPS: &[(&str, &str, &str)] = &[
     // The run's only witness is a declared revision parameter; a result
     // would be reported (see the test on a task result).
@@ -69,7 +70,8 @@ const KNOWN_GAPS: &[(&str, &str, &str)] = &[
     // the Rollout, not the digest.
     ("Application", "Rollout", "Application"),
     ("Application", "Rollout", "Rollout"),
-    // The Rollout reports its pod-template hash, not the digest.
+    // The Rollout reports its pod-template hash, which the pods' label
+    // matches; neither carries the digest.
     ("Rollout", "pods", "Rollout"),
 ];
 
@@ -428,3 +430,49 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
 /// `[confirmed, claimed, unknown]` of each fixture, as the join gave them
 /// before links carried observations.
 const COUNTS: [[usize; 3]; 4] = [[4, 4, 0], [7, 1, 0], [12, 0, 0], [8, 4, 0]];
+
+#[test]
+fn the_rule_fails_on_a_side_with_nothing_read() {
+    use super::join::{Hop, Link};
+    use super::observation::{Meta, ObjectRef};
+    let digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    let object =
+        |kind: &str| ObjectRef::new("argoproj.io", kind, Some("shop"), "api", &Meta::default());
+    let key = Key::Digest(super::Digest::parse(digest).unwrap());
+    let link = |evidence: Vec<Observation>| Link {
+        from: Hop::Application,
+        to: Hop::Rollout,
+        subject: "shop/api".into(),
+        key: key.clone(),
+        confidence: Confidence::Confirmed,
+        reason: String::new(),
+        evidence,
+    };
+    let declared =
+        Observation::declared(role::ENVIRONMENT, object("Rollout"), "/spec", Some(digest));
+    let concluded = Observation::derived(
+        role::JOIN,
+        ObjectRef::new("", "Join", None, "rule", &Meta::default()),
+        "/key",
+        Some(digest),
+    );
+    let on_rollout =
+        Observation::derived(role::ENVIRONMENT, object("Rollout"), "/spec", Some(digest));
+    let reported = Observation::reported(
+        role::ENVIRONMENT,
+        object("Rollout"),
+        "/status",
+        Some(digest),
+    );
+    // Declared, a join's conclusion, or a derived copy of a read field: none
+    // is a side that was read.
+    for evidence in [vec![declared.clone()], vec![concluded], vec![on_rollout]] {
+        assert!(!stands_on(&link(evidence), Hop::Rollout));
+    }
+    // A value that isn't the key is not it either.
+    let other = Observation::reported(role::ENVIRONMENT, object("Rollout"), "/status", Some("x"));
+    assert!(!stands_on(&link(vec![other]), Hop::Rollout));
+    // What the pods or another hop report is not this side.
+    assert!(!stands_on(&link(vec![reported.clone()]), Hop::Application));
+    assert!(stands_on(&link(vec![declared, reported]), Hop::Rollout));
+}
