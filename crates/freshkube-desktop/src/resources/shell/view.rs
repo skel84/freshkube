@@ -136,13 +136,25 @@ impl ShellView {
     }
 }
 
+impl ShellView {
+    /// Keeps the least height for the text size drawn; a change asks for
+    /// the next frame, as the log view's does, so the dock that sizes the
+    /// tab by it hears of it without a notify from render.
+    fn note_least(&mut self, least: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        if self.least == least {
+            return;
+        }
+        self.least = least;
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            _ = view.update(cx, |_, cx| cx.notify());
+        });
+    }
+}
+
 impl Render for ShellView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let least = dp_px(LEAST_HEIGHT, window);
-        if self.least != least {
-            self.least = least;
-            cx.notify();
-        }
+        self.note_least(dp_px(LEAST_HEIGHT, window), window, cx);
         let p = palette(cx);
         v_flex()
             .id("pod-shell")

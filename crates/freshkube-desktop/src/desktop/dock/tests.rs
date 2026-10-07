@@ -1491,6 +1491,111 @@ fn a_ninth_shell_tab_asks_to_close_the_oldest(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn every_way_of_closing_a_running_shells_tab_asks(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    pick_shell(handle, &pilot, &pods[1], cx);
+    pick_shell(handle, &pilot, &pods[2], cx);
+    let ids: Vec<u64> = cx.update(|cx| dock.read(cx).tabs.iter().map(|tab| tab.id).collect());
+    let asked = |expected: String, cx: &mut TestAppContext| {
+        let (message, _) = cx.pending_prompt().unwrap();
+        assert_eq!(message, expected);
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert_eq!(titles(&dock, cx).len(), 3);
+        assert_eq!(cx.read(shell::running_anywhere).len(), 2);
+    };
+
+    // A middle-click.
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::InputEvent as _;
+        window.render_frame(cx);
+        let position = window
+            .find(format!("dock-tab-{}", ids[1]))
+            .bounds()
+            .center();
+        window.dispatch_event(
+            gpui_kit::MouseDownEvent {
+                button: gpui_kit::MouseButton::Middle,
+                position,
+                click_count: 1,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    asked(format!("End the shell in {}?", pods[1].name), cx);
+
+    // Command-W from the selected shell's terminal.
+    let close = if cfg!(target_os = "macos") {
+        "cmd-w"
+    } else {
+        "ctrl-shift-w"
+    };
+    cx.update_window(handle, |_, window, cx| window.press(close, cx))
+        .unwrap();
+    cx.run_until_parked();
+    asked(format!("End the shell in {}?", pods[2].name), cx);
+
+    // Close others and Close to the right, from the log tab.
+    for close in [Dock::close_others, Dock::close_to_right] {
+        cx.update_window(handle, |_, window, cx| {
+            dock.update(cx, |dock, cx| close(dock, ids[0], window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        asked("End 2 shells?".into(), cx);
+    }
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| dock.close_to_right(ids[0], window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("End the shells");
+    cx.run_until_parked();
+    assert_eq!(titles(&dock, cx), [format!("Pod {}", pods[0].name)]);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+}
+
+#[gpui_kit::test]
+fn a_gone_pods_shell_tab_starts_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pod = running_pods(&pilot, cx)[0].clone();
+    pick_shell(handle, &pilot, &pod, cx);
+    let view = shell_view(&dock, 0, cx);
+    cx.update(|cx| view.update(cx, |view, cx| view.end(cx)));
+    cx.run_until_parked();
+    let ended = shell_state(&dock, 0, cx);
+    assert!(cx.read(|cx| view.read(cx).can_start()));
+    // Its watch finds the pod gone.
+    let id = cx.update(|cx| dock.read(cx).tabs[0].id);
+    let gone = freshkube_core::resources::WorkloadPods {
+        listed: true,
+        ..Default::default()
+    };
+    cx.update(|cx| dock.update(cx, |dock, cx| dock.apply_pod(id, gone, cx)));
+    assert!(!cx.read(|cx| view.read(cx).can_start()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("pod-shell-start", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(shell_state(&dock, 0, cx), ended);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    // Nor does a pick from the menu.
+    pick_shell(handle, &pilot, &pod, cx);
+    assert_eq!(shell_state(&dock, 0, cx), ended);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+}
+
+#[gpui_kit::test]
 fn the_terminal_keeps_control_period_and_comma(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
@@ -1572,7 +1677,7 @@ fn a_shell_tab_asked_for_by_name_starts_on_the_pod_its_watch_finds(cx: &mut Test
             })
         })
         .unwrap();
-    let view = cx.update(|cx| shell_view_of(&dock.read(cx), 0));
+    let view = cx.update(|cx| shell_view_of(dock.read(cx), 0));
     assert!(!cx.read(|cx| view.read(cx).can_start()), "no UID, no start");
 
     // The watch finds the pod: the view takes its UID and keeps its container.
@@ -1618,7 +1723,7 @@ fn a_shell_tab_asked_for_by_name_takes_the_picked_pods_uid(cx: &mut TestAppConte
     // Before its watch answers, the menu's pick settles the tab's pod.
     pick_shell(handle, &pilot, &pod, cx);
     assert_eq!(titles(&dock, cx), [format!("Shell {}", pod.name)]);
-    let view = cx.update(|cx| shell_view_of(&dock.read(cx), 0));
+    let view = cx.update(|cx| shell_view_of(dock.read(cx), 0));
     assert_eq!(
         cx.read(|cx| view.read(cx).pod().unwrap().uid.clone()),
         pod.uid

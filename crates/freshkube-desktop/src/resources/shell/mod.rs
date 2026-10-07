@@ -120,6 +120,8 @@ pub(crate) struct ShellView {
     containers: PodContainers,
     /// Whether `containers` was read for this pod yet.
     known: bool,
+    /// The pod is gone: no shell starts in it again.
+    gone: bool,
     pub(super) container: Option<String>,
     pub(crate) state: ShellState,
     pub(super) status: Status,
@@ -164,6 +166,7 @@ impl ShellView {
             pod: None,
             containers: PodContainers::default(),
             known: false,
+            gone: false,
             container: None,
             state: ShellState::Idle,
             status: Status {
@@ -207,6 +210,7 @@ impl ShellView {
         self.pod = pod;
         self.containers = PodContainers::default();
         self.known = false;
+        self.gone = false;
         self.container = None;
         self.state = ShellState::Idle;
         self.title = None;
@@ -215,6 +219,14 @@ impl ShellView {
         }
         self.describe(None);
         cx.notify();
+    }
+
+    /// The pod is gone, as its tab's watch found: Start stays off.
+    pub(crate) fn set_gone(&mut self, cx: &mut Context<Self>) {
+        if !self.gone {
+            self.gone = true;
+            cx.notify();
+        }
     }
 
     /// The UID of a pod asked for by name, as a restored tab's, once it is
@@ -309,7 +321,8 @@ impl ShellView {
 
     /// Whether Start can start a session now.
     pub(crate) fn can_start(&self) -> bool {
-        self.pod.as_ref().is_some_and(|pod| !pod.uid.is_empty())
+        !self.gone
+            && self.pod.as_ref().is_some_and(|pod| !pod.uid.is_empty())
             && self.access.is_some()
             && !self.running()
             && self.chosen_running()

@@ -68,7 +68,10 @@ impl Dock {
                     view.update(cx, |view, cx| view.end(cx));
                     FeedState::Gone
                 }
-                (TabKind::Shell(_), None) => FeedState::Gone,
+                (TabKind::Shell(view), None) => {
+                    view.update(cx, |view, cx| view.set_gone(cx));
+                    FeedState::Gone
+                }
                 (TabKind::Workload(_), None) => {
                     FeedState::Failed("Example data has no such object".into())
                 }
@@ -184,8 +187,10 @@ impl Dock {
         if gone {
             // Nothing more of this pod is read: neither its log, which would
             // retry by name, nor its watch.
-            if let TabKind::Pod(view) = &tab.kind {
-                view.update(cx, |view, cx| view.end(cx));
+            match &tab.kind {
+                TabKind::Pod(view) => view.update(cx, |view, cx| view.end(cx)),
+                TabKind::Shell(view) => view.update(cx, |view, cx| view.set_gone(cx)),
+                TabKind::Workload(_) => {}
             }
             tab.feed.job = None;
         }
