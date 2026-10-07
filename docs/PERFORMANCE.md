@@ -259,7 +259,19 @@ Release stress runs, 20 s after 5 s of warm-up, on a MacBook Air: three runs of 
 
 The hoist alone did nothing for Nodes and System services: the Talos hold kept the header's spinner turning, so the page still rendered on about 905 of 905 frames. With the hosts the page renders once on Nodes and never on the other two. The cached parts draw again on none of `pod-logs`'s 896 frames, 28 of `burst`'s 166 (the shell's own notifies), 2 of `table`'s 44, and on loading Pods only the header, 16 times, with its once-a-second countdown; that tick and the FPS meter's cost about 0.5 ms a second. The FPS meter still counts every frame: the shell, which draws on every frame, starts its count.
 
-Unexplained: process CPU rose by about 1 point on `pod-logs` and 1.5 on `burst` while frame time fell. Code this change doesn't touch runs about 30% slower per operation only in the hosts binary (`logs.apply` 0.22 → 0.29 ms, `logs.render` 1.12 → 1.58 ms, `logs.measure_row` 0.04 → 0.06 ms; `table.rebuild` about 5% on `burst`), and two more `pod-logs` runs with the hosts binary first showed the same, so run order isn't the cause. Lower clocks or efficiency cores under a lighter main thread, or different code generation for the log view, would each explain it; a build with the parts present but uncached would tell them apart.
+Process CPU rose by about 1 point on `pod-logs` and 1.5 on `burst` while frame time fell, and code this change doesn't touch ran about 30% slower per operation, only in the hosts binary (`logs.apply` 0.22 → 0.29 ms, `logs.render` 1.12 → 1.58 ms, `logs.measure_row` 0.04 → 0.06 ms; `table.rebuild` about 5% on `burst`). Run order wasn't the cause. #396 told codegen from clocks with two builds of the #385 merge: as merged, and with the header, rail and column drawn as the same views in plain `div`s of the same sizes, without `.cached(…)`. The `LogView` code is the same in both. Three runs of each, alternated, same settings, on power, with a one-minute load of 1.8–4.6 at each start; medians:
+
+| Span or measure | `pod-logs`, cached | `pod-logs`, uncached | `burst`, cached | `burst`, uncached |
+| --- | --- | --- | --- | --- |
+| `frame.cpu` | 4.68 / 5.67 | 5.00 / 5.78 | 10.35 / 14.25 | 11.99 / 15.67 |
+| `logs.apply` p50 | 0.29 | 0.22 | — | — |
+| `logs.render` p50 | 1.51 | 1.12 | — | — |
+| `logs.measure_row` p50 | 0.06 | 0.04 | — | — |
+| `table.rebuild` p50 | — | — | 4.90 | 4.57 |
+| Frames the chrome draws | 0 of ~890 | every frame | 28 of 166 | every frame |
+| Process CPU | 41.0% | 40.2% | 50.3% | 48.1% |
+
+The uncached build runs the log view at main's speed, so the slowdown follows how busy the main thread is, not the code: lower clocks or an efficiency core under a lighter thread. Process CPU is time, not cycles, so the same work at a lower clock reads as more of it. Frames stay cheaper cached, and the caching stays. Log batches don't redraw the chrome either: the dock notifies the shell only when the selected tab's least height changes, and the Talos log doesn't notify while it is hidden, so there is no shell notify to skip.
 
 ### A first list no longer stops the window
 
