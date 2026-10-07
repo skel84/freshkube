@@ -14,21 +14,119 @@ pub(super) fn reveal_item(scroll: &ScrollHandle, item: Option<usize>, window: &m
         return false;
     }
     if let Some(item) = item {
-        scroll.scroll_to_item(item);
+        match scroll.bounds_for_item(item) {
+            Some(bounds) => reveal_clear_of_fades(scroll, bounds, window),
+            None => scroll.scroll_to_item(item),
+        }
     }
     true
 }
 
-/// A column's scrolling list with Kit's scrollbar over it, shown on hover.
+/// Scrolls the least that shows an item's `bounds`, as laid out before
+/// scrolling, clear of the fades over the list's cut edges, where room
+/// allows; an item at either end of the list meets the end itself.
+fn reveal_clear_of_fades(scroll: &ScrollHandle, bounds: Bounds<Pixels>, window: &Window) {
+    let view = scroll.bounds();
+    let spare = (view.size.height - bounds.size.height).max(px(0.));
+    let margin = ui::dp_px(FADE, window).min(spare / 2.);
+    let mut offset = scroll.offset();
+    let top = bounds.top() + offset.y;
+    let bottom = bounds.bottom() + offset.y;
+    if top < view.top() + margin {
+        offset.y += view.top() + margin - top;
+    } else if bottom > view.bottom() - margin {
+        offset.y -= bottom - (view.bottom() - margin);
+    } else {
+        return;
+    }
+    offset.y = offset.y.clamp(-scroll.max_offset().y, px(0.));
+    scroll.set_offset(offset);
+}
+
+/// How far a fade reaches into a list from an edge it cuts.
+const FADE: f32 = 28.;
+
+/// Which edges of a scrolling list cut its content, as (top, bottom), from
+/// what its last layout measured.
+pub(in crate::desktop) fn cut_edges(scroll: &ScrollHandle) -> (bool, bool) {
+    let scrolled = -scroll.offset().y;
+    let max = scroll.max_offset().y;
+    (scrolled > px(0.5), scrolled < max - px(0.5))
+}
+
+/// A scrolling list that fades into `background` at each edge it cuts, so a
+/// list taller than its room shows that it scrolls (#406). The fades are
+/// painted after the list has laid out, from its handle, so they follow
+/// the frame's own measurements; a scroll notifies the list's view, which
+/// paints them again.
+fn with_edge_fades(list: impl IntoElement, scroll: &ScrollHandle, background: Hsla) -> Div {
+    let scroll = scroll.clone();
+    let fades = canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let (top, bottom) = cut_edges(&scroll);
+            let height = ui::dp_px(FADE, window).min(bounds.size.height / 2.);
+            let clear = background.opacity(0.);
+            if top {
+                window.paint_quad(fill(
+                    Bounds::new(bounds.origin, size(bounds.size.width, height)),
+                    linear_gradient(
+                        180.,
+                        linear_color_stop(background, 0.),
+                        linear_color_stop(clear, 1.),
+                    ),
+                ));
+            }
+            if bottom {
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(bounds.origin.x, bounds.bottom() - height),
+                        size(bounds.size.width, height),
+                    ),
+                    linear_gradient(
+                        0.,
+                        linear_color_stop(background, 0.),
+                        linear_color_stop(clear, 1.),
+                    ),
+                ));
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
+    div().relative().child(list).child(fades)
+}
+
+/// A scrolling rail or column, faded where it is cut, with Kit's scrollbar
+/// over it, shown on hover.
 pub(super) fn with_scrollbar(
     list: impl IntoElement,
     scroll: &ScrollHandle,
     id: &'static str,
+    background: Hsla,
 ) -> Div {
-    div().relative().child(list).child(
+    with_edge_fades(list, scroll, background).child(
         Scrollbar::vertical(scroll)
             .id(id)
             .mode(ScrollbarMode::Hover),
+    )
+}
+
+/// A scrolling strip of icons, faded where it is cut, with Kit's scrollbar
+/// shown whenever it overflows: a cut can fall in the gap between two
+/// icons, where a fade has nothing to dim.
+pub(super) fn icon_strip(
+    list: impl IntoElement,
+    scroll: &ScrollHandle,
+    id: &'static str,
+    background: Hsla,
+) -> Div {
+    with_edge_fades(list, scroll, background).child(
+        Scrollbar::vertical(scroll)
+            .id(id)
+            .mode(ScrollbarMode::Always),
     )
 }
 
@@ -113,14 +211,19 @@ impl Pilot {
                 this.child(self.render_namespaces(cx))
             });
         Some(
-            with_scrollbar(column, &self.column_scroll, "nav-column-scrollbar")
-                .w(dp(COLUMN_WIDTH))
-                .flex_none()
-                .h_full()
-                .bg(cx.theme().background)
-                .border_r_1()
-                .border_color(p.line)
-                .into_any_element(),
+            with_scrollbar(
+                column,
+                &self.column_scroll,
+                "nav-column-scrollbar",
+                cx.theme().background,
+            )
+            .w(dp(COLUMN_WIDTH))
+            .flex_none()
+            .h_full()
+            .bg(cx.theme().background)
+            .border_r_1()
+            .border_color(p.line)
+            .into_any_element(),
         )
     }
 

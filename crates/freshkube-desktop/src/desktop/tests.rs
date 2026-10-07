@@ -3871,9 +3871,78 @@ fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut Tes
                 item.top() >= list.top() - px(0.5) && item.bottom() <= list.bottom() + px(0.5),
                 "{destination:?}: {item:?} outside {list:?}"
             );
+            // Nor does a fade over a cut edge dim it (#406).
+            let fade = crate::ui::dp_px(28., window);
+            let (top, bottom) = super::shell::cut_edges(&pilot.read(cx).obs_column_scroll);
+            assert!(
+                (!top || item.top() >= list.top() + fade - px(0.5))
+                    && (!bottom || item.bottom() <= list.bottom() - fade + px(0.5)),
+                "{destination:?}: {item:?} under a fade of {list:?}"
+            );
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
+    use super::shell::cut_edges;
+    // At 20 px text a 560 high window shows neither the rail's areas nor
+    // the collapsed column's destinations in full (#406).
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let edges = |pilot: &Entity<Pilot>, cx: &gpui_kit::App| {
+            let pilot = pilot.read(cx);
+            (
+                cut_edges(&pilot.rail_scroll),
+                cut_edges(&pilot.obs_column_scroll),
+            )
+        };
+        // Overview, at the top, leaves only the rail's bottom cut. The
+        // column has scrolled to Applications, so it is cut at the bottom.
+        let (rail, column) = edges(&pilot, cx);
+        assert_eq!(rail, (false, true));
+        assert!(column.1, "{column:?}");
+        for _ in 0..30 {
+            window.scroll(
+                "nav-rail",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-40.))),
+                cx,
+            );
+            window.render_frame(cx);
+        }
+        assert_eq!(edges(&pilot, cx).0, (true, false));
+        window.scroll(
+            "nav-rail",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(40.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert_eq!(edges(&pilot, cx).0, (true, true));
+    })
+    .unwrap();
+
+    // With room for everything, nothing is cut.
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let pilot = pilot.read(cx);
+        assert_eq!(cut_edges(&pilot.rail_scroll), (false, false));
+        assert_eq!(cut_edges(&pilot.column_scroll), (false, false));
+        assert_eq!(cut_edges(&pilot.obs_column_scroll), (false, false));
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

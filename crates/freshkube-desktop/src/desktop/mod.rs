@@ -360,6 +360,11 @@ pub(crate) struct Pilot {
     /// Problem dots on the rail, from the overview's cards.
     rail_marks: shell::RailMarks,
     column_scroll: ScrollHandle,
+    /// The icon rail, which scrolls when the window is short or the text
+    /// large.
+    rail_scroll: ScrollHandle,
+    /// The collapsed column's icons, which scroll in the same way.
+    compact_column_scroll: ScrollHandle,
     /// A column row to scroll into view on the next frame.
     column_reveal: Option<ColumnReveal>,
     /// The Observability column's list, which scrolls when the window is
@@ -862,6 +867,8 @@ impl Pilot {
             last_control: Page::Etcd,
             rail_marks: Default::default(),
             column_scroll: ScrollHandle::new(),
+            rail_scroll: ScrollHandle::new(),
+            compact_column_scroll: ScrollHandle::new(),
             column_reveal: None,
             obs_column_scroll: ScrollHandle::new(),
             obs_column_revealed: None,
