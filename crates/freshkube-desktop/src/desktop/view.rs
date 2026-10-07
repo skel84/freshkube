@@ -170,8 +170,10 @@ impl Render for Pilot {
 impl Pilot {
     /// The motion over the shown page's loading rows. The page owns it and
     /// its rows decide when it moves; the shell mounts it beside the
-    /// page and the cached chrome, so its frames redraw neither, and a
-    /// hidden page's motion isn't mounted at all.
+    /// page and the cached chrome, so its frames redraw neither. It is
+    /// mounted only while the shown page's table draws loading rows: not
+    /// for a hidden page, and not once a state, the cards or an expanded
+    /// pane replace the table, since only a drawn table stills it.
     pub(super) fn page_loading_motion(
         &self,
         cx: &App,
@@ -183,8 +185,19 @@ impl Pilot {
             {
                 None
             }
-            Page::Nodes => Some(self.node_workspace.loading_motion().clone()),
-            Page::SystemServices => Some(self.system_services.read(cx).loading_motion().clone()),
+            Page::Nodes => {
+                let workspace = &self.node_workspace;
+                let table = workspace.view == NodeView::Table
+                    && !(workspace.open && workspace.expanded)
+                    && freshkube_ui::table::TableSource::loading(self).is_some();
+                table.then(|| workspace.loading_motion().clone())
+            }
+            Page::SystemServices => {
+                let services = self.system_services.read(cx);
+                freshkube_ui::table::TableSource::loading(services)
+                    .is_some()
+                    .then(|| services.loading_motion().clone())
+            }
             _ => None,
         }
     }

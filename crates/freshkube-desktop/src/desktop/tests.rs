@@ -1772,6 +1772,96 @@ fn the_loading_motion_stops_on_the_first_answer(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Runs a few frames and asserts that the loading motion asks for none
+/// and draws no more: whatever replaced the table took it away.
+fn assert_motion_stopped(cx: &mut TestAppContext, handle: AnyWindowHandle, why: &str) {
+    // At most the frame already asked, which draws what replaced the rows.
+    motion_frame(cx, handle);
+    let motion = probe::count("table.loading-motion");
+    for _ in 0..3 {
+        assert_eq!(motion_frame(cx, handle), 0, "no frames after {why}");
+    }
+    assert_eq!(probe::count("table.loading-motion"), motion, "{why}");
+}
+
+/// A refusal or a failure replaces the loading rows with a state, and
+/// the motion goes with the table: nothing asks for frames over it.
+#[gpui_kit::test]
+fn the_loading_motion_stops_when_the_list_is_refused_or_fails(cx: &mut TestAppContext) {
+    use crate::resources::model::ReadState;
+    let (_runtime, handle, view) = loading_pods(cx);
+    let resources = cx.update(|cx| view.read(cx).resources.clone());
+    for (state, shown) in [
+        (
+            ReadState::Refused("pods is forbidden".into()),
+            "resource-refused",
+        ),
+        (ReadState::Failed("Timeout".into()), "resource-failed"),
+    ] {
+        // Listing again, held, brings the loading rows and their motion back.
+        cx.update_window(handle, |_, window, cx| {
+            resources.update(cx, |resources, cx| resources.refresh(window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        motion_frame(cx, handle);
+        assert!(motion_frame(cx, handle) > 0, "the rows move before {shown}");
+        cx.update(|cx| resources.update(cx, |resources, cx| resources.deliver_read(state, cx)));
+        cx.run_until_parked();
+        assert_motion_stopped(cx, handle, shown);
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.find(shown).visible());
+            assert!(window.try_find("resource-loading").is_none());
+            assert!(view.read(cx).page_loading_motion(cx).is_none());
+        })
+        .unwrap();
+    }
+}
+
+/// Nodes waiting on Talos that then fails show their failure, not the
+/// table, and the motion stops; the cards view never mounts it.
+#[gpui_kit::test]
+fn the_nodes_loading_motion_stops_on_a_failure_or_the_cards(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| window.press("secondary-2", cx))
+        .unwrap();
+    cx.run_until_parked();
+    motion_frame(cx, handle);
+    assert!(
+        motion_frame(cx, handle) > 0,
+        "the rows move while Talos loads"
+    );
+    cx.update_window(handle, |_, window, cx| window.click("nodes-view-cards", cx))
+        .unwrap();
+    cx.run_until_parked();
+    // The cards wait under their own skeleton, which may ask frames of
+    // its own; the table's motion neither draws nor is mounted.
+    motion_frame(cx, handle);
+    let motion = probe::count("table.loading-motion");
+    for _ in 0..3 {
+        motion_frame(cx, handle);
+    }
+    assert_eq!(probe::count("table.loading-motion"), motion, "the cards");
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.find("nodes-loading").visible());
+        assert!(view.read(cx).page_loading_motion(cx).is_none());
+        window.click("nodes-view-table", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    motion_frame(cx, handle);
+    assert!(motion_frame(cx, handle) > 0, "the table's rows move again");
+    cx.update(|cx| view.update(cx, |view, cx| view.simulate_failure(cx)));
+    cx.run_until_parked();
+    assert_motion_stopped(cx, handle, "a failure");
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.find("nodes-failed").visible());
+        assert!(view.read(cx).page_loading_motion(cx).is_none());
+    })
+    .unwrap();
+}
+
 /// A page that hides takes its motion with it: the shell no longer mounts
 /// it, so nothing asks frames, and a shell redraw doesn't draw it.
 #[gpui_kit::test]
@@ -1791,6 +1881,43 @@ fn a_hidden_pages_loading_motion_is_never_mounted(cx: &mut TestAppContext) {
     assert!(probe::count("shell") > shell);
     assert_eq!(probe::count("table.loading-motion"), motion);
     cx.update(|cx| assert!(view.read(cx).page_loading_motion(cx).is_none()));
+}
+
+/// Draws the next frame as the platform would, without `render_frame`,
+/// which redraws every cached view: a part that missed its notify shows
+/// what it drew before.
+fn next_frame(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+    cx.update_window(handle, |_, window, cx| window.simulate_next_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+}
+
+/// Talos answering for the first time marks the rail through the real
+/// path, from the example answer to the overview's cards, and the cached
+/// rail draws the mark on the next frame.
+#[gpui_kit::test]
+fn the_cached_rail_draws_the_marks_the_first_answer_brings(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    next_frame(cx, handle);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.within("nav-nodes").try_find("rail-mark").is_none());
+    })
+    .unwrap();
+    let rail = probe::count("chrome.rail");
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.fixture_hold = false;
+            view.refresh_now(window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    next_frame(cx, handle);
+    assert!(probe::count("chrome.rail") > rail, "the rail draws again");
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.within("nav-nodes").find("rail-mark").visible());
+    })
+    .unwrap();
 }
 
 /// Applies `change` and returns which parts of the chrome drew again.

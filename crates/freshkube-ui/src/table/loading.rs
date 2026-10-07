@@ -235,7 +235,10 @@ fn place(slots: &[Slot], region: Bounds<Pixels>, window: &Window) -> Vec<Bar> {
 /// The moving half of the loading rows: a small view over the table that
 /// moves the bars the table painted, so its frames never redraw the table.
 /// Once the table draws its rows instead, it draws nothing and asks no
-/// frames.
+/// frames. Only a drawn table stills it, so whoever mounts it must stop
+/// once something else replaces the table. Mounted beside a page, it
+/// paints after everything drawn before it, the status bar too; that is
+/// safe, since it paints only within the table's viewport.
 pub struct LoadingMotion {
     id: SharedString,
     painted: Rc<RefCell<Painted>>,
