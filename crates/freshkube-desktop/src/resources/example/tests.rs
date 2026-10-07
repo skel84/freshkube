@@ -1,5 +1,5 @@
-use super::objects::*;
 use super::*;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use std::collections::HashSet;
 
 #[test]
@@ -63,7 +63,11 @@ fn example_secrets_hide_values_until_one_is_revealed() {
     let identity = &secrets[0].identity;
     let document = document(identity, TEST_NOW).unwrap();
     assert!(!document.yaml.contains("example-only-password"));
-    assert!(!document.yaml.contains(&base64(b"example-only-password")));
+    assert!(
+        !document
+            .yaml
+            .contains(&STANDARD.encode(b"example-only-password"))
+    );
     let keys = &document.overview.secret.unwrap().keys;
     assert_eq!(keys.len(), 3);
     assert_eq!(
@@ -121,16 +125,6 @@ fn example_discovery_covers_every_group_state() {
     )
     .unwrap();
     assert_eq!(payments.len(), 2);
-}
-
-#[test]
-fn base64_matches_the_standard_alphabet_and_padding() {
-    assert_eq!(base64(b""), "");
-    assert_eq!(base64(b"a"), "YQ==");
-    assert_eq!(base64(b"ab"), "YWI=");
-    assert_eq!(base64(b"abc"), "YWJj");
-    assert_eq!(base64(b"hunter2"), "aHVudGVyMg==");
-    assert_eq!(base64(&[0xfb, 0xff]), "+/8=");
 }
 
 #[test]

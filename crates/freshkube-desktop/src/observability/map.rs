@@ -3,36 +3,18 @@ use freshkube_core::coroot::AppId;
 use freshkube_ui::graph::{GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView};
 use freshkube_ui::inspector::InspectorSplit;
 
-/// The service map's graph: its page, filter and selection, and what it
-/// draws. Clearing the page's observations resets it to an empty map.
-pub(super) struct MapDisplay(GraphState<AppId>);
-
-impl Default for MapDisplay {
-    fn default() -> Self {
-        Self(GraphState::new(
-            "obs-map",
-            GraphText {
-                nouns: ("applications", "connections"),
-                title: "Connections".into(),
-                problems: "Problem connections".into(),
-                caption: "Callers on the left · line width is traffic · dashed lines have a problem · every connection is listed in Connections".into(),
-            },
-        ))
-    }
-}
-
-impl std::ops::Deref for MapDisplay {
-    type Target = GraphState<AppId>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for MapDisplay {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
+/// The service map's graph state: its page, filter and selection, and what
+/// it draws. Clearing the page's observations resets it to an empty map.
+pub(super) fn display() -> GraphState<AppId> {
+    GraphState::new(
+        "obs-map",
+        GraphText {
+            nouns: ("applications", "connections"),
+            title: "Connections".into(),
+            problems: "Problem connections".into(),
+            caption: "Callers on the left · line width is traffic · dashed lines have a problem · every connection is listed in Connections".into(),
+        },
+    )
 }
 
 impl ObservabilityPage {

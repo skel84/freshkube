@@ -40,12 +40,6 @@ pub enum MarkerKind {
     NodeReboot,
 }
 
-impl MarkerKind {
-    pub fn is_node(self) -> bool {
-        !matches!(self, Self::Deploy)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Marker {
     pub kind: MarkerKind,

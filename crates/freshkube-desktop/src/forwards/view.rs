@@ -1,6 +1,7 @@
 //! One forward as the app holds it: its request, where it stands and what
 //! the status bar and the Ports tab say about it, derived when it changes.
 
+use freshkube_core::pluralize;
 use std::time::Duration;
 
 use freshkube_core::resources::{
@@ -493,7 +494,6 @@ fn target_kind(target: &ForwardTarget) -> &'static str {
 fn count(connections: usize) -> String {
     match connections {
         0 => "No connections".to_owned(),
-        1 => "1 connection".to_owned(),
-        count => format!("{count} connections"),
+        count => pluralize(count, "connection", "connections"),
     }
 }

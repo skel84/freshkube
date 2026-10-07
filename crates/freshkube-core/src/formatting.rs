@@ -80,9 +80,37 @@ pub fn pluralize(count: usize, singular: &str, plural: &str) -> String {
     }
 }
 
+/// Groups digits in threes: 455555555 becomes 455,555,555.
+///
+/// ```
+/// use freshkube_core::group_digits;
+/// assert_eq!(group_digits(7), "7");
+/// assert_eq!(group_digits(1_234), "1,234");
+/// assert_eq!(group_digits(1_234_567), "1,234,567");
+/// ```
+pub fn group_digits(value: u64) -> String {
+    let digits = value.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (ix, digit) in digits.chars().enumerate() {
+        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digits_are_grouped_in_threes() {
+        assert_eq!(group_digits(0), "0");
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1_000), "1,000");
+        assert_eq!(group_digits(455_555_555), "455,555,555");
+    }
 
     #[test]
     fn test_format_bytes() {

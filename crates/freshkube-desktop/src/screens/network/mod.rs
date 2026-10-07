@@ -8,6 +8,7 @@
 //! the snapshot's `next_sample` like the Processes screen does for CPU.
 mod capture;
 
+use freshkube_core::group_digits;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -654,19 +655,6 @@ fn interface_kind(name: &str) -> &'static str {
     }
 }
 
-/// Groups digits in threes: 455555555 becomes 455,555,555.
-fn group_digits(value: u64) -> String {
-    let digits = value.to_string();
-    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
-    for (ix, digit) in digits.chars().enumerate() {
-        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    grouped
-}
-
 fn rate_total(interface: &NetworkInterfaceSnapshot) -> u64 {
     interface.rate.as_ref().map_or(0, |rate| {
         rate.rx_bytes_per_sec.saturating_add(rate.tx_bytes_per_sec)
@@ -893,16 +881,3 @@ use example::{example, example_kubespan};
 #[cfg(test)]
 #[path = "tests.rs"]
 mod ui_tests;
-
-#[cfg(test)]
-mod digit_tests {
-    use super::group_digits;
-
-    #[test]
-    fn digits_are_grouped_in_threes() {
-        assert_eq!(group_digits(0), "0");
-        assert_eq!(group_digits(999), "999");
-        assert_eq!(group_digits(1_000), "1,000");
-        assert_eq!(group_digits(455_555_555), "455,555,555");
-    }
-}

@@ -9,6 +9,7 @@
 //! One terminal serves every session of the tab: a new session clears it,
 //! so the remote side starts at the size the terminal already has.
 
+use freshkube_core::pluralize;
 use std::time::Duration;
 
 use freshkube_core::resources::{
@@ -26,6 +27,7 @@ use crate::forwards;
 use crate::logs::choice_label;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
+use crate::stream_status::Status;
 use crate::terminal::{TerminalEvent, TerminalSize, TerminalView};
 use crate::ui::Tone;
 
@@ -76,16 +78,6 @@ pub(crate) fn choices(containers: &PodContainers) -> Vec<Choice> {
             enabled: matches!(container.state, ContainerState::Running(_)),
         })
         .collect()
-}
-
-/// What the controls say about the session, derived when it changes.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub(super) tone: Tone,
-    pub(super) tag: SharedString,
-    pub(super) text: SharedString,
-    /// Both, for assistive technology and tests.
-    pub(super) label: SharedString,
 }
 
 /// What the dock hears from a shell tab.
@@ -169,12 +161,7 @@ impl ShellView {
             gone: false,
             container: None,
             state: ShellState::Idle,
-            status: Status {
-                tone: Tone::Unknown,
-                tag: SharedString::default(),
-                text: SharedString::default(),
-                label: SharedString::default(),
-            },
+            status: Status::default(),
             terminal,
             used: false,
             session: None,
@@ -683,17 +670,7 @@ impl ShellView {
             ShellState::Ended => (Tone::Unknown, "Ended", ended.unwrap_or_default()),
             ShellState::Failed => (Tone::Crit, "Failed", ended.unwrap_or_default()),
         };
-        let label = match (tag, text.as_str()) {
-            ("", text) => text.to_owned(),
-            (tag, "") => tag.to_owned(),
-            (tag, text) => format!("{tag}: {text}"),
-        };
-        self.status = Status {
-            tone,
-            tag: tag.into(),
-            text: text.into(),
-            label: label.into(),
-        };
+        self.status = Status::new(tone, tag, &text);
     }
 }
 
@@ -734,23 +711,6 @@ const SHELLS_DETAIL: &str = "Freshkube sends Control-C, then Control-D, to stop 
                              end each shell. A program that ignores them, such as an open \
                              editor, keeps running in its pod.";
 
-/// Asks to end the shells in `pods`; resolves to whether the user agreed.
-fn ask(
-    pods: &[SharedString],
-    window: &mut Window,
-    cx: &mut App,
-) -> impl Future<Output = bool> + use<> {
-    let (question, detail, answer) = ending_question(pods);
-    let answer = window.prompt(
-        PromptLevel::Warning,
-        &question,
-        Some(detail),
-        &[answer, "Cancel"],
-        cx,
-    );
-    async move { answer.await == Ok(0) }
-}
-
 /// Runs `then` at once when no shell runs (`pods` is empty), or once the
 /// user agrees to end the shells in `pods`. Cancel leaves everything as it
 /// was.
@@ -764,7 +724,7 @@ pub(crate) fn unless_shell<V: 'static>(
     if pods.is_empty() {
         return then(view, window, cx);
     }
-    let agreed = ask(&pods, window, cx);
+    let agreed = ask_closing(&pods, 0, window, cx);
     cx.spawn_in(window, async move |this, cx| {
         if agreed.await {
             _ = this.update_in(cx, then);
@@ -823,10 +783,7 @@ fn ask_closing(
 
 /// The question, its detail and the agreeing answer.
 fn closing_question(pods: &[SharedString], forwards: usize) -> (String, String, String) {
-    let stop = match forwards {
-        1 => "stop 1 forward".to_owned(),
-        count => format!("stop {count} forwards"),
-    };
+    let stop = format!("stop {}", pluralize(forwards, "forward", "forwards"));
     let forward_detail = "Stopping closes each local port and every connection through it.";
     if pods.is_empty() {
         return (

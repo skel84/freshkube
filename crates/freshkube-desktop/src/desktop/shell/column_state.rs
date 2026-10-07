@@ -88,15 +88,8 @@ mod tests {
 
     #[gpui_kit::test]
     fn the_last_sidebar_choice_survives_reopening(cx: &mut TestAppContext) {
-        let directory = std::env::temp_dir().join(format!(
-            "freshkube-sidebar-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let preferences = directory.join("preferences.json");
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
         cx.update(|cx| {
             let mut state = ColumnState::new(NavigationFile::open(Some(&preferences)));
             state.collapsed = true;
@@ -108,6 +101,5 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(ColumnState::new(NavigationFile::open(Some(&preferences))).collapsed);
-        std::fs::remove_dir_all(directory).unwrap();
     }
 }

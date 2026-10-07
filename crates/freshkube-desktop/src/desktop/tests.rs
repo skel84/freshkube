@@ -2118,9 +2118,8 @@ fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
 async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext) {
     // Configuration loads on Tokio; let GPUI park for its completion.
     cx.executor().allow_parking();
-    let directory =
-        std::env::temp_dir().join(format!("freshkube-desktop-browse-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path().to_path_buf();
     let chosen = directory.join("config");
     std::fs::write(
         &chosen,
@@ -2166,7 +2165,6 @@ async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext
         assert_eq!(pilot.path.read(cx).value(), chosen.display().to_string());
         assert!(pilot.config_error.is_none());
     });
-    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[gpui_kit::test]
@@ -2202,11 +2200,8 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let directory = std::env::temp_dir().join(format!(
-        "freshkube-connection-restore-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path().to_path_buf();
     let preferences = directory.join("preferences.json");
     let chosen = directory.join("talosconfig");
     // Invalid synthetic certificates stop before any network connection.
@@ -2263,7 +2258,6 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
         assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
     })
     .unwrap();
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[gpui_kit::test]
@@ -2271,11 +2265,8 @@ async fn kubeconfig_file_applies_its_current_context_then_a_chosen_one(cx: &mut 
     use freshkube_core::cluster_overview::KubeconfigSelection;
     // Inspection runs on Tokio; let GPUI park for its completion.
     cx.executor().allow_parking();
-    let directory = std::env::temp_dir().join(format!(
-        "freshkube-desktop-kubeconfig-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path().to_path_buf();
     let chosen = directory.join("kubeconfig");
     std::fs::write(
         &chosen,
@@ -2338,7 +2329,6 @@ async fn kubeconfig_file_applies_its_current_context_then_a_chosen_one(cx: &mut 
         );
     })
     .unwrap();
-    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[gpui_kit::test]
@@ -2346,11 +2336,8 @@ async fn connection_failure_offers_a_picker_and_bad_files_do_not_replace_saved_s
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let directory = std::env::temp_dir().join(format!(
-        "freshkube-connection-picker-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path().to_path_buf();
     let preferences = directory.join("preferences.json");
     let first = directory.join("first");
     let second = directory.join("second");
@@ -2416,18 +2403,14 @@ async fn connection_failure_offers_a_picker_and_bad_files_do_not_replace_saved_s
     assert_eq!(restored.config_path(), Some(second.as_path()));
     assert_eq!(restored.context(), Some("beta"));
     cx.run_until_parked();
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[gpui_kit::test]
 async fn kubeconfig_without_a_usable_context_is_not_applied(cx: &mut TestAppContext) {
     use freshkube_core::cluster_overview::KubeconfigSelection;
     cx.executor().allow_parking();
-    let directory = std::env::temp_dir().join(format!(
-        "freshkube-desktop-kubeconfig-bad-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path().to_path_buf();
     let unreadable = directory.join("not-yaml");
     std::fs::write(&unreadable, "{{{ not a kubeconfig").unwrap();
     let options = GpuiOptions::new(Some(directory.join("missing")), None, 100);
@@ -2454,7 +2437,6 @@ async fn kubeconfig_without_a_usable_context_is_not_applied(cx: &mut TestAppCont
         assert!(window.find("kubeconfig-error").visible());
     })
     .unwrap();
-    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[gpui_kit::test]
@@ -2780,9 +2762,9 @@ fn dangerous_services_are_confirmed_by_name(cx: &mut TestAppContext) {
         .unwrap();
         cx.run_until_parked();
     }
-    assert!(crate::actions::is_critical_service("etcd"));
-    assert!(crate::actions::is_critical_service("machined"));
-    assert!(!crate::actions::is_critical_service("containerd"));
+    assert!(crate::actions::critical_warning("etcd").is_some());
+    assert!(crate::actions::critical_warning("machined").is_some());
+    assert!(crate::actions::critical_warning("containerd").is_none());
 }
 
 #[gpui_kit::test]

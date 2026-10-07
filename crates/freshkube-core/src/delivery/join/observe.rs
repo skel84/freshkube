@@ -84,7 +84,7 @@ fn sha_label_field() -> String {
 
 /// What a PipelineRun says of the commit: the PaC label, declared, and the
 /// run's own witness, a parameter (declared) or a result (reported).
-pub(super) fn run_commit(build: &Build, names: &CommitNames) -> Vec<Observation> {
+pub(super) fn run_commit(build: &Build, names: &CommitNames, sha: &str) -> Vec<Observation> {
     let run = build.run.object_ref();
     let mut seen = Vec::new();
     if let Some(label) = &build.run.sha {
@@ -95,7 +95,7 @@ pub(super) fn run_commit(build: &Build, names: &CommitNames) -> Vec<Observation>
             Some(label),
         ));
     }
-    if let Some(witness) = build.witness(names) {
+    if let Some(witness) = build.witness(names, sha) {
         let commit = Some(witness.commit.as_str());
         seen.push(match witness.source {
             WitnessSource::Param => {
@@ -170,7 +170,7 @@ pub(super) fn builds_side(builds: &[Build], names: &CommitNames, key: &Key) -> V
             .collect(),
         Key::Sha(sha) => builds
             .iter()
-            .flat_map(|build| run_commit(build, names))
+            .flat_map(|build| run_commit(build, names, sha))
             .filter(|seen| {
                 seen.value
                     .as_deref()

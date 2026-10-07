@@ -3,6 +3,7 @@
 //! generated suffix starts, and for a pod, its state, readiness, restarts,
 //! containers' squares, node and resources.
 
+use freshkube_core::pluralize;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -250,8 +251,10 @@ pub(crate) fn container_line(container: &ContainerFacts, init: bool) -> String {
     }
     match container.restarts {
         0 => {}
-        1 => line.push_str(" · 1 restart"),
-        n => line.push_str(&format!(" · {n} restarts")),
+        n => line.push_str(&format!(
+            " · {}",
+            pluralize(n as usize, "restart", "restarts")
+        )),
     }
     line
 }
@@ -349,7 +352,7 @@ pub(crate) fn pod_row(
         ready,
         restarts,
         restarts_text: restarts.to_string(),
-        restarts_label: format!("{restarts} restart{}", if restarts == 1 { "" } else { "s" }),
+        restarts_label: pluralize(restarts as usize, "restart", "restarts"),
         restarts_emphasis: restarts_emphasis(restarts),
         node,
         requests: facts.requests,

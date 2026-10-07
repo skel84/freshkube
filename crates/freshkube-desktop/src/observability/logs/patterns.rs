@@ -4,6 +4,7 @@
 //! time under the table.
 use super::super::*;
 use freshkube_core::coroot::{self as api, ChartPanel};
+use freshkube_core::group_digits;
 use freshkube_core::types::LogLevel;
 use freshkube_ui::table::{
     self as shared, DataTable, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource,
@@ -48,19 +49,6 @@ impl PatternRow {
                 .map(Rc::new),
         }
     }
-}
-
-/// `1,234`.
-fn group_digits(count: u64) -> String {
-    let digits = count.to_string();
-    let mut out = String::new();
-    for (ix, digit) in digits.chars().enumerate() {
-        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -254,15 +242,5 @@ impl TableSource for PatternTable {
         self.rows
             .is_empty()
             .then(|| "Coroot found no patterns in this window.".into_any_element())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn counts_read_with_grouped_digits() {
-        assert_eq!(super::group_digits(7), "7");
-        assert_eq!(super::group_digits(1_234), "1,234");
-        assert_eq!(super::group_digits(1_234_567), "1,234,567");
     }
 }

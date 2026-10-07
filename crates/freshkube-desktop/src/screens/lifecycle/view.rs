@@ -143,12 +143,12 @@ impl LifecycleScreen {
         ) -> (String, bool) {
             match source {
                 SourceSnapshot::Available(items) => {
-                    (plural(items.len(), noun_one, noun_many), true)
+                    (pluralize(items.len(), noun_one, noun_many), true)
                 }
                 SourceSnapshot::Partial { value, warnings } => (
                     format!(
                         "{} · partial: {}",
-                        plural(value.len(), noun_one, noun_many),
+                        pluralize(value.len(), noun_one, noun_many),
                         warnings.join("; ")
                     ),
                     !value.is_empty(),

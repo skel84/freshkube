@@ -409,12 +409,17 @@ impl Pilot {
         self.navigate(page, window, cx);
     }
 
-    /// Log collection keeps running in the background across screens; other
-    /// screens load when shown and stay idle while hidden.
-    pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+    /// Drops a pending object open, so its answer is ignored when it comes.
+    pub(super) fn cancel_object_open(&mut self) {
         self.object_open_job = None;
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
+    }
+
+    /// Log collection keeps running in the background across screens; other
+    /// screens load when shown and stay idle while hidden.
+    pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_object_open();
         self.page = page;
         self.deliver_summary_nodes(cx);
         let area = Area::of(page, &self.resource_kind);
@@ -621,99 +626,94 @@ impl Pilot {
             uid: object.uid.clone(),
         };
         let same = self.resources.read(cx).showing(&identity, cx);
-        let open = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-            if !same {
-                this.resources
-                    .update(cx, |resources, cx| resources.close_for_link(cx));
+        if !same {
+            self.resources
+                .update(cx, |resources, cx| resources.close_for_link(cx));
+        }
+        self.open_kind(kind.clone(), window, cx);
+        self.cancel_object_open();
+        let mut identity = identity;
+        if identity.uid.is_empty() {
+            if let Some(found) = self
+                .resources
+                .read(cx)
+                .identity_named(&object.namespace, &object.name)
+            {
+                identity = found;
+            } else if self.fixture
+                && let Some((_, rows)) = resources::example::read(
+                    &source.context,
+                    &kind.key(),
+                    Some(&object.namespace),
+                    chrono::Utc::now().timestamp(),
+                )
+                && let Some(row) = rows
+                    .into_iter()
+                    .find(|row| row.identity.name == object.name)
+            {
+                identity = row.identity;
             }
-            this.open_kind(kind.clone(), window, cx);
-            this.object_open_job = None;
-            this.object_open_task = None;
-            this.object_open_sequence = this.object_open_sequence.wrapping_add(1);
-            let mut identity = identity;
-            if identity.uid.is_empty() {
-                if let Some(found) = this
-                    .resources
-                    .read(cx)
-                    .identity_named(&object.namespace, &object.name)
+        }
+        if !identity.uid.is_empty() {
+            self.resources.update(cx, |resources, cx| {
+                resources.open_identity_on(identity, tab, window, cx)
+            });
+            return;
+        }
+        let sequence = self.object_open_sequence;
+        let epoch = self.epoch;
+        let (job, receiver) = crate::backend::spawn_job(
+            &self.runtime,
+            std::time::Duration::from_secs(15),
+            "Resolving the object's identity timed out".into(),
+            async move {
+                let client = source.access.client().await?;
+                freshkube_core::resources::get_metadata(
+                    &client,
+                    &kind,
+                    (!object.namespace.is_empty()).then_some(object.namespace.as_str()),
+                    &object.name,
+                )
+                .await
+                .map_err(|error| error.to_string())
+            },
+        );
+        self.object_open_job = Some(job);
+        self.object_open_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = receiver
+                .await
+                .unwrap_or_else(|_| Err("The identity worker stopped".into()));
+            _ = this.update_in(cx, |this, window, cx| {
+                if this.epoch != epoch
+                    || this.object_open_sequence != sequence
+                    || this
+                        .kube_source()
+                        .is_none_or(|source| source.id != identity.connection)
+                    || this.resources.read(cx).detail_identity(cx).is_some()
                 {
-                    identity = found;
-                } else if this.fixture
-                    && let Some((_, rows)) = resources::example::read(
-                        &source.context,
-                        &kind.key(),
-                        Some(&object.namespace),
-                        chrono::Utc::now().timestamp(),
-                    )
-                    && let Some(row) = rows
-                        .into_iter()
-                        .find(|row| row.identity.name == object.name)
-                {
-                    identity = row.identity;
+                    return;
                 }
-            }
-            if !identity.uid.is_empty() {
-                this.resources.update(cx, |resources, cx| {
-                    resources.open_identity_on(identity, tab, window, cx)
-                });
-                return;
-            }
-            let sequence = this.object_open_sequence;
-            let epoch = this.epoch;
-            let (job, receiver) = crate::backend::spawn_job(
-                &this.runtime,
-                std::time::Duration::from_secs(15),
-                "Resolving the object's identity timed out".into(),
-                async move {
-                    let client = source.access.client().await?;
-                    freshkube_core::resources::get_metadata(
-                        &client,
-                        &kind,
-                        (!object.namespace.is_empty()).then_some(object.namespace.as_str()),
-                        &object.name,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())
-                },
-            );
-            this.object_open_job = Some(job);
-            this.object_open_task = Some(cx.spawn_in(window, async move |this, cx| {
-                let result = receiver
-                    .await
-                    .unwrap_or_else(|_| Err("The identity worker stopped".into()));
-                _ = this.update_in(cx, |this, window, cx| {
-                    if this.epoch != epoch
-                        || this.object_open_sequence != sequence
-                        || this
-                            .kube_source()
-                            .is_none_or(|source| source.id != identity.connection)
-                        || this.resources.read(cx).detail_identity(cx).is_some()
-                    {
-                        return;
-                    }
-                    this.object_open_job = None;
-                    if let Ok(metadata) = &result
-                        && let Some(uid) = metadata.uid.clone()
-                    {
-                        identity.uid = uid;
-                        this.resources.update(cx, |resources, cx| {
-                            resources.open_identity_on(identity, tab, window, cx)
-                        });
-                    } else {
-                        window.push_notification(
-                            format!(
-                                "Can’t open {}: {}",
-                                identity.name,
-                                result
-                                    .err()
-                                    .unwrap_or_else(|| "The API returned no UID".into())
-                            ),
-                            cx,
-                        );
-                    }
-                });
-            }));
-        };
-        open(self, window, cx);
+                this.object_open_job = None;
+                if let Ok(metadata) = &result
+                    && let Some(uid) = metadata.uid.clone()
+                {
+                    identity.uid = uid;
+                    this.resources.update(cx, |resources, cx| {
+                        resources.open_identity_on(identity, tab, window, cx)
+                    });
+                } else {
+                    window.push_notification(
+                        format!(
+                            "Can’t open {}: {}",
+                            identity.name,
+                            result
+                                .err()
+                                .unwrap_or_else(|| "The API returned no UID".into())
+                        ),
+                        cx,
+                    );
+                }
+            });
+        }));
     }
 }

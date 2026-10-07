@@ -1,11 +1,11 @@
 use std::{
     fmt::Display,
     future::Future,
-    io::Read,
     path::{Path, PathBuf},
     time::Duration,
 };
 
+use freshkube_core::BoundedReadError;
 use freshkube_core::cluster_overview::{ClusterOverviewCollector, KubeconfigSelection};
 use freshkube_core::{
     cluster_overview::{ClusterOverview, ConfigIdentity},
@@ -86,32 +86,13 @@ fn read_config_file(path: &Path) -> Result<TalosConfig, String> {
 /// while the talosconfig is unchanged.
 fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIdentity), String> {
     // Windows refuses to open a directory at all, so ask first; the opened
-    // file's own metadata below is what decides.
+    // file's own metadata is what decides.
     if std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_file()) {
         return Err("Talos configuration must be a regular file".into());
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // Descriptor inspection follows a nonblocking open, so a FIFO swapped
-        // into the path cannot strand this worker or runtime shutdown.
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options
-        .open(path)
-        .map_err(|error| format!("Cannot open talosconfig: {error}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("Cannot inspect talosconfig: {error}"))?;
-    if !metadata.is_file() {
-        return Err("Talos configuration must be a regular file".into());
-    }
-    if metadata.len() > MAX_CONFIG_BYTES {
-        return Err("Talos configuration exceeds the 4 MiB limit".into());
-    }
-    let bytes = read_capped_config(file)?;
+    // Core's reader opens nonblocking and caps the read on the descriptor.
+    let bytes = freshkube_core::read_bounded_regular_file(path, MAX_CONFIG_BYTES)
+        .map_err(config_read_message)?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| "Talos configuration is not valid UTF-8".to_string())?;
     // serde_yaml diagnostics may echo credential values; never send them to UI.
@@ -121,16 +102,15 @@ fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIde
         .map_err(|_| "Talos configuration could not be parsed".into())
 }
 
-fn read_capped_config(reader: impl Read) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    reader
-        .take(MAX_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("Cannot read talosconfig: {error}"))?;
-    if bytes.len() as u64 > MAX_CONFIG_BYTES {
-        return Err("Talos configuration exceeds the 4 MiB limit".into());
+/// What the user reads when the talosconfig can't be read.
+fn config_read_message(error: BoundedReadError) -> String {
+    match error {
+        BoundedReadError::NotFound => "Cannot open talosconfig: file not found".into(),
+        BoundedReadError::PermissionDenied => "Cannot open talosconfig: permission denied".into(),
+        BoundedReadError::NotRegularFile => "Talos configuration must be a regular file".into(),
+        BoundedReadError::TooLarge => "Talos configuration exceeds the 4 MiB limit".into(),
+        BoundedReadError::Io(error) => format!("Cannot read talosconfig: {error}"),
     }
-    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -667,18 +647,6 @@ mod tests {
             .set_len(MAX_CONFIG_BYTES + 1)
             .unwrap();
         assert!(read_config_file(&oversized).unwrap_err().contains("4 MiB"));
-        // The descriptor size check is not sufficient if a regular file grows.
-        assert!(
-            read_capped_config(std::io::repeat(b'x'))
-                .unwrap_err()
-                .contains("4 MiB")
-        );
-        assert_eq!(
-            read_capped_config(std::io::repeat(b'x').take(MAX_CONFIG_BYTES))
-                .unwrap()
-                .len() as u64,
-            MAX_CONFIG_BYTES
-        );
         let invalid = directory.0.join("invalid");
         std::fs::write(&invalid, [0xff]).unwrap();
         assert!(read_config_file(&invalid).unwrap_err().contains("UTF-8"));
@@ -686,6 +654,63 @@ mod tests {
         let error = read_config_file(&invalid).unwrap_err();
         assert!(error.contains("could not be parsed"));
         assert!(!error.contains("TOP_SECRET_CREDENTIAL"));
+    }
+
+    #[test]
+    fn a_missing_talosconfig_says_it_was_not_found() {
+        let directory = ConfigDirectory::new();
+        assert_eq!(
+            read_config_file(&directory.0.join("absent")).unwrap_err(),
+            "Cannot open talosconfig: file not found"
+        );
+    }
+
+    #[test]
+    fn a_directory_as_talosconfig_is_not_a_regular_file() {
+        let directory = ConfigDirectory::new();
+        assert_eq!(
+            read_config_file(&directory.0).unwrap_err(),
+            "Talos configuration must be a regular file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_talosconfig_says_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = ConfigDirectory::new();
+        let locked = directory.0.join("locked");
+        std::fs::write(&locked, "context: alpha\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // The superuser reads anything, so there is nothing to refuse.
+        if std::fs::File::open(&locked).is_err() {
+            assert_eq!(
+                read_config_file(&locked).unwrap_err(),
+                "Cannot open talosconfig: permission denied"
+            );
+        }
+    }
+
+    #[test]
+    fn an_oversized_talosconfig_names_the_limit() {
+        let directory = ConfigDirectory::new();
+        let oversized = directory.0.join("oversized");
+        std::fs::File::create(&oversized)
+            .unwrap()
+            .set_len(MAX_CONFIG_BYTES + 1)
+            .unwrap();
+        assert_eq!(
+            read_config_file(&oversized).unwrap_err(),
+            "Talos configuration exceeds the 4 MiB limit"
+        );
+    }
+
+    #[test]
+    fn an_io_failure_names_the_os_text() {
+        assert_eq!(
+            config_read_message(BoundedReadError::Io(std::io::Error::other("disk gone"))),
+            "Cannot read talosconfig: disk gone"
+        );
     }
 
     #[cfg(unix)]

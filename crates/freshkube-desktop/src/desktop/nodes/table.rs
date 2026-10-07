@@ -1,5 +1,6 @@
 //! Nodes' G7 table. The shell retains the data, selection and pane.
 use super::*;
+use freshkube_core::pluralize;
 use freshkube_ui::table::{
     self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
@@ -316,10 +317,7 @@ impl TableSource for Pilot {
         let count = self.node_workspace.group_counts[status.index()];
         let collapsed =
             status == projection::Status::Healthy && self.node_workspace.healthy_collapsed();
-        let mut detail = vec![format!(
-            "{count} {}",
-            if count == 1 { "node" } else { "nodes" }
-        )];
+        let mut detail = vec![pluralize(count, "node", "nodes")];
         if collapsed {
             detail.push("collapsed".into());
         }

@@ -172,7 +172,7 @@ impl EtcdScreen {
                 .aria_label("etcd alarms")
                 .child(ui::banner(
                     self.derived.alarm_tone,
-                    Some(plural(alarms.len(), "etcd alarm", "etcd alarms").into()),
+                    Some(pluralize(alarms.len(), "etcd alarm", "etcd alarms").into()),
                     body,
                     None,
                     cx,

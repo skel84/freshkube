@@ -4,6 +4,254 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.8.0 (2026-10-07)
+
+### Coroot
+
+- **Coroot logs:** the Logs histogram and a pattern's chart draw each severity
+  in its own colour, errors and fatal in red and warnings in amber, instead of
+  the next colours in turn.
+
+### Other changes
+
+- **Log errors look like errors:** an ERROR line in any log takes the
+  error colour, coral, for its level and its stripe, so it no longer reads
+  as less severe than a WARN line beside it. Error lines still don't count
+  toward any health check.
+- **Node logs' service picker:** the service pills take at most two rows, and
+  a "+N" button lists every service with its collect and show toggles. In a
+  short window no pill row shows: "3 of 12 services" sits on the collection
+  row and opens the same list, so the controls leave more room for lines.
+- Pod, workload and node log rows show their times in your local time, as the charts, Coroot's logs and the status bar do; Kubernetes and Talos write theirs in UTC. Copy still copies each line as it was written, and restart and gap notes read on the same clock as their rows.
+- **One loading state for tables:** Resources, Nodes and System services
+  show their header over skeleton rows at the row height until their
+  first answer, in place of a card of bars. System services waits for
+  the Talos overview instead of saying no node has reported, and says
+  why when it can't read the services.
+- **Resources watch:** the mapping of watch events and the 16 ms window that
+  batches them move into their own unit, with tests for a burst, an idle gap, the
+  batch cap and a relist after an expired watch. Nothing changes on screen.
+- **Delivery:** the delivery spike parses what Argo CD reports about
+  reconciling an Application: auto-sync and self-heal, the retry limit and
+  the operation's retry count and phase, single or multiple sources, the
+  requested, compared and deployed revisions, each managed object's sync and
+  health, and the Application's conditions. A missing inventory is unknown,
+  not empty, and configuration alone never claims a retry is running.
+- **Delivery join split:** `delivery/join.rs` is now a `join/` module of
+  build, Kargo, Argo CD, workload and render parts. No behaviour change.
+- **Delivery links say where their evidence came from:** each link of a
+  delivery trail now lists the observations behind it, with the cluster,
+  object, UID, resource version, field and whether it was reported or
+  declared, and a trail's text prints one `from …` line for each. What the
+  join itself compared is marked as derived and named by its rule. A link
+  from a source that couldn't be read lists none. A few confirmed links
+  rest on a declared field alone on one side (a revision parameter, Chains'
+  annotation, a Rollout's spec pin); their evidence says so, and #387 will
+  decide their confidence, which this change leaves as it was. The read time
+  comes from the caller.
+- A Kubernetes-only UI test waits for the kubeconfig to be read before it
+  checks the files Settings lists, so it no longer fails on a busy machine.
+- **Log search:** Next and Previous step through every matching line, so a
+  stack trace that names the search on several lines shows each of them in
+  turn, even in a row taller than the list, before moving on to the next row.
+  Such a row marks its matching lines rather than the whole row, the current
+  one more strongly. The match count and the status line count lines.
+- **Log dock:** logs open in a full-width dock under the page, on every
+  page, one tab per pod or workload, instead of the detail pane's Logs tab.
+  A tab keeps reading while it is open, whatever the page shows; the dock
+  minimizes to its tabs, fits to the window, drags to any height, and comes
+  back with its tabs for the same context. Control-. and Control-, switch
+  tabs, Shift-Escape minimizes it, and a middle-click closes a tab.
+- **Log toolbar:** a log's controls fit one row: the pod's container and tail
+  pickers, Previous and Timestamps as toggles, Stop, a Levels menu with counts,
+  search, Wrap, Follow and Copy. Narrow windows and large text show icons and
+  wrap to two rows. A crash-looping pod's waiting reason and last exit share one
+  line, which ends by pointing at Previous, so a 760 × 560 window keeps three
+  whole log lines. A pod's pane has one Logs button, which opens the container
+  at fault and names it in its tooltip.
+- **Shells in the dock:** a pod's Shell menu starts a shell in the container
+  you pick, in a dock tab of its own that keeps running whatever page or
+  object shows; navigating no longer asks to end it. Closing a running
+  shell's tab asks first, and a shell tab saved with the dock comes back
+  idle, starting nothing until Start. The dock keeps at most eight shell
+  tabs; a ninth replaces the oldest idle one, or asks before ending the
+  oldest running shell. The compact Levels button keeps its
+  chevron at large text sizes, and a crash loop's log note starts with
+  "Previous shows the last run" and wraps in its tooltip.
+- **Workload logs:** a container whose log is refused is read again only when
+  the workload's pods change or on Retry, not every 30 seconds, and other
+  failed streams spread their retries so they don't all read again at once.
+- **Details and YAML:** the details drawer has two tabs instead of five.
+  Details is one page you scroll: the overview, with a failing pod's
+  cause first, then its ports and its events, under an index that jumps
+  to each part and marks the one you're reading. YAML has a tab of its
+  own, and going to it and back keeps your place. A button beside the
+  object's name copies the name. Details lists an object's newest 25
+  events, and Show all lists the rest.
+- **Details in a drawer:** a Resources row now opens its details in a
+  drawer over the right of the list, under the page's toolbar, instead of
+  a split that squeezed the table. It opens about 725 points wide, leaves
+  the list at least 280, and remembers the width you drag its left edge
+  to. Another row swaps what it shows, and a click beside the rows closes
+  it; Logs and Shell close it too, since they open in the dock. In a
+  narrow window it takes the whole list.
+- **Pods:** a Containers column after the name draws a small square per
+  container, init containers first and dimmed, coloured by what each
+  does: running, restarted, not ready, waiting, failing or exited. Its
+  tooltip names each container with its state, reason and restarts, and
+  the column sorts the pods with a failing container first.
+- **Pods:** restarts have a column of their own, sortable, next to the
+  pod's CPU and memory, and the columns follow Freelens's order: Name,
+  Ready, CPU, Memory, Restarts, Owner, Node, Age. Ready sorts the least
+  ready pods first. A group's buttons now follow its count, so the
+  details drawer no longer hides them, and the Healthy group no longer
+  offers Collapse while a filter keeps every healthy pod in sight.
+- **Pods:** every pod row has a Logs button after its name, faint until
+  you point at the row, that opens the pod's logs in the dock without
+  selecting the row or opening its details.
+- **Delivery join follow-ups:** a build read discovers Tekton's API once, not
+  once per PipelineRun, and one build whose TaskRuns are refused leaves the
+  other builds of the commit whole. An error page that isn't the API server's
+  JSON loses the bare host names and addresses it names, as `host:port`
+  already did ([#292](https://github.com/skel84/freshkube/issues/292)).
+- **Kubernetes summary:** the node summary drops an unused pods parameter, and
+  the volumes, namespaces and version parts gain tests for never listed, failed and
+  stale. Nothing changes on screen.
+- **Download logs to a file:** every log's toolbar has a Download menu
+  that saves the visible lines or every retained line, as Copy copies
+  them, to a file you name, suggested in ~/Downloads. A failed save says
+  why and leaves no partial file. A workload's lines, copied or saved,
+  now start with the pod and container that wrote them. When the toolbar
+  shows icons alone, a pod's status tag shows its glyph, with its words
+  in the tooltip.
+- **Workload logs pick a pod:** a workload's log tab has a Pod select,
+  All pods or one pod, which narrows its lines and container chips to
+  that pod while every container reads on, and a Timestamps toggle like a
+  pod tab's. A pod that leaves keeps its pick, marked "(gone)", and a pod
+  past the 20-container cap says it isn't read.
+- **Error pages redacted further:** an error page that isn't the API server's
+  `Status` also loses wildcard and suffix domains (`*.apps.cluster.example`,
+  `.svc.cluster.local`), host names whose last label has a digit, IPv6
+  addresses inside markup and fields with their zones, and credentials and
+  email addresses whole. A proxy's JSON no longer passes for the API server's
+  error, and the message is cut to 4 KiB
+  ([#305](https://github.com/skel84/freshkube/issues/305)).
+- **Status messages redacted further:** a Kubernetes or object status message
+  loses credentials and email addresses whole (`user:pass@`, base64 and
+  percent-encoded userinfo, `git@host:org/…` with its owner), IPv6 addresses
+  wherever they stand, and IPv4 addresses in fields with their port or prefix
+  (`ip=192.0.2.1`, `10.0.0.0/24`). It keeps the API groups and versions it
+  names, and is cut to 4 KiB after redaction. Error pages lose the same, and
+  host names between dashes, and their 4 KiB cap now holds on the final
+  message ([#311](https://github.com/skel84/freshkube/issues/311)).
+- **FPS meter:** a followed log no longer reads red. The meter counts frames
+  only while the app draws back to back, such as when scrolling, and frames
+  that take longer than 33 ms; sparse, quick frames read idle.
+- **Host names out of Status messages:** a Kubernetes or object status message
+  now also loses the host names Go's errors write: after `lookup` (`lookup
+  git.example.com on …: no such host`) and `address`, and in an x509 "valid
+  for" list, its `not …` and its `none matched …`. A webhook's quoted name
+  goes too (`failed calling webhook "…"`, `admission webhook "…"`). API group
+  and resource names, such as `pipelineruns.tekton.dev` or `(get
+  widgets.example.com)`, stay
+  ([#314](https://github.com/skel84/freshkube/issues/314)).
+- **Log search:** in the dark theme the current match now stands out
+  clearly from the other matches, in logs and in the YAML pane's search.
+  Enter in a log's search field steps to the next match and Shift-Enter
+  to the previous one, and the keyboard stays in the field, as in a
+  browser.
+- **Log Copy and Download:** Copy no longer builds its text on every frame to
+  decide whether it's enabled; any selection enables it, and a selection it can't
+  copy says why. Download's temporary file is named `.<name>.freshkube-<pid>.part`
+  and is removed on every failed save.
+- **Nodes keys:** Enter on a focused button in a node's inspector presses it, as it
+  does elsewhere; Enter in the Nodes filter hands the keyboard to the list without
+  opening a node, as the Resources filter does; and a log's match count keeps a
+  gap from the search field's focus ring.
+- **Proxy and local clusters:** a kubeconfig server on loopback (`127.0.0.1`,
+  `::1`, `localhost`) is reached directly when `HTTPS_PROXY` is set, as kubectl
+  does, instead of failing to make a client; a kubeconfig's own `proxy-url` is
+  still used.
+- **Delivery join destinations:** an Argo CD Application sent to `in-cluster`
+  or `https://kubernetes.default.svc` now reaches the Rollout and pods when Argo
+  CD runs in the environment cluster. Any other cluster name maps with
+  `--known-as-name alias=name`, and when a name isn't mapped the join says how
+  to map it. A Rollout's pods come from its ReplicaSet at the promoted digest,
+  never from an older one beside it. The output now shows whether a Promotion
+  was automatic or by hand, the commit it pushed, why a Stage is unhealthy, the
+  Freight image's OCI revision and the run's result names, and it ends with a
+  summary line ([#330](https://github.com/skel84/freshkube/issues/330)).
+- Nodes: Escape steps back the way it does on Resources. In the filter it clears the text, then leaves. In the node pane it hands the keyboard to the table and leaves the pane open on its tab. On the table it clears the filter, then closes the pane.
+- Kubeconfig connections now work through an `http://` proxy, taken from `HTTPS_PROXY` or a kubeconfig's `proxy-url`, as kubectl does. `NO_PROXY` is still honoured. An `https` API server is reached through a `CONNECT` tunnel, so TLS still runs to the server, and any `user:password` in the proxy's URL goes to the proxy alone. A proxy that refuses the connection is now named in the error, such as `unsuccessful tunnel (HTTP/1.1 407 …)`. `socks5://` and `https://` proxies are still refused, with an error that says so.
+- Kubeconfig connections now honour `NO_PROXY` (and `no_proxy`) as kubectl does: hosts and their subdomains, `.domain`, IP addresses, CIDR blocks, `host:port` and `*`. A server it names connects directly instead of through `HTTPS_PROXY`. When a proxy Freshkube can't use stops a connection, the error now names the proxy, without any credentials in its URL, and says how to bypass it, instead of only "Couldn't make a client".
+- **Delivery:** a Promotion whose commit and push steps record the same
+  commit now lists that commit once.
+- Nodes: with a node's pane open, the table now follows Filter nodes and the health groups, as it does without the pane, so its rows agree with the counts above it. A filter that hides the open node leaves its pane open.
+- Nodes: Enter on a node, a click on one of its pane's tabs, or a click in the pane moves the keyboard into the pane, as Enter does on Resources, so Escape first hands the keyboard back to the table and only a second Escape closes the pane. A tab whose screen takes no keys gives the keyboard to the tab strip, even from the filter.
+- **Chart legends:** five or six series with short names, such as the Logs
+  histogram's severities, list inline, so a short chart no longer hides the fifth
+  under its legend's edge.
+- **Charts in the light theme:** series, bars, thresholds and log
+  severities draw in darker inks of the same hues; series and threshold
+  lines reach at least 3:1 on the white card, so the Logs histogram's warning bars no longer read as pale
+  tan. In the dark theme only bars change: they draw at full opacity, so
+  blue and grey bars stand out as clearly as lines.
+- Processes: the find field now takes every letter you type. Before, t, d, y and z ran the list's shortcuts instead, so typing `etcd` gave `ec`. Escape in the field clears it, then hands the keyboard back to the list; it no longer resets the zombie or disk-wait filter, which Escape on the list still clears.
+- **Heatmaps in the light theme:** an empty cell now reads pale and the busiest cell darkest, where the light theme had them the other way round. Its steps mirror the dark theme's, and the Traces caption reads "stronger = more" instead of "brighter = more", which held only in dark. Flame graph colours stay the same in both themes, and a chart's hover readout takes a new theme at once, without waiting for the pointer to move.
+- **Linux compile and lint can be required:** platform checks run it as its own
+  job, "Compile and lint (Linux)", so a change to docs alone still reports it
+  as skipped instead of leaving the merge waiting. Windows stays advisory.
+- **Windows:** a port forward no longer binds over another program listening on
+  the same port, the automatic port steps past ports Windows reserves, and a
+  directory chosen as talosconfig says it is not a regular file.
+- **Windows tests in CI:** platform checks run the whole workspace test suite on
+  Windows in a separate advisory job, alongside Linux's.
+- **Talos node facts:** what Talos reports about each node (its address,
+  role, etcd membership, whether it answers, memory and services) is worked
+  out in the core library, with the same rules, and gains tests for missing
+  and partial answers. Nothing changes on screen.
+- **Smaller Talos client:** the `talos-rs` crate drops the client methods, talosctl
+  wrappers, display helpers, generated protos and TLS helpers nothing called, and
+  four dependencies with them. The processes view formats memory sizes with the
+  shared formatter, so a size of 1 TiB or more now reads as TB instead of GB.
+- **Core API:** freshkube-core no longer exports code nothing used, including
+  the `AsyncState` loading container and several unused helpers.
+- **Tooling cleanup:** the unmaintained `dirs-next` dependency is gone (the home
+  folder now comes from `std::env::home_dir`, the Downloads folder from `dirs`;
+  on Windows the home folder is read from `USERPROFILE` first), four one-off
+  test-cluster scripts are deleted, and the stress binary has one query parser.
+- **Less hand-built Kubernetes plumbing:** single-object metadata reads use
+  kube's `get_metadata`, a Service's label selector uses kube's `Selector`,
+  and the GET reads, pod lookups and base-URL checks share one helper each.
+  Requests use the same paths, queries and Accept headers.
+- Maintenance mode's form keeps its field captions short, with their notes under the fields, so none runs out of its card; in a narrow window or at a large text size the form fills the page's width above the workflow.
+- Maintenance mode's page uses the shared page header and padding, like the other pages.
+- **Nodes' healthy fold:** H shows or folds the healthy nodes, and a
+  right-click on a node offers Open and the fold with their keys. The
+  healthy group keeps a chevron in place of its Expand/Collapse button.
+- **Actions on the selected row:** a right-click on a Resources row opens
+  its actions (Open and Mark on every kind; for pods also Logs, Select
+  all in its group, Open its node, Expand or Collapse the healthy pods),
+  each with its key. New keys: Shift-X marks the selected pod's group,
+  O opens its node, H shows or folds the healthy pods. The group rows
+  lose their Select all and Open node buttons to the menu; the healthy
+  group keeps its chevron. A row's menu acts only on the row it was
+  opened for: if the list changes under it, it does nothing.
+- **System services' actions on the selection:** the Logs and Open node
+  buttons leave the rows for the toolbar. Select a service with a click or
+  the arrows, then use the toolbar, a right-click, L for its logs, or O or
+  Enter for its node.
+- **Tables:** the code that draws a table's line is split into smaller
+  parts, making room for actions on the selection. No behaviour change.
+- **The design guide matches the app:** every page now draws with the shared
+  components, so DESIGN.md, the screen guide in AGENTS.md and the roadmap
+  describe that. The style check's allowlist is empty, so any page that draws
+  its own title, table, glyphs or corners fails CI.
+- Monitoring and Observability take the cluster connection through a small
+  core type, `ClusterSource`, instead of the Resources page's own, so
+  Monitoring can later move into a crate of its own. Nothing changes in
+  the app.
+
 ## 0.7.0 (2026-10-07)
 
 ### Coroot

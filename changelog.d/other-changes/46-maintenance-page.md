@@ -1,1 +1,0 @@
-- Maintenance mode's page uses the shared page header and padding, like the other pages.

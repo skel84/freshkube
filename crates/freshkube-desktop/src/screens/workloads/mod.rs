@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::constants::HIGH_RESTART_THRESHOLD;
+use freshkube_core::pluralize;
 use freshkube_core::workloads::{
     HealthState, NamespaceSummary, PodInfo, PodIssue, WorkloadCollectionOutcome, WorkloadInfo,
     WorkloadKind, WorkloadSnapshot, WorkloadSource, WorkloadSourceError,
@@ -191,10 +192,6 @@ fn age(created: Option<DateTime<Utc>>) -> String {
     } else {
         format!("{}s", elapsed.num_seconds().max(0))
     }
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 /// The visible rows for one data set and one set of filters. The data is
@@ -434,9 +431,9 @@ impl WorkloadsScreen {
                     }),
                     name: namespace.name.clone(),
                     kind: "Namespace",
-                    ready: plural(namespace.total_workloads, "workload", "workloads"),
+                    ready: pluralize(namespace.total_workloads, "workload", "workloads"),
                     issue: if issues > 0 {
-                        plural(issues, "issue", "issues")
+                        pluralize(issues, "issue", "issues")
                     } else {
                         "healthy".into()
                     },
@@ -464,7 +461,7 @@ impl WorkloadsScreen {
                     chevron: None,
                     name: pod.name.clone(),
                     kind: "Pod",
-                    ready: plural(pod.restarts.max(0) as usize, "restart", "restarts"),
+                    ready: pluralize(pod.restarts.max(0) as usize, "restart", "restarts"),
                     issue: pod.issue.label().to_owned(),
                 }
             }

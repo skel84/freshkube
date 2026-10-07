@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
+use freshkube_core::pluralize;
 use freshkube_core::resources::{
     ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, PodSelector,
     WorkloadPod, WorkloadPods, follow_pod_log, follow_pods,
@@ -47,6 +48,7 @@ use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
+use crate::stream_status::Status;
 use crate::ui::Tone;
 use controls::Controls;
 
@@ -73,36 +75,23 @@ const RETRY_MAX: Duration = Duration::from_secs(30);
 /// that fail together don't all read again at once.
 const RETRY_JITTER: f64 = 0.2;
 
-/// Spreads retry waits by up to [`RETRY_JITTER`] either way: a splitmix64
-/// sequence from a seed, random in the app and fixed in tests, so a test
-/// draws the same waits from a clone.
+/// Spreads retry waits by up to [`RETRY_JITTER`] either way: random in the
+/// app and seeded in tests, so a test draws the same waits from a clone.
 #[derive(Clone, Debug)]
-pub(super) struct Jitter {
-    state: u64,
-}
+pub(super) struct Jitter(fastrand::Rng);
 
 impl Jitter {
     fn new() -> Self {
         #[cfg(test)]
-        let seed = 0x5EED;
+        let rng = fastrand::Rng::with_seed(0x5EED);
         #[cfg(not(test))]
-        let seed = {
-            use std::hash::BuildHasher as _;
-            std::collections::hash_map::RandomState::new().hash_one(0u64)
-        };
-        Self { state: seed }
+        let rng = fastrand::Rng::new();
+        Self(rng)
     }
 
     /// `wait`, scaled by the next factor in `1 ± RETRY_JITTER`.
     pub(super) fn spread(&mut self, wait: Duration) -> Duration {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
-        // The top 53 bits, as a share of one in [0, 1).
-        let unit = (z >> 11) as f64 / (1u64 << 53) as f64;
-        wait.mul_f64(1. - RETRY_JITTER + 2. * RETRY_JITTER * unit)
+        wait.mul_f64(1. - RETRY_JITTER + 2. * RETRY_JITTER * self.0.f64())
     }
 }
 
@@ -254,16 +243,6 @@ pub(super) struct PodChoice {
     pub(super) label: SharedString,
 }
 
-/// What the controls say, derived when anything changes.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub(super) tone: Tone,
-    pub(super) tag: SharedString,
-    pub(super) text: SharedString,
-    /// Both, for assistive technology and tests.
-    pub(super) label: SharedString,
-}
-
 pub(crate) struct WorkloadLogs {
     runtime: Handle,
     clock: Clock,
@@ -397,12 +376,7 @@ impl WorkloadLogs {
             capped: None,
             refused_note: None,
             labels: BTreeMap::new(),
-            status: Status {
-                tone: Tone::Unknown,
-                tag: SharedString::default(),
-                text: SharedString::default(),
-                label: SharedString::default(),
-            },
+            status: Status::default(),
             empty: SharedString::default(),
             errors: BTreeMap::new(),
         };
@@ -513,7 +487,7 @@ impl WorkloadLogs {
         }
         self.chips = Rc::new(chips);
         self.chips_revision += 1;
-        self.streams_label = plural(self.chips.len(), "container", "containers").into();
+        self.streams_label = pluralize(self.chips.len(), "container", "containers").into();
         self.capped = (self.left_out > 0).then(|| capped_note(MAX_STREAMS + self.left_out).into());
         let refused = self
             .streams
@@ -523,7 +497,7 @@ impl WorkloadLogs {
         self.refused_note = (refused > 0).then(|| {
             format!(
                 "Logs refused for {}: read again when the pods change.",
-                plural(refused, "container", "containers")
+                pluralize(refused, "container", "containers")
             )
             .into()
         });
@@ -534,8 +508,8 @@ impl WorkloadLogs {
         let counts = match &self.pod {
             None => format!(
                 "{} · {}",
-                plural(pods, "pod", "pods"),
-                plural(streams, "container", "containers")
+                pluralize(pods, "pod", "pods"),
+                pluralize(streams, "container", "containers")
             ),
             Some(pod) => {
                 let present = self.pods.iter().any(|seen| seen.name == *pod);
@@ -543,8 +517,8 @@ impl WorkloadLogs {
                 format!(
                     "{} of {} · {read} of {}",
                     usize::from(present),
-                    plural(pods, "pod", "pods"),
-                    plural(streams, "container", "containers")
+                    pluralize(pods, "pod", "pods"),
+                    pluralize(streams, "container", "containers")
                 )
             }
         };
@@ -586,17 +560,7 @@ impl WorkloadLogs {
                 "Nothing was read.".to_owned(),
             ),
         };
-        let label = if text.is_empty() {
-            tag.to_owned()
-        } else {
-            format!("{tag}: {text}")
-        };
-        self.status = Status {
-            tone,
-            tag: tag.into(),
-            text: text.into(),
-            label: label.into(),
-        };
+        self.status = Status::new(tone, tag, &text);
         self.empty = empty.into();
         self.not_read = self.pod_not_read().map(Into::into);
     }
@@ -689,14 +653,6 @@ impl WorkloadLogs {
 /// What the cap leaves out, in the words of the note under the toolbar.
 fn capped_note(containers: usize) -> String {
     format!("Reading {MAX_STREAMS} of {containers} containers, the newest pods first.")
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{count} {many}")
-    }
 }
 
 impl LogSource for WorkloadLogs {

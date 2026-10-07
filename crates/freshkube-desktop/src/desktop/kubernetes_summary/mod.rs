@@ -30,10 +30,17 @@ pub(super) struct SummarySession {
 }
 impl SummarySession {
     fn fixture_now(&self, now: Instant) -> chrono::DateTime<chrono::Utc> {
-        self.fixture_at
-            + chrono::Duration::from_std(now.saturating_duration_since(self.fixture_clock))
-                .unwrap_or_default()
+        fixture_time(self.fixture_at, self.fixture_clock, now)
     }
+}
+
+/// The example session's time: its start, moved on by the executor's clock.
+fn fixture_time(
+    at: chrono::DateTime<chrono::Utc>,
+    clock: Instant,
+    now: Instant,
+) -> chrono::DateTime<chrono::Utc> {
+    at + chrono::Duration::from_std(now.saturating_duration_since(clock)).unwrap_or_default()
 }
 
 impl Pilot {
@@ -78,22 +85,7 @@ impl Pilot {
         if let Some(session) = &self.summary_session {
             session.core.relist();
             if self.fixture && !self.fixture_hold {
-                example::seed_summary(
-                    &session.core,
-                    &session.target.context,
-                    session.fixture_at.timestamp(),
-                );
-                let publication = session
-                    .core
-                    .derive(session.fixture_now(cx.background_executor().now()));
-                session.core.publish(publication.clone());
-                self.apply_summary(
-                    publication.clone(),
-                    WorkloadData::from_outcome(&publication.summary.workloads),
-                    window,
-                    cx,
-                );
-                self.watch_fixture_summary(window, cx);
+                self.publish_fixture(window, cx);
             }
         } else {
             self.ensure_summary(window, cx);
@@ -131,17 +123,7 @@ impl Pilot {
             if self.fixture_hold {
                 return;
             }
-            let at = self.summary_session.as_ref().unwrap().fixture_at;
-            example::seed_summary(&session, &source.context, at.timestamp());
-            let publication = session.derive(at);
-            session.publish(publication.clone());
-            self.apply_summary(
-                publication.clone(),
-                WorkloadData::from_outcome(&publication.summary.workloads),
-                window,
-                cx,
-            );
-            self.watch_fixture_summary(window, cx);
+            self.publish_fixture(window, cx);
             return;
         }
         if let Some(super::kubernetes_only::KubernetesOnly {
@@ -209,6 +191,28 @@ impl Pilot {
         self.deliver_summary_nodes(cx);
     }
 
+    /// Seeds the example session, publishes what it derives at its own
+    /// time and keeps watching it.
+    fn publish_fixture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.summary_session.as_ref().unwrap();
+        example::seed_summary(
+            &session.core,
+            &session.target.context,
+            session.fixture_at.timestamp(),
+        );
+        let publication = session
+            .core
+            .derive(session.fixture_now(cx.background_executor().now()));
+        session.core.publish(publication.clone());
+        self.apply_summary(
+            publication.clone(),
+            WorkloadData::from_outcome(&publication.summary.workloads),
+            window,
+            cx,
+        );
+        self.watch_fixture_summary(window, cx);
+    }
+
     fn watch_fixture_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.summary_session.as_ref().unwrap();
         let core = session.core.clone();
@@ -216,13 +220,7 @@ impl Pilot {
         let mut changes = core.changes();
         self.summary_task = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
-                let now = at
-                    + chrono::Duration::from_std(
-                        cx.background_executor()
-                            .now()
-                            .saturating_duration_since(clock),
-                    )
-                    .unwrap_or_default();
+                let now = fixture_time(at, clock, cx.background_executor().now());
                 let expiry = core.next_warning_change(now);
                 let dirty = changes.changed();
                 let timer = cx
@@ -236,13 +234,7 @@ impl Pilot {
                     futures::future::Either::Right(_) => {}
                 }
                 changes.borrow_and_update();
-                let now = at
-                    + chrono::Duration::from_std(
-                        cx.background_executor()
-                            .now()
-                            .saturating_duration_since(clock),
-                    )
-                    .unwrap_or_default();
+                let now = fixture_time(at, clock, cx.background_executor().now());
                 let publication = core.derive(now);
                 core.publish(publication.clone());
                 let health = WorkloadData::from_outcome(&publication.summary.workloads);

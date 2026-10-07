@@ -687,7 +687,7 @@ impl Pilot {
         else {
             return;
         };
-        let critical = actions::is_critical_service(&service_id);
+        let critical = actions::critical_warning(&service_id).is_some();
         let this = cx.weak_entity();
         let (current, run) = (this.clone(), this);
         let (current_id, run_id) = (service_id.clone(), service_id.clone());

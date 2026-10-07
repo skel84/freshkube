@@ -48,6 +48,15 @@ impl<T> SourceSnapshot<T> {
     pub fn is_available(&self) -> bool {
         matches!(self, Self::Available(_))
     }
+
+    /// Why the source wasn't fully collected: its warnings, or its reason.
+    pub fn problem(&self) -> Option<String> {
+        match self {
+            Self::Available(_) => None,
+            Self::Partial { warnings, .. } => Some(warnings.join("; ")),
+            Self::Unavailable { reason } => Some(reason.clone()),
+        }
+    }
 }
 
 /// The selected Talos identity, always derived from the selected talosconfig.
