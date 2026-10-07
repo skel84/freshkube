@@ -10,54 +10,42 @@ use super::{WatchEnd, WatchEvent};
 use crate::resources::failure::Failure;
 use crate::resources::table::{Table, TableRow};
 
-/// What one item from a watch stream asks of the watch.
-pub(super) enum Mapped {
-    /// Changes to deliver, in order; none for a bookmark.
-    Events(Vec<WatchEvent>),
-    /// The watch ends here.
-    End(WatchEnd),
-}
-
-/// Maps one item from a watch stream, moving `resource_version` past every
-/// row it carries and to every bookmark.
+/// Maps one item from a watch stream, pushing its changes onto `out` in
+/// order and moving `resource_version` past every row it carries and to every
+/// bookmark. Returns how the watch ends, if this item ends it.
 pub(super) fn map_event(
     item: Result<KubeWatchEvent<Table>, kube::Error>,
     resource_version: &mut String,
-) -> Mapped {
+    out: &mut Vec<WatchEvent>,
+) -> Option<WatchEnd> {
     match item {
         Ok(event) => match event {
-            KubeWatchEvent::Added(table) | KubeWatchEvent::Modified(table) => Mapped::Events(
-                table
-                    .rows
-                    .into_iter()
-                    .map(|row| {
-                        track_version(resource_version, &row);
-                        WatchEvent::Upsert(row)
-                    })
-                    .collect(),
-            ),
-            KubeWatchEvent::Deleted(table) => Mapped::Events(
-                table
-                    .rows
-                    .into_iter()
-                    .map(|row| {
-                        track_version(resource_version, &row);
-                        WatchEvent::Delete(row)
-                    })
-                    .collect(),
-            ),
+            KubeWatchEvent::Added(table) | KubeWatchEvent::Modified(table) => {
+                for row in table.rows {
+                    track_version(resource_version, &row);
+                    out.push(WatchEvent::Upsert(row));
+                }
+                None
+            }
+            KubeWatchEvent::Deleted(table) => {
+                for row in table.rows {
+                    track_version(resource_version, &row);
+                    out.push(WatchEvent::Delete(row));
+                }
+                None
+            }
             KubeWatchEvent::Bookmark(bookmark) => {
                 *resource_version = bookmark.metadata.resource_version;
-                Mapped::Events(Vec::new())
+                None
             }
-            KubeWatchEvent::Error(status) if status.code == 410 => Mapped::End(WatchEnd::Relist),
-            KubeWatchEvent::Error(status) => Mapped::End(WatchEnd::Failed(Failure::from_kube(
+            KubeWatchEvent::Error(status) if status.code == 410 => Some(WatchEnd::Relist),
+            KubeWatchEvent::Error(status) => Some(WatchEnd::Failed(Failure::from_kube(
                 kube::Error::Api(status),
             ))),
         },
         // A 410 can also arrive as the response itself rather than an event.
-        Err(kube::Error::Api(status)) if status.code == 410 => Mapped::End(WatchEnd::Relist),
-        Err(error) => Mapped::End(WatchEnd::Failed(Failure::from_kube(error))),
+        Err(kube::Error::Api(status)) if status.code == 410 => Some(WatchEnd::Relist),
+        Err(error) => Some(WatchEnd::Failed(Failure::from_kube(error))),
     }
 }
 
@@ -94,8 +82,9 @@ impl Batcher {
         self.deadline
     }
 
-    pub(super) fn extend(&mut self, events: Vec<WatchEvent>) {
-        self.pending.extend(events);
+    /// Where newly arrived events go; `flush` decides when they leave.
+    pub(super) fn pending_mut(&mut self) -> &mut Vec<WatchEvent> {
+        &mut self.pending
     }
 
     /// Called after each stream item, and when the window elapses, at `now`.
@@ -173,35 +162,49 @@ mod tests {
             .collect()
     }
 
-    fn events(mapped: Mapped) -> Vec<String> {
-        match mapped {
-            Mapped::Events(events) => summary(&events),
-            Mapped::End(_) => panic!("expected events, the watch ended"),
-        }
+    /// The changes one item maps to; it must not end the watch.
+    fn events(
+        item: Result<KubeWatchEvent<Table>, kube::Error>,
+        version: &mut String,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        assert!(
+            map_event(item, version, &mut out).is_none(),
+            "the watch ended"
+        );
+        summary(&out)
+    }
+
+    /// How one item ends the watch; it must add no changes.
+    fn end(item: Result<KubeWatchEvent<Table>, kube::Error>, version: &mut String) -> WatchEnd {
+        let mut out = Vec::new();
+        let end = map_event(item, version, &mut out).expect("the watch goes on");
+        assert!(out.is_empty());
+        end
     }
 
     #[test]
     fn rows_become_events_and_move_the_version() {
         let mut version = "10".to_string();
-        let added = map_event(Ok(table_event("ADDED", &[("a", "11")])), &mut version);
-        assert_eq!(events(added), ["upsert a"]);
+        let added = events(Ok(table_event("ADDED", &[("a", "11")])), &mut version);
+        assert_eq!(added, ["upsert a"]);
         assert_eq!(version, "11");
-        let modified = map_event(
+        let modified = events(
             Ok(table_event("MODIFIED", &[("a", "12"), ("b", "13")])),
             &mut version,
         );
-        assert_eq!(events(modified), ["upsert a", "upsert b"]);
+        assert_eq!(modified, ["upsert a", "upsert b"]);
         assert_eq!(version, "13");
-        let deleted = map_event(Ok(table_event("DELETED", &[("b", "14")])), &mut version);
-        assert_eq!(events(deleted), ["delete b"]);
+        let deleted = events(Ok(table_event("DELETED", &[("b", "14")])), &mut version);
+        assert_eq!(deleted, ["delete b"]);
         assert_eq!(version, "14");
     }
 
     #[test]
     fn a_row_without_a_version_keeps_the_last_one() {
         let mut version = "10".to_string();
-        let added = map_event(Ok(table_event("ADDED", &[("a", "")])), &mut version);
-        assert_eq!(events(added), ["upsert a"]);
+        let added = events(Ok(table_event("ADDED", &[("a", "")])), &mut version);
+        assert_eq!(added, ["upsert a"]);
         assert_eq!(version, "10");
     }
 
@@ -212,7 +215,7 @@ mod tests {
             "kind": "Table", "apiVersion": "meta.k8s.io/v1",
             "metadata": {"resourceVersion": "40"}}}))
         .unwrap();
-        assert!(events(map_event(Ok(bookmark), &mut version)).is_empty());
+        assert!(events(Ok(bookmark), &mut version).is_empty());
         assert_eq!(version, "40");
     }
 
@@ -220,12 +223,12 @@ mod tests {
     fn gone_relists_as_an_event_or_a_response() {
         let mut version = "10".to_string();
         assert!(matches!(
-            map_event(Ok(error_event(410)), &mut version),
-            Mapped::End(WatchEnd::Relist)
+            end(Ok(error_event(410)), &mut version),
+            WatchEnd::Relist
         ));
         assert!(matches!(
-            map_event(Err(error_response(410)), &mut version),
-            Mapped::End(WatchEnd::Relist)
+            end(Err(error_response(410)), &mut version),
+            WatchEnd::Relist
         ));
         assert_eq!(version, "10", "a relist takes the list's version");
     }
@@ -234,12 +237,12 @@ mod tests {
     fn other_errors_fail_the_watch() {
         let mut version = "10".to_string();
         assert!(matches!(
-            map_event(Ok(error_event(403)), &mut version),
-            Mapped::End(WatchEnd::Failed(failure)) if failure.kind == FailureKind::Forbidden
+            end(Ok(error_event(403)), &mut version),
+            WatchEnd::Failed(failure) if failure.kind == FailureKind::Forbidden
         ));
         assert!(matches!(
-            map_event(Err(error_response(500)), &mut version),
-            Mapped::End(WatchEnd::Failed(failure)) if failure.kind == FailureKind::Other
+            end(Err(error_response(500)), &mut version),
+            WatchEnd::Failed(failure) if failure.kind == FailureKind::Other
         ));
     }
 
@@ -248,7 +251,7 @@ mod tests {
         let start = Instant::now();
         let mut batcher = Batcher::new(WINDOW, 512);
         for (at, name) in [(0, "a"), (5, "b"), (15, "c")] {
-            batcher.extend(vec![upsert(name)]);
+            batcher.pending_mut().extend(vec![upsert(name)]);
             assert!(batcher.flush(start + ms(at), false).is_none());
             assert_eq!(batcher.deadline(), Some(start + WINDOW));
         }
@@ -262,7 +265,7 @@ mod tests {
     fn an_idle_gap_publishes_one_window_after_the_event() {
         let start = Instant::now();
         let mut batcher = Batcher::new(WINDOW, 512);
-        batcher.extend(vec![upsert("a")]);
+        batcher.pending_mut().extend(vec![upsert("a")]);
         assert!(batcher.flush(start, false).is_none());
         assert_eq!(batcher.deadline(), Some(start + WINDOW));
         // Nothing more arrives: the window elapsing delivers the event.
@@ -270,7 +273,7 @@ mod tests {
         assert_eq!(summary(&batch), ["upsert a"]);
         // After a quiet second, the next event opens a window of its own.
         let later = start + ms(1000);
-        batcher.extend(vec![upsert("b")]);
+        batcher.pending_mut().extend(vec![upsert("b")]);
         assert!(batcher.flush(later, false).is_none());
         assert_eq!(batcher.deadline(), Some(later + WINDOW));
         let batch = batcher.flush(later + WINDOW, false).unwrap();
@@ -281,7 +284,7 @@ mod tests {
     fn nothing_pending_opens_no_window() {
         let start = Instant::now();
         let mut batcher = Batcher::new(WINDOW, 512);
-        batcher.extend(Vec::new());
+        batcher.pending_mut().extend(Vec::new());
         assert!(batcher.flush(start, false).is_none());
         assert!(
             batcher.flush(start, true).is_none(),
@@ -294,9 +297,9 @@ mod tests {
     fn a_full_batch_publishes_at_once() {
         let start = Instant::now();
         let mut batcher = Batcher::new(WINDOW, 3);
-        batcher.extend(vec![upsert("a"), upsert("b")]);
+        batcher.pending_mut().extend(vec![upsert("a"), upsert("b")]);
         assert!(batcher.flush(start, false).is_none());
-        batcher.extend(vec![upsert("c")]);
+        batcher.pending_mut().extend(vec![upsert("c")]);
         let batch = batcher.flush(start + ms(1), false).unwrap();
         assert_eq!(summary(&batch), ["upsert a", "upsert b", "upsert c"]);
         assert_eq!(batcher.deadline(), None);
@@ -307,18 +310,13 @@ mod tests {
         let start = Instant::now();
         let mut version = "10".to_string();
         let mut batcher = Batcher::new(WINDOW, 512);
-        let Mapped::Events(added) =
-            map_event(Ok(table_event("ADDED", &[("a", "11")])), &mut version)
-        else {
-            panic!("expected events");
-        };
-        batcher.extend(added);
+        let added = Ok(table_event("ADDED", &[("a", "11")]));
+        assert!(map_event(added, &mut version, batcher.pending_mut()).is_none());
         assert!(batcher.flush(start, false).is_none());
         // A 410 inside the window: the pending change goes out before the
         // relist, whose complete list then replaces it in a batch of its own.
-        let Mapped::End(WatchEnd::Relist) = map_event(Ok(error_event(410)), &mut version) else {
-            panic!("expected a relist");
-        };
+        let gone = map_event(Ok(error_event(410)), &mut version, batcher.pending_mut());
+        assert!(matches!(gone, Some(WatchEnd::Relist)));
         let batch = batcher.flush(start + ms(2), true).unwrap();
         assert_eq!(summary(&batch), ["upsert a"]);
         assert_eq!(batcher.deadline(), None);

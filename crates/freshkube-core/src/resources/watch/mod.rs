@@ -13,7 +13,7 @@ use super::table::{Table, TableColumn, TableRow, list_table, watch_table};
 
 mod batch;
 
-use batch::{Batcher, Mapped, map_event};
+use batch::{Batcher, map_event};
 
 /// How long events are collected before they're delivered as one batch, so a
 /// frontend rebuilds at most about once per frame however fast changes arrive.
@@ -173,13 +173,7 @@ async fn watch_once(
             // The batch window elapsed.
             None => None,
             Some(None) => Some(WatchEnd::Resume),
-            Some(Some(item)) => match map_event(item, resource_version) {
-                Mapped::Events(events) => {
-                    batcher.extend(events);
-                    None
-                }
-                Mapped::End(end) => Some(end),
-            },
+            Some(Some(item)) => map_event(item, resource_version, batcher.pending_mut()),
         };
         if let Some(batch) = batcher.flush(Instant::now(), end.is_some())
             && !send(sink, batch).await
@@ -414,8 +408,9 @@ pub(super) mod tests {
         assert!(watches[1].contains("resourceVersion=20"));
     }
 
-    /// A burst inside one window arrives as one batch, and the list after a
-    /// 410 arrives as a batch of its own, which replaces what came before.
+    /// A burst followed by a 410 arrives as one batch, since the 410 ends the
+    /// watch, and the list after it as a batch of its own. (The window itself
+    /// is covered in `batch.rs`; this checks the batch boundaries.)
     #[tokio::test(start_paused = true)]
     async fn a_burst_is_one_batch_and_a_relist_starts_a_new_one() {
         let lists = Arc::new(Mutex::new(0));
