@@ -820,7 +820,7 @@ async fn client_from_roster_config(
                         "Could not load credentials for the validated Kubernetes source".into(),
                     )
                 })?;
-            Client::try_from(config).map_err(|_| {
+            crate::kube_client::client(config).map_err(|_| {
                 K8sError::ClientCreate(
                     "Could not construct a client for the validated Kubernetes source".into(),
                 )
@@ -1074,7 +1074,7 @@ pub async fn create_k8s_client_with_source(
                 match (node_ca.as_deref(), ambient_kubeconfig_ca()) {
                     (Some(node_ca), Some(ambient_ca)) if node_ca == ambient_ca => {
                         if let Ok(config) = Config::infer().await
-                            && let Ok(client) = Client::try_from(config)
+                            && let Ok(client) = crate::kube_client::client(config)
                         {
                             tracing::debug!("KUBECONFIG matches the Talos cluster; using it");
                             return Ok((client, KubeconfigSource::Environment));
@@ -1128,7 +1128,7 @@ pub async fn create_k8s_client_with_source(
     }
 
     if let Ok(config) = Config::infer().await
-        && let Ok(client) = Client::try_from(config)
+        && let Ok(client) = crate::kube_client::client(config)
     {
         tracing::debug!("Using kubeconfig from environment (KUBECONFIG or default path)");
         return Ok((client, KubeconfigSource::Environment));
@@ -1194,7 +1194,7 @@ async fn client_from_kubeconfig(kubeconfig: kube::config::Kubeconfig) -> Result<
     let config = Config::from_custom_kubeconfig(kubeconfig, &Default::default())
         .await
         .map_err(|error| K8sError::ClientCreate(error.to_string()))?;
-    Client::try_from(config).map_err(|error| K8sError::ClientCreate(error.to_string()))
+    crate::kube_client::client(config).map_err(|error| K8sError::ClientCreate(error.to_string()))
 }
 
 async fn fetch_kubeconfig_from_client(client: &TalosClient) -> Result<Client, K8sError> {
