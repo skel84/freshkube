@@ -1060,6 +1060,25 @@ fn a_promotions_steps_give_pushed_and_checked_out_commits_apart() {
     assert!(parsed.pushed_commits.is_empty());
 }
 
+#[test]
+fn a_commit_that_two_steps_record_is_pushed_once() {
+    // A commit step and the push step after it both record the commit; the
+    // push step's may differ in case.
+    let mut value = promotion_pushing("f-new", NEW, "Succeeded", PUSHED);
+    value["status"]["state"]["step-4"] =
+        serde_json::json!({"commit": PUSHED.to_ascii_uppercase(), "branch": "main"});
+    let promotion = super::kargo::parse_promotion(&value).unwrap();
+    assert_eq!(promotion.pushed_commits, [PUSHED]);
+}
+
+#[test]
+fn two_different_pushed_commits_are_both_kept_in_order() {
+    let mut value = promotion_pushing("f-new", NEW, "Succeeded", PUSHED);
+    value["status"]["state"]["step-4"] = serde_json::json!({"commit": OTHER_SHA});
+    let promotion = super::kargo::parse_promotion(&value).unwrap();
+    assert_eq!(promotion.pushed_commits, [PUSHED, OTHER_SHA]);
+}
+
 #[tokio::test]
 async fn the_naming_fallback_is_off_unless_configured() {
     let world = without_rollouts();
