@@ -308,9 +308,12 @@ mod tests {
     fn the_map_inspector_width_survives_reopening(cx: &mut TestAppContext) {
         use crate::navigation_file::NavigationFile;
         let directory = std::env::temp_dir().join(format!(
-            "freshkube-map-width-{}-{:?}",
+            "freshkube-map-width-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let preferences = directory.join("preferences.json");
         cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
