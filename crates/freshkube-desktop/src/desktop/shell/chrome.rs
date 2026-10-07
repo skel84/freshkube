@@ -113,13 +113,13 @@ impl ChromeParts {
     /// What the column reads from the pages: each one's area, and the
     /// namespace the Workloads and Observability columns pick. Resources
     /// notifies with every watch event, so only a new namespace draws.
+    /// Custom Resources needs no watch: the shell observes it.
     pub(in crate::desktop) fn watch(&self, pilot: &Pilot, cx: &mut App) {
         let resources = pilot.resources.clone();
-        let (services, custom) = (pilot.system_services.clone(), pilot.custom.clone());
+        let services = pilot.system_services.clone();
         let (monitoring, observability) = (pilot.monitoring.clone(), pilot.observability.clone());
         self.column.update(cx, |column, cx| {
             column.watch(&services, |area| area == Area::ControlPlane, cx);
-            column.watch(&custom, |area| area == Area::Custom, cx);
             column.watch(&monitoring, |area| area == Area::Monitoring, cx);
             column.watch(&observability, |area| area == Area::Observability, cx);
             let mut shown = resources.read(cx).namespace().map(str::to_owned);

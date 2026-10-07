@@ -1885,6 +1885,57 @@ fn the_column_redraws_for_the_pages_it_reads(cx: &mut TestAppContext) {
     );
 }
 
+/// Monitoring and Observability each draw the column in their own area,
+/// and only there. Custom Resources draws it through the shell, which
+/// observes it.
+#[gpui_kit::test]
+fn the_column_redraws_for_its_areas_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    type Notify = Box<dyn Fn(&mut gpui_kit::App)>;
+    let (custom, pages): (Notify, Vec<(&str, Notify)>) = cx.update(|cx| {
+        let pilot = view.read(cx);
+        let (custom, monitoring) = (pilot.custom.clone(), pilot.monitoring.clone());
+        let observability = pilot.observability.clone();
+        (
+            Box::new(move |cx: &mut gpui_kit::App| custom.update(cx, |_, cx| cx.notify()))
+                as Notify,
+            vec![
+                (
+                    "nav-monitoring",
+                    Box::new(move |cx: &mut gpui_kit::App| {
+                        monitoring.update(cx, |_, cx| cx.notify())
+                    }) as Notify,
+                ),
+                (
+                    "nav-observability",
+                    Box::new(move |cx: &mut gpui_kit::App| {
+                        observability.update(cx, |_, cx| cx.notify())
+                    }),
+                ),
+            ],
+        )
+    });
+    for (nav, _) in &pages {
+        cx.update_window(handle, |_, window, cx| window.click(*nav, cx))
+            .unwrap();
+        cx.run_until_parked();
+        for (other, notify) in &pages {
+            let redrawn = chrome_redrawn(cx, handle, |_, cx| notify(cx));
+            if other == nav {
+                assert_eq!(redrawn, ["chrome.column"], "{other} on {nav}");
+            } else {
+                assert!(redrawn.is_empty(), "{other} on {nav}: {redrawn:?}");
+            }
+        }
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-k8s-group-custom", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(chrome_redrawn(cx, handle, |_, cx| custom(cx)).contains(&"chrome.column"));
+}
+
 /// The parts draw with the shell's own controls: a rail button and a
 /// header control act on the shell through them.
 #[gpui_kit::test]
