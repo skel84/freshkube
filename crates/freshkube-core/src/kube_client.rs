@@ -15,7 +15,11 @@ use kube::{Client, Config};
 /// `http://` proxy, tunnelling an `https` server through `CONNECT`, so TLS
 /// still runs to the server with the kubeconfig's certificates; any
 /// `user:password@` in the proxy's URL goes to the proxy alone, as
-/// `Proxy-Authorization`. kube refuses other schemes, `socks5://` (a feature
+/// `Proxy-Authorization`. An `http` server's requests go to the proxy in
+/// absolute form without it: kube adds the proxy's headers only to the
+/// `CONNECT`, so a proxy that asks for credentials refuses them. That is
+/// kube's (rare: a plain-http API server) and leaks nothing. kube refuses
+/// other schemes, `socks5://` (a feature
 /// we don't build) and `https://` among them.
 pub(crate) fn client(mut config: Config) -> Result<Client, ClientError> {
     let environment = environment_proxy();
@@ -430,17 +434,26 @@ mod tests {
     }
 
     /// A one-connection proxy on loopback: it keeps the request head it is
-    /// sent and answers with `reply`.
+    /// sent and answers with `reply`. A client that never reaches it, as one
+    /// that bypassed it would, fails the test after five seconds instead of
+    /// hanging it.
     async fn proxy(reply: &'static str) -> (String, tokio::task::JoinHandle<String>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let head = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
+            let wait = std::time::Duration::from_secs(5);
+            let (mut stream, _) = tokio::time::timeout(wait, listener.accept())
+                .await
+                .expect("the client never reached the proxy")
+                .unwrap();
             let mut head = Vec::new();
             let mut buffer = [0; 1024];
             while !head.windows(4).any(|window| window == b"\r\n\r\n") {
-                let read = stream.read(&mut buffer).await.unwrap();
+                let read = tokio::time::timeout(wait, stream.read(&mut buffer))
+                    .await
+                    .expect("the client stopped before its request ended")
+                    .unwrap();
                 assert!(read > 0, "the client closed before its request ended");
                 head.extend_from_slice(&buffer[..read]);
             }
