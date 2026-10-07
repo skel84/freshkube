@@ -90,7 +90,7 @@ fn keyboard_selection_moves_through_nodes_and_updates_details(cx: &mut TestAppCo
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_some());
         // The details open with a selection.
-        assert!(window.try_find("lifecycle-details").is_none());
+        assert!(window.try_find("lifecycle-detail").is_none());
         window.click(node("talos-cp-fra1-01"), cx);
         window.press("down", cx);
         window.render_frame(cx);
@@ -99,7 +99,11 @@ fn keyboard_selection_moves_through_nodes_and_updates_details(cx: &mut TestAppCo
             window.find(node("talos-cp-fra1-01")).selected(),
             Some(false)
         );
-        let details = window.find("lifecycle-details").label().unwrap().to_owned();
+        let details = window
+            .find("lifecycle-detail-title")
+            .label()
+            .unwrap()
+            .to_owned();
         assert!(details.contains("talos-cp-fra1-02"), "{details}");
         // The alert follows the last node; End reaches it.
         window.press("end", cx);
@@ -108,12 +112,16 @@ fn keyboard_selection_moves_through_nodes_and_updates_details(cx: &mut TestAppCo
             window.find(("lifecycle-alert", 0usize)).selected(),
             Some(true)
         );
-        let details = window.find("lifecycle-details").label().unwrap().to_owned();
+        let details = window
+            .find("lifecycle-detail-title")
+            .label()
+            .unwrap()
+            .to_owned();
         assert!(details.contains("skew"), "{details}");
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).selected.is_none());
-        assert!(window.try_find("lifecycle-details").is_none());
+        assert!(window.try_find("lifecycle-detail").is_none());
     })
     .unwrap();
 }
@@ -128,7 +136,7 @@ fn details_sit_beside_the_roster_only_when_it_fits_whole(cx: &mut TestAppContext
             window.render_frame(cx);
             let scroll = window.find("lifecycle-table-scroll").bounds();
             let row = window.find(node("talos-cp-fra1-01")).bounds();
-            let details = window.find("lifecycle-details").bounds();
+            let details = window.find("lifecycle-detail").bounds();
             if beside {
                 assert!(details.left() >= scroll.right(), "{width}: {details:?}");
                 assert!(row.right() <= scroll.right(), "{width}: {row:?} {scroll:?}");
@@ -693,7 +701,7 @@ fn lifecycle_is_a_table_page_with_its_status_in_the_bar(cx: &mut TestAppContext)
             assert!(alerts.top() >= table.bottom(), "{alerts:?} {table:?}");
             window.click(node("talos-cp-fra1-01"), cx);
             window.render_frame(cx);
-            window.find("lifecycle-details");
+            window.find("lifecycle-detail");
             layout_check::assert_edge_frame(window, cx, &LIFECYCLE_SPLIT);
             layout_check::assert_table(window, cx, &LIFECYCLE_TABLE);
             layout_check::assert_bare(window, "lifecycle-table-scroll");
@@ -865,4 +873,185 @@ fn the_status_warns_of_an_unsafe_etcd_and_alerts_to_review() {
         format!("{} {plural}, {review} to review", alerts.len())
     };
     assert_eq!(status[3], status::Part::new(text).tone(Tone::Warn));
+}
+
+/// The shared Inspector opens with a selection: beside the roster on a
+/// page wide enough for both, under it otherwise, where the roster keeps
+/// the height of its rows and the alerts follow the split.
+#[gpui_kit::test]
+fn the_inspector_opens_with_a_selection_beside_or_under_the_roster(cx: &mut TestAppContext) {
+    for (width, beside) in [(1700., true), (1100., false)] {
+        let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("lifecycle-detail").is_none());
+            window.click(node("talos-cp-fra1-01"), cx);
+            layout_check::assert_inspector(
+                window,
+                cx,
+                "lifecycle-split",
+                "lifecycle-table-scroll",
+                "lifecycle-detail",
+                "lifecycle-detail-title",
+            );
+            let scroll = window.find("lifecycle-table-scroll").bounds();
+            let detail = window.find("lifecycle-detail").bounds();
+            let rows = screen.read(cx).rows_and_alerts().0;
+            let last = window.find(node(&rows.last().unwrap().name));
+            assert!(
+                last.bounds().bottom() <= scroll.bottom() + px(0.5),
+                "{width}: the last row is cut off"
+            );
+            if beside {
+                assert!(detail.left() >= scroll.right() - px(0.5), "{width}");
+            } else {
+                assert!(detail.top() >= scroll.bottom() - px(0.5), "{width}");
+            }
+            let split = window.find("lifecycle-split").bounds();
+            let alerts = window.find("lifecycle-alerts").bounds();
+            assert!(alerts.top() >= split.bottom(), "{alerts:?} {split:?}");
+        })
+        .unwrap();
+    }
+}
+
+/// A selected node that leaves the roster keeps the Inspector open under
+/// its name and says so.
+#[gpui_kit::test]
+fn a_selected_node_that_leaves_the_roster_keeps_its_name(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| {
+            screen.selected = Some(Item::Node("talos-old-node".into()));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("lifecycle-detail-gone").visible());
+        let title = window
+            .find("lifecycle-detail-title")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(title.contains("talos-old-node"), "{title}");
+    })
+    .unwrap();
+}
+
+/// A width dragged to is saved under `lifecycle` in `navigation.json`,
+/// and the next page opens its Inspector at it.
+#[gpui_kit::test]
+fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
+    use crate::navigation_file::NavigationFile;
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-lifecycle-inspector-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let preferences = directory.join("preferences.json");
+    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(node("talos-cp-fra1-01"), cx);
+        window.render_frame(cx);
+        let state = screen.read(cx).split.beside_state().clone();
+        state.update(cx, |state, cx| {
+            state.resize_panel(1, crate::ui::dp_px(400., window), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reopened = NavigationFile::open(Some(&preferences));
+    assert_eq!(reopened.inspector_width("lifecycle"), Some(400.));
+    cx.update(|cx| cx.set_global(reopened));
+    let (_runtime, screen, _handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
+    cx.read(|cx| assert_eq!(screen.read(cx).split.width(), 400.));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// A width saved wider than the room beside the roster still opens beside
+/// it, the Inspector taking only the rest, so the split never sticks
+/// stacked with no handle to drag it back.
+#[gpui_kit::test]
+fn an_oversized_saved_width_stays_beside_the_roster(cx: &mut TestAppContext) {
+    use crate::navigation_file::NavigationFile;
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-lifecycle-oversized-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let preferences = directory.join("preferences.json");
+    cx.update(|cx| {
+        let file = NavigationFile::open(Some(&preferences));
+        file.set_inspector_width("lifecycle", 2000., cx);
+        cx.set_global(file);
+    });
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(node("talos-cp-fra1-01"), cx);
+        window.render_frame(cx);
+        let roster = screen.read(cx).loader.data().unwrap().display.width;
+        let scroll = window.find("lifecycle-table-scroll").bounds();
+        let detail = window.find("lifecycle-detail").bounds();
+        let split = window.find("lifecycle-split").bounds();
+        assert!(
+            detail.left() >= scroll.right() - px(0.5),
+            "stacked: {detail:?}"
+        );
+        assert!(
+            scroll.size.width >= crate::ui::dp_px(roster, window) - px(0.5),
+            "the roster scrolls sideways: {scroll:?}, {roster} dp"
+        );
+        assert!(
+            detail.right() <= split.right() + px(0.5),
+            "{detail:?} {split:?}"
+        );
+    })
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// An alert stays selected by what it is about: a refresh that raises
+/// another alert ahead of it keeps the Inspector on the same one.
+#[gpui_kit::test]
+fn a_selected_alert_survives_a_new_alert_ahead_of_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("lifecycle-alert", 0usize), cx);
+        window.render_frame(cx);
+        let title = |window: &gpui_kit::Window| {
+            (window.find("lifecycle-detail-title").label())
+                .unwrap()
+                .to_owned()
+        };
+        assert!(title(window).contains("skew"), "{}", title(window));
+        screen.update(cx, |screen, cx| {
+            let mut view = example_view();
+            view.snapshot
+                .alerts
+                .push(freshkube_core::security_lifecycle::LifecycleAlert {
+                    health: HealthIndicator::Warning,
+                    message: "Configuration drift detected across nodes".into(),
+                });
+            let target = screen.source.as_ref().unwrap().target.clone();
+            screen.resolve(target, Ok(view));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("lifecycle-alert", 1usize)).selected(),
+            Some(true)
+        );
+        assert!(title(window).contains("skew"), "{}", title(window));
+    })
+    .unwrap();
 }
