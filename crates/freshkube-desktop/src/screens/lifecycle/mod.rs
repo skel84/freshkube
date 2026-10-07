@@ -780,12 +780,8 @@ fn etcd_verdict(etcd: &SourceSnapshot<EtcdPreOperationAudit>) -> EtcdVerdict {
 /// Sources that didn't answer fully, for the partial notice.
 fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
     fn note<T>(out: &mut Vec<String>, label: &str, source: &SourceSnapshot<T>) {
-        match source {
-            SourceSnapshot::Available(_) => {}
-            SourceSnapshot::Partial { warnings, .. } => {
-                out.push(format!("{label}: {}", warnings.join("; ")))
-            }
-            SourceSnapshot::Unavailable { reason } => out.push(format!("{label}: {reason}")),
+        if let Some(problem) = source.problem() {
+            out.push(format!("{label}: {problem}"));
         }
     }
     let snapshot = &view.snapshot;
