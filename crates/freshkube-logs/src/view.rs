@@ -27,6 +27,7 @@ use super::{
     review::{Mark, shown_message},
 };
 use freshkube_ui::palette::{Palette, palette};
+use freshkube_ui::tooltip::FollowTooltip as _;
 use freshkube_ui::ui::{self, dp};
 
 impl<S: LogSource> LogView<S> {
@@ -321,8 +322,10 @@ impl<S: LogSource> LogView<S> {
                     div()
                         .id("logs-summary-text")
                         .test_support()
-                        .text_color(p.muted)
-                        .child(feedback),
+                        .truncate()
+                        .text_color(if feedback.failed { p.crit_ink } else { p.muted })
+                        .child(feedback.text)
+                        .follow_tooltip(feedback.whole),
                 )
             })
             .children(self.source.errors().iter().map(|(service, error)| {
@@ -494,9 +497,10 @@ impl<S: LogSource> LogView<S> {
                             } else {
                                 "Copy selected lines".into()
                             })
-                            .disabled(self.review.copy_text(self.columns.time).is_err())
+                            .disabled(self.review.copy_text(self.copy_as()).is_err())
                             .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
-                    ),
+                    )
+                    .child(self.render_download(cx)),
             );
         v_flex()
             .gap(dp(6.))

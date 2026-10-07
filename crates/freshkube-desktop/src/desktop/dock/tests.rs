@@ -1175,24 +1175,32 @@ fn l_at_the_largest_text_size_opens_a_log_whose_panel_doesnt_scroll(cx: &mut Tes
     l_keeps_the_row_above_three_lines(&pod, 20., false, cx);
 }
 
-/// How many rows the toolbar's tools take in the dock: the distinct
-/// middles of its controls.
-fn tool_rows(handle: AnyWindowHandle, cx: &mut TestAppContext) -> usize {
+/// A pod tab's own tools.
+const POD_TOOLS: &[&str] = &[
+    "pod-logs-container",
+    "pod-logs-tail",
+    "pod-logs-previous",
+    "pod-logs-timestamps",
+    "pod-logs-stream",
+    "pod-logs-status",
+];
+
+/// A workload tab's own tools.
+const WORKLOAD_TOOLS: &[&str] = &["workload-logs-pod", "workload-logs-timestamps"];
+
+/// How many rows the toolbar takes in the dock, with the source's `tools`
+/// first: the distinct middles of its controls.
+fn tool_rows(handle: AnyWindowHandle, tools: &[&'static str], cx: &mut TestAppContext) -> usize {
     cx.update_window(handle, |_, window, _| {
         let mut middles: Vec<f32> = Vec::new();
-        for id in [
-            "pod-logs-container",
-            "pod-logs-tail",
-            "pod-logs-previous",
-            "pod-logs-timestamps",
-            "pod-logs-stream",
-            "pod-logs-status",
+        for &id in tools.iter().chain(&[
             "logs-levels",
             "logs-search",
             "logs-wrap",
             "logs-follow",
             "logs-copy",
-        ] {
+            "logs-download",
+        ]) {
             let bounds = window.within("dock").find(id).bounds();
             let middle = f32::from(bounds.center().y);
             if !middles.iter().any(|seen| (seen - middle).abs() < 8.) {
@@ -1226,7 +1234,7 @@ fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) 
         let pod = lowest_crash_looping_pod(&pilot, cx);
         open_logs(handle, &pilot, "pods", &pod, cx);
         settle(handle, cx);
-        let rows = tool_rows(handle, cx);
+        let rows = tool_rows(handle, POD_TOOLS, cx);
         assert!(rows <= most, "{width}×{height} at {text_size}: {rows} rows");
         // Previous keeps its label in a compact toolbar too, where the
         // crash-loop note points to it: wider than an icon alone.
@@ -1245,6 +1253,15 @@ fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) 
             );
         })
         .unwrap();
+        // A workload's tab keeps to the same rows.
+        let api = objects(&pilot, "deployments.apps", |_, name| name == "api", cx);
+        open_logs(handle, &pilot, "deployments.apps", &api[0], cx);
+        settle(handle, cx);
+        let rows = tool_rows(handle, WORKLOAD_TOOLS, cx);
+        assert!(
+            rows <= most,
+            "workload, {width}×{height} at {text_size}: {rows} rows"
+        );
     }
 }
 

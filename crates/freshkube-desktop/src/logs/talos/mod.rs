@@ -20,7 +20,7 @@ use tokio::{runtime::Handle, sync::mpsc};
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
-use super::{LogPanel, LogSource};
+use super::{DownloadLines, LogPanel, LogSource};
 use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
 use crate::ui;
 
@@ -88,6 +88,23 @@ impl TalosLogs {
 }
 
 impl LogSource for TalosLogs {
+    fn download_name(view: &LogPanel, _lines: DownloadLines) -> String {
+        let source = view.source();
+        let node = source
+            .target
+            .as_ref()
+            .map(|(target, _)| target.node.as_str())
+            .or(source
+                .fixture_target
+                .as_ref()
+                .map(|target| target.node.as_str()))
+            .unwrap_or("node");
+        match source.collecting.iter().collect::<Vec<_>>().as_slice() {
+            [service] => format!("{node}-{}", service.as_str()),
+            _ => format!("{node}-services"),
+        }
+    }
+
     fn prepare_controls(
         view: &mut LogPanel,
         width: Pixels,

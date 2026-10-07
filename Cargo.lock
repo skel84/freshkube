@@ -2550,10 +2550,13 @@ version = "0.7.0"
 name = "freshkube-logs"
 version = "0.7.0"
 dependencies = [
+ "chrono",
+ "dirs-next",
  "freshkube-core",
  "freshkube-probe",
  "freshkube-ui",
  "gpui-kit",
+ "tempfile",
  "tokio",
 ]
 

@@ -17,6 +17,8 @@ use gpui_kit::{
     px,
 };
 
+use freshkube_ui::tooltip::FollowTooltip as _;
+
 use super::{PodLogView, Stream, StreamState, TAILS, role_heading};
 use crate::palette::palette;
 use crate::ui::{self, dp};
@@ -163,13 +165,25 @@ impl Controls for PodLogView {
                 }
             }));
         let status = &source.status;
+        // Compact, the tag is its glyph alone, as the buttons are their
+        // icons: its words stay in the tooltip and the label.
+        let compact = self.compact();
+        let words = status.label.clone();
         let tag = h_flex()
             .id("pod-logs-status")
             .test_support()
             .role(Role::Status)
             .aria_label(status.label.clone())
-            .when(!status.tag.is_empty(), |this| {
+            .when(!status.tag.is_empty() && !compact, |this| {
                 this.child(ui::tag(status.tone, None, status.tag.clone(), cx))
+            })
+            .when(!status.tag.is_empty() && compact, |this| {
+                this.w(dp(20.))
+                    .self_stretch()
+                    .flex_none()
+                    .justify_center()
+                    .children(ui::status_glyph(status.tone, cx))
+                    .follow_tooltip(words)
             });
         vec![
             container.into_any_element(),

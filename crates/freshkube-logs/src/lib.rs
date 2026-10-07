@@ -17,7 +17,9 @@
 //! - `measure`: measured row heights and the wrapped-resize handling.
 //! - `view`: rendering.
 //! - `source_api`: the calls a source makes on the view.
+//! - `download`: saving lines to a file.
 
+mod download;
 mod measure;
 mod review;
 mod source_api;
@@ -27,6 +29,8 @@ mod view;
 
 #[cfg(test)]
 mod tests;
+
+pub use download::DownloadLines;
 
 use std::{
     cell::Cell,
@@ -177,6 +181,56 @@ impl ScrollbarHandle for ManualReviewScroll {
 /// How often stream batches are applied while the page is hidden.
 const HIDDEN_APPLY_INTERVAL: Duration = Duration::from_millis(250);
 
+/// The line under the toolbar: what the last action did, in crit when it
+/// failed.
+#[derive(Clone, Debug, PartialEq)]
+struct Feedback {
+    /// One line, cut short when the panel is narrow.
+    text: SharedString,
+    /// The whole of it, for the tooltip: `text` with what it leaves out,
+    /// such as the folder a file was saved in.
+    whole: SharedString,
+    failed: bool,
+}
+
+impl Feedback {
+    fn failed(text: impl Into<SharedString>) -> Self {
+        Self {
+            failed: true,
+            ..Self::from(text.into())
+        }
+    }
+
+    fn with_whole(self, whole: impl Into<SharedString>) -> Self {
+        Self {
+            whole: whole.into(),
+            ..self
+        }
+    }
+}
+
+impl From<SharedString> for Feedback {
+    fn from(text: SharedString) -> Self {
+        Self {
+            whole: text.clone(),
+            text,
+            failed: false,
+        }
+    }
+}
+
+impl From<String> for Feedback {
+    fn from(text: String) -> Self {
+        SharedString::from(text).into()
+    }
+}
+
+impl From<&'static str> for Feedback {
+    fn from(text: &'static str) -> Self {
+        SharedString::from(text).into()
+    }
+}
+
 /// Where a log view's lines come from. The view calls these while it
 /// renders; the source feeds lines through [`LogView::ingest`] and keeps
 /// its stream, catalog and failures to itself.
@@ -209,6 +263,12 @@ pub trait LogSource: Sized + 'static {
         Vec::new()
     }
 
+    /// What a downloaded file of `lines` is named after, such as the pod
+    /// and its container; the view adds the time and `.log`.
+    fn download_name(_view: &LogView<Self>, _lines: DownloadLines) -> String {
+        "logs".into()
+    }
+
     /// What the list says while no line is visible.
     fn empty_message(view: &LogView<Self>) -> SharedString;
 
@@ -237,6 +297,13 @@ pub trait LogSource: Sized + 'static {
     /// here. Copy and search keep the full name.
     fn source_label(&self, _service: &ServiceId) -> Option<SharedString> {
         None
+    }
+
+    /// Whether a copied or saved line starts with its source's full name:
+    /// for lines of several sources interleaved, which the text alone can't
+    /// tell apart.
+    fn tags_lines(&self) -> bool {
+        false
     }
 }
 
@@ -342,7 +409,13 @@ pub struct LogView<S: LogSource> {
     revealed_line: Option<(u64, usize, Pixels)>,
     review_anchor: Option<ReviewAnchor>,
     anchor_evicted: bool,
-    feedback: Option<String>,
+    feedback: Option<Feedback>,
+    /// Asks where to save a download and writes it; a new download
+    /// replaces it.
+    download: Option<Task<()>>,
+    /// Whether a download's save dialog is open: another download waits
+    /// until it answers, so the first is never dropped unseen.
+    choosing_file: bool,
     /// Whether the view is on screen. Its source keeps streaming either
     /// way, but a hidden view applies lines in coalesced groups and never
     /// asks the window to redraw for them.
@@ -425,6 +498,8 @@ impl<S: LogSource> LogView<S> {
             review_anchor: None,
             anchor_evicted: false,
             feedback: None,
+            download: None,
+            choosing_file: false,
             visible: true,
             backlog: Vec::new(),
             last_applied: cx.background_executor().now(),
@@ -571,7 +646,7 @@ impl<S: LogSource> LogView<S> {
         self.feedback = self
             .review
             .selection_limited
-            .then(|| format!("Selected the newest {MAX_SELECTED_LINES} of {count} lines"));
+            .then(|| format!("Selected the newest {MAX_SELECTED_LINES} of {count} lines").into());
         cx.notify();
     }
 
@@ -616,8 +691,17 @@ impl<S: LogSource> LogView<S> {
         cx.notify();
     }
 
+    /// How Copy and Download write a line: with its time while the time
+    /// shows, and led by its source where the source asks.
+    fn copy_as(&self) -> review::CopyAs {
+        review::CopyAs {
+            time: self.columns.time,
+            tagged: self.source.tags_lines(),
+        }
+    }
+
     fn copy(&mut self, cx: &mut Context<Self>) {
-        match self.review.copy_text(self.columns.time) {
+        match self.review.copy_text(self.copy_as()) {
             Ok(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 self.feedback = Some("Copied selected complete visible lines".into());

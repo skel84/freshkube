@@ -168,7 +168,7 @@ impl<S: LogSource> LogView<S> {
     /// The notice under the toolbar, such as why an action did nothing.
     /// It doesn't notify; the caller does.
     pub fn set_feedback(&mut self, feedback: Option<String>) {
-        self.feedback = feedback;
+        self.feedback = feedback.map(Into::into);
     }
 
     /// Adds lines read before any stream, such as example history, at once

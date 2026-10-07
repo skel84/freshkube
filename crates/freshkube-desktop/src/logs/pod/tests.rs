@@ -12,6 +12,14 @@ use crate::resources::{KubeAccess, example, live};
 
 /// The view on its own, active and on screen, as the Logs tab shows it.
 fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<PodLogView>, AnyWindowHandle) {
+    mount_sized(cx, 620., 820.)
+}
+
+fn mount_sized(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<PodLogView>, AnyWindowHandle) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -19,7 +27,7 @@ fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<PodLogView>, AnyWindowHand
     });
     let runtime = Runtime::new().unwrap();
     let mut view = None;
-    let handle = cx.open_window(size(px(620.), px(820.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let logs = cx.new(|cx| {
             let mut logs = PodLogView::for_pods(runtime.handle().clone(), window, cx);
             logs.set_active(true, cx);
@@ -583,4 +591,83 @@ fn pod_logs_keep_the_shared_stream_wording(cx: &mut TestAppContext) {
             "Pause to review. Collection keeps running."
         )
     });
+}
+
+#[gpui_kit::test]
+fn a_pod_download_is_named_by_its_pod_container_and_instance(cx: &mut TestAppContext) {
+    use crate::logs::LogSource;
+    let (_runtime, view, _handle) = mount(cx);
+    let identity = running_pod();
+    cx.update(|cx| {
+        show(&view, &identity, cx);
+        let source = view.read(cx).source();
+        let container = source.container.clone().unwrap();
+        assert_eq!(
+            super::PodLogs::download_name(view.read(cx), crate::logs::DownloadLines::Visible),
+            format!("{}-{}-{container}", identity.namespace, identity.name)
+        );
+    });
+}
+
+/// Under 40 rem the status tag is its glyph alone, as the buttons are their
+/// icons; its words stay in the tooltip and the accessibility label.
+#[gpui_kit::test]
+fn a_compact_toolbar_shows_the_status_as_its_glyph_with_its_words_in_the_tooltip(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, view, handle) = mount_sized(cx, 480., 820.);
+    let words = cx
+        .update_window(handle, |_, window, cx| {
+            show(&view, &running_pod(), cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(view.read(cx).compact());
+            let words = view.read(cx).source().status.label.clone();
+            assert_eq!(words.as_ref(), "Streaming");
+            let tag = window.find("pod-logs-status");
+            assert_eq!(tag.label(), Some(words.as_ref()));
+            // A glyph's width, not a word's.
+            assert!(tag.bounds().size.width < window.rem_size() * 2., "{tag:?}");
+            window.hover("pod-logs-status", cx);
+            window.render_frame(cx);
+            words
+        })
+        .unwrap();
+    // Past the tooltip's show delay.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let before = freshkube_ui::tooltip::drawn(&words);
+        window.render_frame(cx);
+        assert!(freshkube_ui::tooltip::drawn(&words) > before);
+
+        // Stopped, it says so in the same words as the wide tag's.
+        window.click("pod-logs-stream", cx);
+        window.render_frame(cx);
+        let stopped = view.read(cx).source().status.label.clone();
+        assert_eq!(
+            stopped.as_ref(),
+            "Stopped: Resume reads on from the last line."
+        );
+        let tag = window.find("pod-logs-status");
+        assert_eq!(tag.label(), Some(stopped.as_ref()));
+        assert!(tag.bounds().size.width < window.rem_size() * 2.);
+    })
+    .unwrap();
+}
+
+/// Wide, the tag shows its word.
+#[gpui_kit::test]
+fn a_wide_toolbar_shows_the_status_tag_with_its_word(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount_sized(cx, 900., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        show(&view, &running_pod(), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(!view.read(cx).compact());
+        let tag = window.find("pod-logs-status");
+        assert!(tag.bounds().size.width > window.rem_size() * 3., "{tag:?}");
+    })
+    .unwrap();
 }

@@ -553,28 +553,26 @@ impl LogReview {
     }
 
     /// Copy only selected complete, retained, currently visible original lines,
-    /// without their leading timestamp unless `with_time`. Markers are notes,
-    /// not lines, so they are never copied. Never silently truncate a line or
-    /// turn Copy into a whole-buffer export.
-    pub(super) fn copy_text(&self, with_time: bool) -> Result<String, &'static str> {
+    /// as `copied` writes them. Markers are notes, not lines, so they are never
+    /// copied. Never silently truncate a line or turn Copy into a whole-buffer
+    /// export.
+    pub(super) fn copy_text(&self, as_: CopyAs) -> Result<String, &'static str> {
         let mut output = String::new();
+        let mut line = String::new();
         for row_ix in 0..self.visible.len() {
             let entry = self.entry(row_ix);
             if entry.is_marker() || !self.selected.contains(&self.id(row_ix)) {
                 continue;
             }
-            let line = if with_time {
-                entry.selectable_text()
-            } else {
-                entry.text_without_timestamp()
-            };
+            line.clear();
+            copied(entry, as_, &mut line);
             if output.len() + line.len() + usize::from(!output.is_empty()) > MAX_COPY_BYTES {
                 return Err("Selection exceeds 1 MiB; select fewer complete lines");
             }
             if !output.is_empty() {
                 output.push('\n');
             }
-            output.push_str(line);
+            output.push_str(&line);
         }
         if output.is_empty() {
             Err("Select visible lines to copy")
@@ -582,6 +580,30 @@ impl LogReview {
             Ok(output)
         }
     }
+}
+
+/// How Copy and Download write a line.
+#[derive(Clone, Copy, Default)]
+pub(super) struct CopyAs {
+    /// With the line's leading timestamp.
+    pub(super) time: bool,
+    /// Led by its source's full name, as where several sources interleave.
+    pub(super) tagged: bool,
+}
+
+/// One original line as Copy and Download write it: its source's full name
+/// first when `tagged`, then the line, without its leading timestamp unless
+/// `time`.
+pub(super) fn copied(entry: &LogEntry, as_: CopyAs, out: &mut String) {
+    if as_.tagged {
+        out.push_str(entry.service.as_str());
+        out.push(' ');
+    }
+    out.push_str(if as_.time {
+        entry.selectable_text()
+    } else {
+        entry.text_without_timestamp()
+    });
 }
 
 #[cfg(test)]
@@ -601,7 +623,12 @@ mod model_tests {
         assert_eq!(review.row_for_id(selected), Some(2));
         assert_eq!(review.selected, BTreeSet::from([selected]));
         assert_eq!(
-            review.copy_text(true).unwrap(),
+            review
+                .copy_text(CopyAs {
+                    time: true,
+                    tagged: false
+                })
+                .unwrap(),
             "2026-09-30T10:00:02Z info repeated"
         );
     }
@@ -619,11 +646,16 @@ mod model_tests {
         review.select(2, true, false);
         assert_eq!(review.selected.len(), 3);
         assert_eq!(
-            review.copy_text(true).unwrap(),
+            review
+                .copy_text(CopyAs {
+                    time: true,
+                    tagged: false
+                })
+                .unwrap(),
             "2026-10-01T12:00:00Z GET / 200\n2026-10-01T12:00:02Z GET /health 200"
         );
         assert_eq!(
-            review.copy_text(false).unwrap(),
+            review.copy_text(CopyAs::default()).unwrap(),
             "GET / 200\nGET /health 200"
         );
         assert_eq!(review.level_counts().iter().sum::<usize>(), 2);
@@ -776,7 +808,14 @@ mod model_tests {
         assert_eq!(review.row_for_id(old), None);
         assert!(!review.selected.contains(&old));
         review.set_service_filter(BTreeSet::new());
-        assert!(review.copy_text(true).is_err());
+        assert!(
+            review
+                .copy_text(CopyAs {
+                    time: true,
+                    tagged: false
+                })
+                .is_err()
+        );
     }
 
     #[test]
@@ -785,7 +824,14 @@ mod model_tests {
         review.append((0..20).map(|_| LogEvent::new("apid", "x".repeat(MAX_LINE_BYTES))));
         review.select(0, false, false);
         review.select(19, true, false);
-        assert!(review.copy_text(true).is_err());
+        assert!(
+            review
+                .copy_text(CopyAs {
+                    time: true,
+                    tagged: false
+                })
+                .is_err()
+        );
         review.append([LogEvent::new("apid", "x".repeat(MAX_LINE_BYTES + 1))]);
         assert_eq!(review.omitted, 1);
         assert_eq!(review.visible.len(), 20);
@@ -808,7 +854,16 @@ mod model_tests {
         assert_eq!(review.row_for_id(0), None);
         assert_eq!(review.row_for_id(survivor), Some(55));
         assert_eq!(review.selected, BTreeSet::from([survivor]));
-        assert_eq!(review.copy_text(true).unwrap().len(), MAX_LINE_BYTES);
+        assert_eq!(
+            review
+                .copy_text(CopyAs {
+                    time: true,
+                    tagged: false
+                })
+                .unwrap()
+                .len(),
+            MAX_LINE_BYTES
+        );
         let retained_bytes: usize = review
             .logs
             .buffer()
