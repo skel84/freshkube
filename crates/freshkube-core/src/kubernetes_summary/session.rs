@@ -217,18 +217,11 @@ pub struct Publication {
 
 #[derive(Clone)]
 pub struct Subscription {
-    key: SubscriptionKey,
     receiver: watch::Receiver<Option<Arc<Publication>>>,
 }
 impl Subscription {
-    pub fn key(&self) -> &SubscriptionKey {
-        &self.key
-    }
     pub fn latest(&self) -> Option<Arc<Publication>> {
         self.receiver.borrow().clone()
-    }
-    pub async fn changed(&mut self) -> Result<(), watch::error::RecvError> {
-        self.receiver.changed().await
     }
 }
 
@@ -299,7 +292,6 @@ impl Session {
     pub fn subscribe(&self, key: SubscriptionKey) -> Option<Subscription> {
         (key == SubscriptionKey::summary(self.identity.clone(), key.source())).then(|| {
             Subscription {
-                key,
                 receiver: self.publications(),
             }
         })

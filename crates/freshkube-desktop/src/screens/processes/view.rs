@@ -287,8 +287,8 @@ impl ProcessesScreen {
                 "Memory",
                 mono(format!(
                     "{} resident · {} virtual",
-                    process.resident_memory_human(),
-                    process.virtual_memory_human()
+                    freshkube_core::format_bytes(process.resident_memory),
+                    freshkube_core::format_bytes(process.virtual_memory)
                 )),
                 cx,
             ))

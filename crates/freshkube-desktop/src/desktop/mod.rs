@@ -527,6 +527,7 @@ impl Pilot {
             KeyBinding::new("down", NextNode, Some("NodeWorkspace")),
             KeyBinding::new("up", PreviousNode, Some("NodeWorkspace")),
             KeyBinding::new("enter", nodes::OpenNode, Some("NodeWorkspace")),
+            KeyBinding::new("h", nodes::ToggleHealthyNodes, Some("NodeWorkspace")),
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
                 "secondary-shift-enter",

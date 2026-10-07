@@ -4,25 +4,17 @@
 //! list request makes only that resource kind unavailable: successful lists
 //! remain in the returned snapshot so a frontend can still show useful state.
 
-use std::{collections::HashMap, time::Duration};
-
-use chrono::{DateTime, Utc};
-use k8s_openapi::api::{
-    apps::v1::{DaemonSet, Deployment, StatefulSet},
-    core::v1::Pod,
-};
-use kube::{
-    Client,
-    api::{Api, ListParams},
-};
+use std::collections::HashMap;
 
 use crate::{
     constants::HIGH_RESTART_THRESHOLD,
     indicators::{HasHealth, HealthIndicator},
 };
-
-/// Default upper bound for the concurrent Kubernetes list requests.
-pub const DEFAULT_WORKLOAD_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+use chrono::{DateTime, Utc};
+use k8s_openapi::api::{
+    apps::v1::{DaemonSet, Deployment, StatefulSet},
+    core::v1::Pod,
+};
 
 /// Health state of a workload or pod.
 ///
@@ -281,115 +273,6 @@ impl WorkloadCollectionOutcome {
             Self::Partial { unavailable, .. } => unavailable,
             Self::Unavailable { errors, .. } => errors,
         }
-    }
-}
-
-/// Collects Kubernetes workload state for an explicit cluster target.
-///
-/// `client` must be created from the Talos-pinned kubeconfig helpers. All four
-/// authoritative API lists are requested concurrently. A list error or timeout
-/// produces [`WorkloadCollectionOutcome::Partial`] when another list succeeded,
-/// and [`WorkloadCollectionOutcome::Unavailable`] only when none did.
-pub async fn collect_workloads(
-    target: impl Into<String>,
-    client: Client,
-) -> WorkloadCollectionOutcome {
-    collect_workloads_with_timeout(target, client, DEFAULT_WORKLOAD_REQUEST_TIMEOUT).await
-}
-
-/// Collects workloads with a caller-selected deadline for all concurrent lists.
-pub async fn collect_workloads_with_timeout(
-    target: impl Into<String>,
-    client: Client,
-    timeout: Duration,
-) -> WorkloadCollectionOutcome {
-    let target = target.into();
-    let deployments_api: Api<Deployment> = Api::all(client.clone());
-    let statefulsets_api: Api<StatefulSet> = Api::all(client.clone());
-    let daemonsets_api: Api<DaemonSet> = Api::all(client.clone());
-    let pods_api: Api<Pod> = Api::all(client);
-    let list_params = ListParams::default().match_any();
-
-    let fetched = tokio::time::timeout(timeout, async {
-        tokio::join!(
-            deployments_api.list(&list_params),
-            statefulsets_api.list(&list_params),
-            daemonsets_api.list(&list_params),
-            pods_api.list(&list_params),
-        )
-    })
-    .await;
-
-    let (deployments, statefulsets, daemonsets, pods, errors) = match fetched {
-        Ok((deployments, statefulsets, daemonsets, pods)) => {
-            let mut errors = Vec::new();
-            let deployments = deployments.map_or_else(
-                |error| {
-                    errors.push(source_error(WorkloadSource::Deployments, error));
-                    Vec::new()
-                },
-                |list| list.items,
-            );
-            let statefulsets = statefulsets.map_or_else(
-                |error| {
-                    errors.push(source_error(WorkloadSource::StatefulSets, error));
-                    Vec::new()
-                },
-                |list| list.items,
-            );
-            let daemonsets = daemonsets.map_or_else(
-                |error| {
-                    errors.push(source_error(WorkloadSource::DaemonSets, error));
-                    Vec::new()
-                },
-                |list| list.items,
-            );
-            let pods = pods.map_or_else(
-                |error| {
-                    errors.push(source_error(WorkloadSource::Pods, error));
-                    Vec::new()
-                },
-                |list| list.items,
-            );
-            (deployments, statefulsets, daemonsets, pods, errors)
-        }
-        Err(_) => {
-            let message = format!("Request timed out after {}s", timeout.as_secs());
-            let errors = [
-                WorkloadSource::Deployments,
-                WorkloadSource::StatefulSets,
-                WorkloadSource::DaemonSets,
-                WorkloadSource::Pods,
-            ]
-            .into_iter()
-            .map(|source| WorkloadSourceError {
-                source,
-                message: message.clone(),
-            })
-            .collect();
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), errors)
-        }
-    };
-
-    if errors.len() == 4 {
-        return WorkloadCollectionOutcome::Unavailable { target, errors };
-    }
-
-    let snapshot = build_snapshot(target, deployments, statefulsets, daemonsets, pods);
-    if errors.is_empty() {
-        WorkloadCollectionOutcome::Complete(snapshot)
-    } else {
-        WorkloadCollectionOutcome::Partial {
-            snapshot,
-            unavailable: errors,
-        }
-    }
-}
-
-fn source_error(source: WorkloadSource, error: kube::Error) -> WorkloadSourceError {
-    WorkloadSourceError {
-        source,
-        message: error.to_string(),
     }
 }
 
