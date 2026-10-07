@@ -30,6 +30,11 @@ use gpui_kit::*;
 
 /// Most custom API groups, and kinds per group, the column lists; a row
 /// says how many more there are.
+/// The header's height, in dp.
+pub(in crate::desktop) const HEADER_HEIGHT: f32 = 52.;
+/// The status bar's height, in dp.
+pub(in crate::desktop) const STATUS_BAR_HEIGHT: f32 = 28.;
+
 const MAX_SIDEBAR_GROUPS: usize = 300;
 const MAX_SIDEBAR_KINDS: usize = 200;
 

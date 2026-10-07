@@ -20,10 +20,14 @@ use gpui_kit::{
     prelude::*,
 };
 
-/// The node log's height in a short window. A page's log would take a short
-/// window's height; the tab names this one, so it leaves out the title row
-/// a page has, and its lines still fit the pane once the body has scrolled.
-const SHORT_LOG_HEIGHT: f32 = freshkube_ui::page::SHORT_HEIGHT - TITLE_ROW;
+/// The node log's height in a short window: what a page's log takes in the
+/// shortest window that isn't short, inside the frame's header and status
+/// bar. The tab names this one, so it leaves out the title row a page has,
+/// and its lines still fit the pane once the body has scrolled.
+const SHORT_LOG_HEIGHT: f32 = freshkube_ui::page::SHORT_HEIGHT - FRAME - TITLE_ROW;
+
+/// The frame's header and status bar, above and below every page.
+const FRAME: f32 = super::super::shell::HEADER_HEIGHT + super::super::shell::STATUS_BAR_HEIGHT;
 
 /// The title row the tab stands in for, as tall as a toolbar row.
 const TITLE_ROW: f32 = freshkube_ui::page::TOOLBAR_HEIGHT;

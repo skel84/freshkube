@@ -21,7 +21,7 @@ impl Pilot {
     ) -> AnyElement {
         let minimal = window.viewport_size().width / ui::dp_px(1., window) < 680.;
         TitleBar::new()
-            .h(dp(52.))
+            .h(dp(super::HEADER_HEIGHT))
             .bg(cx.theme().title_bar)
             // Clear of the traffic lights.
             .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
