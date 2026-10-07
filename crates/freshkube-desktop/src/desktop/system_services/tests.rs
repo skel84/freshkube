@@ -107,7 +107,6 @@ fn narrow_window_keeps_the_header_and_scrolls_the_table(cx: &mut TestAppContext)
             );
         }
         assert!(window.find(UNHEALTHY).visible());
-        window.within(UNHEALTHY).find("open");
     })
     .unwrap();
 }
@@ -192,64 +191,135 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
 
 /// The rows the fit checks read: the unhealthy one, and one of the
 /// baremetal node's, whose long name is the widest and truncates.
-const FIT_ROWS: [&str; 2] = [
-    UNHEALTHY,
-    "system-service-talos-cp-fra1-03-baremetal-rack-b7-auditd",
-];
-
-/// Health check fills the line up to the actions: its right edge sits no
-/// further from Logs than the actions cell's padding and a little slack.
-fn assert_health_check_reaches_the_actions(
-    window: &mut gpui_kit::Window,
-    rows: &[&'static str],
-    size: f32,
-) {
-    let health = window.find(("system-services-sort", 4usize)).bounds();
-    let dp = gpui_kit::px(size / crate::ui::BASE_TEXT);
-    for &row in rows {
-        let logs = window.within(row).find("logs").bounds();
-        assert!(
-            logs.left() >= health.right() && logs.left() - health.right() <= dp * 16.,
-            "{row}: Health check ends at {:?}, Logs starts at {:?} at {size} px",
-            health.right(),
-            logs.left()
-        );
-    }
+/// The selected row's id, read from the page.
+fn selected(view: &gpui_kit::Entity<crate::desktop::Pilot>, cx: &gpui_kit::App) -> Option<String> {
+    view.read(cx)
+        .system_services
+        .read(cx)
+        .selected
+        .as_ref()
+        .map(|key| key.to_string())
 }
 
 #[gpui_kit::test]
-fn the_row_actions_fit_at_1280_at_the_default_text_size_and_one_up(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
+fn the_rows_carry_no_actions_and_the_toolbar_waits_for_a_selection(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     for size in [crate::ui::BASE_TEXT, 14.] {
         cx.update_window(handle, |_, window, cx| {
             crate::text_size::set(size, cx);
             window.press("secondary-7", cx);
             window.render_frame(cx);
-            let table = window.find("system-services-table-scroll").bounds();
-            for row in FIT_ROWS {
+            for row in [UNHEALTHY, HEALTHY] {
                 for action in ["logs", "open"] {
-                    let bounds = window.within(row).find(action).bounds();
                     assert!(
-                        bounds.left() >= table.left() && bounds.right() <= table.right(),
-                        "{row} {action} at {bounds:?} leaves the table at {table:?} at {size} px"
+                        window.within(row).try_find(action).is_none(),
+                        "{row} still has {action} at {size} px"
                     );
                 }
             }
-            assert_health_check_reaches_the_actions(window, &FIT_ROWS, size);
+            // Health check is the last column.
+            assert!(window.try_find(("system-services-sort", 5usize)).is_none());
+            // With nothing selected, the toolbar's actions do nothing.
+            window.click("system-service-open", cx);
+            window.click("system-service-logs", cx);
+            window.press("enter", cx);
+            window.press("l", cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, Page::SystemServices);
         })
         .unwrap();
     }
 }
 
 #[gpui_kit::test]
-fn health_check_reaches_the_actions_when_the_table_scrolls(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+fn the_arrows_select_and_escape_clears(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        crate::text_size::set(20., cx);
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        // Only the first rows are drawn in this short window.
-        assert_health_check_reaches_the_actions(window, &[UNHEALTHY], 20.);
+        // The page gives the list the keyboard; down starts at the first row.
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
+        assert_eq!(window.find(UNHEALTHY).selected(), Some(true));
+        window.press("down", cx);
+        window.press("up", cx);
+        assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&view, cx), None);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        window.within(UNHEALTHY).click("name", cx);
+        window.click("system-service-filter", cx);
+        window.input("kubelet", cx);
+        window.render_frame(cx);
+        // l, o and e went into the filter, not to the selected row.
+        assert_eq!(view.read(cx).page, Page::SystemServices);
+        assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
+        assert!(window.try_find(HEALTHY).is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_filter_that_hides_the_selected_row_clears_it(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        window.within(UNHEALTHY).click("name", cx);
+        assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
+        window.click("system-services-tally-healthy", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&view, cx), None);
+        window.click("system-service-open", cx);
+        assert_eq!(view.read(cx).page, Page::SystemServices);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        window.within(HEALTHY).right_click("name", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(selected(&view, cx).as_deref(), Some(HEALTHY));
+        let menu = window.within("popup-menu");
+        let labels: Vec<_> = (0..2usize)
+            .map(|ix| menu.find(ix).label().map(str::to_owned))
+            .collect();
+        assert!(
+            labels[0].as_deref().is_some_and(|label| label.starts_with("Logs"))
+                && labels[1]
+                    .as_deref()
+                    .is_some_and(|label| label.starts_with("Open node")),
+            "{labels:?}"
+        );
+        window.within("popup-menu").click(1usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.page, Page::Nodes);
+        assert_eq!(pilot.selected_service.as_deref(), Some("apid"));
+        assert_eq!(pilot.node_workspace.tab, crate::desktop::nodes::NodeTab::Services);
     })
     .unwrap();
 }

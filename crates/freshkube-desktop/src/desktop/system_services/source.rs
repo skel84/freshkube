@@ -10,7 +10,6 @@ enum Field {
     Service,
     State,
     Message,
-    Actions,
 }
 
 pub(crate) struct Column {
@@ -50,13 +49,8 @@ fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>) -> f32 {
 }
 
 /// The Node column's widest: a longer name truncates, and the row's
-/// tooltip holds it, so the actions stay in view at 1280 one text size up.
+/// tooltip holds it, so Health check keeps room at 1280 one text size up.
 const NODE_WIDTH: f32 = 200.;
-/// Logs and Open node at xsmall, with a little room. They sit at the
-/// column's left, right after Health check, which fills the rest; Kit's
-/// buttons don't scale exactly with the text size, so what room is left
-/// over falls at the table's edge, not between the message and Logs.
-const ACTIONS_WIDTH: f32 = 120.;
 
 /// The columns for these rows, and their total width.
 pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
@@ -83,7 +77,6 @@ pub(super) fn columns(rows: &[ServiceRow]) -> (Vec<Column>, f32) {
             fit("State", rows.iter().map(|row| &row.state)),
         ),
         column(Field::Message, "Health check", 240.),
-        column(Field::Actions, "", ACTIONS_WIDTH),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
@@ -108,7 +101,9 @@ impl TableSource for SystemServices {
     }
 
     fn list_label(&self) -> String {
-        "System services on every node, problems first; each row opens its logs or its node".into()
+        "System services on every node, problems first; L opens the selected service's logs, \
+         O or Enter its node, and a right-click lists both"
+            .into()
     }
 
     fn sorting(&self, _: &Column) -> Option<((), Option<SortOrder>)> {
@@ -169,28 +164,6 @@ impl TableSource for SystemServices {
                 .text_color(style.p.muted)
                 .child(row.message.clone())
                 .into_any_element(),
-            Field::Actions => {
-                let (logs_node, logs_service) = (row.node.to_string(), row.service.to_string());
-                let (open_node, open_service) = (logs_node.clone(), logs_service.clone());
-                cell.flex()
-                    .items_center()
-                    .gap_1()
-                    .child(Button::new("logs").ghost().xsmall().label("Logs").on_click(
-                        cx.listener(move |_, _, _, cx| {
-                            cx.emit(ServiceEvent::Logs(logs_node.clone(), logs_service.clone()))
-                        }),
-                    ))
-                    .child(
-                        Button::new("open")
-                            .outline()
-                            .xsmall()
-                            .label("Open node")
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(ServiceEvent::Open(open_node.clone(), open_service.clone()))
-                            })),
-                    )
-                    .into_any_element()
-            }
         }
     }
 
@@ -214,8 +187,40 @@ impl TableSource for SystemServices {
         )
     }
 
-    fn clickable(&self) -> bool {
-        false
+    fn selected_key(&self) -> Option<&SharedString> {
+        self.selected.as_ref()
+    }
+
+    fn line_of(&self, key: &SharedString) -> Option<usize> {
+        self.lines
+            .iter()
+            .position(|entry| matches!(entry, Entry::Row(ix) if &self.rows[*ix].id == key))
+    }
+
+    /// A click selects the row and puts the keyboard on the list.
+    fn click(&mut self, key: &SharedString, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.select(key.clone(), cx);
+        self.focus(window, cx);
+    }
+
+    fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
+        Some(self.focus.clone())
+    }
+
+    /// A right-click selects the row as a click does; its menu is the
+    /// toolbar's actions, with their keys.
+    fn row_menu(
+        &mut self,
+        key: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<table::RowAction> {
+        self.select(key.clone(), cx);
+        self.focus(window, cx);
+        vec![
+            table::RowAction::new("Logs", ServiceLogs),
+            table::RowAction::new("Open node", OpenServiceNode),
+        ]
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

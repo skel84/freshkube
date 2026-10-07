@@ -379,6 +379,9 @@ impl Pilot {
         } else if self.page == Page::Observability {
             self.observability
                 .update(cx, |page, cx| page.focus(window, cx));
+        } else if self.page == Page::SystemServices {
+            self.system_services
+                .update(cx, |services, cx| services.focus(window, cx));
         } else if self.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);

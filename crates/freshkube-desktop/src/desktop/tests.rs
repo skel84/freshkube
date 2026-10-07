@@ -3270,7 +3270,8 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
         assert_eq!(view.read(cx).page, Page::SystemServices);
         assert!(window.find(row).visible());
         assert!(window.try_find("restart-service").is_none());
-        window.within(row).click("open", cx);
+        window.within(row).click("name", cx);
+        window.click("system-service-open", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -3283,9 +3284,11 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
             view.read(cx).node_workspace.tab,
             super::nodes::NodeTab::Services
         );
+        // Back on the page, the row is still selected and the list has
+        // the keyboard, so L opens its logs.
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        window.within(row).click("logs", cx);
+        window.press("l", cx);
     })
     .unwrap();
     cx.run_until_parked();
