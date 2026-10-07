@@ -1,3 +1,4 @@
+use freshkube_core::pluralize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::Duration,
@@ -374,11 +375,10 @@ impl TalosPanel for LogPanel {
 
     fn status_line(&self) -> String {
         let mut parts = vec![if self.source().collection_active {
-            if self.source().collecting.len() == 1 {
-                "Collecting 1 service".to_owned()
-            } else {
-                format!("Collecting {} services", self.source().collecting.len())
-            }
+            format!(
+                "Collecting {}",
+                pluralize(self.source().collecting.len(), "service", "services")
+            )
         } else {
             "Collection stopped".to_owned()
         }];

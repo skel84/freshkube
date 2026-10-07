@@ -13,6 +13,7 @@ use freshkube_core::kubernetes_summary::{Part, Publication, SessionIdentity, Sub
 use freshkube_core::lifecycle_versions::{
     KubeletSkew, KubeletVersions, kubelet_skew, kubernetes_support, newest_kubelet,
 };
+use freshkube_core::pluralize;
 use freshkube_core::security_lifecycle::{
     ClusterIdentity, DiscoveryRosterEntry, EtcdPreOperationAudit, KubernetesNodeRosterEntry,
     LifecycleAlert, LifecycleAlertKind, LifecycleCollector, LifecycleSnapshot,
@@ -831,10 +832,6 @@ fn presence_text(value: Option<bool>, roster: &str) -> String {
         Some(false) => format!("not listed in {roster}"),
         None => format!("unknown ({roster} wasn't read)"),
     }
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 // ---------------------------------------------------------------------------

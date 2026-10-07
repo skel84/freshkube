@@ -3,6 +3,7 @@
 //! relationships when the document arrives.
 
 use chrono::{DateTime, Local, Utc};
+use freshkube_core::pluralize;
 use freshkube_core::resources::{Diagnosis, Instance, PodStatus, Severity};
 use gpui_kit::component::{
     Sizable,
@@ -214,10 +215,7 @@ impl Timeline {
         let span = (to - from).num_milliseconds().max(1) as f32;
         let at =
             |time: DateTime<Utc>| ((time - from).num_milliseconds() as f32 / span).clamp(0., 1.);
-        let restarts = match container.restarts {
-            1 => "1 restart".to_owned(),
-            count => format!("{count} restarts"),
-        };
+        let restarts = pluralize(container.restarts as usize, "restart", "restarts");
         Some(Self {
             title: format!("{} · {restarts}", container.name).into(),
             runs: runs

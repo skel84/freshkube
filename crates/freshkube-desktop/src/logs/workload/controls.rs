@@ -22,7 +22,7 @@ use gpui_kit::{
     size,
 };
 
-use super::{Chip, MAX_STREAMS, PodsState, Streams, WorkloadLogView, plural};
+use super::{Chip, MAX_STREAMS, PodsState, Streams, WorkloadLogView, pluralize};
 use crate::logs::{chip_rows, chips_that_fit, timestamps_button};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
@@ -105,7 +105,7 @@ fn chip(chip: &Chip, id: SharedString, view: WeakEntity<WorkloadLogView>, cx: &A
 /// What "+N" reads: the hidden count, or every container when no row shows.
 fn more_label(hidden: usize, total: usize) -> SharedString {
     if hidden == total {
-        plural(total, "container", "containers").into()
+        pluralize(total, "container", "containers").into()
     } else {
         format!("+{hidden}").into()
     }

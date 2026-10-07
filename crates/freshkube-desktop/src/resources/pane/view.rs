@@ -1,6 +1,7 @@
 //! The pane's frame: header, notices, tabs, and what replaces a tab while
 //! there is no document.
 
+use freshkube_core::pluralize;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
@@ -484,10 +485,7 @@ impl DetailPane {
                 this.child(ui::tag(
                     Tone::Warn,
                     None,
-                    match warnings {
-                        1 => "1 warning".to_owned(),
-                        count => format!("{count} warnings"),
-                    },
+                    pluralize(warnings, "warning", "warnings"),
                     cx,
                 ))
             })

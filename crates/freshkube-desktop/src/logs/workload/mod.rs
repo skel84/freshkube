@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
+use freshkube_core::pluralize;
 use freshkube_core::resources::{
     ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, PodSelector,
     WorkloadPod, WorkloadPods, follow_pod_log, follow_pods,
@@ -513,7 +514,7 @@ impl WorkloadLogs {
         }
         self.chips = Rc::new(chips);
         self.chips_revision += 1;
-        self.streams_label = plural(self.chips.len(), "container", "containers").into();
+        self.streams_label = pluralize(self.chips.len(), "container", "containers").into();
         self.capped = (self.left_out > 0).then(|| capped_note(MAX_STREAMS + self.left_out).into());
         let refused = self
             .streams
@@ -523,7 +524,7 @@ impl WorkloadLogs {
         self.refused_note = (refused > 0).then(|| {
             format!(
                 "Logs refused for {}: read again when the pods change.",
-                plural(refused, "container", "containers")
+                pluralize(refused, "container", "containers")
             )
             .into()
         });
@@ -534,8 +535,8 @@ impl WorkloadLogs {
         let counts = match &self.pod {
             None => format!(
                 "{} · {}",
-                plural(pods, "pod", "pods"),
-                plural(streams, "container", "containers")
+                pluralize(pods, "pod", "pods"),
+                pluralize(streams, "container", "containers")
             ),
             Some(pod) => {
                 let present = self.pods.iter().any(|seen| seen.name == *pod);
@@ -543,8 +544,8 @@ impl WorkloadLogs {
                 format!(
                     "{} of {} · {read} of {}",
                     usize::from(present),
-                    plural(pods, "pod", "pods"),
-                    plural(streams, "container", "containers")
+                    pluralize(pods, "pod", "pods"),
+                    pluralize(streams, "container", "containers")
                 )
             }
         };
@@ -689,14 +690,6 @@ impl WorkloadLogs {
 /// What the cap leaves out, in the words of the note under the toolbar.
 fn capped_note(containers: usize) -> String {
     format!("Reading {MAX_STREAMS} of {containers} containers, the newest pods first.")
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{count} {many}")
-    }
 }
 
 impl LogSource for WorkloadLogs {

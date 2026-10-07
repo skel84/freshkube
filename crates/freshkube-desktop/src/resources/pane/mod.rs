@@ -6,6 +6,7 @@
 //! Secret values stay hidden until one is revealed. Nothing here changes the
 //! cluster.
 
+use freshkube_core::pluralize;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -864,13 +865,7 @@ impl DetailPane {
         let count = range.len();
         let text = view.text(range).to_owned();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.feedback = Some(
-            match count {
-                1 => "Copied 1 line".to_owned(),
-                count => format!("Copied {count} lines"),
-            }
-            .into(),
-        );
+        self.feedback = Some(format!("Copied {}", pluralize(count, "line", "lines")).into());
         cx.notify();
     }
 

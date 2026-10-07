@@ -1,6 +1,7 @@
 //! The YAML tab: the document as unwrapped lines with search and line
 //! selection.
 
+use freshkube_core::pluralize;
 use std::ops::Range;
 
 use gpui_kit::assets::IconName;
@@ -114,10 +115,7 @@ impl DetailPane {
                     .outline()
                     .xsmall()
                     .icon(IconName::Copy)
-                    .label(match lines {
-                        1 => "Copy 1 line".to_owned(),
-                        lines => format!("Copy {lines} lines"),
-                    })
+                    .label(format!("Copy {}", pluralize(lines, "line", "lines")))
                     .on_click(cx.listener(|pane, _, _, cx| pane.copy_lines(cx)))
             }));
         let lines = view.lines.len();

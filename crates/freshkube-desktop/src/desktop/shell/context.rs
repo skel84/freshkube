@@ -1,5 +1,6 @@
 //! Labels are prepared on source and text-size changes, never while drawing.
 use super::*;
+use freshkube_core::pluralize;
 
 #[derive(Default)]
 pub(in crate::desktop) struct ContextDisplay {
@@ -97,12 +98,7 @@ impl Pilot {
         self.context_display.counts = self
             .context_nodes
             .iter()
-            .map(|(name, count)| {
-                (
-                    name.clone(),
-                    format!("{count} {}", if *count == 1 { "node" } else { "nodes" }).into(),
-                )
-            })
+            .map(|(name, count)| (name.clone(), pluralize(*count, "node", "nodes").into()))
             .collect();
         self.context_display.status = if self.kubernetes_only.is_some() {
             format!("Connected to {full} · Kubernetes {kubernetes}")

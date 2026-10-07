@@ -1,6 +1,7 @@
 use super::super::model::format_age;
 use super::super::projection::{Cause, PodFilter};
 use super::*;
+use freshkube_core::pluralize;
 use gpui_kit::base::Selectable;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use std::rc::Rc;
@@ -93,10 +94,9 @@ impl ResourcesScreen {
             Cause::Healthy => (ui::Tone::Good, "Healthy"),
         };
         let key = group_key(&group.cause);
-        let pods = if group.total == 1 { "pod" } else { "pods" };
         // The count leads, then the buttons, then the rest, so the
         // buttons stay in the room a drawer leaves the list (#321).
-        let count = format!("{} {pods}", group.total);
+        let count = pluralize(group.total, "pod", "pods");
         let mut detail = Vec::new();
         if group.namespaces > 1 && group.cause == Cause::Healthy {
             detail.push(format!("{} namespaces", group.namespaces));

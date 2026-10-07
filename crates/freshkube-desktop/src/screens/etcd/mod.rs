@@ -9,12 +9,12 @@ mod source;
 mod tests;
 mod view;
 
-use freshkube_core::format_bytes_signed;
 use freshkube_core::indicators::QuorumState;
 use freshkube_core::inspection::{
     EtcdHealthSnapshot, EtcdInspectionRequest, EtcdMemberSnapshot, InspectionSource,
     InspectionUnavailable, assemble_etcd_health, collect_etcd_health,
 };
+use freshkube_core::{format_bytes_signed, pluralize};
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::TableState;
 use gpui_kit::assets::IconName;
@@ -473,10 +473,6 @@ fn quorum_banner(snapshot: &EtcdHealthSnapshot) -> Option<QuorumBanner> {
     }
 }
 
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
-}
-
 fn member_row(member: &EtcdMemberSnapshot) -> MemberRow {
     let id = member.info.id;
     let role = MemberRole::of(member);
@@ -598,7 +594,7 @@ impl EtcdScreen {
         let members = if reported < snapshot.members.len() {
             format!("{reported} of {} reported", snapshot.members.len())
         } else {
-            plural(snapshot.members.len(), "member", "members")
+            pluralize(snapshot.members.len(), "member", "members")
         };
         let leader = match (snapshot.leader_id(), snapshot.reported_leader_ids.len()) {
             (Some(id), _) => format!("leader {}", name_in(&snapshot.members, id)),
@@ -637,7 +633,7 @@ impl EtcdScreen {
         } else if alarms.is_empty() {
             Part::new("no alarms")
         } else {
-            toned(plural(alarms.len(), "alarm", "alarms"), alarm_tone)
+            toned(pluralize(alarms.len(), "alarm", "alarms"), alarm_tone)
         });
         if let Some(time) = self.loader.last_successful() {
             parts.push(Part::new(format!("updated {}", clock(time))).minor());

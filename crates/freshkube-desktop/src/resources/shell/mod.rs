@@ -9,6 +9,7 @@
 //! One terminal serves every session of the tab: a new session clears it,
 //! so the remote side starts at the size the terminal already has.
 
+use freshkube_core::pluralize;
 use std::time::Duration;
 
 use freshkube_core::resources::{
@@ -823,10 +824,7 @@ fn ask_closing(
 
 /// The question, its detail and the agreeing answer.
 fn closing_question(pods: &[SharedString], forwards: usize) -> (String, String, String) {
-    let stop = match forwards {
-        1 => "stop 1 forward".to_owned(),
-        count => format!("stop {count} forwards"),
-    };
+    let stop = format!("stop {}", pluralize(forwards, "forward", "forwards"));
     let forward_detail = "Stopping closes each local port and every connection through it.";
     if pods.is_empty() {
         return (
