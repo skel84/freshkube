@@ -12,6 +12,7 @@ pub mod digest;
 pub mod github;
 pub mod join;
 pub mod kargo;
+pub mod observation;
 pub mod pods;
 pub mod read;
 pub mod rollouts;
@@ -29,6 +30,7 @@ pub use collect::{Clusters, Plan, collect, commit_of_pull_request};
 pub use digest::Digest;
 pub use github::{GhCli, GitHub, PullRequest};
 pub use join::{Confidence, Evidence, Hop, Key, Link, Trail, join, render};
+pub use observation::{Fact, Meta, ObjectRef, Observation};
 pub use read::{ListRequest, ReadOnlyClient, Reader, Resource, Scope};
 pub use source::{
     Source, printable, redact_body, redact_identity, redact_location, redact_message, shown,

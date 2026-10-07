@@ -4,6 +4,7 @@
 use serde_json::Value;
 
 use super::digest::{Digest, text};
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope};
 use super::source::{Source, Truncation};
 use super::versions::resolve;
@@ -18,8 +19,9 @@ pub const POD_HASH_LABEL: &str = "rollouts-pod-template-hash";
 pub struct Rollout {
     pub namespace: String,
     pub name: String,
-    /// `metadata.uid`, which its ReplicaSets' owner references carry.
-    pub uid: Option<String>,
+    /// `meta.uid` is what its ReplicaSets' owner references carry.
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub phase: Option<String>,
     pub current_pod_hash: Option<String>,
     pub stable_hash: Option<String>,
@@ -33,6 +35,8 @@ pub struct Rollout {
 pub struct AnalysisRun {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub phase: Option<String>,
     pub rollout: Option<String>,
 }
@@ -42,6 +46,8 @@ pub struct AnalysisRun {
 pub struct ReplicaSet {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     /// The UID of the Rollout its controller owner reference names.
     pub owner_uid: Option<String>,
     /// Its `rollouts-pod-template-hash` label, which its pods carry too.
@@ -52,7 +58,44 @@ pub struct ReplicaSet {
     pub ready_replicas: u64,
 }
 
+impl AnalysisRun {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "AnalysisRun",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+impl Rollout {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Rollout",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
 impl ReplicaSet {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            "apps",
+            "ReplicaSet",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+
     /// Whether its pod template pins one of `digests`.
     pub fn pins(&self, digests: &[Digest]) -> bool {
         self.images
@@ -95,6 +138,7 @@ pub fn parse_replica_set(value: &Value) -> Option<ReplicaSet> {
     Some(ReplicaSet {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         owner_uid,
         pod_hash: value
             .pointer("/metadata/labels")
@@ -112,7 +156,7 @@ pub fn parse_rollout(value: &Value) -> Option<Rollout> {
     Some(Rollout {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
-        uid: text(value, "/metadata/uid"),
+        meta: Meta::parse(value),
         phase: text(value, "/status/phase"),
         current_pod_hash: text(value, "/status/currentPodHash"),
         stable_hash: text(value, "/status/stableRS"),
@@ -143,6 +187,7 @@ pub fn parse_analysis_run(value: &Value) -> Option<AnalysisRun> {
     Some(AnalysisRun {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         phase: text(value, "/status/phase"),
         rollout,
     })

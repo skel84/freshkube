@@ -4,6 +4,7 @@
 use serde_json::Value;
 
 use super::digest::{Digest, text};
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Listing, Reader, Resource, Scope, label_equals};
 use super::rollouts::POD_HASH_LABEL;
 use super::source::{Source, Truncation};
@@ -12,11 +13,21 @@ use crate::resources::Failure;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunningImage {
     pub pod: String,
+    pub namespace: Option<String>,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub container: String,
     /// The tag or reference the container was asked to run, shown only.
     pub image: Option<String>,
     pub digest: Option<Digest>,
     pub ready: bool,
+}
+
+impl RunningImage {
+    /// The pod this container belongs to.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new("", "Pod", self.namespace.as_deref(), &self.pod, &self.meta)
+    }
 }
 
 fn running(listing: &Listing) -> (Vec<RunningImage>, Option<Truncation>) {
@@ -30,6 +41,8 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
     let Some(pod) = text(value, "/metadata/name") else {
         return Vec::new();
     };
+    let namespace = text(value, "/metadata/namespace");
+    let meta = Meta::parse(value);
     // Init containers don't keep running; only the app containers count.
     value
         .pointer("/status/containerStatuses")
@@ -39,6 +52,8 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
         .filter_map(|status| {
             Some(RunningImage {
                 pod: pod.clone(),
+                namespace: namespace.clone(),
+                meta: meta.clone(),
                 container: text(status, "/name")?,
                 image: text(status, "/image"),
                 digest: text(status, "/imageID").and_then(|id| Digest::from_reference(&id)),

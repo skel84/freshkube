@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use super::digest::text;
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Scope};
 use super::source::{Source, Truncation, redact_message};
 use super::versions::resolve;
@@ -245,6 +246,8 @@ pub struct Reconciliation {
 pub struct Application {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub project: Option<String>,
     /// `spec.destination.server`, when the destination is given by URL.
     pub destination_server: Option<String>,
@@ -307,6 +310,7 @@ pub fn parse_application(value: &Value) -> Option<Application> {
     Some(Application {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         project: text(value, "/spec/project"),
         destination_server: text(value, "/spec/destination/server"),
         destination_name: text(value, "/spec/destination/name"),
@@ -483,6 +487,17 @@ fn strings(value: &Value, pointer: &str) -> BTreeMap<String, String> {
 }
 
 impl Application {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Application",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+
     /// The Kargo project under the setup's key: the annotation, else the
     /// label.
     fn named_project(&self, naming: &StageNaming) -> Option<&str> {

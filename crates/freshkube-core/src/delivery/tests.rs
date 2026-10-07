@@ -8,6 +8,11 @@ use super::kargo::{parse_freight, parse_stage};
 use super::source::Source;
 use super::tekton::{built_images, conforma, read_builds};
 
+/// The caller's clock, fixed: nothing in core reads the time.
+fn observed_at() -> chrono::DateTime<chrono::Utc> {
+    "2026-10-06T12:00:00Z".parse().expect("a fixed time")
+}
+
 fn plan(contexts: &[(&str, &str)]) -> Plan {
     Plan {
         sha: SHA.into(),
@@ -67,7 +72,7 @@ async fn run_configured(
     let mut plan = plan(contexts);
     plan.github_repo = repo.map(str::to_owned);
     configure(&mut plan);
-    join(&collect(&clusters, &plan).await)
+    join(&collect(&clusters, &plan, observed_at()).await)
 }
 
 fn link(trail: &Trail, from: Hop, to: Hop) -> Vec<&super::join::Link> {
@@ -797,7 +802,7 @@ async fn rollouts_are_not_judged_in_a_cluster_that_is_not_the_destination() {
         ("env-b", "https://env-b.example:6443"),
     ]);
     plan.environment = "env-b".into();
-    let trail = join(&collect(&clusters, &plan).await);
+    let trail = join(&collect(&clusters, &plan, observed_at()).await);
     let rollout = one(&trail, Hop::Application, Hop::Rollout);
     assert_eq!(rollout.confidence, Confidence::Unknown);
     assert!(
@@ -934,7 +939,7 @@ async fn pods_are_not_read_from_a_cluster_that_is_not_the_destination() {
     let mut plan = plan(&[("env-a", "https://env-a.example:6443")]);
     plan.stage_naming = Some(naming());
     plan.environment = "env-b".into();
-    let trail = join(&collect(&clusters, &plan).await);
+    let trail = join(&collect(&clusters, &plan, observed_at()).await);
     let pods = one(&trail, Hop::Application, Hop::Pod);
     assert_eq!(pods.confidence, Confidence::Unknown);
     assert!(world.environment.requests.borrow().is_empty());
@@ -1712,4 +1717,45 @@ async fn a_capped_replica_set_listing_says_so_when_one_pins_the_digest() {
         "{}",
         pods.reason
     );
+}
+
+#[test]
+fn every_parser_keeps_uid_and_resource_version() {
+    use super::kargo::{parse_promotion, parse_warehouse};
+    use super::observation::Meta;
+    use super::pods::parse_pod;
+    use super::rollouts::{parse_analysis_run, parse_replica_set, parse_rollout};
+    use super::tekton::{parse_pipeline_run, parse_task_run};
+    let object = serde_json::json!({
+        "metadata": {
+            "namespace": "acme",
+            "name": "example",
+            "uid": "u-1",
+            "resourceVersion": "42",
+        },
+        "status": {"containerStatuses": [{"name": "app"}]},
+    });
+    let want = Meta {
+        uid: Some("u-1".into()),
+        resource_version: Some("42".into()),
+    };
+    let found = [
+        parse_application(&object).unwrap().meta,
+        parse_freight(&object).unwrap().meta,
+        parse_stage(&object).unwrap().meta,
+        parse_promotion(&object).unwrap().meta,
+        parse_warehouse(&object).unwrap().meta,
+        parse_rollout(&object).unwrap().meta,
+        parse_replica_set(&object).unwrap().meta,
+        parse_analysis_run(&object).unwrap().meta,
+        parse_pipeline_run(&object).unwrap().meta,
+        parse_task_run(&object).unwrap().meta,
+        parse_pod(&object).remove(0).meta,
+    ];
+    for meta in found {
+        assert_eq!(meta, want);
+    }
+    // Missing from what was read is missing, not invented.
+    let bare = serde_json::json!({"metadata": {"namespace": "acme", "name": "example"}});
+    assert_eq!(parse_application(&bare).unwrap().meta, Meta::default());
 }

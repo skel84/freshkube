@@ -87,6 +87,25 @@ impl FixtureReader {
     }
 }
 
+/// The object with an invented `uid` and `resourceVersion` where it has
+/// none, as a server's answer always has them.
+fn stamped(mut item: Value, plural: &str, index: usize) -> Value {
+    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
+        let name = metadata
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed")
+            .to_owned();
+        metadata
+            .entry("uid")
+            .or_insert_with(|| Value::from(format!("uid-{plural}-{name}")));
+        metadata
+            .entry("resourceVersion")
+            .or_insert_with(|| Value::from(format!("{}", 1000 + index)));
+    }
+    item
+}
+
 /// `key=value` terms, and a bare `key` for a label that exists.
 fn matches(item: &Value, selector: &str) -> bool {
     let label = |key: &str| {
@@ -147,6 +166,8 @@ impl Reader for FixtureReader {
                 })
             })
             .filter(|item| selector.as_deref().is_none_or(|s| matches(item, s)))
+            .enumerate()
+            .map(|(index, item)| stamped(item, &request.resource.plural, index))
             .collect();
         let truncated = self
             .capped

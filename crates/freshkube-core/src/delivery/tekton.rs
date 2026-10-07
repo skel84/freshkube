@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use super::digest::{Digest, is_full_sha, text};
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope, label_equals};
 use super::source::{Source, Truncation, printable};
 use super::versions::resolve_each;
@@ -26,6 +27,8 @@ const CHAINS_SIGNED: &str = "chains.tekton.dev/signed";
 pub struct PipelineRun {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     /// From the PaC label: a claim until something else says the same.
     pub sha: Option<String>,
     pub repository: Option<String>,
@@ -49,9 +52,37 @@ pub struct PipelineRun {
 pub struct TaskRun {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub pipeline_run: Option<String>,
     pub results: BTreeMap<String, String>,
     pub chains_state: Option<String>,
+}
+
+impl PipelineRun {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            TEKTON_GROUP,
+            "PipelineRun",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+impl TaskRun {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            TEKTON_GROUP,
+            "TaskRun",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
 }
 
 /// An image a build reported, by repository and digest.
@@ -117,6 +148,7 @@ pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
     Some(PipelineRun {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         sha: label(value, SHA_LABEL),
         repository: label(value, REPOSITORY_LABEL),
         event: label(value, "pipelinesascode.tekton.dev/event-type"),
@@ -144,6 +176,7 @@ pub fn parse_task_run(value: &Value) -> Option<TaskRun> {
     Some(TaskRun {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         pipeline_run: label(value, PIPELINE_RUN_LABEL),
         results: results_of(value),
         chains_state: chains_state(value),

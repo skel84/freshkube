@@ -22,6 +22,8 @@ pub use render::render;
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
+
 use super::argocd::{Application, DestinationMatch, StageNaming};
 use super::digest::Digest;
 use super::github::PullRequest;
@@ -138,6 +140,8 @@ impl Link {
 /// Everything read for one change, each part with its own outcome.
 pub struct Evidence {
     pub sha: String,
+    /// When the caller read it all. The caller's clock, never read here.
+    pub observed_at: DateTime<Utc>,
     /// Where the pipeline's own evidence record is; `None` when the caller
     /// configured none.
     pub evidence_result: Option<EvidenceResult>,
@@ -235,7 +239,9 @@ fn owned_replica_sets<'a>(
     replica_sets: Option<&'a [ReplicaSet]>,
 ) -> impl Iterator<Item = &'a ReplicaSet> {
     replica_sets.into_iter().flatten().filter(|set| {
-        set.namespace == rollout.namespace && rollout.uid.is_some() && set.owner_uid == rollout.uid
+        set.namespace == rollout.namespace
+            && rollout.meta.uid.is_some()
+            && set.owner_uid == rollout.meta.uid
     })
 }
 
@@ -252,6 +258,8 @@ pub struct WantedRollout {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trail {
     pub sha: String,
+    /// When the evidence was read, as [`Evidence::observed_at`].
+    pub observed_at: DateTime<Utc>,
     pub links: Vec<Link>,
 }
 
@@ -499,6 +507,7 @@ pub fn join(evidence: &Evidence) -> Trail {
             ));
             return Trail {
                 sha: sha.clone(),
+                observed_at: evidence.observed_at,
                 links,
             };
         }
@@ -531,6 +540,7 @@ pub fn join(evidence: &Evidence) -> Trail {
     }
     Trail {
         sha: sha.clone(),
+        observed_at: evidence.observed_at,
         links,
     }
 }

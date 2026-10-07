@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use super::digest::{Digest, text};
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope};
 use super::source::{Source, Truncation};
 use super::versions::resolve;
@@ -42,6 +43,8 @@ pub struct Freight {
     pub project: String,
     /// Kargo's content hash, the object's name.
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub alias: Option<String>,
     pub warehouse: Option<String>,
     pub commits: Vec<FreightCommit>,
@@ -56,6 +59,8 @@ pub struct Freight {
 pub struct Stage {
     pub project: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub warehouses: Vec<String>,
     /// Names of the freight the Stage says it currently runs.
     pub current_freight: Vec<String>,
@@ -73,6 +78,8 @@ pub struct Stage {
 pub struct Promotion {
     pub project: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub stage: Option<String>,
     pub freight: Option<String>,
     pub phase: Option<String>,
@@ -147,6 +154,8 @@ impl Creator {
 pub struct Warehouse {
     pub project: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub image_repos: Vec<String>,
 }
 
@@ -176,6 +185,7 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
     Some(Freight {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         alias: text(value, "/metadata/labels/kargo.akuity.io~1alias")
             .or_else(|| text(value, "/alias")),
         warehouse: text(body, "/origin/name").or_else(|| text(value, "/origin/name")),
@@ -237,6 +247,7 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
     Some(Stage {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         warehouses: array(value, "/spec/requestedFreight")
             .filter_map(|request| text(request, "/origin/name"))
             .collect(),
@@ -307,6 +318,7 @@ pub fn parse_promotion(value: &Value) -> Option<Promotion> {
         freight_digests,
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         stage: text(value, "/spec/stage"),
         freight: text(value, "/spec/freight").or_else(|| text(value, "/status/freight/name")),
         phase: text(value, "/status/phase"),
@@ -324,10 +336,57 @@ pub fn parse_warehouse(value: &Value) -> Option<Warehouse> {
     Some(Warehouse {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         image_repos: array(value, "/spec/subscriptions")
             .filter_map(|subscription| text(subscription, "/image/repoURL"))
             .collect(),
     })
+}
+
+impl Freight {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Freight",
+            Some(&self.project),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+impl Stage {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(GROUP, "Stage", Some(&self.project), &self.name, &self.meta)
+    }
+}
+
+impl Promotion {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Promotion",
+            Some(&self.project),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+impl Warehouse {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Warehouse",
+            Some(&self.project),
+            &self.name,
+            &self.meta,
+        )
+    }
 }
 
 /// Everything Kargo knows about one project's delivery.
