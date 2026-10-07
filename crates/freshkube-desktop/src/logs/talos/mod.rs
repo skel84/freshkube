@@ -5,17 +5,15 @@ use std::{
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, Pixels, Role, SharedString, Task, Window,
+    AnyElement, Context, Pixels, Role, SharedString, Task, TestSupportExt, Window,
     component::{
         Disableable, Sizable,
         button::{Button, ButtonVariants},
         h_flex,
-        scroll::ScrollableElement,
         tooltip::Tooltip,
     },
     div,
     prelude::*,
-    px, size,
 };
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::{runtime::Handle, sync::mpsc};
@@ -24,7 +22,6 @@ use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::{LogPanel, LogSource};
 use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
-use crate::palette::palette;
 use crate::ui;
 
 mod catalog;
@@ -46,8 +43,8 @@ pub(crate) struct TalosLogs {
     pub(super) collection_active: bool,
     /// The latest failure of each collected service.
     errors: BTreeMap<ServiceId, String>,
-    /// The service catalog's height this frame: at most two rows of chips.
-    catalog_height: Pixels,
+    /// What the controls draw of the service catalog.
+    picker: catalog::Picker,
 }
 
 impl TalosLogs {
@@ -65,7 +62,7 @@ impl TalosLogs {
             delivery: None,
             collection_active: false,
             errors: BTreeMap::new(),
-            catalog_height: px(0.),
+            picker: catalog::Picker::default(),
         }
     }
 
@@ -97,24 +94,22 @@ impl LogSource for TalosLogs {
         window: &mut Window,
         cx: &mut Context<LogPanel>,
     ) {
-        let mut catalog_content = catalog::catalog(view, cx).into_any_element();
-        let catalog_size = catalog_content.layout_as_root(
-            size(
-                AvailableSpace::Definite((width - ui::dp_px(90., window)).max(px(0.))),
-                AvailableSpace::MinContent,
-            ),
-            window,
-            cx,
-        );
-        view.source_mut().catalog_height =
-            catalog_size.height.min(ui::dp_px(26. * 2. + 6., window));
+        catalog::fit(view, width, window, cx);
     }
 
     fn controls(view: &LogPanel, cx: &mut Context<LogPanel>) -> Vec<AnyElement> {
-        vec![
-            view.render_header(cx).into_any_element(),
-            view.render_services(cx).into_any_element(),
-        ]
+        let header = view.render_header(cx);
+        let mut controls = vec![match catalog::compact(view, cx) {
+            Some(picker) => h_flex()
+                .items_center()
+                .gap_3()
+                .child(picker)
+                .child(header.flex_1().min_w_0())
+                .into_any_element(),
+            None => header.into_any_element(),
+        }];
+        controls.extend(view.render_services(cx).map(IntoElement::into_any_element));
+        controls
     }
 
     fn empty_message(view: &LogPanel) -> SharedString {
@@ -209,6 +204,7 @@ impl TalosPanel for LogPanel {
             source.collecting.clear();
             source.defaults_applied = false;
             source.errors.clear();
+            source.picker.open = false;
         }
         self.source_mut().target = target;
         let mut catalog: Vec<_> = services
@@ -279,6 +275,7 @@ impl TalosPanel for LogPanel {
         let source = self.source_mut();
         source.collecting = TalosLogs::default_collection(&source.services);
         source.errors.clear();
+        source.picker.open = false;
         self.preload(events, cx);
         self.set_shown(self.source().services.iter().cloned().collect());
         self.reveal_last();
@@ -406,8 +403,8 @@ pub(super) trait Collection: Sized + 'static {
     /// The title, the node and the Start or Stop button.
     fn render_header(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
 
-    /// The service catalog: what to collect, and what to show.
-    fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
+    /// The service catalog's rows: what to collect, and what to show.
+    fn render_services(&self, cx: &mut Context<Self>) -> Option<gpui_kit::Div>;
 }
 
 impl Collection for LogPanel {
@@ -636,38 +633,35 @@ impl Collection for LogPanel {
             )
     }
 
-    fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let catalog_height = self.source().catalog_height;
-        h_flex()
-            .items_start()
-            .gap_2()
-            .child(
-                div()
-                    .id("logs-services-label")
-                    .pt(ui::dp(6.))
-                    .tooltip(|window, cx| {
-                        Tooltip::new("Collect up to 16 services. The eye hides a service's lines without stopping collection.")
-                            .build(window, cx)
-                    })
-                    .child(ui::caption("Services", cx)),
-            )
-            .child(
-                div()
-                    .id("logs-services")
-                    .role(Role::Group)
-                    .aria_label("Services to collect and show")
-                    .flex_1()
-                    .min_w_0()
-                    .h(catalog_height)
-                    .min_h_0()
-                    .child(
-                        catalog::catalog(self, cx)
-                            .h_full()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .id("logs-services-scroll"),
-                    ),
-            )
+    fn render_services(&self, cx: &mut Context<Self>) -> Option<gpui_kit::Div> {
+        let rows = catalog::rows(self, cx)?;
+        Some(
+            h_flex()
+                .items_start()
+                .gap_2()
+                .child(
+                    div()
+                        .id("logs-services-label")
+                        .flex_none()
+                        .w(ui::dp(82.))
+                        .pt(ui::dp(6.))
+                        .tooltip(|window, cx| {
+                            Tooltip::new("Collect up to 16 services. The eye hides a service's lines without stopping collection.")
+                                .build(window, cx)
+                        })
+                        .child(ui::caption("Services", cx)),
+                )
+                .child(
+                    div()
+                        .id("logs-services")
+                        .test_support()
+                        .role(Role::Group)
+                        .aria_label("Services to collect and show")
+                        .flex_1()
+                        .min_w_0()
+                        .child(rows),
+                ),
+        )
     }
 }
 
