@@ -11,9 +11,9 @@ use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla, Role, ScrollHandle,
-    ScrollStrategy, SharedString, Stateful, TestSupportExt, UniformListScrollHandle, Window, div,
-    px, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla, Pixels, Role,
+    ScrollHandle, ScrollStrategy, SharedString, Stateful, TestSupportExt, UniformListScrollHandle,
+    WeakEntity, Window, div, px, uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -280,6 +280,59 @@ pub fn reveal<S: TableSource>(source: &S, strategy: ScrollStrategy) {
     if let Some(line) = source.selected_key().and_then(|key| source.line_of(key)) {
         source.table_state().reveal(line, strategy);
     }
+}
+
+/// How many frames [`reveal_when_settled`] waits at most for the table's
+/// height to change.
+const SETTLE_FRAMES: usize = 6;
+
+/// Reveals the selected row on each of the next frames until the table's
+/// height has changed and then held: a stacked inspector's split learns its
+/// heights while drawing and applies them on a later frame, and a row
+/// revealed in the taller table would end up under it. Each reveal asks for
+/// the next frame, so the split's change is drawn; the wait is bounded when
+/// the height never changes. `showing` says whether the row still has a
+/// table to be revealed in; once it doesn't, the wait ends.
+pub fn reveal_when_settled<S: TableSource>(
+    view: WeakEntity<S>,
+    showing: fn(&S) -> bool,
+    window: &Window,
+) {
+    settle(view, showing, None, false, SETTLE_FRAMES, window);
+}
+
+fn settle<S: TableSource>(
+    view: WeakEntity<S>,
+    showing: fn(&S) -> bool,
+    last: Option<Pixels>,
+    changed: bool,
+    frames: usize,
+    window: &Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        let Some(height) = view
+            .update(cx, |source, cx| {
+                if !showing(source) {
+                    return None;
+                }
+                reveal(source, ScrollStrategy::Nearest);
+                cx.notify();
+                Some(
+                    (source.table_state().scroll.0.borrow().last_item_size)
+                        .map(|size| size.item.height),
+                )
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        let settled = changed && height == last;
+        if frames > 1 && !settled {
+            let changed = changed || (last.is_some() && height != last);
+            settle(view, showing, height, changed, frames - 1, window);
+        }
+    });
 }
 
 /// The line `delta` rows from `from`, where `is_row` tells a row's line

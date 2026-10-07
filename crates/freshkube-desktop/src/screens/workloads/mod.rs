@@ -505,7 +505,12 @@ impl WorkloadsScreen {
             && self.selected.is_some()
             && crate::screens::page_width(window) < inspector::SPLIT_WIDTH
         {
-            reveal_when_settled(cx.entity().downgrade(), None, false, 6, window);
+            // Closed again: there is nothing to reveal.
+            table::reveal_when_settled(
+                cx.entity().downgrade(),
+                |screen| screen.selected.is_some(),
+                window,
+            );
         }
     }
 
@@ -569,37 +574,6 @@ impl WorkloadsScreen {
         let line = segment(self.source.as_ref(), &self.loader, parts);
         self.status = Some((revision, line));
     }
-}
-
-/// Reveals the selected row on each of the next `frames` frames until the
-/// table's height, which the opening Inspector changes, stops changing.
-fn reveal_when_settled(
-    view: WeakEntity<WorkloadsScreen>,
-    last: Option<Pixels>,
-    changed: bool,
-    frames: usize,
-    window: &Window,
-) {
-    window.on_next_frame(move |window, cx| {
-        // Closed again: there is nothing to reveal.
-        let Some(height) = view
-            .update(cx, |screen, cx| {
-                screen.selected.as_ref()?;
-                table::reveal(screen, ScrollStrategy::Nearest);
-                cx.notify();
-                Some((screen.table.scroll.0.borrow().last_item_size).map(|size| size.item.height))
-            })
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        let settled = changed && height == last;
-        if frames > 1 && !settled {
-            let changed = changed || (last.is_some() && height != last);
-            reveal_when_settled(view, height, changed, frames - 1, window);
-        }
-    });
 }
 
 fn workload_matches(workload: &WorkloadInfo, query: &str) -> bool {

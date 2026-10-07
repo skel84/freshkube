@@ -74,10 +74,18 @@ impl GraphView {
         let split = source.graph_split();
         let display = &state.display;
         // The inspector sits beside the graph only on a wide page, and only
-        // while the whole graph fits next to it (less the card's borders);
-        // otherwise it opens under the graph.
+        // while the whole graph fits next to its least width in the split's
+        // room, inside the card's borders; otherwise it opens under the
+        // graph. Beside, it takes at most the rest, however wide it was
+        // dragged before, and a drag stops at the graph: a saved width that
+        // outgrew the room would otherwise stack it for good, with no handle
+        // to narrow it (#425).
+        let room = self.available - 2.;
         let beside = self.page_width >= inspector::SPLIT_WIDTH
-            && self.available >= display.width + 2. + split.width();
+            && room >= display.width + inspector::MIN_WIDTH;
+        if beside {
+            split.keep_lead(display.width, room);
+        }
         // Stacked, the graph scrolls when it is wider than the card.
         let scrolls = !beside && self.available < display.width + 2.;
         let lead = LINE_H * 2. + display.height + if scrolls { SCROLLBAR_H } else { 0. };

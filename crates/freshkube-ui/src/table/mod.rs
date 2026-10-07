@@ -23,7 +23,7 @@ mod pinned;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
     DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState, data_table, reveal,
-    step,
+    reveal_when_settled, step,
 };
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look};

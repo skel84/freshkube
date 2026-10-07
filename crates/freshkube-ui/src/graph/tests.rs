@@ -267,6 +267,17 @@ fn open(
     width: f32,
     text: Option<f32>,
 ) -> (AnyWindowHandle, Entity<Map>) {
+    open_saved(cx, graph, width, text, None)
+}
+
+/// [`open`] with the inspector's width a page saved before.
+fn open_saved(
+    cx: &mut TestAppContext,
+    graph: GraphState<usize>,
+    width: f32,
+    text: Option<f32>,
+    saved: Option<f32>,
+) -> (AnyWindowHandle, Entity<Map>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -283,7 +294,7 @@ fn open(
         let map = cx.new(|cx| Map {
             graph,
             split: inspector_split(
-                None,
+                saved,
                 {
                     let remembered = remembered.clone();
                     move |width, _| remembered.borrow_mut().push(width)
@@ -764,4 +775,62 @@ fn a_dragged_inspector_width_is_reported_once(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| assert_eq!(*map.read(cx).remembered.borrow(), vec![400.]));
+}
+
+/// A saved width wider than the room beside the graph used to stack the
+/// inspector for good, with no handle to narrow it (#425). It opens beside
+/// the whole graph and takes the rest.
+#[gpui_kit::test]
+fn an_oversized_saved_width_opens_beside_the_graph_capped(cx: &mut TestAppContext) {
+    let (handle, map) = open_saved(cx, state(12, 20), 2000., None, Some(1200.));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let graph = map.read(cx).graph.display.width;
+        let lead = window.find("map-lead").bounds();
+        let inspector = window.find("map-inspector").bounds();
+        assert!(
+            graph + 2. + inspector::MIN_WIDTH <= 1968.,
+            "the graph ({graph} dp) leaves the inspector room"
+        );
+        assert_eq!(lead.top(), inspector.top(), "beside, not stacked");
+        assert!(
+            lead.size.width >= crate::ui::dp_px(graph, window),
+            "the whole graph shows: {lead:?} for {graph} dp"
+        );
+        assert!(inspector.left() >= lead.right() - px(1.));
+    })
+    .unwrap();
+}
+
+/// A drag stops where the graph starts, so the width saved fits beside it.
+#[gpui_kit::test]
+fn a_drag_stops_at_the_graph(cx: &mut TestAppContext) {
+    let (handle, map) = open(cx, state(12, 20), 2000., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let inspector = window.find("map-inspector").bounds();
+        let y = inspector.center().y;
+        window.drag(point(inspector.left(), y), point(px(40.), y), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let graph = map.read(cx).graph.display.width;
+        let remembered = map.read(cx).remembered.borrow().clone();
+        assert_eq!(remembered.len(), 1, "{remembered:?}");
+        // The room inside the page's padding, less the graph and its card.
+        let rest = 1968. - graph - 2.;
+        assert!(
+            (remembered[0] - rest).abs() <= 1.,
+            "saved {}, the room beside the graph is {rest}",
+            remembered[0]
+        );
+        let lead = window.find("map-lead").bounds();
+        let inspector = window.find("map-inspector").bounds();
+        assert_eq!(lead.top(), inspector.top(), "still beside");
+        assert!(lead.size.width >= crate::ui::dp_px(graph, window));
+    })
+    .unwrap();
 }
