@@ -2576,3 +2576,36 @@ fn enter_opens_a_node_from_the_list_and_presses_a_focused_button(cx: &mut TestAp
     })
     .unwrap();
 }
+
+/// Enter in the filter hands the keyboard to the list without opening a
+/// node, as the Resources filter does; Enter on the list then opens one.
+#[gpui_kit::test]
+fn enter_in_the_filter_moves_to_the_list_and_opens_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        window.click("nodes-filter", cx);
+        window.input("wk", cx);
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        assert!(!pilot.read(cx).node_workspace.open);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        let node = pilot.read(cx).selected_node.clone().unwrap_or_default();
+        assert!(node.contains("-wk-"), "{node} isn't a filtered node");
+    })
+    .unwrap();
+}
