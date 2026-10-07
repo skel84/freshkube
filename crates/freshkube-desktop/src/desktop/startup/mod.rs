@@ -130,17 +130,10 @@ impl Pilot {
         }
         if let Some(destination) = page.and_then(|slug| {
             use crate::observability::Destination;
-            [
-                Destination::Applications,
-                Destination::ServiceMap,
-                Destination::Application,
-                Destination::Incidents,
-                Destination::Deployments,
-                Destination::Profiling,
-                Destination::Traces,
-            ]
-            .into_iter()
-            .find(|destination| format!("observability-{}", destination.slug()) == slug)
+            Destination::NAVIGATION
+                .into_iter()
+                .chain([Destination::Application])
+                .find(|destination| format!("observability-{}", destination.slug()) == slug)
         }) {
             self.observability
                 .update(cx, |page, cx| page.open(destination, cx));
