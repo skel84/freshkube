@@ -135,12 +135,15 @@ impl Dock {
             return;
         };
         let mut ids = Vec::new();
-        let mut logs = 0;
+        let (mut logs, mut shells) = (0, 0);
         // The selected tab, if it is one that comes back; the saved
         // position counts every context's tabs.
         let mut selected = None;
         for (ix, saved) in restore.tabs.into_iter().enumerate() {
-            if saved.context != source.context || (!saved.shell && logs >= MAX_LOG_TABS) {
+            if saved.context != source.context
+                || (!saved.shell && logs >= MAX_LOG_TABS)
+                || (saved.shell && shells >= MAX_SHELL_TABS)
+            {
                 continue;
             }
             let Some(kind) = log_kind(&saved.kind) else {
@@ -175,6 +178,7 @@ impl Dock {
                 let Some(container) = saved.container else {
                     continue;
                 };
+                shells += 1;
                 self.add_shell(target, container, window, cx)
             } else {
                 logs += 1;

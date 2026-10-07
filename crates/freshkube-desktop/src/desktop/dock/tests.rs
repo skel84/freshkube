@@ -3,8 +3,8 @@ use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px};
 
 use super::saved::{SavedDock, SavedTab};
-use super::{Dock, MAX_LOG_TABS, TabKind};
-use crate::desktop::tests::fixture;
+use super::{Dock, MAX_LOG_TABS, MAX_SHELL_TABS, TabKind};
+use crate::desktop::tests::{fixture, start_shell};
 use crate::desktop::{Page, Pilot};
 use crate::logs::PodLogPanel;
 use crate::logs::PodLogView;
@@ -1395,6 +1395,51 @@ fn closing_a_running_shells_tab_asks_first(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(!cx.has_pending_prompt());
     assert!(titles(&dock, cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn a_ninth_shell_tab_asks_to_close_the_oldest(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    assert!(pods.len() > MAX_SHELL_TABS);
+    // Log tabs don't count toward the shells' cap.
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    for pod in &pods[..MAX_SHELL_TABS] {
+        start_shell(handle, &pilot, pod, cx);
+    }
+    assert_eq!(titles(&dock, cx).len(), MAX_SHELL_TABS + 1);
+    assert_eq!(cx.read(shell::running_anywhere).len(), MAX_SHELL_TABS);
+    assert!(!cx.has_pending_prompt());
+
+    // Cancel opens nothing and ends nothing.
+    start_shell(handle, &pilot, &pods[MAX_SHELL_TABS], cx);
+    let (message, _) = cx.pending_prompt().unwrap();
+    assert_eq!(
+        message,
+        format!("Close the oldest shell tab (Shell {})?", pods[0].name)
+    );
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(titles(&dock, cx).len(), MAX_SHELL_TABS + 1);
+    assert_eq!(cx.read(shell::running_anywhere).len(), MAX_SHELL_TABS);
+
+    // Agreeing ends the oldest shell, without asking again, and starts the new one.
+    start_shell(handle, &pilot, &pods[MAX_SHELL_TABS], cx);
+    cx.simulate_prompt_answer("Close it");
+    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
+    let titles = titles(&dock, cx);
+    assert_eq!(titles.len(), MAX_SHELL_TABS + 1);
+    assert_eq!(titles[0], format!("Pod {}", pods[0].name));
+    assert_eq!(titles[1], format!("Shell {}", pods[1].name));
+    assert_eq!(
+        titles.last().unwrap(),
+        &format!("Shell {}", pods[MAX_SHELL_TABS].name)
+    );
+    let running = cx.read(shell::running_anywhere);
+    assert_eq!(running.len(), MAX_SHELL_TABS);
+    assert!(!running.iter().any(|pod| pod.as_ref() == pods[0].name));
 }
 
 #[gpui_kit::test]
