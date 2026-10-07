@@ -56,7 +56,7 @@ What differs, handled by one platform module and never by a screen:
 | Terminal-wide shortcuts | ⌘ | Ctrl-Shift | Ctrl-Shift |
 | Packaging | DMG, Homebrew cask | MSI or winget | AppImage, Flatpak or deb |
 
-Bind app keys with `secondary-` and show the platform's label (`⌘K`, `Ctrl+K`). Terminal copy, paste and leave use Command on macOS and explicit Ctrl-Shift bindings on Windows and Linux; the interceptor reserves plain Ctrl for the shell. The bundled faces keep the same metrics on every platform. [#81](https://github.com/skel84/freshkube/issues/81)'s advisory Linux and Windows CI checks compilation, linting and the terminal keymap; full runtime and packaging support remain separate work.
+Bind app keys with `secondary-` and show the platform's label (`⌘K`, `Ctrl+K`). Terminal copy, paste and leave use Command on macOS and explicit Ctrl-Shift bindings on Windows and Linux; the interceptor reserves plain Ctrl for the shell. The bundled faces keep the same metrics on every platform. [#81](https://github.com/skel84/freshkube/issues/81)'s Linux and Windows CI checks compilation, linting and the terminal keymap; full runtime and packaging support remain separate work.
 
 The comps are in the canvas's [Desktop grade](https://claude.ai/artifact/U5UUnSURiNJJ3qtVxMRbi1) section. P1d, P4d and P4w are pages, also in [`platform/`](platform/) as `home-desktop`, `app-delivery-desktop` and `app-delivery-windows`. N1, N1c and N2, the Native pass, are the workspace around a page: a source list, document tabs, the inspector and a bottom panel for logs, the terminal and agent activity. R is the app today, for comparison.
 

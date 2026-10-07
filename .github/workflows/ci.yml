@@ -35,8 +35,9 @@ env:
   RUST_BACKTRACE: 1
 
 # macOS runs the required checks and builds the release bundles here.
-# Linux/Windows compile, lint and test checks are advisory in platforms.yml;
-# they do not establish full runtime or packaging support on those platforms.
+# Compile and lint (Linux) in platforms.yml is required too; the Windows checks
+# there are advisory. None establishes full runtime or packaging support on
+# those platforms.
 jobs:
   changes:
     name: Changes
