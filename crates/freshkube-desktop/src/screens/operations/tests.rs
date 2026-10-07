@@ -98,6 +98,12 @@ fn wait_until_finished(
     );
 }
 
+/// The id of prod-fra's node row `ix`, from the node's name.
+fn row(ix: usize) -> gpui_kit::SharedString {
+    let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
+    format!("ops-node-{}", nodes[ix].name).into()
+}
+
 fn names(screen: &Entity<OperationsScreen>, cx: &TestAppContext) -> Vec<String> {
     cx.read(|cx| {
         screen
@@ -186,11 +192,16 @@ fn selection_keeps_its_order_and_the_order_can_change(cx: &mut TestAppContext) {
     assert_eq!(names(&screen, cx), ["talos-cp-fra1-01"]);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.click(("ops-node", 3usize), cx);
-        window.click(("ops-node", 1usize), cx);
+        window.click(row(3), cx);
+        window.click(row(1), cx);
         window.render_frame(cx);
-        assert_eq!(window.find(("ops-node", 3usize)).selected(), Some(true));
-        assert_eq!(window.find(("ops-node", 2usize)).selected(), Some(false));
+        // Both clicked nodes join the run; the table's selection is the
+        // cursor, on the last one clicked.
+        let label = |ix| window.find(row(ix)).label().unwrap_or_default().to_owned();
+        assert!(label(3).contains("selected, run order 2"), "{}", label(3));
+        assert!(label(2).contains("not selected"), "{}", label(2));
+        assert_eq!(window.find(row(1)).selected(), Some(true));
+        assert_eq!(window.find(row(3)).selected(), Some(false));
         window.click(("ops-move-earlier", 2usize), cx);
         window.render_frame(cx);
     })
@@ -208,7 +219,7 @@ fn selection_keeps_its_order_and_the_order_can_change(cx: &mut TestAppContext) {
             .to_owned();
         assert!(label.contains("talos-cp-fra1-02"), "{label}");
         // Deselecting keeps the order of the rest.
-        window.click(("ops-node", 1usize), cx);
+        window.click(row(1), cx);
         window.render_frame(cx);
     })
     .unwrap();
@@ -221,7 +232,7 @@ fn keyboard_selects_reorders_and_clears(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         // Clicking the target row deselects it and puts focus in the roster.
-        window.click(("ops-node", 0usize), cx);
+        window.click(row(0), cx);
         window.press("down", cx);
         window.press("space", cx);
         window.press("down", cx);
@@ -245,11 +256,7 @@ fn keyboard_selects_reorders_and_clears(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.press("escape", cx);
         window.render_frame(cx);
-        let row = window
-            .find(("ops-node", 1usize))
-            .label()
-            .unwrap()
-            .to_owned();
+        let row = window.find(row(1)).label().unwrap().to_owned();
         assert!(row.contains("not selected"), "{row}");
     })
     .unwrap();
@@ -404,7 +411,7 @@ fn cancelling_stops_the_simulation_between_steps(cx: &mut TestAppContext) {
     let (runtime, screen, handle) = mount(cx, "prod-fra", 200);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.click(("ops-node", 1usize), cx);
+        window.click(row(1), cx);
     })
     .unwrap();
     review(cx, handle);
@@ -521,9 +528,9 @@ fn a_partial_failure_stays_visible(cx: &mut TestAppContext) {
     // talos-wk-fra1-02 answers; talos-wk-fra1-03 does not.
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.click(("ops-node", 0usize), cx);
-        window.click(("ops-node", 4usize), cx);
-        window.click(("ops-node", 5usize), cx);
+        window.click(row(0), cx);
+        window.click(row(4), cx);
+        window.click(row(5), cx);
     })
     .unwrap();
     review(cx, handle);
@@ -578,17 +585,25 @@ fn a_run_keeps_its_context_when_the_target_changes(cx: &mut TestAppContext) {
     );
 }
 
-const OPERATIONS_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+/// The split of roster and plan runs edge to edge under the toolbar.
+const OPERATIONS_SPLIT: layout_check::PageFrame = layout_check::PageFrame {
     page: "ops-page",
     title: "ops-title",
     title_text: "Operations",
-    content: "ops-body",
+    content: "ops-split",
 };
 
-/// Operations is a page of cards under the toolbar header, and where it
-/// reads and when is the status bar's segment.
+const OPERATIONS_TABLE: layout_check::Table = layout_check::Table {
+    table: Some("ops-table-scroll"),
+    list: "ops-list",
+};
+
+/// Operations draws its roster as Pods draws its list: the shared table,
+/// bare and edge to edge under the toolbar, with sentence-case column
+/// labels, at both text sizes; the operation and its options sit in an
+/// inset above it. Where it reads and when is the status bar's segment.
 #[gpui_kit::test]
-fn operations_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppContext) {
+fn operations_draws_its_roster_as_a_bare_table_with_its_status_in_the_bar(cx: &mut TestAppContext) {
     for text in [None, Some(20.)] {
         let (_runtime, handle, _view) = app(cx, 1280., 880.);
         cx.update_window(handle, |_, window, cx| {
@@ -605,7 +620,34 @@ fn operations_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppCont
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            layout_check::assert_page_frame(window, cx, &OPERATIONS_FRAME);
+            layout_check::assert_edge_frame(window, cx, &OPERATIONS_SPLIT);
+            let rows = layout_check::assert_table(window, cx, &OPERATIONS_TABLE);
+            assert!(rows.header.is_some(), "{rows:#?}");
+            layout_check::assert_bare(window, "ops-table-scroll");
+            for (ix, label) in ["Order", "Node", "Address", "Role"].into_iter().enumerate() {
+                let header = window
+                    .find(("ops-sort", ix))
+                    .label()
+                    .unwrap_or_default()
+                    .to_owned();
+                assert_eq!(header, label);
+            }
+            // The operation's choice sits inset above the table.
+            let page = window.find("ops-page").bounds();
+            let kinds = window.find("ops-kinds").bounds();
+            let table = window.find("ops-table-scroll").bounds();
+            assert!(
+                kinds.left() > page.left() && kinds.right() < page.right(),
+                "{kinds:?}"
+            );
+            assert!(kinds.bottom() <= table.top(), "{kinds:?} {table:?}");
+            // The plan sits beside the roster, or under it at 20 px.
+            let plan = window.find("ops-plan").bounds();
+            if text.is_none() {
+                assert!(plan.left() >= table.right(), "{plan:?} {table:?}");
+            } else {
+                assert!(plan.top() >= table.bottom(), "{plan:?} {table:?}");
+            }
             window.find("ops-refresh");
             assert!(window.try_find("screen-refresh").is_none());
             let scope = window.find("operations-scope");
@@ -618,6 +660,70 @@ fn operations_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppCont
         })
         .unwrap();
     }
+}
+
+/// A target whose roster names no node the operations can reach says so in
+/// the table, under its header.
+#[gpui_kit::test]
+fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 50);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let mut source = source("prod-fra", 0);
+        source.nodes = Arc::new(Vec::new());
+        screen.update(cx, |screen, cx| screen.set_source(Some(source), window, cx));
+        window.render_frame(cx);
+        let empty = window.find("ops-empty");
+        assert!(empty.visible());
+        assert!(empty.bounds().top() >= window.find(("ops-sort", 0usize)).bounds().bottom());
+        assert!(window.try_find(row(0)).is_none());
+    })
+    .unwrap();
+    assert!(names(&screen, cx).is_empty());
+}
+
+/// Choosing nodes in the table, by pointer and keys, runs nothing: clicks,
+/// a double-click, Space and Enter only add nodes to the run or take them
+/// out. Review still opens the confirmation, and no step runs while it
+/// waits.
+#[gpui_kit::test]
+fn the_table_chooses_nodes_and_review_still_asks_before_any_step(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row(4), cx);
+        window.press("down", cx);
+        window.press("space", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        names(&screen, cx),
+        ["talos-cp-fra1-01", "talos-wk-fra1-02", "talos-wk-fra1-03"]
+    );
+    // Enter on the cursor takes the node out again, as Space does.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("enter", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(names(&screen, cx), ["talos-cp-fra1-01", "talos-wk-fra1-02"]);
+    // A double-click is two clicks: the node goes in and out again.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.double_click(row(1), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("confirm-dialog").is_none());
+    })
+    .unwrap();
+    assert_eq!(names(&screen, cx), ["talos-cp-fra1-01", "talos-wk-fra1-02"]);
+    assert!(cx.read(Operations::current).is_none());
+    assert!(cx.read(|cx| screen.read(cx).run.is_none()));
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+    assert!(cx.read(Operations::current).is_none());
+    assert!(cx.read(|cx| screen.read(cx).run.is_none()));
 }
 
 /// Without a target the page keeps its header, says why it is empty and

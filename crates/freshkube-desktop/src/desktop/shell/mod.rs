@@ -502,6 +502,9 @@ impl Pilot {
 mod chrome;
 pub(super) use chrome::ChromeParts;
 mod column;
+pub(super) use column::Room;
+#[cfg(test)]
+pub(super) use column::cut_edges;
 mod context;
 pub(super) use context::ContextDisplay;
 pub(super) mod fps;

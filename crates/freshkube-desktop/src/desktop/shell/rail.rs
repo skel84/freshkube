@@ -71,31 +71,68 @@ fn icon(area: Area) -> IconName {
 }
 
 impl Pilot {
-    pub(in crate::desktop) fn render_rail(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(in crate::desktop) fn render_rail(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
         let divider = || div().w(dp(28.)).h(px(1.)).my(dp(6.)).flex_none().bg(p.line);
         let mut rail = v_flex()
-            .id("nav-rail")
-            .test_support()
-            .aria_label("Areas")
-            .w(dp(RAIL_WIDTH))
-            .flex_none()
-            .h_full()
+            .id("nav-rail-list")
+            .size_full()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
+            .track_scroll(&self.rail_scroll)
             .items_center()
             .py(dp(12.))
-            .gap(dp(4.))
-            .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().sidebar_border);
+            .gap(dp(4.));
+        // The rail's children: each section's buttons, a divider between.
+        let mut children = 0;
+        let mut active = None;
         for (ix, section) in Area::RAIL.iter().enumerate() {
             if ix > 0 {
                 rail = rail.child(divider());
+                children += 1;
             }
-            rail = rail.children(section.iter().map(|area| self.rail_button(*area, cx)));
+            for area in *section {
+                if *area == self.area {
+                    active = Some(children);
+                }
+                rail = rail.child(self.rail_button(*area, cx));
+                children += 1;
+            }
         }
-        rail.into_any_element()
+        // A short window or large text scrolls the rail; keep the active
+        // area in view whenever it, or the room, changes.
+        let key = (self.area, super::column::room(window));
+        if self.rail_revealed != Some(key)
+            && super::column::reveal_item(
+                &self.rail_scroll,
+                &mut self.rail_reveal_pass,
+                key,
+                active,
+                window,
+            )
+        {
+            self.rail_revealed = Some(key);
+        }
+        super::column::icon_strip(
+            rail,
+            &self.rail_scroll,
+            "nav-rail-scrollbar",
+            cx.theme().sidebar,
+        )
+        .id("nav-rail")
+        .test_support()
+        .aria_label("Areas")
+        .w(dp(RAIL_WIDTH))
+        .flex_none()
+        .h_full()
+        .bg(cx.theme().sidebar)
+        .border_r_1()
+        .border_color(cx.theme().sidebar_border)
+        .into_any_element()
     }
 
     fn rail_button(&self, area: Area, cx: &Context<Self>) -> AnyElement {
