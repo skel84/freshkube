@@ -2507,6 +2507,7 @@ dependencies = [
  "tower 0.5.2",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
  "x509-parser",
 ]
 

@@ -18,8 +18,15 @@
 //! the listener that accepted it, so there the retry can't pass our own
 //! TIME_WAIT. On Linux the first bind sets the flag: it never binds over
 //! a listening socket, and our connections then wait out TIME_WAIT
-//! without holding the port. Windows must never set it, since there it
-//! lets a socket bind over a port another program listens on.
+//! without holding the port. Windows must never set it first, since
+//! there it lets a socket bind over a port another program listens on.
+//! Without it, Windows still lets 127.0.0.1:p bind over another program's
+//! *:p, so there the first bind asks for the address exclusively
+//! (`SO_EXCLUSIVEADDRUSE`), which also refuses our own TIME_WAIT until the
+//! retry.
+//!
+//! Windows refuses a port it reserves with `PermissionDenied`, not
+//! `AddrInUse`; the automatic rule steps past it as past a taken one.
 
 use std::collections::HashSet;
 use std::io;
@@ -37,8 +44,14 @@ const SYSTEM_TRIES: usize = 8;
 /// can't bind over a listener.
 const REUSE_FIRST: bool = cfg!(target_os = "linux");
 /// How long asking whether something listens may take. On the loopback
-/// the answer is immediate, unless a listener is too busy to accept.
-const PROBE_DEADLINE: Duration = Duration::from_millis(200);
+/// the answer is immediate, unless a listener is too busy to accept, or on
+/// Windows, which tries a refused loopback connection again for about a
+/// second before it reports the refusal.
+const PROBE_DEADLINE: Duration = if cfg!(windows) {
+    Duration::from_millis(2500)
+} else {
+    Duration::from_millis(200)
+};
 
 /// The ports our forwards listen on, so that a probe never reaches one.
 static HELD: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
@@ -109,7 +122,7 @@ pub fn bind_automatic(remote: u16) -> io::Result<Listeners> {
     for port in candidates(remote) {
         match bind_both(port) {
             Ok(listeners) => return Ok(listeners),
-            Err(error) if is_taken(&error) => continue,
+            Err(error) if is_taken(&error) || is_reserved(&error) => continue,
             Err(error) => return Err(error),
         }
     }
@@ -119,6 +132,13 @@ pub fn bind_automatic(remote: u16) -> io::Result<Listeners> {
 /// Another program, or another forward, listens on the port.
 pub fn is_taken(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::AddrInUse
+}
+
+/// The system keeps the port from us: on Windows, one in a range it
+/// reserves. The automatic ports are all above 10000, where Unix needs no
+/// privilege.
+fn is_reserved(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied
 }
 
 fn bind_both(port: u16) -> io::Result<Listeners> {
@@ -173,8 +193,37 @@ fn listen(address: SocketAddr, reuse: bool) -> io::Result<TcpListener> {
         SocketAddr::V6(_) => TcpSocket::new_v6()?,
     };
     socket.set_reuseaddr(reuse || REUSE_FIRST)?;
+    #[cfg(windows)]
+    if !reuse {
+        exclusive(&socket)?;
+    }
     socket.bind(address)?;
     socket.listen(BACKLOG)
+}
+
+/// Asks Windows for the address alone, so the bind fails while another
+/// socket holds the port, on the same address or the wildcard.
+#[cfg(windows)]
+fn exclusive(socket: &TcpSocket) -> io::Result<()> {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{
+        SO_EXCLUSIVEADDRUSE, SOCKET_ERROR, SOL_SOCKET, setsockopt,
+    };
+    let on: i32 = 1;
+    // SAFETY: the socket is open for the call, and `on` outlives it.
+    let result = unsafe {
+        setsockopt(
+            socket.as_raw_socket() as usize,
+            SOL_SOCKET,
+            SO_EXCLUSIVEADDRUSE,
+            (&on as *const i32).cast(),
+            std::mem::size_of::<i32>() as i32,
+        )
+    };
+    if result == SOCKET_ERROR {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
