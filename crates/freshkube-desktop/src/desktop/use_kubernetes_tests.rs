@@ -395,3 +395,93 @@ async fn choosing_another_kubeconfig_in_settings_connects_to_none(cx: &mut TestA
         assert_eq!(kube.connection, kubernetes_only::KubeConnection::Idle);
     });
 }
+
+/// Kubernetes-only mode on `file` with `context` picked, as the switcher does.
+async fn picked(
+    cx: &mut TestAppContext,
+    directory: &std::path::Path,
+    file: &std::path::Path,
+    context: &str,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = broken_talos(cx, directory);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    click(cx, handle, "use-kubernetes-only");
+    let chosen = file.to_path_buf();
+    cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).contexts == ["alpha", "beta"]
+    })
+    .await;
+    click(cx, handle, "context-switcher");
+    click_context(cx, handle, 1);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).applied.context.as_deref() == Some(context)
+    })
+    .await;
+    (runtime, handle, view)
+}
+
+#[gpui_kit::test]
+async fn going_back_to_talos_inspects_the_picked_context_not_the_current_one(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::cluster_overview::KubeconfigSelection;
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path();
+    let file = kubeconfig(directory);
+    let (_runtime, handle, view) = picked(cx, directory, &file, "beta").await;
+
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.leave_kubernetes_only(window, cx))
+    })
+    .unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).kubeconfig_draft.inspection.is_some()
+    })
+    .await;
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert_eq!(
+            view.kubeconfig,
+            KubeconfigSelection::File {
+                path: file.clone(),
+                context: Some("beta".into())
+            }
+        );
+    });
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+async fn a_picked_context_the_file_lacks_is_refused_and_the_current_one_is_not_tried(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::cluster_overview::KubeconfigSelection;
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path();
+    let file = kubeconfig(directory);
+    let (_runtime, handle, view) = picked(cx, directory, &file, "beta").await;
+
+    // The file changes under the window: `beta` is gone, `alpha` remains.
+    std::fs::write(&file, KUBECONFIG.replace("- name: beta", "- name: gamma")).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.leave_kubernetes_only(window, cx))
+    })
+    .unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).kubeconfig_draft.inspection.is_some()
+    })
+    .await;
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert_eq!(view.kubeconfig, KubeconfigSelection::Automatic);
+        let Some(Err(message)) = &view.kubeconfig_draft.inspection else {
+            panic!("the missing context should be reported");
+        };
+        assert!(message.contains("'beta'") && !message.contains("alpha"));
+    });
+    cx.run_until_parked();
+}
