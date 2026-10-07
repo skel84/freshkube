@@ -3270,7 +3270,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
         assert_eq!(view.read(cx).page, Page::SystemServices);
         assert!(window.find(row).visible());
         assert!(window.try_find("restart-service").is_none());
-        window.within(row).click("name", cx);
+        window.click(row, cx);
         window.click("system-service-open", cx);
     })
     .unwrap();

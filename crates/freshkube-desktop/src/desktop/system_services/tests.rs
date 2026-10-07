@@ -258,9 +258,13 @@ fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        window.within(UNHEALTHY).click("name", cx);
+        window.click(UNHEALTHY, cx);
         window.click("system-service-filter", cx);
         window.input("kubelet", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         // l, o and e went into the filter, not to the selected row.
         assert_eq!(view.read(cx).page, Page::SystemServices);
@@ -276,7 +280,7 @@ fn a_filter_that_hides_the_selected_row_clears_it(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        window.within(UNHEALTHY).click("name", cx);
+        window.click(UNHEALTHY, cx);
         assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
         window.click("system-services-tally-healthy", cx);
         window.render_frame(cx);
@@ -293,7 +297,7 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        window.within(HEALTHY).right_click("name", cx);
+        window.right_click(HEALTHY, cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -305,7 +309,9 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
             .map(|ix| menu.find(ix).label().map(str::to_owned))
             .collect();
         assert!(
-            labels[0].as_deref().is_some_and(|label| label.starts_with("Logs"))
+            labels[0]
+                .as_deref()
+                .is_some_and(|label| label.starts_with("Logs"))
                 && labels[1]
                     .as_deref()
                     .is_some_and(|label| label.starts_with("Open node")),
@@ -319,7 +325,10 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
         let pilot = view.read(cx);
         assert_eq!(pilot.page, Page::Nodes);
         assert_eq!(pilot.selected_service.as_deref(), Some("apid"));
-        assert_eq!(pilot.node_workspace.tab, crate::desktop::nodes::NodeTab::Services);
+        assert_eq!(
+            pilot.node_workspace.tab,
+            crate::desktop::nodes::NodeTab::Services
+        );
     })
     .unwrap();
 }

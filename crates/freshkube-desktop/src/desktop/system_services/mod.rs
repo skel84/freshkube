@@ -15,8 +15,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     assets::IconName,
     component::{
-        Icon, Sizable,
-        button::{Button, ButtonVariants},
+        Disableable, Icon, Sizable,
+        button::Button,
         input::{Input, InputEvent, InputState},
         menu::{DropdownMenu, PopupMenuItem},
     },
@@ -323,9 +323,10 @@ impl SystemServices {
         // A row the filters hide, or that went, is no longer selected, so
         // the toolbar never acts on a row out of sight.
         if self.selected.as_ref().is_some_and(|key| {
-            !self.lines.iter().any(
-                |entry| matches!(entry, Entry::Row(ix) if &self.rows[*ix].id == key),
-            )
+            !self
+                .lines
+                .iter()
+                .any(|entry| matches!(entry, Entry::Row(ix) if &self.rows[*ix].id == key))
         }) {
             self.selected = None;
         }
@@ -371,13 +372,15 @@ impl SystemServices {
         header
             .filter(filter)
             .chips(Some(chips))
-            .foldable(logs, logs_fold)
-            .foldable(open, open_fold)
+            // The picker narrows the list, as a source would, so it comes
+            // first; the actions fold before it.
             .foldable(
                 self.render_node_picker(nodes.clone()),
                 page::Fold::from(page::submenu_value("Node", value, nodes))
                     .changed(picked.map(|node| format!("Node {node}").into())),
             )
+            .foldable(logs, logs_fold)
+            .foldable(open, open_fold)
             .render(window, cx)
     }
     /// A toolbar button for an action on the selected row, with its key in

@@ -198,7 +198,13 @@ impl TableSource for SystemServices {
     }
 
     /// A click selects the row and puts the keyboard on the list.
-    fn click(&mut self, key: &SharedString, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn click(
+        &mut self,
+        key: &SharedString,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.select(key.clone(), cx);
         self.focus(window, cx);
     }
