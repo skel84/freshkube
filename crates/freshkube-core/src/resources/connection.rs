@@ -56,10 +56,10 @@ pub async fn connect(sources: Vec<PathBuf>, name: String) -> Result<Connection, 
                     )
                 })?;
             config.connect_timeout = Some(CONNECT_TIMEOUT);
-            let client = crate::kube_client::client(config).map_err(|_| {
+            let client = crate::kube_client::client(config).map_err(|error| {
                 Failure::new(
                     FailureKind::Config,
-                    format!("Couldn't make a client for context '{wanted}'"),
+                    error.message(&format!("Couldn't make a client for context '{wanted}'")),
                 )
             })?;
             Ok::<_, Failure>((context, client))

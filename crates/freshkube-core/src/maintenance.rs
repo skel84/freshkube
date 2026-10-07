@@ -1628,9 +1628,9 @@ async fn kubernetes_client_for_probe(
                         "Could not load credentials for verified readiness source".into(),
                     )
                 })?;
-            crate::kube_client::client(config).map_err(|_| {
+            crate::kube_client::client(config).map_err(|error| {
                 crate::cluster_overview::K8sError::ClientCreate(
-                    "Could not create verified readiness client".into(),
+                    error.message("Could not create verified readiness client"),
                 )
             })
         })
