@@ -78,9 +78,9 @@ pub struct LogTimestamp {
 /// A time a line or marker carries, before a zone is chosen to show it in.
 struct Stamp {
     /// The instant, when the text says which: an offset, an epoch, or a date
-    /// and time without a zone. The only lines without Kubernetes' UTC prefix
-    /// are a Talos node's, and Talos keeps UTC, so a time without a zone is
-    /// read as UTC.
+    /// and time without a zone. Pod lines carry Kubernetes' UTC prefix and
+    /// Coroot's lines their own offset, so a time without a zone is a Talos
+    /// node's, and Talos keeps UTC: it's read as UTC.
     instant: Option<DateTime<Utc>>,
     /// The clock as written, shown when there's no instant.
     written: String,
@@ -275,9 +275,38 @@ where
     }
 }
 
-/// An event's entry, its time shown in the viewer's local time.
+/// An event's entry, its time shown in the viewer's local time, or in the
+/// zone a test pinned.
 fn parse_event(event: LogEvent, sequence: u64) -> LogEntry {
+    #[cfg(any(test, feature = "testing"))]
+    if let Some(zone) = PINNED_ZONE.with(std::cell::Cell::get) {
+        return parse_event_in(event, sequence, &zone);
+    }
     parse_event_in(event, sequence, &Local)
+}
+
+#[cfg(any(test, feature = "testing"))]
+thread_local! {
+    static PINNED_ZONE: std::cell::Cell<Option<FixedOffset>> = const { std::cell::Cell::new(None) };
+}
+
+/// Shows the times of lines parsed on this thread in `zone` rather than the
+/// machine's, until the guard drops, so a test's rows read the same on any
+/// machine.
+#[cfg(any(test, feature = "testing"))]
+pub fn pin_zone(zone: FixedOffset) -> PinnedZone {
+    PinnedZone(PINNED_ZONE.with(|pinned| pinned.replace(Some(zone))))
+}
+
+/// Puts back the zone [`pin_zone`] replaced when dropped.
+#[cfg(any(test, feature = "testing"))]
+pub struct PinnedZone(Option<FixedOffset>);
+
+#[cfg(any(test, feature = "testing"))]
+impl Drop for PinnedZone {
+    fn drop(&mut self) {
+        PINNED_ZONE.with(|pinned| pinned.set(self.0));
+    }
 }
 
 fn parse_event_in<Tz: TimeZone>(event: LogEvent, sequence: u64, zone: &Tz) -> LogEntry
@@ -891,11 +920,18 @@ fn extract_klog_timestamp(line: &str) -> Option<(Stamp, &str)> {
     ))
 }
 
-/// A klog time, which leaves out the year: this year's, in UTC.
+/// A klog time, which leaves out the year, in UTC: the latest year it's
+/// valid in that isn't ahead of now, so December's lines read in January
+/// stay last year's and February 29th finds its leap year.
 fn klog_instant(month: i64, day: i64, time: &str) -> Option<DateTime<Utc>> {
-    let date = NaiveDate::from_ymd_opt(Utc::now().year(), month as u32, day as u32)?;
     let time = NaiveTime::parse_from_str(time, "%H:%M:%S%.f").ok()?;
-    Some(date.and_time(time).and_utc())
+    let now = Utc::now();
+    let latest = now + chrono::Duration::days(1);
+    (now.year() - 8..=now.year())
+        .rev()
+        .filter_map(|year| NaiveDate::from_ymd_opt(year, month as u32, day as u32))
+        .map(|date| date.and_time(time).and_utc())
+        .find(|instant| *instant <= latest)
 }
 
 fn extract_json_timestamp(line: &str) -> Option<Stamp> {
@@ -942,6 +978,9 @@ fn extract_rfc3339_prefix(line: &str) -> Option<(Stamp, usize)> {
 }
 
 fn extract_leading_timestamp(line: &str) -> (Option<Stamp>, &str) {
+    if let Some((instant, rest)) = absolute_prefix(line) {
+        return (Some(Stamp::at(instant)), rest.trim());
+    }
     let mut end = 0;
     let mut has_colon = false;
     let bytes = line.as_bytes();
@@ -1028,31 +1067,53 @@ fn valid_time_at(bytes: &[u8], index: usize, seconds: bool) -> bool {
             && (bytes[index + 6] - b'0') * 10 + bytes[index + 7] - b'0' < 60)
 }
 
-/// The instant `text` names: an RFC 3339 time, a date and time without a
-/// zone, read as UTC, or seconds or milliseconds since the epoch.
+/// The instant `text` names: a date and time, or seconds, milliseconds,
+/// microseconds or nanoseconds since the epoch.
 fn absolute_time(text: &str) -> Option<DateTime<Utc>> {
-    if let Ok(timestamp) = DateTime::parse_from_rfc3339(text) {
-        return Some(timestamp.to_utc());
+    if let Some((instant, "")) = absolute_prefix(text) {
+        return Some(instant);
+    }
+    epoch_time(text)
+}
+
+/// A date and time at the start of `text`, and the rest, which is empty or
+/// starts with a space. An offset may be written `Z`, `+02:00`, `+0200` or
+/// `+02`; a time without one is read as UTC.
+fn absolute_prefix(text: &str) -> Option<(DateTime<Utc>, &str)> {
+    let whole = |rest: &str| rest.is_empty() || rest.starts_with(char::is_whitespace);
+    for format in ["%Y-%m-%dT%H:%M:%S%.f%#z", "%Y-%m-%d %H:%M:%S%.f%#z"] {
+        if let Ok((time, rest)) = DateTime::parse_and_remainder(text, format)
+            && whole(rest)
+        {
+            return Some((time.to_utc(), rest));
+        }
     }
     for format in [
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S%.f",
         "%Y/%m/%d %H:%M:%S%.f",
     ] {
-        if let Ok(timestamp) = NaiveDateTime::parse_from_str(text, format) {
-            return Some(timestamp.and_utc());
+        if let Ok((time, rest)) = NaiveDateTime::parse_and_remainder(text, format)
+            && whole(rest)
+        {
+            return Some((time.and_utc(), rest));
         }
     }
+    None
+}
+
+/// A number of seconds, milliseconds, microseconds or nanoseconds since the
+/// epoch, told apart by size, for a time from 2000 to 2100. A smaller
+/// number, such as a duration, names no time.
+fn epoch_time(text: &str) -> Option<DateTime<Utc>> {
+    const FROM: f64 = 946_684_800.0; // 2000-01-01
+    const UNTIL: f64 = 4_102_444_800.0; // 2100-01-01
     let value = text.parse::<f64>().ok()?;
-    if !value.is_finite() {
-        return None;
-    }
-    let seconds = if value.abs() >= 1_000_000_000_000.0 {
-        (value / 1000.0).trunc() as i64
-    } else {
-        value.trunc() as i64
-    };
-    DateTime::from_timestamp(seconds, 0)
+    let seconds = [1.0, 1e3, 1e6, 1e9]
+        .into_iter()
+        .map(|unit| value / unit)
+        .find(|seconds| (FROM..UNTIL).contains(seconds))?;
+    DateTime::from_timestamp(seconds.trunc() as i64, 0)
 }
 
 fn parse_digits(value: &str) -> Option<i64> {
@@ -1153,12 +1214,28 @@ mod tests {
                 r#"time="2026-10-01T05:55:00.1Z" level=info msg=ready"#,
                 "07:55:00",
             ),
+            // zap's offset without a colon, and Go's date with more after it.
+            ("2026-10-01T07:55:00.000+0200\tINFO\tready", "07:55:00"),
+            ("2026/10/01 05:55:00.123456 1 main.go:12] ready", "07:55:00"),
+            // klog leaves out the year: February 29th finds a leap year.
+            ("I0229 05:55:00.000000 1 server.go:94] ready", "07:55:00"),
+            // Epochs in micro- and nanoseconds.
+            (r#"{"ts":1790834100123456,"msg":"ready"}"#, "07:55:00"),
+            (r#"{"ts":1790834100123456789,"msg":"ready"}"#, "07:55:00"),
             // A clock without a date names no instant, so it shows as written.
             ("05:55:00 ready", "05:55:00"),
         ] {
             assert_eq!(shown(line).as_deref(), Some(display), "{line}");
         }
         assert_eq!(shown("ready"), None);
+        // A small number is a duration or a count, not a time.
+        assert_eq!(shown(r#"{"time":42,"msg":"ready"}"#), None);
+        let go = parse_event_in(
+            LogEvent::new("apid", "2026/10/01 05:55:00 12 requests"),
+            0,
+            &east,
+        );
+        assert_eq!(go.message, "12 requests");
 
         let at = DateTime::parse_from_rfc3339("2026-10-01T05:55:30Z").unwrap();
         let marker = parse_event_in(LogEvent::marker("app", at, "app restarted"), 0, &east);
@@ -1306,14 +1383,15 @@ mod tests {
         assert_eq!(spaced.text_without_timestamp(), spaced.raw);
     }
 
-    /// A marker reads in the offset it's given, as the lines around it do,
-    /// and keeps its place by the instant.
+    /// A marker reads on the same clock as the lines around it, the
+    /// viewer's, whatever offset each is given in, and keeps its place by
+    /// the instant.
     #[test]
-    fn a_marker_reads_in_the_offset_of_the_lines_around_it() {
+    fn a_marker_reads_on_the_clock_of_the_lines_around_it() {
         let east = FixedOffset::east_opt(2 * 3600).unwrap();
-        let gap = DateTime::parse_from_rfc3339("2026-10-01T05:55:30Z")
-            .unwrap()
-            .with_timezone(&east);
+        let _zone = pin_zone(east);
+        // The gap's time comes in UTC, the lines' in the viewer's offset.
+        let gap = DateTime::parse_from_rfc3339("2026-10-01T05:55:30Z").unwrap();
         let mut logs = MultiServiceLogs::new("app");
         logs.append_batch([
             LogEvent::new("app", "2026-10-01T07:56:00+02:00 after"),

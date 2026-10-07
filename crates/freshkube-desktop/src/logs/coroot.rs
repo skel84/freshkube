@@ -205,12 +205,12 @@ mod tests {
         );
     }
 
-    /// A gap's note reads on the rows' clock, the viewer's, whatever offset
-    /// the lines are written in.
+    /// A gap's note reads on the rows' clock, the viewer's.
     #[test]
     fn a_gap_reads_in_the_same_zone_as_the_messages() {
         let service = ServiceId::from("app");
         let east = FixedOffset::east_opt(2 * 3600).unwrap();
+        let _zone = freshkube_core::logs::pin_zone(east);
         // 05:55:00 UTC, 07:55 at +02:00.
         let at = DateTime::from_timestamp_millis(1_790_834_100_000).unwrap();
         let mut message = line("ready".into());
@@ -224,10 +224,6 @@ mod tests {
             .iter()
             .map(|entry| entry.timestamp.as_ref().unwrap().display.clone())
             .collect();
-        let local = |at: DateTime<Utc>| at.with_timezone(&Local).format("%H:%M:%S").to_string();
-        assert_eq!(
-            times,
-            [local(at), local(at + chrono::Duration::seconds(30))]
-        );
+        assert_eq!(times, ["07:55:00", "07:55:30"]);
     }
 }

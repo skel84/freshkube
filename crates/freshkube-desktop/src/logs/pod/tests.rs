@@ -422,14 +422,16 @@ fn the_time_column_hides_and_copy_copies_what_shows(cx: &mut TestAppContext) {
 /// written.
 #[gpui_kit::test]
 fn a_pod_line_shows_the_viewers_clock_and_copies_as_written(cx: &mut TestAppContext) {
+    let _zone = freshkube_core::logs::pin_zone(chrono::FixedOffset::east_opt(2 * 3600).unwrap());
     let (_runtime, view, handle) = mount(cx);
     cx.update_window(handle, |_, window, cx| {
         show(&view, &running_pod(), cx);
         window.render_frame(cx);
         // Newer than the example's lines, so it's the row a following view
-        // ends on.
-        let at =
-            chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp() + 3600, 0).unwrap();
+        // ends on: 05:55 UTC on a later day, 07:55 at UTC+2.
+        let day = 86_400;
+        let at = (live::now() / day + 1) * day + 5 * 3600 + 55 * 60;
+        let at = chrono::DateTime::from_timestamp(at, 0).unwrap();
         let line = format!("{} INFO ready", at.format("%Y-%m-%dT%H:%M:%S%.3fZ"));
         view.update(cx, |view, cx| {
             view.ingest(vec![LogEvent::new("app", line.clone())], cx)
@@ -437,8 +439,7 @@ fn a_pod_line_shows_the_viewers_clock_and_copies_as_written(cx: &mut TestAppCont
         window.render_frame(cx);
         let row = last_row(&view, cx);
         let shown = window.find(row.clone()).label().unwrap().to_owned();
-        let local = at.with_timezone(&chrono::Local).format("%H:%M:%S");
-        assert!(shown.starts_with(&format!("{local} INFO ")), "{shown}");
+        assert!(shown.starts_with("07:55:00 INFO "), "{shown}");
 
         window.click(row, cx);
         window.press("secondary-c", cx);
