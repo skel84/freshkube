@@ -16,12 +16,17 @@ struct Page {
     open: bool,
     /// The table's own height, given to the split while rendering.
     lead: Option<f32>,
+    /// The table's least width and the split's room beside it.
+    keep: Option<(f32, f32)>,
 }
 
 impl Render for Page {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(lead) = self.lead {
             self.split.lead_start(lead, cx);
+        }
+        if let Some((least, room)) = self.keep {
+            self.split.keep_lead(least, room);
         }
         let table = div()
             .id("table")
@@ -95,6 +100,7 @@ fn open_with(
             beside,
             open,
             lead: None,
+            keep: None,
         });
         page = Some(view.clone());
         Root::new(view, window, cx)
@@ -252,6 +258,46 @@ fn dragging_the_hairline_widens_the_inspector(cx: &mut TestAppContext) {
     assert_eq!(heard.len(), 1, "{heard:?}");
     near("heard", heard[0], WIDTH + 100.);
     cx.update(|cx| near("kept", page.read(cx).split.width(), WIDTH + 100.));
+}
+
+/// A table that keeps its width leaves the inspector the rest, however
+/// wide the user left it before, so it never pushes the table aside.
+#[gpui_kit::test]
+fn a_kept_table_caps_a_remembered_width(cx: &mut TestAppContext) {
+    let (handle, page, _) = open(cx, Some(1000.), true, true);
+    cx.update(|cx| page.update(cx, |page, _| page.keep = Some((800., 1200.))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let table = window.find("table").bounds();
+        let inspector = window.find("inspector").bounds();
+        close("inspector", inspector.size.width, dp_px(400., window));
+        close("table", table.size.width, dp_px(800., window));
+        close("meeting", inspector.left(), table.right());
+    })
+    .unwrap();
+}
+
+/// A drag stops where the kept table starts, so the width saved fits the
+/// room beside it.
+#[gpui_kit::test]
+fn a_drag_stops_at_the_kept_table(cx: &mut TestAppContext) {
+    let (handle, page, heard) = open(cx, None, true, true);
+    cx.update(|cx| page.update(cx, |page, _| page.keep = Some((700., 1200.))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let inspector = window.find("inspector").bounds();
+        let y = inspector.center().y;
+        window.drag(
+            point(inspector.left(), y),
+            point(inspector.left() - px(300.), y),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let heard = heard.borrow().clone();
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    near("heard", heard[0], 500.);
 }
 
 #[gpui_kit::test]
