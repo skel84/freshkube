@@ -7,7 +7,8 @@ independent: a same-access refresh can supersede a request without clearing its
 retained data.
 
 Ordinary Kubernetes reads use the opaque `KubeSource.id` derived from core's
-`AccessIdentity`. Resource rows, detail requests, discovery, search and the
+`AccessIdentity`; Monitoring's `ClusterSource.id` carries the same key, and
+Observability takes it alone. Resource rows, detail requests, discovery, search and the
 summary share that access boundary. Node selection is independent.
 
 | Identity | Lifetime |

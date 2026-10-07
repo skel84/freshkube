@@ -29,7 +29,6 @@ use super::connection::describe;
 use super::{MonitoringEvent, MonitoringPage, Request};
 use crate::monitoring::store::{Choice, token_account};
 use crate::palette::palette;
-use crate::resources::KubeAccess;
 use crate::secrets::{STORE_NAME, SecretStore};
 use crate::ui::{self, dp};
 
@@ -444,10 +443,11 @@ pub(crate) fn source_section(page: &Entity<MonitoringPage>, cx: &App) -> AnyElem
             ))
             .into_any_element();
     };
-    if matches!(
-        this.source.as_ref().map(|source| &source.access),
-        Some(KubeAccess::Example)
-    ) {
+    if this
+        .source
+        .as_ref()
+        .is_some_and(|source| source.access.is_example())
+    {
         return section
             .child(heading)
             .child(hint("Example data answers in example mode.".into()))

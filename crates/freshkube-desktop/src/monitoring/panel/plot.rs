@@ -18,7 +18,7 @@ use gpui_kit::{
 };
 
 use super::markers::{self, Placed};
-use crate::monitoring::colors::{FADED_OPACITY, Tier};
+use crate::monitoring::colors::{FADED_OPACITY, THRESHOLD_OPACITY};
 use crate::monitoring::derive::{Axis, BarSlot, Chart, ChartSeries, fitting};
 use crate::palette::{Palette, palette};
 use crate::ui::{self, dp_px};
@@ -156,9 +156,9 @@ struct Look<'a> {
 }
 
 impl<'a> Look<'a> {
-    fn of(series: &'a ChartSeries, focused: bool) -> Self {
+    fn of(series: &'a ChartSeries, palette: &Palette, focused: bool) -> Self {
         Self {
-            color: series.ink.color(focused),
+            color: series.ink.color(palette, focused),
             fill: series.fill,
             line: series.draw == DrawStyle::Line,
             dashes: series.dashes.as_deref(),
@@ -322,7 +322,7 @@ impl Paint {
                     origin + point(frame.left, top),
                     size(frame.width, frame.y(low) - top),
                 ),
-                self.tier_color(band.tier).opacity(0.08),
+                band.tier.color(&self.palette).opacity(0.08),
             ));
         }
     }
@@ -345,7 +345,7 @@ impl Paint {
             line.move_to(origin + point(frame.left, y));
             line.line_to(origin + point(frame.right(), y));
             if let Ok(path) = line.build() {
-                window.paint_path(path, self.tier_color(threshold.tier).opacity(0.8));
+                window.paint_path(path, threshold.tier.color(p).opacity(THRESHOLD_OPACITY));
             }
             let (x, align) = if threshold.right {
                 (frame.right() - px(4.), TextAlign::Right)
@@ -419,7 +419,7 @@ impl Paint {
             );
             if let Some(path) = path {
                 crate::desktop::probe::hit("monitoring-path-painted");
-                window.paint_path(path, series.ink.color(focused).opacity(0.7 * fade));
+                window.paint_path(path, series.ink.color(&self.palette, focused).opacity(fade));
             }
         }
     }
@@ -441,7 +441,7 @@ impl Paint {
             1.
         };
         for (number, members) in self.chart.groups.iter().enumerate() {
-            let look = Look::of(&self.chart.series[members[0]], false);
+            let look = Look::of(&self.chart.series[members[0]], &self.palette, false);
             self.paint_shape(
                 Slot::Group(number),
                 &look,
@@ -460,7 +460,7 @@ impl Paint {
                 .is_some_and(|series| series.bar.is_none())
         });
         if let Some(index) = focused {
-            let look = Look::of(&self.chart.series[index], true);
+            let look = Look::of(&self.chart.series[index], &self.palette, true);
             self.paint_shape(
                 Slot::Focus(index),
                 &look,
@@ -540,7 +540,7 @@ impl Paint {
                 continue;
             }
             let (focused, fade) = self.emphasis(index);
-            let color = series.ink.color(focused);
+            let color = series.ink.color(&self.palette, focused);
             if series.points || series.draw == DrawStyle::Points || self.chart.xs.len() == 1 {
                 let r = px(if focused { 3. } else { 2.5 });
                 for (x, y) in self.chart.xs.iter().zip(&series.tops) {
@@ -586,13 +586,6 @@ impl Paint {
             debug_assert!(false, "{}: a path failed to build: {error}", self.id);
             None
         })
-    }
-
-    fn tier_color(&self, tier: Tier) -> Hsla {
-        match tier {
-            Tier::Warn => self.palette.warn,
-            Tier::Crit => self.palette.crit,
-        }
     }
 }
 

@@ -15,7 +15,7 @@ freshkube-ui.workspace = true
 # The download's file name carries the local time.
 chrono.workspace = true
 # The download's default folder.
-dirs-next.workspace = true
+dirs.workspace = true
 
 [features]
 # Read-outs for tests in crates that embed the view (`applied_and_held`,

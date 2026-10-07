@@ -24,13 +24,13 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
+use freshkube_core::cluster_source::ClusterSource;
 use freshkube_core::monitoring::QueryError;
 use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task};
 use tokio::runtime::Handle;
 
 use super::request::{self, Request};
 use super::store::{MonitoringStore, Saved};
-use crate::resources::{KubeAccess, KubeSource};
 
 use board::Board;
 pub(crate) use catalog::{Catalog, Entry, EntryId, FolderState};
@@ -102,7 +102,7 @@ pub(crate) struct MonitoringPage {
     store: Option<MonitoringStore>,
     saved: Saved,
     visible: bool,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     connection: Connection,
     catalog: Catalog,
     /// The dashboard chosen, kept across contexts.
@@ -212,8 +212,8 @@ impl MonitoringPage {
 
     /// A new source from the shell. The same connection keeps everything;
     /// another one forgets the Prometheus found and asks again.
-    pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
-        let id = |source: &Option<KubeSource>| source.as_ref().map(|source| source.id.clone());
+    pub(crate) fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
+        let id = |source: &Option<ClusterSource>| source.as_ref().map(|source| source.id.clone());
         let same = id(&self.source) == id(&source);
         self.source = source;
         if same {
@@ -248,10 +248,9 @@ impl MonitoringPage {
     }
 
     fn example(&self) -> bool {
-        matches!(
-            self.source.as_ref().map(|source| &source.access),
-            Some(KubeAccess::Example)
-        )
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.access.is_example())
     }
 
     fn context(&self) -> Option<String> {

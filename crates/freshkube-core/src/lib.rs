@@ -25,6 +25,7 @@
 pub mod async_state;
 mod client_cache;
 pub mod cluster_overview;
+pub mod cluster_source;
 
 pub mod constants;
 pub mod coroot;
@@ -48,6 +49,7 @@ pub mod pcap;
 pub mod resources;
 pub mod security_lifecycle;
 pub mod selection;
+pub mod talos_nodes;
 pub mod types;
 pub mod workloads;
 

@@ -224,6 +224,7 @@ impl ObservabilityPage {
         heat: &Heat,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let p = crate::palette::palette(cx);
         let grid = v_flex()
             .gap(dp(3.))
             .children(heat.lines.iter().map(|line_data| {
@@ -251,7 +252,7 @@ impl ObservabilityPage {
                                     .min_w_0()
                                     .h_full()
                                     .rounded(px(3.))
-                                    .bg(crate::palette::heat_color(level, line_data.errors))
+                                    .bg(crate::palette::heat_color(&p, level, line_data.errors))
                                     .tooltip(move |window, cx| {
                                         Tooltip::new(label.clone()).build(window, cx)
                                     })
@@ -367,7 +368,7 @@ impl ObservabilityPage {
                 ))
                 .into_any_element(),
             _ => muted(
-                "Requests per second by duration · brighter = more · click a cell to list its requests",
+                "Requests per second by duration · stronger = more · click a cell to list its requests",
                 cx,
             )
             .into_any_element(),
@@ -467,7 +468,7 @@ impl ObservabilityPage {
                             .min_w_0()
                             .h_full()
                             .rounded(px(3.))
-                            .bg(crate::palette::heat_color(level, line_data.errors))
+                            .bg(crate::palette::heat_color(&p, level, line_data.errors))
                             .border(border.unwrap_or(px(1.)))
                             .border_color(if border.is_some() {
                                 p.accent

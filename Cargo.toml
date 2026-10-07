@@ -50,8 +50,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-dirs-next = "2"
 arboard = "3"
+dirs = "6"
 
 # Kubernetes client
 kube = { version = "0.98", features = [
@@ -59,6 +59,9 @@ kube = { version = "0.98", features = [
     "config",
     "runtime",
     "rustls-tls",
+    # An http:// proxy from HTTPS_PROXY or a kubeconfig's proxy-url, as
+    # kubectl takes it (#335).
+    "http-proxy",
     # Pod exec runs over a websocket (docs/POD_EXEC.md).
     "ws",
 ], default-features = false }

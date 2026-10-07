@@ -561,22 +561,6 @@ pub(crate) fn set_node_pane_width(width: f32) {
     NODE_PANE_WIDTH.set(width);
 }
 
-pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {
-    div()
-        .id(id)
-        .size_full()
-        .overflow_y_scroll()
-        .restrict_scroll_to_axis()
-}
-
-pub(crate) fn page_body() -> Div {
-    v_flex()
-        .px(dp(PAGE_PADDING))
-        .pt(dp(22.))
-        .pb(dp(30.))
-        .gap(dp(20.))
-}
-
 pub(crate) fn mono(text: impl Into<SharedString>) -> Div {
     div()
         .font_family(MONO_FONT)

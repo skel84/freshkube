@@ -24,9 +24,15 @@ use gpui_kit::{
 };
 
 use super::{Geometry, PanelEvent, PanelView, markers};
+use crate::monitoring::colors::Ink;
 use crate::monitoring::derive::{self, Chart};
-use crate::palette::palette;
+use crate::palette::{Palette, palette};
 use crate::ui::{self, dp, dp_px};
+
+/// A dot on a line: its height in the plot, from 0 to 1, its series' ink
+/// and whether that series has the focus. The colour is resolved as it
+/// paints, so a theme change shows at once.
+type Dot = (f32, Ink, bool);
 
 /// Readout rows drawn at most; the rest are counted.
 pub(super) const READOUT_ROWS: usize = 10;
@@ -75,10 +81,7 @@ pub(crate) struct Crosshair {
     geometry: Rc<Cell<Geometry>>,
     /// The sample's place across the plot, from 0 to 1.
     pub(super) x: f32,
-    /// Each dot's height in the plot, from 0 to 1, and its colour.
-    dots: Vec<(f32, Hsla)>,
-    line: Hsla,
-    ring: Hsla,
+    dots: Vec<Dot>,
 }
 
 impl Crosshair {
@@ -93,14 +96,8 @@ impl Crosshair {
             .child(
                 canvas(
                     |_, _, _| {},
-                    move |_, _, window, _| {
-                        paint(
-                            self.geometry.get(),
-                            self.x,
-                            &self.dots,
-                            (self.line, self.ring),
-                            window,
-                        )
+                    move |_, _, window, cx| {
+                        paint(self.geometry.get(), self.x, &self.dots, 0.35, window, cx)
                     },
                 )
                 .size_full(),
@@ -128,14 +125,30 @@ struct Shown {
     cursor: Cursor,
     /// The sample's place across the plot, from 0 to 1.
     x: f32,
-    dots: Vec<(f32, Hsla)>,
-    /// Each readout row's colour, and whether its series has the focus.
-    inks: Vec<(Hsla, bool)>,
+    dots: Vec<Dot>,
+    /// Each readout row's ink, and whether its series has the focus.
+    inks: Vec<(Ink, bool)>,
     /// The marker under the pointer.
     marker: Option<markers::Placed>,
 }
 
+impl Shown {
+    /// Each readout row's colour in the theme `p`, and whether its series
+    /// has the focus.
+    fn colors(&self, p: &Palette) -> impl Iterator<Item = (Hsla, bool)> + '_ {
+        let p = *p;
+        (self.inks.iter()).map(move |&(ink, focused)| (ink.color(&p, focused), focused))
+    }
+}
+
 impl CursorOverlay {
+    /// The readout's swatch colours, as it draws them now.
+    #[cfg(test)]
+    pub(crate) fn swatches(&self, cx: &App) -> Option<Vec<Hsla>> {
+        let colors = self.shown.as_ref()?.colors(&palette(cx));
+        Some(colors.map(|(color, _)| color).collect())
+    }
+
     /// The series the readout names, and the focused one among them.
     #[cfg(test)]
     pub(crate) fn named(&self) -> Option<(Vec<usize>, Option<usize>)> {
@@ -193,7 +206,7 @@ impl Linked {
         };
         self.crosshairs.extend(panels.into_iter().map(|panel| {
             (panel.entity_id() != from)
-                .then(|| panel.read(cx).crosshair(time, cx))
+                .then(|| panel.read(cx).crosshair(time))
                 .flatten()
         }));
         true
@@ -214,19 +227,16 @@ impl Linked {
 impl PanelView {
     /// Another chart's cursor at `time`, when it falls on this chart's
     /// samples.
-    pub(crate) fn crosshair(&self, time: f64, cx: &App) -> Option<Crosshair> {
+    pub(crate) fn crosshair(&self, time: f64) -> Option<Crosshair> {
         let chart = self.chart()?;
         let index = nearest_time(&chart.times, time)?;
         let x = *chart.xs.get(index)?;
         let (named, _) = self.named(&chart, index, READOUT_ROWS);
-        let p = palette(cx);
         Some(Crosshair {
             id: self.element_id("crosshair"),
             geometry: self.geometry.clone(),
             x,
             dots: self.dots(&chart, index, &named),
-            line: p.ink_2.opacity(0.35),
-            ring: p.surface,
         })
     }
 
@@ -305,10 +315,7 @@ impl PanelView {
                     dots: self.dots(&chart, cursor.index, &named),
                     inks: named
                         .iter()
-                        .map(|series| {
-                            let focused = focus == Some(*series);
-                            (chart.series[*series].ink.color(focused), focused)
-                        })
+                        .map(|series| (chart.series[*series].ink, focus == Some(*series)))
                         .collect(),
                     marker: cursor
                         .marker
@@ -392,7 +399,7 @@ impl PanelView {
     /// A dot on each line, or past the readout's rows on the lines it
     /// names and the focused one: hundreds of dots stacked on one
     /// crosshair say nothing and cost every frame of the hover.
-    fn dots(&self, chart: &Chart, index: usize, named: &[usize]) -> Vec<(f32, Hsla)> {
+    fn dots(&self, chart: &Chart, index: usize, named: &[usize]) -> Vec<Dot> {
         let few = chart.series.len() <= READOUT_ROWS;
         let focus = self.focus();
         chart
@@ -402,8 +409,7 @@ impl PanelView {
             .filter(|(series, _)| few || focus == Some(*series) || named.contains(series))
             .filter_map(|(series, line)| {
                 let y = *line.tops.get(index)?;
-                y.is_finite()
-                    .then(|| (y, line.ink.color(focus == Some(series))))
+                y.is_finite().then(|| (y, line.ink, focus == Some(series)))
             })
             .collect()
     }
@@ -480,11 +486,9 @@ impl Render for CursorOverlay {
         let Some(shown) = &self.shown else {
             return overlay;
         };
-        let p = palette(cx);
         let geometry = self.geometry.clone();
         let g = geometry.get();
         let at = g.origin - self.origin.get();
-        let colors = (p.ink_2.opacity(0.7), p.surface);
         let (x, dots) = (shown.x, shown.dots.clone());
         overlay.child(
             div()
@@ -496,7 +500,7 @@ impl Render for CursorOverlay {
                 .child(
                     canvas(
                         |_, _, _| {},
-                        move |_, _, window, _| paint(geometry.get(), x, &dots, colors, window),
+                        move |_, _, window, cx| paint(geometry.get(), x, &dots, 0.7, window, cx),
                     )
                     .absolute()
                     .top_0()
@@ -526,7 +530,7 @@ impl CursorOverlay {
         let mut swatches = Vec::with_capacity(cursor.rows.len());
         let mut values = Vec::with_capacity(cursor.rows.len());
         let mut names = Vec::with_capacity(cursor.rows.len());
-        let rows = cursor.rows.iter().zip(shown.inks.iter().copied());
+        let rows = cursor.rows.iter().zip(shown.colors(&p));
         for (n, (row, (color, focused))) in rows.enumerate() {
             swatches.push(
                 cell()
@@ -629,18 +633,14 @@ impl CursorOverlay {
     }
 }
 
-/// A crosshair at `x` across the plot `g` last painted, with a dot on
-/// each line.
-fn paint(
-    g: Geometry,
-    x: f32,
-    dots: &[(f32, Hsla)],
-    (line, ring): (Hsla, Hsla),
-    window: &mut Window,
-) {
+/// A crosshair at `x` across the plot `g` last painted, its line at
+/// `opacity`, with a dot on each line in the theme's inks.
+fn paint(g: Geometry, x: f32, dots: &[Dot], opacity: f32, window: &mut Window, cx: &App) {
     if g.width <= px(0.) {
         return;
     }
+    let p = palette(cx);
+    let (line, ring) = (p.ink_2.opacity(opacity), p.surface);
     let x = g.origin.x + g.left + g.width * x;
     let top = g.origin.y + g.top;
     window.paint_quad(fill(
@@ -648,12 +648,12 @@ fn paint(
         line,
     ));
     let (outer, inner) = (dp_px(10., window), dp_px(7., window));
-    for (y, color) in dots {
-        let center = point(x + px(0.5), top + g.height * (1. - *y));
+    for &(y, ink, focused) in dots {
+        let center = point(x + px(0.5), top + g.height * (1. - y));
         let ring_bounds = Bounds::centered_at(center, size(outer, outer));
         window.paint_quad(fill(ring_bounds, ring).corner_radii(outer / 2.));
         let dot = Bounds::centered_at(center, size(inner, inner));
-        window.paint_quad(fill(dot, *color).corner_radii(inner / 2.));
+        window.paint_quad(fill(dot, ink.color(&p, focused)).corner_radii(inner / 2.));
     }
 }
 

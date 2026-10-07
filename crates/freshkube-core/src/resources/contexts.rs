@@ -55,12 +55,12 @@ impl KubeconfigReport {
 /// except an explicit one, which is reported when read.
 pub fn kubeconfig_sources(explicit: Option<&Path>) -> Vec<PathBuf> {
     if let Some(path) = explicit {
-        return vec![expand_home(path, dirs_next::home_dir().as_deref())];
+        return vec![expand_home(path, std::env::home_dir().as_deref())];
     }
     sources_from(
         std::env::var_os("FRESHKUBE_KUBECONFIG"),
         std::env::var_os("KUBECONFIG"),
-        dirs_next::home_dir().as_deref(),
+        std::env::home_dir().as_deref(),
     )
     .into_iter()
     .filter(|path| path.is_file())
