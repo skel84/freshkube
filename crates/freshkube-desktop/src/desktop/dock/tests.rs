@@ -809,6 +809,50 @@ fn a_pod_tab_asked_for_by_name_keeps_the_first_pod_it_finds(cx: &mut TestAppCont
     assert_eq!(titles(&dock, cx).len(), 2);
 }
 
+/// A pod asked for by name that is already gone at its first listing
+/// never takes a later pod of the name.
+#[gpui_kit::test]
+fn a_pod_tab_gone_at_its_first_listing_keeps_no_later_pod(cx: &mut TestAppContext) {
+    use crate::resources::LogsRequest;
+    use crate::resources::detail::DetailTarget;
+    use freshkube_core::resources::WorkloadPods;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let mut pod = running_pods(&pilot, cx).remove(0);
+    let open = |identity: ResourceIdentity, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            dock.update(cx, |dock, cx| {
+                let target = DetailTarget {
+                    identity,
+                    kind: builtin("pods").unwrap(),
+                };
+                dock.open_logs(LogsRequest { target, at: None }, window, cx)
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // By name alone, as a restored tab is.
+    pod.uid.clear();
+    open(pod.clone(), cx);
+    cx.update(|cx| {
+        dock.update(cx, |dock, cx| {
+            assert!(dock.tabs[0].key.wildcard);
+            let id = dock.tabs[0].id;
+            let none = WorkloadPods {
+                listed: true,
+                ..WorkloadPods::default()
+            };
+            assert!(!dock.apply_pod(id, none, cx));
+            assert_eq!(dock.tabs[0].feed.state, super::feed::FeedState::Gone);
+        })
+    });
+    // A pod made with the name later takes a tab of its own.
+    pod.uid = "00000000-0000-4000-8000-000000000099".into();
+    open(pod, cx);
+    assert_eq!(titles(&dock, cx).len(), 2);
+}
+
 #[gpui_kit::test]
 fn the_chromes_close_closes_every_tab(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
