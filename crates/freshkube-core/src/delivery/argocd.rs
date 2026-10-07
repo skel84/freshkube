@@ -167,7 +167,7 @@ pub struct Revisions {
     /// Each source's `targetRevision`, in the sources' order; `None` where a
     /// source names none. Empty when the spec has no source.
     pub requested: Vec<Option<String>>,
-    /// `status.sync.revision` and `status.sync.revisions`.
+    /// `status.sync.revisions`, else `status.sync.revision`.
     pub compared: Vec<String>,
     /// The last history entry's revisions.
     pub deployed: Vec<String>,
@@ -219,8 +219,20 @@ pub struct Reconciliation {
     /// The configured retry limit, as written; `None` without a retry block
     /// or a limit in it.
     pub retry_limit: Option<i64>,
+    /// What the operation shows of retries. Read it with
+    /// [`Reconciliation::superseded`]: the operation state is the last
+    /// operation's, and stays after it ends.
     pub retries: Retries,
+    /// The last operation's phase.
     pub phase: Option<String>,
+    /// When the last operation finished; `None` while it runs.
+    pub operation_finished_at: Option<String>,
+    /// The revisions the last operation synced.
+    pub operation_revisions: Vec<String>,
+    /// The last operation has ended, and Argo CD has since compared the
+    /// cluster against other revisions: its phase and retries are history,
+    /// not the current state.
+    pub superseded: bool,
     pub multiple_sources: bool,
     pub revisions: Revisions,
     /// `None` when Argo CD reported no inventory: unknown, not empty.
@@ -252,6 +264,9 @@ pub struct Application {
     pub managed: Vec<ManagedObject>,
     /// Whether `status.resources` was there at all.
     pub inventory_reported: bool,
+    /// `status.sync.revisions`, else `status.sync.revision`, read as the
+    /// operation's and history's revisions are.
+    pub compared_revisions: Vec<String>,
     /// Images Argo CD summarises, shown only.
     pub images: Vec<String>,
     pub sync_policy: Option<SyncPolicy>,
@@ -304,6 +319,9 @@ pub fn parse_application(value: &Value) -> Option<Application> {
         inventory_reported: value
             .pointer("/status/resources")
             .is_some_and(Value::is_array),
+        compared_revisions: object(value, "/status/sync")
+            .map(revisions_of)
+            .unwrap_or_default(),
         images: value
             .pointer("/status/summary/images")
             .and_then(Value::as_array)
@@ -312,8 +330,8 @@ pub fn parse_application(value: &Value) -> Option<Application> {
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect(),
-        sync_policy: value.pointer("/spec/syncPolicy").map(parse_sync_policy),
-        operation: value.pointer("/status/operationState").map(parse_operation),
+        sync_policy: object(value, "/spec/syncPolicy").map(parse_sync_policy),
+        operation: object(value, "/status/operationState").map(parse_operation),
         sources: parse_sources(value),
         last_deployed: value
             .pointer("/status/history")
@@ -353,14 +371,14 @@ fn parse_managed(resource: &Value) -> Option<ManagedObject> {
 
 fn parse_sync_policy(policy: &Value) -> SyncPolicy {
     SyncPolicy {
-        automated: policy.get("automated").map(|automated| Automated {
+        automated: object(policy, "/automated").map(|automated| Automated {
             enabled: flag(automated, "/enabled"),
             prune: flag(automated, "/prune"),
             self_heal: flag(automated, "/selfHeal"),
         }),
-        retry: policy.get("retry").map(|retry| RetryPolicy {
+        retry: object(policy, "/retry").map(|retry| RetryPolicy {
             limit: number(retry, "/limit"),
-            backoff: retry.get("backoff").map(|backoff| Backoff {
+            backoff: object(retry, "/backoff").map(|backoff| Backoff {
                 duration: text(backoff, "/duration"),
                 factor: number(backoff, "/factor"),
                 max_duration: text(backoff, "/maxDuration"),
@@ -420,6 +438,12 @@ fn revisions_of(value: &Value) -> Vec<String> {
     } else {
         many
     }
+}
+
+/// The object at `pointer`; a null, as a block left empty in YAML reads, is
+/// no block, as Argo CD reads it.
+fn object<'a>(value: &'a Value, pointer: &str) -> Option<&'a Value> {
+    value.pointer(pointer).filter(|found| found.is_object())
 }
 
 fn redacted(value: &Value, pointer: &str) -> Option<String> {
@@ -525,7 +549,7 @@ impl Application {
                 .flat_map(Sources::as_slice)
                 .map(|source| source.target_revision.clone())
                 .collect(),
-            compared: self.sync_revisions.clone(),
+            compared: self.compared_revisions.clone(),
             deployed: self
                 .last_deployed
                 .as_ref()
@@ -549,12 +573,20 @@ impl Application {
             .as_ref()
             .and_then(|policy| policy.retry.as_ref())
             .and_then(|retry| retry.limit);
-        let phase = self.operation.as_ref().and_then(|op| op.phase.clone());
+        let operation = self.operation.as_ref();
         Reconciliation {
             auto_sync,
             retry_limit,
-            retries: retries(self.operation.as_ref(), retry_limit),
-            phase,
+            retries: retries(operation, retry_limit),
+            phase: operation.and_then(|op| op.phase.clone()),
+            operation_finished_at: operation.and_then(|op| op.finished_at.clone()),
+            operation_revisions: operation.map(|op| op.revisions.clone()).unwrap_or_default(),
+            superseded: operation.is_some_and(|op| {
+                op.has_ended()
+                    && !op.revisions.is_empty()
+                    && !self.compared_revisions.is_empty()
+                    && op.revisions != self.compared_revisions
+            }),
             multiple_sources: matches!(self.sources, Some(Sources::Multiple(_))),
             revisions: self.revisions(),
             inventory: self.inventory().map(|objects| InventoryCounts {
@@ -564,6 +596,18 @@ impl Application {
                 missing: count(objects, |o| o.health.as_deref() == Some("Missing")),
             }),
         }
+    }
+}
+
+impl Operation {
+    /// Whether the operation has ended: it has a finish time, or a phase
+    /// Argo CD writes only at the end.
+    pub fn has_ended(&self) -> bool {
+        self.finished_at.is_some()
+            || matches!(
+                self.phase.as_deref(),
+                Some("Succeeded" | "Failed" | "Error")
+            )
     }
 }
 
@@ -1005,6 +1049,7 @@ mod tests {
                                 "message": "probe to 192.0.2.10:8080 failed for User \"jane\""}},
                     {"version": "v1", "kind": "Service", "namespace": "shop", "name": "storefront",
                      "status": "Synced", "health": {"status": "Missing"}},
+                    {"version": "v1", "kind": "ConfigMap", "namespace": "shop", "name": "storefront"},
                 ],
                 "conditions": [
                     {"type": "ComparisonError",
@@ -1039,10 +1084,16 @@ mod tests {
                 .managed_object("", "Deployment", Some("shop"), "storefront")
                 .is_none()
         );
+        // Without a sync status or health, an object counts nowhere.
+        let bare = application
+            .managed_object("", "ConfigMap", Some("shop"), "storefront")
+            .unwrap();
+        assert_eq!((bare.sync.as_deref(), bare.health.as_deref()), (None, None));
+        assert_eq!(bare.health_message, None);
         assert_eq!(
             application.reconciliation().inventory,
             Some(InventoryCounts {
-                objects: 3,
+                objects: 4,
                 out_of_sync: 1,
                 degraded: 1,
                 missing: 1,
@@ -1052,5 +1103,113 @@ mod tests {
         assert_eq!(application.conditions[0].kind, "ComparisonError");
         let message = application.conditions[0].message.as_deref().unwrap();
         assert!(!message.contains("git.example.test"), "{message}");
+    }
+
+    #[test]
+    fn a_stale_operation_is_superseded_not_current() {
+        let failed_long_ago = json!({
+            "phase": "Failed",
+            "message": "one or more objects failed to apply",
+            "retryCount": 5,
+            "startedAt": "2026-09-01T10:00:00Z",
+            "finishedAt": "2026-09-01T10:20:00Z",
+            "syncResult": {"revision": COMMIT_B},
+        });
+        let application = app(
+            json!({"syncPolicy": {"automated": {}, "retry": {"limit": 5}}}),
+            json!({
+                "sync": {"status": "Synced", "revision": COMMIT_A},
+                "health": {"status": "Healthy"},
+                "operationState": failed_long_ago,
+            }),
+        );
+        let reconciliation = application.reconciliation();
+        assert!(reconciliation.superseded);
+        assert_eq!(reconciliation.phase.as_deref(), Some("Failed"));
+        assert_eq!(reconciliation.retries, Retries::Exhausted { count: 5 });
+        assert_eq!(
+            reconciliation.operation_finished_at.as_deref(),
+            Some("2026-09-01T10:20:00Z")
+        );
+        assert_eq!(
+            reconciliation.operation_revisions,
+            vec![COMMIT_B.to_owned()]
+        );
+        assert_eq!(reconciliation.revisions.compared, vec![COMMIT_A.to_owned()]);
+
+        // The same failure at the revision still compared is current.
+        let current = app(
+            json!({"syncPolicy": {"retry": {"limit": 5}}}),
+            json!({
+                "sync": {"status": "OutOfSync", "revision": COMMIT_B},
+                "operationState": failed_long_ago,
+            }),
+        );
+        assert!(!current.reconciliation().superseded);
+
+        // Both fields written, on either side, are read alike.
+        let both = app(
+            json!({"sources": [{"targetRevision": "main"}, {"targetRevision": "main"}]}),
+            json!({
+                "sync": {"revision": COMMIT_A, "revisions": [COMMIT_A, COMMIT_B]},
+                "operationState": {"phase": "Succeeded", "syncResult": {
+                    "revision": COMMIT_A, "revisions": [COMMIT_A, COMMIT_B],
+                }},
+            }),
+        );
+        assert!(!both.reconciliation().superseded);
+        assert_eq!(
+            both.revisions().compared,
+            vec![COMMIT_A.to_owned(), COMMIT_B.to_owned()]
+        );
+
+        // A running operation is never history, whatever it syncs.
+        let running = app(
+            json!({}),
+            json!({
+                "sync": {"status": "OutOfSync", "revision": COMMIT_A},
+                "operationState": {"phase": "Running", "syncResult": {"revision": COMMIT_B}},
+            }),
+        );
+        assert!(!running.reconciliation().superseded);
+
+        // Without revisions on either side, nothing says it was superseded.
+        let unknown = app(
+            json!({}),
+            json!({
+                "sync": {"status": "Synced", "revision": COMMIT_A},
+                "operationState": {"phase": "Failed", "finishedAt": "2026-09-01T10:20:00Z"},
+            }),
+        );
+        assert!(!unknown.reconciliation().superseded);
+        let uncompared = app(
+            json!({}),
+            json!({"operationState": {"phase": "Failed", "syncResult": {"revision": COMMIT_B}}}),
+        );
+        assert!(!uncompared.reconciliation().superseded);
+    }
+
+    #[test]
+    fn a_null_block_is_no_block() {
+        let application = app(
+            json!({"syncPolicy": {"automated": null, "retry": {"limit": 3, "backoff": null}}}),
+            json!({"operationState": null}),
+        );
+        let policy = application.sync_policy.as_ref().unwrap();
+        assert_eq!(policy.automated, None);
+        assert_eq!(
+            policy.retry,
+            Some(RetryPolicy {
+                limit: Some(3),
+                backoff: None,
+            })
+        );
+        assert_eq!(application.operation, None);
+        assert_eq!(application.reconciliation().auto_sync, AutoSync::Manual);
+
+        let empty = app(json!({"syncPolicy": null}), json!({}));
+        assert_eq!(empty.sync_policy, None);
+        let no_retry = app(json!({"syncPolicy": {"retry": null}}), json!({}));
+        assert_eq!(no_retry.sync_policy.unwrap().retry, None);
     }
 }
