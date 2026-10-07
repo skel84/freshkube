@@ -580,6 +580,28 @@ mod tests {
     }
 
     #[test]
+    fn a_webhooks_failure_is_printed_without_the_host_it_looked_up() {
+        let message = r#"Internal error occurred: failed calling webhook "validate.example.com": failed to call webhook: Post "https://hooks.shop.svc:443/validate?timeout=10s": dial tcp: lookup hooks.shop.svc on 10.96.0.10:53: no such host"#;
+        let status = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "status": "Failure",
+            "message": message,
+            "reason": "InternalError",
+            "code": 500,
+        });
+        let body = serde_json::to_vec(&status).unwrap();
+        let failure = decode(http::StatusCode::INTERNAL_SERVER_ERROR, &body).unwrap_err();
+        assert_eq!(failure.message, message);
+        // The webhook's quoted name is the configuration's, not a host the
+        // message reached, and stays, as a quoted resource name does.
+        assert_eq!(
+            super::super::source::printable(&failure),
+            r#"Internal error occurred: failed calling webhook "validate.example.com": failed to call webhook: Post "<url>": dial tcp: lookup <address> on <address>: no such host"#
+        );
+    }
+
+    #[test]
     fn secrets_are_refused_whatever_the_case_of_the_plural() {
         assert!(refuse_secret(&Resource::new("", "v1", "secrets", true)).is_err());
         assert!(refuse_secret(&Resource::new("", "v1", "Secrets", true)).is_err());
