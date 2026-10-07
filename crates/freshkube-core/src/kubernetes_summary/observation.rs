@@ -258,9 +258,6 @@ impl Observation {
     pub fn last_success(&self) -> Option<DateTime<Utc>> {
         self.last_success
     }
-    pub fn synchronized_at(&self) -> Option<DateTime<Utc>> {
-        self.synchronized_at
-    }
     pub fn revision(&self) -> u64 {
         self.revision
     }

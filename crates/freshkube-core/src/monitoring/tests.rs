@@ -11,7 +11,7 @@ use k8s_openapi::api::core::v1::Service;
 use kube::client::Body;
 use serde_json::{Value, json};
 
-use super::transport::scrape_interval_of;
+use super::transport::scrape_interval as scrape_interval_of;
 use super::*;
 
 /// Every request the fake API saw, as `METHOD path?query`.
