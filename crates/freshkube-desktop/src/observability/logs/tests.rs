@@ -117,6 +117,31 @@ fn the_histogram_draws_each_severity_in_its_coroot_colour(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn the_histogram_lists_all_five_severities_inside_its_short_card(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    open(cx, &page, example::WORKER);
+    draw(cx, handle);
+    cx.update_window(handle, |_, window, _| {
+        let card = window.find("monitoring-panel-obs-logs-histogram").bounds();
+        let plot = window
+            .find("monitoring-panel-obs-logs-histogram-plot")
+            .bounds();
+        // Error, warning, info, debug and unknown: each row lies under the
+        // plot and within the card, none clipped below its bottom.
+        for series in 0..5 {
+            let row = window
+                .find(SharedString::from(format!(
+                    "monitoring-panel-obs-logs-histogram-legend-{series}"
+                )))
+                .bounds();
+            assert!(row.top() >= plot.bottom(), "{series}: {row:?} {plot:?}");
+            assert!(row.bottom() <= card.bottom(), "{series}: {row:?} {card:?}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_long_trace_is_one_row_and_a_search_finds_its_last_line(cx: &mut TestAppContext) {
     // Tall enough that the whole list is on screen below the map and checks.
     let (_runtime, handle, page) = super::super::tests::mount_size(cx, true, 1260., 1800.);

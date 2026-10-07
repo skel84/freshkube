@@ -156,6 +156,33 @@ fn many_series_get_a_table_legend_with_grey_overflow() {
 }
 
 #[test]
+fn up_to_six_short_names_list_inline_and_longer_ones_take_the_table() {
+    let spec = timeseries(json!({}), json!({}));
+    let mode = |names: &[&str]| {
+        let all = names.iter().map(|name| series(name, &[1.; 7])).collect();
+        chart_of(&derive(&spec, frame(all), window())).legend.mode
+    };
+    let severities = ["error", "warning", "info", "debug", "unknown"];
+    assert_eq!(mode(&severities), LegendMode::Inline);
+    assert_eq!(
+        mode(&[&severities[..], &["trace"]].concat()),
+        LegendMode::Inline
+    );
+    assert_eq!(
+        mode(&[&severities[..], &["trace", "fatal"]].concat()),
+        LegendMode::Table
+    );
+    // Sixteen characters still list inline; one more takes the table.
+    let long = ["a", "b", "c", "d", "sixteen-chars-ab"];
+    assert_eq!(mode(&long), LegendMode::Inline);
+    let longer = ["a", "b", "c", "d", "seventeen-chars-a"];
+    assert_eq!(mode(&longer), LegendMode::Table);
+    // Four series list inline whatever their names.
+    let four = ["a-very-long-series-name-1", "b", "c", "d"];
+    assert_eq!(mode(&four), LegendMode::Inline);
+}
+
+#[test]
 fn the_dashboards_calcs_pick_the_legend_columns_and_a_stopped_series_is_dated() {
     let spec = timeseries(
         json!({}),
@@ -198,7 +225,14 @@ fn hidden_legends_stay_hidden() {
 fn legend_values_take_the_titles_unit_and_one_column_width() {
     const GIB: f64 = 1024. * 1024. * 1024.;
     let spec = timeseries(json!({"unit": "bytes"}), json!({}));
-    let names = ["a", "b", "c", "d", "e"];
+    // Five names past the inline length, so the legend is a table.
+    let names = [
+        "worker-pool-node-a",
+        "worker-pool-node-b",
+        "worker-pool-node-c",
+        "worker-pool-node-d",
+        "worker-pool-node-e",
+    ];
     let levels = [6. * GIB, 3. * GIB, 0.5 * GIB, 929. / 1024. * GIB, 2. * GIB];
     let all = names
         .iter()

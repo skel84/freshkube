@@ -1043,10 +1043,11 @@ fn an_odd_last_legend_row_keeps_half_the_width(cx: &mut TestAppContext) {
 }
 
 /// Where two rows don't fit, each takes the line, the odd last one too.
+/// Seven series, so the short names still take the table.
 #[gpui_kit::test]
 fn a_narrow_legend_takes_one_column(cx: &mut TestAppContext) {
-    let (handle, _panel) = legend_panel(cx, 5, 300., &[]);
-    let rows = bounds_of(cx, handle, &legend_rows(5));
+    let (handle, _panel) = legend_panel(cx, 7, 300., &[]);
+    let rows = bounds_of(cx, handle, &legend_rows(7));
     for pair in rows.windows(2) {
         assert_eq!(pair[1].left(), pair[0].left());
         assert!(pair[1].top() > pair[0].top(), "{rows:?}");
@@ -1081,10 +1082,11 @@ fn a_long_legend_stops_short_of_the_cards_edge(cx: &mut TestAppContext) {
 }
 
 /// A series that stopped early shows its last value muted, with the time in
-/// the row's tooltip: its value takes no more room than any other.
+/// the row's tooltip: its value takes no more room than any other. Seven
+/// series, so the legend is a table.
 #[gpui_kit::test]
 fn a_stopped_series_keeps_its_value_as_wide_as_the_others(cx: &mut TestAppContext) {
-    let (handle, panel) = legend_panel(cx, 6, 640., &[0]);
+    let (handle, panel) = legend_panel(cx, 7, 640., &[0]);
     let stale = cx.read(|cx| {
         let chart = panel.read(cx).chart().unwrap();
         (
