@@ -582,12 +582,43 @@ impl Pilot {
         self.show_node_tab(tabs[next], window, cx);
     }
 
+    /// Escape steps back one level, as on Resources: from the pane it hands
+    /// the keyboard to the table, leaving the pane open on its tab (an
+    /// expanded pane first gives the table its room back); on the table it
+    /// clears the filter, then closes the pane.
     pub(super) fn node_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.node_workspace.tab != NodeTab::Overview {
-            self.show_node_tab(NodeTab::Overview, window, cx);
-        } else {
+        let nodes = &self.node_workspace;
+        if nodes.open && (nodes.expanded || !self.node_focus.is_focused(window)) {
+            if nodes.expanded {
+                self.toggle_node_expanded(cx);
+            }
+            window.focus(&self.node_focus, cx);
+            cx.notify();
+        } else if !nodes.query_text.is_empty() {
+            self.clear_node_filter(window, cx);
+        } else if nodes.open {
             self.close_node(window, cx);
         }
+    }
+
+    /// Escape in the filter clears it; in an empty filter it hands the
+    /// keyboard back to the table.
+    pub(super) fn leave_node_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.node_workspace.query_text.is_empty() {
+            window.focus(&self.node_focus, cx);
+        } else {
+            self.clear_node_filter(window, cx);
+        }
+    }
+
+    fn clear_node_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.node_workspace.query_text.clear();
+        // Setting the value from code emits no change event.
+        self.node_workspace
+            .query
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.node_workspace.rebuild_lines();
+        cx.notify();
     }
 }
 

@@ -757,8 +757,50 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
+        // Escape steps back as on Resources (#334): the pane hands the
+        // keyboard to the table and stays open on its tab.
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Overview);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert!(nodes.open);
+        assert_eq!(nodes.tab, NodeTab::Processes);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        // Expanded from the table, the pane first gives the table its room
+        // back.
+        window.press("secondary-shift-enter", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.expanded);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let nodes = &pilot.read(cx).node_workspace;
+        assert!(nodes.open && !nodes.expanded);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        window.focus(
+            &pilot
+                .read(cx)
+                .node_workspace
+                .query
+                .read(cx)
+                .focus_handle(cx),
+            cx,
+        );
+        window.input("fra1", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.query_text, "fra1");
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        // The table clears its filter, then closes the pane.
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.query_text.is_empty());
+        assert!(pilot.read(cx).node_workspace.open);
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(!pilot.read(cx).node_workspace.open);
@@ -1385,10 +1427,15 @@ fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut Test
         assert!(window.try_find("nodes-cards").is_none());
         assert_eq!(pilot.read(cx).selected_node, target);
         assert!(pilot.read(cx).node_workspace.selected.is_none());
+        // Escape clears the filter, keeping the keyboard there; a second
+        // hands it to the cards.
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(pilot.read(cx).node_workspace.query_text.is_empty());
         assert!(window.find("nodes-cards").visible());
+        assert!(!pilot.read(cx).node_focus.is_focused(window));
+        window.press("escape", cx);
+        window.render_frame(cx);
         assert!(pilot.read(cx).node_focus.is_focused(window));
         window.focus(
             &pilot
