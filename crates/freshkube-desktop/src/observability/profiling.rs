@@ -70,27 +70,26 @@ impl ObservabilityPage {
                 let color =
                     crate::palette::flame_color(if self.compare_profile { frame.delta } else { 0 });
                 let matches = self.flame_matches[index];
-                Button::new(SharedString::from(format!("obs-flame-{index}")))
-                    .ghost()
-                    .group("fog-control")
-                    .absolute()
-                    .left(relative((frame.x - start) / width))
-                    .top(dp((frame.depth - depth) as f32 * 38.))
-                    .w(relative(frame.width / width))
-                    .h(dp(28.))
-                    .px(dp(6.))
-                    .rounded(px(3.))
-                    .justify_start()
-                    .bg(color)
-                    .text_color(gpui_kit::white())
-                    .opacity(if matches { 1. } else { 0.3 })
-                    .overflow_hidden()
-                    .child(mono(frame.name).truncate())
-                    .tooltip(format!(
-                        "{} · {} CPU · {:+}% self time · Click to zoom",
-                        frame.name, frame.cpu, frame.delta
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| this.zoom_frame(index, cx)))
+                flame_frame(
+                    SharedString::from(format!("obs-flame-{index}")),
+                    frame.name,
+                    color,
+                    cx,
+                )
+                .absolute()
+                .left(relative((frame.x - start) / width))
+                .top(dp((frame.depth - depth) as f32 * 38.))
+                .w(relative(frame.width / width))
+                .h(dp(28.))
+                .px(dp(6.))
+                .opacity(if matches { 1. } else { 0.3 })
+                .overflow_hidden()
+                .child(mono(frame.name).truncate())
+                .tooltip(flame_tooltip(format!(
+                    "{} · {} CPU · {:+}% self time · Click to zoom",
+                    frame.name, frame.cpu, frame.delta
+                )))
+                .on_click(cx.listener(move |this, _, _, cx| this.zoom_frame(index, cx)))
             }));
         let details = if let Some(index) = self.selected_frame {
             let frame = &self.frames[index];
@@ -168,4 +167,42 @@ impl ObservabilityPage {
             )
             .into_any_element()
     }
+}
+
+/// One frame of a flame graph: filled with its colour under a white label,
+/// and a little lighter under the pointer. Not a Kit button: a ghost's hover
+/// fill replaces the colour and leaves the white label unreadable in the
+/// light theme (#404), and Kit sets a button's hover after the caller's. The
+/// unstyled base button keeps a Kit button's tab stop, Enter and Space.
+pub(super) fn flame_frame(
+    id: SharedString,
+    name: impl Into<SharedString>,
+    color: Hsla,
+    cx: &App,
+) -> gpui_kit::base::Button {
+    use gpui_kit::component::ActiveTheme as _;
+    let lighter = move |by: f32| Hsla {
+        l: (color.l + by).min(1.),
+        ..color
+    };
+    let ring = cx.theme().ring;
+    gpui_kit::base::Button::new(id)
+        .accessibility_label(name)
+        .justify_start()
+        .rounded(px(3.))
+        .cursor_pointer()
+        .bg(color)
+        .text_color(gpui_kit::white())
+        .hover(move |style| style.bg(lighter(0.08)))
+        .active(move |style| style.bg(lighter(0.14)))
+        // Tab reaches each frame; a click doesn't leave it ringed.
+        .focus_visible(move |style| style.border_2().border_color(ring))
+}
+
+/// A frame's tooltip, as a Kit button draws its own.
+pub(super) fn flame_tooltip(
+    text: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text = text.into();
+    move |window, cx| Tooltip::new(text.clone()).build(window, cx)
 }
