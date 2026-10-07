@@ -4,7 +4,7 @@ use chrono::Utc;
 use freshkube_core::security_lifecycle::SourceSnapshot;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, Window, WindowHandle, px, size};
+use gpui_kit::{AppContext, Entity, SharedString, TestAppContext, Window, WindowHandle, px, size};
 use tokio::runtime::{Builder, Runtime};
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
@@ -14,13 +14,29 @@ use crate::desktop::layout_check;
 use crate::desktop::tests::fixture as app;
 use crate::{fixture, presentation};
 
-/// The page's frame reaches the body under the toolbar.
+/// The page's frame: the table runs edge to edge under the toolbar.
 const SECURITY_FRAME: layout_check::PageFrame = layout_check::PageFrame {
     page: "security-page",
     title: "security-title",
     title_text: "Security",
-    content: "security-body",
+    content: "security-table",
 };
+
+const SECURITY_TABLE: layout_check::Table = layout_check::Table {
+    table: Some("security-table-scroll"),
+    list: "security-list",
+};
+
+/// Each row's key, in display order.
+fn keys(screen: &Entity<SecurityScreen>, cx: &gpui_kit::App) -> Vec<SharedString> {
+    (screen.read(cx).items().iter())
+        .map(|item| item.key.clone())
+        .collect()
+}
+
+fn selected(window: &Window, key: &SharedString) -> bool {
+    window.find(key.clone()).selected() == Some(true)
+}
 
 fn source(node: &str) -> ScreenSource {
     let nodes = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
@@ -66,43 +82,61 @@ fn mount(
     (runtime, screen.unwrap(), handle)
 }
 
+/// Nothing is selected until a click or a key picks a row; the arrows,
+/// Home and End step over the group rows.
 #[gpui_kit::test]
 fn keyboard_selection_updates_the_details(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(
-            window.find(("security-item", 0usize)).selected(),
-            Some(true)
-        );
-        window.click(("security-item", 0usize), cx);
+        let keys = keys(&screen, cx);
+        assert!(!keys.iter().any(|key| selected(window, key)));
+        window.click(keys[0].clone(), cx);
+        window.render_frame(cx);
+        assert!(selected(window, &keys[0]));
         window.press("down", cx);
         window.render_frame(cx);
-        assert_eq!(
-            window.find(("security-item", 1usize)).selected(),
-            Some(true)
-        );
+        assert!(selected(window, &keys[1]));
         assert_eq!(
             window.find("security-detail-title").label(),
             Some("talosconfig")
         );
         window.press("end", cx);
         window.render_frame(cx);
-        let count = screen.read(cx).items().len();
-        assert_eq!(
-            window.find(("security-item", count - 1)).selected(),
-            Some(true)
-        );
+        assert!(selected(window, keys.last().unwrap()));
         assert_eq!(
             window.find("security-detail-title").label(),
             Some("EPHEMERAL volume")
         );
         window.press("home", cx);
         window.render_frame(cx);
-        assert_eq!(
-            window.find(("security-item", 0usize)).selected(),
-            Some(true)
-        );
+        assert!(selected(window, &keys[0]));
+    })
+    .unwrap();
+}
+
+/// The three groups head their rows: Certificates, RBAC role and Volume
+/// encryption, each with its worst row's glyph and its count.
+#[gpui_kit::test]
+fn the_audit_is_grouped(cx: &mut TestAppContext) {
+    let (_runtime, _screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let groups: Vec<String> = ["certificates", "rbac", "volumes"]
+            .into_iter()
+            .map(|slug| {
+                let id = SharedString::from(format!("security-group-{slug}"));
+                window.find(id).label().unwrap_or_default().to_owned()
+            })
+            .collect();
+        assert!(groups[0].starts_with("Certificates"), "{groups:?}");
+        assert!(groups[0].contains("4 certificates"), "{groups:?}");
+        assert!(groups[1].starts_with("RBAC role"), "{groups:?}");
+        assert!(groups[2].starts_with("Volume encryption"), "{groups:?}");
+        for (ix, label) in ["Status", "Name", "Summary"].into_iter().enumerate() {
+            let header = window.find(("security-sort", ix + 1));
+            assert_eq!(header.label(), Some(label));
+        }
     })
     .unwrap();
 }
@@ -126,15 +160,13 @@ fn expiring_certificate_is_a_warning(cx: &mut TestAppContext) {
                 .all(|item| item.verdict != Verdict::Crit),
             "only the expiring certificate is flagged, and only as a warning"
         );
-        let ix = all
-            .iter()
-            .position(|item| item.verdict == Verdict::Warn)
-            .unwrap();
-        let label = window
-            .find(("security-item", ix))
-            .label()
-            .map(str::to_owned);
+        assert_eq!(expiring[0].name, "kubeconfig (admin)");
+        let key = expiring[0].key.clone();
+        let label = window.find(key).label().map(str::to_owned);
         assert!(label.unwrap().contains("Expiring soon"));
+        // Its group, Certificates, takes its warning.
+        let group = screen.read(cx).display.1.groups[0].verdict;
+        assert_eq!(group, Verdict::Warn);
     })
     .unwrap();
 }
@@ -179,7 +211,7 @@ fn unavailable_section_is_named_and_unknown(cx: &mut TestAppContext) {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].verdict, Verdict::Unknown);
         assert_eq!(rows[0].status, "Unknown");
-        assert!(window.try_find(("security-item", 2usize)).is_some());
+        window.find(rows[0].key.clone());
     })
     .unwrap();
 }
@@ -221,7 +253,7 @@ fn silent_target_offers_retry_without_data(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_none());
         window.find("screen-retry");
-        assert!(window.try_find("security-list").is_none());
+        assert!(window.try_find("security-table").is_none());
     })
     .unwrap();
 }
@@ -257,7 +289,19 @@ fn security_is_an_edge_page_at_both_text_sizes(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             layout_check::assert_edge_frame(window, cx, &SECURITY_FRAME);
+            let rows = layout_check::assert_table(window, cx, &SECURITY_TABLE);
+            assert!(rows.header.is_some(), "{rows:#?}");
+            layout_check::assert_bare(window, "security-table-scroll");
             window.find("security-refresh");
+            // The banners and the summary sit inset above the table.
+            let page = window.find("security-page").bounds();
+            let inset = window.find("security-summary").bounds();
+            let table = window.find("security-table").bounds();
+            assert!(
+                inset.left() > page.left() && inset.right() < page.right(),
+                "{inset:?}"
+            );
+            assert!(inset.bottom() <= table.top(), "{inset:?} {table:?}");
         })
         .unwrap();
     }
@@ -293,7 +337,7 @@ fn under_the_toolbar(window: &Window, id: &'static str) {
         state.top() >= toolbar.bottom(),
         "{id} {state:?} isn't under the toolbar {toolbar:?}"
     );
-    assert!(window.try_find("security-body").is_none());
+    assert!(window.try_find("security-table").is_none());
 }
 
 #[gpui_kit::test]

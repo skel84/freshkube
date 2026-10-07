@@ -21,12 +21,12 @@ impl Section {
         }
     }
 
-    pub(super) fn icon(self) -> IconName {
+    /// The group row it sits under: both kinds of certificate share one.
+    pub(super) fn group(self) -> Group {
         match self {
-            Section::TalosCertificates => IconName::KeyRound,
-            Section::KubernetesCertificates => IconName::ShieldCheck,
-            Section::Rbac => IconName::Shield,
-            Section::Volumes => IconName::Lock,
+            Section::TalosCertificates | Section::KubernetesCertificates => Group::Certificates,
+            Section::Rbac => Group::Rbac,
+            Section::Volumes => Group::Volumes,
         }
     }
 
@@ -36,6 +36,43 @@ impl Section {
             Section::KubernetesCertificates => "kubernetes-certs",
             Section::Rbac => "rbac",
             Section::Volumes => "volumes",
+        }
+    }
+}
+
+/// The table's groups, in display order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Group {
+    Certificates,
+    Rbac,
+    Volumes,
+}
+
+impl Group {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Group::Certificates => "Certificates",
+            Group::Rbac => "RBAC role",
+            Group::Volumes => "Volume encryption",
+        }
+    }
+
+    pub(super) fn slug(self) -> &'static str {
+        match self {
+            Group::Certificates => "certificates",
+            Group::Rbac => "rbac",
+            Group::Volumes => "volumes",
+        }
+    }
+
+    fn noun(self, count: usize) -> &'static str {
+        match (self, count) {
+            (Group::Certificates, 1) => "certificate",
+            (Group::Certificates, _) => "certificates",
+            (Group::Rbac, 1) => "role",
+            (Group::Rbac, _) => "roles",
+            (Group::Volumes, 1) => "volume",
+            (Group::Volumes, _) => "volumes",
         }
     }
 }
@@ -60,6 +97,28 @@ impl Verdict {
         }
     }
 
+    /// The row's status glyph.
+    pub(super) fn glyph(self) -> Tone {
+        match self {
+            Verdict::Good => Tone::Good,
+            Verdict::Warn => Tone::Warn,
+            Verdict::Crit => Tone::Crit,
+            Verdict::Info => Tone::Info,
+            Verdict::Unknown => Tone::Unknown,
+        }
+    }
+
+    /// How much it asks for attention: a group takes its worst row's.
+    fn weight(self) -> u8 {
+        match self {
+            Verdict::Good => 0,
+            Verdict::Info => 1,
+            Verdict::Unknown => 2,
+            Verdict::Warn => 3,
+            Verdict::Crit => 4,
+        }
+    }
+
     /// The tag's tone, and an icon for Info, which carries no status.
     pub(super) fn tone(self) -> (Tone, Option<IconName>) {
         match self {
@@ -75,8 +134,8 @@ impl Verdict {
 /// One selectable row: a certificate, the RBAC role, a volume, or a section
 /// that couldn't be read (shown as unknown).
 #[derive(Clone, Debug)]
-pub(super) struct Item {
-    pub(super) key: String,
+pub(crate) struct Item {
+    pub(super) key: SharedString,
     pub(super) section: Section,
     pub(super) name: String,
     pub(super) verdict: Verdict,
@@ -137,7 +196,8 @@ fn certificate_item(section: Section, ix: usize, cert: &CertificateAudit) -> Ite
             section.slug(),
             cert.name,
             cert.not_after.timestamp()
-        ),
+        )
+        .into(),
         section,
         name: cert.name.clone(),
         verdict,
@@ -163,7 +223,7 @@ fn certificate_item(section: Section, ix: usize, cert: &CertificateAudit) -> Ite
 /// the page never implies the certificates are fine or bad.
 fn unknown_item(section: Section, what: &str, reason: &str) -> Item {
     Item {
-        key: format!("{}:unknown", section.slug()),
+        key: format!("{}:unknown", section.slug()).into(),
         section,
         name: what.to_owned(),
         verdict: Verdict::Unknown,
@@ -270,7 +330,7 @@ fn volume_item(volume: &VolumeEncryptionAudit) -> Item {
         }
     };
     Item {
-        key: format!("volumes:{}", volume.volume_name),
+        key: format!("volumes:{}", volume.volume_name).into(),
         section: Section::Volumes,
         name: format!("{} volume", volume.volume_name),
         verdict,
@@ -319,18 +379,80 @@ fn volume_items(source: &SourceSnapshot<Vec<VolumeEncryptionAudit>>) -> Vec<Item
 #[derive(Default)]
 pub(super) struct Display {
     pub(super) items: Vec<Item>,
+    /// The table's lines: each group's row, then its items.
+    pub(super) lines: Vec<Entry>,
+    /// The group rows, by the index an [`Entry::Group`] carries.
+    pub(super) groups: Vec<GroupLine>,
     pub(super) missing: Vec<String>,
     pub(super) stats: Stats,
 }
 
 impl Display {
     pub(super) fn new(snapshot: &SecurityAuditSnapshot) -> Self {
+        let items = items(snapshot);
+        let (lines, groups) = lines(&items);
         Self {
-            items: items(snapshot),
+            items,
+            lines,
+            groups,
             missing: missing(snapshot),
             stats: Stats::new(snapshot),
         }
     }
+}
+
+/// One line of the table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Entry {
+    Group(usize),
+    Row(usize),
+}
+
+/// A group's row: its worst verdict and what it holds, in words.
+pub(super) struct GroupLine {
+    pub(super) group: Group,
+    pub(super) verdict: Verdict,
+    pub(super) detail: Vec<String>,
+}
+
+/// The items under their group rows, in the order they come.
+fn lines(items: &[Item]) -> (Vec<Entry>, Vec<GroupLine>) {
+    let mut lines = Vec::new();
+    let mut groups: Vec<GroupLine> = Vec::new();
+    let mut counts = Vec::new();
+    for (ix, item) in items.iter().enumerate() {
+        let group = item.section.group();
+        if groups.last().is_none_or(|line| line.group != group) {
+            lines.push(Entry::Group(groups.len()));
+            groups.push(GroupLine {
+                group,
+                verdict: item.verdict,
+                detail: Vec::new(),
+            });
+            counts.push((0, 0));
+        }
+        let line = groups.last_mut().unwrap();
+        if item.verdict.weight() > line.verdict.weight() {
+            line.verdict = item.verdict;
+        }
+        let (known, unknown) = counts.last_mut().unwrap();
+        if item.verdict == Verdict::Unknown {
+            *unknown += 1;
+        } else {
+            *known += 1;
+        }
+        lines.push(Entry::Row(ix));
+    }
+    for (line, (known, unknown)) in groups.iter_mut().zip(counts) {
+        if known > 0 {
+            line.detail
+                .push(format!("{known} {}", line.group.noun(known)));
+        }
+        if unknown > 0 {
+            line.detail.push("not all reported".to_owned());
+        }
+    }
+    (lines, groups)
 }
 
 /// The counts over the list, in words: a number, or "unknown" when the

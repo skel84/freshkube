@@ -1,96 +1,21 @@
-//! The page: the banners, the summary, the audit's list and the
-//! selection's details.
+//! The page: the banners and the summary in an inset, then the audit's
+//! table edge to edge, then the selection's details.
 use super::*;
 use audit::Stats;
+use freshkube_ui::table::DataTable;
 
 impl SecurityScreen {
-    fn summary(stats: &Stats, cx: &App) -> Stateful<Div> {
+    fn summary(stats: &Stats, cx: &App) -> AnyElement {
         h_flex()
             .id("security-summary")
+            .test_support()
             .gap_2p5()
             .flex_wrap()
             .child(stat("Valid certificates", stats.valid.clone(), cx))
             .child(stat("Expiring soon", stats.expiring.clone(), cx))
             .child(stat("Expired", stats.expired.clone(), cx))
             .child(stat("Volumes encrypted", stats.volumes.clone(), cx))
-    }
-
-    fn render_row(
-        &self,
-        ix: usize,
-        item: &Item,
-        selected: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let (tone, _) = item.verdict.tone();
-        let key = item.key.clone();
-        h_flex()
-            .id(("security-item", ix))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(format!(
-                "{} · {} · {}",
-                item.name, item.status, item.summary
-            ))
-            .w_full()
-            .h(dp(ROW_HEIGHT))
-            .flex_none()
-            .gap_3()
-            .px_3()
-            .text_size(dp(12.5))
-            .cursor_pointer()
-            .when(selected, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!selected, |this| this.hover(|style| style.bg(p.hover)))
-            .child(div().w(dp(112.)).flex_none().child(ui::tag(
-                tone,
-                None,
-                item.status.clone(),
-                cx,
-            )))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(item.name.clone()),
-            )
-            .child(
-                div()
-                    .max_w(dp(220.))
-                    .truncate()
-                    .font_family(MONO_FONT)
-                    .text_size(dp(12.))
-                    .when(!selected, |this| this.text_color(p.muted))
-                    .child(item.summary.clone()),
-            )
-            .on_click(cx.listener(move |view, _, window, cx| {
-                view.selected = Some(key.clone());
-                window.focus(&view.focus, cx);
-                cx.notify();
-            }))
-    }
-
-    fn section_head(section: Section, cx: &App) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        h_flex()
-            .id(SharedString::from(format!(
-                "security-section-{}",
-                section.slug()
-            )))
-            .test_support()
-            .aria_label(section.title())
-            .flex_none()
-            .gap_2()
-            .px_3()
-            .pt_3()
-            .pb_1()
-            .border_b_1()
-            .border_color(p.line)
-            .child(Icon::new(section.icon()).size(dp(13.)).text_color(p.muted))
-            .child(ui::caption(section.title(), cx))
+            .into_any_element()
     }
 
     fn details(&self, item: Option<&Item>, cx: &mut Context<Self>) -> Div {
@@ -154,15 +79,18 @@ impl Render for SecurityScreen {
             cx,
         );
         let body = match state {
-            Some(state) => page::inset()
-                .id("security-state")
-                .test_support()
-                .child(state)
-                .into_any_element(),
-            None => self.render_body(window, cx),
+            Some(state) => vec![
+                page::inset()
+                    .id("security-state")
+                    .test_support()
+                    .child(state)
+                    .into_any_element(),
+            ],
+            None if self.loader.data().is_some() => self.render_body(window, cx),
+            None => Vec::new(),
         };
         // The keys live on a wrapper drawn in every state; the page scrolls
-        // when the window is too short for the list's least height.
+        // when the window is too short for the table's least height.
         div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
@@ -179,7 +107,7 @@ impl Render for SecurityScreen {
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .child(page::toolbar(cx).child(header))
-                    .child(body),
+                    .children(body),
             )
     }
 }
@@ -197,118 +125,39 @@ impl SecurityScreen {
         header.control(refresh).render(window, cx)
     }
 
-    /// The banners, the summary and the audit with the selection's details,
-    /// inset under the toolbar.
-    fn render_body(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        if self.loader.data().is_none() {
-            return div().into_any_element();
-        }
-        let p = palette(cx);
-        let Display {
-            items: all,
-            missing,
-            stats,
-        } = &self.display.1;
-        let selected_ix = self.selected_index(all);
-        let summary = Self::summary(stats, cx);
-
-        // Rows are grouped under section captions; remember where the
-        // selected row lands among the children so it can scroll into view.
-        let mut children: Vec<AnyElement> = Vec::new();
-        let mut selected_child = None;
-        let mut section = None;
-        for (ix, item) in all.iter().enumerate() {
-            if section != Some(item.section) {
-                section = Some(item.section);
-                children.push(Self::section_head(item.section, cx).into_any_element());
-            }
-            if selected_ix == Some(ix) {
-                selected_child = Some(children.len());
-            }
-            children.push(
-                self.render_row(ix, item, selected_ix == Some(ix), cx)
-                    .into_any_element(),
-            );
-        }
-        if let Some(child) = selected_child {
-            self.scroll.scroll_to_item(child);
-        }
-
-        let list = panel(cx)
-            .flex_1()
-            .min_h(dp(LIST_MIN_HEIGHT))
-            .overflow_hidden()
-            .child(
-                v_flex()
-                    .id("security-list")
-                    .test_support()
-                    .role(Role::ListBox)
-                    .aria_label(
-                        "Certificates, RBAC role and volume encryption; arrows select an item",
-                    )
-                    .flex_1()
-                    .min_h_0()
-                    .pb_2()
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&self.scroll)
-                    .when(all.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .px_3()
-                                .py_3p5()
-                                .text_size(dp(12.5))
-                                .text_color(p.muted)
-                                .child("The audit reported nothing."),
-                        )
-                    })
-                    .children(children),
-            );
-        let details = self.details(selected_ix.map(|ix| &all[ix]), cx);
-        let wide = content_width(window) >= SIDE_DETAILS;
-        let split = if wide {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT))
-                .items_stretch()
-                .gap(dp(14.))
-                .child(v_flex().flex_1().min_w_0().min_h_0().child(list))
-                .child(
-                    div()
-                        .id("security-details")
-                        .w(dp(380.))
-                        .flex_none()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .child(details),
-                )
-        } else {
-            h_flex()
-                .flex_1()
-                .min_h(dp(LIST_MIN_HEIGHT + 14. + DETAILS_HEIGHT))
-                .child(
-                    v_flex().size_full().gap(dp(14.)).child(list).child(
-                        div()
-                            .id("security-details")
-                            .h(dp(DETAILS_HEIGHT))
-                            .flex_none()
-                            .overflow_y_scroll()
-                            .restrict_scroll_to_axis()
-                            .child(details),
-                    ),
-                )
-        };
-        v_flex()
-            .id("security-body")
+    /// The banners and the summary in an inset, then the table edge to
+    /// edge with the selection's details under it.
+    fn render_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Display { missing, stats, .. } = &self.display.1;
+        let inset = page::inset()
+            .id("security-inset")
             .test_support()
-            .flex_1()
-            .px(dp(page::PANE_PADDING))
-            .py(dp(page::PANE_PADDING_Y))
-            .gap(dp(14.))
+            .flex()
+            .flex_col()
+            .gap(dp(page::PANE_PADDING_Y))
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing.clone(), cx))
-            .child(summary)
-            .child(split)
-            .into_any_element()
+            .child(Self::summary(stats, cx));
+        let table = div()
+            .id("security-table")
+            .test_support()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .min_h(dp(inspector::STACKED_LIST_HEIGHT))
+            .child(DataTable::new().render(self, window, cx).flex_1().min_h_0());
+        let details = page::inset()
+            .id("security-details")
+            .h(dp(DETAILS_HEIGHT))
+            .flex_none()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(self.details(self.selected_item(), cx));
+        vec![
+            inset.into_any_element(),
+            table.into_any_element(),
+            details.into_any_element(),
+        ]
     }
 }

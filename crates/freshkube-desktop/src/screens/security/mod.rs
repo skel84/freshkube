@@ -13,28 +13,27 @@ use freshkube_core::security_lifecycle::{
     VolumeEncryptionAudit,
 };
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
+use freshkube_ui::inspector;
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::status::{Part, Segment};
+use freshkube_ui::table::TableState;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gate, mono, panel, partial_notice, refresh_control, segment, stat,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
+    panel, partial_notice, refresh_control, segment, stat,
 };
 use crate::palette::palette;
-use crate::ui::{self, MONO_FONT, Tone, dp};
+use crate::ui::{self, Tone, dp};
 
 const CONTEXT: &str = "TalosSecurity";
 /// The page header's id prefix.
 const PREFIX: &str = "security";
-const ROW_HEIGHT: f32 = 34.;
-/// Below this content width the details pane moves under the list.
-const SIDE_DETAILS: f32 = 920.;
-const LIST_MIN_HEIGHT: f32 = 240.;
+/// The details' height under the table.
 const DETAILS_HEIGHT: f32 = 260.;
 
 actions!(
@@ -44,23 +43,26 @@ actions!(
 
 mod audit;
 mod example;
+mod table;
 #[cfg(test)]
 mod tests;
 mod view;
 
-use audit::{Display, Item, Section, identity_parts};
+use audit::{Display, Item, identity_parts};
 #[cfg(test)]
-use audit::{Verdict, items};
+use audit::{Section, Verdict, items};
 use example::example;
 
 pub(crate) struct SecurityScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<SecurityAuditSnapshot>,
-    /// Selection survives refreshes by key; the first row shows until one is chosen.
-    selected: Option<String>,
+    /// The selected row's key, which survives a refresh that keeps the row.
+    selected: Option<SharedString>,
     focus: FocusHandle,
-    scroll: ScrollHandle,
+    table: TableState,
+    /// The table's columns for the derived rows, and their total width.
+    columns: (Vec<table::Column>, f32),
     /// The meta line's parts for the audit at a loader revision.
     status: Option<(u64, Segment)>,
     /// The audit's rows and counts at a loader revision.
@@ -83,7 +85,8 @@ impl ScreenPanel for SecurityScreen {
             loader: Loader::default(),
             selected: None,
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            table: TableState::new(PREFIX),
+            columns: table::columns(&[]),
             status: None,
             display: (u64::MAX, Display::default()),
         }
@@ -174,27 +177,27 @@ impl SecurityScreen {
             return;
         }
         let display = self.loader.data().map(Display::new).unwrap_or_default();
+        self.columns = table::columns(&display.items);
         self.display = (revision, display);
     }
 
-    /// Index of the selected row; the first row until the user picks one.
-    fn selected_index(&self, items: &[Item]) -> Option<usize> {
-        match &self.selected {
-            Some(key) => items.iter().position(|item| &item.key == key),
-            None => (!items.is_empty()).then_some(0),
-        }
+    /// The selected row, while it is listed.
+    fn selected_item(&self) -> Option<&Item> {
+        let key = self.selected.as_ref()?;
+        self.items().iter().find(|item| &item.key == key)
+    }
+
+    fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
+        self.selected = Some(key);
+        freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
+        cx.notify();
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         self.sync();
-        let items = self.items();
-        if items.is_empty() {
-            return;
+        if let Some(key) = freshkube_ui::table::step(self, delta, cx) {
+            self.select(key, cx);
         }
-        let current = self.selected_index(&items).unwrap_or(0);
-        let next = current.saturating_add_signed(delta).min(items.len() - 1);
-        self.selected = Some(items[next].key.clone());
-        cx.notify();
     }
 
     /// Derives the status bar's line again when a new audit arrives.
