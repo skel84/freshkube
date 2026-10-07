@@ -13,7 +13,6 @@
 //! - [`types`] - Core domain types (Cluster, Node, Service, etc.)
 //! - [`indicators`] - Health and status indicators for consistent UI representation
 //! - [`formatting`] - Utilities for formatting bytes, durations, percentages, etc.
-//! - [`selection`] - Generic selection logic for list-based UI components
 //! - [`errors`] - Error formatting utilities for user-friendly messages
 //! - [`network`] - Network analysis utilities (port mapping, connection classification)
 //! - [`diagnostics`] - Diagnostic types for health checks and CNI detection
@@ -46,7 +45,6 @@ pub mod operations;
 pub mod pcap;
 pub mod resources;
 pub mod security_lifecycle;
-pub mod selection;
 pub mod types;
 pub mod workloads;
 
@@ -57,7 +55,6 @@ pub use diagnostics::*;
 pub use errors::*;
 pub use formatting::*;
 pub use indicators::*;
-pub use selection::*;
 pub use types::*;
 
 // Network is not re-exported at root to avoid name conflicts
