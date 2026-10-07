@@ -728,6 +728,7 @@ fn render_line<S: TableSource>(
             p.line,
         ));
     }
+    let menu_id = ElementId::from((row.id.clone(), "menu"));
     let key = row.key;
     let menu = source
         .menu_focus(cx)
@@ -738,18 +739,25 @@ fn render_line<S: TableSource>(
         )
     });
     Some(match menu {
-        Some((focus, key, view)) => element
+        // The menu draws inside its trigger and takes its text style, so
+        // the trigger is a wrapper in the UI font around the monospace row.
+        Some((focus, key, view)) => div()
+            .id(menu_id)
+            .w_full()
+            .font_family(cx.theme().font_family.clone())
+            .child(element)
             .context_menu(move |menu, window, cx| {
                 let actions = view
                     .update(cx, |view, cx| view.row_menu(&key, window, cx))
                     .unwrap_or_default();
                 let (view, key) = (view.clone(), key.clone());
-                super::menu::row_menu(menu, actions, &focus, move |cx| {
+                let live = move |cx: &App| {
                     view.upgrade().is_some_and(|view| {
                         let view = view.read(cx);
                         view.selected_key() == Some(&key) && view.line_of(&key).is_some()
                     })
-                })
+                };
+                super::menu::row_menu(menu, actions, &focus, live, cx)
             })
             .into_any_element(),
         None => element.into_any_element(),
