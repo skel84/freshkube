@@ -59,8 +59,13 @@ pub(super) fn printed_tone(text: &str) -> ui::Tone {
     }
 }
 
+/// A cell's tooltip, hidden while the row's menu is open over it.
 fn tooltip(this: Stateful<Div>, text: impl Fn() -> String + 'static) -> Stateful<Div> {
-    this.tooltip(move |window, cx| Tooltip::new(text()).build(window, cx))
+    this.tooltip(move |window, cx| {
+        let text = text();
+        let tip = Tooltip::new(text.clone()).build(window, cx);
+        freshkube_ui::tooltip::unless_menu(tip, text, cx)
+    })
 }
 
 /// The glyph, or a check where the row is marked.
