@@ -9,8 +9,8 @@ use crate::proto::machine::machine_service_client::MachineServiceClient;
 use crate::proto::machine::{EtcdMemberListRequest, LogsRequest, NetstatRequest, netstat_request};
 use crate::proto::time::time_service_client::TimeServiceClient;
 use crate::target::{is_loopback, target_host};
+use futures::StreamExt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio_stream::StreamExt;
 use tonic::Request;
 use tonic::transport::Channel;
 
