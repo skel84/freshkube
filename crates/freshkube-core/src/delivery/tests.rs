@@ -184,9 +184,12 @@ async fn a_freight_can_join_on_the_commit_alone() {
         one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
         Confidence::Unknown
     );
-    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    // No build is named: the change stands against the Freight's commit.
+    assert!(link(&trail, Hop::PipelineRun, Hop::Freight).is_empty());
+    let freight = one(&trail, Hop::Commit, Hop::Freight);
     assert_eq!(freight.confidence, Confidence::Confirmed);
     assert_eq!(freight.key, Key::Sha(SHA.into()));
+    assert_eq!(freight.subject, "storefront/f-new");
 }
 
 #[tokio::test]

@@ -15,6 +15,7 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
     match hop {
         // A pull request joins the Freight through the build of its head.
         Hop::PullRequest => &["PullRequest", "PipelineRun"],
+        // The change itself, or the Freight's commit it was joined to.
         Hop::Commit => &["Commit"],
         Hop::PipelineRun => &["PipelineRun", "TaskRun"],
         // Only an annotation of Chains' says a build was signed, and it is
@@ -60,9 +61,6 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
 /// declared only, or absent. Provenance shows them as they are; whether they
 /// stay confirmed is for the confidence slice (#387).
 const KNOWN_GAPS: &[(&str, &str, &str)] = &[
-    // #387: the commit joined a Freight with no build read, or with a build that
-    // reports no digest: only its declared labels name the commit.
-    ("PipelineRun", "Freight", "PipelineRun"),
     // #387: Chains' `signed` annotation is all that says it, and it is declared.
     ("PipelineRun", "supply chain", "supply chain"),
     // #387: the Rollout's spec pin is declared, and Argo CD's resource list names
@@ -151,6 +149,7 @@ async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
         (Hop::Commit, Hop::PipelineRun),
         (Hop::PipelineRun, Hop::SupplyChain),
         (Hop::PipelineRun, Hop::Freight),
+        (Hop::Commit, Hop::Freight),
         (Hop::Freight, Hop::Promotion),
         (Hop::Freight, Hop::Stage),
         (Hop::Stage, Hop::Application),
@@ -269,6 +268,81 @@ async fn a_result_naming_another_commit_is_a_claim_whatever_the_declared_fields_
         commit.reason.contains(&OTHER_SHA[..12]),
         "{}",
         commit.reason
+    );
+}
+
+/// Builds of `SHA` that report no image, so the Freight joins on the commit.
+fn sha_joined(reported: Option<&str>) -> World {
+    let mut world = build_world(Some(SHA), reported);
+    world.tekton = world
+        .tekton
+        .with("pipelineruns", vec![pipeline_run(SHA, true, None)]);
+    world
+}
+
+#[tokio::test]
+async fn a_sha_joined_freight_with_no_build_joins_the_commit_itself() {
+    let mut world = healthy().with_meta();
+    world.tekton = world.tekton.with("pipelineruns", vec![]);
+    let trail = run(&world, &ENV).await;
+    assert!(link(&trail, Hop::PipelineRun, Hop::Freight).is_empty());
+    let freight = one(&trail, Hop::Commit, Hop::Freight);
+    assert_eq!(freight.confidence, Confidence::Confirmed);
+    assert_eq!(freight.key, Key::Sha(SHA.into()));
+    for hop in [Hop::Commit, Hop::Freight] {
+        assert!(stands_on(freight, hop), "{hop:?}: {freight:#?}");
+    }
+    // No PipelineRun is named: none was seen.
+    assert!(
+        freight
+            .evidence
+            .iter()
+            .all(|seen| seen.object.kind != "PipelineRun"),
+        "{freight:#?}"
+    );
+    // The chain still reaches the pods, so the summary reads as before.
+    assert!(
+        trail
+            .summary()
+            .starts_with("running, confirmed: pods run the digest; "),
+        "{}",
+        trail.summary()
+    );
+    assert_eq!(trail.running(), Some(Confidence::Confirmed));
+}
+
+#[tokio::test]
+async fn a_sha_joined_freight_whose_build_has_only_a_label_is_a_claim() {
+    let trail = run(&sha_joined(None), &ENV).await;
+    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    assert_eq!(freight.key, Key::Sha(SHA.into()));
+    assert_eq!(freight.confidence, Confidence::Claimed);
+    assert!(
+        freight.reason.contains(
+            "the Freight reports the commit; the build's tie to it is its declared label"
+        ),
+        "{}",
+        freight.reason
+    );
+    assert!(!stands_on(freight, Hop::PipelineRun));
+    assert!(stands_on(freight, Hop::Freight));
+}
+
+#[tokio::test]
+async fn a_sha_joined_freight_whose_build_reports_the_commit_stays_confirmed() {
+    let trail = run(&sha_joined(Some(SHA)), &ENV).await;
+    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    assert_eq!(freight.confidence, Confidence::Confirmed);
+    for hop in [Hop::PipelineRun, Hop::Freight] {
+        assert!(stands_on(freight, hop), "{hop:?}: {freight:#?}");
+    }
+    // Only reported observations stand on either side.
+    assert!(
+        freight
+            .evidence
+            .iter()
+            .all(|seen| seen.fact == Fact::Reported),
+        "{freight:#?}"
     );
 }
 

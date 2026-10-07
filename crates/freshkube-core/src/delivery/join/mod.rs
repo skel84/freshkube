@@ -29,7 +29,7 @@ use super::argocd::{Application, DestinationMatch, StageNaming};
 use super::digest::Digest;
 use super::github::PullRequest;
 use super::kargo::{Freight, KargoRead};
-use super::observation::Observation;
+use super::observation::{Fact, Observation};
 use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
@@ -364,6 +364,48 @@ fn matching_freight<'a>(
     found
 }
 
+/// The link into a Freight the change reached: from the PipelineRun when the
+/// join has a build to stand on, else from the commit itself.
+///
+/// On a digest, a build reported the image. On the SHA, only a result of a
+/// build reports the commit; a build tied to it by its PaC label alone makes
+/// the link a claim, and with no build at all the Freight's own commit stands
+/// against the change.
+fn build_freight(
+    builds: &[Build],
+    names: &CommitNames,
+    sha: &str,
+    freight: &Freight,
+    key: &Key,
+) -> (Hop, Confidence, String, Vec<Observation>) {
+    let summary = freight_summary(freight, sha);
+    let mut seen = observe::builds_side(builds, names, key);
+    if matches!(key, Key::Digest(_)) {
+        seen.extend(observe::freight_side(freight, key));
+        return (Hop::PipelineRun, Confidence::Confirmed, summary, seen);
+    }
+    if builds.is_empty() {
+        let mut seen = vec![observe::change(sha)];
+        seen.extend(observe::freight_side(freight, key));
+        return (Hop::Commit, Confidence::Confirmed, summary, seen);
+    }
+    let reported = seen.iter().any(|seen| seen.fact == Fact::Reported);
+    seen.extend(observe::freight_side(freight, key));
+    if reported {
+        seen.retain(|seen| seen.fact == Fact::Reported);
+        (Hop::PipelineRun, Confidence::Confirmed, summary, seen)
+    } else {
+        (
+            Hop::PipelineRun,
+            Confidence::Claimed,
+            format!(
+                "the Freight reports the commit; the build's tie to it is its declared label; {summary}"
+            ),
+            seen,
+        )
+    }
+}
+
 /// The Rollouts whose pods should be read: those an Application managed by a
 /// Stage that reports one of `freight` as current points at, when the
 /// Application deploys to the environment cluster. Used by the collector so
@@ -540,16 +582,15 @@ pub fn join(evidence: &Evidence) -> Trail {
         ));
     }
     for (freight, key) in &matched {
-        let mut seen = observe::builds_side(builds, names, key);
-        seen.extend(observe::freight_side(freight, key));
+        let (from, confidence, reason, seen) = build_freight(builds, names, sha, freight, key);
         links.push(
             Link::new(
-                Hop::PipelineRun,
+                from,
                 Hop::Freight,
                 id(&freight.project, &freight.name),
                 key.clone(),
-                Confidence::Confirmed,
-                freight_summary(freight, sha),
+                confidence,
+                reason,
             )
             .observed(seen),
         );
