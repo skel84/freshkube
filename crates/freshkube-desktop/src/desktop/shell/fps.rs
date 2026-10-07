@@ -1,5 +1,6 @@
-//! Passive frame sampling. Painting records a timestamp; only this small
-//! indicator is notified once a second, and only when its reading changes.
+//! Passive frame sampling. The shell's render marks when a frame starts and
+//! painting when it ends; only this small indicator is notified once a
+//! second, and only when its reading changes.
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -16,30 +17,66 @@ use crate::{
 };
 
 const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
-const IDLE_GAP: Duration = Duration::from_millis(250);
+/// A frame that starts this soon after the last paint was wanted while that
+/// one drew: scrolling, an animation, a flood of lines. The gap between the
+/// two paints is then the frame rate.
+const BACK_TO_BACK: Duration = Duration::from_millis(20);
+/// A frame whose own work, from the shell's render to this paint, takes
+/// longer than this counts however long the app waited before it, so slow
+/// frames read red without input. Only sparse, quick frames read idle.
+const SLOW_FRAME: Duration = Duration::from_millis(33);
+/// The counted time a second needs before it reads anything: about nine
+/// frames at 60 FPS. A followed log's few pairs of frames, a new line
+/// measured and then drawn, stay idle.
+const ACTIVE: Duration = Duration::from_millis(150);
 
 #[derive(Default)]
 struct Frames {
+    started: Option<Instant>,
     last: Option<Instant>,
     elapsed: Duration,
     intervals: u32,
 }
 
 impl Frames {
+    fn start(&mut self, now: Instant) {
+        self.started = Some(now);
+    }
+
     fn paint(&mut self, now: Instant) {
-        if let Some(last) = self.last.replace(now) {
-            let elapsed = now.saturating_duration_since(last);
-            // Sparse event-driven redraws do not indicate slow animation.
-            // Ignore duplicate paints at one instant in headless tests, too.
-            if !elapsed.is_zero() && elapsed < IDLE_GAP {
-                self.elapsed += elapsed;
-                self.intervals += 1;
+        let started = self.started.take();
+        let Some(last) = self.last.replace(now) else {
+            return;
+        };
+        let gap = now.saturating_duration_since(last);
+        let work = started.map(|started| now.saturating_duration_since(started));
+        #[cfg(feature = "stress")]
+        {
+            crate::perf::value("frame.gap", gap.as_secs_f64() * 1000.);
+            if let Some(work) = work {
+                crate::perf::value("frame.cpu", work.as_secs_f64() * 1000.);
             }
+        }
+        // A followed log redraws every 100 ms or so in a few milliseconds:
+        // sparse, quick frames say nothing about the frame rate. Ignore
+        // duplicate paints at one instant in headless tests, too.
+        let waited = started.map_or(gap, |started| started.saturating_duration_since(last));
+        let interval = if waited < BACK_TO_BACK {
+            gap
+        } else {
+            match work {
+                Some(work) if work > SLOW_FRAME => work,
+                _ => return,
+            }
+        };
+        if !interval.is_zero() {
+            self.elapsed += interval;
+            self.intervals += 1;
         }
     }
 
     fn sample(&mut self) -> Option<u32> {
-        let fps = (self.intervals >= 3)
+        let fps = (self.elapsed >= ACTIVE)
             .then(|| (f64::from(self.intervals) / self.elapsed.as_secs_f64()).round() as u32);
         self.elapsed = Duration::ZERO;
         self.intervals = 0;
@@ -71,6 +108,9 @@ impl Fps {
                 if this
                     .update(cx, |this: &mut Self, cx| {
                         let fps = this.frames.borrow_mut().sample();
+                        // A stress run records each reading, idle as 0.
+                        #[cfg(feature = "stress")]
+                        crate::perf::value("frame.meter", f64::from(fps.unwrap_or(0)));
                         if this.fps != fps {
                             this.fps = fps;
                             this.label = fps.map_or_else(
@@ -92,6 +132,11 @@ impl Fps {
             label: "FPS idle".into(),
             _task: task,
         }
+    }
+
+    /// Marks the start of a frame; the shell renders first in every frame.
+    pub(in crate::desktop) fn frame_started(&self, now: Instant) {
+        self.frames.borrow_mut().start(now);
     }
 }
 
@@ -123,7 +168,7 @@ impl Render for Fps {
                 frames.borrow_mut().paint(cx.background_executor().now());
             }).absolute().size_full())
             .tooltip(|window, cx| Tooltip::new(
-                "Rendered frames per second during activity: green 55+, amber 30–54, red below 30. Idle means redraws are sparse."
+                "Frame rate while drawing back to back or slowly: green 55+, amber 30–54, red below 30."
             ).build(window, cx))
     }
 }
@@ -139,29 +184,110 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    /// Paints ten frames `every` apart, each taking `work`, and samples them.
+    fn sampled(every: u64, work: u64) -> Option<u32> {
+        let mut frames = Frames::default();
+        let start = Instant::now();
+        frames.paint(start);
+        for n in 1..=10 {
+            let painted = start + Duration::from_millis(n * every);
+            frames.start(painted - Duration::from_millis(work));
+            frames.paint(painted);
+        }
+        frames.sample()
+    }
+
     #[test]
-    fn activity_colors_and_idle_do_not_confuse_sparse_redraws_with_slow_frames() {
-        for (millis, expected, color) in [
+    fn frames_drawn_back_to_back_read_their_rate() {
+        for (every, expected, color) in [
             (16, 63, Tone::Good),
             (25, 40, Tone::Warn),
             (50, 20, Tone::Crit),
+            (80, 13, Tone::Crit),
         ] {
-            let mut frames = Frames::default();
-            let start = Instant::now();
-            for n in 0..=10 {
-                frames.paint(start + Duration::from_millis(n * millis));
-            }
-            let fps = frames.sample();
+            // Each frame starts a millisecond after the last one painted.
+            let fps = sampled(every, every - 1);
             assert_eq!(fps, Some(expected));
             assert_eq!(tone(fps), color);
-            assert_eq!(frames.sample(), None);
-            frames.paint(start + Duration::from_secs(3));
-            frames.paint(start + Duration::from_secs(4));
-            assert_eq!(frames.sample(), None);
         }
         assert_eq!(tone(None), Tone::Unknown);
         assert_eq!(tone(Some(55)), Tone::Good);
         assert_eq!(tone(Some(30)), Tone::Warn);
+    }
+
+    #[test]
+    fn a_sparse_quick_followed_log_reads_idle() {
+        // Lines arrive every 100 ms and each frame takes 6 ms (#312).
+        assert_eq!(sampled(100, 6), None);
+        // A held key repeating every 30 ms, drawn in 5 ms.
+        assert_eq!(sampled(30, 5), None);
+        // Duplicate paints at one instant, as headless tests draw.
+        assert_eq!(sampled(0, 0), None);
+        // Five lines in a second, each measured and then drawn: five pairs of
+        // frames 17 ms apart.
+        let mut frames = Frames::default();
+        let start = Instant::now();
+        for n in 0..5 {
+            let first = start + Duration::from_millis(n * 200);
+            frames.start(first - Duration::from_millis(6));
+            frames.paint(first);
+            frames.start(first + Duration::from_millis(11));
+            frames.paint(first + Duration::from_millis(17));
+        }
+        assert_eq!(frames.intervals, 5);
+        assert_eq!(frames.sample(), None);
+    }
+
+    #[test]
+    fn slow_frames_without_input_read_red() {
+        // A frame every 100 ms that takes 60 ms of it, waiting 40 ms first.
+        let fps = sampled(100, 60);
+        assert_eq!(fps, Some(17));
+        assert_eq!(tone(fps), Tone::Crit);
+        // Slower than the old 250 ms cut: a 400 ms frame after a pause.
+        let mut frames = Frames::default();
+        let start = Instant::now();
+        frames.paint(start);
+        for n in 1..=3 {
+            let painted = start + Duration::from_millis(n * 500);
+            frames.start(painted - Duration::from_millis(400));
+            frames.paint(painted);
+        }
+        assert_eq!(frames.sample(), Some(3));
+        assert_eq!(frames.sample(), None);
+    }
+
+    #[gpui_kit::test]
+    fn the_shell_marks_each_frame_start(cx: &mut TestAppContext) {
+        let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 880.);
+        let frames = view.read_with(cx, |view, cx| view.fps.read(cx).frames.clone());
+        // A stale start 90 ms ago would make the next frame a slow one; the
+        // shell's render replaces it with the frame's own, a quick one.
+        let now = cx.executor().now();
+        frames.borrow_mut().last = Some(now - Duration::from_millis(100));
+        frames.borrow_mut().start(now - Duration::from_millis(90));
+        let before = frames.borrow().intervals;
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        assert_eq!(frames.borrow().intervals, before);
+        assert!(frames.borrow().started.is_none());
+        // Counts the intervals four frames add, reading around each frame so
+        // the meter's own sampling between them doesn't matter.
+        let draw = |cx: &mut TestAppContext, every: u64| {
+            let mut counted = 0;
+            for _ in 0..4 {
+                cx.executor().advance_clock(Duration::from_millis(every));
+                let before = frames.borrow().intervals;
+                cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+                    .unwrap();
+                counted += frames.borrow().intervals - before;
+            }
+            counted
+        };
+        draw(cx, 16);
+        // Headless frames take no time: sparse ones read idle, close ones count.
+        assert_eq!(draw(cx, 100), 0);
+        assert_eq!(draw(cx, 16), 4);
     }
 
     #[gpui_kit::test]
@@ -198,7 +324,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(notices.get(), 0);
-        for _ in 0..4 {
+        // The first frame follows an idle second; ten intervals of 16 ms read.
+        for _ in 0..11 {
             cx.executor().advance_clock(Duration::from_millis(16));
             cx.update_window(handle.into(), |_, window, cx| {
                 window.render_frame(cx);

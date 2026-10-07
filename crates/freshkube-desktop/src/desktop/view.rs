@@ -4,6 +4,9 @@ use freshkube_probe::first_frame::FirstFrame;
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
+        self.fps
+            .read(cx)
+            .frame_started(cx.background_executor().now());
         // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,
         // whatever page it opens on and in release builds too: the release
         // smoke check waits for this line.
