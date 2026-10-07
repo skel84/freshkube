@@ -138,14 +138,18 @@ fn object(
         tab,
     )
 }
+/// How long a state has held, in the format Pods' group rows give it
+/// (`format_age`), so both pages say "198d" for the same node.
 fn standing(since: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
-    let seconds = since.map(|since| now.signed_duration_since(since).num_seconds().max(0));
-    match seconds {
-        Some(seconds) if seconds >= 3600 => format!(" for {} h", seconds / 3600),
-        Some(seconds) if seconds >= 60 => format!(" for {} min", seconds / 60),
-        Some(seconds) => format!(" for {seconds} s"),
-        None => String::new(),
-    }
+    since
+        .map(|since| {
+            let seconds = now.signed_duration_since(since).num_seconds().max(0);
+            format!(
+                " for {}",
+                crate::resources::model::format_age(seconds as u64)
+            )
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn build(

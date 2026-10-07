@@ -178,7 +178,7 @@ fn node_problems_merge_and_unknown_service_health_stays_unknown() {
     assert_eq!(node.since, since);
     assert_eq!(
         node.reason,
-        "Talos API not answering · Kubernetes NotReady for 10 min · 1 unhealthy system services · Memory at 95 %"
+        "Talos API not answering · Kubernetes NotReady for 10m · 1 unhealthy system services · Memory at 95 %"
     );
     assert!(matches!(&node.open, Destination::Node(key, NodeTab::Overview) if key == &row.key));
     let service = &attention.rows[1];
@@ -190,6 +190,29 @@ fn node_problems_merge_and_unknown_service_health_stays_unknown() {
     assert!(
         matches!(&service.open_node, Some(Destination::Node(key, NodeTab::Services)) if key == &row.key)
     );
+}
+
+#[test]
+fn a_long_not_ready_reads_as_pods_gives_it() {
+    // 4775 h, as the example's NotReady node: Pods' group row says 198d.
+    let mut row = node();
+    let ready = row
+        .kubernetes
+        .as_mut()
+        .unwrap()
+        .conditions
+        .iter_mut()
+        .find(|condition| condition.kind == "Ready")
+        .unwrap();
+    ready.status = "False".into();
+    ready.since = Some(now() - chrono::Duration::hours(4775));
+    let attention = build(&[row], None, None, now());
+    let reason = &attention.rows[0].reason;
+    assert!(reason.contains("Kubernetes NotReady for 198d"), "{reason}");
+    assert!(reason.contains(&format!(
+        "NotReady for {}",
+        crate::resources::model::format_age(4775 * 3600)
+    )));
 }
 
 #[test]
