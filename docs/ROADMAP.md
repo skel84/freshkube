@@ -16,6 +16,7 @@ These hold for every step until a later one deliberately changes them.
 
 | Step | What landed | Commit |
 | --- | --- | --- |
+| System services actions ([#46](https://github.com/skel84/freshkube/issues/46), step 6.11) | The actions column goes. Logs and Open node act on the selected row from the toolbar (folding into its "…" menu), the row's context menu and keys: L, O or Enter, with the arrows to select and Escape to clear. The list takes the keyboard when the page shows, and its key context sits around the table, so the filter types those letters. A filter that hides the selected row clears it | the commit that adds this row |
 | Actions on the selection ([#46](https://github.com/skel84/freshkube/issues/46), step 6.10) | Resources and Nodes act on the selected row: a right-click selects it and opens its menu (`freshkube_ui::table::row_menu`), each action with its key, and acts only on the row it was opened for. Group rows lose their action buttons to the menu and the keys (Shift-X, O, H); the healthy group keeps its chevron. | the commit that adds this row |
 | Cluster source seam ([#53](https://github.com/skel84/freshkube/issues/53), [#356](https://github.com/skel84/freshkube/issues/356)) | Monitoring and Observability no longer import `crate::resources`. Core's `cluster_source` holds `ClusterSource { id, context, access }` and `ClusterAccess { Example, Live(Arc<dyn KubeClientSource>) }`; desktop's `KubeSource::cluster()` wraps a clone of the existing `KubeAccess`, so its client caching is unchanged, and Observability takes the connection id alone. No behaviour change: desktop's 917 tests pass unchanged apart from the monitoring page tests' source, which is now a `ClusterSource` with a client stub, and core adds two tests (1790 → 1792 in the workspace). | the commit that adds this row |
 | Coroot severity colours ([#226](https://github.com/skel84/freshkube/issues/226), item 2) | A Coroot chart of log severities, the Logs report's histogram and a pattern's chart (`ChartPanel::severities`), draws each severity in the Console colour nearest the one Coroot names (`SeriesColor::severity`): fatal and error critical, warning amber, info blue, debug green, trace and unknown grey. `PanelView::set_named_colors` hands them to the derive, which draws a named series in its colour, focused or not; a series with no colour or an unknown one keeps its turn. Other Coroot charts keep their turn, since there Coroot's colours are categorical, and Prometheus dashboards still ignore theirs | the commit that adds this row |
@@ -312,12 +313,11 @@ One ordered list. A step starts when the one above it is done or explicitly runs
 ### 1. Finish the visual system and #22
 
 [#46](https://github.com/skel84/freshkube/issues/46) makes every page look like Pods. Its checklist was brought up to date on 7 October 2026:
-- Every page is on the shared components: Monitoring (4.5), every control-plane page through Maintenance (4.6), and the desktop-grade changes 6.0–6.10, 6.12 and 6.13.
+- Every page is on the shared components: Monitoring (4.5), every control-plane page through Maintenance (4.6), and the desktop-grade changes 6.0–6.13.
 - The style allowlist is empty, and the check fails CI on any offence.
 - The 6 October polish issues are closed, and so is [#22](https://github.com/skel84/freshkube/issues/22).
 
 What remains:
-- 6.11 (System services without an actions column).
 - The closing `smoke.sh pages` pass, in light and dark, at 760 × 560 and at 20 px text. It becomes the new capture baseline.
 
 ### 2. Linux and Windows releases

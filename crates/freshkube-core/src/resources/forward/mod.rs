@@ -452,7 +452,7 @@ fn service_route(service: &Service, port: u16) -> Result<(String, RemotePort), F
     Ok((selector, RemotePort::of_service(service_port)))
 }
 
-fn api_resource(kind: &ResourceKind) -> ApiResource {
+pub(crate) fn api_resource(kind: &ResourceKind) -> ApiResource {
     ApiResource {
         group: kind.group.clone(),
         version: kind.version.clone(),

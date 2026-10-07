@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::*;
+use crate::base_url::parse_base_url;
 use tokio::sync::Semaphore;
 
 const DEADLINE: Duration = Duration::from_secs(20);
@@ -31,16 +32,7 @@ impl Provider {
         {
             return Err(ReadError::Authentication);
         }
-        let parsed = url::Url::parse(url).map_err(|_| ReadError::InvalidUrl)?;
-        if !matches!(parsed.scheme(), "http" | "https")
-            || parsed.host_str().is_none()
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err(ReadError::InvalidUrl);
-        }
+        parse_base_url(url).map_err(|_| ReadError::InvalidUrl)?;
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))

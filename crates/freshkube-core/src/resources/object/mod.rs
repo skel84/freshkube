@@ -115,9 +115,13 @@ impl fmt::Debug for SecretValue {
     }
 }
 
-pub(crate) fn json_get(path: String) -> Result<Request<Vec<u8>>, Failure> {
+/// The Accept header of an ordinary JSON read.
+pub(crate) const JSON: &str = "application/json";
+
+/// A GET request for `path` that accepts `accept`.
+pub(crate) fn json_get(path: String, accept: &str) -> Result<Request<Vec<u8>>, Failure> {
     Request::get(path)
-        .header(header::ACCEPT, "application/json")
+        .header(header::ACCEPT, accept)
         .body(Vec::new())
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))
 }
@@ -132,7 +136,7 @@ pub async fn get_object(
 ) -> Result<ObjectDocument, Failure> {
     // A YAML value keeps the server's field order, which JSON maps don't.
     let object: Value = client
-        .request(json_get(kind.object_path(namespace, name))?)
+        .request(json_get(kind.object_path(namespace, name), JSON)?)
         .await
         .map_err(Failure::from_kube)?;
     document(kind, object)
@@ -186,7 +190,7 @@ pub async fn reveal_secret_value(
 ) -> Result<SecretValue, Failure> {
     let kind = ResourceKind::new("", "v1", "Secret", "secrets", true);
     let object: serde_json::Value = client
-        .request(json_get(kind.object_path(Some(namespace), name))?)
+        .request(json_get(kind.object_path(Some(namespace), name), JSON)?)
         .await
         .map_err(Failure::from_kube)?;
     secret_value(&object, uid, key)
