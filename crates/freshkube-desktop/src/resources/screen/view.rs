@@ -248,9 +248,11 @@ impl ResourcesScreen {
         table::data_table(self, window, cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
-            // Over the table. Its frames still redraw this page and the
-            // shell above it, as the skeleton's did.
-            .child(self.loading_motion.clone())
+            // Embedded in the node pane, the motion goes over the table;
+            // the page's goes beside it in the shell (`loading_motion`).
+            .when(self.embedded, |this| {
+                this.child(self.loading_motion.clone())
+            })
             .into_any_element()
     }
 
@@ -459,6 +461,7 @@ impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("resources");
         let _span = crate::perf::span("table.render");
+        let _page = crate::perf::span("page.render");
         self.status();
         // A dock that opens or grows takes the list's room from below;
         // the list scrolls as it lays out to keep its selection in sight.

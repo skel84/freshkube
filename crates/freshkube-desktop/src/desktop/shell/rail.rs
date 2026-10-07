@@ -132,6 +132,8 @@ impl Pilot {
             }))
             .children(tone.map(|tone| {
                 ui::badge_dot(tone, Some(cx.theme().sidebar), cx)
+                    .id("rail-mark")
+                    .test_support()
                     .absolute()
                     .top(dp(8.))
                     .right(dp(8.))

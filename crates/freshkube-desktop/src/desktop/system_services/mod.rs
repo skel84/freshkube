@@ -255,6 +255,12 @@ impl SystemServices {
         );
         self.rebuild(cx);
     }
+    /// The motion over the table's loading rows, which the shell mounts
+    /// beside the cached page, so its frames redraw neither.
+    pub(super) fn loading_motion(&self) -> &Entity<table::LoadingMotion> {
+        &self.loading_motion
+    }
+
     pub(super) fn set_reading(&mut self, reading: Reading, cx: &mut Context<Self>) {
         if reading != self.reading {
             self.reading = reading;
@@ -496,19 +502,15 @@ impl SystemServices {
             .flex_1()
             .min_h_0()
             .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
-            .child(
-                table::data_table(self, window, cx)
-                    .flex_1()
-                    .min_h_0()
-                    // Over the table. Its frames still redraw this page and
-                    // the shell above it, as the skeleton's did.
-                    .child(self.loading_motion.clone()),
-            )
+            // The motion over its loading rows goes beside the page, in
+            // the shell (`loading_motion`).
+            .child(table::data_table(self, window, cx).flex_1().min_h_0())
     }
 }
 
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _span = crate::perf::span("page.render");
         // A short window scrolls the frame, so the list keeps some rows.
         let short = page::is_short(window);
         page::page("system-services-page")

@@ -218,6 +218,9 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
+    /// Example lists hold their answers (`fixture::hold`), so the page
+    /// stays on its loading rows.
+    pub(crate) hold: bool,
     field_selector: Option<String>,
     embedded: bool,
     runtime: Handle,
@@ -418,6 +421,7 @@ impl ResourcesScreen {
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
             layout_for: None,
+            hold: crate::fixture::hold().lists,
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
@@ -731,6 +735,16 @@ impl ResourcesScreen {
         )
     }
 
+    /// The motion over the page's loading rows, which the shell mounts
+    /// beside the cached page while the page shows, so its frames redraw
+    /// neither the page nor its table. Only while the table draws those
+    /// rows: a refusal or a failure replaces the table, and the motion
+    /// goes with it. An embedded list keeps its own.
+    pub(crate) fn loading_motion(&self) -> Option<Entity<table::LoadingMotion>> {
+        (!self.embedded && table::TableSource::loading(self).is_some())
+            .then(|| self.loading_motion.clone())
+    }
+
     /// Starts a new read session: forgets the rows, and when visible lists
     /// and watches the kind for the current connection and namespace.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -772,6 +786,9 @@ impl ResourcesScreen {
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
         if let KubeAccess::Example = source.access {
+            if self.hold {
+                return;
+            }
             let events = match example::read_filtered(
                 &source.context,
                 &kind.key(),

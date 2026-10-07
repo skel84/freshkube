@@ -9,7 +9,10 @@
 //! around it, so motion inside the table would redraw the table on every
 //! frame. The motion dims the bars (Pulse) or sweeps a light band across
 //! them (Shimmer) where the table's last frame put them, on the executor's
-//! clock, and under reduced motion draws nothing and asks no frames.
+//! clock, and under reduced motion draws nothing and asks no frames. It
+//! paints where the table recorded, in window coordinates, so it may sit
+//! anywhere after the table: the app's shell draws the shown page's motion
+//! beside the page, which stays cached.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -232,7 +235,10 @@ fn place(slots: &[Slot], region: Bounds<Pixels>, window: &Window) -> Vec<Bar> {
 /// The moving half of the loading rows: a small view over the table that
 /// moves the bars the table painted, so its frames never redraw the table.
 /// Once the table draws its rows instead, it draws nothing and asks no
-/// frames.
+/// frames. Only a drawn table stills it, so whoever mounts it must stop
+/// once something else replaces the table. Mounted beside a page, it
+/// paints after everything drawn before it, the status bar too; that is
+/// safe, since it paints only within the table's viewport.
 pub struct LoadingMotion {
     id: SharedString,
     painted: Rc<RefCell<Painted>>,
@@ -255,6 +261,7 @@ impl LoadingMotion {
 impl Render for LoadingMotion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         freshkube_probe::probe::hit("table.loading-motion");
+        let _span = freshkube_probe::perf::span("table.loading-motion");
         let showing = {
             let mut painted = self.painted.borrow_mut();
             painted.motion = Some(cx.entity_id());

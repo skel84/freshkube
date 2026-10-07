@@ -380,10 +380,11 @@ impl Pilot {
                     .ghost()
                     .small()
                     .rounded(px(12.))
-                    .icon(IconName::RefreshCw)
-                    .loading(loading)
+                    .icon(ui::refresh_icon(loading, cx))
                     .accessibility_label("Refresh now")
-                    .tooltip(if ring_visible {
+                    .tooltip(if loading {
+                        "Refreshing…".into()
+                    } else if ring_visible {
                         format!("Refresh now · next Talos refresh in {next_in} s")
                     } else {
                         "Refresh now".into()

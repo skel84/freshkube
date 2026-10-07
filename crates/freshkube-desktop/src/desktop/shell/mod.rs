@@ -499,6 +499,8 @@ impl Pilot {
     }
 }
 
+mod chrome;
+pub(super) use chrome::ChromeParts;
 mod column;
 mod context;
 pub(super) use context::ContextDisplay;

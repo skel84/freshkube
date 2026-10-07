@@ -15,6 +15,9 @@ pub struct GpuiOptions {
     kube_context: Option<String>,
     preferences: Option<PathBuf>,
     keyring: bool,
+    /// Example data holds the Talos overview and the summary
+    /// (`fixture::hold`).
+    hold_talos: bool,
 }
 
 impl GpuiOptions {
@@ -30,6 +33,7 @@ impl GpuiOptions {
             kube_context: None,
             preferences: None,
             keyring: false,
+            hold_talos: false,
         }
     }
     /// Opens without Talos: the Kubernetes pages read `kubeconfig`, or the
@@ -80,8 +84,16 @@ impl GpuiOptions {
     pub fn fixture() -> Self {
         Self {
             fixture: true,
+            hold_talos: fixture::hold().talos,
             ..Self::new(None, None, 100)
         }
+    }
+
+    /// Example data that never answers Talos, as `FRESHKUBE_FIXTURE_HOLD=talos`.
+    #[cfg(test)]
+    pub(crate) fn holding_talos(mut self) -> Self {
+        self.hold_talos = true;
+        self
     }
     /// Remembers preferences between launches. A saved Talos selection is
     /// restored when no explicit config is supplied; fixture, maintenance and

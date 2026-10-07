@@ -398,6 +398,14 @@ pub fn sparkline(samples: Vec<f64>, cores: Option<usize>, cx: &App) -> Canvas<()
     .h(dp(32.))
 }
 
+/// A Refresh button's icon, in accent while its read runs. Never Kit's
+/// `.loading` spinner: it repeats, and anything repeating inside the shell
+/// redraws the whole shell on every frame. Pair it with `.disabled(reading)`
+/// and the tooltip "Refreshing…".
+pub fn refresh_icon(reading: bool, cx: &App) -> Icon {
+    Icon::new(IconName::RefreshCw).when(reading, |icon| icon.text_color(palette(cx).accent))
+}
+
 /// Remaining time until the next automatic refresh, drawn as a ring.
 pub fn countdown_ring(remaining: f32, visible: bool, cx: &App) -> Canvas<()> {
     let p = palette(cx);
