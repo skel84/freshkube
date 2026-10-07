@@ -1688,3 +1688,59 @@ fn icon_only_menu_buttons_keep_room_for_their_caret(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// Copy is enabled by any selection, and its text is built only on click:
+/// a selection the filters hide, or one over 1 MiB, says why in the note
+/// and leaves the clipboard as it was (#318).
+#[gpui_kit::test]
+fn copy_explains_a_selection_it_cant_copy_and_leaves_the_clipboard(cx: &mut TestAppContext) {
+    use freshkube_core::types::LogLevel;
+    let (_runtime, panel, handle) = mount(cx);
+    let clicked = |cx: &mut TestAppContext| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("unchanged".into()));
+            window.click("logs-copy", cx);
+            window.render_frame(cx);
+            assert!(window.find("logs-summary-text").visible());
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("unchanged")
+            );
+            panel.read(cx).feedback.clone().unwrap()
+        })
+        .unwrap()
+    };
+
+    // A line selected, then hidden by the level filter.
+    panel.update(cx, |view, cx| {
+        view.review.select(0, false, false);
+        view.review.set_level(&LogLevel::Info, false);
+        cx.notify();
+    });
+    let feedback = clicked(cx);
+    assert_eq!(feedback.text.as_ref(), "Select visible lines to copy");
+
+    // Lines that add up to more than 1 MiB.
+    panel.update(cx, |view, cx| {
+        view.review.set_level(&LogLevel::Info, true);
+        view.review.selected.clear();
+        cx.notify();
+    });
+    cx.update(|cx| deliver(&panel, vec!["x".repeat(8 * 1024); 160], cx));
+    panel.update(cx, |view, cx| {
+        let last = view.review.visible.len() - 1;
+        view.review.select(last - 159, false, false);
+        view.review.select(last, true, false);
+        assert_eq!(view.review.selected.len(), 160);
+        cx.notify();
+    });
+    let feedback = clicked(cx);
+    assert!(
+        feedback.text.contains("exceeds 1 MiB"),
+        "{:?}",
+        feedback.text
+    );
+}
