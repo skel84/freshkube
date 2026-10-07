@@ -130,6 +130,7 @@ pub(crate) enum Section {
 }
 
 impl Section {
+    /// A pod's, a Service's and a workload's: everything with ports.
     const POD: &[Section] = &[Section::Overview, Section::Ports, Section::Events];
     const OTHER: &[Section] = &[Section::Overview, Section::Events];
 
@@ -202,9 +203,11 @@ pub(crate) struct DetailPane {
     /// Details' scroll, and the section at its top as last drawn.
     details_scroll: ScrollHandle,
     shown_section: Rc<Cell<Section>>,
-    /// A section asked for stays marked in the index until the user
-    /// scrolls, even when it is too short to reach the top.
-    section_pinned: Rc<Cell<bool>>,
+    /// The section asked for, by its place in Details. Details keeps it
+    /// at the top, or scrolled as far as it goes, and the index marks it
+    /// until the user scrolls, while the document loads and the sections
+    /// above it grow; it is resolved after layout (`watch_sections`).
+    section_pinned: Rc<Cell<Option<usize>>>,
     /// How far the tabs scrolled when the pane is too narrow for them.
     tab_strip: freshkube_ui::inspector::TabStrip,
     find: Entity<InputState>,
@@ -213,6 +216,8 @@ pub(crate) struct DetailPane {
     current: Option<usize>,
     selection: Option<LineSelection>,
     show_all_labels: bool,
+    /// Details lists the newest `EVENTS_SHOWN` events until asked for all.
+    show_all_events: bool,
     show_all_annotations: bool,
     feedback: Option<SharedString>,
     focus: FocusHandle,
@@ -320,6 +325,7 @@ impl DetailPane {
             current: None,
             selection: None,
             show_all_labels: false,
+            show_all_events: false,
             show_all_annotations: false,
             feedback: None,
             focus: cx.focus_handle(),
@@ -382,7 +388,7 @@ impl DetailPane {
         // Another object starts at the top of its details.
         self.details_scroll = ScrollHandle::new();
         self.shown_section.set(Section::Overview);
-        self.section_pinned.set(false);
+        self.section_pinned.set(None);
         self.ports.update(cx, |ports, cx| {
             ports.show(
                 Some((target.identity.clone(), target.kind.clone())),
@@ -393,7 +399,7 @@ impl DetailPane {
         self.shell_choices = Rc::default();
         self.title = target.identity.address().into();
         self.detail = Some(Detail::new(target));
-        // Another object may have other tabs, so its strip starts unscrolled.
+        // The strip starts unscrolled for each object.
         self.tab_strip = Default::default();
         self.follow = Follow::new(version);
         self.summary = None;
@@ -404,6 +410,7 @@ impl DetailPane {
         self.current = None;
         self.selection = None;
         self.show_all_labels = false;
+        self.show_all_events = false;
         self.show_all_annotations = false;
         self.feedback = None;
         self.yaml_scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -904,24 +911,16 @@ impl DetailPane {
     }
 
     /// Scrolls Details to `section`, or to its top when this object has
-    /// no such section.
+    /// no such section. The scroll happens once Details has laid out, since
+    /// a newly opened object's handle knows no bounds yet.
     fn show_section(&mut self, section: Section) {
         let sections = self
             .detail
             .as_ref()
             .map_or(Section::OTHER, |detail| Section::of(&detail.target.kind));
         let ix = sections.iter().position(|s| *s == section).unwrap_or(0);
-        if ix == 0 {
-            // The top is the page's start, padding and all; aligning the
-            // first section with the edge would hide that padding.
-            self.details_scroll.set_offset(Point::default());
-            self.shown_section.set(sections[0]);
-            self.section_pinned.set(false);
-            return;
-        }
-        self.details_scroll.scroll_to_top_of_item(ix);
         self.shown_section.set(sections[ix]);
-        self.section_pinned.set(true);
+        self.section_pinned.set(Some(ix));
     }
 
     /// Moves `delta` tabs along, wrapping, from outside the pane.

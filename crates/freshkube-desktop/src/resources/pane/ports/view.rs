@@ -1,5 +1,5 @@
-//! Drawing the Ports tab. Everything shown was derived when the ports or
-//! the forwards changed.
+//! Drawing Details' Ports section. Everything shown was derived when the
+//! ports or the forwards changed.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{

@@ -1,5 +1,6 @@
-//! The Ports tab of a pod, Service or workload (docs/PORT_FORWARD.md): the
-//! ports the object declares, each with a local port field and Forward,
+//! The Ports section of a pod's, Service's or workload's Details
+//! (docs/PORT_FORWARD.md): the ports the object declares, each with a
+//! local port field and Forward,
 //! an "Other port" row for any number, and the forwards already running
 //! from this object. It reads nothing itself; starting goes through the
 //! app's forwards, so closing the pane leaves them running.
@@ -17,7 +18,7 @@ use crate::resources::model::ResourceIdentity;
 mod tests;
 mod view;
 
-/// Whether `kind` has a Ports tab.
+/// Whether `kind` has a Ports section.
 pub(crate) fn forwardable(kind: &ResourceKind) -> bool {
     ForwardTarget::of(kind, "", "").is_some()
 }

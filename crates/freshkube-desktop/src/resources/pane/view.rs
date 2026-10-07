@@ -67,6 +67,7 @@ impl DetailPane {
                                     .flex_none()
                                     .icon(IconName::Copy)
                                     .tooltip("Copy the name")
+                                    .accessibility_label("Copy the name")
                                     .on_click(cx.listener(|pane, _, _, cx| pane.copy_name(cx))),
                             ),
                     ),
@@ -309,7 +310,7 @@ impl DetailPane {
                     .track_scroll(&self.details_scroll)
                     .on_scroll_wheel({
                         let pinned = self.section_pinned.clone();
-                        move |_, _, _| pinned.set(false)
+                        move |_, _, _| pinned.set(None)
                     })
                     .flex_1()
                     .min_h_0()
@@ -336,7 +337,28 @@ impl DetailPane {
         let this = cx.entity().downgrade();
         canvas(
             move |_, window, _| {
-                if pinned.get() {
+                // Runs after Details laid out this frame, so the handle's
+                // bounds and its sections' are this frame's.
+                if let Some(ix) = pinned.get() {
+                    let Some(item) = scroll.bounds_for_item(ix) else {
+                        return;
+                    };
+                    // The first section keeps the page's padding above it.
+                    let top = if ix == 0 {
+                        px(0.)
+                    } else {
+                        (item.top() - scroll.bounds().top())
+                            .min(scroll.max_offset().y)
+                            .max(px(0.))
+                    };
+                    let offset = scroll.offset();
+                    if (offset.y + top).abs() > px(0.5) {
+                        scroll.set_offset(point(offset.x, -top));
+                        let this = this.clone();
+                        window.on_next_frame(move |_, cx| {
+                            _ = this.update(cx, |_, cx| cx.notify());
+                        });
+                    }
                     return;
                 }
                 let at_end = scroll.max_offset().y > px(0.)
@@ -377,6 +399,8 @@ impl DetailPane {
         h_flex()
             .id("detail-index")
             .test_support()
+            .role(Role::TabList)
+            .aria_label("Sections")
             .flex_none()
             .flex_wrap()
             .gap_1()
@@ -439,14 +463,22 @@ impl DetailPane {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let warnings = detail.events.warnings();
+        let label = self.section_label(section, detail);
         h_flex()
             .gap_2()
             .pb_2()
             .child(
                 div()
+                    .id(SharedString::from(format!(
+                        "detail-heading-{}",
+                        section.slug()
+                    )))
+                    .test_support()
+                    .role(Role::Heading)
+                    .aria_label(label.clone())
                     .text_size(dp(13.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.section_label(section, detail)),
+                    .child(label),
             )
             .when(section == Section::Events && warnings > 0, |this| {
                 this.child(ui::tag(

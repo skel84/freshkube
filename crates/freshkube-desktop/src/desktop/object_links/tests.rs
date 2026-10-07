@@ -3,6 +3,41 @@ use crate::{
     resources::{Tab, example, model::ResourceIdentity},
 };
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+
+/// Draws until the drawer settles, then asserts that Details landed on
+/// `section`: its top at the scroller's top, or, when what follows is too
+/// short for that, scrolled to the end with the section's top in view.
+fn assert_landed(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, section: &str) {
+    for _ in 0..4 {
+        window.render_frame(cx);
+        if window.simulate_next_frame(cx) == 0 {
+            break;
+        }
+    }
+    let one = gpui_kit::px(1.);
+    let scroller = window.find("detail-details").bounds();
+    let top = window
+        .find(gpui_kit::SharedString::from(format!(
+            "detail-section-{section}"
+        )))
+        .bounds()
+        .top()
+        - scroller.top();
+    // The last section ends the content, so its bottom shows the end.
+    let end = window.find("detail-section-events").bounds().bottom();
+    assert!(
+        top >= -one && (top <= one || end <= scroller.bottom() + one),
+        "{section} lands {top:?} below the top, the content ending at {end:?} of {scroller:?}"
+    );
+    assert_eq!(
+        window
+            .find(gpui_kit::SharedString::from(format!(
+                "detail-jump-{section}"
+            )))
+            .selected(),
+        Some(true)
+    );
+}
 fn pod() -> (ResourceIdentity, freshkube_core::resources::ObjectDocument) {
     let identity = example::read("prod-fra", "pods", None, chrono::Utc::now().timestamp())
         .unwrap()
@@ -123,7 +158,7 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
             assert_eq!(pilot.read(cx).resource_kind.key(), "services");
             assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), tab);
             if tab == Tab::Ports {
-                assert!(window.find("ports").visible());
+                assert_landed(window, cx, "ports");
             }
         })
         .unwrap();
@@ -287,10 +322,8 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
             window.render_frame(cx);
         }
         window.click("pod-all-events", cx);
-        window.render_frame(cx);
-        window.render_frame(cx);
         // The link scrolls Details to its events.
-        assert!(window.find("detail-section-events").visible());
+        assert_landed(window, cx, "events");
         assert_eq!(
             pilot.read(cx).resources.read(cx).detail_tab(cx),
             Tab::Events
@@ -358,7 +391,7 @@ fn owner_and_service_links_go_at_once_while_a_shell_runs(cx: &mut TestAppContext
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).resource_kind.key(), "services");
         assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Ports);
-        assert!(window.find("ports").visible());
+        assert_landed(window, cx, "ports");
         assert_eq!(crate::resources::shell::running_anywhere(cx), running);
     })
     .unwrap();
@@ -459,6 +492,40 @@ fn a_short_window_keeps_the_drawers_header_and_tabs_in_sight(cx: &mut TestAppCon
         }
         // The page's toolbar stays above it.
         assert!(window.find("resource-filter").bounds().bottom() <= drawer.top());
+    })
+    .unwrap();
+}
+
+/// Forward opens a pod's Service in a drawer that has never drawn, by
+/// the same entry point as here, and lands its Ports at the top of
+/// Details, not past it: a short window leaves room to overshoot (#322
+/// review).
+#[gpui_kit::test]
+fn forward_lands_a_fresh_drawer_on_its_ports(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 440.);
+    let service = example::read("prod-fra", "services", None, chrono::Utc::now().timestamp())
+        .unwrap()
+        .1
+        .into_iter()
+        .find(|row| row.identity.namespace == "payments" && row.identity.name == "worker")
+        .unwrap()
+        .identity;
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(
+                freshkube_core::resources::builtin("services").unwrap(),
+                service.into(),
+                Tab::Ports,
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(pilot.read(cx).resource_kind.key(), "services");
+        assert_landed(window, cx, "ports");
     })
     .unwrap();
 }
