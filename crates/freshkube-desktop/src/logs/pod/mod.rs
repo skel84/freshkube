@@ -387,8 +387,8 @@ impl PodLogs {
         self.derive_note();
     }
 
-    /// A note between lines, placed after the last line read. In UTC, as
-    /// Kubernetes writes the lines' times.
+    /// A note between lines, placed after the last line read. It shows on
+    /// the viewer's clock, as the lines do.
     fn marker(&self, text: String) -> LogEvent {
         let at = self.position.time().unwrap_or_else(Utc::now);
         LogEvent::marker(

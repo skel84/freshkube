@@ -42,6 +42,10 @@ chrono.workspace = true
 # Error handling
 thiserror.workspace = true
 
+[features]
+# Tests pin the zone log times show in (`logs::pin_zone`).
+testing = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

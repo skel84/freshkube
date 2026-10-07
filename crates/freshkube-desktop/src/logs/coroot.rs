@@ -205,11 +205,12 @@ mod tests {
         );
     }
 
-    /// A gap's note reads on the rows' clock, in any offset.
+    /// A gap's note reads on the rows' clock, the viewer's.
     #[test]
     fn a_gap_reads_in_the_same_zone_as_the_messages() {
         let service = ServiceId::from("app");
         let east = FixedOffset::east_opt(2 * 3600).unwrap();
+        let _zone = freshkube_core::logs::pin_zone(east);
         // 05:55:00 UTC, 07:55 at +02:00.
         let at = DateTime::from_timestamp_millis(1_790_834_100_000).unwrap();
         let mut message = line("ready".into());

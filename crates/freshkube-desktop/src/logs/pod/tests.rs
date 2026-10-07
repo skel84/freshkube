@@ -424,6 +424,41 @@ fn the_time_column_hides_and_copy_copies_what_shows(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Kubernetes writes a pod's times in UTC; the row shows the viewer's own
+/// clock, as the charts and the status bar do, and Copy keeps the line as
+/// written.
+#[gpui_kit::test]
+fn a_pod_line_shows_the_viewers_clock_and_copies_as_written(cx: &mut TestAppContext) {
+    let _zone = freshkube_core::logs::pin_zone(chrono::FixedOffset::east_opt(2 * 3600).unwrap());
+    let (_runtime, view, handle) = mount(cx);
+    cx.update_window(handle, |_, window, cx| {
+        show(&view, &running_pod(), cx);
+        window.render_frame(cx);
+        // Newer than the example's lines, so it's the row a following view
+        // ends on: 05:55 UTC on a later day, 07:55 at UTC+2.
+        let day = 86_400;
+        let at = (live::now() / day + 1) * day + 5 * 3600 + 55 * 60;
+        let at = chrono::DateTime::from_timestamp(at, 0).unwrap();
+        let line = format!("{} INFO ready", at.format("%Y-%m-%dT%H:%M:%S%.3fZ"));
+        view.update(cx, |view, cx| {
+            view.ingest(vec![LogEvent::new("app", line.clone())], cx)
+        });
+        window.render_frame(cx);
+        let row = last_row(&view, cx);
+        let shown = window.find(row.clone()).label().unwrap().to_owned();
+        assert!(shown.starts_with("07:55:00 INFO "), "{shown}");
+
+        window.click(row, cx);
+        window.press("secondary-c", cx);
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert_eq!(copied, line);
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn an_init_container_reads_to_its_end_and_a_new_tail_starts_over(cx: &mut TestAppContext) {
     let (_runtime, view, handle) = mount(cx);

@@ -64,6 +64,8 @@ tempfile = "3"
 freshkube-probe = { workspace = true, features = ["counting"] }
 # The shell tests read the terminal's screen (`screen_text`, `ended`).
 freshkube-terminal = { workspace = true, features = ["testing"] }
+# The log tests pin the zone rows show their times in (`logs::pin_zone`).
+freshkube-core = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }
 # The status bar tests read which line a segment drew (`status::shown`).
