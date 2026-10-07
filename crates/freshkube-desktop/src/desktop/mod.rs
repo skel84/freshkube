@@ -1235,11 +1235,12 @@ impl Pilot {
         self.node_pods.update(cx, |resources, cx| {
             resources.set_source(source.clone(), window, cx)
         });
-        self.monitoring.update(cx, |monitoring, cx| {
-            monitoring.set_source(source.clone(), cx)
-        });
+        let cluster = source.as_ref().map(KubeSource::cluster);
+        self.monitoring
+            .update(cx, |monitoring, cx| monitoring.set_source(cluster, cx));
+        let id = source.as_ref().map(|source| source.id.clone());
         self.observability
-            .update(cx, |page, cx| page.set_source(source.clone(), cx));
+            .update(cx, |page, cx| page.set_source(id, cx));
         let identity = self.kube_identity();
         self.dock.update(cx, |dock, cx| {
             dock.set_source(source.clone(), identity.as_deref(), window, cx)

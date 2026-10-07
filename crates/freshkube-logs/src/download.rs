@@ -193,15 +193,15 @@ pub(super) fn file_name(base: &str, time: &str) -> String {
 
 /// The Downloads folder, else the home folder.
 pub(super) fn default_folder() -> PathBuf {
-    dirs_next::download_dir()
+    dirs::download_dir()
         .filter(|dir| dir.is_dir())
-        .or_else(dirs_next::home_dir)
+        .or_else(std::env::home_dir)
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// The path as the note shows it, with the home folder as `~`.
 fn shown_path(path: &Path) -> String {
-    if let Some(home) = dirs_next::home_dir()
+    if let Some(home) = std::env::home_dir()
         && let Ok(rest) = path.strip_prefix(&home)
     {
         return Path::new("~").join(rest).display().to_string();

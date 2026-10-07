@@ -74,7 +74,7 @@ impl TalosConfig {
 
         tracing::debug!("TALOSCONFIG env var not set, using default path");
         // Fallback to default location
-        let home = dirs_next::home_dir().ok_or(TalosError::NoHomeDirectory)?;
+        let home = std::env::home_dir().ok_or(TalosError::NoHomeDirectory)?;
         Ok(home.join(".talos").join("config"))
     }
 
@@ -453,7 +453,7 @@ contexts:
             std::env::remove_var("TALOSCONFIG");
         }
         let path = TalosConfig::default_path().unwrap();
-        let home = dirs_next::home_dir().unwrap();
+        let home = std::env::home_dir().unwrap();
         let expected = home.join(".talos").join("config");
         assert_eq!(path, expected);
     }

@@ -27,9 +27,6 @@ base64.workspace = true
 # Error handling
 thiserror.workspace = true
 
-# Utilities
-dirs-next.workspace = true
-
 # Compression (for kubeconfig extraction)
 flate2 = "1.0"
 tar = "0.4"

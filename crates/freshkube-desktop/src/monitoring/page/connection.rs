@@ -3,6 +3,7 @@
 //! the context goes first, then discovery's ranked candidates. Each outcome
 //! is a state the page shows on its own: looking, found, none found (with
 //! what was looked for and the candidates to pick from), refused and failed.
+use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::{
     Backend, BuildInfo, Candidate, Discovery, ErrorKind, Prometheus, PrometheusService, QueryError,
     Tried, confirm, confirm_url, discover,
@@ -12,7 +13,6 @@ use gpui_kit::{Context, SharedString};
 use super::{MonitoringEvent, MonitoringPage, Request};
 use crate::monitoring::history::{HistoryKind, HistorySource};
 use crate::monitoring::store::{Choice, token_account};
-use crate::resources::KubeAccess;
 
 pub(super) enum Connection {
     /// Not looked for on this source yet, or the page hid while looking.
@@ -101,7 +101,7 @@ impl MonitoringPage {
     pub(crate) fn history(&self) -> Option<HistorySource> {
         let source = self.source.as_ref()?;
         let kind = match (&self.connection, &source.access) {
-            (_, KubeAccess::Example) => HistoryKind::Example,
+            (_, ClusterAccess::Example) => HistoryKind::Example,
             (Connection::Ready { prometheus, .. }, _) => HistoryKind::Ready(prometheus.clone()),
             (Connection::None | Connection::Looking { .. }, access) => {
                 // A URL's token is read only when the page connects.
@@ -139,7 +139,7 @@ impl MonitoringPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        if let KubeAccess::Example = source.access {
+        if source.access.is_example() {
             self.connection = Connection::Example;
             self.resume(cx);
             return;
