@@ -414,6 +414,64 @@ pub(super) mod tests {
         assert!(watches[1].contains("resourceVersion=20"));
     }
 
+    /// A burst inside one window arrives as one batch, and the list after a
+    /// 410 arrives as a batch of its own, which replaces what came before.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_is_one_batch_and_a_relist_starts_a_new_one() {
+        let lists = Arc::new(Mutex::new(0));
+        let counter = lists.clone();
+        let (client, _) = server(move |uri| {
+            if !uri.contains("watch=1") {
+                let mut lists = counter.lock().unwrap();
+                *lists += 1;
+                return if *lists == 1 {
+                    (200, list("10", "", &["a"]))
+                } else {
+                    (200, list("20", "", &["a", "c"]))
+                };
+            }
+            if uri.contains("resourceVersion=10") {
+                let lines = [
+                    event("ADDED", "b", "11"),
+                    event("MODIFIED", "a", "12"),
+                    event("DELETED", "b", "13"),
+                    json!({"type": "ERROR", "object": serde_json::from_str::<serde_json::Value>(
+                        &status(410, "Expired")).unwrap()})
+                    .to_string(),
+                ];
+                (200, lines.join("\n"))
+            } else {
+                (403, status(403, "Forbidden"))
+            }
+        });
+        let (sender, mut receiver) = mpsc::channel(8);
+        tokio::spawn(watch_collection(
+            client,
+            builtin("pods").unwrap(),
+            None,
+            None,
+            sender,
+        ));
+        let mut batches = Vec::new();
+        while let Some(batch) = receiver.recv().await {
+            let kinds: Vec<&str> = batch
+                .events
+                .iter()
+                .map(|event| match event {
+                    WatchEvent::Reset { .. } => "reset",
+                    WatchEvent::Upsert(_) => "upsert",
+                    WatchEvent::Delete(_) => "delete",
+                    WatchEvent::Failed { .. } => "failed",
+                })
+                .collect();
+            batches.push(kinds.join(","));
+        }
+        assert_eq!(
+            batches,
+            ["reset", "upsert,upsert,delete", "reset", "failed"]
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn transient_failures_are_reported_then_retried() {
         let attempts = Arc::new(Mutex::new(0));
