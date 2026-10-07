@@ -528,6 +528,36 @@ impl Pilot {
             KeyBinding::new("up", PreviousNode, Some("NodeWorkspace")),
             KeyBinding::new("enter", nodes::OpenNode, Some("NodeWorkspace")),
             KeyBinding::new("h", nodes::ToggleHealthyNodes, Some("NodeWorkspace")),
+            KeyBinding::new(
+                "down",
+                system_services::NextService,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "up",
+                system_services::PreviousService,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "enter",
+                system_services::OpenServiceNode,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "o",
+                system_services::OpenServiceNode,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "l",
+                system_services::ServiceLogs,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "escape",
+                system_services::ClearService,
+                Some(system_services::CONTEXT),
+            ),
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
                 "secondary-shift-enter",
