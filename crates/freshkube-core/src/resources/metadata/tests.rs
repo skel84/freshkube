@@ -106,3 +106,36 @@ async fn metadata_names_remain_bounded_if_a_server_ignores_the_limit() {
     assert!(names.capped);
     assert_eq!(names.objects.len(), 2_000);
 }
+
+#[tokio::test]
+async fn identity_reads_use_the_kinds_scope_and_group_path() {
+    for (key, namespace, path) in [
+        ("nodes", Some("ignored"), "/api/v1/nodes/n1"),
+        ("nodes", None, "/api/v1/nodes/n1"),
+        (
+            "deployments.apps",
+            Some("shop"),
+            "/apis/apps/v1/namespaces/shop/deployments/n1",
+        ),
+    ] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        let service = tower::service_fn(move |request: Request<Body>| {
+            seen.lock().unwrap().push(request.uri().to_string());
+            async move {
+                Ok::<_, Infallible>(Response::new(Body::from(
+                    br#"{"metadata":{"name":"n1"}}"#.to_vec(),
+                )))
+            }
+        });
+        get_metadata(
+            &kube::Client::new(service, "default"),
+            &super::super::builtin(key).unwrap(),
+            namespace,
+            "n1",
+        )
+        .await
+        .unwrap();
+        assert_eq!(*requests.lock().unwrap(), [path]);
+    }
+}

@@ -16,15 +16,13 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
 use kube::api::{AttachParams, TerminalSize};
 use kube::client::UpgradeConnectionError;
 use kube::{Api, Client};
-use serde_yaml::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::failure::{Failure, FailureKind};
-use super::kinds::builtin;
-use super::object::{json_get, text};
-use super::pod_logs::{ContainerState, pod_containers};
+use super::object::text;
+use super::pod_logs::{ContainerState, pod_containers, read_pod};
 
 /// Runs the first shell the container has, so its exit ends the session.
 pub const SHELL: &str = "command -v bash >/dev/null && exec bash; \
@@ -554,17 +552,9 @@ enum Check {
 }
 
 async fn check_container(client: &Client, request: &ExecRequest) -> Result<Check, ExecFailure> {
-    let kind = builtin("pods").expect("pods are built in");
-    let path = kind.object_path(Some(&request.namespace), &request.pod);
-    let get = json_get(path)?;
-    let pod: Result<Value, kube::Error> =
-        tokio::time::timeout(REQUEST_DEADLINE, client.request(get))
-            .await
-            .map_err(|_| Failure::timeout("Reading the pod"))?;
-    let pod = match pod {
+    let pod = match read_pod(client, &request.namespace, &request.pod).await {
         Ok(pod) => pod,
-        Err(error) => {
-            let failure = Failure::from_kube(error);
+        Err(failure) => {
             if failure.kind == FailureKind::NotFound {
                 return Ok(Check::Gone("The pod was deleted".into()));
             }

@@ -148,7 +148,7 @@ pub async fn resolve_owner_kind(
         format!("/apis/{group}/{version}")
     };
     let list = client
-        .request::<ResourceList>(super::object::json_get(path)?)
+        .request::<ResourceList>(super::object::json_get(path, super::object::JSON)?)
         .await
         .map_err(Failure::from_kube)?;
     let entry = list
