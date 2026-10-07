@@ -6,12 +6,14 @@
 //! # Example
 //!
 //! ```no_run
-//! use talos_rs::TalosClient;
+//! use talos_rs::{TalosClient, TalosConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Connect using default talosconfig
-//!     let client = TalosClient::from_default_config().await?;
+//!     // Connect using the current context of the default talosconfig
+//!     let config = TalosConfig::load_default()?;
+//!     let ctx = config.current_context().ok_or("no current context")?;
+//!     let client = TalosClient::from_context(ctx).await?;
 //!
 //!     // Get version info
 //!     let versions = client.version().await?;

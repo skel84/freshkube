@@ -3,7 +3,7 @@
 //! Provides a convenient interface for interacting with Talos clusters.
 
 use crate::auth::create_channel;
-use crate::config::{Context, TalosConfig};
+use crate::config::Context;
 use crate::error::TalosError;
 use crate::proto::machine::machine_service_client::MachineServiceClient;
 use crate::proto::machine::{EtcdMemberListRequest, LogsRequest, NetstatRequest, netstat_request};
@@ -58,22 +58,6 @@ impl TalosClient {
     /// data derived through this connection without exposing any credentials.
     pub fn connection_id(&self) -> u64 {
         self.connection_id
-    }
-
-    /// Create a new client from the default talosconfig
-    pub async fn from_default_config() -> Result<Self, TalosError> {
-        let config = TalosConfig::load_default()?;
-        let ctx = config
-            .current_context()
-            .ok_or_else(|| TalosError::ConfigInvalid("No current context".to_string()))?;
-        Self::from_context(ctx).await
-    }
-
-    /// Create a new client from a named context in the default talosconfig
-    pub async fn from_named_context(context_name: &str) -> Result<Self, TalosError> {
-        let config = TalosConfig::load_default()?;
-        let ctx = config.get_context(context_name)?;
-        Self::from_context(ctx).await
     }
 
     /// Create a new client targeting a specific node
@@ -528,40 +512,6 @@ impl TalosClient {
         Ok(stats)
     }
 
-    /// Get logs for a service (non-streaming, returns last N lines)
-    pub async fn logs(&self, service_id: &str, tail_lines: i32) -> Result<String, TalosError> {
-        let mut client = self.machine_client();
-
-        let request = self.with_nodes(Request::new(LogsRequest {
-            namespace: "system".to_string(),
-            id: service_id.to_string(),
-            driver: 0, // CONTAINERD
-            follow: false,
-            tail_lines,
-        }));
-
-        let response = client.logs(request).await?;
-        let mut stream = response.into_inner();
-
-        let mut logs = String::new();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(data) => {
-                    if let Ok(text) = String::from_utf8(data.bytes) {
-                        logs.push_str(&text);
-                    }
-                }
-                Err(e) => {
-                    // Stop on error but return what we have
-                    tracing::warn!("Log stream error: {}", e);
-                    break;
-                }
-            }
-        }
-
-        Ok(logs)
-    }
-
     /// Follow a service's logs with caller-driven backpressure and cancellation.
     ///
     /// This owns the gRPC stream directly: no detached task or unbounded
@@ -589,44 +539,6 @@ impl TalosClient {
                 .map_err(TalosError::from)
                 .and_then(crate::log_stream::decode_log_chunk)
         })))
-    }
-
-    /// Get logs for multiple services in parallel
-    /// Returns Vec of (service_id, log_content) tuples
-    pub async fn logs_multi(
-        &self,
-        service_ids: &[&str],
-        tail_lines: i32,
-    ) -> Result<Vec<(String, String)>, TalosError> {
-        use futures::future::join_all;
-
-        let futures: Vec<_> = service_ids
-            .iter()
-            .map(|&service_id| {
-                let service_id = service_id.to_string();
-                async move {
-                    let result = self.logs(&service_id, tail_lines).await;
-                    (service_id, result)
-                }
-            })
-            .collect();
-
-        let results = join_all(futures).await;
-
-        let mut logs = Vec::new();
-        for (service_id, result) in results {
-            match result {
-                Ok(content) => {
-                    logs.push((service_id, content));
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to fetch logs for {}: {}", service_id, e);
-                    // Continue with other services, just skip this one
-                }
-            }
-        }
-
-        Ok(logs)
     }
 
     // ==================== Etcd APIs ====================
@@ -657,14 +569,6 @@ impl TalosClient {
         }
 
         Ok(members)
-    }
-
-    /// Get etcd status from control plane nodes
-    /// Returns status for each etcd member that responds
-    ///
-    /// Use `etcd_status_for_nodes()` if you need to target specific control plane nodes.
-    pub async fn etcd_status(&self) -> Result<Vec<EtcdMemberStatus>, TalosError> {
-        self.etcd_status_for_nodes(&[]).await
     }
 
     /// Get etcd status from specific control plane nodes
@@ -849,38 +753,6 @@ impl TalosClient {
         Ok(result)
     }
 
-    /// Get dmesg (kernel ring buffer) output
-    ///
-    /// # Arguments
-    /// * `follow` - If true, continue streaming new messages (not recommended for non-async use)
-    /// * `tail` - If true, only return recent messages
-    pub async fn dmesg(&self, follow: bool, tail: bool) -> Result<String, TalosError> {
-        use crate::proto::machine::DmesgRequest;
-
-        let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(DmesgRequest { follow, tail }));
-
-        let response = client.dmesg(request).await?;
-        let mut stream = response.into_inner();
-
-        let mut output = String::new();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(data) => {
-                    if let Ok(text) = String::from_utf8(data.bytes) {
-                        output.push_str(&text);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Dmesg stream error: {}", e);
-                    break;
-                }
-            }
-        }
-
-        Ok(output)
-    }
-
     /// Read a file from the node's filesystem
     ///
     /// Returns the file contents as a string, or an error if the file doesn't exist
@@ -918,30 +790,6 @@ impl TalosClient {
         }
 
         Ok(output)
-    }
-
-    /// Check if the br_netfilter kernel module is loaded
-    ///
-    /// Returns true if the module is loaded, false otherwise.
-    /// This checks by reading /proc/sys/net/bridge/bridge-nf-call-iptables
-    /// which only exists when br_netfilter is loaded.
-    pub async fn is_br_netfilter_loaded(&self) -> Result<bool, TalosError> {
-        match self
-            .read_file("/proc/sys/net/bridge/bridge-nf-call-iptables")
-            .await
-        {
-            Ok(content) => {
-                tracing::info!(
-                    "br_netfilter sysctl file exists, content: {:?}",
-                    content.trim()
-                );
-                Ok(true)
-            }
-            Err(e) => {
-                tracing::info!("br_netfilter sysctl file not found: {}", e);
-                Ok(false)
-            }
-        }
     }
 
     /// Get kubeconfig from the cluster
@@ -1081,25 +929,6 @@ impl TalosClient {
             .collect())
     }
 
-    /// Stream packet capture from an interface
-    ///
-    /// Returns a receiver that yields raw pcap data chunks.
-    /// The first chunk contains the pcap file header.
-    ///
-    /// # Arguments
-    /// * `interface` - Network interface name (e.g., "eth0")
-    /// * `promiscuous` - Enable promiscuous mode
-    /// * `snap_len` - Maximum bytes to capture per packet (0 = use default 65535)
-    pub async fn packet_capture(
-        &self,
-        interface: &str,
-        promiscuous: bool,
-        snap_len: u32,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>, TalosError> {
-        self.packet_capture_with_filter(interface, promiscuous, snap_len, Vec::new())
-            .await
-    }
-
     /// Follow raw pcap chunks with caller-driven backpressure and cancellation.
     ///
     /// The first chunk contains the pcap header. No detached task or channel is
@@ -1143,26 +972,6 @@ impl TalosClient {
             // Most interfaces (eth*, ens*, bond*, veth*, lo, etc.) use Ethernet framing
             LinkType::EN10MB
         }
-    }
-
-    /// Start packet capture with BPF filter to exclude the Talos API port.
-    ///
-    /// This prevents feedback loops when capturing on the management interface
-    /// by filtering out traffic on port 50000 (Talos apid).
-    ///
-    /// Automatically detects the link type based on interface name:
-    /// - EN10MB for Ethernet interfaces (eth*, ens*, bond*, lo, etc.)
-    /// - RAW for tunnel interfaces (kubespan, wg*, tun*)
-    pub async fn packet_capture_exclude_api(
-        &self,
-        interface: &str,
-        promiscuous: bool,
-        snap_len: u32,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>, TalosError> {
-        let link_type = Self::detect_link_type(interface);
-        let bpf_filter = Self::build_port_exclusion_filter(50000, link_type);
-        self.packet_capture_with_filter(interface, promiscuous, snap_len, bpf_filter)
-            .await
     }
 
     /// Build the existing link-type-aware filter excluding Talos API traffic.
@@ -1581,51 +1390,6 @@ impl TalosClient {
                 k: 0x00040000,
             },
         ]
-    }
-
-    /// Internal packet capture with explicit BPF filter
-    async fn packet_capture_with_filter(
-        &self,
-        interface: &str,
-        promiscuous: bool,
-        snap_len: u32,
-        bpf_filter: Vec<crate::proto::machine::BpfInstruction>,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>, TalosError> {
-        use crate::proto::machine::PacketCaptureRequest;
-
-        let mut client = self.machine_client();
-
-        let request = self.with_nodes(Request::new(PacketCaptureRequest {
-            interface: interface.to_string(),
-            promiscuous,
-            snap_len: if snap_len == 0 { 65535 } else { snap_len },
-            bpf_filter,
-        }));
-
-        let response = client.packet_capture(request).await?;
-        let mut stream = response.into_inner();
-
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
-        // Spawn a task to read from the stream and send to channel
-        tokio::spawn(async move {
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(data) => {
-                        if tx.send(data.bytes).is_err() {
-                            // Receiver dropped, stop streaming
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Packet capture stream error: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(rx)
     }
 
     /// Reboot the node
