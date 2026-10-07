@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 
 use crate::backend::{self, OwnedJob};
 use crate::forwards;
+use crate::logs::Status;
 use crate::logs::choice_label;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
@@ -77,16 +78,6 @@ pub(crate) fn choices(containers: &PodContainers) -> Vec<Choice> {
             enabled: matches!(container.state, ContainerState::Running(_)),
         })
         .collect()
-}
-
-/// What the controls say about the session, derived when it changes.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub(super) tone: Tone,
-    pub(super) tag: SharedString,
-    pub(super) text: SharedString,
-    /// Both, for assistive technology and tests.
-    pub(super) label: SharedString,
 }
 
 /// What the dock hears from a shell tab.
@@ -170,12 +161,7 @@ impl ShellView {
             gone: false,
             container: None,
             state: ShellState::Idle,
-            status: Status {
-                tone: Tone::Unknown,
-                tag: SharedString::default(),
-                text: SharedString::default(),
-                label: SharedString::default(),
-            },
+            status: Status::default(),
             terminal,
             used: false,
             session: None,
@@ -684,17 +670,7 @@ impl ShellView {
             ShellState::Ended => (Tone::Unknown, "Ended", ended.unwrap_or_default()),
             ShellState::Failed => (Tone::Crit, "Failed", ended.unwrap_or_default()),
         };
-        let label = match (tag, text.as_str()) {
-            ("", text) => text.to_owned(),
-            (tag, "") => tag.to_owned(),
-            (tag, text) => format!("{tag}: {text}"),
-        };
-        self.status = Status {
-            tone,
-            tag: tag.into(),
-            text: text.into(),
-            label: label.into(),
-        };
+        self.status = Status::new(tone, tag, &text);
     }
 }
 

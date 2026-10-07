@@ -32,6 +32,45 @@ pub(crate) use pod::{PodLogPanel, PodLogView, choice_label, role_heading};
 pub(crate) use talos::{TalosLogs, TalosPanel};
 pub(crate) use workload::{WorkloadLogPanel, WorkloadLogView};
 
+/// What the controls of a pod's log, a workload's log and a shell tab say
+/// about their stream, derived when it changes.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Status {
+    pub(crate) tone: ui::Tone,
+    pub(crate) tag: gpui_kit::SharedString,
+    pub(crate) text: gpui_kit::SharedString,
+    /// Both, for assistive technology and tests.
+    pub(crate) label: gpui_kit::SharedString,
+}
+
+impl Default for Status {
+    fn default() -> Self {
+        Self {
+            tone: ui::Tone::Unknown,
+            tag: Default::default(),
+            text: Default::default(),
+            label: Default::default(),
+        }
+    }
+}
+
+impl Status {
+    /// The status for a tag and the words beside it, labelled "tag: text".
+    pub(crate) fn new(tone: ui::Tone, tag: &str, text: &str) -> Self {
+        let label = match (tag, text) {
+            ("", text) => text.to_owned(),
+            (tag, "") => tag.to_owned(),
+            (tag, text) => format!("{tag}: {text}"),
+        };
+        Self {
+            tone,
+            tag: tag.to_owned().into(),
+            text: text.to_owned().into(),
+            label: label.into(),
+        }
+    }
+}
+
 /// The Talos Logs page.
 pub(crate) type LogPanel = LogView<TalosLogs>;
 

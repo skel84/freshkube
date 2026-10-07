@@ -27,6 +27,7 @@ use tokio::sync::mpsc;
 
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
+use crate::logs::Status;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example, live};
 use crate::ui::Tone;
@@ -75,16 +76,6 @@ pub(super) struct Choice {
     pub(super) label: SharedString,
     /// An init container that hasn't started has no log to choose.
     pub(super) enabled: bool,
-}
-
-/// What the controls say about the stream, derived when it changes.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub(super) tone: Tone,
-    pub(super) tag: SharedString,
-    pub(super) text: SharedString,
-    /// Both, for assistive technology and tests.
-    pub(super) label: SharedString,
 }
 
 /// What the line under a pod log's toolbar says.
@@ -158,12 +149,7 @@ impl PodLogs {
             stream: 0,
             job: None,
             delivery: None,
-            status: Status {
-                tone: Tone::Unknown,
-                tag: SharedString::default(),
-                text: SharedString::default(),
-                label: SharedString::default(),
-            },
+            status: Status::default(),
             hint: None,
             note: None,
             empty: SharedString::default(),
@@ -366,17 +352,7 @@ impl PodLogs {
                 "Nothing was read.".to_owned(),
             ),
         };
-        let label = if text.is_empty() {
-            tag.to_owned()
-        } else {
-            format!("{tag}: {text}")
-        };
-        self.status = Status {
-            tone,
-            tag: tag.into(),
-            text: text.into(),
-            label: label.into(),
-        };
+        self.status = Status::new(tone, tag, &text);
         self.empty = empty.into();
         self.derive_note();
     }

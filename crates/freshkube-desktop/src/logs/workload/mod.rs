@@ -46,6 +46,7 @@ use tokio::sync::{mpsc, watch};
 
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
+use crate::logs::Status;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
 use crate::ui::Tone;
@@ -255,16 +256,6 @@ pub(super) struct PodChoice {
     pub(super) label: SharedString,
 }
 
-/// What the controls say, derived when anything changes.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub(super) tone: Tone,
-    pub(super) tag: SharedString,
-    pub(super) text: SharedString,
-    /// Both, for assistive technology and tests.
-    pub(super) label: SharedString,
-}
-
 pub(crate) struct WorkloadLogs {
     runtime: Handle,
     clock: Clock,
@@ -398,12 +389,7 @@ impl WorkloadLogs {
             capped: None,
             refused_note: None,
             labels: BTreeMap::new(),
-            status: Status {
-                tone: Tone::Unknown,
-                tag: SharedString::default(),
-                text: SharedString::default(),
-                label: SharedString::default(),
-            },
+            status: Status::default(),
             empty: SharedString::default(),
             errors: BTreeMap::new(),
         };
@@ -587,17 +573,7 @@ impl WorkloadLogs {
                 "Nothing was read.".to_owned(),
             ),
         };
-        let label = if text.is_empty() {
-            tag.to_owned()
-        } else {
-            format!("{tag}: {text}")
-        };
-        self.status = Status {
-            tone,
-            tag: tag.into(),
-            text: text.into(),
-            label: label.into(),
-        };
+        self.status = Status::new(tone, tag, &text);
         self.empty = empty.into();
         self.not_read = self.pod_not_read().map(Into::into);
     }
