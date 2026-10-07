@@ -2,6 +2,10 @@
 //! panels, the progress log and the status bar.
 use super::*;
 use freshkube_core::maintenance::GeneratedConfiguration;
+use freshkube_ui::page::{self, PageHeader};
+
+/// The prefix of the page header's ids.
+const PREFIX: &str = "maint";
 
 fn phase_label(phase: &BootstrapPhase) -> (&'static str, Tone) {
     match phase {
@@ -136,7 +140,7 @@ impl MaintenanceView {
             .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
             .child(
                 h_flex()
-                    .id("maint-title")
+                    .id("maint-location")
                     .test_support()
                     .role(Role::Status)
                     .aria_label("Maintenance mode: insecure Talos access")
@@ -737,11 +741,9 @@ impl MaintenanceView {
 
 impl Render for MaintenanceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
-        let error = self.error.clone();
-        let form = self.form(cx);
-        let workflow = self.workflow(window, cx);
-        let progress = self.progress_panel(cx);
+        let header = PageHeader::new(PREFIX, "Maintenance").render(window, cx);
+        let banners = self.render_banners(cx);
+        let columns = self.render_columns(window, cx);
         v_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -750,56 +752,78 @@ impl Render for MaintenanceView {
             .child(self.title_bar(cx))
             .child(
                 div().flex_1().min_h_0().child(
-                    page_scroll("maint-page").child(
-                        page_body()
-                            .child(
-                                div()
-                                    .id("maint-warning")
-                                    .test_support()
-                                    .role(Role::Status)
-                                    .aria_label("Insecure Talos access: verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.")
-                                    .child(ui::warning_banner(
-                                        Some("Insecure Talos access".into()),
-                                        "Verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.",
-                                        None,
-                                        cx,
-                                    )),
-                            )
-                            .when_some(error, |this, error| {
-                                this.child(
-                                    div()
-                                        .id("maint-error")
-                                        .test_support()
-                                        .role(Role::Alert)
-                                        .aria_label(error.clone())
-                                        .px_3()
-                                        .py_2p5()
-                                        .rounded(px(8.))
-                                        .bg(p.crit_soft)
-                                        .text_color(p.crit_ink)
-                                        .text_size(dp(13.))
-                                        .child(error),
-                                )
-                            })
-                            .child(
-                                h_flex()
-                                    .items_start()
-                                    .gap_5()
-                                    .flex_wrap()
-                                    .child(div().w(dp(440.)).flex_none().child(form))
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .min_w(dp(420.))
-                                            .gap_4()
-                                            .child(workflow)
-                                            .child(progress),
-                                    ),
-                            ),
-                    ),
+                    page::padded("maint-page")
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .child(header)
+                        .child(banners)
+                        .child(columns),
                 ),
             )
             .child(self.status_bar(cx))
+    }
+}
+
+impl MaintenanceView {
+    /// The insecure-access warning, and the last error under it.
+    fn render_banners(&self, cx: &App) -> Div {
+        let p = palette(cx);
+        let error = self.error.clone();
+        v_flex()
+            .flex_none()
+            .gap(dp(page::PAGE_GAP))
+            .child(
+                div()
+                    .id("maint-warning")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label("Insecure Talos access: verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.")
+                    .child(ui::warning_banner(
+                        Some("Insecure Talos access".into()),
+                        "Verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.",
+                        None,
+                        cx,
+                    )),
+            )
+            .when_some(error, |this, error| {
+                this.child(
+                    div()
+                        .id("maint-error")
+                        .test_support()
+                        .role(Role::Alert)
+                        .aria_label(error.clone())
+                        .px_3()
+                        .py_2p5()
+                        .rounded(px(8.))
+                        .bg(p.crit_soft)
+                        .text_color(p.crit_ink)
+                        .text_size(dp(13.))
+                        .child(error),
+                )
+            })
+    }
+
+    /// The form at the left, the workflow and its progress at the right.
+    fn render_columns(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let form = self.form(cx);
+        let workflow = self.workflow(window, cx);
+        let progress = self.progress_panel(cx);
+        h_flex()
+            .id("maint-columns")
+            .test_support()
+            .flex_none()
+            .items_start()
+            .gap_5()
+            .flex_wrap()
+            .child(div().w(dp(440.)).flex_none().child(form))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(dp(420.))
+                    .gap_4()
+                    .child(workflow)
+                    .child(progress),
+            )
     }
 }
 

@@ -965,3 +965,26 @@ async fn a_disk_button_stays_in_view_when_the_table_scrolls(cx: &mut TestAppCont
     })
     .unwrap();
 }
+
+/// The page is a padded page of cards: the shared header's toolbar over
+/// the banners and the two columns, at both text sizes.
+#[gpui_kit::test]
+async fn the_page_is_the_shared_padded_frame(cx: &mut TestAppContext) {
+    use crate::desktop::layout_check::{PageFrame, assert_page_frame};
+    const FRAME: PageFrame = PageFrame {
+        page: "maint-page",
+        title: "maint-title",
+        title_text: "Maintenance",
+        content: "maint-columns",
+    };
+    let world = World::new("frame");
+    let (_runtime, handle, view) = mount(cx, &world, NODE);
+    inspect(cx, handle, &view, &world).await;
+    for text in [13., 16.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            assert_page_frame(window, cx, &FRAME);
+        })
+        .unwrap();
+    }
+}

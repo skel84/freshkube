@@ -46,7 +46,7 @@ use crate::{
     actions,
     mutation::{self, Confirmation, Operations},
     palette::palette,
-    screens::{field, mono, page_body, page_scroll, panel},
+    screens::{field, mono, panel},
     ui::{self, MONO_FONT, Tone, dp},
 };
 
