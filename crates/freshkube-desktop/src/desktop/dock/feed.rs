@@ -168,11 +168,7 @@ impl Dock {
                 Some(pod) => {
                     // A tab asked for by name, as a restored one, is the
                     // first pod it finds: one made again later is another.
-                    if tab.target.identity.uid.is_empty() && !pod.uid.is_empty() {
-                        tab.target.identity.uid = pod.uid.clone();
-                        tab.key.uid = pod.uid.clone();
-                        tab.key.wildcard = false;
-                    }
+                    tab.settle_uid(&pod.uid, cx);
                     set_containers(tab, pod.containers, cx);
                     FeedState::Ready
                 }

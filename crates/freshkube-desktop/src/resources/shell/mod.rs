@@ -217,6 +217,16 @@ impl ShellView {
         cx.notify();
     }
 
+    /// The UID of a pod asked for by name, as a restored tab's, once it is
+    /// found: a session starts only on a pod known by its UID.
+    pub(crate) fn settle_uid(&mut self, uid: &str) {
+        if let Some(pod) = self.pod.as_mut()
+            && pod.uid.is_empty()
+        {
+            pod.uid = uid.to_owned();
+        }
+    }
+
     /// The pod's containers as last read. Without a chosen container the
     /// first read picks the default, or the first running one when the
     /// default isn't.
@@ -269,6 +279,11 @@ impl ShellView {
         self.title.as_ref()
     }
 
+    #[cfg(test)]
+    pub(crate) fn pod(&self) -> Option<&ResourceIdentity> {
+        self.pod.as_ref()
+    }
+
     /// The container the shell runs in.
     pub(crate) fn container(&self) -> Option<&str> {
         self.container.as_deref()
@@ -294,7 +309,10 @@ impl ShellView {
 
     /// Whether Start can start a session now.
     pub(crate) fn can_start(&self) -> bool {
-        self.pod.is_some() && self.access.is_some() && !self.running() && self.chosen_running()
+        self.pod.as_ref().is_some_and(|pod| !pod.uid.is_empty())
+            && self.access.is_some()
+            && !self.running()
+            && self.chosen_running()
     }
 
     /// The container the tab's shell runs in, chosen before any session.

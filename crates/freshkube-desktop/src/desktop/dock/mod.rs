@@ -199,6 +199,20 @@ impl DockTab {
         }
     }
 
+    /// A tab asked for by name, as a restored one, takes the UID of the
+    /// pod it finds; a shell's view needs it to start.
+    fn settle_uid(&mut self, uid: &str, cx: &mut App) {
+        if !self.target.identity.uid.is_empty() || uid.is_empty() {
+            return;
+        }
+        self.target.identity.uid = uid.to_owned();
+        self.key.uid = uid.to_owned();
+        self.key.wildcard = false;
+        if let TabKind::Shell(view) = &self.kind {
+            view.update(cx, |view, _| view.settle_uid(uid));
+        }
+    }
+
     fn is_log(&self) -> bool {
         !matches!(self.kind, TabKind::Shell(_))
     }
@@ -466,7 +480,13 @@ impl Dock {
             .find(|tab| !tab.is_log() && tab.key.shows(&key))
             .map(|tab| tab.id);
         let id = match found {
-            Some(id) => id,
+            Some(id) => {
+                // A tab asked for by name takes the picked pod's UID.
+                if let Some(ix) = self.position(id) {
+                    self.tabs[ix].settle_uid(&request.target.identity.uid, cx);
+                }
+                id
+            }
             None if self.shell_tabs() >= MAX_SHELL_TABS => {
                 self.ask_to_close_oldest_shell(request, window, cx);
                 return;

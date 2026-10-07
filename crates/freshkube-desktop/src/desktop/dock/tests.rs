@@ -1217,6 +1217,13 @@ fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) 
     }
 }
 
+fn shell_view_of(dock: &Dock, ix: usize) -> Entity<ShellView> {
+    match &dock.tabs[ix].kind {
+        TabKind::Shell(view) => view.clone(),
+        _ => panic!("not a shell tab"),
+    }
+}
+
 fn shell_view(dock: &Entity<Dock>, ix: usize, cx: &mut TestAppContext) -> Entity<ShellView> {
     cx.update(|cx| match &dock.read(cx).tabs[ix].kind {
         TabKind::Shell(view) => view.clone(),
@@ -1471,6 +1478,111 @@ fn the_terminal_keeps_control_period_and_comma(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(cx.update(|cx| dock.read(cx).selected()), Some(0));
     assert_eq!(shell_state(&dock, 1, cx), ShellState::Running);
+}
+
+/// A pod's identity and containers as its watch reports them.
+fn watched(pod: &ResourceIdentity) -> freshkube_core::resources::WorkloadPods {
+    let containers = example::document(pod, live::now())
+        .unwrap()
+        .overview
+        .pod
+        .unwrap();
+    freshkube_core::resources::WorkloadPods {
+        listed: true,
+        pods: vec![freshkube_core::resources::WorkloadPod {
+            name: pod.name.clone(),
+            uid: pod.uid.clone(),
+            created: None,
+            terminating: false,
+            containers,
+        }],
+        failure: None,
+    }
+}
+
+#[gpui_kit::test]
+fn a_shell_tab_asked_for_by_name_starts_on_the_pod_its_watch_finds(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    let pod = pods[0].clone();
+    assert!(!pod.uid.is_empty());
+    // As a restore on a cluster: the pod by name alone, no UID yet.
+    let by_name = ResourceIdentity {
+        uid: String::new(),
+        ..pod.clone()
+    };
+    let target = crate::resources::detail::DetailTarget {
+        identity: by_name.clone(),
+        kind: builtin("pods").unwrap(),
+    };
+    let container = watched(&pod).pods[0].containers.default.clone().unwrap();
+    let id = cx
+        .update_window(handle, |_, window, cx| {
+            dock.update(cx, |dock, cx| {
+                let id = dock.add_shell(target, container.clone(), window, cx);
+                let view = shell_view_of(dock, 0);
+                let access = dock.source.as_ref().unwrap().access.clone();
+                view.update(cx, |view, cx| {
+                    view.show_pod(Some(by_name.clone()), Some(access), cx);
+                    view.choose_container(container.clone(), cx);
+                });
+                id
+            })
+        })
+        .unwrap();
+    let view = cx.update(|cx| shell_view_of(&dock.read(cx), 0));
+    assert!(!cx.read(|cx| view.read(cx).can_start()), "no UID, no start");
+
+    // The watch finds the pod: the view takes its UID and keeps its container.
+    cx.update(|cx| dock.update(cx, |dock, cx| dock.apply_pod(id, watched(&pod), cx)));
+    cx.read(|cx| {
+        let view = view.read(cx);
+        assert_eq!(view.pod().unwrap().uid, pod.uid);
+        assert_eq!(view.container(), Some(container.as_str()));
+        assert!(view.can_start());
+    });
+    // The menu picks the same pod: the tab, not another.
+    pick_shell(handle, &pilot, &pod, cx);
+    assert_eq!(titles(&dock, cx), [format!("Shell {}", pod.name)]);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+}
+
+#[gpui_kit::test]
+fn a_shell_tab_asked_for_by_name_takes_the_picked_pods_uid(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pod = running_pods(&pilot, cx)[0].clone();
+    let by_name = ResourceIdentity {
+        uid: String::new(),
+        ..pod.clone()
+    };
+    let container = watched(&pod).pods[0].containers.default.clone().unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            let target = crate::resources::detail::DetailTarget {
+                identity: by_name.clone(),
+                kind: builtin("pods").unwrap(),
+            };
+            dock.add_shell(target, container.clone(), window, cx);
+            let view = shell_view_of(dock, 0);
+            let access = dock.source.as_ref().unwrap().access.clone();
+            view.update(cx, |view, cx| {
+                view.show_pod(Some(by_name.clone()), Some(access), cx);
+                view.choose_container(container.clone(), cx);
+            });
+        })
+    })
+    .unwrap();
+    // Before its watch answers, the menu's pick settles the tab's pod.
+    pick_shell(handle, &pilot, &pod, cx);
+    assert_eq!(titles(&dock, cx), [format!("Shell {}", pod.name)]);
+    let view = cx.update(|cx| shell_view_of(&dock.read(cx), 0));
+    assert_eq!(
+        cx.read(|cx| view.read(cx).pod().unwrap().uid.clone()),
+        pod.uid
+    );
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
 }
 
 #[gpui_kit::test]
