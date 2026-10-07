@@ -75,36 +75,23 @@ const RETRY_MAX: Duration = Duration::from_secs(30);
 /// that fail together don't all read again at once.
 const RETRY_JITTER: f64 = 0.2;
 
-/// Spreads retry waits by up to [`RETRY_JITTER`] either way: a splitmix64
-/// sequence from a seed, random in the app and fixed in tests, so a test
-/// draws the same waits from a clone.
+/// Spreads retry waits by up to [`RETRY_JITTER`] either way: random in the
+/// app and seeded in tests, so a test draws the same waits from a clone.
 #[derive(Clone, Debug)]
-pub(super) struct Jitter {
-    state: u64,
-}
+pub(super) struct Jitter(fastrand::Rng);
 
 impl Jitter {
     fn new() -> Self {
         #[cfg(test)]
-        let seed = 0x5EED;
+        let rng = fastrand::Rng::with_seed(0x5EED);
         #[cfg(not(test))]
-        let seed = {
-            use std::hash::BuildHasher as _;
-            std::collections::hash_map::RandomState::new().hash_one(0u64)
-        };
-        Self { state: seed }
+        let rng = fastrand::Rng::new();
+        Self(rng)
     }
 
     /// `wait`, scaled by the next factor in `1 ± RETRY_JITTER`.
     pub(super) fn spread(&mut self, wait: Duration) -> Duration {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
-        // The top 53 bits, as a share of one in [0, 1).
-        let unit = (z >> 11) as f64 / (1u64 << 53) as f64;
-        wait.mul_f64(1. - RETRY_JITTER + 2. * RETRY_JITTER * unit)
+        wait.mul_f64(1. - RETRY_JITTER + 2. * RETRY_JITTER * self.0.f64())
     }
 }
 
