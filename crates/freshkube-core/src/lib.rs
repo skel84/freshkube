@@ -25,6 +25,7 @@
 pub mod async_state;
 mod client_cache;
 pub mod cluster_overview;
+pub mod cluster_source;
 
 pub mod constants;
 pub mod coroot;
