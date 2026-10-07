@@ -1,9 +1,10 @@
-//! Argo Rollouts and their AnalysisRuns, as read in an environment cluster.
+//! Argo Rollouts, their ReplicaSets and their AnalysisRuns, as read in an
+//! environment cluster.
 
 use serde_json::Value;
 
-use super::digest::text;
-use super::read::{ListRequest, Reader, Scope};
+use super::digest::{Digest, text};
+use super::read::{ListRequest, Reader, Resource, Scope};
 use super::source::{Source, Truncation};
 use super::versions::resolve;
 use crate::resources::Failure;
@@ -34,6 +35,72 @@ pub struct AnalysisRun {
     pub rollout: Option<String>,
 }
 
+/// A ReplicaSet a Rollout owns: one pod template, one pod-template hash.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplicaSet {
+    pub namespace: String,
+    pub name: String,
+    /// The Rollout named by its controller owner reference.
+    pub rollout: Option<String>,
+    /// Its `rollouts-pod-template-hash` label, which its pods carry too.
+    pub pod_hash: Option<String>,
+    /// `spec.template.spec.containers[].image`, as written.
+    pub images: Vec<String>,
+    pub replicas: u64,
+    pub ready_replicas: u64,
+}
+
+impl ReplicaSet {
+    /// Whether its pod template pins one of `digests`.
+    pub fn pins(&self, digests: &[Digest]) -> bool {
+        self.images
+            .iter()
+            .filter_map(|image| Digest::from_reference(image))
+            .any(|digest| digests.contains(&digest))
+    }
+}
+
+fn containers(value: &Value) -> Vec<String> {
+    value
+        .pointer("/spec/template/spec/containers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|container| text(container, "/image"))
+        .collect()
+}
+
+fn count(value: &Value, pointer: &str) -> u64 {
+    value.pointer(pointer).and_then(Value::as_u64).unwrap_or(0)
+}
+
+pub fn parse_replica_set(value: &Value) -> Option<ReplicaSet> {
+    let rollout = value
+        .pointer("/metadata/ownerReferences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|owner| {
+            text(owner, "/kind").as_deref() == Some("Rollout")
+                && owner.get("controller").and_then(Value::as_bool) != Some(false)
+        })
+        .and_then(|owner| text(owner, "/name"));
+    Some(ReplicaSet {
+        namespace: text(value, "/metadata/namespace")?,
+        name: text(value, "/metadata/name")?,
+        rollout,
+        pod_hash: value
+            .pointer("/metadata/labels")
+            .and_then(|labels| labels.get(POD_HASH_LABEL))
+            .and_then(Value::as_str)
+            .filter(|hash| !hash.is_empty())
+            .map(str::to_owned),
+        images: containers(value),
+        replicas: count(value, "/status/replicas"),
+        ready_replicas: count(value, "/status/readyReplicas"),
+    })
+}
+
 pub fn parse_rollout(value: &Value) -> Option<Rollout> {
     Some(Rollout {
         namespace: text(value, "/metadata/namespace")?,
@@ -41,13 +108,7 @@ pub fn parse_rollout(value: &Value) -> Option<Rollout> {
         phase: text(value, "/status/phase"),
         current_pod_hash: text(value, "/status/currentPodHash"),
         stable_hash: text(value, "/status/stableRS"),
-        images: value
-            .pointer("/spec/template/spec/containers")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|container| text(container, "/image"))
-            .collect(),
+        images: containers(value),
         aborted: value
             .pointer("/status/abort")
             .and_then(Value::as_bool)
@@ -106,4 +167,21 @@ pub async fn read_analysis_runs<R: Reader>(
     Source::from_listing(
         read_namespace(reader, "analysisruns", namespace, parse_analysis_run).await,
     )
+}
+
+/// The ReplicaSets of one namespace; the caller keeps those of its Rollouts.
+pub async fn read_replica_sets<R: Reader>(reader: &R, namespace: &str) -> Source<Vec<ReplicaSet>> {
+    async fn run<R: Reader>(
+        reader: &R,
+        namespace: &str,
+    ) -> Result<(Vec<ReplicaSet>, Option<Truncation>), Failure> {
+        let listing = reader
+            .list(&ListRequest {
+                resource: Resource::new("apps", "v1", "replicasets", true),
+                scope: Scope::Namespace(namespace.to_owned()),
+            })
+            .await?;
+        Ok(listing.parse(parse_replica_set))
+    }
+    Source::from_listing(run(reader, namespace).await)
 }

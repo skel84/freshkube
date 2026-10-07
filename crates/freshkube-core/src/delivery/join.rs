@@ -11,12 +11,14 @@
 
 use std::collections::BTreeMap;
 
-use super::argocd::{Application, DestinationMatch, ManagedObject, StageClaim, StageNaming};
+use super::argocd::{
+    Application, DestinationMatch, IN_CLUSTER_NAME, ManagedObject, StageClaim, StageNaming,
+};
 use super::digest::{Digest, repository, tag};
 use super::github::PullRequest;
 use super::kargo::{Freight, KargoRead, Promotion, Stage};
 use super::pods::RunningImage;
-use super::rollouts::{AnalysisRun, Rollout};
+use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, Truncation, cap_note, redact_message};
 use super::tekton::{Build, CommitNames, EvidenceResult};
 
@@ -146,8 +148,10 @@ pub struct Evidence {
     pub environment: String,
     pub rollouts: Source<Vec<Rollout>>,
     pub analysis_runs: Source<Vec<AnalysisRun>>,
+    /// The ReplicaSets of the Rollouts' namespaces.
+    pub replica_sets: Source<Vec<ReplicaSet>>,
     /// Pods read for each Rollout, by `namespace/name`.
-    pub pods: BTreeMap<String, Source<Vec<RunningImage>>>,
+    pub pods: BTreeMap<String, RolloutPods>,
     /// Pods read in an Application's destination namespace, by the
     /// Application's `namespace/name`, for workloads that aren't Rollouts.
     pub namespace_pods: BTreeMap<String, Source<Vec<RunningImage>>>,
@@ -164,11 +168,75 @@ impl Evidence {
     /// Its Rollouts and pods are read, and judged, only then: a workload of
     /// the same name in another cluster says nothing about this one.
     pub fn deploys_to_environment(&self, app_id: &str) -> bool {
-        match self.destinations.get(app_id) {
-            Some(DestinationMatch::One(context)) => *context == self.environment,
-            _ => false,
+        self.destinations
+            .get(app_id)
+            .and_then(DestinationMatch::context)
+            .is_some_and(|context| context == self.environment)
+    }
+}
+
+/// Which of a Rollout's pods show what it runs for the change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PodSet {
+    /// The ReplicaSets, `(name, pod-template hash)`, whose pod template pins
+    /// the Freight's digest. Another ReplicaSet of the Rollout, such as an
+    /// older one that never became healthy, is not judged.
+    Pinned(Vec<(String, String)>),
+    /// The Rollout's current pod hash, when no ReplicaSet of it pins the
+    /// digest or they weren't read.
+    Current(String),
+}
+
+impl PodSet {
+    pub fn hashes(&self) -> Vec<&str> {
+        match self {
+            Self::Pinned(sets) => sets.iter().map(|(_, hash)| hash.as_str()).collect(),
+            Self::Current(hash) => vec![hash],
         }
     }
+}
+
+/// The pods read for one Rollout, and which.
+#[derive(Clone, Debug)]
+pub struct RolloutPods {
+    pub set: PodSet,
+    pub pods: Source<Vec<RunningImage>>,
+}
+
+/// The pods to read for a Rollout: those of its ReplicaSets that pin one of
+/// `digests`, else its current pod hash. `None` when it reports none.
+pub fn pod_set(
+    rollout: &Rollout,
+    replica_sets: Option<&[ReplicaSet]>,
+    digests: &[Digest],
+) -> Option<PodSet> {
+    let pinned: Vec<(String, String)> = owned_replica_sets(rollout, replica_sets)
+        .filter(|set| set.pins(digests))
+        .filter_map(|set| Some((set.name.clone(), set.pod_hash.clone()?)))
+        .collect();
+    if pinned.is_empty() {
+        rollout.current_pod_hash.clone().map(PodSet::Current)
+    } else {
+        Some(PodSet::Pinned(pinned))
+    }
+}
+
+fn owned_replica_sets<'a>(
+    rollout: &'a Rollout,
+    replica_sets: Option<&'a [ReplicaSet]>,
+) -> impl Iterator<Item = &'a ReplicaSet> {
+    replica_sets.into_iter().flatten().filter(|set| {
+        set.namespace == rollout.namespace && set.rollout.as_deref() == Some(rollout.name.as_str())
+    })
+}
+
+/// A Rollout the change reaches, with the digests of the Freight that lead
+/// to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WantedRollout {
+    pub namespace: String,
+    pub name: String,
+    pub digests: Vec<Digest>,
 }
 
 /// The trail of one change.
@@ -186,6 +254,49 @@ impl Trail {
             .filter(|link| link.to == Hop::Pod)
             .map(|link| link.confidence)
             .min()
+    }
+
+    /// One line: how many links of each confidence, whether the change was
+    /// found running, and, when not, the first link on the way to the pods
+    /// that stopped it.
+    pub fn summary(&self) -> String {
+        let count = |confidence| {
+            self.links
+                .iter()
+                .filter(|link| link.confidence == confidence)
+                .count()
+        };
+        let counts = format!(
+            "{} confirmed, {} claimed, {} unknown",
+            count(Confidence::Confirmed),
+            count(Confidence::Claimed),
+            count(Confidence::Unknown)
+        );
+        let running = match self.running() {
+            Some(Confidence::Confirmed) => "running, confirmed: pods run the digest".to_owned(),
+            Some(Confidence::Claimed) => {
+                "running only as claimed: no pod is seen running the digest".to_owned()
+            }
+            _ => {
+                // The links the pods are reached through; a Promotion or the
+                // supply chain is beside the way, and a pull request before it.
+                let stop = self.links.iter().find(|link| {
+                    link.confidence == Confidence::Unknown
+                        && link.from != Hop::PullRequest
+                        && !matches!(link.to, Hop::Promotion | Hop::SupplyChain)
+                });
+                match stop {
+                    Some(link) => format!(
+                        "not found running, stopped at {} -> {} {}",
+                        link.from.word(),
+                        link.to.word(),
+                        link.subject
+                    ),
+                    None => "not found running".to_owned(),
+                }
+            }
+        };
+        format!("{running}; {counts}")
     }
 }
 
@@ -228,7 +339,7 @@ fn matching_freight<'a>(
 /// Stage that reports one of `freight` as current points at, when the
 /// Application deploys to the environment cluster. Used by the collector so
 /// pods are read only for the change in question.
-pub fn candidate_rollouts(evidence: &Evidence) -> Vec<(String, String)> {
+pub fn candidate_rollouts(evidence: &Evidence) -> Vec<WantedRollout> {
     let (Some(builds), Some(freight), Some(stages), Some(apps)) = (
         evidence.builds.read(),
         evidence.kargo.freight.read(),
@@ -237,8 +348,10 @@ pub fn candidate_rollouts(evidence: &Evidence) -> Vec<(String, String)> {
     ) else {
         return Vec::new();
     };
-    let mut wanted = Vec::new();
+    let mut wanted: Vec<WantedRollout> = Vec::new();
     for (item, _) in matching_freight(&evidence.sha, builds, freight) {
+        let digests = item.images.iter().filter_map(|image| image.digest.clone());
+        let digests: Vec<Digest> = digests.collect();
         for stage in stages
             .iter()
             .filter(|stage| stage.current_freight.contains(&item.name))
@@ -252,9 +365,24 @@ pub fn candidate_rollouts(evidence: &Evidence) -> Vec<(String, String)> {
                     let Some(namespace) = rollout_namespace(app, managed) else {
                         continue;
                     };
-                    let key = (namespace, managed.name.clone());
-                    if !wanted.contains(&key) {
-                        wanted.push(key);
+                    let found = wanted
+                        .iter()
+                        .position(|w| w.namespace == namespace && w.name == managed.name);
+                    let entry = match found {
+                        Some(index) => &mut wanted[index],
+                        None => {
+                            wanted.push(WantedRollout {
+                                namespace,
+                                name: managed.name.clone(),
+                                digests: Vec::new(),
+                            });
+                            wanted.last_mut().expect("just pushed")
+                        }
+                    };
+                    for digest in &digests {
+                        if !entry.digests.contains(digest) {
+                            entry.digests.push(digest.clone());
+                        }
                     }
                 }
             }
@@ -388,7 +516,7 @@ pub fn join(evidence: &Evidence) -> Trail {
             id(&freight.project, &freight.name),
             key.clone(),
             Confidence::Confirmed,
-            freight_summary(freight),
+            freight_summary(freight, sha),
         ));
         links.extend(stage_links(evidence, freight));
     }
@@ -633,7 +761,10 @@ fn supply_chain_links(
     let images = build.images();
     let subject = id(&build.run.namespace, &build.run.name);
     let verdict = match evidence_result.map(|config| build.evidence_record(config)) {
-        None => format!("{verdict}; no evidence result configured"),
+        None => format!(
+            "{verdict}; no evidence result configured{}",
+            run_results(build)
+        ),
         Some(None) => format!("{verdict}; the configured evidence result is not on the build"),
         Some(Some(record)) => {
             let same_commit = record.commit.as_deref().is_some_and(|sha| {
@@ -695,13 +826,48 @@ fn supply_chain_links(
         .collect()
 }
 
-fn freight_summary(freight: &Freight) -> String {
+/// The names of the run's own results, which a configured evidence result
+/// could be one of.
+fn run_results(build: &Build) -> String {
+    const SHOWN: usize = 8;
+    let names: Vec<&str> = build.run.results.keys().map(String::as_str).collect();
+    match names.len() {
+        0 => " (the run has no results)".to_owned(),
+        n if n > SHOWN => format!(
+            " (the run's results: {}, and {} more)",
+            names[..SHOWN].join(", "),
+            n - SHOWN
+        ),
+        _ => format!(" (the run's results: {})", names.join(", ")),
+    }
+}
+
+fn freight_summary(freight: &Freight, sha: &str) -> String {
     let images: Vec<String> = freight
         .images
         .iter()
-        .map(|image| match &image.tag {
-            Some(tag) => format!("{} (tag {tag})", repository(&image.repo_url)),
-            None => repository(&image.repo_url),
+        .map(|image| {
+            let tag = image
+                .tag
+                .as_deref()
+                .map(|tag| format!(" (tag {tag})"))
+                .unwrap_or_default();
+            let revision = image
+                .revision
+                .as_deref()
+                .map(|revision| {
+                    let whose = if revision.eq_ignore_ascii_case(sha) {
+                        "this change's commit"
+                    } else {
+                        "not this change's commit"
+                    };
+                    format!(
+                        "; its OCI revision annotation names {}, {whose}",
+                        short_commit(revision)
+                    )
+                })
+                .unwrap_or_default();
+            format!("{}{tag}{revision}", repository(&image.repo_url))
         })
         .collect();
     let alias = freight
@@ -763,7 +929,7 @@ fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
         ));
     }
     for stage in current {
-        let health = stage.health.as_deref().unwrap_or("unreported");
+        let health = stage_health(stage);
         links.push(match shared_digest(freight, &stage.current_digests) {
             Some(digest) => Link::new(
                 Hop::Freight,
@@ -789,6 +955,20 @@ fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
     links
 }
 
+/// The Stage's health, with Kargo's reasons when it gives any.
+fn stage_health(stage: &Stage) -> String {
+    let status = stage.health.as_deref().unwrap_or("unreported");
+    if stage.health_issues.is_empty() {
+        return status.to_owned();
+    }
+    let issues: Vec<String> = stage
+        .health_issues
+        .iter()
+        .map(|issue| redact_message(issue))
+        .collect();
+    format!("{status} ({})", issues.join("; "))
+}
+
 /// The first digest of `freight` that `held` also holds.
 fn shared_digest<'a>(freight: &'a Freight, held: &[Digest]) -> Option<&'a Digest> {
     freight
@@ -799,15 +979,27 @@ fn shared_digest<'a>(freight: &'a Freight, held: &[Digest]) -> Option<&'a Digest
 }
 
 fn promotion_link(promotion: &Promotion, freight: &Freight) -> Link {
+    let pushed = match promotion.pushed_commits.as_slice() {
+        [] => "it recorded no pushed commit".to_owned(),
+        commits => format!(
+            "it pushed {}",
+            commits
+                .iter()
+                .map(|commit| short_commit(commit))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
     let note = format!(
-        "to Stage {}: {}{}",
+        "to Stage {}: {}{}; {}; {pushed}",
         promotion.stage.as_deref().unwrap_or("?"),
         promotion.phase.as_deref().unwrap_or("no phase"),
         promotion
             .message
             .as_deref()
             .map(|message| format!(" ({})", redact_message(message)))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        promotion.creator().describe()
     );
     let subject = id(&promotion.project, &promotion.name);
     match shared_digest(freight, &promotion.freight_digests) {
@@ -1004,9 +1196,15 @@ fn describe_destination(destination: &DestinationMatch) -> String {
             "destination matches several contexts ({}); the user must choose",
             contexts.join(", ")
         ),
+        DestinationMatch::ArgoCd(context) => {
+            format!("destination is Argo CD's own cluster ({IN_CLUSTER_NAME}), context {context}")
+        }
+        DestinationMatch::Named { name, context } => {
+            format!("destination by cluster name {name}, mapped to context {context}")
+        }
         DestinationMatch::None => "destination matches no known context".to_owned(),
         DestinationMatch::ByName(name) => {
-            format!("destination by cluster name {name}, mapped by hand")
+            format!("destination by cluster name {name}, which no context is mapped to")
         }
         DestinationMatch::Unspecified => "no destination".to_owned(),
     }
@@ -1023,8 +1221,32 @@ fn rollout_namespace(app: &Application, managed: &ManagedObject) -> Option<Strin
         .filter(|namespace| !namespace.is_empty())
 }
 
-const NOT_THE_ENVIRONMENT: &str =
-    "the destination is not known to be the environment cluster, so nothing was read there for it";
+/// Why nothing was read in the environment cluster for an Application, and
+/// how the user would say otherwise when its destination is that cluster.
+fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
+    let env = &evidence.environment;
+    let why = match evidence.destinations.get(app_id) {
+        Some(DestinationMatch::ByName(name)) => format!(
+            "the cluster name {name} is mapped to no context; if it is the environment cluster, map it with --known-as-name {env}={name}"
+        ),
+        Some(DestinationMatch::None) => format!(
+            "its server matches no context; if it is the environment cluster's, add it with --known-as {env}=<server>"
+        ),
+        Some(DestinationMatch::Ambiguous(contexts)) => format!(
+            "it matches several contexts ({}); the user must choose",
+            contexts.join(", ")
+        ),
+        Some(DestinationMatch::Unspecified) => "the Application names no destination".to_owned(),
+        Some(matched) => format!(
+            "it is context {}, and the environment is {env}",
+            matched.context().unwrap_or("?")
+        ),
+        None => "its destination was not matched".to_owned(),
+    };
+    format!(
+        "the destination is not known to be the environment cluster, so nothing was read there for it: {why}"
+    )
+}
 
 fn rollout_links(evidence: &Evidence, freight: &Freight, app: &Application) -> Vec<Link> {
     let app_id = id(&app.namespace, &app.name);
@@ -1033,13 +1255,14 @@ fn rollout_links(evidence: &Evidence, freight: &Freight, app: &Application) -> V
         return vec![workload_pod_link(evidence, freight, app, &app_id)];
     }
     if !evidence.deploys_to_environment(&app_id) {
+        let why = not_the_environment(evidence, &app_id);
         return vec![Link::new(
             Hop::Application,
             Hop::Rollout,
             app_id,
             Key::None,
             Confidence::Unknown,
-            NOT_THE_ENVIRONMENT,
+            why,
         )];
     }
     let Some(rollouts) = evidence.rollouts.read() else {
@@ -1144,8 +1367,11 @@ fn rollout_state(rollout: &Rollout, analysis: Option<&Vec<AnalysisRun>>) -> Stri
 fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_id: &str) -> Link {
     let subject = rollout_id.to_owned();
     let read = evidence.pods.get(rollout_id);
-    let pods = match read {
-        Some(source) if source.read().is_some() => source.read().unwrap(),
+    let (pods, which) = match read {
+        Some(read) if read.pods.read().is_some() => (
+            read.pods.read().unwrap(),
+            which_pods(evidence, rollout, &read.set),
+        ),
         Some(other) => {
             return Link::new(
                 Hop::Rollout,
@@ -1153,7 +1379,7 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
                 subject,
                 Key::None,
                 Confidence::Unknown,
-                other.why_not_read().unwrap_or_default(),
+                other.pods.why_not_read().unwrap_or_default(),
             );
         }
         None => {
@@ -1171,13 +1397,63 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
             );
         }
     };
-    judge_pods(
+    let mut link = judge_pods(
         Hop::Rollout,
         subject,
         pods,
-        read.and_then(Source::capped),
+        read.and_then(|read| read.pods.capped()),
         freight,
-    )
+    );
+    link.reason = format!("{}; {which}", link.reason);
+    link
+}
+
+/// Which pods were judged, and which of the Rollout's other ReplicaSets with
+/// pods were not.
+fn which_pods(evidence: &Evidence, rollout: &Rollout, set: &PodSet) -> String {
+    let read = evidence.replica_sets.read().map(Vec::as_slice);
+    let which = match set {
+        PodSet::Pinned(sets) => format!(
+            "the pods of ReplicaSet {}, whose template pins the Freight's digest",
+            sets.iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        PodSet::Current(hash) => {
+            let why = match evidence.replica_sets.why_not_read() {
+                Some(why) => format!("its ReplicaSets were not read ({why})"),
+                None => format!(
+                    "no ReplicaSet of it pins the Freight's digest{}",
+                    cap_note(evidence.replica_sets.capped())
+                ),
+            };
+            format!("the pods of the Rollout's current pod hash {hash}; {why}")
+        }
+    };
+    let judged = set.hashes();
+    let unlike = match set {
+        PodSet::Pinned(_) => ", whose template does not pin it",
+        PodSet::Current(_) => "",
+    };
+    let others: Vec<&str> = owned_replica_sets(rollout, read)
+        .filter(|other| {
+            other.replicas > 0
+                && other
+                    .pod_hash
+                    .as_deref()
+                    .is_none_or(|hash| !judged.contains(&hash))
+        })
+        .map(|other| other.name.as_str())
+        .collect();
+    if others.is_empty() {
+        which
+    } else {
+        format!(
+            "{which}; not judged: the pods of ReplicaSet {}{unlike}",
+            others.join(", ")
+        )
+    }
 }
 
 /// The Application's pods when it manages no Rollout: whatever runs in its
@@ -1200,7 +1476,7 @@ fn workload_pod_link(
         )
     };
     if !evidence.deploys_to_environment(app_id) {
-        return unknown(NOT_THE_ENVIRONMENT.to_owned());
+        return unknown(not_the_environment(evidence, app_id));
     }
     match evidence.namespace_pods.get(app_id) {
         Some(source) if source.read().is_some() => {
@@ -1324,7 +1600,7 @@ fn judge_pods(
     }
 }
 
-/// A trail as text, one link per line.
+/// A trail as text, one link per line, then its summary.
 pub fn render(trail: &Trail) -> String {
     let mut out = format!("change {}\n", trail.sha);
     for link in &trail.links {
@@ -1338,5 +1614,6 @@ pub fn render(trail: &Trail) -> String {
             link.reason
         ));
     }
+    out.push_str(&format!("summary: {}\n", trail.summary()));
     out
 }

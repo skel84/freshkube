@@ -278,6 +278,77 @@ pub fn pod(name: &str, image: &str, image_id: &str) -> Value {
     })
 }
 
+/// A pod of one ReplicaSet of the Rollout, by its pod-template hash.
+pub fn pod_of(name: &str, hash: &str, image: &str, image_id: &str, ready: bool) -> Value {
+    json!({
+        "metadata": {"name": name, "namespace": "shop",
+                      "labels": {"rollouts-pod-template-hash": hash}},
+        "status": {"containerStatuses": [
+            {"name": "app", "image": image, "imageID": image_id, "ready": ready}]}
+    })
+}
+
+/// A ReplicaSet the storefront Rollout owns.
+pub fn replica_set(hash: &str, image: &str, replicas: u64, ready: u64) -> Value {
+    json!({
+        "metadata": {"name": format!("storefront-{hash}"), "namespace": "shop",
+                      "labels": {"rollouts-pod-template-hash": hash},
+                      "ownerReferences": [{"apiVersion": "argoproj.io/v1alpha1", "kind": "Rollout",
+                                           "name": "storefront", "controller": true}]},
+        "spec": {"template": {"spec": {"containers": [{"name": "app", "image": image}]}}},
+        "status": {"replicas": replicas, "readyReplicas": ready}
+    })
+}
+
+/// The Rollout at the Freight's digest, running as ReplicaSet `5d9c`, beside
+/// `7f3b`: an older ReplicaSet of it that never became healthy, was never
+/// promoted, and still has a crash-looping pod of another image. The
+/// Rollout's status reports `current` as its current pod hash.
+pub fn beside_a_stale_replica_set(current: &str) -> World {
+    let mut world = healthy();
+    let pinned = format!("{REPO}@{NEW}");
+    let stale = format!("{REPO}@{OLD}");
+    let mut rollout = rollout(&pinned);
+    rollout["status"]["currentPodHash"] = json!(current);
+    world.environment = world
+        .environment
+        .with("rollouts", vec![rollout])
+        .with(
+            "replicasets",
+            vec![
+                replica_set("7f3b", &stale, 1, 0),
+                replica_set("5d9c", &pinned, 2, 2),
+            ],
+        )
+        .with(
+            "pods",
+            vec![
+                pod_of(
+                    "storefront-7f3b-a",
+                    "7f3b",
+                    &stale,
+                    &format!("docker-pullable://{stale}"),
+                    false,
+                ),
+                pod_of(
+                    "storefront-5d9c-a",
+                    "5d9c",
+                    &pinned,
+                    &format!("docker-pullable://{pinned}"),
+                    true,
+                ),
+                pod_of(
+                    "storefront-5d9c-b",
+                    "5d9c",
+                    &pinned,
+                    &format!("docker-pullable://{pinned}"),
+                    true,
+                ),
+            ],
+        );
+    world
+}
+
 pub fn pipeline_run(sha: &str, with_revision: bool, digest: Option<&str>) -> Value {
     let mut params =
         vec![json!({"name": "git-url", "value": "https://git.example/acme/storefront.git"})];

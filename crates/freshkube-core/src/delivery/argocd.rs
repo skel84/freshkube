@@ -225,18 +225,55 @@ pub async fn read_applications<R: Reader>(reader: &R, namespace: &str) -> Source
     Source::from_listing(run(reader, namespace).await)
 }
 
-/// How an Application's destination server matches the servers of the
-/// kubeconfig contexts. Several matches are never resolved by guessing.
+/// The name Argo CD gives the cluster it runs in.
+pub const IN_CLUSTER_NAME: &str = "in-cluster";
+/// The address Argo CD gives the cluster it runs in, as seen from inside it.
+const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
+
+/// How an Application's destination matches the kubeconfig contexts. Several
+/// matches are never resolved by guessing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DestinationMatch {
+    /// The destination server is this context's.
     One(String),
+    /// The destination is Argo CD's own cluster, `in-cluster` or
+    /// `https://kubernetes.default.svc`: the context Argo CD was read from.
+    ArgoCd(String),
+    /// The destination's cluster name, mapped by the user to this context.
+    Named {
+        name: String,
+        context: String,
+    },
     /// Candidates, in the order given; the user must choose.
     Ambiguous(Vec<String>),
     None,
-    /// The destination is a cluster name, which is a cluster Secret the app
-    /// doesn't read, or has no destination at all.
+    /// The destination is a cluster name no context is mapped to. Its cluster
+    /// Secret, which holds the address, is not read.
     ByName(String),
+    /// The Application has no destination at all.
     Unspecified,
+}
+
+impl DestinationMatch {
+    /// The one context the destination is, if it is known.
+    pub fn context(&self) -> Option<&str> {
+        match self {
+            Self::One(context) | Self::ArgoCd(context) | Self::Named { context, .. } => {
+                Some(context)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Where destinations may point: the `(context name, server)` pairs of the
+/// kubeconfig contexts, the `(context name, cluster name)` pairs the user
+/// mapped, and the context Argo CD runs in.
+#[derive(Clone, Copy, Debug)]
+pub struct Destinations<'a> {
+    pub contexts: &'a [(String, String)],
+    pub names: &'a [(String, String)],
+    pub argocd: &'a str,
 }
 
 /// `https://Host:443/` and `https://host` name the same server.
@@ -250,31 +287,49 @@ pub fn normalize_server(server: &str) -> String {
         .to_owned()
 }
 
-/// Matches a destination against `(context name, server)` pairs. The servers
-/// stay inside this function; only context names come out.
-pub fn match_destination(
-    application: &Application,
-    contexts: &[(String, String)],
-) -> DestinationMatch {
-    if let Some(server) = &application.destination_server {
+/// Matches a destination against the contexts. The servers stay inside this
+/// function; only context names come out. Argo CD's own names for its
+/// cluster match the Argo CD context, as they do in Argo CD; any other
+/// cluster name matches only the contexts the user mapped it to.
+pub fn match_destination(application: &Application, to: Destinations<'_>) -> DestinationMatch {
+    let (mut found, own) = if let Some(server) = &application.destination_server {
         let wanted = normalize_server(server);
-        let mut found: Vec<String> = contexts
+        let found: Vec<String> = to
+            .contexts
             .iter()
             .filter(|(_, server)| normalize_server(server) == wanted)
             .map(|(name, _)| name.clone())
             .collect();
-        // A context may be reachable at more than one address, so it may be
-        // listed under several servers.
-        found.sort();
-        found.dedup();
-        return match found.len() {
-            0 => DestinationMatch::None,
-            1 => DestinationMatch::One(found.remove(0)),
-            _ => DestinationMatch::Ambiguous(found),
-        };
+        (found, wanted == IN_CLUSTER_SERVER)
+    } else if let Some(name) = &application.destination_name {
+        let found: Vec<String> = to
+            .names
+            .iter()
+            .filter(|(_, mapped)| mapped == name)
+            .map(|(context, _)| context.clone())
+            .collect();
+        (found, name == IN_CLUSTER_NAME)
+    } else {
+        return DestinationMatch::Unspecified;
+    };
+    if own {
+        found.push(to.argocd.to_owned());
     }
-    match &application.destination_name {
-        Some(name) => DestinationMatch::ByName(name.clone()),
-        None => DestinationMatch::Unspecified,
+    // A context may be reachable at more than one address, or mapped under
+    // a name more than once, so it may be found more than once.
+    found.sort();
+    found.dedup();
+    match (found.len(), &application.destination_server) {
+        (0, Some(_)) => DestinationMatch::None,
+        (0, None) => {
+            DestinationMatch::ByName(application.destination_name.clone().unwrap_or_default())
+        }
+        (1, _) if own => DestinationMatch::ArgoCd(found.remove(0)),
+        (1, Some(_)) => DestinationMatch::One(found.remove(0)),
+        (1, None) => DestinationMatch::Named {
+            name: application.destination_name.clone().unwrap_or_default(),
+            context: found.remove(0),
+        },
+        _ => DestinationMatch::Ambiguous(found),
     }
 }
