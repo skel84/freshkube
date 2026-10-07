@@ -10,8 +10,8 @@ use std::rc::Rc;
 use freshkube_core::resources::ResourceKind;
 
 use super::{
-    KEYBOARD_PAUSE, KubeAccess, KubeSource, ListView, NotServed, ResourcesScreen, WATCH_COALESCE,
-    row_id,
+    DRAWER_SAVE_DELAY, KEYBOARD_PAUSE, KubeAccess, KubeSource, ListView, NotServed,
+    ResourcesScreen, WATCH_COALESCE, row_id,
 };
 use crate::resources::example;
 use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
@@ -390,6 +390,7 @@ fn a_kind_no_longer_served_says_so_and_closes_its_details(cx: &mut TestAppContex
         window.within(row_id(&first)).click("name", cx);
         window.render_frame(cx);
         assert_eq!(shown(&screen, cx), Some(first));
+        assert!(window.find("resource-drawer").visible());
     })
     .unwrap();
 
@@ -510,13 +511,14 @@ fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppContext) {
-    // 1280 leaves the page 1000 wide, room for both; 760 leaves 480.
-    for (width, beside) in [(1280., true), (760., false)] {
+fn a_clicked_row_shows_its_details_in_the_drawer_over_the_list(cx: &mut TestAppContext) {
+    // Here the page is the whole window: 1280 has room for the drawer
+    // beside 280 of list, and the drawer takes a page under 600 whole.
+    for (width, full) in [(1280., false), (560., true)] {
         let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), width);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.try_find("resource-detail").is_none());
+            assert!(window.try_find("resource-drawer").is_none());
             let third = identity_at(&screen, 2, cx);
             window.within(row_id(&third)).click("name", cx);
             window.render_frame(cx);
@@ -525,32 +527,31 @@ fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppC
                 window.find("detail-title").label(),
                 Some(third.address().as_str())
             );
-            // The table scrolls sideways in what the pane leaves it.
-            let list = window.find("resource-table-scroll").bounds();
-            let pane = window.find("resource-detail").bounds();
-            if beside {
-                assert!(pane.left() >= list.right(), "{list:?} {pane:?}");
-                assert!(pane.size.width >= px(320.), "{pane:?}");
-                assert!(list.size.width >= px(320.), "{list:?}");
-            } else {
-                assert!(pane.top() >= list.bottom(), "{list:?} {pane:?}");
-                assert!(pane.size.height >= px(220.), "{pane:?}");
-            }
-            assert!(pane.right() <= px(width), "{width}: {pane:?}");
-            crate::desktop::layout_check::assert_inspector(
+            // The list keeps its whole width under the drawer.
+            let body = window.find("resource-split").bounds();
+            let list = window.find("resource-list-area").bounds();
+            assert_eq!(list.size.width, body.size.width);
+            let drawn = crate::desktop::layout_check::assert_drawer(
                 window,
                 cx,
                 "resource-split",
-                "resource-body",
+                "resource-drawer",
                 "detail-inspector",
                 "detail-title",
             );
+            let page = body.size.width / crate::ui::dp_px(1., window);
+            let fit = freshkube_ui::drawer::fit(freshkube_ui::drawer::WIDTH, page);
+            assert_eq!(fit.full, full, "{width}: a page {page} wide");
+            assert!(
+                (drawn - fit.width).abs() <= 1.,
+                "{width}: {drawn} for {fit:?}"
+            );
 
-            // With no filter to clear, Escape closes the pane and drops
+            // With no filter to clear, Escape closes the drawer and drops
             // the selection it showed.
             window.press("escape", cx);
             window.render_frame(cx);
-            assert!(window.try_find("resource-detail").is_none());
+            assert!(window.try_find("resource-drawer").is_none());
             assert_eq!(shown(&screen, cx), None);
             assert_eq!(selected(&screen, cx), None);
         })
@@ -558,28 +559,181 @@ fn a_clicked_row_shows_its_details_beside_the_list_or_below_it(cx: &mut TestAppC
     }
 }
 
-/// Stacked, the pane takes two thirds of the height, as it did before the
-/// inspector.
+/// A click on the list that isn't on a row closes the drawer; one on
+/// another row swaps its object in the same drawer, without closing it.
 #[gpui_kit::test]
-fn the_stacked_pane_takes_two_thirds_of_the_height(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 760., 880.);
+fn a_click_beside_the_rows_closes_the_drawer_and_a_row_swaps_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        let pane = screen.read(cx).detail.clone();
+        let second = identity_at(&screen, 1, cx);
+        let closes = Rc::new(RefCell::new(0));
+        let _closed = {
+            let closes = closes.clone();
+            cx.observe(&pane, move |pane, cx| {
+                if pane.read(cx).target_identity().is_none() {
+                    *closes.borrow_mut() += 1;
+                }
+            })
+        };
+        window.within(row_id(&second)).click("name", cx);
         window.render_frame(cx);
-        let first = identity_at(&screen, 0, cx);
-        window.within(row_id(&first)).click("name", cx);
+        assert_eq!(shown(&screen, cx), Some(second.clone()));
+        assert_eq!(*closes.borrow(), 0, "the swap closed the drawer");
+        assert!(window.try_find("resource-drawer").is_some());
+
+        // A click inside the drawer leaves it open.
+        window.click("detail-title", cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(second.clone()));
+
+        // Under the last row, the list is empty space: a click there
+        // closes the drawer, keeping the row selected for Enter.
+        let list = window.find("resource-list-area").bounds();
+        window.click_at(
+            "resource-list-area",
+            gpui_kit::point(px(40.), list.size.height - px(10.)),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("resource-drawer").is_none());
+        assert_eq!(shown(&screen, cx), None);
+        assert_eq!(selected(&screen, cx), Some(second.clone()));
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(second));
     })
     .unwrap();
+}
+
+/// A control in the list, such as a group's Expand or the footer's Show
+/// all, is no click beside the rows: the drawer stays open on its object.
+#[gpui_kit::test]
+fn the_lists_own_buttons_leave_the_drawer_open(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        open_first(&screen, window, cx);
+        let first = shown(&screen, cx).expect("a row opened");
+        let drawer = window.find("resource-drawer").bounds();
+        for button in [
+            "resource-group-healthy-toggle",
+            "resource-group-healthy-toggle",
+            "resource-show-all",
+        ] {
+            assert!(
+                window.find(button).bounds().right() < drawer.left(),
+                "{button}"
+            );
+            window.click(button, cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), Some(first.clone()), "{button}");
+        }
+        // Show all did what it does.
+        assert_eq!(screen.read(cx).list_view, ListView::All);
+        // A column header sorts, and leaves the drawer open too.
+        window.click(("resource-sort", 1usize), cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(first));
+    })
+    .unwrap();
+}
+
+/// Closed, the drawer keeps its row selected: the arrows move the
+/// selection without opening it, Escape clears it, and only Enter or a
+/// click opens it again.
+#[gpui_kit::test]
+fn a_closed_drawer_stays_closed_while_the_selection_moves(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        // A click under the rows closes the drawer and keeps the row.
+        let list = window.find("resource-list-area").bounds();
+        window.click_at(
+            "resource-list-area",
+            gpui_kit::point(px(40.), list.size.height - px(10.)),
+            cx,
+        );
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), None);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 0, cx)));
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 1, cx)));
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 2, cx)));
+    })
+    .unwrap();
+    // The keyboard pause passes; nothing opens.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let list = window.find("resource-body").bounds();
-        let pane = window.find("detail-inspector").bounds();
-        let split = window.find("resource-split").bounds();
+        assert_eq!(shown(&screen, cx), None);
+        assert!(window.try_find("resource-drawer").is_none());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), None);
+        window.press("down", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(identity_at(&screen, 0, cx)));
+    })
+    .unwrap();
+}
+
+/// The drawer's bounds come from the list's width as last drawn. When the
+/// window narrows, the list measures itself while drawing and asks for one
+/// more frame, which fits the drawer to it without any input, and then
+/// asks for no more.
+#[gpui_kit::test]
+fn the_measured_width_settles_without_input(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    let left = |window: &mut gpui_kit::Window| {
+        let body = window.find("resource-split").bounds();
+        let drawer = window.find("resource-drawer").bounds();
+        (drawer.left() - body.left()) / crate::ui::dp_px(1., window)
+    };
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        while window.simulate_next_frame(cx) > 0 {
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(800.), px(880.)));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The list measured its new width and asked for a frame.
+        assert_eq!(window.simulate_next_frame(cx), 1, "no frame asked for");
+        window.render_frame(cx);
         assert!(
-            (pane.size.height - list.size.height * 2.).abs() <= px(2.),
-            "{list:?} {pane:?}"
+            left(window) >= freshkube_ui::drawer::LIST_KEEPS - 1.,
+            "{}",
+            left(window)
         );
-        assert_eq!(pane.bottom(), split.bottom());
+        // Settled: the next draw asks for nothing.
+        assert_eq!(window.simulate_next_frame(cx), 0);
+    })
+    .unwrap();
+}
+
+/// The page's toolbar is above the drawer, not under it: typing a filter
+/// keeps the drawer open.
+#[gpui_kit::test]
+fn the_drawer_starts_under_the_page_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        let drawer = window.find("resource-drawer").bounds();
+        let filter = window.find("resource-filter").bounds();
+        assert!(drawer.top() >= filter.bottom(), "{filter:?} {drawer:?}");
+        window.click("resource-filter", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("resource-drawer").is_some());
     })
     .unwrap();
 }
@@ -595,10 +749,11 @@ fn open_first(
     window.render_frame(cx);
 }
 
-/// The pane's width is the page's, for every kind, and comes back when
-/// the app opens again.
+/// The drawer's width is the page's, for every kind: a drag of its left
+/// edge sets it within its bounds, and it comes back when the app opens
+/// again.
 #[gpui_kit::test]
-fn the_pane_width_survives_reopening(cx: &mut TestAppContext) {
+fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
     let directory = std::env::temp_dir().join(format!(
         "freshkube-resources-width-{}-{:?}",
@@ -610,21 +765,38 @@ fn the_pane_width_survives_reopening(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
     cx.update_window(handle, |_, window, cx| {
         open_first(&screen, window, cx);
-        let state = screen.read(cx).split.beside_state().clone();
-        state.update(cx, |state, cx| {
-            state.resize_panel(1, crate::ui::dp_px(560., window), window, cx)
-        });
+        let drawer = window.find("resource-drawer").bounds();
+        // Drag the left edge so the drawer is 560 dp wide.
+        let from = gpui_kit::point(drawer.left() + px(2.), drawer.center().y);
+        let to = drawer.right() - crate::ui::dp_px(560., window);
+        window.drag(from, gpui_kit::point(to, from.y), cx);
+        window.render_frame(cx);
+        let width = window.find("resource-drawer").bounds().size.width;
+        let expected = crate::ui::dp_px(560., window);
+        assert!(
+            (width - expected).abs() <= px(2.),
+            "{width:?}, {expected:?}"
+        );
+        // Dragged past its bounds, it stops at them.
+        screen.update(cx, |screen, cx| screen.resize_drawer(50., window, cx));
+        assert_eq!(
+            screen.read(cx).drawer_width,
+            freshkube_ui::drawer::MIN_WIDTH
+        );
+        screen.update(cx, |screen, cx| screen.resize_drawer(560., window, cx));
     })
     .unwrap();
+    cx.executor().advance_clock(DRAWER_SAVE_DELAY * 2);
     cx.run_until_parked();
     let reopened = NavigationFile::open(Some(&preferences));
-    assert_eq!(reopened.inspector_width("resources"), Some(560.));
+    assert_eq!(reopened.drawer_width("resources"), Some(560.));
+    assert_eq!(reopened.inspector_width("resources"), None);
 
     cx.update(|cx| cx.set_global(reopened));
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
     cx.update_window(handle, |_, window, cx| {
         open_first(&screen, window, cx);
-        let width = window.find("detail-inspector").bounds().size.width;
+        let width = window.find("resource-drawer").bounds().size.width;
         let expected = crate::ui::dp_px(560., window);
         assert!(
             (width - expected).abs() <= px(1.),
@@ -650,6 +822,7 @@ fn arrow_keys_show_the_next_row_once_the_keyboard_pauses(cx: &mut TestAppContext
         window.render_frame(cx);
         assert_eq!(shown(&screen, cx), Some(identity_at(&screen, 2, cx)));
         assert_eq!(window.find("detail-state").label(), Some("Reading"));
+        assert!(window.find("resource-drawer").visible());
     })
     .unwrap();
     cx.executor().advance_clock(KEYBOARD_PAUSE);
@@ -1456,13 +1629,11 @@ fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
             window.render_frame(cx);
             window.press("l", cx);
             window.render_frame(cx);
-            assert_eq!(shown(&screen, cx), Some(first.clone()));
-            // The pane stays on its tab, and the list keeps the keyboard
-            // until the dock takes it.
-            assert_eq!(
-                screen.read(cx).detail_tab(cx),
-                crate::resources::Tab::Overview
-            );
+            // The drawer steps aside for the dock and the row stays
+            // selected, so Enter opens it again.
+            assert_eq!(shown(&screen, cx), None);
+            assert!(window.try_find("resource-drawer").is_none());
+            assert_eq!(screen.read(cx).selected_row(), Some(&first));
             first
         })
         .unwrap();

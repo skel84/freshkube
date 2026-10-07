@@ -5,6 +5,7 @@
 pub mod card;
 pub mod dock;
 pub mod document;
+pub mod drawer;
 pub mod graph;
 pub mod grid;
 pub mod inspector;

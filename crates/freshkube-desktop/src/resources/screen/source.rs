@@ -222,6 +222,9 @@ impl TableSource for ResourcesScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A row swaps the drawer's object; a click elsewhere on the list
+        // closes it.
+        cx.stop_propagation();
         self.click_row(key, window, cx);
     }
 

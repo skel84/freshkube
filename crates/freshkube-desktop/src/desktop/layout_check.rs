@@ -7,7 +7,8 @@
 //! `assert_table` checks one table's header and rows (a page may hold
 //! several), and `assert_table_page` checks a table page with the edge
 //! frame and its table, and that the table sits in no card;
-//! `assert_inspector` checks an inspector against its table. A page names a few
+//! `assert_inspector` checks an inspector against its table, and
+//! `assert_drawer` a drawer over its list. A page names a few
 //! elements by id; rows and group headers are found by their accessibility
 //! roles inside the list, so the checks need no access to the page's state.
 
@@ -213,6 +214,62 @@ pub(crate) fn assert_inspector(
         title.top() - pane.top()
     );
     assert_bare(window, inspector);
+}
+
+/// Asserts DESIGN.md's drawer: over the right edge of the `body` it covers,
+/// top to bottom; the whole width on a page under `FULL_BELOW`, otherwise
+/// at least `MIN_WIDTH` wide and leaving the list at least `LIST_KEEPS`; in
+/// no card; and its inspector's `title` `PANE_PADDING` in from its left.
+/// Returns the drawer's width in dp.
+pub(crate) fn assert_drawer(
+    window: &mut Window,
+    cx: &mut App,
+    body: &'static str,
+    drawer: &'static str,
+    inspector: &'static str,
+    title: &'static str,
+) -> f32 {
+    use freshkube_ui::drawer::{FULL_BELOW, LIST_KEEPS, MIN_WIDTH};
+    window.render_frame(cx);
+    let body = window.find(body).bounds();
+    let pane = window.find(drawer).bounds();
+    let title = window.find(title).bounds();
+    let dp = |n: f32| dp_px(n, window);
+    let check = |what: &str, actual: Pixels, expected: Pixels| {
+        assert!(
+            (actual - expected).abs() <= px(1.),
+            "{drawer}: {what} is {actual:?}, expected {expected:?}"
+        );
+    };
+    check("its right against the body's", pane.right(), body.right());
+    check("its top against the body's", pane.top(), body.top());
+    check(
+        "its bottom against the body's",
+        pane.bottom(),
+        body.bottom(),
+    );
+    if body.size.width < dp(FULL_BELOW) {
+        check(
+            "its width on a narrow page",
+            pane.size.width,
+            body.size.width,
+        );
+    } else {
+        assert!(
+            pane.size.width >= dp(MIN_WIDTH) - px(1.),
+            "{drawer}: {:?} wide, under {MIN_WIDTH} dp",
+            pane.size.width
+        );
+        assert!(
+            pane.left() - body.left() >= dp(LIST_KEEPS) - px(1.),
+            "{drawer}: leaves the list {:?}, under {LIST_KEEPS} dp",
+            pane.left() - body.left()
+        );
+    }
+    let pad = dp(PANE_PADDING);
+    check("the title's inset", title.left() - pane.left(), pad);
+    assert_bare(window, inspector);
+    pane.size.width / dp(1.)
 }
 
 /// Asserts DESIGN.md's padded frame, a page of cards': 26 dp side padding and

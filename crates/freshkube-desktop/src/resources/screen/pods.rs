@@ -145,9 +145,10 @@ impl ResourcesScreen {
         }
     }
 
-    /// L opens the selected pod's logs in the dock. The pane and the
-    /// page's frame stay as they are, and the list, shorter above the
-    /// dock, scrolls to keep the row in sight (see `render`).
+    /// L opens the selected pod's logs in the dock and closes the drawer,
+    /// as the pane's Logs does, keeping the row selected. The list,
+    /// shorter above the dock, scrolls to keep the row in sight (see
+    /// `render`).
     pub(super) fn open_logs(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if !self.lists_pods() || self.embedded {
             return;
@@ -155,6 +156,7 @@ impl ResourcesScreen {
         let Some(identity) = self.projection.selected().cloned() else {
             return;
         };
+        self.hide_detail(cx);
         cx.emit(ResourceLink::Logs(LogsRequest {
             target: DetailTarget {
                 identity,

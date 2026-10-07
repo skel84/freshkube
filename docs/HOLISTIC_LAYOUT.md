@@ -404,7 +404,7 @@ These have a default, so they don't block a step. Change one only by updating th
 
 - **Fixture visual entry points** add `node-overview`, `pod-overview`, `search` and `kubernetes-only` to `FRESHKUBE_PAGE`. Node Overview picks a node with a problem; Pod Overview picks a crash-looping pod; search starts with grafana. `FRESHKUBE_THEME=light|dark` and `FRESHKUBE_WINDOW_SIZE=1280x880|760x560` select the review conditions without saving settings. Kubernetes-only fixture navigation keeps using the example store and never opens kubeconfig files.
 
-- **Short Resources pages** scroll the frame below 620 dp of window height when the list stacks above the pane. Opening an object reveals the pane; closing returns the frame to the top. This keeps the existing list and pane minimum sizes usable at 760 × 560 with 20 px text, where a fixed stack clipped the tabs and Runs on link.
+- **Short Resources pages** scroll the frame below 620 dp of window height, with the list keeping 180 dp. The drawer scrolls itself and asks no more height, so at 760 × 560 with 20 px text the toolbar, the pane's header and its tabs stay in sight. The drawer takes the whole list under 600 dp of width (#290).
 
 - **Narrow Nodes tables** keep their columns in a horizontally scrolling frame, including the header. Long names stay on one line in tables and cards, with the full name in the row tooltip and accessible label. Overview card contents fill the Kit button so card borders and headings align across each grid row.
 

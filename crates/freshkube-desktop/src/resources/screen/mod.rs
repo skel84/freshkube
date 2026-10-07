@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use freshkube_core::resources::{
     ResourceKind, WatchBatch, WatchEvent, builtin, list_table, watch_collection,
 };
-use freshkube_ui::inspector::{self, InspectorSplit};
+use freshkube_ui::drawer;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, IndexPath, Sizable,
@@ -33,7 +33,7 @@ use super::model::{
 use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
-use super::{example, live, navigation};
+use super::{ResourceLink, example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::screens::{SCREEN_DEADLINE, page_width};
@@ -54,6 +54,8 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 /// gathered and applied together, so a churning list re-sorts and redraws at
 /// most ten times a second instead of once per batch core sends.
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
+/// How long a drag of the drawer's edge pauses before its width is saved.
+const DRAWER_SAVE_DELAY: Duration = Duration::from_millis(300);
 /// The namespace picker's width in the toolbar.
 const NAMESPACE_WIDTH: f32 = 132.;
 /// The table's header and a couple of rows.
@@ -226,12 +228,15 @@ pub(crate) struct ResourcesScreen {
     watch: Option<(OwnedJob, Task<()>)>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
     tick: Option<Task<()>>,
-    /// The selected object in full, beside the list or below it.
+    /// The selected object in full, in the drawer over the list.
     detail: Entity<DetailPane>,
-    /// The list and the pane: the pane's width, one for every kind, is
-    /// remembered in `navigation.json`; stacked, they share the height one
-    /// to two.
-    split: InspectorSplit,
+    /// The drawer's width in dp, one for every kind, as the user left it;
+    /// remembered in `navigation.json` under `drawer`.
+    drawer_width: f32,
+    /// Saves a dragged width once the drag pauses.
+    drawer_save: Option<Task<()>>,
+    /// The width in dp of the room the drawer lays out in, as last drawn.
+    body_width: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// Pods: problems first, or all in one list.
     list_view: ListView,
     /// The healthy pods show under the problems.
@@ -338,11 +343,19 @@ impl ResourcesScreen {
                 |this, _, event: &DetailEvent, window, cx| match event {
                     DetailEvent::Closed => this.close_pane(window, cx),
                     DetailEvent::Leave => {
+                        // A short page's frame returns to the list's top.
                         this.page_scroll.set_offset(point(px(0.), px(0.)));
                         window.focus(&this.focus, cx);
                         cx.notify();
                     }
-                    DetailEvent::Link(intent) => cx.emit(intent.clone()),
+                    DetailEvent::Link(intent) => {
+                        // Logs and shells open in the dock, under the
+                        // drawer: it steps aside, keeping the row.
+                        if matches!(intent, ResourceLink::Logs(_) | ResourceLink::Shell(_)) {
+                            this.hide_detail(cx);
+                        }
+                        cx.emit(intent.clone());
+                    }
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
                         this.open_now(identity.clone(), window, |_, _, _| {}, cx);
@@ -379,14 +392,11 @@ impl ResourcesScreen {
             namespace_job: None,
             tick: None,
             detail,
-            split: {
-                let file = crate::navigation_file::NavigationFile::global(cx);
-                InspectorSplit::new(
-                    file.inspector_width("resources"),
-                    move |width, cx| file.set_inspector_width("resources", width, cx),
-                    cx,
-                )
-            },
+            drawer_width: drawer::start_width(
+                crate::navigation_file::NavigationFile::global(cx).drawer_width("resources"),
+            ),
+            drawer_save: None,
+            body_width: Default::default(),
             list_view: ListView::default(),
             healthy_open: false,
             not_ready: NotReady::new(),
@@ -419,6 +429,10 @@ impl ResourcesScreen {
     #[cfg(test)]
     pub(crate) fn filter_value(&self, cx: &App) -> String {
         self.query.read(cx).value().to_string()
+    }
+    #[cfg(test)]
+    pub(crate) fn selected_row(&self) -> Option<&ResourceIdentity> {
+        self.projection.selected()
     }
     #[cfg(test)]
     pub(crate) fn field_selector_value(&self) -> Option<&str> {
@@ -505,21 +519,22 @@ impl ResourcesScreen {
         }
         self.select_identity(&identity, window, cx);
         self.restore = Some(identity.clone());
-        self.open_now(
-            identity,
-            window,
-            move |this, window, cx| {
-                this.detail.update(cx, |detail, cx| {
-                    detail.set_tab(tab, cx);
-                    // Logs open in the dock, which takes the keyboard and
-                    // hands it back to the list.
-                    if tab != crate::resources::Tab::Logs {
-                        detail.focus(window, cx);
-                    }
-                })
-            },
-            cx,
-        );
+        // Logs open in the dock and close the drawer at once: its read
+        // waits as for a keyboard pause, which the close cancels.
+        let delay = if tab == crate::resources::Tab::Logs {
+            KEYBOARD_PAUSE
+        } else {
+            Duration::ZERO
+        };
+        self.open_detail(identity, delay, cx);
+        self.detail.update(cx, |detail, cx| {
+            detail.set_tab(tab, cx);
+            // Logs open in the dock, which takes the keyboard and hands it
+            // back to the list.
+            if tab != crate::resources::Tab::Logs {
+                detail.focus(window, cx);
+            }
+        });
     }
 
     /// A source with the same `id` only refreshes the handles; another one
@@ -871,6 +886,7 @@ impl ResourcesScreen {
             detail.set_context(context, cx);
             detail.open(target, access, &version, delay, cx)
         });
+        // A short page scrolls its frame: reveal the drawer.
         self.page_scroll.scroll_to_bottom();
         cx.notify();
     }
@@ -901,10 +917,44 @@ impl ResourcesScreen {
 
     /// Closes the pane and clears the selection it showed.
     fn close_detail(&mut self, cx: &mut Context<Self>) {
-        self.page_scroll.set_offset(point(px(0.), px(0.)));
-        self.detail.update(cx, |detail, cx| detail.close(cx));
+        self.hide_detail(cx);
         self.projection.select(&self.store, None);
         self.restore = None;
+    }
+
+    /// Closes the pane, keeping the row it showed selected, so Enter
+    /// opens it again.
+    fn hide_detail(&mut self, cx: &mut Context<Self>) {
+        self.detail.update(cx, |detail, cx| detail.close(cx));
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    /// The width in dp the drawer lays out in: the list's, as last drawn,
+    /// or the page's before it has been.
+    fn drawer_room(&self, window: &Window) -> f32 {
+        self.body_width.get().unwrap_or_else(|| page_width(window))
+    }
+
+    /// A drag of the drawer's edge, in dp: kept within what the page
+    /// allows, and saved once the drag pauses.
+    fn resize_drawer(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let fit = drawer::fit(width, self.drawer_room(window));
+        if fit.full || (fit.width - self.drawer_width).abs() < 0.5 {
+            return;
+        }
+        self.drawer_width = fit.width;
+        self.drawer_save = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(DRAWER_SAVE_DELAY).await;
+            _ = this.update(cx, |screen, cx| {
+                screen.drawer_save = None;
+                crate::navigation_file::NavigationFile::global(cx).set_drawer_width(
+                    "resources",
+                    screen.drawer_width,
+                    cx,
+                );
+            });
+        }));
         cx.notify();
     }
 
@@ -1129,7 +1179,11 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll_to_selection(ScrollStrategy::Nearest);
-        if let Some(identity) = self.projection.selected().cloned() {
+        // An open drawer follows the selection; a closed one stays closed
+        // until Enter or a click.
+        if self.detail.read(cx).target_identity().is_some()
+            && let Some(identity) = self.projection.selected().cloned()
+        {
             self.open_detail(identity, KEYBOARD_PAUSE, cx);
         }
         cx.notify();
@@ -1150,13 +1204,17 @@ impl ResourcesScreen {
         cx.notify();
     }
 
-    /// Escape clears the filter, or with none, closes the pane.
+    /// Escape clears the filter, or with none, closes the drawer and
+    /// clears the selection; with the drawer already closed, it clears
+    /// the selection it kept.
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.query.read(cx).value().is_empty() {
             self.clear_filter(window, cx);
         } else if self.embedded {
             cx.emit(NodePodsEvent::Back);
-        } else if self.detail.read(cx).target_identity().is_some() {
+        } else if self.detail.read(cx).target_identity().is_some()
+            || self.projection.selected().is_some()
+        {
             self.close_pane(window, cx);
         }
     }
