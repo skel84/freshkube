@@ -1,0 +1,1 @@
+- Pod, workload and node log rows show their times in your local time, as the charts, Coroot's logs and the status bar do; Kubernetes and Talos write theirs in UTC. Copy still copies each line as it was written, and restart and gap notes read on the same clock as their rows.

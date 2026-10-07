@@ -205,7 +205,8 @@ mod tests {
         );
     }
 
-    /// A gap's note reads on the rows' clock, in any offset.
+    /// A gap's note reads on the rows' clock, the viewer's, whatever offset
+    /// the lines are written in.
     #[test]
     fn a_gap_reads_in_the_same_zone_as_the_messages() {
         let service = ServiceId::from("app");
@@ -223,6 +224,10 @@ mod tests {
             .iter()
             .map(|entry| entry.timestamp.as_ref().unwrap().display.clone())
             .collect();
-        assert_eq!(times, ["07:55:00", "07:55:30"]);
+        let local = |at: DateTime<Utc>| at.with_timezone(&Local).format("%H:%M:%S").to_string();
+        assert_eq!(
+            times,
+            [local(at), local(at + chrono::Duration::seconds(30))]
+        );
     }
 }
