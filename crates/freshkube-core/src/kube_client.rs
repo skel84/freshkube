@@ -10,9 +10,13 @@ use kube::{Client, Config};
 /// wouldn't: a loopback server, or one `NO_PROXY` names.
 ///
 /// kube reads `HTTPS_PROXY` when the kubeconfig names no `proxy-url`, but it
-/// ignores `NO_PROXY`, and without its `http-proxy` feature an `http://` proxy
-/// fails the client outright. A kubeconfig's own `proxy-url` is kept, as
-/// kubectl keeps it whatever `NO_PROXY` says.
+/// ignores `NO_PROXY`. A kubeconfig's own `proxy-url` is kept, as kubectl
+/// keeps it whatever `NO_PROXY` says. kube's `http-proxy` feature takes an
+/// `http://` proxy, tunnelling an `https` server through `CONNECT`, so TLS
+/// still runs to the server with the kubeconfig's certificates; any
+/// `user:password@` in the proxy's URL goes to the proxy alone, as
+/// `Proxy-Authorization`. kube refuses other schemes, `socks5://` (a feature
+/// we don't build) and `https://` among them.
 pub(crate) fn client(mut config: Config) -> Result<Client, ClientError> {
     let environment = environment_proxy();
     let no_proxy = environment_no_proxy();
@@ -27,7 +31,7 @@ pub(crate) fn client(mut config: Config) -> Result<Client, ClientError> {
     })
 }
 
-/// Why a client couldn't be made. Its message names a refused proxy by its
+/// Why a client couldn't be made. Its message names a proxy kube refused by its
 /// scheme, host and port alone: kube's own message prints the whole URL,
 /// with any credentials in it, so neither `Display` nor `Debug` shows it.
 pub(crate) struct ClientError {
@@ -47,13 +51,14 @@ impl ClientError {
         let proxy = redacted(proxy);
         if self.from_environment {
             format!(
-                "{fallback}: it goes through the proxy {proxy} from HTTPS_PROXY, which \
-                 Freshkube can't use yet. To connect directly, add the server's host to NO_PROXY."
+                "{fallback}: it goes through the proxy {proxy} from HTTPS_PROXY, and Freshkube \
+                 takes only http:// proxies. To connect directly, add the server's host to \
+                 NO_PROXY."
             )
         } else {
             format!(
                 "{fallback}: its kubeconfig sends it through the proxy {proxy} (proxy-url), \
-                 which Freshkube can't use yet."
+                 and Freshkube takes only http:// proxies."
             )
         }
     }
@@ -140,6 +145,7 @@ fn bypasses(no_proxy: &str, url: &http::Uri) -> bool {
     let Some(host) = url.host() else {
         return false;
     };
+    // Go converts non-ASCII names to punycode first; we compare them as given.
     let host = host
         .trim_start_matches('[')
         .trim_end_matches(']')
@@ -195,6 +201,8 @@ fn matches_entry(entry: &str, host: &str, port: u16, ip: Option<IpAddr>) -> bool
 }
 
 /// Splits `host:port` or `[v6]:port`; a bare IPv6 address keeps its colons.
+/// `[v6]` without a port is read as the address, more leniently than Go,
+/// which takes it for a name that never matches and so proxies.
 fn split_port(entry: &str) -> (&str, Option<u16>) {
     if let Some(rest) = entry.strip_prefix('[') {
         return match rest.split_once(']') {
@@ -328,6 +336,8 @@ mod tests {
         assert!(!direct("fd00::/8", "https://[fe80::1]:6443"));
         assert!(direct("fd00::1", "https://[fd00::1]:6443"));
         assert!(direct("[fd00::1]:6443", "https://[fd00::1]:6443"));
+        // Deliberately more lenient than kubectl, which proxies here.
+        assert!(direct("[fd00::1]", "https://[fd00::1]:6443"));
         assert!(direct("0.0.0.0/0", "https://203.0.113.9"));
         assert!(direct("*", "https://anything.example.test"));
         assert!(direct("*", "https://198.51.100.1"));
@@ -376,42 +386,131 @@ mod tests {
     }
 
     #[test]
-    fn the_error_names_the_proxy_without_its_credentials() {
+    fn the_error_names_a_refused_proxy_without_its_credentials() {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let secret = "http://someone:hunter2@proxy.invalid:3128";
-        let mut environment = config("https://api.example.test:6443", Some(secret));
-        let from_environment = skip_environment_proxy(&mut environment, Some(secret), "");
-        assert!(from_environment);
-        let error = ClientError {
-            error: Client::try_from(environment).err().unwrap(),
-            from_environment,
-        };
-        let message = error.message("Couldn't make a client for context 'example'");
-        assert!(message.contains("http://proxy.invalid:3128"), "{message}");
-        assert!(message.contains("HTTPS_PROXY") && message.contains("NO_PROXY"));
-        assert!(!message.contains("someone") && !message.contains("hunter2"));
-        assert!(!error.to_string().contains("hunter2"));
-        assert!(!format!("{error:?}").contains("hunter2"));
+        for secret in [
+            "socks5://someone:hunter2@proxy.invalid:1080",
+            "https://someone:hunter2@proxy.invalid:3128",
+        ] {
+            let mut environment = config("https://api.example.test:6443", Some(secret));
+            let from_environment = skip_environment_proxy(&mut environment, Some(secret), "");
+            assert!(from_environment);
+            let error = ClientError {
+                error: Client::try_from(environment).err().unwrap(),
+                from_environment,
+            };
+            let message = error.message("Couldn't make a client for context 'example'");
+            let shown = &secret[..secret.find("://").unwrap() + 3];
+            assert!(
+                message.contains(&format!("{shown}proxy.invalid:")),
+                "{message}"
+            );
+            assert!(message.contains("HTTPS_PROXY") && message.contains("NO_PROXY"));
+            assert!(message.contains("only http://"), "{message}");
+            assert!(!message.contains("someone") && !message.contains("hunter2"));
+            assert!(!error.to_string().contains("hunter2"));
+            assert!(!format!("{error:?}").contains("hunter2"));
 
-        let own = config("https://api.example.test:6443", Some(secret));
-        let error = ClientError {
-            error: Client::try_from(own).err().unwrap(),
-            from_environment: false,
-        };
-        let message = error.message("Couldn't make a client");
-        assert!(message.contains("proxy-url") && !message.contains("NO_PROXY"));
-        assert!(!message.contains("hunter2"), "{message}");
+            let own = config("https://api.example.test:6443", Some(secret));
+            let error = ClientError {
+                error: Client::try_from(own).err().unwrap(),
+                from_environment: false,
+            };
+            let message = error.message("Couldn't make a client");
+            assert!(message.contains("proxy-url") && !message.contains("NO_PROXY"));
+            assert!(!message.contains("hunter2"), "{message}");
+        }
     }
 
     #[tokio::test]
-    async fn a_client_for_loopback_builds_behind_an_http_proxy() {
+    async fn an_http_proxy_makes_a_client() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let config = config("https://api.example.test:6443", Some(PROXY));
+        assert!(Client::try_from(config).is_ok());
+    }
+
+    /// A one-connection proxy on loopback: it keeps the request head it is
+    /// sent and answers with `reply`.
+    async fn proxy(reply: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let head = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            let mut buffer = [0; 1024];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await.unwrap();
+                assert!(read > 0, "the client closed before its request ended");
+                head.extend_from_slice(&buffer[..read]);
+            }
+            stream.write_all(reply.as_bytes()).await.unwrap();
+            stream.shutdown().await.unwrap();
+            String::from_utf8_lossy(&head).into_owned()
+        });
+        (format!("{address}"), head)
+    }
+
+    fn proxied(server: &str, proxy: &str) -> Client {
+        let mut config = config(server, Some(proxy));
+        config.connect_timeout = Some(std::time::Duration::from_secs(5));
+        config.read_timeout = Some(std::time::Duration::from_secs(5));
+        Client::try_from(config).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_https_server_tunnels_through_the_proxy_with_its_credentials() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (address, head) = proxy("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n").await;
+        let client = proxied(
+            "https://api.example.test:6443",
+            &format!("http://someone:hunter2@{address}"),
+        );
+        let error = client.apiserver_version().await.unwrap_err();
+        let error = crate::resources::Failure::from_kube(error).to_string();
+        let head = head.await.unwrap();
+        assert!(
+            head.starts_with("CONNECT api.example.test:6443 HTTP/1.1\r\n"),
+            "{head}"
+        );
+        // base64("someone:hunter2"), for the proxy alone.
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("proxy-authorization: basic c29tzw9uztpodw50zxiy"),
+            "{head}"
+        );
+        assert!(error.contains("407"), "{error}");
+        assert!(!error.contains("hunter2"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_http_server_is_reached_through_the_proxy() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        const VERSION: &str = r#"{"major":"1","minor":"33","gitVersion":"v1.33.0","gitCommit":"","gitTreeState":"","buildDate":"","goVersion":"","compiler":"","platform":""}"#;
+        let reply: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{VERSION}",
+                VERSION.len()
+            )
+            .into_boxed_str(),
+        );
+        let (address, head) = proxy(reply).await;
+        let client = proxied("http://api.example.test:6443", &format!("http://{address}"));
+        let version = client.apiserver_version().await.unwrap();
+        assert_eq!(version.git_version, "v1.33.0");
+        let head = head.await.unwrap();
+        assert!(
+            head.starts_with("GET http://api.example.test:6443/version"),
+            "{head}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_for_loopback_skips_an_http_proxy() {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let mut config = config("http://127.0.0.1:1", Some(PROXY));
-        assert!(
-            Client::try_from(config.clone()).is_err(),
-            "kube without http-proxy refuses it"
-        );
         skip_environment_proxy(&mut config, Some(PROXY), "");
+        assert_eq!(config.proxy_url, None);
         assert!(Client::try_from(config).is_ok());
     }
 }
