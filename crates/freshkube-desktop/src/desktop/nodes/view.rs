@@ -135,6 +135,7 @@ impl Pilot {
                     .or_else(|| table::step(view, 1, cx))
                 {
                     view.open_node(key, window, cx);
+                    view.focus_node_pane(window, cx);
                 }
             }))
             .when(!expanded, |this| {
@@ -242,6 +243,18 @@ impl Pilot {
             .test_support()
             .size_full()
             .min_h_0()
+            // A click in the pane that no field, list or log inside it
+            // takes moves the keyboard to its tab strip, not the table
+            // around it (#340).
+            .on_mouse_down(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|view, _, window, cx| {
+                    if !window.default_prevented() {
+                        window.focus(&view.node_workspace.tab_focus, cx);
+                        window.prevent_default();
+                    }
+                }),
+            )
             .child(inspector)
             .into_any_element()
     }
@@ -434,6 +447,7 @@ impl Pilot {
                         let tab = *tab;
                         move |view, _, window, cx| {
                             view.show_node_tab(tab, window, cx);
+                            view.focus_node_pane(window, cx);
                         }
                     }))
             }))
@@ -453,7 +467,8 @@ impl Pilot {
                                     menu.item(PopupMenuItem::new("Events").on_click(
                                         move |_, window, cx| {
                                             let _ = events.update(cx, |view, cx| {
-                                                view.show_node_tab(NodeTab::Events, window, cx)
+                                                view.show_node_tab(NodeTab::Events, window, cx);
+                                                view.focus_node_pane(window, cx);
                                             });
                                         },
                                     ))
@@ -461,7 +476,8 @@ impl Pilot {
                                         PopupMenuItem::new("YAML").on_click(
                                             move |_, window, cx| {
                                                 let _ = yaml.update(cx, |view, cx| {
-                                                    view.show_node_tab(NodeTab::Yaml, window, cx)
+                                                    view.show_node_tab(NodeTab::Yaml, window, cx);
+                                                    view.focus_node_pane(window, cx);
                                                 });
                                             },
                                         ),

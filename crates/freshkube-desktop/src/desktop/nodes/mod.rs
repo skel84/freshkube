@@ -535,6 +535,34 @@ impl Pilot {
         }
     }
 
+    /// Moves the keyboard into the node's pane, as Enter moves it into
+    /// Resources' drawer (#340): to the shown tab's list, document, log or
+    /// screen, or to the tab strip when the tab has none of its own.
+    pub(super) fn focus_node_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.node_workspace.tab {
+            NodeTab::Logs => self
+                .logs
+                .update(cx, |logs, cx| logs.focus_lines(window, cx)),
+            NodeTab::Pods => self.node_pods.update(cx, |pods, cx| pods.focus(window, cx)),
+            NodeTab::Events | NodeTab::Yaml => self
+                .node_workspace
+                .document
+                .update(cx, |pane, cx| pane.focus(window, cx)),
+            _ => {
+                if let Some(screen) = self.active_screen() {
+                    screen.focus(window, cx);
+                }
+                // Most screens keep no keyboard of their own. A screen
+                // shown for the first time isn't in the dispatch tree yet,
+                // so ask whether the table still has it, not whether the
+                // workspace does.
+                if self.node_focus.is_focused(window) || window.focused(cx).is_none() {
+                    window.focus(&self.node_workspace.tab_focus, cx);
+                }
+            }
+        }
+    }
+
     pub(super) fn step_joined_node(
         &mut self,
         delta: isize,
