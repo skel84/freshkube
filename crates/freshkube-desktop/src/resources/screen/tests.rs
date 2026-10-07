@@ -1137,14 +1137,13 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert_eq!(focused(window, "resource-body"), Some(true));
         assert!(shown(&screen, cx).is_some());
         // From the list, the brackets switch the tab and keep the keyboard
-        // on the list. A pod's tabs wrap round to Ports.
+        // on the list. The two tabs wrap round.
         window.press("secondary-}", cx);
-        assert_eq!(window.find("detail-tab-events").selected(), Some(true));
-        window.press("secondary-{", cx);
-        window.press("secondary-{", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-tab-details").selected(), Some(true));
         window.press("secondary-{", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
         assert_eq!(focused(window, "resource-body"), Some(true));
         // Enter on the open row hands the keyboard to the pane.
         window.press("enter", cx);
@@ -1213,7 +1212,7 @@ fn a_forward_runs_on_through_another_context_and_names_its_own(cx: &mut TestAppC
             .within(row_id(&identity_at(&screen, ix, cx)))
             .click("name", cx);
     });
-    step(cx, &|window, cx| window.click("detail-tab-ports", cx));
+    step(cx, &|window, cx| window.click("detail-jump-ports", cx));
     step(cx, &|window, cx| window.click("ports-forward-8080", cx));
     step(cx, &|window, cx| {
         screen.update(cx, |screen, cx| {

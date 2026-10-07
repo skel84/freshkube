@@ -62,7 +62,7 @@ impl DetailPane {
                 return state(
                     "detail-events-loading",
                     v_flex()
-                        .p_4()
+                        .py_2()
                         .gap_3()
                         .children((0..4).map(|_| ui::skeleton(relative(0.8), dp(12.)))),
                 );
@@ -165,15 +165,12 @@ impl DetailPane {
                 })
                 .into_any_element()
         };
-        div()
+        v_flex()
             .id("detail-events")
             .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(freshkube_ui::page::PANE_PADDING))
-            .py_3()
-            .child(v_flex().gap_3().children(stale).child(body))
+            .gap_3()
+            .children(stale)
+            .child(body)
             .into_any_element()
     }
 }

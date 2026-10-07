@@ -1,6 +1,6 @@
 # Port forwarding
 
-A forward makes a port of a pod reachable on the Mac's loopback, the way `kubectl port-forward` does. It starts from a Ports tab in the pane of a pod, Service or workload, lives until the user stops it, and every running forward shows in the status bar. This file records what the source review found, the decisions taken with the user, and the design the build follows. The [roadmap](ROADMAP.md) tracks its progress.
+A forward makes a port of a pod reachable on the Mac's loopback, the way `kubectl port-forward` does. It starts from the Ports section of the pane of a pod, Service or workload, lives until the user stops it, and every running forward shows in the status bar. This file records what the source review found, the decisions taken with the user, and the design the build follows. The [roadmap](ROADMAP.md) tracks its progress.
 
 ## Feasibility
 
@@ -21,7 +21,7 @@ Verdict: it fits with what pod exec already built. The work is the local listene
 Taken with the user on 2 October 2026.
 
 - **The second exception to read-only.** A forward needs `create` on `pods/portforward`. It changes no objects, but it reaches whatever the port serves, admin endpoints included. It starts only from an explicit Forward. Live checks forward only a pod and port the user names.
-- **Where it lives.** A Ports tab in the pane lists the object's declared ports, each with Forward, and takes any other port too. A status-bar entry ("⇄ 2 forwards") opens a list of every forward with Copy address, Open in browser, Stop, Start again and Remove, on any page and in any context.
+- **Where it lives.** A Ports section in the pane's Details lists the object's declared ports, each with Forward, and takes any other port too. A status-bar entry ("⇄ 2 forwards") opens a list of every forward with Copy address, Open in browser, Stop, Start again and Remove, on any page and in any context.
 - **Targets.** Pods, Services, Deployments, StatefulSets, DaemonSets and ReplicaSets. A pod forward is tied to the pod's UID and ends when that pod goes, even if a pod with the same name comes back. A Service or workload resolves to one Ready pod. When that pod goes, open connections close and new ones go to another Ready pod, and the forward shows which pod it uses.
 - **Which pod.** A Ready, non-terminating pod that matches the selector. For a Service, it must also have the targetPort. The one Ready longest wins, then the first by name, so the choice is stable. The user can't pick: forwarding the pod itself does that.
 - **No Ready pod.** The port stays bound and the forward says "No ready pod". A new connection waits up to 10 s for one, then closes. The forward resumes when a pod turns Ready, and ends on its own only when the Service or workload is deleted.
@@ -70,14 +70,14 @@ Taken with the user on 2 October 2026.
   - `indicator.rs` is a small view in the status bar: "⇄ 2 forwards", hidden when the list is empty. Its popover lists every forward with Copy address (`localhost:13306`), Open in browser (`http://localhost:13306`), Stop, Start again and Remove.
   - `example.rs` is the example-mode listener. It resolves the target from the example data as a live forward would: a pod that isn't Running fails as Not running, a Service without a selector as No pods, and a Service or workload goes to its app's first Ready pod.
   - A `ForwardView` that starts again asks for the port it had first. If that is taken now and the port was automatic, it takes the automatic one; a typed port fails as in use and offers "Use an automatic port".
-- **`resources/pane/ports/`** is the Ports tab, shown for pods, Services and the four workload kinds.
+- **`resources/pane/ports/`** is the Ports section of Details, shown for pods, Services and the four workload kinds.
   - It lists the declared ports from the document the pane already reads: name, number, protocol, the local port field (its placeholder shows the automatic port) and Forward.
   - Under each port, its forwards from this object show as in the status bar's list, with Stop while running and Start again and Remove once ended. The same port can run more than once on different local ports.
   - An "Other port" row takes any number.
   - It reads nothing itself: starting goes through `Forwards`, so closing the pane leaves the forward running.
 - **Quitting and closing the window** extend `shell::may_close` into one question that covers both: "Stop 2 forwards?", or "End the shell in ⟨pod⟩ and stop 2 forwards?". Agreeing stops every forward, which frees its ports at once, and ends the shells as before.
 - **Context, kubeconfig, pane and page changes** don't consult forwards. They keep running against the connection they started on, and the list names it.
-- **Keys.** Ports joins the pane's tabs, last: Command-Shift-[ and ], and ← and → on the tab strip. Enter in a port's local port field, or in Other port's fields, starts it.
+- **Keys.** Ports is a section of Details, between the Overview and Events; its index button jumps to it. Enter in a port's local port field, or in Other port's fields, starts it.
 
 ### Lifetime
 

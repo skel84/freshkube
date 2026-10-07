@@ -193,11 +193,6 @@ impl DetailPane {
         div()
             .id("detail-overview")
             .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(freshkube_ui::page::PANE_PADDING))
-            .py_3()
             .child(body)
             .into_any_element()
     }

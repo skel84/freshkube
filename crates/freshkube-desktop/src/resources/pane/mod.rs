@@ -6,6 +6,7 @@
 //! Secret values stay hidden until one is revealed. Nothing here changes the
 //! cluster.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
@@ -82,36 +83,80 @@ pub(crate) enum DetailEvent {
     Link(super::ResourceLink),
 }
 
+/// Where the pane opens: a section of Details, YAML, or the dock's logs.
+/// The strip has two tabs, Details and YAML; Overview, Ports and Events are
+/// sections of Details, one scrolling page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
+    /// Details, from the top.
     Overview,
     Yaml,
+    /// Details, scrolled to its events.
     Events,
     /// Not a tab: asking for it opens the object's logs in the dock, for
     /// pods and the workloads that run them.
     Logs,
-    /// Pods, Services and the workloads that run pods.
+    /// Details, scrolled to its ports: pods, Services and the workloads
+    /// that run pods.
     Ports,
 }
 
 impl Tab {
-    const POD: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Ports];
-    const FORWARDABLE: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Ports];
-    const OTHER: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events];
+    /// The strip's tabs, in order.
+    const STRIP: [Tab; 2] = [Tab::Overview, Tab::Yaml];
 
-    /// The tabs an object of `kind` has, in order.
-    fn of(kind: &ResourceKind) -> &'static [Tab] {
-        if kind.is_pod() {
-            Tab::POD
-        } else if ports::forwardable(kind) {
-            Tab::FORWARDABLE
-        } else {
-            Tab::OTHER
+    /// The strip's tab that shows this one.
+    fn page(self) -> Tab {
+        match self {
+            Tab::Yaml => Tab::Yaml,
+            _ => Tab::Overview,
         }
     }
 
     fn index(self) -> usize {
-        self as usize
+        Tab::STRIP
+            .iter()
+            .position(|tab| *tab == self.page())
+            .unwrap_or(0)
+    }
+}
+
+/// A part of Details, in the order the page shows them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Section {
+    Overview,
+    Ports,
+    Events,
+}
+
+impl Section {
+    const POD: &[Section] = &[Section::Overview, Section::Ports, Section::Events];
+    const OTHER: &[Section] = &[Section::Overview, Section::Events];
+
+    /// The sections an object of `kind` has, in order.
+    fn of(kind: &ResourceKind) -> &'static [Section] {
+        if kind.is_pod() || ports::forwardable(kind) {
+            Section::POD
+        } else {
+            Section::OTHER
+        }
+    }
+
+    /// The section a request for `tab` scrolls to.
+    fn of_tab(tab: Tab) -> Section {
+        match tab {
+            Tab::Events => Section::Events,
+            Tab::Ports => Section::Ports,
+            _ => Section::Overview,
+        }
+    }
+
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            Section::Overview => "overview",
+            Section::Ports => "ports",
+            Section::Events => "events",
+        }
     }
 }
 
@@ -148,9 +193,18 @@ pub(crate) struct DetailPane {
     reveal_jobs: HashMap<String, Job>,
     /// A read waiting for arrow keys to pause, or for the follow interval.
     timer: Option<Task<()>>,
+    /// `Overview` (Details) or `Yaml`; the node's inspector, which has no
+    /// strip, also shows `Events` alone.
     tab: Tab,
-    /// One per tab, in `Tab`'s order, so the arrows can move between them.
-    tab_focus: [FocusHandle; 6],
+    /// One per tab, in `Tab::STRIP`'s order, so the arrows can move between
+    /// them.
+    tab_focus: [FocusHandle; 2],
+    /// Details' scroll, and the section at its top as last drawn.
+    details_scroll: ScrollHandle,
+    shown_section: Rc<Cell<Section>>,
+    /// A section asked for stays marked in the index until the user
+    /// scrolls, even when it is too short to reach the top.
+    section_pinned: Rc<Cell<bool>>,
     /// How far the tabs scrolled when the pane is too narrow for them.
     tab_strip: freshkube_ui::inspector::TabStrip,
     find: Entity<InputState>,
@@ -256,6 +310,9 @@ impl DetailPane {
             timer: None,
             tab: Tab::Overview,
             tab_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
+            details_scroll: ScrollHandle::new(),
+            shown_section: Rc::new(Cell::new(Section::Overview)),
+            section_pinned: Rc::default(),
             tab_strip: Default::default(),
             find,
             query: String::new(),
@@ -322,9 +379,10 @@ impl DetailPane {
             return;
         }
         self.stop_reads();
-        if !Tab::of(&target.kind).contains(&self.tab) {
-            self.tab = Tab::Overview;
-        }
+        // Another object starts at the top of its details.
+        self.details_scroll = ScrollHandle::new();
+        self.shown_section.set(Section::Overview);
+        self.section_pinned.set(false);
         self.ports.update(cx, |ports, cx| {
             ports.show(
                 Some((target.identity.clone(), target.kind.clone())),
@@ -760,6 +818,20 @@ impl DetailPane {
         cx.notify();
     }
 
+    /// The object's name alone, without its namespace, as kubectl takes it.
+    fn copy_name(&mut self, cx: &mut Context<Self>) {
+        let Some(name) = self
+            .detail
+            .as_ref()
+            .map(|detail| detail.target.identity.name.clone())
+        else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(name));
+        self.feedback = Some("Copied the name".into());
+        cx.notify();
+    }
+
     fn view(&self) -> Option<&DocumentView> {
         self.detail.as_ref()?.view.as_deref()
     }
@@ -792,9 +864,14 @@ impl DetailPane {
         cx.notify();
     }
 
+    /// What the pane shows: YAML, or the section at the top of Details.
     #[cfg(test)]
     pub(crate) fn tab(&self) -> Tab {
-        self.tab
+        match (self.tab, self.shown_section.get()) {
+            (Tab::Overview, Section::Ports) => Tab::Ports,
+            (Tab::Overview, Section::Events) => Tab::Events,
+            (tab, _) => tab,
+        }
     }
 
     pub(crate) fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
@@ -802,10 +879,49 @@ impl DetailPane {
             self.request_logs(None, cx);
             return;
         }
+        if self.embedded_node {
+            self.tab = tab;
+        } else {
+            self.tab = tab.page();
+            if tab != Tab::Yaml {
+                self.show_section(Section::of_tab(tab));
+            }
+        }
+        self.feedback = None;
+        self.show_tab(cx);
+        cx.notify();
+    }
+
+    /// Shows the strip's `tab`, where Details was last scrolled to.
+    fn show_page(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if tab == self.tab {
+            return;
+        }
         self.tab = tab;
         self.feedback = None;
         self.show_tab(cx);
         cx.notify();
+    }
+
+    /// Scrolls Details to `section`, or to its top when this object has
+    /// no such section.
+    fn show_section(&mut self, section: Section) {
+        let sections = self
+            .detail
+            .as_ref()
+            .map_or(Section::OTHER, |detail| Section::of(&detail.target.kind));
+        let ix = sections.iter().position(|s| *s == section).unwrap_or(0);
+        if ix == 0 {
+            // The top is the page's start, padding and all; aligning the
+            // first section with the edge would hide that padding.
+            self.details_scroll.set_offset(Point::default());
+            self.shown_section.set(sections[0]);
+            self.section_pinned.set(false);
+            return;
+        }
+        self.details_scroll.scroll_to_top_of_item(ix);
+        self.shown_section.set(sections[ix]);
+        self.section_pinned.set(true);
     }
 
     /// Moves `delta` tabs along, wrapping, from outside the pane.
@@ -815,12 +931,11 @@ impl DetailPane {
 
     /// Moves `delta` tabs along, wrapping, and returns the tab now shown.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) -> Option<Tab> {
-        let detail = self.detail.as_ref()?;
-        let tabs = Tab::of(&detail.target.kind);
-        let current = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0);
-        let next = (current as isize + delta).rem_euclid(tabs.len() as isize) as usize;
+        self.detail.as_ref()?;
+        let tabs = Tab::STRIP;
+        let next = (self.tab.index() as isize + delta).rem_euclid(tabs.len() as isize) as usize;
         let tab = tabs[next];
-        self.set_tab(tab, cx);
+        self.show_page(tab, cx);
         Some(tab)
     }
 

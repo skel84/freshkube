@@ -264,20 +264,20 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         assert_eq!(pilot.read(cx).dock.read(cx).tabs.len(), 1);
         assert_eq!(window.find("pod-logs-previous").checked(), Some(false));
         reopen(window, cx);
-        window.click("detail-tab-overview", cx);
+        window.click("detail-tab-details", cx);
         window.render_frame(cx);
         // Recent events sit below the history; scroll until the link is
         // whole, since a click lands on its centre.
         for _ in 0..20 {
             let (link, pane) = (
                 window.find("pod-all-events").bounds(),
-                window.find("detail-overview").bounds(),
+                window.find("detail-details").bounds(),
             );
             if link.bottom() <= pane.bottom() && link.top() >= pane.top() {
                 break;
             }
             window.scroll(
-                "detail-overview",
+                "detail-details",
                 gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
                     gpui_kit::px(0.),
                     gpui_kit::px(-60.),
@@ -288,6 +288,9 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         }
         window.click("pod-all-events", cx);
         window.render_frame(cx);
+        window.render_frame(cx);
+        // The link scrolls Details to its events.
+        assert!(window.find("detail-section-events").visible());
         assert_eq!(
             pilot.read(cx).resources.read(cx).detail_tab(cx),
             Tab::Events

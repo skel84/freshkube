@@ -103,7 +103,7 @@ fn an_object_reads_at_once_with_its_overview_yaml_and_events(cx: &mut TestAppCon
             Some(pod.identity.address().as_str())
         );
         assert!(window.try_find("detail-state").is_none());
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-details").selected(), Some(true));
         assert!(window.find("detail-overview").visible());
         // A crashing pod opens on why; its conditions follow further down.
         assert!(window.find("pod-cause").visible());
@@ -117,10 +117,15 @@ fn an_object_reads_at_once_with_its_overview_yaml_and_events(cx: &mut TestAppCon
         );
 
         // Scheduled, Pulled, Created and Started, then the newest: a
-        // warning that it keeps crashing.
-        window.click("detail-tab-events", cx);
+        // warning that it keeps crashing. Details' index jumps to them.
+        window.click("detail-tab-details", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-events").label(), Some("Events 5"));
+        window.click("detail-jump-events", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-jump-events").selected(), Some(true));
+        assert!(window.find("detail-section-events").visible());
+        assert_eq!(window.find("detail-jump-events").label(), Some("Events 5"));
         let newest = window.find(("detail-event", 0usize));
         assert!(
             newest.label().unwrap().starts_with("BackOff: "),
@@ -334,7 +339,7 @@ fn search_marks_matches_steps_through_them_and_escape_backs_out(cx: &mut TestApp
     step(cx, &|window, cx| {
         open(&pane, &pod, Duration::ZERO, cx);
         window.render_frame(cx);
-        window.click("detail-overview", cx);
+        window.click("detail-details", cx);
     });
     step(cx, &|window, cx| window.press("secondary-f", cx));
     step(cx, &|window, cx| {
@@ -420,6 +425,24 @@ fn lines_select_and_copy_and_copy_yaml_takes_the_whole_document(cx: &mut TestApp
     })
     .unwrap();
     assert_eq!(clipboard(cx), yaml);
+
+    // The button beside the title copies the name alone, as kubectl
+    // takes it.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("detail-copy-name", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("detail-feedback").label(),
+            Some("Copied the name")
+        );
+    })
+    .unwrap();
+    let name = pane.read_with(cx, |pane, _| {
+        pane.detail.as_ref().unwrap().target.identity.name.clone()
+    });
+    assert!(!name.contains('/'));
+    assert_eq!(clipboard(cx), name);
 }
 
 #[gpui_kit::test]
@@ -537,7 +560,7 @@ fn pods_and_what_runs_them_ask_the_dock_for_their_logs(cx: &mut TestAppContext) 
         assert!(window.try_find("detail-tab-logs").is_none());
         window.click("detail-open-logs", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-details").selected(), Some(true));
 
         open(&pane, &deployment, Duration::ZERO, cx);
         window.render_frame(cx);
@@ -570,20 +593,19 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         open(&pane, &pod, Duration::ZERO, cx);
         window.render_frame(cx);
         // A click focuses the tab, and the arrows move along the tabs.
-        window.click("detail-tab-overview", cx);
+        window.click("detail-tab-details", cx);
         window.render_frame(cx);
-        assert_eq!(tab(window, "detail-tab-overview"), (Some(true), Some(true)));
+        assert_eq!(tab(window, "detail-tab-details"), (Some(true), Some(true)));
         window.press("right", cx);
         window.render_frame(cx);
         assert_eq!(tab(window, "detail-tab-yaml"), (Some(true), Some(true)));
-        window.press("left", cx);
+        // Two tabs, which wrap round.
+        window.press("right", cx);
+        window.render_frame(cx);
+        assert_eq!(tab(window, "detail-tab-details"), (Some(true), Some(true)));
         window.press("left", cx);
         window.render_frame(cx);
-        // A pod's tabs wrap round to Ports.
-        assert_eq!(tab(window, "detail-tab-ports"), (Some(true), Some(true)));
-        window.press("left", cx);
-        window.render_frame(cx);
-        assert_eq!(tab(window, "detail-tab-events"), (Some(true), Some(true)));
+        assert_eq!(tab(window, "detail-tab-yaml"), (Some(true), Some(true)));
 
         // From the pane, Command-Shift-] and [ switch the tab and hand the
         // keyboard to the pane.
@@ -593,29 +615,22 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.render_frame(cx);
         window.press("secondary-{", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
-        assert_eq!(window.find("resource-detail").focused(), Some(true));
-        window.press("secondary-{", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-events").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
         window.press("secondary-}", cx);
-        window.press("secondary-}", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-details").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
 
-        // A workload has four tabs, Ports last; other kinds have three.
-        open(&pane, &deployment, Duration::ZERO, cx);
-        window.render_frame(cx);
-        window.press("secondary-{", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
-        open(&pane, &secret, Duration::ZERO, cx);
-        window.render_frame(cx);
-        window.press("secondary-{", cx);
-        window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-events").selected(), Some(true));
+        // Every kind has the same two tabs; Details holds a pod's and a
+        // workload's ports, and every kind's events.
+        for (target, ports) in [(&pod, true), (&deployment, true), (&secret, false)] {
+            open(&pane, target, Duration::ZERO, cx);
+            window.render_frame(cx);
+            assert!(window.find("detail-tab-yaml").visible());
+            assert!(window.find("detail-jump-events").visible());
+            assert_eq!(window.try_find("detail-jump-ports").is_some(), ports);
+        }
     })
     .unwrap();
 }
@@ -805,11 +820,7 @@ fn every_tab_is_28_high_at_any_text_size(cx: &mut TestAppContext) {
             let heading = window.find("detail-inspector-heading").bounds();
             assert!(strip.top() >= heading.bottom(), "{heading:?} {strip:?}");
             let tall = crate::ui::dp_px(28., window);
-            for id in [
-                "detail-tab-overview",
-                "detail-tab-yaml",
-                "detail-tab-events",
-            ] {
+            for id in ["detail-tab-details", "detail-tab-yaml"] {
                 let tab = window.find(id).bounds();
                 assert!(
                     (tab.size.height - tall).abs() <= px(1.),
@@ -860,42 +871,90 @@ fn settle(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     panic!("the tab strip keeps moving");
 }
 
-/// A pane too narrow for its tabs cuts the strip and marks the cut end;
-/// the arrows still land on a tab in view, Ports included (#232).
+/// A narrow pane at text size 20 still fits both tabs, and the index over
+/// Details wraps rather than cutting a section off.
 #[gpui_kit::test]
-fn the_keyboard_reaches_the_tabs_a_narrow_pane_cuts(cx: &mut TestAppContext) {
+fn a_narrow_pane_fits_its_tabs_and_wraps_the_index(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     cx.update(|cx| crate::text_size::install(None, cx));
     cx.update(|cx| crate::text_size::set(20., cx));
-    // Narrower than the other tests' pane, so four tabs don't fit.
-    cx.simulate_window_resize(handle, gpui_kit::size(px(400.), px(820.)));
+    cx.simulate_window_resize(handle, gpui_kit::size(px(320.), px(820.)));
     let (pod, _) = running_pod();
-    let in_view = |window: &mut gpui_kit::Window, id: &'static str| {
-        let row = window.find("detail-tabs").bounds();
-        let tab = window.find(id).bounds();
-        tab.left() >= row.left() - px(0.5) && tab.right() <= row.right() + px(0.5)
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        settle(window, cx);
+        assert!(window.try_find("detail-inspector-tabs-later").is_none());
+        let index = window.find("detail-index").bounds();
+        for id in [
+            "detail-jump-overview",
+            "detail-jump-ports",
+            "detail-jump-events",
+        ] {
+            let jump = window.find(id).bounds();
+            assert!(
+                jump.left() >= index.left() - px(0.5) && jump.right() <= index.right() + px(0.5),
+                "{id}: {jump:?} outside {index:?}"
+            );
+        }
+    })
+    .unwrap();
+}
+
+/// Details is one page under an index: a jump brings its section to the
+/// top and marks it, YAML and back keep the place, and scrolling marks the
+/// section the scroll reaches.
+#[gpui_kit::test]
+fn the_index_jumps_through_details_and_follows_its_scroll(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    let top = |window: &mut gpui_kit::Window, id: &'static str| {
+        window.find(id).bounds().top() - window.find("detail-details").bounds().top()
     };
     cx.update_window(handle, |_, window, cx| {
         open(&pane, &pod, Duration::ZERO, cx);
         settle(window, cx);
+        assert_eq!(window.find("detail-jump-overview").selected(), Some(true));
+        assert!(window.try_find("detail-section-ports").is_some());
+        let start = top(window, "detail-section-overview");
+
+        // This pod's Ports and Events are shorter than the pane, so the
+        // jump scrolls to the end and Ports stays marked.
+        let before = top(window, "detail-section-ports");
+        window.click("detail-jump-ports", cx);
+        settle(window, cx);
+        let jumped = top(window, "detail-section-ports");
         assert!(
-            window.try_find("detail-inspector-tabs-later").is_some(),
-            "the pane fits all its tabs"
+            jumped < before && jumped >= px(-1.),
+            "{before:?} → {jumped:?}"
         );
-        assert!(!in_view(window, "detail-tab-ports"));
-        window.click("detail-tab-overview", cx);
-        // Left from Overview wraps round to Ports, the last tab.
-        window.press("left", cx);
+        assert!(window.find("detail-section-events").visible());
+        assert_eq!(window.find("detail-jump-ports").selected(), Some(true));
+        assert_eq!(window.find("detail-jump-overview").selected(), Some(false));
+
+        window.click("detail-tab-yaml", cx);
         settle(window, cx);
-        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
-        assert_eq!(window.find("detail-tab-ports").focused(), Some(true));
-        assert!(in_view(window, "detail-tab-ports"));
-        assert!(window.try_find("detail-inspector-tabs-earlier").is_some());
-        window.press("right", cx);
+        assert!(window.try_find("detail-details").is_none());
+        window.click("detail-tab-details", cx);
         settle(window, cx);
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
-        assert!(in_view(window, "detail-tab-overview"));
-        assert!(window.try_find("detail-inspector-tabs-earlier").is_none());
+        assert_eq!(top(window, "detail-section-ports"), jumped);
+        assert_eq!(window.find("detail-jump-ports").selected(), Some(true));
+
+        // Back to the top by the wheel, and the index follows.
+        window.scroll(
+            "detail-details",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(5000.))),
+            cx,
+        );
+        settle(window, cx);
+        assert_eq!(top(window, "detail-section-overview"), start);
+        assert_eq!(window.find("detail-jump-overview").selected(), Some(true));
+
+        // A pane asked to open on Events scrolls there.
+        pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Events, cx));
+        settle(window, cx);
+        assert_eq!(window.find("detail-tab-details").selected(), Some(true));
+        assert_eq!(window.find("detail-jump-events").selected(), Some(true));
+        assert!(window.find("detail-section-events").visible());
     })
     .unwrap();
 }
