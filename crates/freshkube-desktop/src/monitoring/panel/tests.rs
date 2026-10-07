@@ -339,7 +339,7 @@ fn the_cursor_reads_out_values_and_tells_the_page_without_rebuilding_paths(
     // The page passes it on: the other chart's crosshair falls on the same
     // sample, and that chart shows no readout.
     let shared = cx
-        .read(|cx| panels[memory].read(cx).crosshair(time, cx))
+        .read(|cx| panels[memory].read(cx).crosshair(time))
         .unwrap();
     let chart = cx.read(|cx| panels[memory].read(cx).chart()).unwrap();
     assert_eq!(shared.x, chart.xs[cursor.index]);
@@ -835,6 +835,46 @@ fn a_pick_under_the_cursor_shows_in_the_readout(cx: &mut TestAppContext) {
 }
 
 /// A table panel of `count` alerts, one per name, answered at once.
+/// The readout takes the theme's inks as it draws: switching the theme while
+/// the cursor shows recolours its swatches before the pointer moves (#350).
+#[gpui_kit::test]
+fn a_theme_change_recolours_the_readout_under_a_still_pointer(cx: &mut TestAppContext) {
+    // Its first two series take the slots, whose inks differ by theme.
+    let (dashboard, specs) = cluster();
+    let cpu = index_of(&specs, "CPU usage by node");
+    let (handle, panels) = mount(cx, specs);
+    answer(cx, &dashboard, &panels);
+    frame(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        let bounds = window.find(format!("monitoring-panel-{cpu}-plot")).bounds();
+        window.dispatch_event(
+            gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                position: bounds.center(),
+                pressed_button: None,
+                modifiers: Default::default(),
+            }),
+            cx,
+        );
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    let overlay = cx.read(|cx| panels[cpu].read(cx).cursor_overlay()).unwrap();
+    let (rows, _) = cx.read(|cx| overlay.read(cx).named()).unwrap();
+    let chart = cx.read(|cx| panels[cpu].read(cx).chart()).unwrap();
+    let expected = |p: &crate::palette::Palette| -> Vec<_> {
+        (rows.iter())
+            .map(|series| chart.series[*series].ink.color(p, false))
+            .collect()
+    };
+    let dark = cx.read(|cx| overlay.read(cx).swatches(cx)).unwrap();
+    assert_eq!(dark, expected(&crate::palette::dark()));
+
+    cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+    let light = cx.read(|cx| overlay.read(cx).swatches(cx)).unwrap();
+    assert_eq!(light, expected(&crate::palette::light()));
+    assert_ne!(light, dark);
+}
+
 fn alert_table(cx: &mut TestAppContext, count: usize) -> (AnyWindowHandle, Entity<PanelView>) {
     use freshkube_core::monitoring::{
         PanelResult,
