@@ -137,14 +137,7 @@ impl Controls for PodLogView {
                 view.set_previous(previous, cx)
             }));
         let time = self.columns().time;
-        let timestamps = Button::new("pod-logs-timestamps")
-            .outline()
-            .small()
-            .icon(IconName::Clock)
-            .toggled(time)
-            .selected(time)
-            .accessibility_label("Timestamps")
-            .tooltip("Show each line's time. Copy copies what shows.")
+        let timestamps = crate::logs::timestamps_button("pod-logs-timestamps", time)
             .on_click(cx.listener(move |view, _, _, cx| view.set_timestamps(!time, cx)));
         let running = source.running();
         let stream = Button::new("pod-logs-stream")

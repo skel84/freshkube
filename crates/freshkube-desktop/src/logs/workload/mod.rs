@@ -244,6 +244,16 @@ pub(super) struct Chip {
     pub(super) shown: bool,
 }
 
+/// One entry of the Pod select, derived when the pods or the streams
+/// change.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PodChoice {
+    pub(super) name: String,
+    /// The menu's words: the pod's short label, and why its lines may be
+    /// missing.
+    pub(super) label: SharedString,
+}
+
 /// What the controls say, derived when anything changes.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Status {
@@ -296,6 +306,20 @@ pub(crate) struct WorkloadLogs {
     hidden: BTreeSet<ServiceId>,
     seen: BTreeSet<ServiceId>,
     pub(super) chips: Rc<Vec<Chip>>,
+    /// The pod whose lines show, by name, or every pod. It is a filter:
+    /// every stream reads on, so All pods shows them again at once. A pod
+    /// that leaves keeps the pick, with what it wrote.
+    pub(super) pod: Option<String>,
+    /// The Pod select's entries: the pods newest first, and a picked pod
+    /// that left.
+    pub(super) pod_choices: Rc<Vec<PodChoice>>,
+    /// What the Pod select's button reads, and says to assistive
+    /// technology.
+    pub(super) pod_label: SharedString,
+    pub(super) pod_aria: SharedString,
+    /// Why the list is empty when the picked pod is one the cap leaves
+    /// unread; it wins over every other empty text.
+    not_read: Option<SharedString>,
     /// Advances whenever the chips are derived again, so their measured
     /// widths are taken again.
     chips_revision: u64,
@@ -313,7 +337,8 @@ pub(crate) struct WorkloadLogs {
     pub(super) more_for: Option<(usize, usize)>,
     /// The streams row's accessible name: how many containers it holds.
     pub(super) streams_label: SharedString,
-    /// The cap's notice, while containers are left out.
+    /// The cap's notice while containers are left out, which also closes
+    /// the Pod select's menu.
     pub(super) capped: Option<SharedString>,
     /// The refused streams' notice, while any is refused.
     pub(super) refused_note: Option<SharedString>,
@@ -355,6 +380,11 @@ impl WorkloadLogs {
             hidden: BTreeSet::new(),
             seen: BTreeSet::new(),
             chips: Rc::default(),
+            pod: None,
+            pod_choices: Rc::default(),
+            pod_label: SharedString::default(),
+            pod_aria: SharedString::default(),
+            not_read: None,
             chips_revision: 0,
             chip_widths: Vec::new(),
             more_width: Pixels::ZERO,
@@ -391,6 +421,9 @@ impl WorkloadLogs {
         self.watch_job = None;
         self.watch_delivery = None;
         self.streams.clear();
+        // Nothing is read, so the cap leaves nothing out until the pods
+        // are listed again.
+        self.left_out = 0;
         self.feed = None;
         self.example_writer = None;
         #[cfg(feature = "stress")]
@@ -437,6 +470,7 @@ impl WorkloadLogs {
         let chips: Vec<Chip> = self
             .streams
             .iter()
+            .filter(|(key, _)| self.pod.as_ref().is_none_or(|pod| key.pod == *pod))
             .map(|(key, stream)| {
                 let service = key.service();
                 let name = service.as_str();
@@ -480,13 +514,7 @@ impl WorkloadLogs {
         self.chips = Rc::new(chips);
         self.chips_revision += 1;
         self.streams_label = plural(self.chips.len(), "container", "containers").into();
-        self.capped = (self.left_out > 0).then(|| {
-            format!(
-                "Reading {MAX_STREAMS} of {} containers, the newest pods first.",
-                MAX_STREAMS + self.left_out
-            )
-            .into()
-        });
+        self.capped = (self.left_out > 0).then(|| capped_note(MAX_STREAMS + self.left_out).into());
         let refused = self
             .streams
             .values()
@@ -501,11 +529,26 @@ impl WorkloadLogs {
         });
         let pods = self.pods.len();
         let streams = self.streams.len();
-        let counts = format!(
-            "{} · {}",
-            plural(pods, "pod", "pods"),
-            plural(streams, "container", "containers")
-        );
+        // A pick narrows the counts; the tag and the banners stay the
+        // workload's, since every stream reads on whatever is picked.
+        let counts = match &self.pod {
+            None => format!(
+                "{} · {}",
+                plural(pods, "pod", "pods"),
+                plural(streams, "container", "containers")
+            ),
+            Some(pod) => {
+                let present = self.pods.iter().any(|seen| seen.name == *pod);
+                let read = self.streams.keys().filter(|key| key.pod == *pod).count();
+                format!(
+                    "{} of {} · {read} of {}",
+                    usize::from(present),
+                    plural(pods, "pod", "pods"),
+                    plural(streams, "container", "containers")
+                )
+            }
+        };
+        self.describe_pods();
         let (tone, tag, text, empty) = match &self.pods_state {
             PodsState::Idle => (Tone::Unknown, "Idle", String::new(), String::new()),
             PodsState::Finding => (
@@ -555,6 +598,61 @@ impl WorkloadLogs {
             label: label.into(),
         };
         self.empty = empty.into();
+        self.not_read = self.pod_not_read().map(Into::into);
+    }
+
+    /// The Pod select's entries and its button's words. A pod none of
+    /// whose containers is read says so, so its filter never looks empty
+    /// for a reason it doesn't give.
+    fn describe_pods(&mut self) {
+        let mut names: Vec<&str> = self.pods.iter().map(|pod| pod.name.as_str()).collect();
+        let gone = self.pod.as_deref().filter(|picked| !names.contains(picked));
+        names.extend(gone);
+        let labels = short_labels(names.iter().map(|name| ServiceId::new(*name)));
+        let label = |name: &str| {
+            labels
+                .get(&ServiceId::new(name))
+                .map(|label| label.to_string())
+                .unwrap_or_else(|| name.to_owned())
+        };
+        let choices: Vec<PodChoice> = names
+            .iter()
+            .map(|&name| {
+                let mut words = label(name);
+                if Some(name) == gone {
+                    words.push_str(" (gone)");
+                } else if self.left_out > 0 && !self.streams.keys().any(|key| key.pod == name) {
+                    words.push_str(" · not read");
+                }
+                PodChoice {
+                    name: name.to_owned(),
+                    label: words.into(),
+                }
+            })
+            .collect();
+        self.pod_label = match &self.pod {
+            None => "All pods".into(),
+            Some(pod) => choices
+                .iter()
+                .find(|choice| choice.name == *pod)
+                .map(|choice| choice.label.clone())
+                .unwrap_or_else(|| pod.clone().into()),
+        };
+        self.pod_aria = format!("Pod: {}", self.pod_label).into();
+        self.pod_choices = Rc::new(choices);
+    }
+
+    /// The cap's words, when the picked pod is one the cap leaves unread.
+    fn pod_not_read(&self) -> Option<String> {
+        let pod = self.pod.as_ref()?;
+        let present = self.pods.iter().any(|seen| seen.name == *pod);
+        let read = self.streams.keys().any(|key| key.pod == *pod);
+        (present && !read && self.left_out > 0).then(|| {
+            format!(
+                "{pod} isn't read. {}",
+                capped_note(MAX_STREAMS + self.left_out)
+            )
+        })
     }
 
     /// A note between lines: a pod joined or left.
@@ -573,10 +671,24 @@ impl WorkloadLogs {
             .collect()
     }
 
-    /// The tags shown: every tag seen but those the user hid.
+    /// The tags shown: every tag seen but those the user hid, of the
+    /// picked pod when there is one.
     fn shown(&self) -> BTreeSet<ServiceId> {
-        self.seen.difference(&self.hidden).cloned().collect()
+        self.seen
+            .difference(&self.hidden)
+            .filter(|service| {
+                self.pod
+                    .as_ref()
+                    .is_none_or(|pod| split(service).0 == pod.as_str())
+            })
+            .cloned()
+            .collect()
     }
+}
+
+/// What the cap leaves out, in the words of the note under the toolbar.
+fn capped_note(containers: usize) -> String {
+    format!("Reading {MAX_STREAMS} of {containers} containers, the newest pods first.")
 }
 
 fn plural(count: usize, one: &str, many: &str) -> String {
@@ -597,12 +709,19 @@ impl LogSource for WorkloadLogs {
         view.fit_chips(width, window, cx);
     }
 
+    fn tools(view: &WorkloadLogView, cx: &mut Context<WorkloadLogView>) -> Vec<AnyElement> {
+        view.render_tools(cx)
+    }
+
     fn notes(view: &WorkloadLogView, cx: &mut Context<WorkloadLogView>) -> Vec<AnyElement> {
         view.render_controls(cx)
     }
 
     fn empty_message(view: &WorkloadLogView) -> SharedString {
-        if !view.has_lines() {
+        // The other pods' lines are retained, so this comes first.
+        if let Some(not_read) = &view.source().not_read {
+            not_read.clone()
+        } else if !view.has_lines() {
             view.source().empty.clone()
         } else {
             "No retained lines pass the filters.".into()
@@ -751,6 +870,7 @@ impl WorkloadLogPanel for WorkloadLogView {
         source.left_out = 0;
         source.hidden.clear();
         source.seen.clear();
+        source.pod = None;
         source.errors.clear();
         source.more_open = false;
         source.describe();
@@ -812,6 +932,12 @@ trait Streams: Sized + 'static {
 
     /// Shows or hides one stream's lines.
     fn toggle_stream(&mut self, service: ServiceId, cx: &mut Context<Self>);
+
+    /// Shows one pod's lines, or every pod's.
+    fn pick_pod(&mut self, pod: Option<String>, cx: &mut Context<Self>);
+
+    /// Shows or hides each line's time.
+    fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>);
 
     /// Starts the pod watch once the tab is wanted, the page shows and the
     /// selector is known.
@@ -880,6 +1006,28 @@ impl Streams for WorkloadLogView {
         self.capture_anchor();
         self.clear_shown();
         cx.notify();
+    }
+
+    fn pick_pod(&mut self, pod: Option<String>, cx: &mut Context<Self>) {
+        if self.source().pod == pod {
+            return;
+        }
+        let source = self.source_mut();
+        source.pod = pod;
+        source.describe();
+        self.capture_anchor();
+        self.clear_shown();
+        cx.notify();
+    }
+
+    fn set_timestamps(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.set_columns(
+            Columns {
+                time: shown,
+                ..self.columns()
+            },
+            cx,
+        );
     }
 
     fn start_watch(&mut self, cx: &mut Context<Self>) {

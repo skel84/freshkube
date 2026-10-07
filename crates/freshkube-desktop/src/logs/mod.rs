@@ -18,7 +18,11 @@ mod workload;
 #[cfg(test)]
 mod tests;
 
-use gpui_kit::{Pixels, Window};
+use gpui_kit::{
+    Pixels, Window,
+    assets::IconName,
+    component::{Selectable, Sizable, button::Button},
+};
 
 use crate::ui;
 
@@ -30,6 +34,19 @@ pub(crate) use workload::{WorkloadLogPanel, WorkloadLogView};
 
 /// The Talos Logs page.
 pub(crate) type LogPanel = LogView<TalosLogs>;
+
+/// The Timestamps toggle of a pod's and a workload's toolbar, on while
+/// `time` shows; the caller adds what a click does.
+fn timestamps_button(id: &'static str, time: bool) -> Button {
+    Button::new(id)
+        .outline()
+        .small()
+        .icon(IconName::Clock)
+        .toggled(time)
+        .selected(time)
+        .accessibility_label("Timestamps")
+        .tooltip("Show each line's time. Copy copies what shows.")
+}
 
 // A source's chips, as the workload logs' containers: they take the rows
 // the panel has room for, and "+N" lists the rest.

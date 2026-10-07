@@ -1,27 +1,37 @@
-//! A workload log's lines under the toolbar's row: where the pod watch
-//! stands, the notices, then one row of chips, one
-//! per container read, which shows or hides lines. The chips take the
-//! rows the panel has room for, two at most, and none when the panel is
-//! short; a "+N" chip lists every container, so none is out of reach.
+//! A workload log's tools in the toolbar's row, the Pod select and
+//! Timestamps, and its lines under the row: where the pod watch stands,
+//! the notices, then one row of chips, one per container read, which
+//! shows or hides lines. The chips take the rows the panel has room for,
+//! two at most, and none when the panel is short; a "+N" chip lists every
+//! container, so none is out of reach.
 
 use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    Anchor, AnyElement, App, AvailableSpace, Context, Pixels, Role, SharedString, TestSupportExt,
-    Toggled, WeakEntity, Window,
-    component::{Icon, Sizable, button::Button, h_flex, popover::Popover},
+    Anchor, AnyElement, App, AvailableSpace, ClickEvent, Context, Pixels, Role, SharedString,
+    TestSupportExt, Toggled, WeakEntity, Window,
+    component::{
+        Disableable, Icon, Sizable,
+        button::Button,
+        h_flex,
+        menu::{DropdownMenu, PopupMenuItem},
+        popover::Popover,
+    },
     div,
     prelude::*,
     size,
 };
 
 use super::{Chip, MAX_STREAMS, PodsState, Streams, WorkloadLogView, plural};
-use crate::logs::{chip_rows, chips_that_fit};
+use crate::logs::{chip_rows, chips_that_fit, timestamps_button};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
 /// The Logs tab's toolbar rows.
 pub(super) trait Controls: Sized + 'static {
+    /// The toolbar's own tools: the Pod select and Timestamps.
+    fn render_tools(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
+
     fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
 
     /// Where the watch stands: a tag, and the counts.
@@ -102,6 +112,53 @@ fn more_label(hidden: usize, total: usize) -> SharedString {
 }
 
 impl Controls for WorkloadLogView {
+    fn render_tools(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let source = self.source();
+        let view = cx.entity().downgrade();
+        let choices = source.pod_choices.clone();
+        let picked = source.pod.clone();
+        let capped = source.capped.clone();
+        let pod = Button::new("workload-logs-pod")
+            .outline()
+            .small()
+            .dropdown_caret(true)
+            .label(source.pod_label.clone())
+            .accessibility_label(source.pod_aria.clone())
+            .tooltip("The pod whose lines show")
+            .disabled(choices.is_empty() && picked.is_none())
+            .dropdown_menu(move |mut menu, _, _| {
+                let pick = |pod: Option<String>| {
+                    let view = view.clone();
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        let pod = pod.clone();
+                        _ = view.update(cx, |view, cx| view.pick_pod(pod, cx));
+                    }
+                };
+                menu = menu.item(
+                    PopupMenuItem::new("All pods")
+                        .checked(picked.is_none())
+                        .on_click(pick(None)),
+                );
+                menu = menu.separator();
+                for choice in choices.iter() {
+                    menu = menu.item(
+                        PopupMenuItem::new(choice.label.clone())
+                            .checked(picked.as_deref() == Some(choice.name.as_str()))
+                            .on_click(pick(Some(choice.name.clone()))),
+                    );
+                }
+                // Why a pod says "not read", in the cap note's words.
+                if let Some(capped) = capped.clone() {
+                    menu = menu.separator().label(capped);
+                }
+                menu
+            });
+        let time = self.columns().time;
+        let timestamps = timestamps_button("workload-logs-timestamps", time)
+            .on_click(cx.listener(move |view, _, _, cx| view.set_timestamps(!time, cx)));
+        vec![pod.into_any_element(), timestamps.into_any_element()]
+    }
+
     fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut rows = vec![self.render_status(cx)];
         rows.extend(self.render_notices(cx));
