@@ -26,6 +26,8 @@ pub struct FixtureReader {
     lists: HashMap<String, Result<Vec<Value>, Failure>>,
     /// Kinds whose listing reports that it stopped at the page cap.
     capped: HashSet<String>,
+    /// Kinds refused for one label selector, by plural and selector.
+    refused_selectors: HashSet<(String, String)>,
     /// Every request, as a path-like description.
     pub requests: RefCell<Vec<String>>,
 }
@@ -62,6 +64,15 @@ impl FixtureReader {
             plural.into(),
             Err(Failure::new(FailureKind::Forbidden, "forbidden by RBAC")),
         );
+        self
+    }
+
+    /// The kind is refused for one label selector only; its other listings
+    /// answer. RBAC can't refuse by selector, but this is how one build's
+    /// TaskRuns fail while another's are read.
+    pub fn refusing_selector(mut self, plural: &str, selector: &str) -> Self {
+        self.refused_selectors
+            .insert((plural.into(), selector.into()));
         self
     }
 
@@ -112,6 +123,13 @@ impl Reader for FixtureReader {
             "LIST {}/{}/{} ns={namespace:?} selector={selector:?}",
             request.resource.group, request.resource.version, request.resource.plural
         ));
+        if let Some(selector) = &selector
+            && self
+                .refused_selectors
+                .contains(&(request.resource.plural.clone(), selector.clone()))
+        {
+            return Err(Failure::new(FailureKind::Forbidden, "forbidden by RBAC"));
+        }
         let items = self
             .lists
             .get(&request.resource.plural)

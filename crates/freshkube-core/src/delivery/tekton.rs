@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use super::digest::{Digest, is_full_sha, text};
-use super::read::{ListRequest, Reader, Scope, label_equals};
+use super::read::{ListRequest, Reader, Resource, Scope, label_equals};
 use super::source::{Source, Truncation, printable};
-use super::versions::resolve;
+use super::versions::resolve_each;
 use crate::resources::Failure;
 
 pub const TEKTON_GROUP: &str = "tekton.dev";
@@ -331,20 +331,27 @@ fn check_sha(sha: &str) -> Result<(), Failure> {
 
 async fn list_scoped<R: Reader, T>(
     reader: &R,
-    group: &str,
-    plural: &str,
-    versions: &[&str],
+    resource: &Resource,
     scope: Scope,
     parse: fn(&Value) -> Option<T>,
 ) -> Result<(Vec<T>, Option<Truncation>), Failure> {
-    let resource = resolve(reader, group, plural, versions, true).await?;
-    let listing = reader.list(&ListRequest { resource, scope }).await?;
+    let listing = reader
+        .list(&ListRequest {
+            resource: resource.clone(),
+            scope,
+        })
+        .await?;
     Ok(listing.parse(parse))
 }
 
 /// The builds PaC started for one commit, with their TaskRuns, in one
 /// namespace. The SHA is only ever sent as a label selector value. Capped
 /// when any of the listings was.
+///
+/// Tekton's API is discovered once for the whole read: PipelineRuns and
+/// TaskRuns are resolved together, and every build's TaskRuns are listed
+/// at that version. When only TaskRuns can't be resolved, each build says
+/// so and keeps its own results.
 ///
 /// A SHA-256 commit (64 digits) is longer than a label value may be, so no
 /// build is found by it: that read says so, and the commit joins Kargo
@@ -362,14 +369,21 @@ pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> S
                 "a SHA-256 commit is longer than a label value, so no build can be found by its SHA",
             ));
         }
-        let (runs, mut truncated) = list_scoped(
+        let selector = label_equals(SHA_LABEL, sha)?;
+        let [pipeline_runs, task_runs] = resolve_each(
             reader,
             TEKTON_GROUP,
-            "pipelineruns",
+            ["pipelineruns", "taskruns"],
             TEKTON_VERSIONS,
+            true,
+        )
+        .await?;
+        let (runs, mut truncated) = list_scoped(
+            reader,
+            &pipeline_runs?,
             Scope::Labels {
                 namespace: Some(namespace.to_owned()),
-                selector: label_equals(SHA_LABEL, sha)?,
+                selector,
             },
             parse_pipeline_run,
         )
@@ -378,22 +392,23 @@ pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> S
         for run in runs {
             // One run's TaskRuns that can't be read leave that build without
             // them; the other builds are still read.
-            let tasks = match label_equals(PIPELINE_RUN_LABEL, &run.name) {
-                Ok(selector) => {
-                    list_scoped(
-                        reader,
-                        TEKTON_GROUP,
-                        "taskruns",
-                        TEKTON_VERSIONS,
-                        Scope::Labels {
-                            namespace: Some(namespace.to_owned()),
-                            selector,
-                        },
-                        parse_task_run,
-                    )
-                    .await
-                }
-                Err(failure) => Err(failure),
+            let tasks = match &task_runs {
+                Ok(task_runs) => match label_equals(PIPELINE_RUN_LABEL, &run.name) {
+                    Ok(selector) => {
+                        list_scoped(
+                            reader,
+                            task_runs,
+                            Scope::Labels {
+                                namespace: Some(namespace.to_owned()),
+                                selector,
+                            },
+                            parse_task_run,
+                        )
+                        .await
+                    }
+                    Err(failure) => Err(failure),
+                },
+                Err(failure) => Err(failure.clone()),
             };
             let (tasks, tasks_unread) = match tasks {
                 Ok((tasks, tasks_truncated)) => {
