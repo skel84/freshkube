@@ -188,7 +188,6 @@ impl ObservabilityPage {
             let id = charts.id.clone();
             let view = cx.new(|cx| {
                 let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
-                view.set_named_colors(panel.colors.clone().into());
                 view.set_result(panel.result.clone(), panel.window, cx);
                 view.set_markers(panel.markers.clone().into(), cx);
                 view

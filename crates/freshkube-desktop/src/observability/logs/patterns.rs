@@ -44,7 +44,7 @@ impl PatternRow {
             chart: pattern
                 .chart
                 .as_ref()
-                .and_then(ChartPanel::new)
+                .and_then(ChartPanel::severities)
                 .map(Rc::new),
         }
     }

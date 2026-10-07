@@ -1,3 +1,3 @@
-- **Coroot charts:** each series keeps its own Coroot colour, drawn as the
-  nearest Console colour, so a Logs histogram shows errors in red and
-  warnings in amber instead of the next colours in turn.
+- **Coroot logs:** the Logs histogram and a pattern's chart draw each severity
+  in its own colour, errors and fatal in red and warnings in amber, instead of
+  the next colours in turn.

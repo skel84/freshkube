@@ -5,8 +5,7 @@
 //! as quantiles or histogram buckets. A threshold step's colour gives only
 //! its meaning: of several steps the highest is critical and the rest are
 //! warnings, and a single step is a warning. The one exception is a Coroot
-//! chart, whose series name their colour: it draws in the nearest Console
-//! colour.
+//! chart of log severities, whose series draw in their severity's colour.
 use freshkube_core::coroot::SeriesColor;
 use freshkube_core::monitoring::model::{color::Rgba, spec::Step};
 use gpui_kit::{Hsla, rgb};
@@ -31,7 +30,7 @@ pub(crate) enum Ink {
     Overflow(usize),
     /// A level on the blue ramp, 0 (lowest, darkest) to 1 (highest).
     Level(f32),
-    /// A Coroot series' own colour, as the nearest Console colour.
+    /// A Coroot log severity's colour, as the nearest Console colour.
     Named(SeriesColor),
 }
 
@@ -48,7 +47,7 @@ impl Ink {
     }
 }
 
-/// The Console colour drawn for a Coroot colour (docs/DESIGN.md, Tokens).
+/// The Console colour drawn for a severity (docs/DESIGN.md, Tokens).
 fn named(color: SeriesColor) -> u32 {
     match color {
         SeriesColor::Critical => 0xF28B82,

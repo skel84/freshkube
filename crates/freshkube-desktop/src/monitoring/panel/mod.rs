@@ -88,7 +88,7 @@ pub(crate) struct PanelView {
     answer: Option<(Frame, TimeWindow)>,
     /// How a timeseries with many series draws: the highest peaks, or all.
     series: SeriesCap,
-    /// Series drawn in their own colour, by name: a Coroot chart's.
+    /// Series drawn in their own colour, by name: a Coroot severity chart's.
     named: Rc<[(String, SeriesColor)]>,
 }
 

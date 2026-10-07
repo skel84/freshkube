@@ -74,7 +74,7 @@ pub(crate) fn derive(
 
 /// Derives what `spec` shows of `frame`, read over `window`, a timeseries
 /// with as many series as `series` says, each drawn in the colour `named`
-/// gives it by name, as a Coroot chart's are, else in its turn.
+/// gives it by name, as a Coroot severity chart's are, else in its turn.
 pub(crate) fn derive_named(
     spec: &PanelSpec,
     frame: Frame,

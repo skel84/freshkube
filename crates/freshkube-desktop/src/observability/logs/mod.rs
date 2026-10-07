@@ -125,7 +125,7 @@ fn origin_slug(origin: api::LogOrigin) -> &'static str {
 }
 
 fn panel(id: &str, chart: &api::AppChart, title: &str, cx: &mut App) -> Option<Entity<PanelView>> {
-    let panel = ChartPanel::new(&api::AppChart {
+    let panel = ChartPanel::severities(&api::AppChart {
         title: title.into(),
         ..chart.clone()
     })?;
