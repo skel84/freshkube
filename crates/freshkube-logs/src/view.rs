@@ -9,6 +9,7 @@ use gpui_kit::{
         input::Input,
         menu::{DropdownMenu, PopupMenuItem},
         scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
+        tooltip::Tooltip,
         v_flex, v_virtual_list,
     },
     div, point,
@@ -16,26 +17,16 @@ use gpui_kit::{
     px, relative, rems, size,
 };
 
-use freshkube_core::{logs::LogEntry, types::LogLevel};
+use freshkube_core::types::LogLevel;
 
 use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
     FirstLine, FocusSearch, LIST_LEAST_REMS, LastLine, LeaveSearch, LogSource, LogView,
     ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
-    SEARCH_CONTEXT, SelectAll,
+    SEARCH_CONTEXT, SelectAll, review::shown_message,
 };
 use freshkube_ui::palette::{Palette, palette};
 use freshkube_ui::ui::{self, dp};
-
-/// What a row's message column shows: its message, or the whole line when
-/// the message is blank.
-pub(super) fn shown_message(entry: &LogEntry) -> &str {
-    if entry.message.trim().is_empty() {
-        entry.selectable_text()
-    } else {
-        &entry.message
-    }
-}
 
 impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
@@ -64,7 +55,7 @@ impl<S: LogSource> LogView<S> {
         let columns = self.columns;
         let selected = self.review.selected.contains(&id);
         let matched = self.review.is_match(row_ix);
-        let current = self.review.current_match == Some(id);
+        let current = self.review.current_match.is_some_and(|hit| hit.id == id);
         let p = palette(cx);
         let (level, level_color, stripe) = level_style(&entry.level, &p);
         let time = entry
@@ -327,12 +318,7 @@ impl<S: LogSource> LogView<S> {
     fn render_toolbar_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let p = palette(cx);
         let match_count = self.review.match_count();
-        let current_position = self.review.current_match.and_then(|id| {
-            self.review
-                .matched_ids()
-                .iter()
-                .position(|&matched| matched == id)
-        });
+        let current_position = self.review.current_position();
         let selected = self.review.selected.len();
         // One row: the source's tools, then the shared ones; a narrow
         // panel or a large text size wraps it once.
@@ -368,8 +354,25 @@ impl<S: LogSource> LogView<S> {
                             ),
                     )
                     .when(!self.review.query.is_empty(), |this| {
+                        // The count is of lines: a stack trace that names
+                        // the search on three lines counts three.
+                        let tip: SharedString = match match_count {
+                            0 => "No matching lines".into(),
+                            1 => "1 matching line".into(),
+                            count => format!(
+                                "{count} matching lines. Each matching line of a \
+                                 multi-line message counts, and Next visits each."
+                            )
+                            .into(),
+                        };
                         this.child(
                             div()
+                                .id("logs-search-count")
+                                .test_support()
+                                .aria_label(tip.clone())
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(tip.clone()).build(window, cx)
+                                })
                                 .flex_none()
                                 .text_size(dp(11.))
                                 .text_color(p.muted)
@@ -530,7 +533,7 @@ impl<S: LogSource> Render for LogView<S> {
         {
             self.reveal_row(ix, window, cx);
         }
-        self.reveal_matched_line = false;
+        self.reveal_matched_line = None;
         let p = palette(cx);
         let empty = S::empty_message(self);
         let entity = cx.entity().downgrade();

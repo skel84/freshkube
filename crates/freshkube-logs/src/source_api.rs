@@ -181,6 +181,7 @@ impl<S: LogSource> LogView<S> {
     /// Scrolls to the last visible line on the next frame.
     pub fn reveal_last(&mut self) {
         self.pending_reveal = self.last_row_id();
+        self.reveal_matched_line = None;
     }
 
     /// Whether any line is retained, whatever the filters.

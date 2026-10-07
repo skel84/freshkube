@@ -22,11 +22,50 @@ pub(super) enum VisibleDelta {
     Extended { dropped: usize, added: usize },
 }
 
-/// Matching row IDs for one query against one revision of the visible rows.
+/// What a row's message column shows: its message, or the whole line when
+/// the message is blank.
+pub(super) fn shown_message(entry: &LogEntry) -> &str {
+    if entry.message.trim().is_empty() {
+        entry.selectable_text()
+    } else {
+        &entry.message
+    }
+}
+
+/// One match of the search: a line of a row's message, so a stack trace
+/// that names the query on three lines holds three. A row whose match lies
+/// outside its message's lines, as in its timestamp, holds one, with no
+/// line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Hit {
+    pub(super) id: u64,
+    /// The matching line's index among the lines of the row's
+    /// [`shown_message`], split after each newline.
+    pub(super) line: Option<usize>,
+}
+
+/// The indexes of the lines of `message`, split after each newline, that
+/// hold `lowercase`.
+fn matching_lines(message: &str, lowercase: &str) -> Vec<usize> {
+    if !message.contains('\n') {
+        return if message.to_lowercase().contains(lowercase) {
+            vec![0]
+        } else {
+            Vec::new()
+        };
+    }
+    (message.split_inclusive('\n').enumerate())
+        .filter(|(_, line)| line.to_lowercase().contains(lowercase))
+        .map(|(ix, _)| ix)
+        .collect()
+}
+
+/// The matches for one query against one revision of the visible rows.
 struct MatchCache {
     revision: u64,
     query: String,
-    ids: Vec<u64>,
+    /// Every matching line, in row order and, within a row, line order.
+    hits: Vec<Hit>,
     /// Whether each visible row matches, by row index, so drawing a row
     /// doesn't search its text again.
     rows: Vec<bool>,
@@ -58,7 +97,7 @@ pub(super) struct LogReview {
     cursor: Option<u64>,
     pub(super) selection_anchor: Option<u64>,
     pub(super) query: String,
-    pub(super) current_match: Option<u64>,
+    pub(super) current_match: Option<Hit>,
     pub(super) revision: u64,
     pub(super) omitted: usize,
     pub(super) evicted: usize,
@@ -123,7 +162,7 @@ impl LogReview {
             self.selected.retain(|id| !gone.contains(id));
             self.cursor = self.cursor.filter(|id| !gone.contains(id));
             self.selection_anchor = self.selection_anchor.filter(|id| !gone.contains(id));
-            self.current_match = self.current_match.filter(|id| !gone.contains(id));
+            self.current_match = self.current_match.filter(|hit| !gone.contains(&hit.id));
         }
         if outcome.extended_tail() {
             // Entries only left the front and joined the end: shift the
@@ -200,14 +239,20 @@ impl LogReview {
         totals
     }
 
-    /// IDs of the visible rows matching the query, in row order. Computed once
-    /// per revision and query rather than once per caller per frame.
-    pub(super) fn matched_ids(&self) -> Ref<'_, Vec<u64>> {
-        Ref::map(self.match_cache(), |cache| &cache.ids)
+    /// Every matching line of the visible rows, in order. Computed once per
+    /// revision and query rather than once per caller per frame.
+    pub(super) fn hits(&self) -> Ref<'_, Vec<Hit>> {
+        Ref::map(self.match_cache(), |cache| &cache.hits)
+    }
+
+    /// Where the current match stands among [`Self::hits`].
+    pub(super) fn current_position(&self) -> Option<usize> {
+        let current = self.current_match?;
+        self.hits().iter().position(|&hit| hit == current)
     }
 
     /// Whether the visible row at `row_ix` matches the query, from the same
-    /// cache as [`Self::matched_ids`].
+    /// cache as [`Self::hits`].
     pub(super) fn is_match(&self, row_ix: usize) -> bool {
         !self.query.is_empty()
             && self
@@ -235,14 +280,22 @@ impl LogReview {
                         .map(|ix| self.entry(ix).matches_lowercase_query(&lowercase))
                         .collect()
                 };
-                let ids = (rows.iter().enumerate())
-                    .filter(|(_, matched)| **matched)
-                    .map(|(ix, _)| self.id(ix))
-                    .collect();
+                let mut hits = Vec::new();
+                for (ix, _) in rows.iter().enumerate().filter(|(_, matched)| **matched) {
+                    let id = self.id(ix);
+                    let lines = matching_lines(shown_message(self.entry(ix)), &lowercase);
+                    if lines.is_empty() {
+                        hits.push(Hit { id, line: None });
+                    }
+                    hits.extend(lines.into_iter().map(|line| Hit {
+                        id,
+                        line: Some(line),
+                    }));
+                }
                 *cache = Some(MatchCache {
                     revision: self.revision,
                     query: self.query.clone(),
-                    ids,
+                    hits,
                     rows,
                 });
             }
@@ -281,33 +334,37 @@ impl LogReview {
         self.rebuild_visible();
     }
 
-    pub(super) fn search(&mut self, forward: bool) -> Option<u64> {
+    /// Steps to the next or previous matching line: through a row's
+    /// matching lines first, then on to the next row's.
+    pub(super) fn search(&mut self, forward: bool) -> Option<Hit> {
         if self.query.is_empty() {
             self.current_match = None;
             return None;
         }
-        let matches = self.matched_ids().clone();
-        if matches.is_empty() {
-            self.current_match = None;
-            return None;
-        }
-        let position = self
-            .current_match
-            .and_then(|id| matches.iter().position(|&v| v == id));
-        let ix = match position {
-            Some(ix) if forward => (ix + 1) % matches.len(),
-            Some(0) => matches.len() - 1,
-            Some(ix) => ix - 1,
-            None if forward => 0,
-            None => matches.len() - 1,
+        let position = self.current_position();
+        let hit = {
+            let hits = self.hits();
+            let count = hits.len();
+            let ix = match position {
+                _ if count == 0 => None,
+                Some(ix) if forward => Some((ix + 1) % count),
+                Some(0) => Some(count - 1),
+                Some(ix) => Some(ix - 1),
+                None if forward => Some(0),
+                None => Some(count - 1),
+            };
+            ix.map(|ix| hits[ix])
         };
-        self.current_match = Some(matches[ix]);
-        self.cursor = self.current_match;
-        self.current_match
+        self.current_match = hit;
+        if let Some(hit) = hit {
+            self.cursor = Some(hit.id);
+        }
+        hit
     }
 
+    /// Matching lines, as the search steps through them.
     pub(super) fn match_count(&self) -> usize {
-        self.matched_ids().len()
+        self.hits().len()
     }
 
     pub(super) fn select(&mut self, row_ix: usize, extend: bool, toggle: bool) {
@@ -484,14 +541,57 @@ mod model_tests {
         ]);
         review.query = "error".into();
         assert_eq!(review.visible.len(), 3);
-        assert_eq!(review.search(true), Some(1));
-        assert_eq!(review.search(true), Some(2));
-        assert_eq!(review.search(true), Some(1));
-        assert_eq!(review.search(false), Some(2));
+        let mut step = |forward| review.search(forward).map(|hit| hit.id);
+        assert_eq!(step(true), Some(1));
+        assert_eq!(step(true), Some(2));
+        assert_eq!(step(true), Some(1));
+        assert_eq!(step(false), Some(2));
         review.set_service_filter(BTreeSet::from([ServiceId::from("kubelet")]));
         assert_eq!(review.match_count(), 1);
         review.set_level(&LogLevel::Error, false);
         assert_eq!(review.match_count(), 0);
+    }
+
+    /// A row that names the query on several of its lines holds a match for
+    /// each: Next visits every one before the next row, Previous mirrors it,
+    /// and the count counts lines (#281).
+    #[test]
+    fn search_steps_through_every_matching_line_of_a_row() {
+        let mut review = LogReview::new("pod");
+        review.append([
+            LogEvent::new("web", "2026-10-01T12:00:00Z info starting"),
+            LogEvent::new(
+                "web",
+                "2026-10-01T12:00:01Z error panic: queue closed\n    at drain()\n    \
+                 at flush(queue)\n    at main()\n    at queue_loop()",
+            ),
+            LogEvent::new("web", "2026-10-01T12:00:02Z warning queue slow"),
+        ]);
+        review.query = "QUEUE".into();
+        let trace = review.id(1);
+        let last = review.id(2);
+        let hit = |id, line| Some(Hit { id, line });
+        let lines = shown_message(review.entry(1)).split_inclusive('\n').count();
+        assert_eq!(lines, 5);
+        assert_eq!(review.match_count(), 4);
+        assert_eq!(review.current_position(), None);
+        assert_eq!(review.search(true), hit(trace, Some(0)));
+        assert_eq!(review.search(true), hit(trace, Some(2)));
+        assert_eq!(review.current_position(), Some(1));
+        assert_eq!(review.search(true), hit(trace, Some(4)));
+        assert_eq!(review.search(true), hit(last, Some(0)));
+        assert_eq!(review.current_position(), Some(3));
+        assert_eq!(review.search(true), hit(trace, Some(0)));
+        assert_eq!(review.search(false), hit(last, Some(0)));
+        assert_eq!(review.search(false), hit(trace, Some(4)));
+        assert_eq!(review.search(false), hit(trace, Some(2)));
+        // The selection's cursor follows the match's row.
+        assert_eq!(review.move_selection(1, false), Some(last));
+        // A match outside the message's lines, here in the timestamp, is one
+        // match for its row, with no line of its own.
+        review.query = "12:00:00".into();
+        assert_eq!(review.match_count(), 1);
+        assert_eq!(review.search(true), hit(review.id(0), None));
     }
 
     #[test]
@@ -515,7 +615,8 @@ mod model_tests {
             .filter(|&ix| review.is_match(ix))
             .map(|ix| review.id(ix))
             .collect();
-        assert_eq!(*review.matched_ids(), ids);
+        let hit_ids: Vec<u64> = review.hits().iter().map(|hit| hit.id).collect();
+        assert_eq!(hit_ids, ids);
         review.query = "first".into();
         assert_eq!(flags(&review), [true, false, false]);
         assert!(!review.is_match(7), "a row past the end");

@@ -331,9 +331,10 @@ pub struct LogView<S: LogSource> {
     settle: Option<Task<()>>,
     unwrapped_width: Pixels,
     pending_reveal: Option<u64>,
-    /// Whether `pending_reveal` is a search's match, whose matched line is
-    /// brought into view within a row taller than the list.
-    reveal_matched_line: bool,
+    /// The line of `pending_reveal`'s message that a search matched, which
+    /// a row taller than the list brings into view instead of its middle.
+    /// `None` for any other reveal.
+    reveal_matched_line: Option<usize>,
     review_anchor: Option<ReviewAnchor>,
     anchor_evicted: bool,
     feedback: Option<String>,
@@ -406,7 +407,7 @@ impl<S: LogSource> LogView<S> {
             sizes_height: 0.,
             row_widths: Vec::new(),
             pending_reveal: None,
-            reveal_matched_line: false,
+            reveal_matched_line: None,
             manual_review: Rc::new(Cell::new(false)),
             row_measurements: BTreeMap::new(),
             row_exact: Vec::new(),
@@ -596,8 +597,9 @@ impl<S: LogSource> LogView<S> {
 
     fn search(&mut self, forward: bool, cx: &mut Context<Self>) {
         self.set_following(false, cx);
-        self.pending_reveal = self.review.search(forward);
-        self.reveal_matched_line = true;
+        let hit = self.review.search(forward);
+        self.pending_reveal = hit.map(|hit| hit.id);
+        self.reveal_matched_line = hit.and_then(|hit| hit.line);
         self.review_anchor = None;
         self.feedback = if self.pending_reveal.is_none() && !self.review.query.is_empty() {
             Some("No matching retained lines in the current filters".into())
@@ -621,6 +623,8 @@ impl<S: LogSource> LogView<S> {
     fn navigate(&mut self, delta: isize, extend: bool, cx: &mut Context<Self>) {
         self.set_following(false, cx);
         self.pending_reveal = self.review.move_selection(delta, extend);
+        // A search's matched line, not yet revealed, no longer applies.
+        self.reveal_matched_line = None;
         self.review_anchor = None;
         cx.notify();
     }

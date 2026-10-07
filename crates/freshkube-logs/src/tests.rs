@@ -338,12 +338,17 @@ fn live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards(cx: &mut 
             }
         }
         assert!(shown > 10);
+        // Rows measured at the new width and rows still estimated add up
+        // to the height the list is given.
+        assert!(view.wrapped);
+        assert_total_height(view);
     })
     .unwrap();
     settle(cx, &panel, handle);
     cx.update_window(handle.into(), |_, _, cx| {
         let view = panel.read(cx);
         assert!(view.settled);
+        assert_total_height(view);
         assert!(view.sizes[90].height < original[90]);
         // Settling rows below the review position never moves it.
         assert_eq!(view.scroll.offset().y, px(0.));
@@ -362,6 +367,7 @@ fn live_resize_lays_out_rows_on_screen_and_settles_the_rest_afterwards(cx: &mut 
             heights, original,
             "settled heights differ from a fresh layout"
         );
+        assert_total_height(panel.read(cx));
     })
     .unwrap();
 }
@@ -546,7 +552,7 @@ fn a_search_shows_the_matched_line_within_a_tall_row(cx: &mut TestAppContext) {
                 window.render_frame(cx);
                 window.render_frame(cx);
                 let view = panel.read(cx);
-                let id = view.review.current_match.expect("a match");
+                let id = view.review.current_match.expect("a match").id;
                 let row = window
                     .find(SharedString::from(format!("log-line-1-{id}")))
                     .bounds();
@@ -573,6 +579,131 @@ fn a_search_shows_the_matched_line_within_a_tall_row(cx: &mut TestAppContext) {
             })
             .unwrap();
         }
+    }
+}
+
+/// A stack trace in one message, 200 lines, that names the function the
+/// search looks for on three of them: the 61st, the 121st and the last.
+fn trace_with_three_matches() -> String {
+    let mut lines = vec!["error panic: settlement queue closed".to_owned()];
+    lines.extend((1..199).map(|ix| match ix {
+        60 | 120 => format!("    payments/ledger.retryLedger(0x{ix:x})"),
+        _ => format!("    frame {ix}(0x0, 0x0, 0xc000123456)"),
+    }));
+    lines.push("    payments/ledger.retryLedger.func1()".to_owned());
+    lines.join("\n")
+}
+
+/// Next visits every matching line of a row taller than the list, each
+/// shown in the list, before it moves on to the next row; Previous comes
+/// back to the row's last match. Each step within the tall row lays the
+/// row out again to find its line (#281).
+#[gpui_kit::test]
+fn next_shows_every_matched_line_of_a_tall_row(cx: &mut TestAppContext) {
+    let reveals = || freshkube_probe::probe::count("logs.reveal_line");
+    for wrapped in [true, false] {
+        let (_runtime, panel, handle) = mount(cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            deliver(
+                &panel,
+                vec![
+                    trace_with_three_matches(),
+                    "info retryLedger finished".to_owned(),
+                ],
+                cx,
+            );
+            if !wrapped {
+                window.click("logs-wrap", cx);
+            }
+            window.render_frame(cx);
+            window.click("logs-search", cx);
+            window.input("retryledger", cx);
+        })
+        .unwrap();
+        settle(cx, &panel, handle);
+        let trace = SharedString::from("log-line-1-120");
+        let mut offsets = Vec::new();
+        for (step, line) in [(1, 60), (2, 120), (3, 199)] {
+            let case = format!("wrapped {wrapped}, step {step}");
+            let before = reveals();
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.click("logs-search-next", cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+            assert!(reveals() > before, "{case}: the row wasn't laid out again");
+            // Nothing a later frame asks for moves the line away.
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.simulate_next_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let hit = panel.read(cx).review.current_match.expect("a match");
+                assert_eq!((hit.id, hit.line), (120, Some(line)), "{case}");
+                assert_eq!(panel.read(cx).review.current_position(), Some(step - 1));
+                assert_eq!(panel.read(cx).review.match_count(), 4);
+                let ix = panel.read(cx).review.row_for_id(120).unwrap();
+                let line_end = panel
+                    .update(cx, |view, cx| view.matched_line_end(ix, line, window, cx))
+                    .expect("the line's end");
+                let row = window.find(trace.clone()).bounds();
+                let list = window.find("logs-viewport").bounds();
+                assert!(
+                    row.size.height > list.size.height * 3.,
+                    "{case}: the row {row:?} isn't tall"
+                );
+                let shown = row.top() + line_end;
+                assert!(
+                    shown > list.top() + window.rem_size() && shown <= list.bottom(),
+                    "{case}: line {line} ends at {shown:?}, outside the list {list:?}"
+                );
+                assert!(
+                    window
+                        .find("logs-search-count")
+                        .label()
+                        .is_some_and(|label| label.starts_with("4 matching lines")),
+                    "{case}: the count doesn't say it counts lines"
+                );
+                offsets.push(panel.read(cx).scroll.offset().y);
+            })
+            .unwrap();
+        }
+        assert!(
+            offsets[0] > offsets[1] && offsets[1] > offsets[2],
+            "wrapped {wrapped}: each step moved down the row: {offsets:?}"
+        );
+        // After the row's last match Next moves on to the short row, which
+        // shows whole and needs no line found.
+        let before = reveals();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("logs-search-next", cx);
+            window.render_frame(cx);
+            let hit = panel.read(cx).review.current_match.expect("a match");
+            assert_eq!(hit.id, 121);
+            assert!(window.find(SharedString::from("log-line-1-121")).visible());
+        })
+        .unwrap();
+        assert_eq!(reveals(), before);
+        // Previous comes back to the trace's last match.
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("logs-search-prev", cx);
+            window.render_frame(cx);
+            let hit = panel.read(cx).review.current_match.expect("a match");
+            assert_eq!((hit.id, hit.line), (120, Some(199)));
+        })
+        .unwrap();
+        assert!(reveals() > before);
+        // An arrow key after a search reveals its own row, not the line
+        // the search had matched: here the trace's line 120.
+        panel.update(cx, |view, cx| {
+            view.search(false, cx);
+            assert_eq!(view.reveal_matched_line, Some(120));
+            view.navigate(1, false, cx);
+            assert_eq!(view.reveal_matched_line, None);
+        });
     }
 }
 
@@ -694,7 +825,10 @@ fn searches_reveal_inner_rows_and_keyboard_copies_complete_selected_lines(cx: &m
         assert_eq!(window.find("logs-search").bounds(), toolbar);
         assert_eq!(panel.read(cx).review.visible.len(), 120);
         assert!(!panel.read(cx).following);
-        assert_eq!(panel.read(cx).review.current_match, Some(10));
+        assert_eq!(
+            panel.read(cx).review.current_match.map(|hit| hit.id),
+            Some(10)
+        );
         window.click(row, cx);
         assert_eq!(panel.read(cx).review.selected.len(), 1);
         assert!(panel.read(cx).focus.is_focused(window));
@@ -713,10 +847,16 @@ fn searches_reveal_inner_rows_and_keyboard_copies_complete_selected_lines(cx: &m
         window.press("escape", cx);
         assert!(panel.read(cx).review.selected.is_empty());
         window.click("logs-search-next", cx);
-        assert_eq!(panel.read(cx).review.current_match, Some(90));
+        assert_eq!(
+            panel.read(cx).review.current_match.map(|hit| hit.id),
+            Some(90)
+        );
         assert!(window.find(SharedString::from("log-line-1-90")).visible());
         window.click("logs-search-prev", cx);
-        assert_eq!(panel.read(cx).review.current_match, Some(10));
+        assert_eq!(
+            panel.read(cx).review.current_match.map(|hit| hit.id),
+            Some(10)
+        );
     })
     .unwrap();
 }
@@ -859,7 +999,8 @@ fn command_f_g_and_a_find_and_select_from_the_lines_or_the_search(cx: &mut TestA
     cx.run_until_parked();
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        let current = |cx: &mut gpui_kit::App| panel.read(cx).review.current_match;
+        let current =
+            |cx: &mut gpui_kit::App| panel.read(cx).review.current_match.map(|hit| hit.id);
         // From the search, Command-G and Shift-Command-G step through the
         // matches, as F3 and Shift-F3 do from the lines.
         window.press("secondary-g", cx);
