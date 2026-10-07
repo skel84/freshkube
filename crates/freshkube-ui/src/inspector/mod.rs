@@ -272,6 +272,9 @@ pub struct InspectorSplit {
     /// The stacked table's height from [`Self::lead_start`], if the page
     /// gives one.
     lead: Cell<Option<f32>>,
+    /// Beside, the table's least width and the split's room, from
+    /// [`Self::keep_lead`], if the page gives them.
+    keep: Cell<Option<(f32, f32)>>,
     /// Whether the user has dragged the stacked split, after which its
     /// sizes are theirs.
     dragged: Rc<Cell<bool>>,
@@ -314,6 +317,7 @@ impl InspectorSplit {
             width,
             heights: Stacked::default(),
             lead: Cell::new(None),
+            keep: Cell::new(None),
             dragged,
             _resized,
             _dragged,
@@ -340,6 +344,15 @@ impl InspectorSplit {
         self.lead.set(Some(start));
         // Kit keeps the sizes it first laid out; forget them.
         self.stacked.update(cx, |state, _| state.clear());
+    }
+
+    /// Beside, the table keeps `least` dp of the `room` the split has, and
+    /// the inspector takes at most the rest, however wide the user left
+    /// it: for a table that must not scroll sideways, given while
+    /// rendering. A drag stops there too, so the width saved never
+    /// outgrows the room.
+    pub fn keep_lead(&self, least: f32, room: f32) {
+        self.keep.set(Some((least, room)));
     }
 
     /// How tall this split is on a page that scrolls its frame; see
@@ -424,17 +437,24 @@ pub fn split(
     };
     let dp = |n: f32| dp_px(n, window);
     let panels = if beside {
+        let (least, most) = match split.keep.get() {
+            Some((least, room)) => {
+                let least = least.max(LIST_MIN_WIDTH);
+                (least, dp((room - least).max(MIN_WIDTH)))
+            }
+            None => (LIST_MIN_WIDTH, Pixels::MAX),
+        };
         h_resizable("inspector-split")
             .with_state(&split.beside)
             .child(
                 resizable_panel()
-                    .size_range(dp(LIST_MIN_WIDTH)..Pixels::MAX)
+                    .size_range(dp(least)..Pixels::MAX)
                     .child(table),
             )
             .child(
                 resizable_panel()
                     .size(dp(split.width()))
-                    .size_range(dp(MIN_WIDTH)..Pixels::MAX)
+                    .size_range(dp(MIN_WIDTH)..most)
                     .flex_none()
                     .child(inspector),
             )

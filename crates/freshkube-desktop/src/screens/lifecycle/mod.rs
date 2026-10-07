@@ -26,19 +26,18 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, NARROW_PANE_WIDTH, SPLIT_GAP, Scope, ScreenEvent, ScreenPanel, ScreenSource,
-    failure_banner, field, gate, mono, page_width, panel, partial_notice, refresh_control, segment,
-    split_narrow,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
+    page_width, panel, partial_notice, refresh_control, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::inspector::{self, InspectorSplit};
 use freshkube_ui::status::{self, Segment};
 use freshkube_ui::table::{self as data_table, TableState};
 
 const CONTEXT: &str = "TalosLifecycle";
 const PREFIX: &str = "lifecycle";
-/// The details pane, when it sits beside the roster: `split_narrow`'s pane
-/// and gap.
+/// Between the etcd and sources cards.
 const GAP: f32 = 14.;
 
 actions!(
@@ -67,7 +66,8 @@ struct KubeletEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Item {
     Node(String),
-    Alert(usize),
+    /// By the alert's key, so a refresh that reorders the alerts keeps it.
+    Alert(String),
 }
 
 pub(crate) struct LifecycleScreen {
@@ -77,6 +77,11 @@ pub(crate) struct LifecycleScreen {
     _observation: gpui_kit::Subscription,
     loader: Loader<LifecycleView>,
     selected: Option<Item>,
+    /// The selection's details, derived when it or the data changes.
+    detail: Option<detail::Detail>,
+    /// The roster and the Inspector, whose width is saved under
+    /// `lifecycle`.
+    split: InspectorSplit,
     table: TableState,
     /// The roster's rows until the first answer, under the columns the
     /// table has before any row sizes them, and their motion.
@@ -114,6 +119,15 @@ impl ScreenPanel for LifecycleScreen {
             _observation: cx.observe_self(|screen, cx| screen.sync_shared_nodes(cx)),
             loader: Loader::default(),
             selected: None,
+            detail: None,
+            split: {
+                let file = crate::navigation_file::NavigationFile::global(cx);
+                InspectorSplit::new(
+                    file.inspector_width("lifecycle"),
+                    move |width, cx| file.set_inspector_width("lifecycle", width, cx),
+                    cx,
+                )
+            },
             table: TableState::new("lifecycle"),
             loading,
             loading_motion,
@@ -132,6 +146,8 @@ impl ScreenPanel for LifecycleScreen {
             self.selected = None;
         }
         self.source = source;
+        // Open node follows the target's nodes.
+        self.detail = None;
         cx.notify();
     }
 
@@ -497,6 +513,9 @@ fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
 
 #[derive(Clone, Debug)]
 struct AlertRow {
+    /// What the alert is about, not its wording, which names nodes: it
+    /// keeps the alert selected while those change.
+    key: String,
     health: HealthIndicator,
     message: String,
     /// Where the alert comes from, shown in its details.
@@ -550,6 +569,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
             ),
         };
         alerts.push(AlertRow {
+            key: "derived:kubelet-skew".into(),
             health: HealthIndicator::Warning,
             message,
             origin: DERIVED,
@@ -571,6 +591,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         if !outside.is_empty() {
             let outside_names: Vec<&str> = outside.iter().map(|version| version.node()).collect();
             alerts.push(AlertRow {
+                key: "derived:kubelet-support".into(),
                 health: HealthIndicator::Warning,
                 message: format!(
                     "Kubelet on {} is outside the Kubernetes range Talos {talos} supports (v1.{low} – v1.{high})",
@@ -614,6 +635,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         if !only_discovery.is_empty() {
             let shown: Vec<&str> = only_discovery.iter().map(String::as_str).collect();
             alerts.push(AlertRow {
+                key: "derived:discovery-only".into(),
                 health: HealthIndicator::Warning,
                 message: format!(
                     "In Talos discovery but not registered in Kubernetes: {}",
@@ -637,6 +659,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         if !only_kubernetes.is_empty() {
             let shown: Vec<&str> = only_kubernetes.iter().map(String::as_str).collect();
             alerts.push(AlertRow {
+                key: "derived:kubernetes-only".into(),
                 health: HealthIndicator::Warning,
                 message: format!(
                     "In Kubernetes but not in Talos discovery: {}",
@@ -716,7 +739,12 @@ fn core_alert(alert: &LifecycleAlert, view: &LifecycleView, rows: &[NodeRow]) ->
         .filter(|(label, _)| rows.iter().any(|row| &row.name == label))
         .map(|(label, _)| label.clone())
         .collect();
+    let key = match alert.kind() {
+        LifecycleAlertKind::Other => format!("collector:{}", alert.message),
+        kind => format!("collector:{kind:?}"),
+    };
     AlertRow {
+        key,
         health: alert.health,
         message: alert.message.clone(),
         origin: COLLECTOR,
@@ -863,7 +891,7 @@ impl LifecycleScreen {
         let (rows, alerts) = self.rows_and_alerts();
         rows.into_iter()
             .map(|row| Item::Node(row.name))
-            .chain((0..alerts.len()).map(Item::Alert))
+            .chain(alerts.into_iter().map(|alert| Item::Alert(alert.key)))
             .collect()
     }
 
@@ -936,6 +964,7 @@ impl LifecycleScreen {
     }
 }
 
+mod detail;
 mod example;
 mod table;
 mod view;
