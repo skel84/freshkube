@@ -479,15 +479,15 @@ pub(super) fn settings_content(
 }
 
 impl Pilot {
-    /// "3 logs" while the dock has tabs: shows a hidden or minimized dock,
-    /// or hides a shown one.
+    /// "3 logs" while the dock has tabs: opens a minimized dock, or
+    /// minimizes an open one.
     fn render_dock_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dock = self.dock.read(cx);
         if !dock.has_tabs() {
             return None;
         }
         let count = dock.tabs.len();
-        let shown = !dock.is_hidden() && dock.is_open();
+        let shown = dock.is_open();
         Some(
             Button::new("dock-toggle")
                 .ghost()
@@ -499,7 +499,7 @@ impl Pilot {
                     format!("{count} logs")
                 })
                 .tooltip(if shown {
-                    "Hide the dock"
+                    "Minimize the dock"
                 } else {
                     "Show the dock"
                 })

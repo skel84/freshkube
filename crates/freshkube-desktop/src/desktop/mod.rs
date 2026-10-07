@@ -589,7 +589,18 @@ impl Pilot {
             &dock,
             window,
             |this, _, event: &dock::DockEvent, window, cx| match event {
-                dock::DockEvent::Leave => this.focus_page(window, cx),
+                dock::DockEvent::Leave(back) => {
+                    // What had the keyboard may no longer be drawn, as after
+                    // going to another page; the shell's root contains it
+                    // only if the last frame drew it.
+                    if let Some(back) = back {
+                        window.focus(back, cx);
+                        if this.focus.contains_focused(window, cx) {
+                            return;
+                        }
+                    }
+                    this.focus_page(window, cx)
+                }
             },
         ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));

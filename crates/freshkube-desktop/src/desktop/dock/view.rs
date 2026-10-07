@@ -1,6 +1,6 @@
 //! The dock drawn: freshkube-ui's frame with the tabs, the chrome (the tab
-//! menu, Minimize or Open, Fit to window or Restore, Hide) and the selected
-//! tab's lines.
+//! menu, Minimize or Open, Fit to window or Restore, Close all) and the
+//! selected tab's lines.
 
 use std::rc::Rc;
 
@@ -36,6 +36,14 @@ impl Dock {
                     cx,
                 )
                 .on_click(cx.listener(move |dock, _, window, cx| dock.select(id, true, window, cx)))
+                // A middle-click closes the tab, as in a browser.
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |dock, _, window, cx| {
+                        cx.stop_propagation();
+                        dock.close_tab(id, window, cx);
+                    }),
+                )
                 .into_any_element()
             }))
             .into_any_element()
@@ -99,11 +107,11 @@ impl Dock {
             .on_click(cx.listener(move |dock, _, _, cx| dock.set_maximized(!maximized, cx)))
             .into_any_element(),
             dock::chrome_button(
-                "dock-hide",
+                "dock-close-all",
                 IconName::X,
-                format!("Hide the dock; its tabs keep reading ({modifier}W closes a tab)"),
+                format!("Close every tab ({modifier}W closes one)"),
             )
-            .on_click(cx.listener(|dock, _, window, cx| dock.hide(window, cx)))
+            .on_click(cx.listener(|dock, _, window, cx| dock.close_all(window, cx)))
             .into_any_element(),
         ]
     }
@@ -216,7 +224,7 @@ impl Dock {
 impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("dock");
-        if self.tabs.is_empty() || self.hidden {
+        if self.tabs.is_empty() {
             return div().into_any_element();
         }
         if self.open {

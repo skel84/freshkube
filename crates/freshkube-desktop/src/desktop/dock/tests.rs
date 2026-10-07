@@ -161,23 +161,42 @@ fn a_tab_reads_across_pages_and_objects_until_it_closes(cx: &mut TestAppContext)
     })
     .unwrap();
 
-    // Hiding keeps it; closing the tab drops it.
-    cx.update_window(handle, |_, window, cx| window.click("dock-hide", cx))
+    // The status bar minimizes it to its tabs, which keep reading, and
+    // opens it again.
+    cx.update_window(handle, |_, window, cx| window.click("dock-toggle", cx))
         .unwrap();
     cx.run_until_parked();
     draw(handle, cx);
     assert!(cx.update(|cx| view.read(cx).streaming()));
     cx.update_window(handle, |_, window, cx| {
-        assert!(window.try_find("dock").is_none());
+        assert!(
+            window.find("dock-tab-0").visible(),
+            "minimized, its tabs show"
+        );
+        assert!(window.try_find("dock-tab-body").is_none());
         window.click("dock-toggle", cx);
     })
     .unwrap();
     cx.run_until_parked();
     draw(handle, cx);
+    // A middle-click closes a tab and drops its stream.
     let weak = view.downgrade();
     drop(view);
-    cx.update_window(handle, |_, window, cx| window.click("dock-tab-0-close", cx))
-        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::InputEvent as _;
+        let position = window.find("dock-tab-0").bounds().center();
+        window.dispatch_event(
+            gpui_kit::MouseDownEvent {
+                button: gpui_kit::MouseButton::Middle,
+                position,
+                click_count: 1,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
     cx.run_until_parked();
     assert!(weak.upgrade().is_none(), "the closed tab's view is dropped");
     draw(handle, cx);
@@ -641,12 +660,12 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
         height: 260.,
         open: false,
         maximized: false,
-        hidden: false,
-        selected: Some(1),
+        // The second of this context's tabs, counted among all of them.
+        selected: Some(2),
         tabs: vec![
+            saved_tab(&pods[2], "another-context"),
             saved_tab(&pods[0], &context),
             saved_tab(&pods[1], &context),
-            saved_tab(&pods[2], "another-context"),
         ],
     };
     // As the app opens: the saved dock waits for the first connection.
@@ -755,4 +774,134 @@ fn a_gone_pod_stops_reading_and_one_made_again_with_its_name_takes_a_new_tab(
         titles(&dock, cx),
         [format!("Pod {}", pod.name), format!("Pod {} (2)", pod.name)]
     );
+}
+
+#[gpui_kit::test]
+fn the_chromes_close_closes_every_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    open_logs(handle, &pilot, "pods", &pods[1], cx);
+    let views = [
+        pod_view(&dock, 0, cx).downgrade(),
+        pod_view(&dock, 1, cx).downgrade(),
+    ];
+    cx.update_window(handle, |_, window, cx| window.click("dock-close-all", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(titles(&dock, cx).is_empty());
+    assert!(views.iter().all(|view| view.upgrade().is_none()));
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("dock").is_none());
+        assert!(window.try_find("dock-toggle").is_none());
+        // The keyboard is back on the page.
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn without_tabs_the_docks_keys_go_on(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let handled = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            ["ctrl-.", "ctrl-,", "shift-escape"]
+                .map(|key| window.dispatch_keystroke(gpui_kit::Keystroke::parse(key).unwrap(), cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(handled, [false; 3], "nothing took them");
+    assert!(
+        cx.update(|cx| dock.read(cx).is_open()),
+        "nothing was minimized"
+    );
+}
+
+#[gpui_kit::test]
+fn leaving_the_dock_after_another_page_puts_the_keyboard_on_that_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    // The list had the keyboard when the dock took it.
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| pilot.focus_page(window, cx));
+        window.render_frame(cx);
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        let target = crate::resources::detail::DetailTarget {
+            identity: pods[0].clone(),
+            kind: builtin("pods").unwrap(),
+        };
+        dock.update(cx, |dock, cx| {
+            dock.open_logs(
+                crate::resources::LogsRequest { target, at: None },
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(dock.read(cx).has_focus(window, cx));
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        // A click in the lines takes the keyboard without the dock
+        // remembering anew: it still holds the list.
+        dock.update(cx, |dock, cx| dock.tabs[0].focus_lines(window, cx));
+        window.render_frame(cx);
+        assert!(dock.read(cx).has_focus(window, cx));
+        dock.update(cx, |dock, cx| dock.leave(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Not the list, which Overview doesn't draw: the page.
+        assert!(window.try_find("resource-body").is_none());
+        assert!(pilot.read(cx).focus.contains_focused(window, cx));
+        assert!(!dock.read(cx).has_focus(window, cx));
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
+    let saved = SavedDock {
+        height: 260.,
+        open: false,
+        maximized: true,
+        selected: Some(1),
+        tabs: vec![SavedTab {
+            kind: "pods".into(),
+            context: "lab".into(),
+            namespace: "payments".into(),
+            name: "api-0".into(),
+            container: Some("api".into()),
+            previous: true,
+        }],
+    };
+    let json = serde_json::to_string(&saved).unwrap();
+    assert_eq!(serde_json::from_str::<SavedDock>(&json).unwrap(), saved);
+    // An empty dock, or one from a build that saved more, still reads.
+    let empty: SavedDock = serde_json::from_str("{}").unwrap();
+    assert_eq!(
+        (empty.height, empty.open, empty.tabs.len()),
+        (DEFAULT_HEIGHT, true, 0)
+    );
+    let older: SavedDock = serde_json::from_str(r#"{"hidden":true,"height":120}"#).unwrap();
+    assert_eq!(older.height, 120.);
 }

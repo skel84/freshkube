@@ -2,7 +2,7 @@
 //! whose logs are open, as Freelens has. The shell owns it, app-wide, like
 //! the forwards. A tab's stream starts when the user opens the tab and
 //! lives until the tab closes, whatever page or object shows and whether
-//! the dock is minimized or hidden. Another connection closes every tab.
+//! the dock is minimized. Another connection closes every tab.
 //!
 //! A tab knows its own object: a pod's tab watches that pod for its
 //! containers (`feed.rs`), a workload's reads its selector once. The tabs
@@ -60,8 +60,9 @@ actions!(
 );
 
 pub(crate) enum DockEvent {
-    /// The keyboard leaves the dock and had no other place to go back to.
-    Leave,
+    /// The keyboard leaves the dock, for what had it before, if the shell
+    /// still draws it, or else the page.
+    Leave(Option<FocusHandle>),
 }
 
 impl EventEmitter<DockEvent> for Dock {}
@@ -170,8 +171,6 @@ pub(crate) struct Dock {
     open: bool,
     /// Fills the page cell; Restore returns to `height`.
     maximized: bool,
-    /// × hides the dock; its tabs keep reading.
-    hidden: bool,
     strip: TabStrip,
     focus: FocusHandle,
     /// What had the keyboard before the dock took it.
@@ -212,7 +211,6 @@ impl Dock {
             height: DEFAULT_HEIGHT,
             open: true,
             maximized: false,
-            hidden: false,
             strip: TabStrip::default(),
             focus: cx.focus_handle(),
             return_focus: None,
@@ -231,10 +229,10 @@ impl Dock {
         dock
     }
 
-    /// The height the dock takes under the page, or `None` when it draws
-    /// nothing: no tabs, or hidden.
+    /// The height the dock takes under the page, or `None` when it has no
+    /// tabs and draws nothing.
     pub(crate) fn shown_height(&self, window: &Window, cx: &App) -> Option<Pixels> {
-        if self.tabs.is_empty() || self.hidden {
+        if self.tabs.is_empty() {
             return None;
         }
         let unit = dp_px(1., window);
@@ -270,10 +268,6 @@ impl Dock {
 
     pub(crate) fn has_tabs(&self) -> bool {
         !self.tabs.is_empty()
-    }
-
-    pub(crate) fn is_hidden(&self) -> bool {
-        self.hidden
     }
 
     pub(crate) fn is_open(&self) -> bool {
@@ -487,7 +481,6 @@ impl Dock {
             return;
         }
         self.selected = Some(id);
-        self.hidden = false;
         self.open = true;
         self.sync_shown(cx);
         if focus {
@@ -510,7 +503,7 @@ impl Dock {
     /// Tells each tab whether it shows, and starts a restored tab the
     /// first time it does.
     fn sync_shown(&mut self, cx: &mut Context<Self>) {
-        let shown = !self.hidden && self.open;
+        let shown = self.open;
         let selected = self.selected;
         let start = selected
             .filter(|id| shown && self.tabs.iter().any(|tab| tab.id == *id && !tab.started));
@@ -529,8 +522,8 @@ impl Dock {
             return;
         }
         let current = self.selected.and_then(|id| self.position(id)).unwrap_or(0);
-        // A hidden or minimized dock comes back on the tab it had.
-        let next = if self.hidden || !self.open {
+        // A minimized dock comes back on the tab it had.
+        let next = if !self.open {
             current
         } else {
             (current as isize + delta).rem_euclid(self.tabs.len() as isize) as usize
@@ -605,23 +598,19 @@ impl Dock {
         cx.notify();
     }
 
-    /// Hands the keyboard back to what had it before the dock, or, without
-    /// one, asks the shell to put it on the page.
-    pub(crate) fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.return_focus.take() {
-            Some(focus) => window.focus(&focus, cx),
-            None => cx.emit(DockEvent::Leave),
-        }
+    /// Hands the keyboard back: the shell puts it on what had it before
+    /// the dock, unless another page has since replaced it, or on the page.
+    pub(crate) fn leave(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DockEvent::Leave(self.return_focus.take()));
     }
 
     /// Minimize or Open from the chrome, and Shift-Escape (minimize only).
     pub(crate) fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.open == open && !self.hidden {
+        if self.open == open {
             return;
         }
         let had_focus = self.focus.contains_focused(window, cx);
         self.open = open;
-        self.hidden = false;
         if !open {
             self.maximized = false;
         }
@@ -637,29 +626,15 @@ impl Dock {
     pub(crate) fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
         self.maximized = maximized;
         self.open = true;
-        self.hidden = false;
         self.sync_shown(cx);
         self.schedule_save(cx);
         cx.notify();
     }
 
-    /// × hides the dock; its tabs keep reading. The status bar and opening
-    /// logs bring it back.
-    pub(crate) fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let had_focus = self.focus.contains_focused(window, cx);
-        self.hidden = true;
-        self.sync_shown(cx);
-        if had_focus {
-            self.leave(window, cx);
-        }
-        self.schedule_save(cx);
-        cx.notify();
-    }
-
-    /// The status bar's button: brings a hidden or minimized dock back, or
-    /// hides a shown one.
+    /// The status bar's button: opens a minimized dock on the tab it had,
+    /// or minimizes an open one.
     pub(crate) fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.hidden || !self.open {
+        if !self.open {
             if let Some(id) = self
                 .selected
                 .or_else(|| self.tabs.first().map(|tab| tab.id))
@@ -667,7 +642,7 @@ impl Dock {
                 self.select(id, true, window, cx);
             }
         } else {
-            self.hide(window, cx);
+            self.set_open(false, window, cx);
         }
     }
 

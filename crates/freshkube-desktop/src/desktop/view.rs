@@ -101,12 +101,22 @@ impl Render for Pilot {
                 cx.listener(|view, _: &ToggleColumn, window, cx| view.toggle_column(window, cx)),
             )
             .on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
+                if !view.dock.read(cx).has_tabs() {
+                    return cx.propagate();
+                }
                 view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
             }))
             .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
+                if !view.dock.read(cx).has_tabs() {
+                    return cx.propagate();
+                }
                 view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
             }))
             .on_action(cx.listener(|view, _: &dock::MinimizeDock, window, cx| {
+                // Without tabs there is no dock: the key goes on.
+                if !view.dock.read(cx).has_tabs() {
+                    return cx.propagate();
+                }
                 view.dock
                     .update(cx, |dock, cx| dock.set_open(false, window, cx))
             }))

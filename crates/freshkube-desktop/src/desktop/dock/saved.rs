@@ -16,8 +16,6 @@ pub(crate) struct SavedDock {
     pub(super) open: bool,
     #[serde(default)]
     pub(super) maximized: bool,
-    #[serde(default)]
-    pub(super) hidden: bool,
     /// The selected tab's position.
     #[serde(default)]
     pub(super) selected: Option<usize>,
@@ -77,7 +75,6 @@ impl Dock {
             height: self.height.round(),
             open: self.open,
             maximized: self.maximized,
-            hidden: self.hidden,
             selected: self.selected.and_then(|id| self.position(id)),
             tabs: self
                 .tabs
@@ -123,7 +120,10 @@ impl Dock {
             return;
         };
         let mut ids = Vec::new();
-        for saved in restore.tabs {
+        // The selected tab, if it is one that comes back; the saved
+        // position counts every context's tabs.
+        let mut selected = None;
+        for (ix, saved) in restore.tabs.into_iter().enumerate() {
             if saved.context != source.context || ids.len() >= MAX_LOG_TABS {
                 continue;
             }
@@ -155,14 +155,13 @@ impl Dock {
                 container,
                 previous: saved.previous,
             });
-            ids.push(self.add_tab(DetailTarget { identity, kind }, at, window, cx));
+            let id = self.add_tab(DetailTarget { identity, kind }, at, window, cx);
+            if restore.selected == Some(ix) {
+                selected = Some(id);
+            }
+            ids.push(id);
         }
-        self.selected = restore
-            .selected
-            .and_then(|ix| ids.get(ix))
-            .or(ids.first())
-            .copied();
-        self.hidden = restore.hidden;
+        self.selected = selected.or(ids.first().copied());
         self.sync_shown(cx);
         cx.notify();
     }
