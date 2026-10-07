@@ -738,6 +738,59 @@ fn a_healthy_pod_has_no_cause_and_logs_is_one_button(cx: &mut TestAppContext) {
     assert!(asked[0].at.as_ref().is_none_or(|at| !at.previous));
 }
 
+/// A pod with a healthy default container and a crash-looping sidecar:
+/// the header's Logs opens the sidecar, the one at fault.
+#[gpui_kit::test]
+fn logs_opens_the_container_at_fault_rather_than_the_default(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, emitted) = mount(cx);
+    let (pod, _) = crashing_pod();
+    let blamed = cx.update(|cx| {
+        open(&pane, &pod, Duration::ZERO, cx);
+        pane.update(cx, |pane, _| {
+            let view = pane.detail.as_mut().unwrap().view.as_mut().unwrap();
+            let mut document = view.document.clone();
+            let overview = &mut document.overview;
+            // A healthy first container, which is also the default.
+            let status = overview.pod_status.as_mut().unwrap();
+            let blamed = status.containers[0].name.clone();
+            let mut healthy = status.containers[0].clone();
+            healthy.name = "proxy".into();
+            healthy.ready = true;
+            healthy.restarts = 0;
+            healthy.waiting = None;
+            healthy.last = None;
+            healthy.running_since = Some(chrono::Utc::now());
+            status.containers.insert(0, healthy);
+            let containers = overview.pod.as_mut().unwrap();
+            let mut proxy = containers.containers[0].clone();
+            proxy.name = "proxy".into();
+            containers.containers.insert(0, proxy);
+            containers.default = Some("proxy".into());
+            *view = std::sync::Arc::new(DocumentView::new(document));
+            pane.rebuild_links();
+            blamed
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            pane.read(cx).cross_links.logs_tip.as_deref(),
+            Some(format!("Opens {blamed}'s log in the dock (L from the list)").as_str())
+        );
+        window.click("detail-open-logs", cx);
+    })
+    .unwrap();
+    let asked = asked_logs(&emitted);
+    assert_eq!(asked.len(), 1);
+    assert_eq!(
+        asked[0].at,
+        Some(LogsAt {
+            container: blamed,
+            previous: false
+        })
+    );
+}
+
 /// A pod's tabs are the inspector's: 28 high, at any text size, in one
 /// strip under the heading.
 #[gpui_kit::test]

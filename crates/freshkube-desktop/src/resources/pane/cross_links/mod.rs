@@ -79,7 +79,9 @@ pub(super) struct CrossLinks {
     /// ServiceAccount, IP and QoS class.
     pub(in crate::resources::pane) facts: Vec<(SharedString, SharedString)>,
     /// The container Logs opens first: the one at fault, else the default.
-    logs: Option<String>,
+    pub(in crate::resources::pane) logs: Option<String>,
+    /// The header's Logs tooltip, naming that container.
+    pub(in crate::resources::pane) logs_tip: Option<SharedString>,
     node: Option<NodeLink>,
     owners: Vec<OwnerLink>,
     services: Vec<ServiceLink>,
@@ -281,11 +283,15 @@ impl DetailPane {
         let logs = diagnosis
             .and_then(|diagnosis| diagnosis.container)
             .or_else(|| pod.default.clone());
+        let logs_tip = logs
+            .as_ref()
+            .map(|name| format!("Opens {name}'s log in the dock (L from the list)").into());
         self.cross_links = CrossLinks {
             cause,
             timeline,
             facts,
             logs,
+            logs_tip,
             node,
             owners,
             services,
