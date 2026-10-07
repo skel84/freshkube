@@ -254,8 +254,11 @@ pub struct Application {
     pub destination_namespace: Option<String>,
     pub sync: Option<String>,
     /// `status.sync.revision` followed by `status.sync.revisions`, as the
-    /// join matches them; to compare revisions with the operation's or
-    /// history's, use `compared_revisions`, read as they are.
+    /// join matches them against a Promotion's pushed commit: a commit
+    /// listed in either field counts. It is not `compared_revisions`, which
+    /// reads one field or the other the way an operation's and a history
+    /// entry's revisions are read; to compare with those, use
+    /// `compared_revisions`.
     pub sync_revisions: Vec<String>,
     pub health: Option<String>,
     /// `<project>:<stage>` from the Kargo annotation, a claim.
@@ -1207,6 +1210,26 @@ mod tests {
             }),
         );
         let reconciliation = unsynced.reconciliation();
+        assert_eq!(
+            reconciliation.operation_revisions,
+            vec![COMMIT_B.to_owned()]
+        );
+        assert!(reconciliation.superseded);
+        // A sync result that names no revision (it failed before any
+        // source synced) falls back to the revisions the operation asked for.
+        let empty_result = app(
+            json!({}),
+            json!({
+                "sync": {"status": "Synced", "revision": COMMIT_A},
+                "operationState": {
+                    "phase": "Failed",
+                    "finishedAt": "2026-09-01T10:20:00Z",
+                    "syncResult": {"resources": []},
+                    "operation": {"sync": {"revisions": [COMMIT_B]}},
+                },
+            }),
+        );
+        let reconciliation = empty_result.reconciliation();
         assert_eq!(
             reconciliation.operation_revisions,
             vec![COMMIT_B.to_owned()]
