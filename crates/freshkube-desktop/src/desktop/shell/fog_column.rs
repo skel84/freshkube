@@ -30,7 +30,7 @@ impl Pilot {
         if self.area == Area::Observability {
             return self.render_observability_column(true, window, cx);
         }
-        let mut column = self.compact_column().child(self.column_toggle(true, cx));
+        let mut column = self.compact_column().child(self.expand_toggle(cx));
         match self.area {
             Area::Group(slug) => {
                 if slug == "workloads" {
@@ -157,20 +157,13 @@ impl Pilot {
             .py(dp(14.))
             .gap(dp(6.))
     }
-    fn column_toggle(&self, collapsed: bool, cx: &Context<Self>) -> Button {
+    /// The collapsed column's button that expands it again.
+    fn expand_toggle(&self, cx: &Context<Self>) -> Button {
         Button::new("nav-collapse")
             .ghost()
             .xsmall()
-            .icon(if collapsed {
-                IconName::PanelLeftOpen
-            } else {
-                IconName::PanelLeftClose
-            })
-            .tooltip(if collapsed {
-                "Expand sidebar · ⌘B"
-            } else {
-                "Collapse sidebar · ⌘B"
-            })
+            .icon(IconName::PanelLeftOpen)
+            .tooltip("Expand sidebar · ⌘B")
             .tooltip_placement(Placement::Right)
             .on_click(cx.listener(|this, _, window, cx| this.toggle_column(window, cx)))
     }
@@ -214,7 +207,7 @@ impl Pilot {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .track_scroll(&self.obs_column_scroll)
-            .gap(dp(4.));
+            .gap(dp(if collapsed { 4. } else { 2. }));
         for item in items {
             let active = active(item);
             let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -323,16 +316,22 @@ impl Pilot {
             .flex_none()
             .border_r_1()
             .border_color(p.line)
-            .px(dp(if collapsed { 8. } else { 12. }))
-            .py(dp(14.))
-            .gap(dp(14.))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .when(!collapsed, |this| {
-                        this.child(ui::caption("Observability", cx))
-                    })
-                    .child(self.column_toggle(collapsed, cx)),
+            // Expanded, the column keeps the shared frame (`render_column`),
+            // so its caption and rows don't move when the area changes.
+            .when_else(
+                collapsed,
+                |this| {
+                    this.px(dp(8.))
+                        .py(dp(14.))
+                        .gap(dp(14.))
+                        .child(self.expand_toggle(cx))
+                },
+                |this| {
+                    this.px(dp(10.))
+                        .py(dp(16.))
+                        .gap(dp(2.))
+                        .child(self.column_header("Observability", cx))
+                },
             )
             .child(
                 if collapsed {
@@ -348,7 +347,7 @@ impl Pilot {
                 .flex_1()
                 .min_h_0(),
             )
-            .child(sources)
+            .child(sources.when(!collapsed, |sources| sources.mt(dp(12.))))
             .into_any_element()
     }
     fn namespace_menu(&self, compact: bool, cx: &Context<Self>) -> AnyElement {
