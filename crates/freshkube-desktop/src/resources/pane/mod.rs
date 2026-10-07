@@ -35,16 +35,15 @@ mod cross_links;
 mod events;
 mod overview;
 mod ports;
-pub(crate) mod shell;
 #[cfg(test)]
 mod tests;
 mod view;
 mod yaml;
 
+use super::shell::{ShellEvent, ShellView};
 use events::EventLine;
 use overview::Summary;
 use ports::PortsView;
-use shell::{ShellEvent, ShellView};
 
 const CONTEXT: &str = "KubeDetail";
 /// The key context of the tab strip, where the arrows move between tabs.
@@ -172,7 +171,7 @@ pub(crate) struct DetailPane {
     yaml_scroll: UniformListScrollHandle,
     /// The open pod's shell. A session lives while the pod stays open, on
     /// any tab and any page.
-    shell: Entity<ShellView>,
+    pub(super) shell: Entity<ShellView>,
     /// The object's ports, and the forwards running from them.
     ports: Entity<PortsView>,
     /// A pod's CPU and memory over the last hour, on its Overview.

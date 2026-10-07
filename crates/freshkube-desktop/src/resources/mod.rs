@@ -12,10 +12,11 @@ mod pane;
 pub(crate) mod projection;
 pub(crate) mod rows;
 mod screen;
+pub(crate) mod shell;
 pub(crate) mod store;
 pub(crate) mod talos;
 
-pub(crate) use pane::{DetailPane, Tab, shell};
+pub(crate) use pane::{DetailPane, Tab};
 pub(crate) use screen::{KubeAccess, KubeSource, NodePodsEvent, NotServed, ResourcesScreen, title};
 
 /// Navigation requested by an explicit relationship link in a resource pane.
