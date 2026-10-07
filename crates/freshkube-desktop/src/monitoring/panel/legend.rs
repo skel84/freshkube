@@ -1,9 +1,10 @@
 //! A timeseries legend: inline under a few series, else rows with a value
-//! per heading, in two columns where they fit. Hovering a row fades the
-//! other lines; a click keeps that series in front until clicked again. A
-//! series that stopped before the window's end shows its last value muted,
-//! with the time in the row's tooltip. A chart with more series than the
-//! cap ends with a line saying how many it draws, and a way to draw all.
+//! per heading, in two columns where they fit. Either takes at most half the
+//! panel and scrolls past it. Hovering a row fades the other lines; a click
+//! keeps that series in front until clicked again. A series that stopped
+//! before the window's end shows its last value muted, with the time in the
+//! row's tooltip. A chart with more series than the cap ends with a line
+//! saying how many it draws, and a way to draw all.
 use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
@@ -38,14 +39,16 @@ pub(super) fn legend(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView
 
 fn inline(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyElement {
     let p = palette(cx);
-    h_flex()
-        .flex_none()
+    let entries = h_flex()
+        .id(view.element_id("legend"))
+        .min_h_0()
+        .overflow_y_scroll()
+        .restrict_scroll_to_axis()
         .flex_wrap()
         .gap_x(dp(16.))
         .gap_y(dp(2.))
         .px(dp(16.))
         .pt(dp(4.))
-        .pb(dp(10.))
         .text_size(dp(11.5))
         .children(chart.legend.rows.iter().map(|row| {
             entry(view, chart, row, cx)
@@ -64,6 +67,14 @@ fn inline(view: &PanelView, chart: &Chart, cx: &mut Context<PanelView>) -> AnyEl
                 })
                 .test_support()
         }))
+        .test_support();
+    // Capped as the table is, so a narrow panel's one name a line scrolls
+    // rather than clipping its last lines.
+    v_flex()
+        .flex_none()
+        .max_h(relative(0.5))
+        .pb(dp(10.))
+        .child(entries)
         .into_any_element()
 }
 

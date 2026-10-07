@@ -21,6 +21,11 @@ use crate::monitoring::colors::{self, Ink, Tier};
 
 /// Legend rows drawn at most; the rest are counted.
 pub(crate) const LEGEND_ROWS: usize = 30;
+/// Series an inline legend lists at most, and the longest name it takes
+/// past four series, in chars rather than display width. More, or longer
+/// names, take the table.
+const INLINE_ROWS: usize = 6;
+const INLINE_NAME: usize = 16;
 
 /// One character's advance in the legend's 12 dp mono values, a little
 /// generous, so a column sized by its widest value never wraps.
@@ -599,7 +604,7 @@ fn legend(shown: &[Shown], options: &TimeSeriesOptions, times: &[f64]) -> Legend
         (LegendMode::Hidden, Vec::new())
     } else if !options.legend_calcs.is_empty() {
         (LegendMode::Table, options.legend_calcs.clone())
-    } else if listed.len() <= 4 {
+    } else if inline(shown, &listed) {
         (LegendMode::Inline, vec![Calc::LastNotNull])
     } else {
         (LegendMode::Table, vec![Calc::LastNotNull, Calc::Max])
@@ -641,6 +646,16 @@ fn legend(shown: &[Shown], options: &TimeSeriesOptions, times: &[f64]) -> Legend
         more: listed.len().saturating_sub(LEGEND_ROWS),
         column: VALUE_COLUMN,
     }
+}
+
+/// Up to four series list inline, and up to six with short names, such as
+/// log severities: a short chart's table would clip its third line.
+fn inline(shown: &[Shown], listed: &[usize]) -> bool {
+    listed.len() <= 4
+        || listed.len() <= INLINE_ROWS
+            && listed
+                .iter()
+                .all(|&i| shown[i].name.chars().count() <= INLINE_NAME)
 }
 
 /// The value columns' width: the widest value or heading after the first,

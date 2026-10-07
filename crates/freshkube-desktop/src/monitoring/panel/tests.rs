@@ -27,6 +27,7 @@ fn window_range() -> TimeWindow {
 struct Host {
     panels: Vec<Entity<PanelView>>,
     width: f32,
+    height: f32,
 }
 
 impl Render for Host {
@@ -38,7 +39,7 @@ impl Render for Host {
                     .relative()
                     .flex_none()
                     .w(px(self.width))
-                    .h(px(320.))
+                    .h(px(self.height))
                     .child(panel.clone().cached(StyleRefinement::default().size_full()))
                     .children(panel.read(cx).cursor_overlay())
             }))
@@ -65,6 +66,16 @@ fn mount_at(
     specs: Vec<Rc<PanelSpec>>,
     width: f32,
 ) -> (AnyWindowHandle, Vec<Entity<PanelView>>) {
+    mount_sized(cx, specs, width, 320.)
+}
+
+/// Panels `width` wide and `height` high, one under another.
+fn mount_sized(
+    cx: &mut TestAppContext,
+    specs: Vec<Rc<PanelSpec>>,
+    width: f32,
+    height: f32,
+) -> (AnyWindowHandle, Vec<Entity<PanelView>>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -73,8 +84,8 @@ fn mount_at(
         cx.set_reduce_motion(true);
     });
     let mut panels = Vec::new();
-    let height = 320. * specs.len() as f32;
-    let window = cx.open_window(size(px(700.), px(height)), |window, cx| {
+    let total = height * specs.len() as f32;
+    let window = cx.open_window(size(px(700.), px(total)), |window, cx| {
         panels = specs
             .into_iter()
             .enumerate()
@@ -83,6 +94,7 @@ fn mount_at(
         let host = cx.new(|_| Host {
             panels: panels.clone(),
             width,
+            height,
         });
         Root::new(host, window, cx)
     });
@@ -953,6 +965,18 @@ fn legend_panel(
     width: f32,
     stopped: &[usize],
 ) -> (AnyWindowHandle, Entity<PanelView>) {
+    let names: Vec<String> = (0..count).map(|n| format!("pod-{n}")).collect();
+    named_panel(cx, &names, width, 320., stopped)
+}
+
+/// A timeseries panel `width` by `height` answered with a series per name.
+fn named_panel(
+    cx: &mut TestAppContext,
+    names: &[String],
+    width: f32,
+    height: f32,
+    stopped: &[usize],
+) -> (AnyWindowHandle, Entity<PanelView>) {
     use freshkube_core::monitoring::{
         PanelResult,
         model::data::{Frame, Series},
@@ -967,24 +991,26 @@ fn legend_panel(
         .unwrap()
         .panels
         .remove(0);
-    let (handle, panels) = mount_at(cx, vec![Rc::new(spec)], width);
+    let (handle, panels) = mount_sized(cx, vec![Rc::new(spec)], width, height);
     let times: Vec<f64> = window_range()
         .times()
         .into_iter()
         .map(|t| t as f64)
         .collect();
-    let series = (0..count)
-        .map(|n| {
+    let series = names
+        .iter()
+        .enumerate()
+        .map(|(n, name)| {
             let mut values = vec![5.; times.len()];
             if stopped.contains(&n) {
                 let end = values.len();
                 values[end - 3..].fill(f64::NAN);
             }
             Series {
-                name: format!("pod-{n}"),
+                name: name.clone(),
                 query: "A".into(),
                 field: None,
-                labels: vec![("pod".into(), format!("pod-{n}"))],
+                labels: vec![("pod".into(), name.clone())],
                 values,
             }
         })
@@ -1001,6 +1027,35 @@ fn legend_panel(
         })
     });
     (handle, panel)
+}
+
+/// One wheel event at `position`, as the start of a gesture.
+fn wheel(
+    window: &mut Window,
+    position: gpui_kit::Point<gpui_kit::Pixels>,
+    y: f32,
+    cx: &mut gpui_kit::App,
+) {
+    use gpui_kit::{InputEvent, MouseMoveEvent, ScrollDelta, ScrollWheelEvent, TouchPhase};
+    window.dispatch_event(
+        MouseMoveEvent {
+            position,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.dispatch_event(
+        ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(0.), px(y))),
+            touch_phase: TouchPhase::Started,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.render_frame(cx);
 }
 
 fn bounds_of(
@@ -1043,10 +1098,11 @@ fn an_odd_last_legend_row_keeps_half_the_width(cx: &mut TestAppContext) {
 }
 
 /// Where two rows don't fit, each takes the line, the odd last one too.
+/// Seven series, so the short names still take the table.
 #[gpui_kit::test]
 fn a_narrow_legend_takes_one_column(cx: &mut TestAppContext) {
-    let (handle, _panel) = legend_panel(cx, 5, 300., &[]);
-    let rows = bounds_of(cx, handle, &legend_rows(5));
+    let (handle, _panel) = legend_panel(cx, 7, 300., &[]);
+    let rows = bounds_of(cx, handle, &legend_rows(7));
     for pair in rows.windows(2) {
         assert_eq!(pair[1].left(), pair[0].left());
         assert!(pair[1].top() > pair[0].top(), "{rows:?}");
@@ -1080,11 +1136,58 @@ fn a_long_legend_stops_short_of_the_cards_edge(cx: &mut TestAppContext) {
     );
 }
 
+/// Six 16-character names on a narrow, short panel list inline one a line,
+/// more than half the panel: the legend stops at half, above the card's
+/// padding, and scrolls to its last line.
+#[gpui_kit::test]
+fn a_narrow_inline_legend_scrolls_to_its_last_line(cx: &mut TestAppContext) {
+    let names: Vec<String> = (0..6).map(|n| format!("worker-pool-ab-{n}")).collect();
+    assert_eq!(names[0].chars().count(), 16);
+    let (handle, panel) = named_panel(cx, &names, 250., 200., &[]);
+    cx.update(|cx| {
+        assert_eq!(
+            panel.read(cx).chart().unwrap().legend.mode,
+            crate::monitoring::derive::LegendMode::Inline
+        )
+    });
+    let ids = [
+        "monitoring-panel-0".to_string(),
+        "monitoring-panel-0-plot".into(),
+        "monitoring-panel-0-legend".into(),
+        "monitoring-panel-0-legend-5".into(),
+    ];
+    let found = bounds_of(cx, handle, &ids);
+    let (card, plot, legend, last) = (found[0], found[1], found[2], found[3]);
+    assert!(
+        plot.size.height >= legend.size.height,
+        "{plot:?} {legend:?}"
+    );
+    assert!(
+        card.bottom() - legend.bottom() >= px(10.),
+        "{legend:?} in {card:?}"
+    );
+    assert!(
+        last.bottom() > legend.bottom(),
+        "fits unscrolled: {last:?} {legend:?}"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        wheel(window, legend.center(), -400., cx)
+    })
+    .unwrap();
+    let last = bounds_of(cx, handle, &ids[3..])[0];
+    assert!(
+        last.bottom() <= legend.bottom(),
+        "{last:?} below {legend:?}"
+    );
+    assert!(last.top() >= legend.top(), "{last:?} above {legend:?}");
+}
+
 /// A series that stopped early shows its last value muted, with the time in
-/// the row's tooltip: its value takes no more room than any other.
+/// the row's tooltip: its value takes no more room than any other. Seven
+/// series, so the legend is a table.
 #[gpui_kit::test]
 fn a_stopped_series_keeps_its_value_as_wide_as_the_others(cx: &mut TestAppContext) {
-    let (handle, panel) = legend_panel(cx, 6, 640., &[0]);
+    let (handle, panel) = legend_panel(cx, 7, 640., &[0]);
     let stale = cx.read(|cx| {
         let chart = panel.read(cx).chart().unwrap();
         (
