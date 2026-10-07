@@ -26,19 +26,18 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, NARROW_PANE_WIDTH, SPLIT_GAP, Scope, ScreenEvent, ScreenPanel, ScreenSource,
-    failure_banner, field, gate, mono, page_width, panel, partial_notice, refresh_control, segment,
-    split_narrow,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
+    page_width, panel, partial_notice, refresh_control, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::inspector::{self, InspectorSplit};
 use freshkube_ui::status::{self, Segment};
 use freshkube_ui::table::{self as data_table, TableState};
 
 const CONTEXT: &str = "TalosLifecycle";
 const PREFIX: &str = "lifecycle";
-/// The details pane, when it sits beside the roster: `split_narrow`'s pane
-/// and gap.
+/// Between the etcd and sources cards.
 const GAP: f32 = 14.;
 
 actions!(
@@ -77,6 +76,11 @@ pub(crate) struct LifecycleScreen {
     _observation: gpui_kit::Subscription,
     loader: Loader<LifecycleView>,
     selected: Option<Item>,
+    /// The selection's details, derived when it or the data changes.
+    detail: Option<detail::Detail>,
+    /// The roster and the Inspector, whose width is saved under
+    /// `lifecycle`.
+    split: InspectorSplit,
     table: TableState,
     /// The roster's rows until the first answer, under the columns the
     /// table has before any row sizes them, and their motion.
@@ -114,6 +118,15 @@ impl ScreenPanel for LifecycleScreen {
             _observation: cx.observe_self(|screen, cx| screen.sync_shared_nodes(cx)),
             loader: Loader::default(),
             selected: None,
+            detail: None,
+            split: {
+                let file = crate::navigation_file::NavigationFile::global(cx);
+                InspectorSplit::new(
+                    file.inspector_width("lifecycle"),
+                    move |width, cx| file.set_inspector_width("lifecycle", width, cx),
+                    cx,
+                )
+            },
             table: TableState::new("lifecycle"),
             loading,
             loading_motion,
@@ -132,6 +145,8 @@ impl ScreenPanel for LifecycleScreen {
             self.selected = None;
         }
         self.source = source;
+        // Open node follows the target's nodes.
+        self.detail = None;
         cx.notify();
     }
 
@@ -936,6 +951,7 @@ impl LifecycleScreen {
     }
 }
 
+mod detail;
 mod example;
 mod table;
 mod view;
