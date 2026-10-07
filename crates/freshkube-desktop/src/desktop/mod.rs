@@ -1,6 +1,8 @@
 mod access;
 mod connection;
 pub(crate) mod dock;
+#[cfg(test)]
+mod gate_tests;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
@@ -958,6 +960,7 @@ impl Pilot {
                 cx.notify();
             },
         ));
+        view.publish_reading(cx);
         view.chrome.watch(&view, cx);
         view.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
@@ -1164,6 +1167,7 @@ impl Pilot {
         match event {
             ScreenEvent::Back => self.node_back(window, cx),
             ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
+            ScreenEvent::RetryCluster => self.refresh(window, cx),
             ScreenEvent::OpenLogs(service) => {
                 self.selected_service = Some(service.clone());
                 self.open_logs(window, cx);

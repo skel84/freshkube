@@ -321,7 +321,9 @@ impl Pilot {
     pub(super) fn nodes_wait(&self) -> bool {
         matches!(self.node_workspace.empty, Some(Empty::Loading))
     }
-    pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
+    /// Derives where the Talos overview stands, for System services and for
+    /// every page that needs a node, whenever the overview changes.
+    pub(super) fn publish_reading(&mut self, cx: &mut Context<Self>) {
         // System services waits as long as the Talos overview has neither
         // answered nor failed, and says why when nothing can answer.
         let failure = self
@@ -335,8 +337,17 @@ impl Pilot {
         } else {
             Reading::Waiting
         };
+        if crate::screens::set_reading(reading.clone(), cx) {
+            for (_, screen) in &self.screens {
+                App::notify(cx, screen.view().entity_id());
+            }
+        }
         self.system_services
             .update(cx, |services, cx| services.set_reading(reading, cx));
+    }
+
+    pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
+        self.publish_reading(cx);
         self.column_state
             .prepare(self.kubernetes_summary.data().map(|s| s.as_ref()));
         let kubernetes = self
