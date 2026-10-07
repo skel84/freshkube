@@ -26,8 +26,9 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    page_width, panel, partial_notice, refresh_control, segment, split_narrow,
+    Loader, NARROW_PANE_WIDTH, SPLIT_GAP, Scope, ScreenEvent, ScreenPanel, ScreenSource,
+    failure_banner, field, gate, mono, page_width, panel, partial_notice, refresh_control, segment,
+    split_narrow,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -38,7 +39,6 @@ const CONTEXT: &str = "TalosLifecycle";
 const PREFIX: &str = "lifecycle";
 /// The details pane, when it sits beside the roster: `split_narrow`'s pane
 /// and gap.
-const DETAILS_WIDTH: f32 = 340.;
 const GAP: f32 = 14.;
 
 actions!(

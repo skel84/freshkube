@@ -40,7 +40,7 @@ impl LifecycleScreen {
         let body = if alerts.is_empty() {
             div()
                 .id("lifecycle-no-alerts")
-                .px_3()
+                .px(dp(page::PANE_PADDING))
                 .py_3()
                 .text_size(dp(12.5))
                 .text_color(p.muted)
@@ -59,7 +59,7 @@ impl LifecycleScreen {
                         .aria_label(format!("{label}: {}", alert.message))
                         .items_start()
                         .gap_2p5()
-                        .px_3()
+                        .px(dp(page::PANE_PADDING))
                         .py_2()
                         .text_size(dp(12.5))
                         .cursor_pointer()
@@ -580,7 +580,7 @@ impl LifecycleScreen {
             .collect();
         // Details sit beside the roster only when it still fits whole;
         // otherwise they'd push its last columns behind a horizontal scroll.
-        let beside = page_width(window) >= view.display.width + DETAILS_WIDTH + GAP;
+        let beside = page_width(window) >= view.display.width + NARROW_PANE_WIDTH + SPLIT_GAP;
         // The card keeps the inset on its outer edges until the Inspector.
         let details = self.details(view, cx).map(|details| {
             div()
