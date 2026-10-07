@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use freshkube_core::BoundedReadError;
 use freshkube_core::cluster_overview::{ClusterOverviewCollector, KubeconfigSelection};
 use freshkube_core::{
     cluster_overview::{ClusterOverview, ConfigIdentity},
@@ -90,18 +91,8 @@ fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIde
         return Err("Talos configuration must be a regular file".into());
     }
     // Core's reader opens nonblocking and caps the read on the descriptor.
-    let bytes =
-        freshkube_core::read_bounded_regular_file(path, MAX_CONFIG_BYTES).map_err(|reason| {
-            match reason {
-                "path is not a regular file" => {
-                    "Talos configuration must be a regular file".to_owned()
-                }
-                "file exceeds the supported size limit" => {
-                    "Talos configuration exceeds the 4 MiB limit".to_owned()
-                }
-                reason => format!("Cannot read talosconfig: {reason}"),
-            }
-        })?;
+    let bytes = freshkube_core::read_bounded_regular_file(path, MAX_CONFIG_BYTES)
+        .map_err(config_read_message)?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| "Talos configuration is not valid UTF-8".to_string())?;
     // serde_yaml diagnostics may echo credential values; never send them to UI.
@@ -109,6 +100,17 @@ fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIde
     TalosConfig::parse(text)
         .map(|config| (config, identity))
         .map_err(|_| "Talos configuration could not be parsed".into())
+}
+
+/// What the user reads when the talosconfig can't be read.
+fn config_read_message(error: BoundedReadError) -> String {
+    match error {
+        BoundedReadError::Open(error) => format!("Cannot open talosconfig: {error}"),
+        BoundedReadError::Inspect(error) => format!("Cannot inspect talosconfig: {error}"),
+        BoundedReadError::NotRegular => "Talos configuration must be a regular file".into(),
+        BoundedReadError::TooLarge => "Talos configuration exceeds the 4 MiB limit".into(),
+        BoundedReadError::Read(error) => format!("Cannot read talosconfig: {error}"),
+    }
 }
 
 #[cfg(test)]
@@ -652,6 +654,58 @@ mod tests {
         let error = read_config_file(&invalid).unwrap_err();
         assert!(error.contains("could not be parsed"));
         assert!(!error.contains("TOP_SECRET_CREDENTIAL"));
+    }
+
+    #[test]
+    fn a_missing_talosconfig_says_it_cannot_be_opened() {
+        let directory = ConfigDirectory::new();
+        let error = read_config_file(&directory.0.join("absent")).unwrap_err();
+        assert!(error.starts_with("Cannot open talosconfig: "), "{error}");
+    }
+
+    #[test]
+    fn a_directory_as_talosconfig_is_not_a_regular_file() {
+        let directory = ConfigDirectory::new();
+        assert_eq!(
+            read_config_file(&directory.0).unwrap_err(),
+            "Talos configuration must be a regular file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_talosconfig_says_it_cannot_be_opened() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = ConfigDirectory::new();
+        let locked = directory.0.join("locked");
+        std::fs::write(&locked, "context: alpha\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // The superuser reads anything, so there is nothing to refuse.
+        if std::fs::File::open(&locked).is_err() {
+            let error = read_config_file(&locked).unwrap_err();
+            assert!(error.starts_with("Cannot open talosconfig: "), "{error}");
+            assert!(
+                error.to_lowercase().contains("permission denied"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn io_failures_after_opening_name_the_step_that_failed() {
+        let failure = || std::io::Error::other("disk gone");
+        assert_eq!(
+            config_read_message(BoundedReadError::Inspect(failure())),
+            "Cannot inspect talosconfig: disk gone"
+        );
+        assert_eq!(
+            config_read_message(BoundedReadError::Read(failure())),
+            "Cannot read talosconfig: disk gone"
+        );
+        assert_eq!(
+            config_read_message(BoundedReadError::TooLarge),
+            "Talos configuration exceeds the 4 MiB limit"
+        );
     }
 
     #[cfg(unix)]

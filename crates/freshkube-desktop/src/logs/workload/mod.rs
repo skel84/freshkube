@@ -46,9 +46,9 @@ use tokio::sync::{mpsc, watch};
 
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
-use crate::logs::Status;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
+use crate::stream_status::Status;
 use crate::ui::Tone;
 use controls::Controls;
 

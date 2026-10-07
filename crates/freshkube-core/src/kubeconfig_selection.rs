@@ -64,21 +64,57 @@ pub fn inspect_kubeconfig(path: &Path) -> Result<KubeconfigFileInfo, K8sError> {
     })
 }
 
-fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, &'static str> {
+/// Why [`read_bounded_regular_file`] gave no bytes.
+#[derive(Debug)]
+pub enum BoundedReadError {
+    /// The path couldn't be opened: missing, not permitted, or unreadable.
+    Open(std::io::Error),
+    /// The opened file's metadata couldn't be read.
+    Inspect(std::io::Error),
+    /// The path is not a regular file: a directory, FIFO or device.
+    NotRegular,
+    /// The file is longer than the limit.
+    TooLarge,
+    /// Reading the opened file failed.
+    Read(std::io::Error),
+}
+
+impl BoundedReadError {
+    /// A fixed, credential-free reason, for messages that carry no OS text.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Open(_) => "file is unreadable or does not exist",
+            Self::Inspect(_) => "file metadata is unavailable",
+            Self::NotRegular => "path is not a regular file",
+            Self::TooLarge => "file exceeds the supported size limit",
+            Self::Read(_) => "file could not be read",
+        }
+    }
+}
+
+impl std::fmt::Display for BoundedReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.reason())
+    }
+}
+
+impl std::error::Error for BoundedReadError {}
+
+fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, BoundedReadError> {
     let mut bytes = Vec::new();
     reader
         .take(limit + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| "file could not be read")?;
+        .map_err(BoundedReadError::Read)?;
     if bytes.len() as u64 > limit {
-        return Err("file exceeds the supported size limit");
+        return Err(BoundedReadError::TooLarge);
     }
     Ok(bytes)
 }
 
 /// Reads a regular file of at most `limit` bytes: opened nonblocking, so a
 /// FIFO swapped into the path can't block, and capped on the descriptor.
-pub fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, &'static str> {
+pub fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, BoundedReadError> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -88,17 +124,13 @@ pub fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, &'s
         // block the worker before descriptor metadata can reject it.
         options.custom_flags(libc::O_NONBLOCK);
     }
-    let file = options
-        .open(path)
-        .map_err(|_| "file is unreadable or does not exist")?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| "file metadata is unavailable")?;
+    let file = options.open(path).map_err(BoundedReadError::Open)?;
+    let metadata = file.metadata().map_err(BoundedReadError::Inspect)?;
     if !metadata.is_file() {
-        return Err("path is not a regular file");
+        return Err(BoundedReadError::NotRegular);
     }
     if metadata.len() > limit {
-        return Err("file exceeds the supported size limit");
+        return Err(BoundedReadError::TooLarge);
     }
     // Enforce the bound on the opened descriptor even if the file grows after
     // metadata inspection. The parsed snapshot never reopens the path.

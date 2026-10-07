@@ -24,10 +24,10 @@ use tokio::task::JoinHandle;
 
 use crate::backend::{self, OwnedJob};
 use crate::forwards;
-use crate::logs::Status;
 use crate::logs::choice_label;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::KubeAccess;
+use crate::stream_status::Status;
 use crate::terminal::{TerminalEvent, TerminalSize, TerminalView};
 use crate::ui::Tone;
 
