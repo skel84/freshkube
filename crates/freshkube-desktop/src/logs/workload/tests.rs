@@ -1680,21 +1680,23 @@ fn a_workload_file_holds_its_lines_as_copy_copies_them_led_by_their_tags(cx: &mu
 
 #[gpui_kit::test]
 fn a_workload_download_is_named_by_the_workload_and_its_picked_pod(cx: &mut TestAppContext) {
-    use crate::logs::LogSource;
+    use crate::logs::{DownloadLines, LogSource};
     let (_runtime, view, _handle) = mount(cx);
     let api = deployment("api");
     let all = pods(&api, "app=api");
     cx.update(|cx| {
         show_fed(&view, &api, cx);
         feed(&view, all.clone(), cx);
-        assert_eq!(
-            super::WorkloadLogs::download_name(view.read(cx)),
-            format!("{}-{}", api.namespace, api.name)
-        );
+        let workload = format!("{}-{}", api.namespace, api.name);
+        let name = |lines, cx: &App| super::WorkloadLogs::download_name(view.read(cx), lines);
+        assert_eq!(name(DownloadLines::Visible, cx), workload);
+        assert_eq!(name(DownloadLines::Retained, cx), workload);
         view.update(cx, |view, cx| view.pick_pod(Some(all[0].name.clone()), cx));
+        // Visible lines are the picked pod's; every retained line isn't.
         assert_eq!(
-            super::WorkloadLogs::download_name(view.read(cx)),
-            format!("{}-{}-{}", api.namespace, api.name, all[0].name)
+            name(DownloadLines::Visible, cx),
+            format!("{workload}-{}", all[0].name)
         );
+        assert_eq!(name(DownloadLines::Retained, cx), workload);
     });
 }

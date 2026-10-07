@@ -30,6 +30,8 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+pub use download::DownloadLines;
+
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet},
@@ -179,9 +181,6 @@ impl ScrollbarHandle for ManualReviewScroll {
 /// How often stream batches are applied while the page is hidden.
 const HIDDEN_APPLY_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Where a log view's lines come from. The view calls these while it
-/// renders; the source feeds lines through [`LogView::ingest`] and keeps
-/// its stream, catalog and failures to itself.
 /// The line under the toolbar: what the last action did, in crit when it
 /// failed.
 #[derive(Clone, Debug, PartialEq)]
@@ -232,6 +231,9 @@ impl From<&'static str> for Feedback {
     }
 }
 
+/// Where a log view's lines come from. The view calls these while it
+/// renders; the source feeds lines through [`LogView::ingest`] and keeps
+/// its stream, catalog and failures to itself.
 pub trait LogSource: Sized + 'static {
     /// Lays out whatever `controls` needs measured, once per frame before
     /// the toolbar is laid out. `width` is the panel's.
@@ -261,9 +263,9 @@ pub trait LogSource: Sized + 'static {
         Vec::new()
     }
 
-    /// What a downloaded file is named after, such as the pod and its
-    /// container; the view adds the time and `.log`.
-    fn download_name(_view: &LogView<Self>) -> String {
+    /// What a downloaded file of `lines` is named after, such as the pod
+    /// and its container; the view adds the time and `.log`.
+    fn download_name(_view: &LogView<Self>, _lines: DownloadLines) -> String {
         "logs".into()
     }
 
@@ -411,6 +413,9 @@ pub struct LogView<S: LogSource> {
     /// Asks where to save a download and writes it; a new download
     /// replaces it.
     download: Option<Task<()>>,
+    /// Whether a download's save dialog is open: another download waits
+    /// until it answers, so the first is never dropped unseen.
+    choosing_file: bool,
     /// Whether the view is on screen. Its source keeps streaming either
     /// way, but a hidden view applies lines in coalesced groups and never
     /// asks the window to redraw for them.
@@ -494,6 +499,7 @@ impl<S: LogSource> LogView<S> {
             anchor_evicted: false,
             feedback: None,
             download: None,
+            choosing_file: false,
             visible: true,
             backlog: Vec::new(),
             last_applied: cx.background_executor().now(),

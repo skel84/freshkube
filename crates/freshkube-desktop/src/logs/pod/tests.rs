@@ -603,7 +603,7 @@ fn a_pod_download_is_named_by_its_pod_container_and_instance(cx: &mut TestAppCon
         let source = view.read(cx).source();
         let container = source.container.clone().unwrap();
         assert_eq!(
-            super::PodLogs::download_name(view.read(cx)),
+            super::PodLogs::download_name(view.read(cx), crate::logs::DownloadLines::Visible),
             format!("{}-{}-{container}", identity.namespace, identity.name)
         );
     });

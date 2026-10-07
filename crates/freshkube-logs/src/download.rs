@@ -25,8 +25,8 @@ use super::review::copied;
 use super::{Feedback, LogSource, LogView};
 
 /// Which lines a download takes.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Lines {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadLines {
     /// The lines the filters show, as the list shows them.
     Visible,
     /// Every retained line, whatever the filters show.
@@ -54,8 +54,8 @@ impl<S: LogSource> LogView<S> {
                     return menu;
                 };
                 for (lines, label, count) in [
-                    (Lines::Visible, "Visible lines", visible),
-                    (Lines::Retained, "All retained lines", retained),
+                    (DownloadLines::Visible, "Visible lines", visible),
+                    (DownloadLines::Retained, "All retained lines", retained),
                 ] {
                     let view = view.clone();
                     menu = menu.item(
@@ -85,11 +85,11 @@ impl<S: LogSource> LogView<S> {
     }
 
     /// The file's text: what Copy copies of the same lines, one line each.
-    pub(super) fn download_text(&self, lines: Lines) -> (String, usize) {
+    pub(super) fn download_text(&self, lines: DownloadLines) -> (String, usize) {
         let entries = self.review.logs.buffer().entries();
         let chosen: Box<dyn Iterator<Item = _>> = match lines {
-            Lines::Visible => Box::new(self.review.visible.iter().map(|&ix| &entries[ix])),
-            Lines::Retained => Box::new(entries.iter()),
+            DownloadLines::Visible => Box::new(self.review.visible.iter().map(|&ix| &entries[ix])),
+            DownloadLines::Retained => Box::new(entries.iter()),
         };
         let as_ = self.copy_as();
         let mut text = String::new();
@@ -102,20 +102,27 @@ impl<S: LogSource> LogView<S> {
         (text, count)
     }
 
-    /// Asks where to save the lines, then writes them there.
-    pub(super) fn download(&mut self, lines: Lines, cx: &mut Context<Self>) {
+    /// Asks where to save the lines, then writes them there. While a save
+    /// dialog is open, another download does nothing.
+    pub(super) fn download(&mut self, lines: DownloadLines, cx: &mut Context<Self>) {
+        if self.choosing_file {
+            return;
+        }
         let (text, count) = self.download_text(lines);
         if count == 0 {
             return;
         }
         let name = file_name(
-            &S::download_name(self),
+            &S::download_name(self, lines),
             &chrono::Local::now().format("%Y%m%d-%H%M%S").to_string(),
         );
         let chosen = cx.prompt_for_new_path(&default_folder(), Some(&name));
+        self.choosing_file = true;
         let executor = cx.background_executor().clone();
         self.download = Some(cx.spawn(async move |this, cx| {
-            let path = match chosen.await {
+            let chosen = chosen.await;
+            _ = this.update(cx, |view, _| view.choosing_file = false);
+            let path = match chosen {
                 Ok(Ok(Some(path))) => path,
                 // Cancelled, or the view went first.
                 Ok(Ok(None)) | Err(_) => return,

@@ -43,7 +43,7 @@ use gpui_kit::{AnyElement, App, Context, Pixels, SharedString, Task, Window};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 
-use super::{Columns, LogSource, LogView};
+use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
@@ -700,14 +700,16 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 }
 
 impl LogSource for WorkloadLogs {
-    fn download_name(view: &WorkloadLogView) -> String {
+    fn download_name(view: &WorkloadLogView, lines: DownloadLines) -> String {
         let source = view.source();
         let mut name = match &source.workload {
             Some(workload) => format!("{}-{}", workload.namespace, workload.name),
             None => "workload".into(),
         };
-        // Visible lines are the picked pod's.
-        if let Some(pod) = &source.pod {
+        // Visible lines are the picked pod's; every retained line isn't.
+        if lines == DownloadLines::Visible
+            && let Some(pod) = &source.pod
+        {
             name = format!("{name}-{pod}");
         }
         name

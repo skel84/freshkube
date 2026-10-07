@@ -1523,6 +1523,92 @@ fn a_download_that_cant_be_written_says_so_and_leaves_no_file(cx: &mut TestAppCo
     .unwrap();
 }
 
+/// While a save dialog is open, another Download does nothing: the first
+/// save goes through with the lines it was asked for, and once it has
+/// answered Download asks again.
+#[gpui_kit::test]
+fn a_second_download_waits_for_the_open_save_dialog(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("first.log");
+    let (_runtime, panel, handle) = mount(cx);
+    settle(cx, &panel, handle);
+    download(
+        cx,
+        handle,
+        ["Visible lines (120)", "All retained lines (120)"],
+        0,
+    );
+    assert!(cx.did_prompt_for_new_path());
+    deliver_more(cx, &panel, 0, 5);
+    download(
+        cx,
+        handle,
+        ["Visible lines (125)", "All retained lines (125)"],
+        1,
+    );
+    cx.simulate_new_path_selection(|_| Some(path.clone()));
+    cx.run_until_parked();
+    assert!(!cx.did_prompt_for_new_path());
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(saved.lines().count(), 120);
+    assert!(!saved.contains("later line"));
+
+    download(
+        cx,
+        handle,
+        ["Visible lines (125)", "All retained lines (125)"],
+        1,
+    );
+    assert!(cx.did_prompt_for_new_path());
+    cx.simulate_new_path_selection(|_| None);
+    cx.run_until_parked();
+}
+
+/// The menu counts its lines each time it opens, however it last closed.
+#[gpui_kit::test]
+fn the_download_menu_counts_again_each_time_it_opens(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    settle(cx, &panel, handle);
+    let labels = |cx: &mut TestAppContext| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("logs-download", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let menu = window.within("popup-menu");
+            [0, 1].map(|ix| menu.find(ix).label().unwrap_or_default().to_owned())
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        labels(cx),
+        ["Visible lines (120)", "All retained lines (120)"]
+    );
+    // Closed by its button.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("logs-download", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    deliver_more(cx, &panel, 0, 5);
+    assert_eq!(
+        labels(cx),
+        ["Visible lines (125)", "All retained lines (125)"]
+    );
+    // Closed by Escape.
+    cx.update_window(handle.into(), |_, window, cx| window.press("escape", cx))
+        .unwrap();
+    cx.run_until_parked();
+    deliver_more(cx, &panel, 5, 3);
+    assert_eq!(
+        labels(cx),
+        ["Visible lines (128)", "All retained lines (128)"]
+    );
+}
+
 /// Under 40 rem the toolbar shows its buttons' icons alone; the menus'
 /// carets still fit beside them.
 #[gpui_kit::test]
