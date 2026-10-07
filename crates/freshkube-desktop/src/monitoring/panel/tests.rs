@@ -834,7 +834,6 @@ fn a_pick_under_the_cursor_shows_in_the_readout(cx: &mut TestAppContext) {
     assert_eq!(cx.read(|cx| overlay.read(cx).named()), None);
 }
 
-/// A table panel of `count` alerts, one per name, answered at once.
 /// The readout takes the theme's inks as it draws: switching the theme while
 /// the cursor shows recolours its swatches before the pointer moves (#350).
 #[gpui_kit::test]
@@ -875,6 +874,7 @@ fn a_theme_change_recolours_the_readout_under_a_still_pointer(cx: &mut TestAppCo
     assert_ne!(light, dark);
 }
 
+/// A table panel of `count` alerts, one per name, answered at once.
 fn alert_table(cx: &mut TestAppContext, count: usize) -> (AnyWindowHandle, Entity<PanelView>) {
     use freshkube_core::monitoring::{
         PanelResult,
