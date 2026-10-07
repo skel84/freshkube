@@ -60,7 +60,6 @@ impl Pilot {
                 return state;
             }
         };
-        let header = self.services_header(&node, cx);
         let toolbar = self.services_toolbar(cx);
         let list = self.services_list(cx);
         let detail = self.service_detail(&node, cx);
@@ -88,10 +87,12 @@ impl Pilot {
                 .child(detail)
                 .into_any_element()
         };
-        let body = self
-            .page_body()
+        // The inspector's tab names the screen and its heading the node, so
+        // the body starts with its banners and toolbar, in the inspector's
+        // inset.
+        let body = v_flex()
+            .gap(dp(12.))
             .children(self.stale_banner(cx))
-            .child(header)
             .children(
                 self.services
                     .error()
@@ -198,53 +199,10 @@ impl Pilot {
         Ok(node)
     }
 
-    fn services_header(&self, node: &presentation::NodeSummary, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        h_flex()
-            .items_end()
-            .gap_3()
-            .flex_wrap()
-            .child(v_flex().gap(dp(7.)).child(ui::page_title("Services")).when(
-                self.page != Page::Nodes,
-                |this| {
-                    this.child(
-                        h_flex()
-                            .gap_1p5()
-                            .text_size(dp(12.5))
-                            .text_color(p.muted)
-                            .child("on")
-                            .child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(12.))
-                                    .child(node.name.clone()),
-                            )
-                            .child("·")
-                            .child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(12.))
-                                    .child(node.address.clone()),
-                            ),
-                    )
-                },
-            ))
-            .child(div().flex_1())
-            .child(
-                Button::new("refresh-services")
-                    .outline()
-                    .small()
-                    .icon(IconName::RefreshCw)
-                    .label("Refresh services")
-                    .loading(self.services.is_loading())
-                    .disabled(self.services.is_loading() || self.selected_node.is_none())
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
-            )
-    }
-
     fn services_toolbar(&self, cx: &mut Context<Self>) -> Div {
         let filter = self.health_filter;
         h_flex()
+            .items_center()
             .gap_2p5()
             .flex_wrap()
             .child(
@@ -284,6 +242,19 @@ impl Pilot {
                         view.rebuild_service_rows(cx);
                         cx.notify();
                     })),
+            )
+            .child(div().flex_1())
+            .child(
+                Button::new("refresh-services")
+                    .ghost()
+                    .small()
+                    .size(dp(ui::CONTROL_HEIGHT))
+                    .icon(IconName::RefreshCw)
+                    .accessibility_label("Refresh services")
+                    .tooltip("Refresh services")
+                    .loading(self.services.is_loading())
+                    .disabled(self.services.is_loading() || self.selected_node.is_none())
+                    .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
             )
     }
 
@@ -632,14 +603,9 @@ impl Pilot {
 
     fn services_skeleton(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let body = self
-            .page_body()
-            .child(
-                v_flex()
-                    .gap_2p5()
-                    .child(ui::skeleton(dp(150.), dp(28.)))
-                    .child(ui::skeleton(dp(240.), dp(13.))),
-            )
+        let body = v_flex()
+            .gap(dp(12.))
+            .child(ui::skeleton(dp(240.), dp(ui::CONTROL_HEIGHT)))
             .child(
                 h_flex()
                     .items_start()

@@ -285,10 +285,69 @@ pub(crate) fn assert_edge_frame(
     );
     check("space right of the content", layout.padding_right, 0.);
     assert_toolbar(window, frame, &layout);
-    // The hairline: a quad bordered below, across the page, under the row.
+    assert_hairline(window, frame, &layout);
+    layout
+}
+
+/// [`assert_edge_frame`] for a screen embedded where a tab names it, such
+/// as a node's tab in the node inspector: its header draws no title, and
+/// `lead`, the toolbar's first part, sits `PANE_PADDING` in from the page's
+/// left edge, centred on the 38 dp row. A toolbar of controls alone, which
+/// sit at its right, passes no lead. The layout's `title_text` is zero, and
+/// its `padding_left` too without a lead.
+pub(crate) fn assert_untitled_edge_frame(
+    window: &mut Window,
+    cx: &mut App,
+    frame: &PageFrame,
+    lead: Option<&str>,
+) -> FrameLayout {
+    window.render_frame(cx);
+    assert!(
+        window.try_find(frame.title).is_none(),
+        "{}: an embedded header draws no title",
+        frame.page
+    );
+    let root = window.find(frame.page).bounds();
+    let content = window.find(frame.content).bounds();
+    let lead = lead.map(|lead| window.find(SharedString::from(lead.to_owned())).bounds());
+    let row = toolbar_row(window, frame);
+    let layout = FrameLayout {
+        padding_left: lead.map_or(px(0.), |lead| lead.left() - root.left()),
+        padding_right: root.right() - content.right(),
+        toolbar: row.size.height,
+        title_text: px(0.),
+        controls: controls(window, frame),
+    };
+    let check = |what: &str, actual: Pixels, expected: f32| {
+        close(window, frame, &layout, what, actual, expected)
+    };
+    if let Some(lead) = lead {
+        check("lead inset", layout.padding_left, PANE_PADDING);
+        assert!(
+            (lead.center().y - row.center().y).abs() < px(0.5),
+            "{}: the toolbar's lead isn't centred on its row: {lead:?} in {row:?}",
+            frame.page
+        );
+    }
+    check(
+        "space left of the content",
+        content.left() - root.left(),
+        0.,
+    );
+    check("space right of the content", layout.padding_right, 0.);
+    check("toolbar row", layout.toolbar, TOOLBAR_HEIGHT);
+    for (ix, control) in layout.controls.iter().enumerate() {
+        check(&format!("control {ix}"), *control, CONTROL_HEIGHT);
+    }
+    assert_hairline(window, frame, &layout);
+    layout
+}
+
+/// The hairline: a quad bordered below, across the page, under the row.
+fn assert_hairline(window: &Window, frame: &PageFrame, layout: &FrameLayout) {
     let scale = window.scale_factor();
     let row = toolbar_row(window, frame).scale(scale);
-    let root = root.scale(scale);
+    let root = window.find(frame.page).bounds().scale(scale);
     let hairline = window.painted_quads().into_iter().any(|quad| {
         let b = quad.bounds;
         quad.border_widths.bottom.0 > 0.
@@ -302,7 +361,6 @@ pub(crate) fn assert_edge_frame(
         "{}: no hairline under the toolbar across the page; {layout:#?}",
         frame.page
     );
-    layout
 }
 
 /// Asserts DESIGN.md's toolbar: a 38 dp row with the title as its 13 dp
@@ -331,21 +389,25 @@ fn measure_frame(window: &Window, frame: &PageFrame) -> FrameLayout {
     let root = window.find(frame.page).bounds();
     let title = window.find(frame.title).bounds();
     let content = window.find(frame.content).bounds();
-    let prefix = prefix(frame);
-    // The controls left on the row, and the "…" holding the rest.
-    let controls = (0..16)
-        .map(|ix| format!("{prefix}-slot-{ix}"))
-        .chain([format!("{prefix}-more")])
-        .filter_map(|id| window.try_find(id))
-        .map(|slot| slot.bounds().size.height)
-        .collect();
     FrameLayout {
         padding_left: title.left() - root.left(),
         padding_right: root.right() - content.right(),
         toolbar: toolbar_row(window, frame).size.height,
         title_text: title_text(window, frame.title_text, title.size.width),
-        controls,
+        controls: controls(window, frame),
     }
+}
+
+/// Each control's height: those left on the row, and the "…" holding the
+/// rest.
+fn controls(window: &Window, frame: &PageFrame) -> Vec<Pixels> {
+    let prefix = prefix(frame);
+    (0..16)
+        .map(|ix| format!("{prefix}-slot-{ix}"))
+        .chain([format!("{prefix}-more")])
+        .filter_map(|id| window.try_find(id))
+        .map(|slot| slot.bounds().size.height)
+        .collect()
 }
 
 /// The header's prefix, from its title's id.

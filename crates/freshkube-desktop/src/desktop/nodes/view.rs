@@ -20,6 +20,14 @@ use gpui_kit::{
     prelude::*,
 };
 
+/// The node log's height in a short window. A page's log would take a short
+/// window's height; the tab names this one, so it leaves out the title row
+/// a page has, and its lines still fit the pane once the body has scrolled.
+const SHORT_LOG_HEIGHT: f32 = freshkube_ui::page::SHORT_HEIGHT - TITLE_ROW;
+
+/// The title row the tab stands in for, as tall as a toolbar row.
+const TITLE_ROW: f32 = freshkube_ui::page::TOOLBAR_HEIGHT;
+
 impl Pilot {
     pub(in crate::desktop) fn render_nodes(
         &mut self,
@@ -317,10 +325,9 @@ impl Pilot {
                     .child(
                         v_flex()
                             .size_full()
-                            .when(short, |this| {
-                                this.min_h(dp(freshkube_ui::page::SHORT_HEIGHT))
-                            })
+                            .when(short, |this| this.min_h(dp(SHORT_LOG_HEIGHT)))
                             .px(dp(PANE_PADDING))
+                            .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
                             .child(self.logs.clone().cached(super::super::cached_page_style())),
                     )

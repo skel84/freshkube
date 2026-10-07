@@ -1,5 +1,5 @@
 //! Cluster cards and shared attention subjects.
-use super::{PAGE_PADDING, Pilot, clock};
+use super::{Pilot, clock};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 use gpui_kit::assets::IconName;
@@ -7,7 +7,6 @@ use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
     tooltip::Tooltip,
-    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -22,14 +21,6 @@ impl Pilot {
             .size_full()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
-    }
-
-    pub(super) fn page_body(&self) -> Div {
-        v_flex()
-            .px(dp(PAGE_PADDING))
-            .pt(dp(22.))
-            .pb(dp(30.))
-            .gap(dp(20.))
     }
 
     /// The talosconfig couldn't be read; shown on every screen.

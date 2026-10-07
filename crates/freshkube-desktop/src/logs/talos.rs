@@ -13,7 +13,6 @@ use gpui_kit::{
         h_flex,
         scroll::ScrollableElement,
         tooltip::Tooltip,
-        v_flex,
     },
     div,
     prelude::*,
@@ -590,49 +589,18 @@ impl Collection for LogPanel {
         cx.notify();
     }
 
+    /// The log draws in the node inspector, whose tab names it and whose
+    /// heading names the node: the row holds only whether it collects and
+    /// the button that starts or stops it.
     fn render_header(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let p = palette(cx);
-        let (node, address) = self
-            .source()
-            .active_target()
-            .map(|target| (target.node.clone(), target.address.clone()))
-            .unwrap_or_else(|| ("no node".into(), String::new()));
         h_flex()
-            .items_end()
+            .items_center()
             .gap_3()
-            .flex_wrap()
-            .child(
-                v_flex()
-                    .gap(ui::dp(7.))
-                    .child(h_flex().gap_2p5().child(ui::page_title("Logs")).child(
-                        if self.source().collection_active {
-                            ui::tag(ui::Tone::Good, None, "Collecting", cx)
-                        } else {
-                            ui::tag(ui::Tone::Unknown, None, "Stopped", cx)
-                        },
-                    ))
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .text_size(ui::dp(12.5))
-                            .text_color(p.muted)
-                            .child("on")
-                            .child(
-                                div()
-                                    .font_family(ui::MONO_FONT)
-                                    .text_size(ui::dp(12.))
-                                    .child(node),
-                            )
-                            .when(!address.is_empty(), |this| {
-                                this.child("·").child(
-                                    div()
-                                        .font_family(ui::MONO_FONT)
-                                        .text_size(ui::dp(12.))
-                                        .child(address),
-                                )
-                            }),
-                    ),
-            )
+            .child(if self.source().collection_active {
+                ui::tag(ui::Tone::Good, None, "Collecting", cx)
+            } else {
+                ui::tag(ui::Tone::Unknown, None, "Stopped", cx)
+            })
             .child(div().flex_1())
             .child(
                 Button::new("logs-collection")

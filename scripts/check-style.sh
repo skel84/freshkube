@@ -8,7 +8,7 @@
 # Outside the shared components, a page may not
 #   list    run its own uniform_list or VirtualList (logs, YAML and terminal views excepted);
 #   radius  round a corner with rounded*(px(n)) other than DESIGN.md's 3, 8, 10 and 12 px (or 0);
-#   title   size text 20 dp or larger with a literal, as only ui::page_title may;
+#   title   size text 20 dp or larger with a literal: PageHeader draws a page's title;
 #   glyph   draw a status glyph itself (a ● ◆ ▲ ○ ✓ string, or a small rounded_full dot)
 #           instead of ui::status_glyph, ui::status_mark or ui::health_mark;
 #   tip     give a button an icon and neither a label, a child nor a tooltip
@@ -159,7 +159,7 @@ if [ -n "$new" ]; then
   while read -r rule file; do
     printf '%s\n' "$found" | grep -F "$rule $file:" | sed 's/^/  /'
   done <<<"$new"
-  echo "Use the shared components (ui::page_title, ui::status_glyph, the table) instead,"
+  echo "Use the shared components (PageHeader, ui::status_glyph, the table) instead,"
   echo "give an icon-only button a tooltip, restrict a vertical scroll to its axis and"
   echo "animate through ui::motion;"
   echo "the allowlist only shrinks, so don't add to it."

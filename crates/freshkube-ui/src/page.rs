@@ -294,6 +294,7 @@ pub struct PageHeader {
     secondary: Option<AnyElement>,
     meta: Vec<AnyElement>,
     parent: Option<Parent>,
+    untitled: bool,
 }
 
 /// A control, with its menu form if it folds.
@@ -535,7 +536,16 @@ impl PageHeader {
             secondary: None,
             meta: Vec::new(),
             parent: None,
+            untitled: false,
         }
+    }
+
+    /// Leaves the title out, for a screen embedded where a tab already
+    /// names it, such as a node's tab in the node inspector. The toolbar
+    /// starts with the filter, then the chips.
+    pub fn untitled(mut self, untitled: bool) -> Self {
+        self.untitled = untitled;
+        self
     }
 
     /// `<prefix>-<part>`, for the filter, chips and controls.
@@ -643,37 +653,43 @@ impl PageHeader {
         let (secondary_id, title_id, scope_id) =
             (self.id("secondary"), self.title_id, self.scope_id);
         let has_filter = self.filter.is_some();
+        let untitled = self.untitled;
+        if untitled {
+            state.label.set(0.);
+        }
         let leading = h_flex()
             .flex_shrink(1.)
             .min_w_0()
             .gap(gap)
             .items_center()
-            .child({
-                let state = state.clone();
-                let slot = move |width: Pixels, window: &Window| {
-                    state.label.set(width / window.rem_size())
-                };
-                match self.parent.as_ref() {
-                    None => measured(
-                        toolbar_label(self.title, cx).id(title_id).test_support(),
-                        slot,
-                    ),
-                    // A breadcrumb's title truncates, at least 120 wide, when
-                    // even a full fold leaves it no room, so what counts is
-                    // the width of an unseen copy that never shrinks.
-                    // Its own least width is the parent's, the "/" and 120.
-                    Some(parent) => div()
-                        .relative()
-                        .flex_shrink(1.)
-                        .child(
-                            measured(breadcrumb(parent, self.title.clone(), cx), slot)
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .opacity(0.),
-                        )
-                        .child(title(self.parent, self.title, title_id, cx)),
-                }
+            .when(!untitled, |this| {
+                this.child({
+                    let state = state.clone();
+                    let slot = move |width: Pixels, window: &Window| {
+                        state.label.set(width / window.rem_size())
+                    };
+                    match self.parent.as_ref() {
+                        None => measured(
+                            toolbar_label(self.title, cx).id(title_id).test_support(),
+                            slot,
+                        ),
+                        // A breadcrumb's title truncates, at least 120 wide, when
+                        // even a full fold leaves it no room, so what counts is
+                        // the width of an unseen copy that never shrinks.
+                        // Its own least width is the parent's, the "/" and 120.
+                        Some(parent) => div()
+                            .relative()
+                            .flex_shrink(1.)
+                            .child(
+                                measured(breadcrumb(parent, self.title.clone(), cx), slot)
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .opacity(0.),
+                            )
+                            .child(title(self.parent, self.title, title_id, cx)),
+                    }
+                })
             })
             .children(self.filter.map(|filter| {
                 // Shrinks only when the row is full with every control folded.
@@ -791,7 +807,7 @@ impl PageHeader {
             .min_w_0()
             .items_center()
             .gap(gap)
-            .child(leading)
+            .when(!untitled || has_filter, |this| this.child(leading))
             .children(chips_row)
             .children(controls_row))
         .id(toolbar_id)
@@ -813,10 +829,10 @@ impl PageHeader {
             move |bounds, window, _| {
                 let rem = window.rem_size();
                 let gap = gap.to_pixels(rem);
-                let filter = if has_filter {
-                    gap + dp(FILTER_WIDTH).to_pixels(rem)
-                } else {
-                    px(0.)
+                let filter = match (has_filter, untitled) {
+                    (true, false) => gap + dp(FILTER_WIDTH).to_pixels(rem),
+                    (true, true) => dp(FILTER_WIDTH).to_pixels(rem),
+                    (false, _) => px(0.),
                 };
                 let widths = HeaderWidths {
                     leading: rem * state.label.get() + filter,
@@ -1347,5 +1363,75 @@ mod tests {
             assert!(parts[11].top() > parts[0].top(), "the line didn't wrap");
         })
         .unwrap();
+    }
+
+    /// A header with a long title, a filter and one wide foldable control,
+    /// drawn with its title or without.
+    struct Untitled {
+        untitled: bool,
+    }
+
+    impl Render for Untitled {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = PageHeader::new("un", "A title long enough to fold the row")
+                .untitled(self.untitled);
+            let control = div()
+                .id(header.id("control"))
+                .test_support()
+                .w(dp(300.))
+                .h(dp(20.));
+            let handler: Handler = Rc::new(|_, _| {});
+            header
+                .filter(div().child(div().id("un-filter").test_support().size_full().h(dp(28.))))
+                .foldable(control, Fold::from(item("Control", handler)))
+                .render(window, cx)
+                .w_full()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn an_untitled_header_leads_with_its_filter_and_folds_without_the_title(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        // The filter and the control fit 560 wide; with the title before
+        // them they don't.
+        for untitled in [false, true] {
+            let handle = cx.open_window(size(px(560.), px(400.)), |window, cx| {
+                let view = cx.new(|_| Untitled { untitled });
+                Root::new(view, window, cx)
+            });
+            for _ in 0..4 {
+                cx.run_until_parked();
+                let asked = cx
+                    .update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.simulate_next_frame(cx)
+                    })
+                    .unwrap();
+                if asked == 0 {
+                    break;
+                }
+            }
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let row = window.find("un-toolbar").bounds();
+                let filter = window.find("un-filter").bounds();
+                assert_eq!(window.try_find("un-title").is_none(), untitled);
+                assert_eq!(window.try_find("un-more").is_some(), !untitled);
+                assert_eq!(window.try_find("un-slot-0").is_some(), untitled);
+                if untitled {
+                    assert_eq!(filter.left(), row.left(), "the filter leads the row");
+                } else {
+                    assert!(filter.left() > window.find("un-title").bounds().right());
+                }
+            })
+            .unwrap();
+        }
     }
 }

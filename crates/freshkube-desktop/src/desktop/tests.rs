@@ -600,6 +600,31 @@ fn selected_service_opens_matching_log_collection(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn embedded_services_start_with_their_toolbar(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Expanded, so the toolbar keeps one row.
+        open_services_with_room(window, cx);
+        window.render_frame(cx);
+        // The tab names the screen and the heading the node, so no title
+        // or node line sits above the toolbar: its controls are the first
+        // row, one inset under the tab strip.
+        let content = window.find("node-inspector-content").bounds();
+        let inset = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
+        for id in ["service-filter", "health-all", "refresh-services"] {
+            let control = window.find(id).bounds();
+            let row = (control.top() - content.top()) - inset;
+            assert!(
+                row >= px(0.) && row <= crate::ui::dp_px(4., window),
+                "{id} sits {row:?} below the inset"
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn log_collection_keeps_running_on_other_screens(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
