@@ -4,6 +4,7 @@ use freshkube_probe::first_frame::FirstFrame;
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
+        let _span = crate::perf::span("shell.render");
         self.fps
             .read(cx)
             .frame_started(cx.background_executor().now());

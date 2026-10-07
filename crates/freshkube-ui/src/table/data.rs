@@ -488,6 +488,7 @@ impl DataTable {
 
 /// The bare table, filling the room its caller gives it.
 pub fn data_table<S: TableSource>(source: &S, window: &Window, cx: &mut Context<S>) -> Div {
+    let _span = freshkube_probe::perf::span("table.data");
     DataTable::new().render(source, window, cx)
 }
 

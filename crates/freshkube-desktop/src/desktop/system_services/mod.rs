@@ -364,6 +364,7 @@ impl SystemServices {
 }
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _span = crate::perf::span("page.render");
         // A short window scrolls the frame, so the list keeps some rows.
         let short = page::is_short(window);
         page::page("system-services-page")

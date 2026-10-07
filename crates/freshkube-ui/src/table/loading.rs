@@ -255,6 +255,7 @@ impl LoadingMotion {
 impl Render for LoadingMotion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         freshkube_probe::probe::hit("table.loading-motion");
+        let _span = freshkube_probe::perf::span("table.loading-motion");
         let showing = {
             let mut painted = self.painted.borrow_mut();
             painted.motion = Some(cx.entity_id());

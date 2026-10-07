@@ -218,6 +218,9 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
+    /// Example lists hold their answers (`fixture::hold`), so the page
+    /// stays on its loading rows.
+    pub(crate) hold: bool,
     field_selector: Option<String>,
     embedded: bool,
     runtime: Handle,
@@ -418,6 +421,7 @@ impl ResourcesScreen {
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
             layout_for: None,
+            hold: crate::fixture::hold().lists,
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
@@ -772,6 +776,9 @@ impl ResourcesScreen {
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
         if let KubeAccess::Example = source.access {
+            if self.hold {
+                return;
+            }
             let events = match example::read_filtered(
                 &source.context,
                 &kind.key(),

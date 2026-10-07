@@ -7,6 +7,28 @@ use talos_rs::{
     ServiceHealth, ServiceInfo, VersionInfo,
 };
 
+/// What example data never answers, so the pages that wait for it stay on
+/// their loading rows, for captures and the stress binary:
+/// `FRESHKUBE_FIXTURE_HOLD=talos` holds the Talos overview and the
+/// Kubernetes summary (Nodes, System services), `lists` the Resources lists,
+/// `all` both. Debug and stress builds only; a release build ignores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Hold {
+    pub(crate) talos: bool,
+    pub(crate) lists: bool,
+}
+
+pub(crate) fn hold() -> Hold {
+    if !cfg!(any(debug_assertions, feature = "stress")) {
+        return Hold::default();
+    }
+    let value = std::env::var("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default();
+    Hold {
+        talos: matches!(value.as_str(), "talos" | "all"),
+        lists: matches!(value.as_str(), "lists" | "all"),
+    }
+}
+
 pub(crate) const CONTEXTS: [&str; 4] = [
     "prod-fra",
     "staging-eu",

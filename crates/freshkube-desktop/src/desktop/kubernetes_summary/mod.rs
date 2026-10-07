@@ -77,7 +77,7 @@ impl Pilot {
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session) = &self.summary_session {
             session.core.relist();
-            if self.fixture {
+            if self.fixture && !self.fixture_hold {
                 example::seed_summary(
                     &session.core,
                     &session.target.context,
@@ -128,6 +128,9 @@ impl Pilot {
             applied_revision: 0,
         });
         if matches!(source.access, KubeAccess::Example) {
+            if self.fixture_hold {
+                return;
+            }
             let at = self.summary_session.as_ref().unwrap().fixture_at;
             example::seed_summary(&session, &source.context, at.timestamp());
             let publication = session.derive(at);

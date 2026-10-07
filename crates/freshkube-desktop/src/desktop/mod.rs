@@ -383,6 +383,9 @@ pub(crate) struct Pilot {
     automatic: bool,
     elapsed: Duration,
     fixture: bool,
+    /// Example data holds the Talos overview and the Kubernetes summary
+    /// (`fixture::hold`), so the pages that wait for them stay loading.
+    fixture_hold: bool,
     fixture_tick: u64,
     focus: FocusHandle,
     node_focus: FocusHandle,
@@ -840,6 +843,7 @@ impl Pilot {
             automatic: true,
             elapsed: Duration::ZERO,
             fixture: options.fixture,
+            fixture_hold: options.fixture && crate::fixture::hold().talos,
             fixture_tick: 0,
             focus: cx.focus_handle(),
             node_focus: cx.focus_handle(),
@@ -1298,6 +1302,11 @@ impl Pilot {
         }
         self.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
+        if self.fixture && self.fixture_hold {
+            // Loading until the hold is released, which only a test does.
+            cx.notify();
+            return;
+        }
         if self.fixture {
             self.fixture_tick += 1;
             let context = self.applied.context.clone().unwrap_or_default();

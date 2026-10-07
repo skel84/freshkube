@@ -26,6 +26,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let _span = crate::perf::span("page.render");
         let pane = self.node_workspace.open;
         let expanded = pane && self.node_workspace.expanded;
         let beside = page_width(window) >= inspector::SPLIT_WIDTH;
