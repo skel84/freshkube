@@ -1,6 +1,7 @@
 //! Live profiles for one application: the profile types Coroot has, and one
 //! flame graph, optionally compared with the window before. The frames to
 //! draw are chosen when the answer, the zoom or the search changes.
+use super::profiling::{flame_frame, flame_tooltip};
 use super::*;
 use freshkube_core::coroot as api;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
@@ -516,44 +517,40 @@ impl ObservabilityPage {
             .children(profiles.drawn.iter().map(|frame| {
                 let index = frame.index;
                 let chosen = selected == Some(index);
-                Button::new(SharedString::from(format!("obs-live-flame-{index}")))
-                    .ghost()
-                    .group("fog-control")
-                    .absolute()
-                    .left(relative(frame.left))
-                    .top(dp(frame.row as f32 * ROW))
-                    .w(relative(frame.width))
-                    .h(dp(ROW - 2.))
-                    .px(dp(4.))
-                    .rounded(px(3.))
-                    .justify_start()
-                    .bg(crate::palette::flame_color(if compared {
-                        frame.delta
+                let color = crate::palette::flame_color(if compared { frame.delta } else { 0 });
+                flame_frame(
+                    SharedString::from(format!("obs-live-flame-{index}")),
+                    frame.tooltip.clone(),
+                    color,
+                    cx,
+                )
+                .absolute()
+                .left(relative(frame.left))
+                .top(dp(frame.row as f32 * ROW))
+                .w(relative(frame.width))
+                .h(dp(ROW - 2.))
+                .px(dp(4.))
+                .border(if chosen { px(2.) } else { px(1.) })
+                .border_color(if chosen {
+                    p.ink
+                } else {
+                    gpui_kit::transparent_black()
+                })
+                .when(chosen, |button| button.shadow_md())
+                .opacity(if frame.dim { 0.3 } else { 1. })
+                .overflow_hidden()
+                .when_some(frame.label.clone(), |button, label| {
+                    button.child(mono(label).text_size(dp(11.5)).truncate())
+                })
+                .tooltip(flame_tooltip(frame.tooltip.clone()))
+                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    if event.click_count() > 1 || this.live_profiles.selected == Some(index) {
+                        this.live_profiles.zoom(index);
                     } else {
-                        0
-                    }))
-                    .border(if chosen { px(2.) } else { px(1.) })
-                    .border_color(if chosen {
-                        p.ink
-                    } else {
-                        gpui_kit::transparent_black()
-                    })
-                    .when(chosen, |button| button.shadow_md())
-                    .text_color(gpui_kit::white())
-                    .opacity(if frame.dim { 0.3 } else { 1. })
-                    .overflow_hidden()
-                    .when_some(frame.label.clone(), |button, label| {
-                        button.child(mono(label).text_size(dp(11.5)).truncate())
-                    })
-                    .tooltip(frame.tooltip.clone())
-                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                        if event.click_count() > 1 || this.live_profiles.selected == Some(index) {
-                            this.live_profiles.zoom(index);
-                        } else {
-                            this.live_profiles.select(index);
-                        }
-                        cx.notify();
-                    }))
+                        this.live_profiles.select(index);
+                    }
+                    cx.notify();
+                }))
             }));
         card("Flame graph", cx).child(
             body()
