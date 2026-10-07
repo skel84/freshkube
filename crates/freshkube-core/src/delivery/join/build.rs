@@ -4,6 +4,7 @@ use crate::delivery::kargo::Freight;
 use crate::delivery::source::{Source, cap_note};
 use crate::delivery::tekton::{Build, CommitNames, EvidenceResult, WitnessSource};
 
+use super::argo::short_commit;
 use super::observe::{
     built_image, chains_signed, change, concluded, freight_side, pull_request, run_commit,
 };
@@ -153,7 +154,8 @@ fn head_build_links(
     let mut links = Vec::new();
     for build in builds {
         let run = commit_link(head, build, &evidence.commit_names);
-        let head_run = run_commit(build, &evidence.commit_names);
+        let run_confidence = run.confidence;
+        let head_run = run_commit(build, &evidence.commit_names, head);
         let digests: Vec<Digest> = build.images().into_iter().map(|i| i.digest).collect();
         let shipped = digests.iter().any(|digest| deployed.contains(digest));
         let note = if digests.is_empty() {
@@ -209,8 +211,12 @@ fn head_build_links(
                         Hop::Freight,
                         format!("{}/{}", item.project, item.name),
                         Key::Digest(digest.clone()),
-                        Confidence::Confirmed,
-                        "Kargo holds the image the pull request's head commit built",
+                        run_confidence,
+                        if run_confidence == Confidence::Confirmed {
+                            "Kargo holds the image the pull request's head commit built".to_owned()
+                        } else {
+                            "Kargo holds the image the pull request's head build made; no result of the build reports the head commit, so its tie to it is declared".to_owned()
+                        },
                     )
                     .observed(on_freight),
                 );
@@ -231,13 +237,24 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
         None => outcome,
     };
     let mut evidence = vec![change(sha)];
-    evidence.extend(run_commit(build, names));
+    evidence.extend(run_commit(build, names, sha));
     let label_is = build
         .run
         .sha
         .as_deref()
         .is_some_and(|label| label.eq_ignore_ascii_case(sha));
-    let link = match build.witness(names) {
+    let others: Vec<String> = {
+        let mut seen = Vec::new();
+        for witness in build.reported_witnesses(names) {
+            let commit = short_commit(&witness.commit);
+            if !seen.contains(&commit) {
+                seen.push(commit);
+            }
+        }
+        seen
+    };
+    let reported_other = !others.is_empty();
+    let link = match build.witness(names, sha) {
         Some(witness) if witness.reported() && witness.commit.eq_ignore_ascii_case(sha) => {
             let rule = match witness.source {
                 WitnessSource::TaskResult(_) => "a task result == the change",
@@ -253,15 +270,15 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
                 format!("a result of the build reports the commit; {outcome}"),
             )
         }
-        Some(witness) if witness.reported() => Link::new(
+        Some(_) if reported_other => Link::new(
             Hop::Commit,
             Hop::PipelineRun,
             subject,
             Key::Sha(sha.to_owned()),
             Confidence::Claimed,
             format!(
-                "a result of the build reports another commit ({}), not this one; {outcome}",
-                short(&witness.commit)
+                "the build's results report other commits ({}), not this one; {outcome}",
+                others.join(", ")
             ),
         ),
         Some(witness) if witness.commit.eq_ignore_ascii_case(sha) => Link::new(
@@ -298,10 +315,6 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
         ),
     };
     link.observed(evidence)
-}
-
-fn short(commit: &str) -> &str {
-    commit.get(..12).unwrap_or(commit)
 }
 
 /// A run's evidence without the commit side, which is the change itself.
@@ -341,7 +354,7 @@ pub(super) fn supply_chain_links(
         Some(Some(record)) => {
             let same_commit = record.commit.as_deref().is_some_and(|sha| {
                 build
-                    .witnessed_commit(names)
+                    .witnessed_commit(names, sha)
                     .or_else(|| build.run.sha.clone())
                     .is_some_and(|seen| seen.eq_ignore_ascii_case(sha))
             });

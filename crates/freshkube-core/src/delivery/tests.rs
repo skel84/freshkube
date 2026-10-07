@@ -55,7 +55,7 @@ fn naming() -> StageNaming {
     }
 }
 
-async fn run_configured(
+pub(super) async fn run_configured(
     world: &World,
     contexts: &[(&str, &str)],
     github: &FixtureGitHub,
@@ -466,8 +466,17 @@ async fn a_squash_merged_pull_request_joins_through_its_merge_commit() {
         head_run.reason
     );
     // The head's image is old freight in Kargo: joined on the digest.
+    // The head build is tied to the head commit by declared fields only, so
+    // the link is a claim, though GitHub and the build each report their part.
     let freight = one(&trail, Hop::PullRequest, Hop::Freight);
-    assert_eq!(freight.confidence, Confidence::Confirmed);
+    assert_eq!(freight.confidence, Confidence::Claimed);
+    assert!(
+        freight
+            .reason
+            .contains("no result of the build reports the head commit"),
+        "{}",
+        freight.reason
+    );
     assert_eq!(freight.subject, "storefront/f-old");
     assert!(matches!(&freight.key, Key::Digest(d) if d.as_str() == OLD));
     // The rest of the chain is untouched.
@@ -658,7 +667,14 @@ fn two_builds() -> World {
             "pipelineruns",
             vec![pipeline_run(SHA, true, Some(NEW)), second],
         )
-        .with("taskruns", vec![task_run(), second_task]);
+        .with(
+            "taskruns",
+            vec![
+                task_run(),
+                clone_task_run("storefront-push-x", SHA),
+                second_task,
+            ],
+        );
     world
 }
 
@@ -685,7 +701,7 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
         .iter()
         .find(|b| b.run.name == "storefront-push-x")
         .unwrap();
-    assert_eq!(read_one.tasks.len(), 1);
+    assert_eq!(read_one.tasks.len(), 2);
     assert_eq!(read_one.tasks_unread, None);
     let refused = builds
         .iter()
@@ -698,7 +714,8 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
     let commits = link(&trail, Hop::Commit, Hop::PipelineRun);
     assert_eq!(commits.len(), 2, "{trail:#?}");
     let x = of(&commits, "storefront-push-x");
-    assert_eq!(x.confidence, Confidence::Claimed);
+    // x's TaskRuns were read whole, and its clone result reports the commit.
+    assert_eq!(x.confidence, Confidence::Confirmed);
     assert!(!x.reason.contains("not read"), "{}", x.reason);
     let y = of(&commits, "storefront-push-y");
     assert_eq!(

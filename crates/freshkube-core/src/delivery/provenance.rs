@@ -6,7 +6,9 @@ use super::fixtures::*;
 use super::join::{Confidence, Hop, Key, Link, Trail, render};
 use super::observation::{Fact, Observation, role};
 use super::source::Source;
-use super::tests::{ENV, link, observed_at, one, promoted, run, run_with, squash_world};
+use super::tests::{
+    ENV, link, observed_at, one, promoted, run, run_configured, run_with, squash_world,
+};
 use crate::resources::{Failure, FailureKind};
 
 /// The kinds of read object whose observations stand on a hop's side of a
@@ -252,12 +254,59 @@ async fn a_task_result_naming_the_commit_confirms_beside_a_parameter() {
 }
 
 #[tokio::test]
+async fn a_pipeline_that_clones_two_repositories_confirms_on_the_one_that_matches() {
+    // The config clone comes first; the source clone reports the change.
+    let mut world = build_world(Some(SHA), None);
+    world.tekton = world.tekton.with(
+        "taskruns",
+        vec![
+            clone_task_run_named("storefront-push-x-clone-config", OTHER_SHA),
+            clone_task_run("storefront-push-x", SHA),
+        ],
+    );
+    let trail = run(&world, &ENV).await;
+    let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(
+        commit.confidence,
+        Confidence::Confirmed,
+        "{}",
+        commit.reason
+    );
+    assert!(stands_on(commit, Hop::PipelineRun), "{commit:#?}");
+}
+
+#[tokio::test]
+async fn a_configured_result_name_confirms_through_the_commit_link() {
+    let mut world = build_world(None, None);
+    let mut task = clone_task_run("storefront-push-x", SHA);
+    task["status"]["results"][0]["name"] = serde_json::json!("made-up-result");
+    world.tekton = world.tekton.with("taskruns", vec![task]);
+    let plain = run(&world, &ENV).await;
+    assert_eq!(
+        one(&plain, Hop::Commit, Hop::PipelineRun).confidence,
+        Confidence::Claimed
+    );
+    let configured = run_configured(&world, &ENV, &FixtureGitHub::default(), None, |plan| {
+        plan.commit_names.results = vec!["made-up-result".into()]
+    })
+    .await;
+    let commit = one(&configured, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(
+        commit.confidence,
+        Confidence::Confirmed,
+        "{}",
+        commit.reason
+    );
+    assert!(stands_on(commit, Hop::PipelineRun), "{commit:#?}");
+}
+
+#[tokio::test]
 async fn a_result_naming_another_commit_is_a_claim_whatever_the_declared_fields_say() {
     let trail = run(&build_world(Some(SHA), Some(OTHER_SHA)), &ENV).await;
     let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
     assert_eq!(commit.confidence, Confidence::Claimed);
     assert!(
-        commit.reason.contains("reports another commit"),
+        commit.reason.contains("report other commits"),
         "{}",
         commit.reason
     );
@@ -266,14 +315,32 @@ async fn a_result_naming_another_commit_is_a_claim_whatever_the_declared_fields_
         "{}",
         commit.reason
     );
+    // The reported mismatch is in the evidence, and the join concluded nothing.
+    assert!(
+        commit.evidence.iter().any(|seen| {
+            seen.fact == Fact::Reported
+                && seen.field == "/status/results"
+                && seen.value.as_deref() == Some(OTHER_SHA)
+        }),
+        "{commit:#?}"
+    );
+    assert!(
+        commit
+            .evidence
+            .iter()
+            .all(|seen| seen.object.kind != "Join"),
+        "{commit:#?}"
+    );
 }
 
-/// Builds of `SHA` that report no image, so the Freight joins on the commit.
-fn sha_joined(reported: Option<&str>) -> World {
-    let mut world = build_world(Some(SHA), reported);
+/// A build of `SHA` that reports no image, so the Freight joins on the commit.
+/// Besides the label it has a revision parameter naming `SHA` when `param`,
+/// and a clone TaskRun reporting `reported`, when given.
+fn sha_joined(param: bool, reported: Option<&str>) -> World {
+    let mut world = build_world(None, reported);
     world.tekton = world
         .tekton
-        .with("pipelineruns", vec![pipeline_run(SHA, true, None)]);
+        .with("pipelineruns", vec![pipeline_run(SHA, param, None)]);
     world
 }
 
@@ -309,25 +376,28 @@ async fn a_sha_joined_freight_with_no_build_joins_the_commit_itself() {
 }
 
 #[tokio::test]
-async fn a_sha_joined_freight_whose_build_has_only_a_label_is_a_claim() {
-    let trail = run(&sha_joined(None), &ENV).await;
-    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
-    assert_eq!(freight.key, Key::Sha(SHA.into()));
-    assert_eq!(freight.confidence, Confidence::Claimed);
-    assert!(
-        freight.reason.contains(
-            "the Freight reports the commit; the build's tie to it is its declared label"
-        ),
-        "{}",
-        freight.reason
-    );
-    assert!(!stands_on(freight, Hop::PipelineRun));
-    assert!(stands_on(freight, Hop::Freight));
+async fn a_sha_joined_freight_whose_build_is_tied_by_declared_fields_is_a_claim() {
+    // A label alone, and a label with a revision parameter.
+    for param in [false, true] {
+        let trail = run(&sha_joined(param, None), &ENV).await;
+        let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+        assert_eq!(freight.key, Key::Sha(SHA.into()));
+        assert_eq!(freight.confidence, Confidence::Claimed, "{param}");
+        assert!(
+            freight.reason.contains(
+                "the Freight reports the commit; the build's tie to it is declared (label, parameter)"
+            ),
+            "{}",
+            freight.reason
+        );
+        assert!(!stands_on(freight, Hop::PipelineRun));
+        assert!(stands_on(freight, Hop::Freight));
+    }
 }
 
 #[tokio::test]
 async fn a_sha_joined_freight_whose_build_reports_the_commit_stays_confirmed() {
-    let trail = run(&sha_joined(Some(SHA)), &ENV).await;
+    let trail = run(&sha_joined(true, Some(SHA)), &ENV).await;
     let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
     assert_eq!(freight.confidence, Confidence::Confirmed);
     for hop in [Hop::PipelineRun, Hop::Freight] {
@@ -540,7 +610,7 @@ async fn an_observation_never_holds_a_server_an_identity_or_a_secret() {
     let mut alone = healthy().with_meta();
     alone.tekton = alone.tekton.with("pipelineruns", vec![]);
     let alone = run(&alone, &ENV).await;
-    let label_only = run(&sha_joined(None), &ENV).await;
+    let label_only = run(&sha_joined(false, None), &ENV).await;
 
     let observations: Vec<&Observation> = [&trail, &alone, &label_only]
         .into_iter()
@@ -656,13 +726,14 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
 }
 
 /// `[confirmed, claimed, unknown]` of each fixture.
-const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [4, 8, 0]];
+const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [3, 9, 0]];
 // healthy: Commit -> PipelineRun (declared label and parameter) and PipelineRun -> supply chain.
 // promoted: the same two links.
 // confirmed: only PipelineRun -> supply chain; the clone TaskRun's `commit` result keeps
 // Commit -> PipelineRun and PullRequest -> PipelineRun Confirmed.
-// squash: Commit -> PipelineRun, both PullRequest -> PipelineRun links, and
-// PipelineRun -> supply chain.
+// squash: Commit -> PipelineRun, both PullRequest -> PipelineRun links, PipelineRun ->
+// supply chain, and PullRequest -> Freight (the head build is tied to the head commit by
+// declared fields only; `storefront-pr-y` has no clone TaskRun there).
 
 #[test]
 fn the_rule_fails_on_a_side_with_nothing_read() {

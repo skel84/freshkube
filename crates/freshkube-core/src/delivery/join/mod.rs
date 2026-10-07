@@ -399,7 +399,7 @@ fn build_freight(
             Hop::PipelineRun,
             Confidence::Claimed,
             format!(
-                "the Freight reports the commit; the build's tie to it is its declared label; {summary}"
+                "the Freight reports the commit; the build's tie to it is declared (label, parameter) or contradicted by a result; {summary}"
             ),
             seen,
         )

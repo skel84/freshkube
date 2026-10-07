@@ -362,28 +362,46 @@ impl Build {
     }
 
     /// The commit the build names besides the PaC label: a commit result of
-    /// the run or one of its tasks, else a revision parameter.
-    pub fn witnessed_commit(&self, names: &CommitNames) -> Option<String> {
-        self.witness(names).map(|witness| witness.commit)
+    /// the run or one of its tasks, else a revision parameter. `prefer` is the
+    /// commit being asked about.
+    pub fn witnessed_commit(&self, names: &CommitNames, prefer: &str) -> Option<String> {
+        self.witness(names, prefer).map(|witness| witness.commit)
+    }
+
+    /// Every commit a result of the run, then of each of its tasks, names.
+    pub fn reported_witnesses(&self, names: &CommitNames) -> Vec<Witness> {
+        let named = |commit, source| Witness { commit, source };
+        let mut found: Vec<Witness> = result_commit(&self.run.results, names)
+            .map(|commit| named(commit, WitnessSource::RunResult))
+            .into_iter()
+            .collect();
+        for (index, task) in self.tasks.iter().enumerate() {
+            if let Some(commit) = result_commit(&task.results, names) {
+                found.push(named(commit, WitnessSource::TaskResult(index)));
+            }
+        }
+        found
     }
 
     /// [`Build::witnessed_commit`], with where the commit was read. What was
     /// reported (the run's results, then its TaskRuns') wins over what the
-    /// run declared (its parameters).
-    pub fn witness(&self, names: &CommitNames) -> Option<Witness> {
-        let named = |commit, source| Witness { commit, source };
-        result_commit(&self.run.results, names)
-            .map(|commit| named(commit, WitnessSource::RunResult))
-            .or_else(|| {
-                self.tasks.iter().enumerate().find_map(|(index, task)| {
-                    result_commit(&task.results, names)
-                        .map(|commit| named(commit, WitnessSource::TaskResult(index)))
-                })
+    /// run declared (its parameters); of several reported commits, one equal
+    /// to `prefer` (a pipeline can clone more than one repository) wins,
+    /// else the first.
+    pub fn witness(&self, names: &CommitNames, prefer: &str) -> Option<Witness> {
+        let reported = self.reported_witnesses(names);
+        let chosen = reported
+            .iter()
+            .position(|witness| witness.commit.eq_ignore_ascii_case(prefer))
+            .unwrap_or(0);
+        reported.into_iter().nth(chosen).or_else(|| {
+            named_commit(&self.run.params, UPSTREAM_REVISION_PARAMS, &names.params).map(|commit| {
+                Witness {
+                    commit,
+                    source: WitnessSource::Param,
+                }
             })
-            .or_else(|| {
-                named_commit(&self.run.params, UPSTREAM_REVISION_PARAMS, &names.params)
-                    .map(|commit| named(commit, WitnessSource::Param))
-            })
+        })
     }
 }
 
