@@ -45,15 +45,9 @@ impl Pilot {
             }));
         let filter = div()
             .key_context("NodeWorkspaceFilter")
-            .on_action(cx.listener(|view, _: &BackNode, window, cx| {
-                view.node_workspace.query_text.clear();
-                view.node_workspace
-                    .query
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                view.node_workspace.rebuild_lines();
-                window.focus(&view.node_focus, cx);
-                cx.notify();
-            }))
+            .on_action(
+                cx.listener(|view, _: &BackNode, window, cx| view.leave_node_filter(window, cx)),
+            )
             .child(
                 Input::new(&self.node_workspace.query)
                     .id(header.id("filter"))

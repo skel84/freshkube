@@ -1,0 +1,1 @@
+- Nodes: Escape steps back the way it does on Resources. In the filter it clears the text, then leaves. In the node pane it hands the keyboard to the table and leaves the pane open on its tab. On the table it clears the filter, then closes the pane.
