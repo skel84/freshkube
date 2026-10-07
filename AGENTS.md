@@ -297,7 +297,7 @@ assert!(state.apply(&replacement, Ok(8)));
 
 For ordinary inspection reads, [screens::Loader](crates/freshkube-desktop/src/screens/mod.rs) owns `Snapshot<T, Target>`, `Option<OwnedJob>` and `Option<Task<()>>`. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](docs/STATE_LIFETIMES.md#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
 
-Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`. The exported core `AsyncState` remains a [legacy compatibility API](docs/STATE_LIFETIMES.md#asyncstate-compatibility); it provides neither identity checks nor owned cancellation and is not the desktop pattern.
+Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`.
 
 ### Using HasHealth Trait
 

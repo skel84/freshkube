@@ -14,7 +14,6 @@
 //! - [`indicators`] - Health and status indicators for consistent UI representation
 //! - [`formatting`] - Utilities for formatting bytes, durations, percentages, etc.
 //! - [`selection`] - Generic selection logic for list-based UI components
-//! - [`async_state`] - Async component state management (loading, error, refresh)
 //! - [`errors`] - Error formatting utilities for user-friendly messages
 //! - [`network`] - Network analysis utilities (port mapping, connection classification)
 //! - [`diagnostics`] - Diagnostic types for health checks and CNI detection
@@ -22,7 +21,6 @@
 //! - [`resources`] - Read-only listing and watching of any Kubernetes kind
 //! - [`monitoring`] - Prometheus dashboards through the service proxy, GET only
 
-pub mod async_state;
 mod client_cache;
 pub mod cluster_overview;
 pub mod cluster_source;
@@ -53,7 +51,6 @@ pub mod types;
 pub mod workloads;
 
 // Re-export commonly used items at crate root
-pub use async_state::*;
 pub use client_cache::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 pub use cluster_overview::*;
 pub use diagnostics::*;
