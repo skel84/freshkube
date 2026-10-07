@@ -244,7 +244,7 @@ pub(super) fn containers(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette)
         cell(column)
             .id("containers")
             .child(freshkube_ui::squares::squares(&pod.squares, p)),
-        move || tip.clone(),
+        move || tip.to_string(),
     )
     .aria_label(pod.containers_label.clone())
     .test_support()

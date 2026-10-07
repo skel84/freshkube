@@ -1833,6 +1833,46 @@ fn containers_sort_the_worst_first_and_name_each_container(cx: &mut TestAppConte
     .unwrap();
 }
 
+/// A pod with more containers than the column draws counts the rest
+/// whole, inside the cell, at the default and the largest text size
+/// (#329 review).
+#[gpui_kit::test]
+fn a_crowded_pods_count_fits_its_cell(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    for size in [freshkube_ui::ui::BASE_TEXT, 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            window.set_rem_size(gpui_kit::px(size));
+            screen.update(cx, |screen, cx| {
+                screen.set_list_view(ListView::All, cx);
+                screen.set_filter("gateway", window, cx);
+            });
+            window.render_frame(cx);
+            let gateway = identity_at(&screen, 0, cx);
+            assert!(gateway.name.starts_with("gateway-"), "{gateway:?}");
+            let view = screen.read(cx);
+            let pod = view
+                .projection
+                .row(&view.store, 0)
+                .unwrap()
+                .pod
+                .clone()
+                .unwrap();
+            assert_eq!(pod.squares.len(), 10);
+            assert_eq!(pod.squares.more().map(|more| more.as_ref()), Some("+2"));
+            let row = window.within(row_id(&gateway));
+            let cell = row.find("containers").bounds();
+            let more = row.find("squares-more");
+            let pad = freshkube_ui::ui::dp_px(freshkube_ui::table::CELL_PAD, window);
+            assert!(
+                more.bounds().right() <= cell.right() - pad + gpui_kit::px(0.5),
+                "at {size}: {:?} in {cell:?}",
+                more.bounds()
+            );
+        })
+        .unwrap();
+    }
+}
+
 #[gpui_kit::test]
 fn pod_rows_show_owner_readiness_use_and_node(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));

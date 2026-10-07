@@ -15,9 +15,10 @@ const MAX_COLUMN: f32 = 280.;
 const MAX_FLEXIBLE: f32 = 440.;
 /// The status glyph's column: 16 for the glyph and its padding.
 pub(super) use freshkube_ui::table::GLYPH_WIDTH;
-/// A pod's container squares, at most eight and a `+N`, under its label
-/// and sort arrow.
-const CONTAINERS_WIDTH: f32 = 112.;
+/// A pod's container squares, at most eight and a `+N`, inside the cell's
+/// padding: 130.
+const CONTAINERS_WIDTH: f32 = freshkube_ui::squares::width(freshkube_ui::squares::SHOWN + 1)
+    + 2. * freshkube_ui::table::CELL_PAD;
 /// A pod's `0/1`, under its label and sort arrow.
 const READY_WIDTH: f32 = 72.;
 /// A pod's restart count, under its label and sort arrow.

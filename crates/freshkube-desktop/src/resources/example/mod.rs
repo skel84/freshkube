@@ -349,11 +349,23 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
     } else {
         ("1/1", "Running", "0".to_owned())
     };
+    // The gateway's pods run their proxy beside nine sidecars, more
+    // containers than the Containers column draws; the sidecars run on
+    // while the proxy crashes.
+    let ready = match (app, ready, status) {
+        ("gateway", "1/1", _) => format!("{GATEWAY_CONTAINERS}/{GATEWAY_CONTAINERS}"),
+        ("gateway", _, "CrashLoopBackOff") => {
+            format!("{}/{GATEWAY_CONTAINERS}", GATEWAY_CONTAINERS - 1)
+        }
+        ("gateway", ..) => format!("0/{GATEWAY_CONTAINERS}"),
+        _ => ready.to_owned(),
+    };
+    let all_ready = ready.split_once('/').is_some_and(|(up, all)| up == all);
     let mut row = ResourceRow {
         identity: identity(connection, "pods", namespace, &name, ix),
         cells: vec![
             name,
-            ready.into(),
+            ready,
             status.into(),
             restarts,
             String::new(),
@@ -386,7 +398,7 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
         .next()
         .and_then(|count| count.parse().ok())
         .unwrap_or(0);
-    let facts = pod_facts(ix, ready == "1/1", status, restarts);
+    let facts = pod_facts(ix, all_ready, status, restarts);
     rows::derive(
         &mut row,
         &pod_columns(),
@@ -416,10 +428,43 @@ fn pod_facts(ix: usize, ready: bool, status: &str, restarts: u32) -> PodFacts {
             cpu_millis: limited.then_some(cpu * 4.),
             memory_bytes: limited.then_some(memory * 2.),
         },
-        containers: vec![app_container(ready, status, restarts)],
+        containers: app_containers(WORKLOADS[workload].1, ready, status, restarts),
         init_containers: init_container(WORKLOADS[workload].1, status),
         ..PodFacts::default()
     }
+}
+
+/// How many containers a gateway pod runs: its proxy and nine sidecars.
+const GATEWAY_CONTAINERS: usize = 10;
+
+/// A pod's app containers: one, or a gateway's proxy and its sidecars.
+fn app_containers(app: &str, ready: bool, status: &str, restarts: u32) -> Vec<ContainerFacts> {
+    let mut containers = vec![app_container(ready, status, restarts)];
+    if app == "gateway" {
+        containers.extend(
+            [
+                "auth",
+                "ratelimit",
+                "otel",
+                "metrics",
+                "certs",
+                "config",
+                "logs",
+                "health",
+                "waf",
+            ]
+            .into_iter()
+            .map(|name| ContainerFacts {
+                name: name.into(),
+                ..match status {
+                    "CrashLoopBackOff" => app_container(true, "Running", 0),
+                    _ => app_container(ready, status, 0),
+                }
+            }),
+        );
+        debug_assert_eq!(containers.len(), GATEWAY_CONTAINERS);
+    }
+    containers
 }
 
 fn app_container(ready: bool, status: &str, restarts: u32) -> ContainerFacts {
@@ -441,12 +486,26 @@ fn app_container(ready: bool, status: &str, restarts: u32) -> ContainerFacts {
         state,
         last_exit_code: crashing.then_some(1),
         last_reason: crashing.then(|| "Error".to_owned()),
+        sidecar: false,
     }
 }
 
 /// Ledger migrates its schema and Prometheus prepares its data folder
-/// before the app starts; a pod not yet scheduled has run neither.
+/// before the app starts; a pod not yet scheduled has run neither. The
+/// report Job ships its logs from a native sidecar, stopped with SIGTERM
+/// (143) when the report ends.
 fn init_container(app: &str, status: &str) -> Vec<ContainerFacts> {
+    if app == "report" {
+        return vec![ContainerFacts {
+            name: "ship-logs".into(),
+            sidecar: true,
+            state: RunState::Terminated {
+                exit_code: 143,
+                reason: Some("Error".into()),
+            },
+            ..ContainerFacts::default()
+        }];
+    }
     let name = match app {
         "ledger" => "migrate",
         "prometheus" => "init-data",
@@ -533,7 +592,7 @@ pub(crate) fn ready_pod(context: &str, namespace: &str, app: &str) -> Option<Str
         .find(|row| {
             row.identity.namespace == namespace
                 && row.cells[0].starts_with(&format!("{app}-"))
-                && row.cells[1] == "1/1"
+                && row.pod.as_ref().is_some_and(|pod| pod.all_ready)
                 && row.cells[2] == "Running"
         })
         .map(|row| row.identity.name)

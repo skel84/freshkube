@@ -6,7 +6,7 @@
 use gpui_kit::{prelude::*, *};
 
 use crate::palette::Palette;
-use crate::ui::{Tone, dp};
+use crate::ui::{Tone, dp, glyph_color};
 
 /// A square's side.
 pub const SIZE: f32 = 8.;
@@ -16,6 +16,8 @@ pub const GAP: f32 = 3.;
 pub const SHOWN: usize = 8;
 /// The `+N` after the last square: its width, at the cell's text size.
 const MORE_WIDTH: f32 = 22.;
+/// A data mark's radius (docs/DESIGN.md, Tokens).
+const RADIUS: f32 = 3.;
 
 /// One container's square.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,20 +49,52 @@ impl Square {
         self
     }
 
+    /// The row glyph's colour for the same tone, so a square agrees
+    /// with it.
     fn color(&self, p: &Palette) -> Hsla {
-        match self.tone {
-            Tone::Good => p.good,
-            Tone::Warn => p.warn,
-            Tone::Crit | Tone::Died => p.crit,
-            _ => p.unk,
+        glyph_color(self.tone, p).unwrap_or(p.unk_ink)
+    }
+}
+
+/// A pod's squares with their `+N`, derived once when the pod's row
+/// arrives rather than on every frame.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Squares {
+    squares: Vec<Square>,
+    more: Option<SharedString>,
+}
+
+impl Squares {
+    pub fn new(squares: Vec<Square>) -> Self {
+        let hidden = squares.len().saturating_sub(SHOWN);
+        Self {
+            more: (hidden > 0).then(|| format!("+{hidden}").into()),
+            squares,
         }
+    }
+
+    /// The `+N` drawn after the last square, when some don't show.
+    pub fn more(&self) -> Option<&SharedString> {
+        self.more.as_ref()
+    }
+}
+
+impl std::ops::Deref for Squares {
+    type Target = [Square];
+
+    fn deref(&self) -> &[Square] {
+        &self.squares
     }
 }
 
 /// The width in dp that `count` squares take, with their `+N`.
-pub fn width(count: usize) -> f32 {
-    let shown = count.min(SHOWN) as f32;
-    let squares = shown * SIZE + (shown - 1.).max(0.) * GAP;
+pub const fn width(count: usize) -> f32 {
+    let shown = if count < SHOWN { count } else { SHOWN };
+    let squares = if shown == 0 {
+        0.
+    } else {
+        shown as f32 * SIZE + (shown - 1) as f32 * GAP
+    };
     if count > SHOWN {
         squares + GAP + MORE_WIDTH
     } else {
@@ -69,8 +103,7 @@ pub fn width(count: usize) -> f32 {
 }
 
 /// The squares in a row, at most [`SHOWN`], then `+N` in muted text.
-pub fn squares(squares: &[Square], p: &Palette) -> Div {
-    let hidden = squares.len().saturating_sub(SHOWN);
+pub fn squares(squares: &Squares, p: &Palette) -> Div {
     h_flex()
         .flex_none()
         .gap(dp(GAP))
@@ -79,7 +112,7 @@ pub fn squares(squares: &[Square], p: &Palette) -> Div {
             let drawn = div()
                 .flex_none()
                 .size(dp(SIZE))
-                .rounded(px(2.))
+                .rounded(px(RADIUS))
                 .when(square.dim, |this| this.opacity(0.5));
             if square.outlined {
                 drawn.border_2().border_color(color)
@@ -87,13 +120,15 @@ pub fn squares(squares: &[Square], p: &Palette) -> Div {
                 drawn.bg(color)
             }
         }))
-        .when(hidden > 0, |this| {
+        .when_some(squares.more(), |this, more| {
             this.child(
                 div()
+                    .id("squares-more")
+                    .test_support()
                     .flex_none()
                     .text_size(dp(11.))
                     .text_color(p.muted)
-                    .child(format!("+{hidden}")),
+                    .child(more.clone()),
             )
         })
 }
@@ -104,7 +139,8 @@ fn h_flex() -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{GAP, MORE_WIDTH, SHOWN, SIZE, width};
+    use super::{GAP, MORE_WIDTH, SHOWN, SIZE, Square, Squares, width};
+    use crate::ui::Tone;
 
     #[test]
     fn the_width_fits_the_squares_and_counts_the_rest() {
@@ -112,5 +148,13 @@ mod tests {
         assert_eq!(width(1), SIZE);
         assert_eq!(width(3), 3. * SIZE + 2. * GAP);
         assert_eq!(width(SHOWN), width(SHOWN + 5) - GAP - MORE_WIDTH);
+    }
+
+    #[test]
+    fn the_rest_is_counted_once() {
+        let of = |count| Squares::new(vec![Square::new(Tone::Good); count]);
+        assert_eq!(of(SHOWN).more(), None);
+        assert_eq!(of(SHOWN + 4).more().map(|more| more.as_ref()), Some("+4"));
+        assert_eq!(of(SHOWN + 4).len(), SHOWN + 4);
     }
 }

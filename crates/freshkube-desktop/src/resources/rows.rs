@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use freshkube_core::resources::{Amounts, ContainerFacts, PodFacts, RunState};
-use freshkube_ui::squares::Square;
+use freshkube_ui::squares::{Square, Squares};
 use freshkube_ui::ui::Tone;
+use gpui_kit::SharedString;
 
 use super::model::{ResourceColumn, ResourceRow, StatusTone, status_tone};
 
@@ -126,32 +127,60 @@ pub(crate) struct PodRow {
     pub(crate) containers: Vec<ContainerFacts>,
     pub(crate) init_containers: Vec<ContainerFacts>,
     /// One per container, init containers first (`squares`).
-    pub(crate) squares: Vec<Square>,
+    pub(crate) squares: Squares,
     /// The worst square's [`severity`], for sorting.
     pub(crate) worst: u8,
     /// The squares' tooltip, a line per container, and their accessible
     /// label, the same lines joined.
-    pub(crate) containers_tip: String,
-    pub(crate) containers_label: String,
+    pub(crate) containers_tip: SharedString,
+    pub(crate) containers_label: SharedString,
 }
 
 /// Waiting reasons that won't clear without a change to the pod or its
 /// image: the container can't start.
-const STUCK: [&str; 7] = [
+const STUCK: [&str; 11] = [
     "CrashLoopBackOff",
     "ImagePullBackOff",
     "ErrImagePull",
+    "ErrImageNeverPull",
+    "ImageInspectError",
     "InvalidImageName",
     "CreateContainerConfigError",
     "CreateContainerError",
     "RunContainerError",
+    "PreStartHookError",
+    "SignatureValidationFailed",
 ];
 
 /// A container's square. Running and ready is good; running unready or
 /// waiting to start, a warning; waiting that won't clear or a failed exit,
 /// critical; a clean exit, grey. Restarts outline it, as does a container
 /// with no state reported yet.
-pub(crate) fn square(container: &ContainerFacts, init: bool) -> Square {
+///
+/// The pod's state can say a container's own state means nothing, so the
+/// square agrees with the row's glyph rather than raise a false alarm: a
+/// terminating pod's containers are being stopped, and all draw grey; a
+/// starting pod's containers waiting or not yet ready draw grey outlined;
+/// a finished pod's sidecars were stopped when the app ended, so their
+/// exit, often 137 or 143, draws grey.
+pub(crate) fn square(container: &ContainerFacts, init: bool, pod: PodState) -> Square {
+    let dim = init && !container.sidecar;
+    let own = own_square(container);
+    let square = match pod {
+        PodState::Terminating => Square::new(Tone::Unknown),
+        PodState::Pending if own.tone == Tone::Warn => Square::new(Tone::Unknown).outlined(true),
+        PodState::Completed
+            if container.sidecar && matches!(container.state, RunState::Terminated { .. }) =>
+        {
+            Square::new(Tone::Unknown)
+        }
+        _ => own,
+    };
+    square.dim(dim)
+}
+
+/// A container's square from its own state alone.
+fn own_square(container: &ContainerFacts) -> Square {
     let restarted = container.restarts > 0;
     let (tone, outlined) = match &container.state {
         RunState::Running if container.ready => (Tone::Good, restarted),
@@ -172,7 +201,7 @@ pub(crate) fn square(container: &ContainerFacts, init: bool) -> Square {
         }
         RunState::Unknown => (Tone::Unknown, true),
     };
-    Square::new(tone).outlined(outlined).dim(init)
+    Square::new(tone).outlined(outlined)
 }
 
 /// How bad a square is, worst first: critical, warning, no state, good,
@@ -192,7 +221,9 @@ pub(crate) fn severity(square: &Square) -> u8 {
 /// 3 restarts`.
 pub(crate) fn container_line(container: &ContainerFacts, init: bool) -> String {
     let mut line = container.name.clone();
-    if init {
+    if container.sidecar {
+        line.push_str(" (sidecar)");
+    } else if init {
         line.push_str(" (init)");
     }
     line.push_str(": ");
@@ -289,9 +320,18 @@ pub(crate) fn pod_row(
     let ready_counts = ready
         .split_once('/')
         .and_then(|(up, all)| Some((up.trim().parse().ok()?, all.trim().parse().ok()?)));
-    let squares: Vec<Square> = (facts.init_containers.iter().map(|c| square(c, true)))
-        .chain(facts.containers.iter().map(|c| square(c, false)))
-        .collect();
+    // The printed status says Terminating, or the object has its deletion
+    // time and the status hasn't caught up.
+    let whole = if terminating {
+        PodState::Terminating
+    } else {
+        state
+    };
+    let squares = Squares::new(
+        (facts.init_containers.iter().map(|c| square(c, true, whole)))
+            .chain(facts.containers.iter().map(|c| square(c, false, whole)))
+            .collect(),
+    );
     let lines: Vec<String> = (facts.init_containers.iter())
         .map(|c| container_line(c, true))
         .chain(facts.containers.iter().map(|c| container_line(c, false)))
@@ -312,8 +352,8 @@ pub(crate) fn pod_row(
         limits: facts.limits,
         worst: squares.iter().map(severity).min().unwrap_or(u8::MAX),
         squares,
-        containers_tip: lines.join("\n"),
-        containers_label: lines.join("; "),
+        containers_tip: lines.join("\n").into(),
+        containers_label: lines.join("; ").into(),
         containers: facts.containers,
         init_containers: facts.init_containers,
     }
@@ -539,6 +579,13 @@ mod tests {
         assert_eq!((odd.ready_counts, odd.all_ready), (None, true));
     }
 
+    fn exit(code: i32, reason: &str) -> RunState {
+        RunState::Terminated {
+            exit_code: code,
+            reason: Some(reason.into()),
+        }
+    }
+
     fn container(
         state: RunState,
         ready: bool,
@@ -640,11 +687,108 @@ mod tests {
             ),
         ];
         for (facts, tone, outlined) in cases {
-            let drawn = square(&facts, false);
+            let drawn = square(&facts, false, PodState::Running);
             assert_eq!((drawn.tone, drawn.outlined), (tone, outlined), "{facts:?}");
             assert!(!drawn.dim);
         }
-        assert!(square(&cases_init(), true).dim);
+        assert!(square(&cases_init(), true, PodState::Running).dim);
+        // A sidecar runs beside the app, so it isn't dimmed as an init
+        // container is.
+        let sidecar = ContainerFacts {
+            sidecar: true,
+            ..cases_init()
+        };
+        assert!(!square(&sidecar, true, PodState::Running).dim);
+    }
+
+    /// Squares agree with the row's glyph: a pod's state can say a
+    /// container's own state means nothing, and the square then draws grey
+    /// rather than a false alarm (#329 review).
+    #[test]
+    fn a_pods_state_greys_what_its_containers_cannot_say() {
+        let drawn = |status: &str, terminating: bool, init: Vec<ContainerFacts>, app| {
+            let facts = PodFacts {
+                init_containers: init,
+                containers: app,
+                ..PodFacts::default()
+            };
+            let pod = pod_row(
+                &columns(),
+                &cells("0/1", status, "0"),
+                Some(facts),
+                terminating,
+            );
+            pod.squares
+                .iter()
+                .map(|s| (s.tone, s.outlined, s.dim))
+                .collect::<Vec<_>>()
+        };
+        let killed = || container(exit(143, "Error"), false, 0, None);
+        let sidecar = |state| ContainerFacts {
+            sidecar: true,
+            ..container(state, false, 0, None)
+        };
+        // A terminating pod's stopped containers, whether the status says
+        // so or only the object's deletion time does.
+        for (status, terminating) in [("Terminating", false), ("Running", true)] {
+            assert_eq!(
+                drawn(status, terminating, vec![], vec![killed()]),
+                [(Tone::Unknown, false, false)],
+                "{status}"
+            );
+        }
+        // A starting pod: an init container running but not yet ready,
+        // and an app container being created.
+        assert_eq!(
+            drawn(
+                "PodInitializing",
+                false,
+                vec![container(RunState::Running, false, 0, None)],
+                vec![container(
+                    RunState::Waiting,
+                    false,
+                    0,
+                    Some("ContainerCreating")
+                )],
+            ),
+            [(Tone::Unknown, true, true), (Tone::Unknown, true, false)]
+        );
+        // A Job's pod that succeeded: its sidecar was stopped with the app.
+        let done = || container(exit(0, "Completed"), false, 0, None);
+        assert_eq!(
+            drawn(
+                "Completed",
+                false,
+                vec![sidecar(exit(137, "Error"))],
+                vec![done()]
+            ),
+            [(Tone::Unknown, false, false), (Tone::Unknown, false, false)]
+        );
+        // While the pod runs, a sidecar that exits has failed.
+        assert_eq!(
+            drawn(
+                "Running",
+                false,
+                vec![sidecar(exit(137, "Error"))],
+                vec![done()]
+            )[0],
+            (Tone::Crit, false, false)
+        );
+        // A stuck container stays critical while the pod is starting.
+        assert_eq!(
+            drawn(
+                "Pending",
+                false,
+                vec![],
+                vec![container(
+                    RunState::Waiting,
+                    false,
+                    0,
+                    Some("ErrImageNeverPull")
+                )],
+            ),
+            [(Tone::Crit, false, false)]
+        );
     }
 
     fn cases_init() -> ContainerFacts {

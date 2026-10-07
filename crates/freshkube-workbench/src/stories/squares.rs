@@ -6,7 +6,7 @@
 use super::motion::{option, segments};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
-use freshkube_ui::squares::{self, Square};
+use freshkube_ui::squares::{self, Square, Squares};
 use freshkube_ui::ui::{self, Tone, dp};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -62,6 +62,11 @@ fn cases() -> Vec<(&'static str, Vec<Square>, &'static str)> {
             vec![done.dim(true), good],
             "migrate (init): exited 0 · Completed; api running",
         ),
+        (
+            "report",
+            vec![done, done],
+            "ship-logs (sidecar): exited 143, stopped when the Job succeeded; report exited 0",
+        ),
     ]
 }
 
@@ -103,7 +108,7 @@ impl Render for SquaresStory {
                                 div()
                                     .w(dp(squares::width(drawn.len())))
                                     .flex_none()
-                                    .child(squares::squares(&drawn, &p)),
+                                    .child(squares::squares(&Squares::new(drawn), &p)),
                             )
                             .child(div().text_color(p.muted).child(words))
                     },

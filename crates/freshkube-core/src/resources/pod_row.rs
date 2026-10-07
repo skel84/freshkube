@@ -34,6 +34,9 @@ pub struct ContainerFacts {
     /// How its previous run ended, when it ended.
     pub last_exit_code: Option<i32>,
     pub last_reason: Option<String>,
+    /// A native sidecar: an init container with `restartPolicy: Always`,
+    /// which runs beside the app containers and is stopped when they end.
+    pub sidecar: bool,
 }
 
 /// What a container is doing now, from its status's `state`.
@@ -85,6 +88,8 @@ struct SpecContainer {
     name: String,
     #[serde(default, deserialize_with = "nullable")]
     resources: Requirements,
+    #[serde(default, rename = "restartPolicy", deserialize_with = "nullable")]
+    restart_policy: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -194,14 +199,18 @@ fn containers(spec: &[SpecContainer], statuses: &[ContainerStatus]) -> Vec<Conta
     let named = |name: &str| spec.iter().any(|container| container.name == name);
     spec.iter()
         .map(|declared| {
-            statuses
+            let facts = statuses
                 .iter()
                 .find(|status| status.name == declared.name)
                 .map(container)
                 .unwrap_or_else(|| ContainerFacts {
                     name: declared.name.clone(),
                     ..ContainerFacts::default()
-                })
+                });
+            ContainerFacts {
+                sidecar: declared.restart_policy == "Always",
+                ..facts
+            }
         })
         .chain(
             statuses
@@ -232,6 +241,8 @@ fn container(status: &ContainerStatus) -> ContainerFacts {
             .waiting
             .as_ref()
             .and_then(|waiting| reason(&waiting.reason)),
+        // From the spec, which `containers` reads.
+        sidecar: false,
         last_exit_code: status
             .last_state
             .terminated
@@ -391,7 +402,8 @@ mod tests {
                 {"name":"app","resources":{"requests":{"cpu":"100m","memory":"64Mi"},
                   "limits":{"cpu":"1","memory":"256Mi"}}},
                 {"name":"proxy","resources":{"requests":{"cpu":"50m","memory":"32Mi"}}}],
-                "initContainers":[{"name":"migrate"},{"name":"mesh"},{"name":"warm"}]},
+                "initContainers":[{"name":"migrate"},{"name":"mesh","restartPolicy":"Always"},
+                  {"name":"warm"}]},
               "status":{"phase":"Running","qosClass":"Burstable",
                 "initContainerStatuses":[
                   {"name":"migrate","ready":false,"restartCount":0,
@@ -447,6 +459,12 @@ mod tests {
                 ("warm", &RunState::Unknown, 0),
             ]
         );
+        // Only an init container restarted Always is a sidecar.
+        let sidecars: Vec<_> = (facts.init_containers.iter())
+            .chain(&facts.containers)
+            .map(|c| c.sidecar)
+            .collect();
+        assert_eq!(sidecars, [false, true, false, false, false]);
     }
 
     #[test]

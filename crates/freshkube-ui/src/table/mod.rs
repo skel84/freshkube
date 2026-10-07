@@ -615,17 +615,16 @@ mod tests {
     /// than [`LEAST_PART`], so none leaves a sliver.
     fn widths(window: &mut Window, cx: &mut App) -> Vec<f32> {
         window.render_frame(cx);
-        let row = window.find("g").bounds();
         let least = f32::from(dp_px(LEAST_PART, window)) - 0.5;
         ORDER
             .iter()
             .map(|part| {
-                let bounds = window.find((ElementId::from("g"), *part)).bounds();
-                let width = f32::from(bounds.size.width);
-                // Below the row's text, above its 1 px border.
-                if bounds.top() >= row.bottom() - px(1.) {
+                let found = window.find((ElementId::from("g"), *part));
+                // Wrapped below the row's line, out of sight.
+                if !found.visible() {
                     return 0.;
                 }
+                let width = f32::from(found.bounds().size.width);
                 assert!(width >= least, "{part} shows a sliver {width} wide");
                 width
             })
