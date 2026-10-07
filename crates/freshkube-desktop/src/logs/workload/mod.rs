@@ -1,11 +1,11 @@
-//! The detail pane's workload logs: every container of every pod a
+//! A workload's logs in the dock: every container of every pod a
 //! Deployment, StatefulSet, DaemonSet, ReplicaSet or Job runs, in one view.
 //! Lines from all streams are interleaved by their timestamps and tagged
 //! `pod/container`. Read-only: it watches the workload's pods and reads
 //! their logs, nothing else.
 //!
 //! Pods are found by the workload's selector (core's
-//! `follow_workload_pods`) and followed as they come and go; each container
+//! `follow_pods`) and followed as they come and go; each container
 //! is read by core's `follow_pod_log`, at most [`MAX_STREAMS`] at once. A
 //! line that arrives late, from a stream behind the others, is placed by
 //! its time among the retained lines, as with Talos services; a paused
@@ -16,11 +16,10 @@
 //! containers write. A stream that fails is read again with the watcher's
 //! backoff while its pod is listed.
 //!
-//! Nothing is read until the Logs tab first shows for the workload. Then
-//! the watch and the streams live while it stays open, whichever tab shows,
-//! and stop when another object opens, the pane closes, the page hides or
-//! the connection changes. Showing the page again reads each container on
-//! from its last line.
+//! Nothing is read until the dock's tab for the workload first shows
+//! (`desktop/dock/`). Then the watch and the streams live while the tab
+//! stays open, whatever page shows, and stop when it closes or the
+//! connection changes.
 //!
 //! This file holds the source's state and its streams; `controls` draws
 //! the status, the streams and their notices.
@@ -36,8 +35,8 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeDelta, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 use freshkube_core::resources::{
-    ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, WorkloadPod,
-    WorkloadPods, follow_pod_log, follow_workload_pods,
+    ContainerRole, Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, PodSelector,
+    WorkloadPod, WorkloadPods, follow_pod_log, follow_pods,
 };
 use gpui_kit::{AnyElement, App, Context, Pixels, SharedString, Task, Window};
 use tokio::runtime::Handle;
@@ -880,7 +879,9 @@ impl Streams for WorkloadLogView {
         let namespace = workload.namespace.clone();
         let job = self.source().runtime.spawn(async move {
             match access.client().await {
-                Ok(client) => follow_workload_pods(client, namespace, selector, sender).await,
+                Ok(client) => {
+                    follow_pods(client, namespace, PodSelector::Labels(selector), sender).await
+                }
                 Err(error) => {
                     access.forget();
                     sender.send_modify(|pods| {

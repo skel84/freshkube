@@ -30,7 +30,7 @@ Mark each item **works**, **problem** (with an issue link) or **not checked**.
    - The window opens within a few seconds, at a sensible size and scale.
 2. **Example data.** Start with `--fixture`.
    - Overview, Nodes and Pods show their example rows.
-   - A pod's Logs tab follows new lines, and a wheel up pauses it.
+   - A pod's log tab in the dock follows new lines, and a wheel up pauses it.
    - A pod's Shell tab starts the local example shell, and typing reaches it.
    - Settings: light and dark theme, and one larger text size.
 3. **One real context, read-only.** A kubeconfig or talosconfig context the

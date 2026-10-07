@@ -128,6 +128,7 @@ impl Pilot {
             h_flex()
                 .flex_none()
                 .gap_3()
+                .children(self.render_dock_button(cx))
                 .child(self.forwards.clone())
                 .child(
                     div()
@@ -144,6 +145,7 @@ impl Pilot {
             h_flex()
                 .gap_3()
                 .flex_none()
+                .children(self.render_dock_button(cx))
                 .child(self.forwards.clone())
                 .children(
                     self.overview
@@ -474,4 +476,37 @@ pub(super) fn settings_content(
             cx,
         ))
         .into_any_element()
+}
+
+impl Pilot {
+    /// "3 logs" while the dock has tabs: opens a minimized dock, or
+    /// minimizes an open one.
+    fn render_dock_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let dock = self.dock.read(cx);
+        if !dock.has_tabs() {
+            return None;
+        }
+        let count = dock.tabs.len();
+        let shown = dock.is_open();
+        Some(
+            Button::new("dock-toggle")
+                .ghost()
+                .xsmall()
+                .icon(IconName::PanelBottom)
+                .label(if count == 1 {
+                    "1 log".to_owned()
+                } else {
+                    format!("{count} logs")
+                })
+                .tooltip(if shown {
+                    "Minimize the dock"
+                } else {
+                    "Show the dock"
+                })
+                .on_click(cx.listener(|pilot, _, window, cx| {
+                    pilot.dock.update(cx, |dock, cx| dock.toggle(window, cx))
+                }))
+                .into_any_element(),
+        )
+    }
 }

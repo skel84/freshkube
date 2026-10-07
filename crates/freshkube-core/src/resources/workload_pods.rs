@@ -1,6 +1,6 @@
-//! The pods a workload runs, with their containers, for reading their logs
-//! together. Read-only: it lists and watches pods by the workload's
-//! selector, nothing else.
+//! The pods a workload runs, or one pod by name, with their containers, for
+//! reading their logs. Read-only: it lists and watches pods by a selector,
+//! nothing else.
 //!
 //! This is its own watch rather than forward's [`super::PodWatches`]: that
 //! one is shared by the app's forwards, lives as long as they do, and keeps
@@ -91,17 +91,35 @@ pub struct WorkloadPods {
     pub failure: Option<Failure>,
 }
 
+/// Which pods [`follow_pods`] watches in a namespace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PodSelector {
+    /// The pods a label selector picks, as a workload's.
+    Labels(String),
+    /// The one pod of this name.
+    Name(String),
+}
+
+impl PodSelector {
+    fn config(&self) -> watcher::Config {
+        match self {
+            Self::Labels(selector) => watcher::Config::default().labels(selector),
+            Self::Name(name) => watcher::Config::default().fields(&format!("metadata.name={name}")),
+        }
+    }
+}
+
 /// Lists and watches the pods `selector` picks in `namespace`, publishing
 /// every change into `sink`, until the receiver is dropped or a failure is
 /// permanent. Run it on Tokio and abort it to stop.
-pub async fn follow_workload_pods(
+pub async fn follow_pods(
     client: Client,
     namespace: String,
-    selector: String,
+    selector: PodSelector,
     sink: watch::Sender<WorkloadPods>,
 ) {
     let api: Api<Pod> = Api::namespaced(client, &namespace);
-    let config = watcher::Config::default().labels(&selector);
+    let config = selector.config();
     let mut backoff = MIN_BACKOFF;
     let mut pods: BTreeMap<String, WorkloadPod> = BTreeMap::new();
     loop {
@@ -175,6 +193,16 @@ mod tests {
 
     fn yaml(text: &str) -> Value {
         serde_yaml::from_str(text).expect("example YAML")
+    }
+
+    #[test]
+    fn a_selector_picks_by_labels_or_by_name() {
+        let labels = PodSelector::Labels("app=web".into()).config();
+        assert_eq!(labels.label_selector.as_deref(), Some("app=web"));
+        assert_eq!(labels.field_selector, None);
+        let name = PodSelector::Name("web-0".into()).config();
+        assert_eq!(name.field_selector.as_deref(), Some("metadata.name=web-0"));
+        assert_eq!(name.label_selector, None);
     }
 
     #[test]

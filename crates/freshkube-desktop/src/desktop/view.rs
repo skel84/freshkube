@@ -100,6 +100,26 @@ impl Render for Pilot {
             .on_action(
                 cx.listener(|view, _: &ToggleColumn, window, cx| view.toggle_column(window, cx)),
             )
+            .on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
+                if !view.dock.read(cx).has_tabs() {
+                    return cx.propagate();
+                }
+                view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
+            }))
+            .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
+                if !view.dock.read(cx).has_tabs() {
+                    return cx.propagate();
+                }
+                view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
+            }))
+            .on_action(cx.listener(|view, _: &dock::MinimizeDock, window, cx| {
+                // Without tabs there is no dock: the key goes on.
+                if !view.dock.read(cx).has_tabs() {
+                    return cx.propagate();
+                }
+                view.dock
+                    .update(cx, |dock, cx| dock.set_open(false, window, cx))
+            }))
             .child(self.render_header(window, cx))
             .child(
                 div()
@@ -109,8 +129,37 @@ impl Render for Pilot {
                     .min_h_0()
                     .child(self.render_rail(cx))
                     .children(self.render_column(window, cx))
-                    .child(div().flex_1().min_w_0().min_h_0().child(page)),
+                    .child(self.render_page_cell(page, window, cx)),
             )
             .child(self.render_status_bar(window, cx))
+    }
+}
+
+impl Pilot {
+    /// The page above the dock. The dock spans the page cell and pushes
+    /// the page up; the page reads how much it takes when it lays out.
+    fn render_page_cell(
+        &mut self,
+        page: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let dock = self.dock.read(cx).shown_height(window, cx);
+        freshkube_ui::page::set_below(
+            dock.map(|height| height / crate::ui::dp_px(1., window))
+                .unwrap_or(0.),
+        );
+        v_flex()
+            .id("page-cell")
+            .test_support()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .child(div().flex_1().min_w_0().min_h_0().child(page))
+            .children(dock.map(|height| {
+                self.dock
+                    .clone()
+                    .cached(StyleRefinement::default().w_full().flex_none().h(height))
+            }))
     }
 }

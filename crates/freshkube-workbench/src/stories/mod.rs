@@ -6,6 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::{AnyView, App, Window};
 
 pub mod data_table;
+pub mod dock;
 pub mod graph;
 pub mod motion;
 
@@ -34,6 +35,12 @@ pub const STORIES: &[Story] = &[
         title: "Graph layout",
         icon: || IconName::Network,
         build: graph::build,
+    },
+    Story {
+        slug: "dock",
+        title: "Dock",
+        icon: || IconName::PanelBottom,
+        build: dock::build,
     },
     Story {
         slug: "loading",

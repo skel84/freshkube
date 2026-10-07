@@ -63,6 +63,19 @@ impl DetailPane {
                     .mt(dp(14.))
                     .child(ui::tag(tone, None, text, cx))
             }))
+            .when(self.has_logs(), |this| {
+                this.child(
+                    div().flex_none().mt(dp(10.)).child(
+                        Button::new("detail-open-logs")
+                            .outline()
+                            .xsmall()
+                            .icon(IconName::ScrollText)
+                            .label("Logs")
+                            .tooltip("Opens the logs in the dock (L from the list)")
+                            .on_click(cx.listener(|pane, _, _, cx| pane.request_logs(None, cx))),
+                    ),
+                )
+            })
             .when(detail.view.is_some(), |this| {
                 this.child(
                     div().flex_none().mt(dp(10.)).child(
@@ -219,9 +232,6 @@ impl DetailPane {
                 }),
                 None,
             ))
-            .when(Tab::of(&detail.target.kind).contains(&Tab::Logs), |this| {
-                this.child(tab("detail-tab-logs", Tab::Logs, "Logs".into(), None, None))
-            })
             .when(detail.target.kind.is_pod(), |this| {
                 let shell = self.shell.read(cx);
                 let running = shell.running().then(|| {
@@ -319,28 +329,6 @@ impl Render for DetailPane {
             (Tab::Overview, Some(_), Some(summary)) => self.overview(detail, summary, cx),
             (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
             (Tab::Events, ..) => self.events(detail, cx),
-            // The log view draws to its edges; the card used to frame it.
-            (Tab::Logs, ..) => v_flex()
-                .size_full()
-                .min_h_0()
-                .px(dp(freshkube_ui::page::PANE_PADDING))
-                .pb(dp(freshkube_ui::page::PANE_PADDING))
-                .child(
-                    v_flex()
-                        .id("detail-logs")
-                        .test_support()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .map(|this| {
-                            if self.shows_workload_logs() {
-                                this.child(self.workload_logs.clone())
-                            } else {
-                                this.child(self.logs.clone())
-                            }
-                        }),
-                )
-                .into_any_element(),
             (Tab::Shell, ..) => self.shell.clone().into_any_element(),
             (Tab::Ports, ..) => self.ports.clone().into_any_element(),
             _ => self.document_state(detail, cx),

@@ -1,8 +1,8 @@
-//! The detail pane's pod logs: one container's log, followed live or its
-//! previous instance read to the end. The stream lives while the pod stays
-//! selected, whichever tab shows, and stops when another object opens, the
-//! pane closes, the page hides or the connection changes. Read-only: it
-//! gets the pod and reads logs, nothing else.
+//! A pod's logs in the dock: one container's log, followed live or its
+//! previous instance read to the end. The stream lives while the dock's tab
+//! stays open (`desktop/dock/`), whatever page shows, and stops when the
+//! tab closes or the connection changes. Read-only: it gets the pod and
+//! reads logs, nothing else.
 //!
 //! This file holds the source's state and its stream; `controls` draws the
 //! container picker, the stream controls and the state of the stream.
@@ -32,7 +32,7 @@ use crate::resources::{KubeAccess, example, live};
 use crate::ui::Tone;
 use controls::Controls;
 
-/// The detail pane's Logs tab.
+/// A pod's tab in the dock.
 pub(crate) type PodLogView = LogView<PodLogs>;
 
 /// How many lines from the end a new stream starts with; `None` is all.
@@ -94,6 +94,8 @@ pub(crate) struct PodLogs {
     containers: PodContainers,
     /// Whether `containers` was read for this pod yet.
     known: bool,
+    /// The pod was deleted: nothing more is read, and its lines stay.
+    gone: bool,
     pub(super) choices: Rc<Vec<Choice>>,
     pub(super) container: Option<String>,
     pub(super) tail: Option<i64>,
@@ -130,6 +132,7 @@ impl PodLogs {
             pod: None,
             containers: PodContainers::default(),
             known: false,
+            gone: false,
             choices: Rc::default(),
             container: None,
             tail: DEFAULT_TAIL,
@@ -237,6 +240,12 @@ impl PodLogs {
     fn describe(&mut self) {
         let name = self.container.clone().unwrap_or_default();
         let (tone, tag, text, empty) = match &self.state {
+            _ if self.gone => (
+                Tone::Unknown,
+                "Gone",
+                String::new(),
+                "The pod went before it wrote a line.".to_owned(),
+            ),
             StreamState::Idle if self.pod.is_some() && !self.known => (
                 Tone::Unknown,
                 "Reading",
@@ -445,10 +454,17 @@ pub(crate) trait PodLogPanel: Sized + 'static {
     /// Opens an explicitly chosen container and instance from its Overview row.
     fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>);
 
-    #[cfg(test)]
+    /// The container read, which the dock saves with its tab.
     fn selected_container(&self) -> Option<&str>;
 
-    #[cfg(test)]
+    /// Whether the pod's containers are known, so one can be chosen.
+    fn knows_containers(&self) -> bool;
+
+    /// The pod was deleted: the stream stops for good, keeping its lines;
+    /// nothing reads by its name again, since that would be another pod.
+    fn end(&mut self, cx: &mut Context<Self>);
+
+    /// Whether the previous instance is read.
     fn reads_previous(&self) -> bool;
 
     /// Whether a stream is open or about to be, for the pane's tests.
@@ -487,6 +503,7 @@ impl PodLogPanel for PodLogView {
         source.pod = pod;
         source.containers = PodContainers::default();
         source.known = false;
+        source.gone = false;
         source.container = None;
         source.previous = false;
         source.wanted = false;
@@ -557,14 +574,30 @@ impl PodLogPanel for PodLogView {
         self.want(cx);
     }
 
-    #[cfg(test)]
     fn selected_container(&self) -> Option<&str> {
         self.source().container.as_deref()
     }
 
-    #[cfg(test)]
     fn reads_previous(&self) -> bool {
         self.source().previous
+    }
+
+    fn end(&mut self, cx: &mut Context<Self>) {
+        if self.source().gone {
+            return;
+        }
+        self.flush_backlog(cx);
+        let source = self.source_mut();
+        source.drop_stream();
+        source.gone = true;
+        source.suspended = false;
+        source.state = StreamState::Idle;
+        source.describe();
+        cx.notify();
+    }
+
+    fn knows_containers(&self) -> bool {
+        self.source().known
     }
 
     #[cfg(test)]
@@ -752,6 +785,9 @@ impl Stream for PodLogView {
     }
 
     fn start(&mut self, fresh: bool, cx: &mut Context<Self>) {
+        if self.source().gone {
+            return;
+        }
         self.flush_backlog(cx);
         let source = self.source_mut();
         source.drop_stream();

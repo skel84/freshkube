@@ -1,5 +1,6 @@
 //! `navigation.json` beside the preferences: whether the sidebar is
-//! collapsed, and how wide each page's inspector is, in dp. The shell opens
+//! collapsed, how wide each page's inspector is, in dp, and the dock's
+//! state and log tabs (`desktop/dock/saved.rs`). The shell opens
 //! it once and makes it a global, so every writer saves the same snapshot
 //! and none drops another's key.
 //!
@@ -14,6 +15,7 @@ use serde_json::{Map, Value};
 
 const COLLAPSED: &str = "collapsed";
 const INSPECTOR: &str = "inspector";
+const DOCK: &str = "dock";
 
 #[derive(Clone, Default)]
 pub(crate) struct NavigationFile(Option<Arc<File>>);
@@ -84,6 +86,20 @@ impl NavigationFile {
             if let Value::Object(widths) = widths {
                 widths.insert(page.into(), width.round().into());
             }
+        });
+    }
+
+    /// The dock as last saved, if it reads as one.
+    pub(crate) fn dock<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
+        self.read(|map| serde_json::from_value(map.get(DOCK)?.clone()).ok())
+    }
+
+    pub(crate) fn set_dock<T: serde::Serialize>(&self, dock: &T, cx: &App) {
+        let Ok(value) = serde_json::to_value(dock) else {
+            return;
+        };
+        self.change(cx, |map| {
+            map.insert(DOCK.into(), value);
         });
     }
 

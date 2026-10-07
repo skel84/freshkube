@@ -10,7 +10,7 @@ use gpui_kit::{ClipboardItem, Context, ScrollStrategy, Window};
 
 use super::super::projection::{Group, Grouping};
 use super::super::store::Usage;
-use super::super::{Tab, example};
+use super::super::{LogsRequest, ResourceLink, detail::DetailTarget, example};
 use super::{KubeAccess, ResourcesScreen};
 use crate::backend;
 use crate::desktop::nodes::{NodeRow, NodeTab};
@@ -145,15 +145,23 @@ impl ResourcesScreen {
         }
     }
 
-    /// L opens the selected pod on its Logs tab.
-    pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// L opens the selected pod's logs in the dock. The pane and the
+    /// page's frame stay as they are, and the list, shorter above the
+    /// dock, scrolls to keep the row in sight (see `render`).
+    pub(super) fn open_logs(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if !self.lists_pods() || self.embedded {
             return;
         }
         let Some(identity) = self.projection.selected().cloned() else {
             return;
         };
-        self.open_identity_on(identity, Tab::Logs, window, cx);
+        cx.emit(ResourceLink::Logs(LogsRequest {
+            target: DetailTarget {
+                identity,
+                kind: self.kind.clone(),
+            },
+            at: None,
+        }));
     }
 
     pub(super) fn open_node(&mut self, node: String, cx: &mut Context<Self>) {

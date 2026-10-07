@@ -1,5 +1,6 @@
 //! The detail pane beside the resource list: one object's overview, YAML,
-//! events; for a pod, its logs and a shell; for a workload, its pods' logs. It reads the object when
+//! events; for a pod, a shell. Logs open in the dock (`desktop/dock/`): a
+//! Logs action here asks for them with `DetailEvent::Link`. It reads the object when
 //! opened and again whenever the list shows a new version of it, at most once
 //! a second, and watches the object's events while open on a visible page.
 //! Secret values stay hidden until one is revealed. Nothing here changes the
@@ -25,9 +26,8 @@ use super::detail::{
 };
 use super::model::ResourceIdentity;
 use super::screen::KubeAccess;
-use super::{example, live};
+use super::{LogsAt, LogsRequest, ResourceLink, example, live};
 use crate::backend::{self, OwnedJob};
-use crate::logs::{PodLogPanel, PodLogView, WorkloadLogPanel, WorkloadLogView};
 use crate::monitoring::history::{HistorySource, HistoryView};
 use freshkube_core::monitoring::history::Subject;
 
@@ -87,7 +87,8 @@ pub(crate) enum Tab {
     Overview,
     Yaml,
     Events,
-    /// Pods, and the workloads that run them.
+    /// Not a tab: asking for it opens the object's logs in the dock, for
+    /// pods and the workloads that run them.
     Logs,
     Shell,
     /// Pods, Services and the workloads that run pods.
@@ -95,17 +96,13 @@ pub(crate) enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 6] = [
+    const POD: &[Tab] = &[
         Tab::Overview,
         Tab::Yaml,
         Tab::Events,
-        Tab::Logs,
         Tab::Shell,
         Tab::Ports,
     ];
-    const POD: &[Tab] = &Tab::ALL;
-    const WORKLOAD: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Logs, Tab::Ports];
-    const RUNS_PODS: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Logs];
     const FORWARDABLE: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Ports];
     const OTHER: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events];
 
@@ -113,10 +110,6 @@ impl Tab {
     fn of(kind: &ResourceKind) -> &'static [Tab] {
         if kind.is_pod() {
             Tab::POD
-        } else if runs_pods(kind) && ports::forwardable(kind) {
-            Tab::WORKLOAD
-        } else if runs_pods(kind) {
-            Tab::RUNS_PODS
         } else if ports::forwardable(kind) {
             Tab::FORWARDABLE
         } else {
@@ -163,7 +156,7 @@ pub(crate) struct DetailPane {
     /// A read waiting for arrow keys to pause, or for the follow interval.
     timer: Option<Task<()>>,
     tab: Tab,
-    /// One per tab, in `Tab::ALL` order, so the arrows can move between them.
+    /// One per tab, in `Tab`'s order, so the arrows can move between them.
     tab_focus: [FocusHandle; 6],
     /// How far the tabs scrolled when the pane is too narrow for them.
     tab_strip: freshkube_ui::inspector::TabStrip,
@@ -177,11 +170,6 @@ pub(crate) struct DetailPane {
     feedback: Option<SharedString>,
     focus: FocusHandle,
     yaml_scroll: UniformListScrollHandle,
-    /// The open pod's logs. Its stream lives while the pod stays open,
-    /// whichever tab shows.
-    logs: Entity<PodLogView>,
-    /// The open workload's pods' logs, which live as a pod's do.
-    workload_logs: Entity<WorkloadLogView>,
     /// The open pod's shell. A session lives while the pod stays open, on
     /// any tab and any page.
     shell: Entity<ShellView>,
@@ -234,9 +222,6 @@ impl DetailPane {
             KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some("NodeDocument")),
         ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
-        let logs = cx.new(|cx| PodLogView::for_pods(runtime.clone(), window, cx));
-        let workload_logs =
-            cx.new(|cx| WorkloadLogView::for_workloads(runtime.clone(), window, cx));
         let shell = cx.new(|cx| ShellView::new(runtime.clone(), window, cx));
         let ports = cx.new(|cx| PortsView::new(runtime.clone(), window, cx));
         let history = cx.new(|_| HistoryView::new(runtime.clone(), "pod"));
@@ -297,8 +282,6 @@ impl DetailPane {
             feedback: None,
             focus: cx.focus_handle(),
             yaml_scroll: UniformListScrollHandle::new(),
-            logs,
-            workload_logs,
             shell,
             ports,
             history,
@@ -309,11 +292,6 @@ impl DetailPane {
     pub(crate) fn embed_node(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.embedded_node = true;
         self.set_tab(tab, cx);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn log_container<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
-        self.logs.read(cx).selected_container()
     }
 
     #[cfg(test)]
@@ -337,10 +315,6 @@ impl DetailPane {
 
     /// Fresh handles for the same connection.
     pub(crate) fn set_access(&mut self, access: KubeAccess, cx: &mut Context<Self>) {
-        self.logs
-            .update(cx, |logs, _| logs.set_access(access.clone()));
-        self.workload_logs
-            .update(cx, |logs, _| logs.set_access(access.clone()));
         self.shell
             .update(cx, |shell, _| shell.set_access(access.clone()));
         self.ports
@@ -377,8 +351,6 @@ impl DetailPane {
         }
         self.stop_reads();
         let pod = target.kind.is_pod().then(|| target.identity.clone());
-        let workload =
-            (runs_pods(&target.kind) && !target.kind.is_pod()).then(|| target.identity.clone());
         if !Tab::of(&target.kind).contains(&self.tab) {
             self.tab = Tab::Overview;
         }
@@ -389,14 +361,8 @@ impl DetailPane {
                 cx,
             )
         });
-        self.shell.update(cx, |shell, cx| {
-            shell.show_pod(pod.clone(), Some(access.clone()), cx)
-        });
-        self.workload_logs.update(cx, |logs, cx| {
-            logs.show_workload(workload, Some(access.clone()), cx)
-        });
-        self.logs
-            .update(cx, |logs, cx| logs.show_pod(pod, Some(access), cx));
+        self.shell
+            .update(cx, |shell, cx| shell.show_pod(pod, Some(access), cx));
         self.title = target.identity.address().into();
         self.detail = Some(Detail::new(target));
         // Another object may have other tabs, so its strip starts unscrolled.
@@ -427,10 +393,6 @@ impl DetailPane {
 
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         self.stop_reads();
-        self.logs
-            .update(cx, |logs, cx| logs.show_pod(None, None, cx));
-        self.workload_logs
-            .update(cx, |logs, cx| logs.show_workload(None, None, cx));
         self.shell
             .update(cx, |shell, cx| shell.show_pod(None, None, cx));
         self.ports
@@ -455,9 +417,6 @@ impl DetailPane {
             return;
         }
         self.active = active;
-        self.logs.update(cx, |logs, cx| logs.set_active(active, cx));
-        self.workload_logs
-            .update(cx, |logs, cx| logs.set_active(active, cx));
         self.show_tab(cx);
         if active {
             self.start(cx);
@@ -621,13 +580,7 @@ impl DetailPane {
         };
         if let Some(containers) = view.document.overview.pod.clone() {
             self.shell
-                .update(cx, |shell, cx| shell.set_containers(containers.clone(), cx));
-            self.logs
-                .update(cx, |logs, cx| logs.set_containers(containers, cx));
-        }
-        if let Some(selector) = view.document.overview.selector.clone() {
-            self.workload_logs
-                .update(cx, |logs, cx| logs.set_selector(selector, cx));
+                .update(cx, |shell, cx| shell.set_containers(containers, cx));
         }
         if let Some(declared) = view.document.overview.ports.clone() {
             self.ports
@@ -877,6 +830,10 @@ impl DetailPane {
     }
 
     pub(crate) fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if tab == Tab::Logs {
+            self.request_logs(None, cx);
+            return;
+        }
         self.tab = tab;
         self.feedback = None;
         self.show_tab(cx);
@@ -899,17 +856,10 @@ impl DetailPane {
         Some(tab)
     }
 
-    /// Puts the keyboard on what the current tab shows: the lines on the
-    /// Logs tab, the terminal on the Shell tab once it has a session, the
-    /// pane otherwise.
+    /// Puts the keyboard on what the current tab shows: the terminal on the
+    /// Shell tab once it has a session, the pane otherwise.
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.tab {
-            Tab::Logs if self.shows_workload_logs() => self
-                .workload_logs
-                .update(cx, |logs, cx| logs.focus_lines(window, cx)),
-            Tab::Logs => self
-                .logs
-                .update(cx, |logs, cx| logs.focus_lines(window, cx)),
             Tab::Shell if self.shell.update(cx, |shell, cx| shell.focus(window, cx)) => {}
             _ => window.focus(&self.focus, cx),
         }
@@ -931,33 +881,31 @@ impl DetailPane {
         }
     }
 
-    /// Whether the Logs tab shows a workload's pods rather than one pod.
-    fn shows_workload_logs(&self) -> bool {
+    /// Whether the open object has logs: a pod, or a workload that runs
+    /// pods.
+    pub(crate) fn has_logs(&self) -> bool {
         self.detail
             .as_ref()
-            .is_some_and(|detail| !detail.target.kind.is_pod() && runs_pods(&detail.target.kind))
+            .is_some_and(|detail| runs_pods(&detail.target.kind) || detail.target.kind.is_pod())
     }
 
-    /// Tells the logs whether they show, and asks for them the first time
-    /// they do for this pod or workload.
+    /// Asks for the open object's logs in the dock, on `at`'s container
+    /// and instance when given.
+    pub(crate) fn request_logs(&mut self, at: Option<LogsAt>, cx: &mut Context<Self>) {
+        if !self.has_logs() {
+            return;
+        }
+        let Some(detail) = self.detail.as_ref() else {
+            return;
+        };
+        cx.emit(DetailEvent::Link(ResourceLink::Logs(LogsRequest {
+            target: detail.target.clone(),
+            at,
+        })));
+    }
+
+    /// Tells the history whether the Overview shows.
     fn show_tab(&mut self, cx: &mut Context<Self>) {
-        let shown = self.tab == Tab::Logs && self.detail.is_some();
-        let workload = self.shows_workload_logs();
-        let active = self.active;
-        self.logs.update(cx, |logs, cx| {
-            let shown = shown && !workload;
-            if shown {
-                logs.want(cx);
-            }
-            logs.set_visible(shown && active, cx);
-        });
-        self.workload_logs.update(cx, |logs, cx| {
-            let shown = shown && workload;
-            if shown {
-                logs.want(cx);
-            }
-            logs.set_visible(shown && active, cx);
-        });
         self.show_history(cx);
     }
 
@@ -1042,24 +990,14 @@ impl DetailPane {
     fn find_match(&mut self, forward: bool, cx: &mut Context<Self>) {
         match self.tab {
             Tab::Yaml => self.step_match(if forward { 1 } else { -1 }, cx),
-            Tab::Logs if self.shows_workload_logs() => self
-                .workload_logs
-                .update(cx, |logs, cx| logs.find_next(forward, cx)),
-            Tab::Logs => self.logs.update(cx, |logs, cx| logs.find_next(forward, cx)),
-            Tab::Overview | Tab::Events | Tab::Shell | Tab::Ports => {}
+            Tab::Overview | Tab::Events | Tab::Logs | Tab::Shell | Tab::Ports => {}
         }
     }
 
     fn select_all(&mut self, cx: &mut Context<Self>) {
         match self.tab {
-            Tab::Logs if self.shows_workload_logs() => {
-                return self
-                    .workload_logs
-                    .update(cx, |logs, cx| logs.select_all(cx));
-            }
-            Tab::Logs => return self.logs.update(cx, |logs, cx| logs.select_all(cx)),
             // Command-A in the terminal waits for a later step.
-            Tab::Shell | Tab::Ports => return,
+            Tab::Logs | Tab::Shell | Tab::Ports => return,
             _ => {}
         }
         let Some(count) = self.view().map(|view| view.lines.len()) else {
@@ -1075,21 +1013,11 @@ impl DetailPane {
         cx.notify();
     }
 
-    /// Command-F: the log search on the Logs tab, the YAML search elsewhere
-    /// but the Shell tab, whose search waits for a later step.
+    /// Command-F: the YAML search, but on the Shell tab, whose search waits
+    /// for a later step. The dock's logs have their own.
     fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.tab {
-            Tab::Logs if self.shows_workload_logs() => {
-                return self
-                    .workload_logs
-                    .update(cx, |logs, cx| logs.focus_search(window, cx));
-            }
-            Tab::Logs => {
-                return self
-                    .logs
-                    .update(cx, |logs, cx| logs.focus_search(window, cx));
-            }
-            Tab::Shell | Tab::Ports => return,
+            Tab::Logs | Tab::Shell | Tab::Ports => return,
             _ => {}
         }
         self.set_tab(Tab::Yaml, cx);

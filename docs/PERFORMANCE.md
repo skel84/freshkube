@@ -29,9 +29,9 @@ scripts/stress.sh terminal-50k terminal 50000
 | `summary` | opens Health with 20,000 Pods, 2,000 Deployments and 5,000 warning Events, then leaves the collections quiet |
 | `summary-burst <changes/s>` | the summary workload with sustained Pod changes from the same writer as the Resources watch |
 | `summary-410 <changes/s>` | the same workload, with one forced Pod watch expiration and relist after 10 s |
-| `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate; every 50th line carries 300 more characters |
+| `pod-logs <lines/s> [tabs]` | opens a pod's logs in the dock (L on the list) while its container writes at that rate, or that many pods' (up to 8), each in its own tab, all writing; every 50th line carries 300 more characters |
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
-| `workload-logs <lines/s>` | an example Deployment's Logs tab: its pods' containers, through the shared channel live streams use, writing that many lines a second between them |
+| `workload-logs <lines/s>` | an example Deployment's log tab in the dock: its pods' containers, through the shared channel live streams use, writing that many lines a second between them |
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
@@ -128,6 +128,17 @@ No log keeps up: the lag grows by the second for as long as the stream runs. A 6
 - Once the buffer evicts, every batch rebuilds a set of every retained line to drop dead measurements (`logs.sweep`, 0.6 ms now and growing with retention).
 
 Memory stayed flat in every run: resident memory held between 90 and 115 MB through a 60-second flood that filled the 8 MiB log buffer.
+
+#### Eight dock tabs (#284, 7 October 2026)
+
+Logs moved into the dock, where every open tab reads whatever shows. `scripts/stress.sh dock-8x1000 pod-logs 1000 8` opens eight pods' logs from the list, each in its own tab, each writing 1,000 lines a second, on a release build on the Air for 30 s; the one-tab run is the same workload with one pod.
+
+| Tabs | Streams | Render median / p99 (ms) | Main-thread stall p99 (ms) | CPU median | Resident memory |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 1.19 / 1.58 | 7.5 | 39% | 114 MB |
+| 8 | 8 | 1.10 / 1.24 | 6.9 | 43% | 149 MB |
+
+Seven hidden tabs cost about 4 CPU points and 35 MB: a hidden view coalesces what it receives and measures no rows, so only the selected tab draws. Each tab keeps its own retained buffer.
 
 ### Terminal floods
 

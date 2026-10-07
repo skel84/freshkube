@@ -60,7 +60,7 @@ enum Scenario {
     SummaryBurst { rate: u32, expire: bool },
     Table { pods: usize },
     Burst { pods: usize, rate: u32 },
-    PodLogs { rate: u32 },
+    PodLogs { rate: u32, tabs: u32 },
     TalosLogs { rate: u32 },
     WorkloadLogs { rate: u32 },
     Terminal { rate: u32 },
@@ -89,8 +89,10 @@ impl Scenario {
                 pods: number(1, 20_000)? as usize,
                 rate: number(2, 2_000)? as u32,
             },
+            // `tabs` pods, each in its own dock tab, all writing at `rate`.
             "pod-logs" => Scenario::PodLogs {
                 rate: number(1, 10_000)? as u32,
+                tabs: number(2, 1)?.clamp(1, 8) as u32,
             },
             "talos-logs" => Scenario::TalosLogs {
                 rate: number(1, 10_000)? as u32,
@@ -127,11 +129,13 @@ impl Scenario {
                 ),
             ],
             Scenario::Burst { .. } => vec![pods],
-            Scenario::PodLogs { .. } => vec![
+            // L opens the selected pod's logs in the dock, which takes the
+            // keyboard; Escape hands it back to the list for the next pod.
+            Scenario::PodLogs { tabs, .. } => vec![
                 pods,
                 (
                     "FRESHKUBE_STRESS_KEYS",
-                    "wait:3000 down enter secondary-} secondary-} secondary-}".into(),
+                    format!("wait:3000{}", " down l wait:300 escape".repeat(tabs as usize)),
                 ),
             ],
             Scenario::TalosLogs { rate } => vec![
@@ -176,7 +180,7 @@ fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(scenario) = Scenario::parse(&args) else {
         eprintln!(
-            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] | talos-logs [lines/s] | workload-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
+            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] [tabs] | talos-logs [lines/s] | workload-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
         );
         std::process::exit(2);
     };
@@ -328,8 +332,10 @@ impl World {
             seed: 42,
         };
         pods.rows = (0..count).map(|_| pods.pod()).collect();
-        // Some variety for filters and sorting.
-        for (ix, pod) in pods.rows.iter_mut().enumerate() {
+        // Some variety for filters and sorting. Log tabs walk the list,
+        // which a failing pod would fold.
+        let varied = !matches!(scenario, Scenario::PodLogs { .. });
+        for (ix, pod) in pods.rows.iter_mut().enumerate().filter(|_| varied) {
             if ix % 37 == 0 {
                 pod.status = "CrashLoopBackOff";
                 pod.restarts = (ix % 9) as u32 + 1;
@@ -428,8 +434,10 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
         ["api", "v1", "pods"] if watching => summary::watch(world, &path, &param, table),
         ["api", "v1", "pods"] => summary::pods(world, None, &param, true),
         ["api", "v1", "namespaces", _, "pods"] if watching => idle_stream(),
+        // The Pods page asks for a Table; a dock tab's one-pod watch lists
+        // objects by name.
         ["api", "v1", "namespaces", namespace, "pods"] => {
-            summary::pods(world, Some(namespace), &param, true)
+            summary::pods(world, Some(namespace), &param, table)
         }
         ["api", "v1", "namespaces", namespace, "pods", name] => pod_object(world, namespace, name),
         ["api", "v1", "namespaces", _, "pods", _, "log"] => log_stream(world),
@@ -545,7 +553,7 @@ fn pod_object(world: &World, namespace: &str, name: &str) -> Response<Body> {
 /// A container writing `rate` lines a second, each stamped with the time it
 /// was due. Every fiftieth line is long, so wrapping has work to do.
 fn log_stream(world: &World) -> Response<Body> {
-    let Scenario::PodLogs { rate } = world.scenario else {
+    let Scenario::PodLogs { rate, .. } = world.scenario else {
         return idle_stream();
     };
     let (sender, receiver) = mpsc::channel(16);

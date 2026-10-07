@@ -19,8 +19,9 @@ use freshkube_core::{logs::LogEntry, types::LogLevel};
 
 use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
-    FirstLine, FocusSearch, LastLine, LeaveSearch, LogSource, LogView, ManualReviewScroll,
-    NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine, SEARCH_CONTEXT, SelectAll,
+    FirstLine, FocusSearch, LIST_LEAST_REMS, LastLine, LeaveSearch, LogSource, LogView,
+    ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
+    SEARCH_CONTEXT, SelectAll,
 };
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, Tone, dp};
@@ -497,14 +498,14 @@ impl<S: LogSource> Render for LogView<S> {
         // shell chrome. The controls keep their whole height; only a long
         // run of notices is capped, and scrolls within its share.
         let panel_height = self.panel_height.unwrap_or(window.bounds().size.height);
-        let viewport_min = (window.rem_size() * 6.).min(panel_height * 0.5);
+        let viewport_min = (window.rem_size() * LIST_LEAST_REMS).min(panel_height * 0.5);
         let chrome_budget = (panel_height - viewport_min).max(px(0.));
         let panel_width = self
             .width
             .map_or(window.bounds().size.width, |width| width + px(2.));
         let chrome = freshkube_probe::perf::span("logs.chrome");
         let notices_cap = (chrome_budget * 0.25).min(chrome_budget);
-        let notices_height = if self.has_notices() {
+        let notices_natural = if self.has_notices() {
             let mut notices = self.render_notices(cx).into_any_element();
             let measured = notices.layout_as_root(
                 size(
@@ -514,10 +515,11 @@ impl<S: LogSource> Render for LogView<S> {
                 window,
                 cx,
             );
-            (measured.height + px(1.)).min(notices_cap)
+            measured.height + px(1.)
         } else {
             px(0.)
         };
+        let notices_height = notices_natural.min(notices_cap);
         S::prepare_controls(self, panel_width, window, cx);
         let mut toolbar_content = self.render_toolbar_content(cx).into_any_element();
         let toolbar_size = toolbar_content.layout_as_root(
@@ -538,6 +540,13 @@ impl<S: LogSource> Render for LogView<S> {
             px(0.)
         };
         let least_height = toolbar_height + notices_height + notices_gap + viewport_min;
+        // A host that gives the panel this much keeps the list at its own
+        // least height, so the panel doesn't scroll.
+        self.note_least_height(
+            toolbar_height + notices_height + notices_gap + window.rem_size() * LIST_LEAST_REMS,
+            window,
+            cx,
+        );
         drop(chrome);
         let manual_scroll = ManualReviewScroll {
             base: self.scroll.clone(),

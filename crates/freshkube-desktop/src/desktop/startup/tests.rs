@@ -336,8 +336,8 @@ fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppCont
     .unwrap();
 }
 
-/// At the smallest window a workload's Logs tab keeps every control above
-/// the log and inside the pane: the chips give their rows up first, and
+/// At the smallest window a workload's logs keep every control above the
+/// log and inside the dock: the chips give their rows up first, and
 /// "+N" lists every container.
 #[gpui_kit::test]
 fn workload_logs_controls_stay_above_the_log_at_minimum_size(cx: &mut TestAppContext) {
@@ -355,7 +355,7 @@ fn workload_logs_controls_stay_above_the_log_at_minimum_size(cx: &mut TestAppCon
         for _ in 0..3 {
             window.render_frame(cx);
         }
-        let pane = window.find("resource-detail").bounds();
+        let pane = window.find("dock").bounds();
         let toolbar = window.find("logs-toolbar").bounds();
         let viewport = window.find("logs-viewport").bounds();
         assert!(

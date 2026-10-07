@@ -136,6 +136,9 @@ impl MeanHeight {
     }
 }
 
+/// The list's least height in rems, room for three lines: below it, with
+/// the controls whole above, the panel scrolls.
+pub const LIST_LEAST_REMS: f32 = 6.;
 /// How long a wrapped pane's width, or a stream of new lines, must hold
 /// before rows off screen are measured. Until then a frame lays out only the
 /// rows it shows.
@@ -243,6 +246,9 @@ pub struct LogView<S: LogSource> {
     /// Scrolls the whole panel when it is shorter than its controls and
     /// notices over the list's least height, so none of them is cut.
     panel_scroll: ScrollHandle,
+    /// The height the whole toolbar, the notices and the list's least
+    /// height take, as last drawn: the least a host should give the panel.
+    least_height: Pixels,
     measured: Option<MeasurementKey>,
     sizes: Rc<Vec<Size<Pixels>>>,
     /// The sum of the heights in `sizes`, kept in step with every change to
@@ -330,6 +336,7 @@ impl<S: LogSource> LogView<S> {
             width: None,
             panel_height: None,
             panel_scroll: ScrollHandle::new(),
+            least_height: Pixels::ZERO,
             measured: None,
             sizes: Rc::new(Vec::new()),
             sizes_height: 0.,
@@ -438,6 +445,26 @@ impl<S: LogSource> LogView<S> {
         if self.manual_review.replace(false) {
             self.set_following(false, cx);
         }
+    }
+
+    /// The least height the panel should have so that it doesn't scroll:
+    /// its whole toolbar and notices, as last drawn, and the list's least
+    /// height, room for three lines. Zero until the view first draws.
+    pub fn least_height(&self) -> Pixels {
+        self.least_height
+    }
+
+    /// Keeps the least height measured while drawing; a change asks for a
+    /// frame, so a host that sizes the panel by it sees it.
+    fn note_least_height(&mut self, least: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        if (self.least_height - least).abs() < px(0.5) {
+            return;
+        }
+        self.least_height = least;
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            _ = view.update(cx, |_, cx| cx.notify());
+        });
     }
 
     /// Puts the keyboard on the lines.

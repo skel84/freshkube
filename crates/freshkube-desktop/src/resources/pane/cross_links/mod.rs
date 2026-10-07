@@ -367,9 +367,13 @@ impl DetailPane {
         cx.notify();
     }
     fn container_logs(&mut self, name: String, previous: bool, cx: &mut Context<Self>) {
-        self.logs
-            .update(cx, |logs, cx| logs.open_container(name, previous, cx));
-        self.set_tab(Tab::Logs, cx);
+        self.request_logs(
+            Some(super::super::LogsAt {
+                container: name,
+                previous,
+            }),
+            cx,
+        );
     }
 }
 fn example_links(

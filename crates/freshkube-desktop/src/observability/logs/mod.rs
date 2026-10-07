@@ -542,6 +542,7 @@ impl ObservabilityPage {
 /// The list's height: tall where the window has room, never less than its
 /// toolbar and three rows.
 fn list_height(window: &Window) -> f32 {
-    let viewport = window.viewport_size().height / ui::dp_px(1., window);
+    let viewport =
+        window.viewport_size().height / ui::dp_px(1., window) - freshkube_ui::page::below();
     (viewport - AROUND_LIST).clamp(LEAST_LIST_HEIGHT, LIST_HEIGHT)
 }

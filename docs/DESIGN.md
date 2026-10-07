@@ -95,6 +95,7 @@ The user settled the open questions on these changes on 5 October 2026:
 - Header 52 dp: context and “Talos + Kubernetes”, Dashboard / Nodes / Workloads / Events / Observability tabs, relevant time range, Search (⌘K), refresh and settings. Tabs become icons in narrow windows.
 - Rail 64 dp: icon-only areas, tooltips, blue active wash; status dots indicate a problem. Existing Kubernetes groups, Custom Resources, Talos pages and Prometheus dashboards stay reachable.
 - Contextual sidebar 208 dp or a 52 dp icon strip. ⌘B and the title's collapse button toggle it. The choice is remembered in `navigation.json` beside preferences; narrow windows auto-collapse but can be expanded manually. Workloads adds namespace counts from the existing summary. Collapsed namespaces become “all”; Observability data sources become one database button. Collapsed tooltips open to the right.
+- Dock, under the page in the page cell, full width (`freshkube_ui::dock`): a 28 dp bar of closable tabs with, at its right, the tab menu (Close, Close others, Close to the right, Close all), Minimize (⇧Escape), Fit to window and Close all (×). A tab closes with its own ×, a middle-click or ⌘W. It opens at 300 dp, or at most half the page cell in a short window until dragged, and drags from its top edge; below 100 dp it minimizes to its bar. Unless fitted, the page keeps at least 100 dp, and the dock keeps the selected log's toolbar and three lines. With no tabs, or hidden, nothing is drawn; the status bar's "N logs" shows it again.
 - Status bar 28 dp: the shell's status (the connection, a running operation or a node's log collection), then, behind a 14 dp hairline, the visible page's segment, then port forwards and the last refresh. Below 1080 dp the shell's status is its glyph alone, with its text in the tooltip, so the page's segment keeps the room.
 
 ## Status and links
@@ -124,7 +125,7 @@ Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to 
 
 ## G8: pod detail
 
-Open on the cause: state, last exit, next restart, termination output and a Logs action. Continue with the restart timeline, containers, Runs on (node and Talos kubelet health), relationships and recent events. The retained resource pane keeps its watch and shell/forward protections. Previous-instance logs are read only through an explicit Logs action; unavailable history is not invented. The node memory bullet uses Talos used/physical capacity when available and explicitly identifies unavailable requests.
+Open on the cause: state, last exit, next restart, termination output and a Logs action. Logs open in the dock, not a pane tab; the pane's header has a Logs button for a pod or anything that runs pods. Continue with the restart timeline, containers, Runs on (node and Talos kubelet health), relationships and recent events. The retained resource pane keeps its watch and shell/forward protections. Previous-instance logs are read only through an explicit Logs action; unavailable history is not invented. The node memory bullet uses Talos used/physical capacity when available and explicitly identifies unavailable requests.
 
 ## H1–H7: observability
 

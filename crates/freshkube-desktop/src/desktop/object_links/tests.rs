@@ -245,19 +245,37 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         window
             .within(format!("pod-container-{name}"))
             .click("pod-container-previous", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Logs);
+        // The container's previous instance opens in the dock; the pane
+        // stays on Overview.
+        assert_eq!(
+            pilot.read(cx).resources.read(cx).detail_tab(cx),
+            Tab::Overview
+        );
         assert_eq!(window.find("pod-logs-previous").checked(), Some(true));
         assert_eq!(
-            pilot.read(cx).resources.read(cx).detail_log_container(cx),
+            pilot
+                .read(cx)
+                .dock
+                .read(cx)
+                .selected_container(cx)
+                .as_deref(),
             Some(name.as_str())
         );
-        window.click("detail-tab-overview", cx);
-        window.render_frame(cx);
         window
             .within(format!("pod-container-{name}"))
             .click("pod-container-logs", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        // The same tab turns to the current instance.
+        assert_eq!(pilot.read(cx).dock.read(cx).tabs.len(), 1);
         assert_eq!(window.find("pod-logs-previous").checked(), Some(false));
         window.click("detail-tab-overview", cx);
         window.render_frame(cx);
