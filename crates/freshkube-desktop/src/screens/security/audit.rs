@@ -313,6 +313,84 @@ fn volume_items(source: &SourceSnapshot<Vec<VolumeEncryptionAudit>>) -> Vec<Item
     }
 }
 
+/// What the page shows of one audit: its rows, the sources that didn't
+/// fully answer and the counts over the list. Derived when the audit
+/// arrives, so drawing only reads it.
+#[derive(Default)]
+pub(super) struct Display {
+    pub(super) items: Vec<Item>,
+    pub(super) missing: Vec<String>,
+    pub(super) stats: Stats,
+}
+
+impl Display {
+    pub(super) fn new(snapshot: &SecurityAuditSnapshot) -> Self {
+        Self {
+            items: items(snapshot),
+            missing: missing(snapshot),
+            stats: Stats::new(snapshot),
+        }
+    }
+}
+
+/// The counts over the list, in words: a number, or "unknown" when the
+/// source didn't answer.
+#[derive(Default)]
+pub(super) struct Stats {
+    pub(super) valid: String,
+    pub(super) expiring: String,
+    pub(super) expired: String,
+    pub(super) volumes: String,
+}
+
+impl Stats {
+    fn new(snapshot: &SecurityAuditSnapshot) -> Self {
+        let certs: Vec<&CertificateAudit> = snapshot
+            .talosconfig_certificates
+            .value()
+            .into_iter()
+            .chain(snapshot.talos_kubeconfig_certificates.value())
+            .flatten()
+            .collect();
+        let known = snapshot.talosconfig_certificates.value().is_some()
+            || snapshot.talos_kubeconfig_certificates.value().is_some();
+        let count = |pred: fn(CertificateExpiryStatus) -> bool| {
+            if known {
+                certs
+                    .iter()
+                    .filter(|cert| pred(cert.expiry))
+                    .count()
+                    .to_string()
+            } else {
+                "unknown".to_owned()
+            }
+        };
+        let volumes = match snapshot.volume_encryption.value() {
+            Some(volumes) if !volumes.is_empty() => format!(
+                "{} of {}",
+                volumes
+                    .iter()
+                    .filter(|volume| volume.provider != EncryptionProvider::None)
+                    .count(),
+                volumes.len()
+            ),
+            _ => "unknown".to_owned(),
+        };
+        Self {
+            valid: count(|status| status == CertificateExpiryStatus::Valid),
+            expiring: count(|status| {
+                matches!(
+                    status,
+                    CertificateExpiryStatus::ExpiringSoon
+                        | CertificateExpiryStatus::ExpiringVerySoon
+                )
+            }),
+            expired: count(|status| status == CertificateExpiryStatus::Expired),
+            volumes,
+        }
+    }
+}
+
 /// Every row of the audit, in display order.
 pub(super) fn items(snapshot: &SecurityAuditSnapshot) -> Vec<Item> {
     let mut items = certificate_items(
@@ -329,7 +407,7 @@ pub(super) fn items(snapshot: &SecurityAuditSnapshot) -> Vec<Item> {
 }
 
 /// Sources that didn't fully answer, for the partial notice.
-pub(super) fn missing(snapshot: &SecurityAuditSnapshot) -> Vec<String> {
+fn missing(snapshot: &SecurityAuditSnapshot) -> Vec<String> {
     fn note<T>(label: &str, source: &SourceSnapshot<T>, out: &mut Vec<String>) {
         if let Some(problem) = source.problem() {
             let partial = if matches!(source, SourceSnapshot::Partial { .. }) {

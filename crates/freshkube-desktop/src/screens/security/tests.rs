@@ -184,6 +184,36 @@ fn unavailable_section_is_named_and_unknown(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// The rows are derived when an audit arrives, not while drawing: another
+/// frame keeps them, and a new audit replaces them.
+#[gpui_kit::test]
+fn rows_are_derived_once_per_audit(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let first = screen.read(cx).items().as_ptr();
+        window.refresh();
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).items().as_ptr(), first, "derived again");
+        screen.update(cx, |screen, cx| {
+            let source = screen.source.clone().unwrap();
+            let mut snapshot = example(&source, Utc::now()).unwrap();
+            snapshot.volume_encryption = SourceSnapshot::Unavailable {
+                reason: "example".into(),
+            };
+            screen.loader.resolve(source.target.clone(), Ok(snapshot));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let volumes: Vec<_> = (screen.read(cx).items().iter())
+            .filter(|item| item.section == Section::Volumes)
+            .map(|item| item.verdict)
+            .collect();
+        assert_eq!(volumes, [Verdict::Unknown]);
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn silent_target_offers_retry_without_data(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");

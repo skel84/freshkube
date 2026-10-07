@@ -1,56 +1,18 @@
 //! The page: the banners, the summary, the audit's list and the
 //! selection's details.
 use super::*;
+use audit::Stats;
 
 impl SecurityScreen {
-    fn summary(&self, snapshot: &SecurityAuditSnapshot, cx: &App) -> Stateful<Div> {
-        let certs: Vec<&CertificateAudit> = snapshot
-            .talosconfig_certificates
-            .value()
-            .into_iter()
-            .chain(snapshot.talos_kubeconfig_certificates.value())
-            .flatten()
-            .collect();
-        let known = snapshot.talosconfig_certificates.value().is_some()
-            || snapshot.talos_kubeconfig_certificates.value().is_some();
-        let count = |pred: fn(CertificateExpiryStatus) -> bool| {
-            if known {
-                certs
-                    .iter()
-                    .filter(|cert| pred(cert.expiry))
-                    .count()
-                    .to_string()
-            } else {
-                "unknown".to_owned()
-            }
-        };
-        let valid = count(|status| status == CertificateExpiryStatus::Valid);
-        let expiring = count(|status| {
-            matches!(
-                status,
-                CertificateExpiryStatus::ExpiringSoon | CertificateExpiryStatus::ExpiringVerySoon
-            )
-        });
-        let expired = count(|status| status == CertificateExpiryStatus::Expired);
-        let volumes = match snapshot.volume_encryption.value() {
-            Some(volumes) if !volumes.is_empty() => format!(
-                "{} of {}",
-                volumes
-                    .iter()
-                    .filter(|volume| volume.provider != EncryptionProvider::None)
-                    .count(),
-                volumes.len()
-            ),
-            _ => "unknown".to_owned(),
-        };
+    fn summary(stats: &Stats, cx: &App) -> Stateful<Div> {
         h_flex()
             .id("security-summary")
             .gap_2p5()
             .flex_wrap()
-            .child(stat("Valid certificates", valid, cx))
-            .child(stat("Expiring soon", expiring, cx))
-            .child(stat("Expired", expired, cx))
-            .child(stat("Volumes encrypted", volumes, cx))
+            .child(stat("Valid certificates", stats.valid.clone(), cx))
+            .child(stat("Expiring soon", stats.expiring.clone(), cx))
+            .child(stat("Expired", stats.expired.clone(), cx))
+            .child(stat("Volumes encrypted", stats.volumes.clone(), cx))
     }
 
     fn render_row(
@@ -181,6 +143,7 @@ impl SecurityScreen {
 
 impl Render for SecurityScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync();
         self.sync_status();
         let header = self.render_header(window, cx);
         let state = gate(
@@ -237,14 +200,17 @@ impl SecurityScreen {
     /// The banners, the summary and the audit with the selection's details,
     /// inset under the toolbar.
     fn render_body(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(snapshot) = self.loader.data() else {
+        if self.loader.data().is_none() {
             return div().into_any_element();
-        };
+        }
         let p = palette(cx);
-        let all = items(snapshot);
-        let selected_ix = self.selected_index(&all);
-        let missing = missing(snapshot);
-        let summary = self.summary(snapshot, cx);
+        let Display {
+            items: all,
+            missing,
+            stats,
+        } = &self.display.1;
+        let selected_ix = self.selected_index(all);
+        let summary = Self::summary(stats, cx);
 
         // Rows are grouped under section captions; remember where the
         // selected row lands among the children so it can scroll into view.
@@ -340,7 +306,7 @@ impl SecurityScreen {
             .py(dp(page::PANE_PADDING_Y))
             .gap(dp(14.))
             .children(failure_banner(&self.loader, cx))
-            .children(partial_notice(missing, cx))
+            .children(partial_notice(missing.clone(), cx))
             .child(summary)
             .child(split)
             .into_any_element()

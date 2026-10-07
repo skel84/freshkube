@@ -48,9 +48,9 @@ mod example;
 mod tests;
 mod view;
 
+use audit::{Display, Item, Section, identity_parts};
 #[cfg(test)]
-use audit::Verdict;
-use audit::{Item, Section, identity_parts, items, missing};
+use audit::{Verdict, items};
 use example::example;
 
 pub(crate) struct SecurityScreen {
@@ -63,6 +63,8 @@ pub(crate) struct SecurityScreen {
     scroll: ScrollHandle,
     /// The meta line's parts for the audit at a loader revision.
     status: Option<(u64, Segment)>,
+    /// The audit's rows and counts at a loader revision.
+    display: (u64, Display),
 }
 
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
@@ -83,6 +85,7 @@ impl ScreenPanel for SecurityScreen {
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             status: None,
+            display: (u64::MAX, Display::default()),
         }
     }
 
@@ -158,8 +161,20 @@ impl ScreenPanel for SecurityScreen {
 }
 
 impl SecurityScreen {
-    fn items(&self) -> Vec<Item> {
-        self.loader.data().map(items).unwrap_or_default()
+    /// The rows as last derived; [`Self::sync`] brings them up to date.
+    fn items(&self) -> &[Item] {
+        &self.display.1.items
+    }
+
+    /// Derives the rows and counts again when a new audit arrives or the
+    /// old one goes.
+    fn sync(&mut self) {
+        let revision = self.loader.revision();
+        if self.display.0 == revision {
+            return;
+        }
+        let display = self.loader.data().map(Display::new).unwrap_or_default();
+        self.display = (revision, display);
     }
 
     /// Index of the selected row; the first row until the user picks one.
@@ -171,6 +186,7 @@ impl SecurityScreen {
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        self.sync();
         let items = self.items();
         if items.is_empty() {
             return;
