@@ -1,6 +1,6 @@
 //! Switching a Talos window to Kubernetes-only mode inside the app.
 use super::tests::{fixture, mount, start_shell};
-use super::{Pilot, kubernetes_only};
+use super::{Page, Pilot, kubernetes_only};
 use crate::GpuiOptions;
 use crate::forwards::{self, ForwardSpec};
 use crate::resources::{KubeAccess, example, live, shell};
@@ -159,37 +159,39 @@ async fn a_remembered_launch_keeps_remembering_and_a_talosconfig_returns_to_talo
     let store = crate::connection_preferences::ConnectionStore::new(&preferences);
     store.remember_kubernetes(crate::connection_preferences::KubeSelection {
         path: file.clone(),
-        context: "alpha".into(),
+        context: "beta".into(),
     });
     store.save_latest().unwrap();
 
-    // The next launch opens on the remembered kubeconfig and context.
+    // The next launch opens on the remembered kubeconfig and context, not
+    // on the file's current one (alpha).
     cx.executor().allow_parking();
-    let options =
-        GpuiOptions::kubernetes_only(None, None, 100).with_preferences(Some(preferences.clone()));
+    let options = GpuiOptions::kubernetes_only(None, None, 100)
+        .with_preferences_in(Some(preferences.clone()), false);
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
     cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).applied.context.as_deref() == Some("alpha")
+        view.read(cx).applied.context.as_deref() == Some("beta")
     })
     .await;
     // Another context there is remembered too.
     click(cx, handle, "context-switcher");
-    click_context(cx, handle, 1);
+    click_context(cx, handle, 0);
     cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
-        saved(directory).is_some_and(|saved| saved["context"] == "beta")
+        saved(directory).is_some_and(|saved| saved["context"] == "alpha")
     })
     .await;
 
-    // Choosing a talosconfig returns to Talos, and that is remembered.
+    // The Control plane column's talosconfig entry returns to Talos, and
+    // that is remembered.
     cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |view, cx| {
-            let text = talosconfig.display().to_string();
-            view.path
-                .update(cx, |input, cx| input.set_value(text, window, cx));
-            view.apply_config_path(window, cx);
-        })
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx))
     })
     .unwrap();
+    cx.run_until_parked();
+    click(cx, handle, "add-talosconfig");
+    click(cx, handle, "browse-config");
+    let chosen = talosconfig.clone();
+    cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
     cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
         let view = view.read(cx);
         view.kubernetes_only.is_none() && view.contexts == ["gamma"]
@@ -249,6 +251,16 @@ async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppConte
     let guard = tempfile::tempdir().unwrap();
     let file = kubeconfig(guard.path());
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    // Start from the second example context: Kubernetes-only mode opens on
+    // the first, which is a different connection, so the shell has to go.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            let second = view.contexts[1].clone();
+            view.select_context(second, window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
     let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
     let pod = pod(&context);
     start_shell(handle, &view, &pod, cx);
@@ -282,7 +294,7 @@ async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
-async fn an_open_forward_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
+fn an_open_forward_is_not_asked_about_and_keeps_running(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     let file = kubeconfig(guard.path());
@@ -304,28 +316,82 @@ async fn an_open_forward_is_asked_about_before_leaving_talos(cx: &mut TestAppCon
     cx.run_until_parked();
     assert_eq!(cx.read(forwards::running), 1);
 
-    let switch = |cx: &mut TestAppContext| {
-        let file = file.clone();
-        cx.update_window(handle, |_, window, cx| {
-            view.update(cx, |view, cx| view.use_kubernetes_only(file, window, cx))
-        })
-        .unwrap();
-        cx.run_until_parked();
-    };
-    switch(cx);
-    let (message, _) = cx.pending_prompt().unwrap();
-    assert_eq!(message, "Stop 1 forward?");
-    cx.simulate_prompt_answer("Cancel");
+    // A forward runs on the connection it started with, so the switch
+    // neither asks nor stops it.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.use_kubernetes_only(file, window, cx))
+    })
+    .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_none()));
+    assert!(!cx.has_pending_prompt());
+    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_some()));
     assert_eq!(cx.read(forwards::running), 1);
+    cx.update(|cx| {
+        let stopping = forwards::stop_all(cx);
+        drop(stopping);
+    });
+}
 
-    switch(cx);
-    cx.simulate_prompt_answer("Stop");
-    // The switch waits for the ports to be freed, which takes real time.
-    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, cx| {
-        view.read(cx).kubernetes_only.is_some()
+#[gpui_kit::test]
+async fn a_kubeconfig_without_contexts_gets_its_own_error_state(cx: &mut TestAppContext) {
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path();
+    let empty = directory.join("empty");
+    std::fs::write(&empty, "apiVersion: v1\nkind: Config\n").unwrap();
+    let (_runtime, handle, view) = broken_talos(cx, directory);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
     })
     .await;
-    assert_eq!(cx.read(forwards::running), 0);
+    click(cx, handle, "use-kubernetes-only");
+    cx.simulate_path_prompt_response(move |_| Some(vec![empty.clone()]));
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        let view = view.read(cx);
+        view.kubernetes_only.is_some() && view.config_error.is_some()
+    })
+    .await;
+    // The state names the kubeconfig and its Browse works; the Talos
+    // button, which would do nothing here, is gone.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("browse-kubeconfig-empty").visible());
+        assert!(window.find("retry-kubeconfig").visible());
+        assert!(window.try_find("use-kubernetes-only").is_none());
+        assert!(window.try_find("browse-config-empty").is_none());
+    })
+    .unwrap();
+    click(cx, handle, "browse-kubeconfig-empty");
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|_| None);
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+async fn choosing_another_kubeconfig_in_settings_connects_to_none(cx: &mut TestAppContext) {
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path();
+    let first = kubeconfig(directory);
+    let second = directory.join("second");
+    std::fs::write(&second, KUBECONFIG).unwrap();
+    cx.executor().allow_parking();
+    let options = GpuiOptions::kubernetes_only(Some(first), Some("beta".into()), 100);
+    let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).applied.context.as_deref() == Some("beta")
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.use_kubeconfig_file(second, window, cx))
+    })
+    .unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        let view = view.read(cx);
+        view.contexts == ["alpha", "beta"] && view.applied.context.is_none()
+    })
+    .await;
+    cx.update(|cx| {
+        let kube = view.read(cx).kubernetes_only.as_ref().unwrap();
+        assert!(kube.access().is_none());
+        assert_eq!(kube.connection, kubernetes_only::KubeConnection::Idle);
+    });
 }

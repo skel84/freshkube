@@ -290,17 +290,6 @@ impl Pilot {
         shell::unless_shell(self, running, window, cx, then);
     }
 
-    /// As [`Self::unless_shell`], and forwards are stopped too: `then` leaves
-    /// the connection for another kind of source.
-    pub(super) fn unless_held(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) {
-        shell::unless_held(self, window, cx, then);
-    }
-
     pub(super) fn adjacent_context(
         &mut self,
         next: bool,

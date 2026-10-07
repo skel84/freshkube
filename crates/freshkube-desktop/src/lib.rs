@@ -104,7 +104,15 @@ impl GpuiOptions {
     /// choice is restored to a Kubernetes-only launch that names neither a
     /// kubeconfig nor a context; fixture and maintenance launches keep their
     /// requested mode.
-    pub fn with_preferences(mut self, path: Option<PathBuf>) -> Self {
+    ///
+    /// A terminal's `KUBECONFIG` beats the remembered kubeconfig, as
+    /// `TALOSCONFIG` beats the remembered talosconfig.
+    pub fn with_preferences(self, path: Option<PathBuf>) -> Self {
+        let environment = std::env::var_os("KUBECONFIG").is_some_and(|value| !value.is_empty());
+        self.with_preferences_in(path, environment)
+    }
+
+    fn with_preferences_in(mut self, path: Option<PathBuf>, kubeconfig_environment: bool) -> Self {
         if !self.fixture && self.maintenance_endpoint.is_none() {
             match path
                 .as_deref()
@@ -120,6 +128,7 @@ impl GpuiOptions {
                 }
                 Some(connection_preferences::Remembered::Kubernetes(saved))
                     if self.kubernetes_only
+                        && !kubeconfig_environment
                         && self.kubeconfig_path.is_none()
                         && self.kube_context.is_none() =>
                 {
@@ -383,29 +392,38 @@ mod connection_tests {
         // The remembered choice stands in for the Talos default.
         assert!(!talos_available(Some(&preferences), || true));
         let restored = GpuiOptions::kubernetes_only(None, None, 100)
-            .with_preferences(Some(preferences.clone()));
+            .with_preferences_in(Some(preferences.clone()), false);
         assert_eq!(restored.kubeconfig_path(), Some(chosen.as_path()));
         assert_eq!(restored.kube_context(), Some("example"));
         assert!(restored.restored_kubernetes());
 
+        // A terminal's KUBECONFIG beats the remembered choice, as TALOSCONFIG
+        // beats the remembered talosconfig.
+        let environment = GpuiOptions::kubernetes_only(None, None, 100)
+            .with_preferences_in(Some(preferences.clone()), true);
+        assert_eq!(environment.kubeconfig_path(), None);
+        assert_eq!(environment.kube_context(), None);
+        assert!(!environment.restored_kubernetes());
+
         // A kubeconfig or context named on the command line wins.
         let other = directory.join("other");
         let named = GpuiOptions::kubernetes_only(Some(other.clone()), None, 100)
-            .with_preferences(Some(preferences.clone()));
+            .with_preferences_in(Some(preferences.clone()), false);
         assert_eq!(named.kubeconfig_path(), Some(other.as_path()));
         assert_eq!(named.kube_context(), None);
         assert!(!named.restored_kubernetes());
         let context = GpuiOptions::kubernetes_only(None, Some("named".into()), 100)
-            .with_preferences(Some(preferences.clone()));
+            .with_preferences_in(Some(preferences.clone()), false);
         assert_eq!(context.kubeconfig_path(), None);
         assert_eq!(context.kube_context(), Some("named"));
         assert!(!context.restored_kubernetes());
         // It never turns a Talos launch into a Kubernetes one.
-        let talos = GpuiOptions::new(None, None, 100).with_preferences(Some(preferences.clone()));
+        let talos =
+            GpuiOptions::new(None, None, 100).with_preferences_in(Some(preferences.clone()), false);
         assert!(!talos.is_kubernetes_only() && talos.config_path().is_none());
         assert!(
             !GpuiOptions::fixture()
-                .with_preferences(Some(preferences.clone()))
+                .with_preferences_in(Some(preferences.clone()), false)
                 .restored_kubernetes()
         );
 
@@ -417,7 +435,7 @@ mod connection_tests {
         store.save_latest().unwrap();
         assert!(talos_available(Some(&preferences), || false));
         let back = GpuiOptions::kubernetes_only(None, None, 100)
-            .with_preferences(Some(preferences.clone()));
+            .with_preferences_in(Some(preferences.clone()), false);
         assert_eq!(back.kubeconfig_path(), None);
         assert!(!back.restored_kubernetes());
         // Nothing remembered: the default talosconfig decides.

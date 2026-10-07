@@ -448,6 +448,9 @@ impl Pilot {
             };
             kube.explicit = Some(path);
             kube.requested = None;
+            // Having chosen the file is not having chosen a context, and
+            // the choice is remembered only once a context is picked.
+            kube.choosing = true;
             this.load_kube_contexts(window, cx);
         });
     }
@@ -480,7 +483,8 @@ impl Pilot {
     }
 
     /// Replaces the Talos session with Kubernetes-only mode on `path`, after
-    /// asking about open shells and forwards, as another connection does.
+    /// asking about open shells, as another connection does. Forwards keep
+    /// running on the connection they started with.
     pub(super) fn use_kubernetes_only(
         &mut self,
         path: PathBuf,
@@ -490,7 +494,7 @@ impl Pilot {
         if self.kubernetes_only.is_some() {
             return;
         }
-        self.unless_held(window, cx, move |this, window, cx| {
+        self.unless_shell(window, cx, move |this, window, cx| {
             this.enter_kubernetes_only(path, window, cx)
         });
     }
@@ -512,6 +516,8 @@ impl Pilot {
         self.context_nodes.clear();
         self.contexts.clear();
         self.applied.context = None;
+        // A Talos-mode kubeconfig read still in flight must not apply later.
+        self.kubeconfig_draft = Default::default();
         let mut kube = KubernetesOnly::new(Some(path), None).remembering();
         // Example mode connects to nothing, so it takes the first example
         // context at once; a real file waits for the user's pick.
