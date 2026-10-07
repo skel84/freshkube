@@ -621,6 +621,137 @@ async fn task_runs_that_cannot_be_read_leave_the_build_standing() {
     );
 }
 
+/// Two builds of the same commit, `storefront-push-x` and
+/// `storefront-push-y`, each with its own TaskRun.
+fn two_builds() -> World {
+    let mut second = pipeline_run(SHA, true, Some(NEW));
+    second["metadata"]["name"] = serde_json::json!("storefront-push-y");
+    second["status"]["childReferences"][0]["name"] = serde_json::json!("storefront-push-y-verify");
+    let mut second_task = task_run();
+    second_task["metadata"]["name"] = serde_json::json!("storefront-push-y-verify");
+    second_task["metadata"]["labels"]["tekton.dev/pipelineRun"] =
+        serde_json::json!("storefront-push-y");
+    let mut world = healthy();
+    world.tekton = world
+        .tekton
+        .with(
+            "pipelineruns",
+            vec![pipeline_run(SHA, true, Some(NEW)), second],
+        )
+        .with("taskruns", vec![task_run(), second_task]);
+    world
+}
+
+fn of<'a>(links: &[&'a super::join::Link], run: &str) -> &'a super::join::Link {
+    let subject = format!("acme-builds/{run}");
+    let found: Vec<_> = links.iter().filter(|l| l.subject == subject).collect();
+    assert_eq!(found.len(), 1, "{subject} in {links:#?}");
+    found[0]
+}
+
+#[tokio::test]
+async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
+    let mut world = two_builds();
+    world.tekton = world
+        .tekton
+        .refusing_selector("taskruns", "tekton.dev/pipelineRun=storefront-push-y");
+
+    let read = read_builds(&world.tekton, "acme-builds", SHA).await;
+    let Source::Read(builds) = &read else {
+        panic!("the builds were read: {read:?}");
+    };
+    assert_eq!(builds.len(), 2);
+    let read_one = builds
+        .iter()
+        .find(|b| b.run.name == "storefront-push-x")
+        .unwrap();
+    assert_eq!(read_one.tasks.len(), 1);
+    assert_eq!(read_one.tasks_unread, None);
+    let refused = builds
+        .iter()
+        .find(|b| b.run.name == "storefront-push-y")
+        .unwrap();
+    assert!(refused.tasks.is_empty());
+    assert_eq!(refused.tasks_unread.as_deref(), Some("forbidden by RBAC"));
+
+    let trail = run(&world, &ENV).await;
+    let commits = link(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(commits.len(), 2, "{trail:#?}");
+    let x = of(&commits, "storefront-push-x");
+    assert_eq!(x.confidence, Confidence::Confirmed);
+    assert!(!x.reason.contains("not read"), "{}", x.reason);
+    let y = of(&commits, "storefront-push-y");
+    assert_eq!(
+        y.confidence,
+        Confidence::Confirmed,
+        "the run's own revision still confirms it"
+    );
+    assert!(
+        y.reason
+            .contains("its TaskRuns were not read (forbidden by RBAC)"),
+        "{}",
+        y.reason
+    );
+
+    let supply = link(&trail, Hop::PipelineRun, Hop::SupplyChain);
+    let x = of(&supply, "storefront-push-x");
+    assert!(
+        x.reason
+            .contains("Conforma SUCCESS (0 failures, 1 warnings)"),
+        "the other build's TaskRun result still joins: {}",
+        x.reason
+    );
+    assert!(!x.reason.contains("not read"), "{}", x.reason);
+    let y = of(&supply, "storefront-push-y");
+    assert!(
+        y.reason
+            .contains("its TaskRuns were not read (forbidden by RBAC), so their results are unknown; no Conforma result"),
+        "{}",
+        y.reason
+    );
+    assert!(!y.reason.contains("Conforma FAILURE"), "{}", y.reason);
+}
+
+#[tokio::test]
+async fn tekton_is_discovered_once_for_every_build_it_reads() {
+    let world = two_builds();
+    let read = read_builds(&world.tekton, "acme-builds", SHA).await;
+    assert_eq!(read.read().map(Vec::len), Some(2));
+    let requests = world.tekton.requests.borrow();
+    let discovery: Vec<&str> = requests
+        .iter()
+        .map(String::as_str)
+        .filter(|r| r.starts_with("GET /apis"))
+        .collect();
+    assert_eq!(discovery, ["GET /apis", "GET /apis/tekton.dev/v1"]);
+    let count = |prefix: &str| requests.iter().filter(|r| r.starts_with(prefix)).count();
+    assert_eq!(count("LIST tekton.dev/v1/pipelineruns"), 1, "{requests:#?}");
+    assert_eq!(count("LIST tekton.dev/v1/taskruns"), 2, "{requests:#?}");
+}
+
+#[tokio::test]
+async fn task_runs_that_are_not_served_leave_the_build_standing() {
+    let tekton = FixtureReader::default()
+        .serves("tekton.dev", "v1", &["pipelineruns"])
+        .with("pipelineruns", vec![pipeline_run(SHA, true, Some(NEW))])
+        .with("taskruns", vec![task_run()]);
+    let read = read_builds(&tekton, "acme-builds", SHA).await;
+    let builds = read.read().expect("the builds were read");
+    assert_eq!(builds.len(), 1);
+    assert_eq!(
+        builds[0].tasks_unread.as_deref(),
+        Some("taskruns.tekton.dev is not served at any version")
+    );
+    assert!(
+        tekton
+            .requests
+            .borrow()
+            .iter()
+            .all(|r| !r.contains("taskruns")),
+        "nothing is listed at a version that doesn't serve it"
+    );
+}
+
 #[tokio::test]
 async fn a_short_sha_finds_no_build() {
     let world = healthy();
