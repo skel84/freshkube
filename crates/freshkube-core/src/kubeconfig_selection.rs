@@ -67,27 +67,34 @@ pub fn inspect_kubeconfig(path: &Path) -> Result<KubeconfigFileInfo, K8sError> {
 /// Why [`read_bounded_regular_file`] gave no bytes.
 #[derive(Debug)]
 pub enum BoundedReadError {
-    /// The path couldn't be opened: missing, not permitted, or unreadable.
-    Open(std::io::Error),
-    /// The opened file's metadata couldn't be read.
-    Inspect(std::io::Error),
+    /// The path doesn't exist.
+    NotFound,
+    /// The path exists but may not be read.
+    PermissionDenied,
     /// The path is not a regular file: a directory, FIFO or device.
-    NotRegular,
+    NotRegularFile,
     /// The file is longer than the limit.
     TooLarge,
-    /// Reading the opened file failed.
-    Read(std::io::Error),
+    /// Any other failure to open, inspect or read it.
+    Io(std::io::Error),
 }
 
 impl BoundedReadError {
+    fn open(error: std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            _ => Self::Io(error),
+        }
+    }
+
     /// A fixed, credential-free reason, for messages that carry no OS text.
     pub fn reason(&self) -> &'static str {
         match self {
-            Self::Open(_) => "file is unreadable or does not exist",
-            Self::Inspect(_) => "file metadata is unavailable",
-            Self::NotRegular => "path is not a regular file",
+            Self::NotFound | Self::PermissionDenied => "file is unreadable or does not exist",
+            Self::NotRegularFile => "path is not a regular file",
             Self::TooLarge => "file exceeds the supported size limit",
-            Self::Read(_) => "file could not be read",
+            Self::Io(_) => "file could not be read",
         }
     }
 }
@@ -105,7 +112,7 @@ fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, BoundedReadErro
     reader
         .take(limit + 1)
         .read_to_end(&mut bytes)
-        .map_err(BoundedReadError::Read)?;
+        .map_err(BoundedReadError::Io)?;
     if bytes.len() as u64 > limit {
         return Err(BoundedReadError::TooLarge);
     }
@@ -124,10 +131,10 @@ pub fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, Bou
         // block the worker before descriptor metadata can reject it.
         options.custom_flags(libc::O_NONBLOCK);
     }
-    let file = options.open(path).map_err(BoundedReadError::Open)?;
-    let metadata = file.metadata().map_err(BoundedReadError::Inspect)?;
+    let file = options.open(path).map_err(BoundedReadError::open)?;
+    let metadata = file.metadata().map_err(BoundedReadError::Io)?;
     if !metadata.is_file() {
-        return Err(BoundedReadError::NotRegular);
+        return Err(BoundedReadError::NotRegularFile);
     }
     if metadata.len() > limit {
         return Err(BoundedReadError::TooLarge);

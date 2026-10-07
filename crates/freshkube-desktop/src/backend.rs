@@ -105,11 +105,11 @@ fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIde
 /// What the user reads when the talosconfig can't be read.
 fn config_read_message(error: BoundedReadError) -> String {
     match error {
-        BoundedReadError::Open(error) => format!("Cannot open talosconfig: {error}"),
-        BoundedReadError::Inspect(error) => format!("Cannot inspect talosconfig: {error}"),
-        BoundedReadError::NotRegular => "Talos configuration must be a regular file".into(),
+        BoundedReadError::NotFound => "Cannot open talosconfig: file not found".into(),
+        BoundedReadError::PermissionDenied => "Cannot open talosconfig: permission denied".into(),
+        BoundedReadError::NotRegularFile => "Talos configuration must be a regular file".into(),
         BoundedReadError::TooLarge => "Talos configuration exceeds the 4 MiB limit".into(),
-        BoundedReadError::Read(error) => format!("Cannot read talosconfig: {error}"),
+        BoundedReadError::Io(error) => format!("Cannot read talosconfig: {error}"),
     }
 }
 
@@ -657,10 +657,12 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_talosconfig_says_it_cannot_be_opened() {
+    fn a_missing_talosconfig_says_it_was_not_found() {
         let directory = ConfigDirectory::new();
-        let error = read_config_file(&directory.0.join("absent")).unwrap_err();
-        assert!(error.starts_with("Cannot open talosconfig: "), "{error}");
+        assert_eq!(
+            read_config_file(&directory.0.join("absent")).unwrap_err(),
+            "Cannot open talosconfig: file not found"
+        );
     }
 
     #[test]
@@ -674,7 +676,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn an_unreadable_talosconfig_says_it_cannot_be_opened() {
+    fn an_unreadable_talosconfig_says_permission_denied() {
         use std::os::unix::fs::PermissionsExt;
         let directory = ConfigDirectory::new();
         let locked = directory.0.join("locked");
@@ -682,29 +684,32 @@ mod tests {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
         // The superuser reads anything, so there is nothing to refuse.
         if std::fs::File::open(&locked).is_err() {
-            let error = read_config_file(&locked).unwrap_err();
-            assert!(error.starts_with("Cannot open talosconfig: "), "{error}");
-            assert!(
-                error.to_lowercase().contains("permission denied"),
-                "{error}"
+            assert_eq!(
+                read_config_file(&locked).unwrap_err(),
+                "Cannot open talosconfig: permission denied"
             );
         }
     }
 
     #[test]
-    fn io_failures_after_opening_name_the_step_that_failed() {
-        let failure = || std::io::Error::other("disk gone");
+    fn an_oversized_talosconfig_names_the_limit() {
+        let directory = ConfigDirectory::new();
+        let oversized = directory.0.join("oversized");
+        std::fs::File::create(&oversized)
+            .unwrap()
+            .set_len(MAX_CONFIG_BYTES + 1)
+            .unwrap();
         assert_eq!(
-            config_read_message(BoundedReadError::Inspect(failure())),
-            "Cannot inspect talosconfig: disk gone"
-        );
-        assert_eq!(
-            config_read_message(BoundedReadError::Read(failure())),
-            "Cannot read talosconfig: disk gone"
-        );
-        assert_eq!(
-            config_read_message(BoundedReadError::TooLarge),
+            read_config_file(&oversized).unwrap_err(),
             "Talos configuration exceeds the 4 MiB limit"
+        );
+    }
+
+    #[test]
+    fn an_io_failure_names_the_os_text() {
+        assert_eq!(
+            config_read_message(BoundedReadError::Io(std::io::Error::other("disk gone"))),
+            "Cannot read talosconfig: disk gone"
         );
     }
 
