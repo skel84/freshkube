@@ -27,14 +27,15 @@ pub(super) trait Controls: Sized + 'static {
     /// Where the watch stands: a tag, and the counts.
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement;
 
-    /// A watch failure with Retry, or the cap's notice.
+    /// A watch failure with Retry, refused streams with Retry, or the cap's
+    /// notice.
     fn render_notices(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
 
     /// One chip per container read: its state, and whether its lines show.
     fn render_streams(&self, cx: &mut Context<Self>) -> Option<AnyElement>;
 
     /// "+N", which lists every container.
-    fn render_more(&self, hidden: usize, cx: &mut Context<Self>) -> AnyElement;
+    fn render_more(&self, cx: &mut Context<Self>) -> AnyElement;
 
     /// How many chips the rows have room for, from their widths, measured
     /// again only when the chips or the text size change.
@@ -157,13 +158,31 @@ impl Controls for WorkloadLogView {
                     .into_any_element(),
             );
         }
-        let left_out = self.source().left_out;
-        if left_out > 0 {
-            let text: SharedString = format!(
-                "Reading {MAX_STREAMS} of {} containers, the newest pods first.",
-                MAX_STREAMS + left_out
-            )
-            .into();
+        if let Some(text) = self.source().refused_note.clone() {
+            notices.push(
+                div()
+                    .id("workload-logs-refused")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(text.clone())
+                    .child(ui::warning_banner(
+                        None,
+                        text,
+                        Some(
+                            Button::new("workload-logs-retry-refused")
+                                .outline()
+                                .small()
+                                .icon(IconName::RefreshCw)
+                                .label("Retry")
+                                .on_click(cx.listener(|view, _, _, cx| view.retry_refused(cx)))
+                                .into_any_element(),
+                        ),
+                        cx,
+                    ))
+                    .into_any_element(),
+            );
+        }
+        if let Some(text) = self.source().capped.clone() {
             notices.push(
                 div()
                     .id("workload-logs-capped")
@@ -189,7 +208,7 @@ impl Controls for WorkloadLogView {
                 .id("workload-logs-streams")
                 .test_support()
                 .role(Role::Group)
-                .aria_label(plural(chips.len(), "container", "containers"))
+                .aria_label(self.source().streams_label.clone())
                 .w_full()
                 .min_w_0()
                 .flex_wrap()
@@ -199,16 +218,14 @@ impl Controls for WorkloadLogView {
                         .iter()
                         .map(|item| chip(item, item.id.clone(), view.clone(), cx)),
                 )
-                .when(shown < chips.len(), |this| {
-                    this.child(self.render_more(chips.len() - shown, cx))
-                })
+                .when(shown < chips.len(), |this| this.child(self.render_more(cx)))
                 .into_any_element(),
         )
     }
 
-    fn render_more(&self, hidden: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_more(&self, cx: &mut Context<Self>) -> AnyElement {
         let chips = self.source().chips.clone();
-        let label = more_label(hidden, chips.len());
+        let label = self.source().more_label.clone();
         let view = cx.entity().downgrade();
         let open_view = view.clone();
         Popover::new("workload-logs-more-popover")
@@ -293,6 +310,12 @@ impl Controls for WorkloadLogView {
         );
         let source = self.source_mut();
         source.fits = fits;
+        // "+N" is derived again only when what it counts changes.
+        let counts = (chips.len().saturating_sub(fits), chips.len());
+        if source.more_for != Some(counts) {
+            source.more_label = more_label(counts.0, counts.1);
+            source.more_for = Some(counts);
+        }
         // With every chip in its row there's no "+N" to hold the list open.
         if fits >= chips.len() {
             source.more_open = false;
