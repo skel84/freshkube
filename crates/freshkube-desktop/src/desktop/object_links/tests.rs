@@ -534,7 +534,7 @@ fn forward_lands_a_fresh_drawer_on_its_ports(cx: &mut TestAppContext) {
 /// leaves, its subject shrinking first, so its buttons stay in sight
 /// (#321).
 #[gpui_kit::test]
-fn group_buttons_stay_clear_of_the_drawer(cx: &mut TestAppContext) {
+fn group_labels_stay_clear_of_the_drawer(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1320., 880.);
     open_in_drawer(handle, &pilot, cx);
     cx.update_window(handle, |_, window, _| {
@@ -544,27 +544,20 @@ fn group_buttons_stay_clear_of_the_drawer(cx: &mut TestAppContext) {
             drawer.left() - list.left() < gpui_kit::px(400.),
             "{list:?} {drawer:?}"
         );
-        let mut seen = 0;
+        // The group's actions are its menu's (DESIGN.md change 10); what
+        // it shows of itself lays out in the room the drawer leaves.
         for key in [
             "resource-group-failing",
             "resource-group-node:talos-wk-fra1-02",
         ] {
-            for action in ["open-node", "select"] {
-                let Some(button) =
-                    window.try_find(gpui_kit::SharedString::from(format!("{key}-{action}")))
-                else {
-                    continue;
-                };
-                seen += 1;
-                assert!(
-                    button.bounds().right() <= drawer.left(),
-                    "{key}-{action}: {:?} under the drawer at {:?}",
-                    button.bounds(),
-                    drawer.left()
-                );
-            }
+            let id = gpui_kit::ElementId::from(gpui_kit::SharedString::from(key));
+            let label = window.find((id, "label")).bounds();
+            assert!(
+                label.right() <= drawer.left(),
+                "{key}: {label:?} under the drawer at {:?}",
+                drawer.left()
+            );
         }
-        assert_eq!(seen, 3);
     })
     .unwrap();
 }

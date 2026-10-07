@@ -77,7 +77,10 @@ actions!(
         OpenSelected,
         ChooseNamespace,
         ToggleMark,
-        OpenLogs
+        OpenLogs,
+        SelectGroup,
+        OpenNode,
+        ToggleHealthy
     ]
 );
 
@@ -291,6 +294,9 @@ impl ResourcesScreen {
             KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
             KeyBinding::new("x", ToggleMark, Some(CONTEXT)),
             KeyBinding::new("l", OpenLogs, Some(CONTEXT)),
+            KeyBinding::new("shift-x", SelectGroup, Some(CONTEXT)),
+            KeyBinding::new("o", OpenNode, Some(CONTEXT)),
+            KeyBinding::new("h", ToggleHealthy, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
@@ -1323,6 +1329,7 @@ impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 mod cells;
 mod controls;
 mod layout;
+mod menu;
 mod pods;
 mod source;
 mod view;
