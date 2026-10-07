@@ -988,3 +988,123 @@ async fn the_page_is_the_shared_padded_frame(cx: &mut TestAppContext) {
         .unwrap();
     }
 }
+
+/// How wide `caption` draws as a form caption: upper case, bold, 11 dp.
+fn caption_width(window: &gpui_kit::Window, caption: &str) -> gpui_kit::Pixels {
+    let mut face = gpui_kit::font(".SystemUIFont");
+    face.weight = crate::ui::HEADING_WEIGHT;
+    let text = caption.to_uppercase();
+    let run = gpui_kit::TextRun {
+        len: text.len(),
+        font: face,
+        color: Default::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(text.into(), crate::ui::dp_px(11., window), &[run], None)
+        .width
+}
+
+/// Every caption fits its card at both text sizes, as the long ones didn't
+/// (#375); what they said moved to notes under the fields, which wrap, and
+/// each field's accessible name still carries it.
+#[gpui_kit::test]
+async fn the_form_captions_fit_and_the_fields_keep_their_notes(cx: &mut TestAppContext) {
+    const CAPTIONS: [&str; 8] = [
+        "Insecure Talos endpoint",
+        "Cluster name",
+        "Kubernetes API HTTPS endpoint",
+        "Configuration output directory",
+        "Authenticated Talos context",
+        "Exact Talos node",
+        "Expected Kubernetes node name",
+        "Kubeconfig path",
+    ];
+    let world = World::new("captions");
+    let (_runtime, handle, _view) = mount(cx, &world, NODE);
+    for text in [13., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            // The inputs span the card inside its padding.
+            let room = window.find("maint-endpoint").bounds().size.width;
+            for caption in CAPTIONS {
+                let width = caption_width(window, caption);
+                assert!(
+                    width <= room,
+                    "at {text} px, {caption:?} is {width:?} in {room:?}"
+                );
+            }
+            if text == 13. {
+                // The measure tells: the old caption overflowed.
+                let old =
+                    "Selected kubeconfig path (optional; empty uses the authenticated Talos API)";
+                assert!(caption_width(window, old) > room);
+            }
+        })
+        .unwrap();
+    }
+    for (id, name) in [
+        (
+            "maint-output",
+            "Configuration output directory. Generation overwrites files here.",
+        ),
+        (
+            "maint-bootstrap-node",
+            "Exact Talos node. The node to wait for and bootstrap; must match the endpoint.",
+        ),
+        (
+            "maint-kubernetes-node",
+            "Expected Kubernetes node name. Optional; no IP-to-name inference.",
+        ),
+        (
+            "maint-kubeconfig",
+            "Kubeconfig path. Optional; empty uses the authenticated Talos API.",
+        ),
+        ("maint-cluster", "Cluster name"),
+    ] {
+        assert_eq!(label(cx, handle, id), name);
+    }
+}
+
+/// Beside the workflow the form keeps its width; when the window is too
+/// narrow for both, it stacks above the workflow and fills the row (#375).
+#[gpui_kit::test]
+async fn a_stacked_form_fills_the_row(cx: &mut TestAppContext) {
+    let world = World::new("stacked");
+    let (_runtime, wide, _view) = mount(cx, &world, NODE);
+    cx.update_window(wide, |_, window, cx| {
+        window.render_frame(cx);
+        let form = window.find("maint-form").bounds();
+        let workflow = window.find("maint-workflow").bounds();
+        assert!(
+            workflow.left() > form.right(),
+            "{form:?} beside {workflow:?}"
+        );
+        let width = crate::ui::dp_px(440., window);
+        assert!((form.size.width - width).abs() < px(0.5), "{form:?}");
+    })
+    .unwrap();
+
+    let (endpoint, runner) = (NODE.to_owned(), world.runner());
+    let (_runtime, narrow, _view) = mount_at(cx, 760., move |runtime, window, cx| {
+        MaintenanceView::with_runner(endpoint, runtime, runner, window, cx)
+    });
+    cx.update_window(narrow, |_, window, cx| {
+        window.render_frame(cx);
+        let form = window.find("maint-form").bounds();
+        let workflow = window.find("maint-workflow").bounds();
+        assert!(
+            workflow.top() >= form.bottom(),
+            "{form:?} above {workflow:?}"
+        );
+        assert!(
+            (form.size.width - workflow.size.width).abs() < px(0.5),
+            "the form {form:?} is not as wide as the workflow {workflow:?}"
+        );
+    })
+    .unwrap();
+}
