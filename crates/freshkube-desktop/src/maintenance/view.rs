@@ -6,6 +6,11 @@ use freshkube_ui::page::{self, PageHeader};
 
 /// The prefix of the page header's ids.
 const PREFIX: &str = "maint";
+/// The form's width beside the workflow; stacked above it, it fills the row.
+const FORM_WIDTH: f32 = 440.;
+/// The least the workflow column takes beside the form.
+const WORKFLOW_MIN_WIDTH: f32 = 420.;
+const COLUMN_GAP: f32 = 16.;
 
 fn phase_label(phase: &BootstrapPhase) -> (&'static str, Tone) {
     match phase {
@@ -108,6 +113,14 @@ pub(super) fn heading(text: &'static str) -> Div {
         .child(text)
 }
 
+/// A field's note: muted, smaller than the field, and wrapping.
+fn hint(text: &'static str, cx: &App) -> Div {
+    div()
+        .text_size(dp(12.))
+        .text_color(palette(cx).muted)
+        .child(text)
+}
+
 impl MaintenanceView {
     fn labelled(&self, label: &'static str, input: impl IntoElement, cx: &App) -> Div {
         v_flex().gap_1().child(ui::caption(label, cx)).child(input)
@@ -121,15 +134,34 @@ impl MaintenanceView {
         locked: bool,
         cx: &App,
     ) -> Div {
+        self.hinted_input(label, None, id, state, locked, cx)
+    }
+
+    /// An input under a short caption, with its `note` under it, where it
+    /// wraps; the input's accessible name carries both.
+    fn hinted_input(
+        &self,
+        label: &'static str,
+        note: Option<&'static str>,
+        id: &'static str,
+        state: &Entity<InputState>,
+        locked: bool,
+        cx: &App,
+    ) -> Div {
+        let name: SharedString = match note {
+            Some(note) => format!("{label}. {note}").into(),
+            None => label.into(),
+        };
         self.labelled(
             label,
             Input::new(state)
                 .id(id)
-                .aria_label(label)
+                .aria_label(name)
                 .small()
                 .disabled(locked),
             cx,
         )
+        .when_some(note, |this, note| this.child(hint(note, cx)))
     }
 
     fn title_bar(&self, cx: &App) -> AnyElement {
@@ -207,8 +239,9 @@ impl MaintenanceView {
                 locked,
                 cx,
             ))
-            .child(self.input(
-                "Configuration output directory (generation overwrites files here)",
+            .child(self.hinted_input(
+                "Configuration output directory",
+                Some("Generation overwrites files here."),
                 "maint-output",
                 &self.fields.output,
                 locked,
@@ -257,33 +290,34 @@ impl MaintenanceView {
                         self.draft.output
                     )),
             )
-            .child(self.input(
-                "Exact Talos node to wait for / bootstrap (must match the endpoint)",
+            .child(self.hinted_input(
+                "Exact Talos node",
+                Some("The node to wait for and bootstrap; must match the endpoint."),
                 "maint-bootstrap-node",
                 &self.fields.bootstrap_node,
                 locked,
                 cx,
             ))
-            .child(self.input(
-                "Expected Kubernetes node name (optional; no IP-to-name inference)",
+            .child(self.hinted_input(
+                "Expected Kubernetes node name",
+                Some("Optional; no IP-to-name inference."),
                 "maint-kubernetes-node",
                 &self.fields.kubernetes_node,
                 locked,
                 cx,
             ))
-            .child(self.input(
-                "Selected kubeconfig path (optional; empty uses the authenticated Talos API)",
+            .child(self.hinted_input(
+                "Kubeconfig path",
+                Some("Optional; empty uses the authenticated Talos API."),
                 "maint-kubeconfig",
                 &self.fields.kubeconfig,
                 locked,
                 cx,
             ))
-            .child(
-                div()
-                    .text_size(dp(12.))
-                    .text_color(palette(cx).muted)
-                    .child("A selected kubeconfig must match the CA/TLS identity of this authenticated Talos node before any credentials or plugins are used. Rejection means unavailable, never an ambient fallback."),
-            )
+            .child(hint(
+                "A selected kubeconfig must match the CA/TLS identity of this authenticated Talos node before any credentials or plugins are used. Rejection means unavailable, never an ambient fallback.",
+                cx,
+            ))
             .child(
                 Button::new("maint-start")
                     .primary()
@@ -808,18 +842,36 @@ impl MaintenanceView {
         let form = self.form(cx);
         let workflow = self.workflow(window, cx);
         let progress = self.progress_panel(cx);
+        // This window has no rail or column: the page is the whole width.
+        let width = window.viewport_size().width / ui::dp_px(1., window) - page::PAGE_PADDING * 2.;
+        let stacked = width < FORM_WIDTH + COLUMN_GAP + WORKFLOW_MIN_WIDTH;
         h_flex()
             .id("maint-columns")
             .test_support()
             .flex_none()
             .items_start()
-            .gap_5()
+            .gap(dp(COLUMN_GAP))
             .flex_wrap()
-            .child(div().w(dp(440.)).flex_none().child(form))
+            .child(
+                div()
+                    .id("maint-form")
+                    .test_support()
+                    .flex_none()
+                    .map(|form| {
+                        if stacked {
+                            form.w_full()
+                        } else {
+                            form.w(dp(FORM_WIDTH))
+                        }
+                    })
+                    .child(form),
+            )
             .child(
                 v_flex()
+                    .id("maint-workflow")
+                    .test_support()
                     .flex_1()
-                    .min_w(dp(420.))
+                    .min_w(dp(WORKFLOW_MIN_WIDTH))
                     .gap_4()
                     .child(workflow)
                     .child(progress),
