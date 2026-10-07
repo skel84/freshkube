@@ -5,13 +5,6 @@ use k8s_openapi::{api::core::v1::Pod, apimachinery::pkg::api::resource::Quantity
 
 use crate::resources::{Amounts, cpu_millis, quantity};
 
-pub(super) fn active(pod: &Pod) -> bool {
-    !matches!(
-        pod.status.as_ref().and_then(|s| s.phase.as_deref()),
-        Some("Succeeded" | "Failed")
-    )
-}
-
 pub(super) const ZERO: Amounts = Amounts {
     cpu_millis: Some(0.),
     memory_bytes: Some(0.),
