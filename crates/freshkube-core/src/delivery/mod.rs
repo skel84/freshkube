@@ -23,6 +23,8 @@ mod versions;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod provenance;
+#[cfg(test)]
 mod tests;
 
 pub use argocd::StageNaming;

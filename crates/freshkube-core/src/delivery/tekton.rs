@@ -21,7 +21,7 @@ pub const SHA_LABEL: &str = "pipelinesascode.tekton.dev/sha";
 const REPOSITORY_LABEL: &str = "pipelinesascode.tekton.dev/repository";
 const PIPELINE_RUN_LABEL: &str = "tekton.dev/pipelineRun";
 /// Chains writes `"true"` here once it has signed a run.
-const CHAINS_SIGNED: &str = "chains.tekton.dev/signed";
+pub const CHAINS_SIGNED: &str = "chains.tekton.dev/signed";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PipelineRun {
@@ -275,6 +275,24 @@ pub fn conforma(results: &BTreeMap<String, String>) -> Option<Conforma> {
     })
 }
 
+/// Where a build's own witness to its commit was read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WitnessSource {
+    /// A parameter of the run: declared.
+    Param,
+    /// A result of the run: reported.
+    RunResult,
+    /// A result of the task at this index of [`Build::tasks`]: reported.
+    TaskResult(usize),
+}
+
+/// A commit a build names besides the PaC label, and where.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Witness {
+    pub commit: String,
+    pub source: WitnessSource,
+}
+
 /// A PipelineRun with the TaskRuns that belong to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
@@ -339,13 +357,24 @@ impl Build {
     /// The commit the build names besides the PaC label: a revision
     /// parameter, else a commit result of the run or one of its tasks.
     pub fn witnessed_commit(&self, names: &CommitNames) -> Option<String> {
-        named_commit(&self.run.params, UPSTREAM_REVISION_PARAMS, &names.params).or_else(|| {
-            result_commit(&self.run.results, names).or_else(|| {
-                self.tasks
-                    .iter()
-                    .find_map(|task| result_commit(&task.results, names))
+        self.witness(names).map(|witness| witness.commit)
+    }
+
+    /// [`Build::witnessed_commit`], with where the commit was read.
+    pub fn witness(&self, names: &CommitNames) -> Option<Witness> {
+        let named = |commit, source| Witness { commit, source };
+        named_commit(&self.run.params, UPSTREAM_REVISION_PARAMS, &names.params)
+            .map(|commit| named(commit, WitnessSource::Param))
+            .or_else(|| {
+                result_commit(&self.run.results, names)
+                    .map(|commit| named(commit, WitnessSource::RunResult))
             })
-        })
+            .or_else(|| {
+                self.tasks.iter().enumerate().find_map(|(index, task)| {
+                    result_commit(&task.results, names)
+                        .map(|commit| named(commit, WitnessSource::TaskResult(index)))
+                })
+            })
     }
 }
 

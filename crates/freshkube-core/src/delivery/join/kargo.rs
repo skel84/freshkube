@@ -3,6 +3,7 @@ use crate::delivery::kargo::{Freight, Promotion, Stage};
 use crate::delivery::source::{cap_note, redact_message};
 
 use super::argo::{application_links, same_commit, short_commit};
+use super::observe::{freight_side, promotion_digest, promotion_names, stage_digest, stage_names};
 use super::*;
 
 pub(super) fn freight_summary(freight: &Freight, sha: &str) -> String {
@@ -94,16 +95,22 @@ pub(super) fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
     for stage in current {
         let health = stage_health(stage);
         links.push(match shared_digest(freight, &stage.current_digests) {
-            Some(digest) => Link::new(
-                Hop::Freight,
-                Hop::Stage,
-                id(&stage.project, &stage.name),
-                Key::Digest(digest.clone()),
-                Confidence::Confirmed,
-                format!(
-                    "the Stage's record of its current Freight carries the digest; health {health}"
-                ),
-            ),
+            Some(digest) => {
+                let key = Key::Digest(digest.clone());
+                let mut seen = freight_side(freight, &key);
+                seen.extend(stage_digest(stage, digest));
+                Link::new(
+                    Hop::Freight,
+                    Hop::Stage,
+                    id(&stage.project, &stage.name),
+                    key,
+                    Confidence::Confirmed,
+                    format!(
+                        "the Stage's record of its current Freight carries the digest; health {health}"
+                    ),
+                )
+                .observed(seen)
+            }
             None => Link::new(
                 Hop::Freight,
                 Hop::Stage,
@@ -111,7 +118,8 @@ pub(super) fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
                 Key::Name(freight.name.clone()),
                 Confidence::Claimed,
                 format!("the Stage names this Freight only; health {health}"),
-            ),
+            )
+            .observed(stage_names(stage, &freight.name)),
         });
         links.extend(application_links(evidence, freight, stage));
     }
@@ -166,14 +174,20 @@ fn promotion_link(promotion: &Promotion, freight: &Freight) -> Link {
     );
     let subject = id(&promotion.project, &promotion.name);
     match shared_digest(freight, &promotion.freight_digests) {
-        Some(digest) => Link::new(
-            Hop::Freight,
-            Hop::Promotion,
-            subject,
-            Key::Digest(digest.clone()),
-            Confidence::Confirmed,
-            format!("the Promotion's status carries the Freight's digest; {note}"),
-        ),
+        Some(digest) => {
+            let key = Key::Digest(digest.clone());
+            let mut seen = freight_side(freight, &key);
+            seen.extend(promotion_digest(promotion, digest));
+            Link::new(
+                Hop::Freight,
+                Hop::Promotion,
+                subject,
+                key,
+                Confidence::Confirmed,
+                format!("the Promotion's status carries the Freight's digest; {note}"),
+            )
+            .observed(seen)
+        }
         None => Link::new(
             Hop::Freight,
             Hop::Promotion,
@@ -181,6 +195,7 @@ fn promotion_link(promotion: &Promotion, freight: &Freight) -> Link {
             Key::Name(promotion.freight.clone().unwrap_or_default()),
             Confidence::Claimed,
             format!("named by the Promotion's spec only; {note}"),
-        ),
+        )
+        .observed(promotion_names(promotion)),
     }
 }

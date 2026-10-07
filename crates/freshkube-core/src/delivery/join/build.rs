@@ -4,6 +4,10 @@ use crate::delivery::kargo::Freight;
 use crate::delivery::source::{Source, cap_note};
 use crate::delivery::tekton::{Build, CommitNames, EvidenceResult};
 
+use super::observe::{
+    built_image, change, freight_side, pull_request, pull_request_side, run_commit_side, side,
+    supply_chain_side,
+};
 use super::*;
 
 pub(super) fn pull_request_links(
@@ -59,18 +63,28 @@ pub(super) fn pull_request_links(
                 "only by ancestry, as GitHub lists it; neither its head nor its merge commit",
             )
         };
-        links.push(Link::new(
-            Hop::PullRequest,
-            Hop::Commit,
-            subject.clone(),
-            Key::Sha(sha.clone()),
-            confidence,
-            format!(
-                "the commit is {how}; {}{}",
-                pr.state.as_deref().unwrap_or("state unknown"),
-                if pr.merged { ", merged" } else { "" }
-            ),
-        ));
+        let by_pr = if merge_is || head_is {
+            pull_request_side(pr, sha)
+        } else {
+            pull_request(pr)
+        };
+        let mut on_commit = by_pr.clone();
+        on_commit.push(change(sha));
+        links.push(
+            Link::new(
+                Hop::PullRequest,
+                Hop::Commit,
+                subject.clone(),
+                Key::Sha(sha.clone()),
+                confidence,
+                format!(
+                    "the commit is {how}; {}{}",
+                    pr.state.as_deref().unwrap_or("state unknown"),
+                    if pr.merged { ", merged" } else { "" }
+                ),
+            )
+            .observed(on_commit),
+        );
         if merge_is || head_is {
             for build in builds {
                 let run = commit_link(sha, build, &evidence.commit_names);
@@ -80,14 +94,19 @@ pub(super) fn pull_request_links(
                     }
                     _ => String::new(),
                 };
-                links.push(Link::new(
-                    Hop::PullRequest,
-                    Hop::PipelineRun,
-                    run.subject,
-                    Key::Sha(sha.clone()),
-                    run.confidence,
-                    format!("built from {how}; {}{numbered}", run.reason),
-                ));
+                let mut on_run = by_pr.clone();
+                on_run.extend(without_change(run.evidence));
+                links.push(
+                    Link::new(
+                        Hop::PullRequest,
+                        Hop::PipelineRun,
+                        run.subject,
+                        Key::Sha(sha.clone()),
+                        run.confidence,
+                        format!("built from {how}; {}{numbered}", run.reason),
+                    )
+                    .observed(on_run),
+                );
             }
         }
         if head_is {
@@ -155,14 +174,19 @@ fn head_build_links(
                     .join(", ")
             )
         };
-        links.push(Link::new(
-            Hop::PullRequest,
-            Hop::PipelineRun,
-            run.subject,
-            Key::Sha(head.clone()),
-            run.confidence,
-            format!("built from the head commit; {note}; {}", run.reason),
-        ));
+        let mut evidence = pull_request_side(pr, head);
+        evidence.extend(without_change(run.evidence));
+        links.push(
+            Link::new(
+                Hop::PullRequest,
+                Hop::PipelineRun,
+                run.subject,
+                Key::Sha(head.clone()),
+                run.confidence,
+                format!("built from the head commit; {note}; {}", run.reason),
+            )
+            .observed(evidence),
+        );
         // A head build whose digest Kargo holds joins the PR to that Freight
         // on the digest, whatever the merge commit was.
         for item in freight {
@@ -172,14 +196,27 @@ fn head_build_links(
                 .filter_map(|image| image.digest.as_ref())
                 .find(|digest| digests.contains(digest))
             {
-                links.push(Link::new(
-                    Hop::PullRequest,
-                    Hop::Freight,
-                    format!("{}/{}", item.project, item.name),
-                    Key::Digest(digest.clone()),
-                    Confidence::Confirmed,
-                    "Kargo holds the image the pull request's head commit built",
-                ));
+                // The pull request's side is the join's own reading of its
+                // head commit as the one that built the image.
+                let mut evidence = side(
+                    built_image(build, digest).into_iter().collect(),
+                    digest.as_str(),
+                    crate::delivery::observation::role::GITHUB,
+                    pr.object_ref(),
+                    "/head/sha",
+                );
+                evidence.extend(freight_side(item, &Key::Digest(digest.clone())));
+                links.push(
+                    Link::new(
+                        Hop::PullRequest,
+                        Hop::Freight,
+                        format!("{}/{}", item.project, item.name),
+                        Key::Digest(digest.clone()),
+                        Confidence::Confirmed,
+                        "Kargo holds the image the pull request's head commit built",
+                    )
+                    .observed(evidence),
+                );
             }
         }
     }
@@ -196,7 +233,9 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
         Some(why) => format!("{outcome}; its TaskRuns were not read ({why})"),
         None => outcome,
     };
-    match build.witnessed_commit(names) {
+    let mut evidence = vec![change(sha)];
+    evidence.extend(run_commit_side(build, names, sha));
+    let link = match build.witnessed_commit(names) {
         Some(witness) if witness.eq_ignore_ascii_case(sha) => Link::new(
             Hop::Commit,
             Hop::PipelineRun,
@@ -221,7 +260,16 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
             Confidence::Claimed,
             format!("only the PaC label says so; {outcome}"),
         ),
-    }
+    };
+    link.observed(evidence)
+}
+
+/// A run's evidence without the commit side, which is the change itself.
+fn without_change(evidence: Vec<Observation>) -> Vec<Observation> {
+    evidence
+        .into_iter()
+        .filter(|seen| seen.object.kind != "Commit")
+        .collect()
 }
 
 pub(super) fn supply_chain_links(
@@ -292,6 +340,9 @@ pub(super) fn supply_chain_links(
                 ),
                 None => (Confidence::Unknown, "no Chains annotation".to_owned()),
             };
+            let mut evidence: Vec<Observation> =
+                built_image(build, &image.digest).into_iter().collect();
+            evidence.extend(supply_chain_side(build, &image.digest));
             Link::new(
                 Hop::PipelineRun,
                 Hop::SupplyChain,
@@ -306,6 +357,7 @@ pub(super) fn supply_chain_links(
                         .unwrap_or_default()
                 ),
             )
+            .observed(evidence)
         })
         .collect()
 }

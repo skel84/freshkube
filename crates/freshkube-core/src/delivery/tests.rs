@@ -9,11 +9,11 @@ use super::source::Source;
 use super::tekton::{built_images, conforma, read_builds};
 
 /// The caller's clock, fixed: nothing in core reads the time.
-fn observed_at() -> chrono::DateTime<chrono::Utc> {
+pub(super) fn observed_at() -> chrono::DateTime<chrono::Utc> {
     "2026-10-06T12:00:00Z".parse().expect("a fixed time")
 }
 
-fn plan(contexts: &[(&str, &str)]) -> Plan {
+pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
     Plan {
         sha: SHA.into(),
         kargo_project: "storefront".into(),
@@ -33,11 +33,11 @@ fn plan(contexts: &[(&str, &str)]) -> Plan {
     }
 }
 
-async fn run(world: &World, contexts: &[(&str, &str)]) -> Trail {
+pub(super) async fn run(world: &World, contexts: &[(&str, &str)]) -> Trail {
     run_with(world, contexts, &FixtureGitHub::default(), None).await
 }
 
-async fn run_with(
+pub(super) async fn run_with(
     world: &World,
     contexts: &[(&str, &str)],
     github: &FixtureGitHub,
@@ -75,7 +75,7 @@ async fn run_configured(
     join(&collect(&clusters, &plan, observed_at()).await)
 }
 
-fn link(trail: &Trail, from: Hop, to: Hop) -> Vec<&super::join::Link> {
+pub(super) fn link(trail: &Trail, from: Hop, to: Hop) -> Vec<&super::join::Link> {
     trail
         .links
         .iter()
@@ -83,7 +83,7 @@ fn link(trail: &Trail, from: Hop, to: Hop) -> Vec<&super::join::Link> {
         .collect()
 }
 
-fn one(trail: &Trail, from: Hop, to: Hop) -> &super::join::Link {
+pub(super) fn one(trail: &Trail, from: Hop, to: Hop) -> &super::join::Link {
     let found = link(trail, from, to);
     assert_eq!(found.len(), 1, "{from:?}->{to:?} in {trail:#?}");
     found[0]
@@ -421,7 +421,7 @@ fn build_results_pair_urls_with_digests_and_conforma_is_parsed() {
 /// A squash merge: the pull request's head commit is not the commit on main.
 /// Main's build is what shipped; the head's build produced another digest,
 /// which Kargo also holds as older freight.
-fn squash_world() -> World {
+pub(super) fn squash_world() -> World {
     let mut world = healthy();
     world.tekton = world.tekton.with(
         "pipelineruns",
@@ -947,7 +947,7 @@ async fn pods_are_not_read_from_a_cluster_that_is_not_the_destination() {
 
 /// The healthy world, with the Promotion and the Stage recording what Kargo
 /// writes, and the Application synced at `revision`.
-fn promoted(digest: &str, phase: &str, revision: &str) -> World {
+pub(super) fn promoted(digest: &str, phase: &str, revision: &str) -> World {
     let mut world = healthy();
     world.kargo = world
         .kargo
@@ -962,7 +962,7 @@ fn promoted(digest: &str, phase: &str, revision: &str) -> World {
     world
 }
 
-const ENV: [(&str, &str); 1] = [("env-a", "https://env-a.example:6443")];
+pub(super) const ENV: [(&str, &str); 1] = [("env-a", "https://env-a.example:6443")];
 
 #[tokio::test]
 async fn the_pushed_commit_the_application_synced_confirms_promotion_stage_and_application() {
