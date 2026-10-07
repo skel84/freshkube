@@ -191,10 +191,6 @@ impl LifecycleScreen {
             .rows
             .iter()
             .find_map(|row| row.talos.clone().ok());
-        let support = match talos.as_deref().and_then(kubernetes_support) {
-            Some((low, high)) => format!("v1.{low} – v1.{high}"),
-            None => "not in the support table".to_owned(),
-        };
         panel(cx)
             .id("lifecycle-sources")
             .test_support()
@@ -255,13 +251,7 @@ impl LifecycleScreen {
             ))
             .child(field(
                 "Kubernetes support",
-                status(
-                    match &talos {
-                        Some(talos) => format!("Talos {talos} supports {support}"),
-                        None => "Talos version not reported".into(),
-                    },
-                    talos.is_some(),
-                ),
+                status(support_line(talos.as_deref()), talos.is_some()),
                 cx,
             ))
             .into_any_element()
@@ -412,3 +402,29 @@ const CARD_MIN: f32 = 320.;
 // ---------------------------------------------------------------------------
 // Example data
 // ---------------------------------------------------------------------------
+
+/// The Kubernetes range the cluster's Talos supports, in words.
+fn support_line(talos: Option<&str>) -> String {
+    let Some(talos) = talos else {
+        return "Talos version not reported".into();
+    };
+    match kubernetes_support(talos) {
+        Some((low, high)) => format!("Talos {talos} supports v1.{low} – v1.{high}"),
+        None => format!("Talos {talos} isn't in the support table"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::support_line;
+
+    #[test]
+    fn the_support_line_reads_for_every_talos() {
+        assert_eq!(support_line(None), "Talos version not reported");
+        assert_eq!(
+            support_line(Some("v0.1.0")),
+            "Talos v0.1.0 isn't in the support table"
+        );
+        assert!(support_line(Some("v1.8.0")).starts_with("Talos v1.8.0 supports v1."));
+    }
+}
