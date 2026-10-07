@@ -7,7 +7,8 @@ use gpui_kit::{
 
 use super::{
     LogSource, LogView, MeanHeight, MeasurementKey, REMEASURE_BUDGET, RESIZE_SETTLE,
-    RowMeasurement, review::VisibleDelta, view::shown_message,
+    RowMeasurement,
+    review::{VisibleDelta, shown_message},
 };
 
 impl<S: LogSource> LogView<S> {
@@ -175,48 +176,54 @@ impl<S: LogSource> LogView<S> {
 
     /// Brings row `ix` into view by its middle. A search's match taller than
     /// the list instead shows its matched line in the list's middle, so a
-    /// long stack trace doesn't hide the line the search found.
+    /// long stack trace doesn't hide the line the search found, whichever
+    /// of its lines that is.
     pub(super) fn reveal_row(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // A matched line is found within the row's measured height, never
+        // an estimate. `measure_viewport` settles the revealed row first,
+        // so this lays nothing out unless that changes.
+        if self.reveal_matched_line.is_some()
+            && self.row_exact.get(ix) == Some(&false)
+            && let Some(key) = self.measured.clone()
+        {
+            self.settle_row(ix, &key, window, cx);
+        }
         let list = self.scroll.bounds().size.height;
         let tall = self.sizes.get(ix).is_some_and(|row| row.height > list);
-        if self.reveal_matched_line
+        if let Some(line) = self.reveal_matched_line
             && tall
             && list > px(0.)
-            && let Some(line_end) = self.matched_line_end(ix, window, cx)
+            && let Some(line_end) = self.matched_line_end(ix, line, window, cx)
         {
             let before: Pixels = self.sizes[..ix].iter().map(|row| row.height).sum();
             let top = (before + line_end - list / 2.).max(px(0.));
             self.scroll.set_offset(point(self.scroll.offset().x, -top));
+            #[cfg(test)]
+            {
+                self.revealed_line = Some((self.review.id(ix), line, line_end));
+            }
         } else {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
     }
 
-    /// How far down row `ix` the first message line holding the query ends,
-    /// measured by laying the row out again with its message cut after that
-    /// line, so it wraps as the row does. `None` when no single line holds
-    /// the query, as when it matched the source's name.
+    /// How far down row `ix` its message's line `line` ends, counting lines
+    /// split after each newline, measured by laying the row out again with
+    /// its message cut after that line, so it wraps as the row does. `None`
+    /// when the row has no such line.
     fn matched_line_end(
         &mut self,
         ix: usize,
+        line: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Pixels> {
         let key = self.measured.clone()?;
-        let query = self.review.query.to_lowercase();
         let message = shown_message(self.review.entry(ix));
-        let mut end = 0;
-        let mut found = false;
-        for line in message.split_inclusive('\n') {
-            end += line.len();
-            if line.to_lowercase().contains(&query) {
-                found = true;
-                break;
-            }
-        }
-        if query.is_empty() || !found {
-            return None;
-        }
+        let mut lines = message.split_inclusive('\n');
+        let before: usize = lines.by_ref().take(line).map(str::len).sum();
+        let end = before + lines.next()?.len();
+        freshkube_probe::probe::hit("logs.reveal_line");
         let shown = message[..end].trim_end_matches('\n').to_owned();
         let mut row = (self.render_row_showing(ix, true, Some(&shown), cx)).into_any_element();
         Some(row.layout_as_root(available(&key), window, cx).height)

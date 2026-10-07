@@ -1,7 +1,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, FontWeight, Hsla, ListSizingBehavior, Render, Role,
-    SharedString, TestSupportExt, Window,
+    AnyElement, AvailableSpace, Context, FontWeight, HighlightStyle, Hsla, ListSizingBehavior,
+    Render, Role, SharedString, StyledText, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants},
@@ -9,6 +9,7 @@ use gpui_kit::{
         input::Input,
         menu::{DropdownMenu, PopupMenuItem},
         scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
+        tooltip::Tooltip,
         v_flex, v_virtual_list,
     },
     div, point,
@@ -16,26 +17,17 @@ use gpui_kit::{
     px, relative, rems, size,
 };
 
-use freshkube_core::{logs::LogEntry, types::LogLevel};
+use freshkube_core::types::LogLevel;
 
 use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
     FirstLine, FocusSearch, LIST_LEAST_REMS, LastLine, LeaveSearch, LogSource, LogView,
     ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
     SEARCH_CONTEXT, SelectAll,
+    review::{Mark, shown_message},
 };
 use freshkube_ui::palette::{Palette, palette};
 use freshkube_ui::ui::{self, dp};
-
-/// What a row's message column shows: its message, or the whole line when
-/// the message is blank.
-pub(super) fn shown_message(entry: &LogEntry) -> &str {
-    if entry.message.trim().is_empty() {
-        entry.selectable_text()
-    } else {
-        &entry.message
-    }
-}
 
 impl<S: LogSource> LogView<S> {
     pub(super) fn render_row(
@@ -63,8 +55,14 @@ impl<S: LogSource> LogView<S> {
         }
         let columns = self.columns;
         let selected = self.review.selected.contains(&id);
-        let matched = self.review.is_match(row_ix);
-        let current = self.review.current_match == Some(id);
+        let marks = self.review.marks(row_ix);
+        let matched = marks.row == Some(Mark::Match);
+        let current = marks.row == Some(Mark::Current);
+        // A message of several lines marks its matching lines instead of
+        // the whole row, so Next moves the mark within the row. Only the
+        // background changes, so rows laid out to measure leave it out.
+        let line_marks =
+            (!measuring && message.is_none() && !marks.lines.is_empty()).then_some(marks.lines);
         let p = palette(cx);
         let (level, level_color, stripe) = level_style(&entry.level, &p);
         let time = entry
@@ -163,7 +161,24 @@ impl<S: LogSource> LogView<S> {
                     .min_w_0()
                     .when(!wrapped, |element| element.whitespace_nowrap())
                     .when(wrapped, |element| element.whitespace_normal())
-                    .child(message),
+                    .map(|element| match line_marks {
+                        Some(lines) => element.child(StyledText::new(message).with_highlights(
+                            lines.into_iter().map(|(range, mark)| {
+                                let background = match mark {
+                                    Mark::Current => p.mark,
+                                    Mark::Match => p.mark.opacity(0.35),
+                                };
+                                (
+                                    range,
+                                    HighlightStyle {
+                                        background_color: Some(background),
+                                        ..HighlightStyle::default()
+                                    },
+                                )
+                            }),
+                        )),
+                        None => element.child(message),
+                    }),
             )
             .on_click(
                 cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
@@ -331,13 +346,6 @@ impl<S: LogSource> LogView<S> {
 
     fn render_toolbar_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let p = palette(cx);
-        let match_count = self.review.match_count();
-        let current_position = self.review.current_match.and_then(|id| {
-            self.review
-                .matched_ids()
-                .iter()
-                .position(|&matched| matched == id)
-        });
         let selected = self.review.selected.len();
         // One row: the source's tools, then the shared ones; a narrow
         // panel or a large text size wraps it once.
@@ -374,16 +382,21 @@ impl<S: LogSource> LogView<S> {
                             ),
                     )
                     .when(!self.review.query.is_empty(), |this| {
+                        // Derived with the count when the match changes.
+                        let count = self.review.search_count();
+                        let tip = count.tip.clone();
                         this.child(
                             div()
+                                .id("logs-search-count")
+                                .test_support()
+                                .aria_label(count.tip)
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(tip.clone()).build(window, cx)
+                                })
                                 .flex_none()
                                 .text_size(dp(11.))
                                 .text_color(p.muted)
-                                .child(match (match_count, current_position) {
-                                    (0, _) => "No matches".to_owned(),
-                                    (count, Some(ix)) => format!("{} of {count}", ix + 1),
-                                    (count, None) => format!("– of {count}"),
-                                }),
+                                .child(count.text),
                         )
                     })
                     .child(
@@ -536,7 +549,7 @@ impl<S: LogSource> Render for LogView<S> {
         {
             self.reveal_row(ix, window, cx);
         }
-        self.reveal_matched_line = false;
+        self.reveal_matched_line = None;
         let p = palette(cx);
         let empty = S::empty_message(self);
         let entity = cx.entity().downgrade();
