@@ -76,8 +76,12 @@ pub(crate) struct TabKey {
     resource: String,
     namespace: String,
     name: String,
-    /// The pod's UID; empty for a workload, or a pod asked for by name.
+    /// The pod's UID; empty for a workload, or a pod asked for by name
+    /// until its watch first finds it.
     uid: String,
+    /// A pod asked for by name that its watch hasn't settled yet: it shows
+    /// any pod of the name. Finding the pod, or finding it gone, ends it.
+    wildcard: bool,
 }
 
 impl TabKey {
@@ -92,17 +96,18 @@ impl TabKey {
             } else {
                 String::new()
             },
+            wildcard: pod && identity.uid.is_empty(),
         }
     }
 
     /// Whether a tab with this key shows `other`: the same object, and for
-    /// a pod the same UID, unless either was asked for by name alone.
+    /// a pod the same UID, unless either is a pod by name alone.
     fn shows(&self, other: &TabKey) -> bool {
         self.connection == other.connection
             && self.resource == other.resource
             && self.namespace == other.namespace
             && self.name == other.name
-            && (self.uid == other.uid || self.uid.is_empty() || other.uid.is_empty())
+            && (self.uid == other.uid || self.wildcard || other.wildcard)
     }
 }
 

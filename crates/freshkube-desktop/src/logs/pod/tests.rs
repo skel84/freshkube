@@ -141,7 +141,8 @@ fn the_log_waits_for_the_pod_then_reads_its_tail_and_follows_it(cx: &mut TestApp
         assert!(window.try_find("logs-empty").is_none());
         assert!(window.find(last_row(&view, cx)).visible());
         assert!(window.try_find("pod-logs-failed").is_none());
-        assert!(window.try_find("pod-logs-hint").is_none());
+        // Streaming has nothing more to say: no line under the toolbar.
+        assert!(window.try_find("pod-logs-note").is_none());
     })
     .unwrap();
 
@@ -273,12 +274,14 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
             state(&view, cx),
             StreamState::Waiting("CrashLoopBackOff".into())
         );
-        let hint = window.find("pod-logs-hint").label().unwrap().to_owned();
+        // Why it waits and how it last ended, in one line.
+        let note = window.find("pod-logs-note").label().unwrap().to_owned();
         assert!(
-            hint.starts_with(&format!(
-                "{app} restarted 14 times, last exited 1 (Error) at "
-            )),
-            "{hint}"
+            note.starts_with(&format!(
+                "{app} isn't running (CrashLoopBackOff); its log goes on once it starts. \
+                 {app} restarted 14 times, last exited 1 (Error) at "
+            )) && note.ends_with(" · Previous shows the last run"),
+            "{note}"
         );
         // The marker row isn't a log line: copy and search pass over it.
         let marker = view.read(cx).row_id(12);
@@ -289,9 +292,9 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
                 .visible()
         );
 
-        // The app never switches by itself; the hint asks first.
+        // The app never switches by itself; Previous asks for it.
         assert!(!view.read(cx).source().previous);
-        window.click("pod-logs-show-previous", cx);
+        window.click("pod-logs-previous", cx);
         window.render_frame(cx);
         assert!(view.read(cx).source().previous);
         assert_eq!(lines(&view, cx), 24);
@@ -303,14 +306,18 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
                 && status.ends_with(" · complete"),
             "{status}"
         );
-        assert!(window.try_find("pod-logs-hint").is_none());
+        // The note is the previous instance's, without the crash hint.
+        let note = window.find("pod-logs-note").label().unwrap().to_owned();
+        assert!(note.starts_with("Previous instance · exited 1"), "{note}");
+        assert!(!note.contains("restarted"), "{note}");
+        assert!(!note.contains("Previous shows"), "{note}");
 
         // A log read to its end has nothing to stop or resume.
         let stream = view.read(cx).source().stream;
         window.click("pod-logs-stream", cx);
         assert_eq!(view.read(cx).source().stream, stream);
 
-        // Unchecking goes back to the current instance, read afresh.
+        // Previous again goes back to the current instance, read afresh.
         window.click("pod-logs-previous", cx);
         assert!(!view.read(cx).source().previous);
         assert_eq!(lines(&view, cx), 12);

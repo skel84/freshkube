@@ -1549,8 +1549,11 @@ fn a_short_window_scrolls_the_frame_to_the_node_log_catalog_and_multiline_errors
         assert!(status.visible());
         assert!(status.bounds().top() >= viewport.bottom());
         assert!(status.bounds().bottom() <= px(560.));
-        assert!(viewport.top() >= shown.top());
+        // The viewport's end shows, with at least the list's least height
+        // of it in the pane; a viewport taller than the pane fills it.
         assert!(viewport.bottom() <= shown.bottom() + px(0.5));
+        let seen = viewport.bottom().min(shown.bottom()) - viewport.top().max(shown.top());
+        assert!(seen >= window.rem_size() * 6., "{viewport:?} {shown:?}");
     })
     .unwrap();
 }

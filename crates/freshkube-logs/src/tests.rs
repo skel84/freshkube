@@ -864,19 +864,6 @@ fn command_f_g_and_a_find_and_select_from_the_lines_or_the_search(cx: &mut TestA
     .unwrap();
 }
 
-#[test]
-fn level_toggles_draw_the_shared_glyphs() {
-    use crate::view::level_tone;
-    use freshkube_core::types::LogLevel;
-    use freshkube_ui::ui::Tone;
-    // An application's errors are information, not the cluster's health.
-    assert_eq!(level_tone(&LogLevel::Error), Some(Tone::Info));
-    assert_eq!(level_tone(&LogLevel::Warning), Some(Tone::Warn));
-    for level in [LogLevel::Info, LogLevel::Debug, LogLevel::Unknown] {
-        assert_eq!(level_tone(&level), None, "{level}");
-    }
-}
-
 /// A frame that scrolls around a log, as a short node pane does.
 struct Frame {
     panel: Entity<LogPanel>,
@@ -941,7 +928,7 @@ fn mount_framed(
 
 #[gpui_kit::test]
 fn a_wheel_over_a_short_logs_controls_scrolls_the_log_and_not_the_frame(cx: &mut TestAppContext) {
-    let (_runtime, panel, scroll, handle) = mount_framed(cx, 240.);
+    let (_runtime, panel, scroll, handle) = mount_framed(cx, 180.);
     panel.update(cx, |view, cx| {
         view.source_mut().banner = true;
         cx.notify();
@@ -1138,4 +1125,44 @@ fn a_sideways_wheel_keeps_following(cx: &mut TestAppContext) {
         assert_eq!(offset.y, tail.y);
         assert!(offset.x < tail.x, "the wheel didn't reach the list");
     });
+}
+
+#[gpui_kit::test]
+fn the_levels_menu_hides_a_level_and_says_how_many_show(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    settle(cx, &panel, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(
+            window.find("logs-levels").label(),
+            Some("Levels: all shown")
+        );
+        // The tooltip counts each level, derived when the counts changed.
+        assert_eq!(
+            panel.read(cx).levels_tip.1.as_ref(),
+            "Lines by level: Error 2 · Warn 0 · Info 118 · Debug 0 · Unknown 0"
+        );
+        window.click("logs-levels", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // The first item, Error, from the keyboard.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.press("down", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let view = panel.read(cx);
+        let levels = &view.review.logs.buffer().filters().levels;
+        assert!(!levels.accepts(&freshkube_core::types::LogLevel::Error));
+        assert!(levels.accepts(&freshkube_core::types::LogLevel::Info));
+        assert_eq!(
+            window.find("logs-levels").label(),
+            Some("Levels: 4 of 5 shown")
+        );
+    })
+    .unwrap();
 }

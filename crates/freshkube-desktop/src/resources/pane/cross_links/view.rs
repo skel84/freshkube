@@ -3,7 +3,6 @@ use crate::{
     palette::palette,
     ui::{self, MONO_FONT, dp},
 };
-use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
@@ -189,21 +188,6 @@ impl DetailPane {
                         .child(value.clone()),
                 )
             }));
-        let logs = links.logs.clone();
-        let primary = h_flex().gap(dp(8.)).child(
-            Button::new("pod-open-logs")
-                .primary()
-                .small()
-                .icon(IconName::ScrollText)
-                .label(match &logs {
-                    Some(name) if links.containers.len() > 1 => format!("Logs of {name}"),
-                    _ => "Logs".to_owned(),
-                })
-                .on_click(cx.listener(move |pane, _, _, cx| match &logs {
-                    Some(name) => pane.container_logs(name.clone(), false, cx),
-                    None => pane.set_tab(Tab::Logs, cx),
-                })),
-        );
         let containers = section("Containers").children(links.containers.iter().map(|container| {
             let name = container.name.clone();
             let previous_name = container.name.clone();
@@ -285,7 +269,6 @@ impl DetailPane {
             .test_support()
             .min_w_0()
             .gap(dp(18.))
-            .child(primary)
             .children(links.cause.as_ref().map(|card| self.cause_card(card, cx)))
             .when(self.history.read(cx).shows(), |this| {
                 this.child(self.history.clone())

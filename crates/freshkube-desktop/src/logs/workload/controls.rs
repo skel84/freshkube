@@ -1,5 +1,5 @@
-//! A workload's Logs tab controls, above the shared filters and search:
-//! where the pod watch stands, the notices, then one row of chips, one
+//! A workload log's lines under the toolbar's row: where the pod watch
+//! stands, the notices, then one row of chips, one
 //! per container read, which shows or hides lines. The chips take the
 //! rows the panel has room for, two at most, and none when the panel is
 //! short; a "+N" chip lists every container, so none is out of reach.

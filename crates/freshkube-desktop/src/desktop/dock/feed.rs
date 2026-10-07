@@ -165,10 +165,22 @@ impl Dock {
             });
             match pod {
                 Some(pod) => {
+                    // A tab asked for by name, as a restored one, is the
+                    // first pod it finds: one made again later is another.
+                    if tab.target.identity.uid.is_empty() && !pod.uid.is_empty() {
+                        tab.target.identity.uid = pod.uid.clone();
+                        tab.key.uid = pod.uid.clone();
+                        tab.key.wildcard = false;
+                    }
                     set_containers(tab, pod.containers, cx);
                     FeedState::Ready
                 }
-                None => FeedState::Gone,
+                None => {
+                    // Gone at its first listing: a pod made with the name
+                    // later is another, with its own tab.
+                    tab.key.wildcard = false;
+                    FeedState::Gone
+                }
             }
         };
         let gone = state == FeedState::Gone;
