@@ -41,7 +41,8 @@ pub(crate) const CONTEXT: &str = "Dock";
 /// Shell tabs don't count.
 pub(crate) const MAX_LOG_TABS: usize = 8;
 /// At most this many shell tabs, each a connection to a pod's exec while
-/// it runs; opening another asks to close the oldest. Log tabs don't count.
+/// it runs; another takes the place of the oldest, which asks first if its
+/// shell runs. Log tabs don't count.
 pub(crate) const MAX_SHELL_TABS: usize = 8;
 /// The header and the status bar, in dp, which the dock never covers.
 const FRAME_CHROME: f32 = 52. + 28.;
@@ -459,7 +460,7 @@ impl Dock {
     /// The pane's Shell menu: a shell in `request`'s container, in a tab of
     /// its own, started at once. The container's tab, if it has one, is
     /// selected, and its shell started again if it ended. The pick is the
-    /// explicit Start. A ninth shell tab asks to close the oldest.
+    /// explicit Start. A ninth shell tab takes the place of the oldest.
     pub(crate) fn open_shell(
         &mut self,
         request: ShellRequest,
@@ -488,7 +489,7 @@ impl Dock {
                 id
             }
             None if self.shell_tabs() >= MAX_SHELL_TABS => {
-                self.ask_to_close_oldest_shell(request, window, cx);
+                self.make_room_for_shell(request, window, cx);
                 return;
             }
             None => {
@@ -512,44 +513,36 @@ impl Dock {
         });
     }
 
-    /// Asks to close the oldest shell tab, ending its shell, and opens
-    /// `request`'s once it has gone.
-    fn ask_to_close_oldest_shell(
+    /// Makes room for `request`'s shell tab and opens it: the oldest shell
+    /// tab that runs nothing closes without asking; when every one runs,
+    /// the oldest asks "End the shell in ⟨pod⟩?" first.
+    fn make_room_for_shell(
         &mut self,
         request: ShellRequest,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(oldest) = self
-            .tabs
-            .iter()
-            .filter(|tab| !tab.is_log())
+        let shells = || self.tabs.iter().filter(|tab| !tab.is_log());
+        let idle = shells()
+            .filter(|tab| tab.running_shell(cx).is_none())
             .min_by_key(|tab| tab.id)
+            .map(|tab| tab.id);
+        if let Some(idle) = idle {
+            self.remove_tabs(&[idle], window, cx);
+            return self.open_shell(request, window, cx);
+        }
+        let Some((oldest, pod)) = shells()
+            .min_by_key(|tab| tab.id)
+            .and_then(|tab| Some((tab.id, tab.running_shell(cx)?)))
         else {
             return;
         };
-        let (oldest, title) = (oldest.id, oldest.title.clone());
-        let answer = window.prompt(
-            PromptLevel::Info,
-            &format!("Close the oldest shell tab ({title})?"),
-            Some(&format!(
-                "The dock keeps at most {MAX_SHELL_TABS} shell tabs. Closing one ends its shell."
-            )),
-            &["Close it", "Cancel"],
-            cx,
-        );
-        cx.spawn_in(window, async move |this, cx| {
-            if answer.await != Ok(0) {
-                return;
+        shell::unless_shell(self, vec![pod], window, cx, move |dock, window, cx| {
+            dock.remove_tabs(&[oldest], window, cx);
+            if dock.shell_tabs() < MAX_SHELL_TABS {
+                dock.open_shell(request, window, cx);
             }
-            _ = this.update_in(cx, |dock, window, cx| {
-                dock.remove_tabs(&[oldest], window, cx);
-                if dock.shell_tabs() < MAX_SHELL_TABS {
-                    dock.open_shell(request, window, cx);
-                }
-            });
-        })
-        .detach();
+        });
     }
 
     /// Adds a tab that reads nothing yet, and returns its id.
