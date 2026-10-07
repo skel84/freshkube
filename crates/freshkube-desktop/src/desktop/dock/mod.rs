@@ -76,7 +76,8 @@ pub(crate) struct TabKey {
     resource: String,
     namespace: String,
     name: String,
-    /// The pod's UID; empty for a workload, or a pod asked for by name.
+    /// The pod's UID; empty for a workload, or a pod asked for by name
+    /// until its watch first finds it.
     uid: String,
 }
 
