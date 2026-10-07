@@ -254,25 +254,43 @@ async fn a_task_result_naming_the_commit_confirms_beside_a_parameter() {
 }
 
 #[tokio::test]
-async fn a_pipeline_that_clones_two_repositories_confirms_on_the_one_that_matches() {
-    // The config clone comes first; the source clone reports the change.
+async fn a_pipeline_that_clones_two_repositories_confirms_in_either_order() {
+    let source = || clone_task_run("storefront-push-x", SHA);
+    let config = || clone_task_run_named("storefront-push-x-clone-config", OTHER_SHA);
+    for tasks in [vec![config(), source()], vec![source(), config()]] {
+        let mut world = build_world(Some(SHA), None);
+        world.tekton = world.tekton.with("taskruns", tasks);
+        let trail = run(&world, &ENV).await;
+        let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+        assert_eq!(
+            commit.confidence,
+            Confidence::Confirmed,
+            "{}",
+            commit.reason
+        );
+        assert!(stands_on(commit, Hop::PipelineRun), "{commit:#?}");
+    }
+    // With neither equal, every distinct commit is named, once.
     let mut world = build_world(Some(SHA), None);
+    let third = "c".repeat(40);
     world.tekton = world.tekton.with(
         "taskruns",
         vec![
             clone_task_run_named("storefront-push-x-clone-config", OTHER_SHA),
-            clone_task_run("storefront-push-x", SHA),
+            clone_task_run_named("storefront-push-x-clone-lib", &third),
+            clone_task_run_named("storefront-push-x-clone-dup", OTHER_SHA),
         ],
     );
     let trail = run(&world, &ENV).await;
     let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
-    assert_eq!(
-        commit.confidence,
-        Confidence::Confirmed,
+    assert_eq!(commit.confidence, Confidence::Claimed);
+    assert!(
+        commit.reason.contains(&OTHER_SHA[..12]),
         "{}",
         commit.reason
     );
-    assert!(stands_on(commit, Hop::PipelineRun), "{commit:#?}");
+    assert!(commit.reason.contains(&third[..12]), "{}", commit.reason);
+    assert_eq!(commit.reason.matches(&OTHER_SHA[..12]).count(), 1);
 }
 
 #[tokio::test]
@@ -384,15 +402,31 @@ async fn a_sha_joined_freight_whose_build_is_tied_by_declared_fields_is_a_claim(
         assert_eq!(freight.key, Key::Sha(SHA.into()));
         assert_eq!(freight.confidence, Confidence::Claimed, "{param}");
         assert!(
-            freight.reason.contains(
-                "the Freight reports the commit; the build's tie to it is declared (label, parameter)"
-            ),
+            freight.reason.contains(if param {
+                "the build's tie to it is the PaC label and the revision parameter, both declared"
+            } else {
+                "the build's tie to it is its declared label"
+            }),
             "{}",
             freight.reason
         );
         assert!(!stands_on(freight, Hop::PipelineRun));
         assert!(stands_on(freight, Hop::Freight));
     }
+}
+
+#[tokio::test]
+async fn a_sha_joined_freight_whose_build_reports_another_commit_says_so() {
+    let trail = run(&sha_joined(true, Some(OTHER_SHA)), &ENV).await;
+    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    assert_eq!(freight.confidence, Confidence::Claimed);
+    assert!(
+        freight
+            .reason
+            .contains("the build's tie to it is that a result of the build reports another commit"),
+        "{}",
+        freight.reason
+    );
 }
 
 #[tokio::test]

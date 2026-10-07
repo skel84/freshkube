@@ -395,12 +395,24 @@ fn build_freight(
         seen.retain(|seen| seen.fact == Fact::Reported);
         (Hop::PipelineRun, Confidence::Confirmed, summary, seen)
     } else {
+        let tie = if builds
+            .iter()
+            .any(|build| !build.reported_witnesses(names).is_empty())
+        {
+            "that a result of the build reports another commit"
+        } else if builds.iter().any(|build| {
+            build
+                .witness(names, sha)
+                .is_some_and(|witness| !witness.reported())
+        }) {
+            "the PaC label and the revision parameter, both declared"
+        } else {
+            "its declared label"
+        };
         (
             Hop::PipelineRun,
             Confidence::Claimed,
-            format!(
-                "the Freight reports the commit; the build's tie to it is declared (label, parameter) or contradicted by a result; {summary}"
-            ),
+            format!("the Freight reports the commit; the build's tie to it is {tie}; {summary}"),
             seen,
         )
     }
