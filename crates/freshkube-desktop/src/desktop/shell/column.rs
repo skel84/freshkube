@@ -88,26 +88,7 @@ impl Pilot {
             .px(dp(10.))
             .py(dp(16.))
             .gap(dp(2.))
-            .child(
-                div()
-                    .px(dp(10.))
-                    .pt(dp(4.))
-                    .pb(dp(8.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(ui::caption(self.area.label(), cx))
-                    .child(
-                        Button::new("nav-collapse")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::PanelLeftClose)
-                            .tooltip("Collapse sidebar · ⌘B")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.toggle_column(window, cx)),
-                            ),
-                    ),
-            )
+            .child(self.column_header(self.area.label(), cx))
             .children(rows)
             .when(self.area == Area::Group("workloads"), |this| {
                 this.child(self.render_namespaces(cx))
@@ -122,6 +103,28 @@ impl Pilot {
                 .border_color(p.line)
                 .into_any_element(),
         )
+    }
+
+    /// A column's caption and its collapse button, inset as its rows'
+    /// labels are. Every expanded column starts with it, so switching areas
+    /// keeps the caption still.
+    pub(super) fn column_header(&self, label: &str, cx: &Context<Self>) -> Div {
+        div()
+            .px(dp(10.))
+            .pt(dp(4.))
+            .pb(dp(8.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(ui::caption(label, cx))
+            .child(
+                Button::new("nav-collapse")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::PanelLeftClose)
+                    .tooltip("Collapse sidebar · ⌘B")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_column(window, cx))),
+            )
     }
 
     /// A built-in group's kinds, after Health for Workloads, and the row a

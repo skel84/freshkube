@@ -3877,6 +3877,40 @@ fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut Tes
 }
 
 #[gpui_kit::test]
+fn every_expanded_column_puts_its_caption_and_rows_in_one_place(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        // Each area's collapse button (beside its caption) and first row.
+        let mut seen = Vec::new();
+        for (page, first) in [
+            (Page::Etcd, "nav-etcd"),
+            (Page::Health, "nav-health"),
+            (Page::Monitoring, "nav-collapse"),
+            (Page::Observability, "nav-obs-applications"),
+        ] {
+            pilot.update(cx, |pilot, cx| pilot.navigate(page, window, cx));
+            window.render_frame(cx);
+            assert!(!pilot.read(cx).column_collapsed(window));
+            let toggle = window.find("nav-collapse").bounds();
+            let row = window.find(first).bounds();
+            seen.push((page, toggle, row));
+        }
+        let (_, toggle, row) = seen[0];
+        for (page, other, other_row) in &seen[1..] {
+            assert_eq!(*other, toggle, "{page:?}'s caption moved");
+            if *page != Page::Monitoring {
+                assert_eq!(other_row.origin, row.origin, "{page:?}'s first row moved");
+                assert_eq!(
+                    other_row.size.width, row.size.width,
+                    "{page:?}'s rows are wider"
+                );
+            }
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn fog_narrow_sidebar_can_be_expanded_manually(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
