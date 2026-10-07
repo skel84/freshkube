@@ -3893,10 +3893,6 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(20., cx);
         window.render_frame(cx);
-        pilot.update(cx, |pilot, cx| {
-            pilot.navigate(Page::Observability, window, cx)
-        });
-        window.render_frame(cx);
         window.render_frame(cx);
         let edges = |pilot: &Entity<Pilot>, cx: &gpui_kit::App| {
             let pilot = pilot.read(cx);
@@ -3905,11 +3901,19 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
                 cut_edges(&pilot.obs_column_scroll),
             )
         };
-        // Overview, at the top, leaves only the rail's bottom cut. The
-        // column has scrolled to Applications, so it is cut at the bottom.
-        let (rail, column) = edges(&pilot, cx);
-        assert_eq!(rail, (false, true));
+        // Overview, at the top, leaves only the rail's bottom cut.
+        assert_eq!(edges(&pilot, cx).0, (false, true));
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        // The column has scrolled to Applications, so it is cut at the
+        // bottom; the rail shows Observability clear of its fades.
+        let column = edges(&pilot, cx).1;
         assert!(column.1, "{column:?}");
+        let rail = pilot.read(cx).rail_scroll.clone();
+        assert_clear_of_fades(window, "nav-rail", "nav-observability", &rail);
         for _ in 0..30 {
             window.scroll(
                 "nav-rail",
@@ -3943,6 +3947,138 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
         assert_eq!(cut_edges(&pilot.obs_column_scroll), (false, false));
     })
     .unwrap();
+}
+
+/// Asserts that `item` shows inside the scrolling `list`, and that no fade
+/// over a cut edge of it dims the item (#406).
+fn assert_clear_of_fades(
+    window: &mut gpui_kit::Window,
+    list: &'static str,
+    item: impl Into<SharedString>,
+    scroll: &gpui_kit::ScrollHandle,
+) {
+    let item = item.into();
+    let area = window.find(list).bounds();
+    let bounds = window.find(item.clone()).bounds();
+    let fade = crate::ui::dp_px(28., window);
+    let (top, bottom) = super::shell::cut_edges(scroll);
+    assert!(
+        bounds.top() >= area.top() + if top { fade } else { px(0.) } - px(0.5)
+            && bounds.bottom() <= area.bottom() - if bottom { fade } else { px(0.) } + px(0.5),
+        "{item}: {bounds:?} under a fade or outside {area:?} (cut {top}, {bottom})"
+    );
+}
+
+/// A reveal measures the layout it scrolls in, not the one before it: a
+/// change of room or of the column's state between two reveals still
+/// leaves the item in view and clear of the fades (#406).
+#[gpui_kit::test]
+fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
+    use crate::observability::Destination;
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    let settle = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+    };
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        let page = pilot.read(cx).observability.clone();
+        page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
+        settle(window, cx);
+        let scroll = pilot.read(cx).obs_column_scroll.clone();
+        assert_clear_of_fades(
+            window,
+            "obs-navigation-scroll",
+            "nav-obs-deployments",
+            &scroll,
+        );
+        // Larger text cuts the column the item was revealed in.
+        crate::text_size::set(20., cx);
+        settle(window, cx);
+        assert!(pilot.read(cx).column_collapsed(window));
+        assert_ne!(super::shell::cut_edges(&scroll), (false, false));
+        assert_clear_of_fades(
+            window,
+            "obs-navigation-scroll",
+            "nav-obs-deployments",
+            &scroll,
+        );
+        // Expanded, its rows are taller.
+        window.click("nav-collapse", cx);
+        settle(window, cx);
+        assert!(!pilot.read(cx).column_collapsed(window));
+        assert_clear_of_fades(
+            window,
+            "obs-navigation-scroll",
+            "nav-obs-deployments",
+            &scroll,
+        );
+        // From a short column, a kind low in a long group; the column's
+        // scroll is shared by every area.
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Etcd, window, cx));
+        settle(window, cx);
+        let key = "validatingadmissionpolicybindings.admissionregistration.k8s.io";
+        pilot.update(cx, |pilot, cx| pilot.open_builtin(key, window, cx));
+        settle(window, cx);
+        let column = pilot.read(cx).column_scroll.clone();
+        assert_clear_of_fades(window, "nav-column", format!("nav-k8s-{key}"), &column);
+        // And the rail shows Control plane, low in it, as Command-9 opens.
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Lifecycle, window, cx));
+        settle(window, cx);
+        let rail = pilot.read(cx).rail_scroll.clone();
+        assert_clear_of_fades(window, "nav-rail", "nav-control-plane", &rail);
+    })
+    .unwrap();
+}
+
+/// A wheel over the rail redraws the rail, so its fades follow the scroll,
+/// and none of the other cached parts.
+#[gpui_kit::test]
+fn a_rail_wheel_redraws_the_rail_alone(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    for _ in 0..5 {
+        cx.update_window(handle, |_, window, cx| window.simulate_next_frame(cx))
+            .unwrap();
+        cx.run_until_parked();
+    }
+    // Not `window.scroll`, which draws whole frames around the wheel and
+    // so passes every cache.
+    let rail = cx
+        .update_window(handle, |_, window, _| window.find("nav-rail").bounds())
+        .unwrap();
+    let before = chrome_counts();
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::InputEvent as _;
+        window.dispatch_event(
+            gpui_kit::ScrollWheelEvent {
+                position: rail.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-40.))),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.simulate_next_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let after = chrome_counts();
+    let scrolled = cx.read(|cx| super::shell::cut_edges(&pilot.read(cx).rail_scroll).0);
+    assert!(scrolled, "the wheel scrolled the rail");
+    assert!(
+        after[1] > before[1],
+        "the rail drew again: {before:?} → {after:?}"
+    );
+    assert_eq!(after[0], before[0], "the header drew again");
+    assert_eq!(after[2], before[2], "the column drew again");
 }
 
 #[gpui_kit::test]

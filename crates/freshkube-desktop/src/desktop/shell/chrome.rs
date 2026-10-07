@@ -81,7 +81,7 @@ impl Render for Chrome {
         self.pilot
             .update(cx, |pilot, cx| match part {
                 Part::Header => pilot.render_header(window, cx),
-                Part::Rail => pilot.render_rail(cx),
+                Part::Rail => pilot.render_rail(window, cx),
                 Part::Column => pilot
                     .render_column(window, cx)
                     .unwrap_or_else(|| div().into_any_element()),

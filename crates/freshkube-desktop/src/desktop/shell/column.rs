@@ -5,27 +5,47 @@ use super::*;
 /// The column's children before its first row: the area's caption.
 const FIRST_ROW: usize = 1;
 
-/// Scrolls a column's `item` into view. Scrolling needs the column's size,
-/// which the first frame of a window doesn't know yet; then this asks for
-/// another frame and returns false.
-pub(super) fn reveal_item(scroll: &ScrollHandle, item: Option<usize>, window: &mut Window) -> bool {
+/// Scrolls a list's `item` into view, clear of the fades, in two frames.
+/// The first scrolls it into view with `scroll_to_item`, which resolves
+/// against that frame's own layout and asks for another frame; the second,
+/// with that layout current, moves it clear of the fades. `pass` holds the
+/// `key` of a reveal between the two, so a new reveal (another item, size or
+/// state) starts over at the first. Scrolling also needs the list's size,
+/// which the first frame of a window doesn't know yet. Returns whether the
+/// reveal is done.
+pub(super) fn reveal_item<K: PartialEq>(
+    scroll: &ScrollHandle,
+    pass: &mut Option<K>,
+    key: K,
+    item: Option<usize>,
+    window: &mut Window,
+) -> bool {
     if scroll.bounds().size.height <= px(0.) {
         window.request_animation_frame();
         return false;
     }
-    if let Some(item) = item {
-        match scroll.bounds_for_item(item) {
-            Some(bounds) => reveal_clear_of_fades(scroll, bounds, window),
-            None => scroll.scroll_to_item(item),
-        }
+    let Some(item) = item else {
+        *pass = None;
+        return true;
+    };
+    if pass.as_ref() != Some(&key) {
+        scroll.scroll_to_item(item);
+        *pass = Some(key);
+        window.request_animation_frame();
+        return false;
+    }
+    *pass = None;
+    if let Some(bounds) = scroll.bounds_for_item(item) {
+        clear_of_fades(scroll, bounds, window);
     }
     true
 }
 
-/// Scrolls the least that shows an item's `bounds`, as laid out before
-/// scrolling, clear of the fades over the list's cut edges, where room
-/// allows; an item at either end of the list meets the end itself.
-fn reveal_clear_of_fades(scroll: &ScrollHandle, bounds: Bounds<Pixels>, window: &Window) {
+/// Moves an item at `bounds`, as the last layout placed it before its
+/// scroll, clear of the fades over the list's cut edges where room allows.
+/// The list's prepaint keeps the offset within its new range, so an item at
+/// either end meets the end itself.
+fn clear_of_fades(scroll: &ScrollHandle, bounds: Bounds<Pixels>, window: &Window) {
     let view = scroll.bounds();
     let spare = (view.size.height - bounds.size.height).max(px(0.));
     let margin = ui::dp_px(FADE, window).min(spare / 2.);
@@ -39,8 +59,16 @@ fn reveal_clear_of_fades(scroll: &ScrollHandle, bounds: Bounds<Pixels>, window: 
     } else {
         return;
     }
-    offset.y = offset.y.clamp(-scroll.max_offset().y, px(0.));
     scroll.set_offset(offset);
+}
+
+/// The room a window gives its lists, as its height and its rem size: a
+/// reveal keyed with it runs again when the window or the text size
+/// changes, which can cut an item that showed.
+pub(in crate::desktop) type Room = (Pixels, Pixels);
+
+pub(in crate::desktop) fn room(window: &Window) -> Room {
+    (window.viewport_size().height, window.rem_size())
 }
 
 /// How far a fade reaches into a list from an edge it cuts.
@@ -164,9 +192,11 @@ impl Pilot {
         };
         // Rows still being discovered will grow the column; it is revealed
         // again once they arrive.
-        if self.column_reveal.is_some()
+        if let Some(key) = self.column_reveal.clone()
             && reveal_item(
                 &self.column_scroll,
+                &mut self.column_reveal_pass,
+                key,
                 reveal.map(|row| FIRST_ROW + row),
                 window,
             )
@@ -182,7 +212,10 @@ impl Pilot {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .track_scroll(&self.column_scroll)
-            .on_scroll_wheel(cx.listener(|view, _, _, _| view.column_reveal = None))
+            .on_scroll_wheel(cx.listener(|view, _, _, _| {
+                view.column_reveal = None;
+                view.column_reveal_pass = None;
+            }))
             .px(dp(10.))
             .py(dp(16.))
             .gap(dp(2.))

@@ -193,10 +193,13 @@ impl Pilot {
             .collect();
         // A short window or large text scrolls the list; keep the
         // destination in view whenever it, or the column's width, changes.
-        let revealed = Some((destination, collapsed));
+        let key = (destination, collapsed, column::room(window));
+        let revealed = Some(key);
         if self.obs_column_revealed != revealed
             && column::reveal_item(
                 &self.obs_column_scroll,
+                &mut self.obs_column_reveal_pass,
+                key,
                 items.iter().position(|&item| active(item)),
                 window,
             )
