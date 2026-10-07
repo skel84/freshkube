@@ -884,8 +884,6 @@ impl TalosClient {
         let proto_mode = match mode {
             ApplyMode::Reboot => Mode::Reboot,
             ApplyMode::Auto => Mode::Auto,
-            ApplyMode::NoReboot => Mode::NoReboot,
-            ApplyMode::Staged => Mode::Staged,
         };
 
         let mut client = self.machine_client();
@@ -1144,13 +1142,12 @@ impl TalosClient {
     /// Reboot the node
     ///
     /// # Arguments
-    /// * `mode` - Reboot mode (default, powercycle)
+    /// * `mode` - Reboot mode
     pub async fn reboot(&self, mode: RebootMode) -> Result<RebootResult, TalosError> {
         use crate::proto::machine::{RebootRequest, reboot_request::Mode};
 
         let proto_mode = match mode {
             RebootMode::Default => Mode::Default,
-            RebootMode::Powercycle => Mode::Powercycle,
         };
 
         let mut client = self.machine_client();
@@ -1178,7 +1175,6 @@ impl TalosClient {
         let msg = &response.messages[0];
         Ok(RebootResult {
             node: self.node_from_metadata(msg.metadata.as_ref(), 0),
-            success: true,
         })
     }
     /// Shut down the node.
@@ -1207,7 +1203,6 @@ impl TalosClient {
         let msg = &response.messages[0];
         Ok(ShutdownResult {
             node: self.node_from_metadata(msg.metadata.as_ref(), 0),
-            success: true,
         })
     }
 
@@ -1309,8 +1304,6 @@ where
 pub struct ShutdownResult {
     /// Node whose shutdown was requested.
     pub node: String,
-    /// Whether Talos accepted the request.
-    pub success: bool,
 }
 
 /// Reboot mode
@@ -1319,8 +1312,6 @@ pub enum RebootMode {
     /// Default reboot
     #[default]
     Default,
-    /// Power cycle (hard reboot)
-    Powercycle,
 }
 
 /// Result of a reboot operation
@@ -1328,8 +1319,6 @@ pub enum RebootMode {
 pub struct RebootResult {
     /// Node that was rebooted
     pub node: String,
-    /// Whether the reboot was initiated successfully
-    pub success: bool,
 }
 
 // ==================== Configuration Types ====================
@@ -1341,10 +1330,6 @@ pub enum ApplyMode {
     Reboot,
     /// Auto-detect if reboot is needed
     Auto,
-    /// Apply without rebooting (may not apply all changes)
-    NoReboot,
-    /// Stage for next reboot
-    Staged,
 }
 
 /// Result of applying configuration
@@ -2628,7 +2613,6 @@ mod tests {
                 }],
             })
             .unwrap();
-        assert!(reboot.success);
         assert_eq!(reboot.node, "configured-node");
         let shutdown = client
             .decode_shutdown(crate::proto::machine::ShutdownResponse {
@@ -2638,7 +2622,6 @@ mod tests {
                 }],
             })
             .unwrap();
-        assert!(shutdown.success);
         assert_eq!(shutdown.node, "fixture-node");
     }
 
