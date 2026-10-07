@@ -303,7 +303,7 @@ Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, 
 - **Padding:** none on a table page, 12 × 10 inside its insets (`PANE_PADDING`); 26 on a page of cards (`PAGE_PADDING`), with 22 / 18 / 14 as above.
 - **Card radius:** 12 px, including Monitoring's cards and Overview's.
 - **Time range:** one picker in the page header's right group, before refresh, as Monitoring's: an outline small button with a clock, the range and a caret, opening a checked menu. Observability uses this picker; its shell time chips are removed.
-- **Refresh:** one per page, the page header's ghost icon button, tooltip `Refresh pods`. A page with auto-refresh puts its interval menu beside it.
+- **Refresh:** one per page, the page header's ghost icon button, tooltip `Refresh pods`. While a read runs: accent icon, disabled, tooltip `Refreshing…`; no spinner in the shell (`ui::refresh_icon`). A page with auto-refresh puts its interval menu beside it.
 - **Group rows:** the row height (26), not a separate 28, so every list stays a uniform list.
 - **Headers on other Resources kinds:** every kind draws Pods' `PageHeader`, with its filter, the namespace picker on namespaced kinds and an icon Refresh; the scope moved to the meta line with change 6, and into the status bar with change 7.
 
