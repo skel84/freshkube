@@ -87,6 +87,14 @@ pub(super) struct Status {
     pub(super) label: SharedString,
 }
 
+/// What the line under a pod log's toolbar says.
+#[derive(Clone)]
+pub(super) struct Note {
+    pub(super) text: SharedString,
+    /// The container waits, reconnects or keeps crashing.
+    pub(super) warn: bool,
+}
+
 pub(crate) struct PodLogs {
     runtime: Handle,
     access: Option<KubeAccess>,
@@ -117,8 +125,11 @@ pub(crate) struct PodLogs {
     job: Option<OwnedJob>,
     delivery: Option<Task<()>>,
     pub(super) status: Status,
-    /// Says the container keeps crashing, and offers its previous instance.
+    /// Says the container keeps crashing; Previous shows the instance
+    /// before.
     pub(super) hint: Option<SharedString>,
+    /// The one line under the toolbar: the status's text and the hint.
+    pub(super) note: Option<Note>,
     empty: SharedString,
     /// Stream failures show in the controls, so the view's list stays empty.
     errors: BTreeMap<ServiceId, String>,
@@ -154,6 +165,7 @@ impl PodLogs {
                 label: SharedString::default(),
             },
             hint: None,
+            note: None,
             empty: SharedString::default(),
             errors: BTreeMap::new(),
         };
@@ -234,6 +246,28 @@ impl PodLogs {
                 .into()
             })
         });
+        self.derive_note();
+    }
+
+    /// Joins the status's text and the crash hint into the one note under
+    /// the toolbar, or none when neither has anything to say. The hint
+    /// is about the running instance, so the previous one's note leaves it.
+    fn derive_note(&mut self) {
+        let hint = self.hint.as_ref().filter(|_| !self.previous);
+        let text = match (self.status.text.is_empty(), hint) {
+            (true, None) => {
+                self.note = None;
+                return;
+            }
+            (true, Some(hint)) => hint.to_string(),
+            (false, None) => self.status.text.to_string(),
+            (false, Some(hint)) => format!("{} {hint}", self.status.text),
+        };
+        let warn = hint.is_some() || matches!(self.status.tone, Tone::Warn);
+        self.note = Some(Note {
+            text: text.into(),
+            warn,
+        });
     }
 
     /// Derives what the controls and the empty list say.
@@ -268,7 +302,7 @@ impl PodLogs {
             StreamState::Waiting(reason) => (
                 Tone::Warn,
                 "Waiting",
-                format!("{name} hasn't started ({reason}). Its log opens once it does."),
+                format!("{name} isn't running ({reason}); its log goes on once it starts."),
                 format!("{name} hasn't started yet."),
             ),
             StreamState::Streaming => (
@@ -338,6 +372,7 @@ impl PodLogs {
             label: label.into(),
         };
         self.empty = empty.into();
+        self.derive_note();
     }
 
     /// A note between lines, placed after the last line read. In UTC, as
@@ -403,8 +438,12 @@ fn clock(time: DateTime<Utc>) -> String {
 }
 
 impl LogSource for PodLogs {
-    fn controls(view: &PodLogView, cx: &mut Context<PodLogView>) -> Vec<AnyElement> {
-        view.render_controls(cx)
+    fn tools(view: &PodLogView, cx: &mut Context<PodLogView>) -> Vec<AnyElement> {
+        view.render_tools(cx)
+    }
+
+    fn notes(view: &PodLogView, cx: &mut Context<PodLogView>) -> Vec<AnyElement> {
+        view.render_notes(cx)
     }
 
     fn empty_message(view: &PodLogView) -> SharedString {

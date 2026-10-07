@@ -72,7 +72,7 @@ impl DetailPane {
                             .icon(IconName::ScrollText)
                             .label("Logs")
                             .tooltip("Opens the logs in the dock (L from the list)")
-                            .on_click(cx.listener(|pane, _, _, cx| pane.request_logs(None, cx))),
+                            .on_click(cx.listener(|pane, _, _, cx| pane.open_logs(cx))),
                     ),
                 )
             })

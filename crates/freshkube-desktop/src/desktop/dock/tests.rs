@@ -486,7 +486,7 @@ fn a_crash_looping_pod_shows_its_notice_and_three_lines_in_a_small_window(cx: &m
     open_logs(handle, &pilot, "pods", &crashing[0], cx);
     settle(handle, cx);
     let view = pod_view(&dock, 0, cx);
-    assert_whole_without_scrolling(handle, &view, "pod-logs-hint", cx);
+    assert_whole_without_scrolling(handle, &view, "pod-logs-note", cx);
 }
 
 #[gpui_kit::test]
@@ -777,6 +777,39 @@ fn a_gone_pod_stops_reading_and_one_made_again_with_its_name_takes_a_new_tab(
 }
 
 #[gpui_kit::test]
+fn a_pod_tab_asked_for_by_name_keeps_the_first_pod_it_finds(cx: &mut TestAppContext) {
+    use freshkube_core::resources::{WorkloadPod, WorkloadPods};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let mut pod = running_pods(&pilot, cx).remove(0);
+    let uid = std::mem::take(&mut pod.uid);
+    open_logs(handle, &pilot, "pods", &pod, cx);
+    let listed = |uid: &str| WorkloadPods {
+        listed: true,
+        pods: vec![WorkloadPod {
+            name: pod.name.clone(),
+            uid: uid.to_owned(),
+            ..WorkloadPod::default()
+        }],
+        ..WorkloadPods::default()
+    };
+    cx.update(|cx| {
+        dock.update(cx, |dock, cx| {
+            let id = dock.tabs[0].id;
+            assert!(dock.apply_pod(id, listed(&uid), cx));
+            assert_eq!(dock.tabs[0].target.identity.uid, uid);
+            // The pod is made again with its name: the tab's pod is gone.
+            assert!(!dock.apply_pod(id, listed("00000000-0000-4000-8000-000000000099"), cx));
+            assert_eq!(dock.tabs[0].feed.state, super::feed::FeedState::Gone);
+        })
+    });
+    // The new pod takes a tab of its own.
+    pod.uid = "00000000-0000-4000-8000-000000000099".into();
+    open_logs(handle, &pilot, "pods", &pod, cx);
+    assert_eq!(titles(&dock, cx).len(), 2);
+}
+
+#[gpui_kit::test]
 fn the_chromes_close_closes_every_tab(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
@@ -906,8 +939,42 @@ fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
     assert_eq!(older.height, 120.);
 }
 
-#[gpui_kit::test]
-fn l_in_the_smallest_window_keeps_the_row_in_sight_above_three_lines(cx: &mut TestAppContext) {
+/// The log lines drawn whole inside the dock's viewport.
+fn whole_lines(
+    handle: AnyWindowHandle,
+    view: &Entity<PodLogView>,
+    cx: &mut TestAppContext,
+) -> usize {
+    cx.update_window(handle, |_, window, cx| {
+        let viewport = window.within("dock").find("logs-viewport").bounds();
+        let view = view.read(cx);
+        let generation = view.generation();
+        (0..view.visible_rows().len())
+            .filter(|&ix| {
+                let id = format!("log-line-{generation}-{}", view.row_id(ix));
+                window.try_find(id).is_some_and(|line| {
+                    let line = line.bounds();
+                    line.top() >= viewport.top() - px(0.5)
+                        && line.bottom() <= viewport.bottom() + px(0.5)
+                })
+            })
+            .count()
+    })
+    .unwrap()
+}
+
+/// In the smallest window, at `text_size`, L on `pod` in the pods list
+/// opens its logs in the dock, and nothing in the log's panel scrolls to
+/// reach its lines. When `row`, the row stays in sight above the dock and
+/// at least three whole log lines show. At the largest text size the page
+/// keeps only its least height, about its header, so no row can show, and
+/// the log's long lines wrap: there the list keeps five rems.
+fn l_keeps_the_row_above_three_lines(
+    pod: &ResourceIdentity,
+    text_size: f32,
+    row: bool,
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
     let dock = dock(&pilot, cx);
     let step = |cx: &mut TestAppContext,
@@ -919,18 +986,23 @@ fn l_in_the_smallest_window_keeps_the_row_in_sight_above_three_lines(cx: &mut Te
         .unwrap();
         cx.run_until_parked();
     };
+    while cx
+        .update_window(handle, |_, window, _| window.rem_size())
+        .unwrap()
+        < px(text_size)
+    {
+        step(cx, &|window, cx| window.press("secondary-=", cx));
+    }
     step(cx, &|window, cx| {
         pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
     });
-    // The pane opens on a running pod, whose logs need no more than the
-    // dock's usual height, and the keyboard goes back to the list, where
-    // L opens the pod's logs in the dock.
-    let running = running_pods(&pilot, cx);
+    // The pane opens on the pod, and the keyboard goes back to the list,
+    // where L opens the pod's logs in the dock.
     step(cx, &|window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_object(
                 builtin("pods").unwrap(),
-                running[0].clone().into(),
+                pod.clone().into(),
                 Tab::Overview,
                 window,
                 cx,
@@ -944,19 +1016,34 @@ fn l_in_the_smallest_window_keeps_the_row_in_sight_above_three_lines(cx: &mut Te
     });
     settle(handle, cx);
     assert_eq!(titles(&dock, cx).len(), 1);
-    let pod = cx.update(|cx| dock.read(cx).tabs[0].target.identity.clone());
+    assert_eq!(
+        cx.update(|cx| dock.read(cx).tabs[0].target.identity.name.clone()),
+        pod.name
+    );
     let view = pod_view(&dock, 0, cx);
     cx.update_window(handle, |_, window, cx| {
         let cell = window.find("page-cell").bounds();
         let dock_bounds = window.find("dock").bounds();
         // An undragged dock takes at most half the page cell, unless the
-        // tab's notices and three lines need more.
+        // tab's notes and three lines need more.
         let least = crate::ui::dp_px(dock.read(cx).least_height(window, cx), window);
         assert!(
             dock_bounds.size.height <= (cell.size.height / 2.).max(least) + px(1.),
             "{cell:?} {dock_bounds:?} {least:?}"
         );
         assert!(dock_bounds.bottom() <= cell.bottom() + px(1.));
+        // Nothing in the log's panel scrolls to reach its lines.
+        assert_eq!(view.read(cx).panel_max_offset(), px(0.));
+        let panel = window.within("dock").find("logs-panel").bounds();
+        assert!(panel.bottom() <= dock_bounds.bottom() + px(1.));
+        if !row {
+            let viewport = window.within("dock").find("logs-viewport").bounds();
+            assert!(
+                viewport.size.height >= window.rem_size() * 5.,
+                "{viewport:?}"
+            );
+            return;
+        }
         // The row the logs came from still shows whole above the dock.
         let row = window.find(format!(
             "resource-row:{}/{}/{}",
@@ -970,14 +1057,98 @@ fn l_in_the_smallest_window_keeps_the_row_in_sight_above_three_lines(cx: &mut Te
             row.bottom() <= body.bottom().min(dock_bounds.top()),
             "{row:?} {dock_bounds:?}"
         );
-        // At least three lines show, with nothing to scroll to reach them.
-        assert_eq!(view.read(cx).panel_max_offset(), px(0.));
-        let panel = window.within("dock").find("logs-panel").bounds();
-        let lines = window.within("dock").find("logs-viewport").bounds();
-        let least = window.rem_size() * freshkube_logs::LIST_LEAST_REMS;
-        assert!(lines.size.height + px(1.) >= least, "{lines:?}");
-        assert!(lines.top() >= panel.top() && lines.bottom() <= panel.bottom() + px(1.));
-        assert!(panel.bottom() <= dock_bounds.bottom() + px(1.));
     })
     .unwrap();
+    if row {
+        let lines = whole_lines(handle, &view, cx);
+        assert!(lines >= 3, "{lines} whole lines");
+    }
+}
+
+/// The crash-looping pod lowest in the list, so the list scrolls to keep
+/// it in sight above the dock.
+fn lowest_crash_looping_pod(pilot: &Entity<Pilot>, cx: &mut TestAppContext) -> ResourceIdentity {
+    objects(pilot, "pods", |cells, _| cells[2] == "CrashLoopBackOff", cx)
+        .pop()
+        .unwrap()
+}
+
+#[gpui_kit::test]
+fn l_in_the_smallest_window_keeps_a_running_pods_row_above_three_lines(cx: &mut TestAppContext) {
+    let (_runtime, _, pilot) = fixture(cx, 760., 560.);
+    // Low in the list, among the healthy pods.
+    let pod = running_pods(&pilot, cx).remove(0);
+    l_keeps_the_row_above_three_lines(&pod, 13., true, cx);
+}
+
+#[gpui_kit::test]
+fn l_in_the_smallest_window_keeps_a_crash_looping_pods_row_above_three_lines(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, _, pilot) = fixture(cx, 760., 560.);
+    let pod = lowest_crash_looping_pod(&pilot, cx);
+    l_keeps_the_row_above_three_lines(&pod, 13., true, cx);
+}
+
+#[gpui_kit::test]
+fn l_at_the_largest_text_size_opens_a_log_whose_panel_doesnt_scroll(cx: &mut TestAppContext) {
+    let (_runtime, _, pilot) = fixture(cx, 760., 560.);
+    let pod = lowest_crash_looping_pod(&pilot, cx);
+    l_keeps_the_row_above_three_lines(&pod, 20., false, cx);
+}
+
+/// How many rows the toolbar's tools take in the dock: the distinct
+/// middles of its controls.
+fn tool_rows(handle: AnyWindowHandle, cx: &mut TestAppContext) -> usize {
+    cx.update_window(handle, |_, window, _| {
+        let mut middles: Vec<f32> = Vec::new();
+        for id in [
+            "pod-logs-container",
+            "pod-logs-tail",
+            "pod-logs-previous",
+            "pod-logs-timestamps",
+            "pod-logs-stream",
+            "pod-logs-status",
+            "logs-levels",
+            "logs-search",
+            "logs-wrap",
+            "logs-follow",
+            "logs-copy",
+        ] {
+            let bounds = window.within("dock").find(id).bounds();
+            let middle = f32::from(bounds.center().y);
+            if !middles.iter().any(|seen| (seen - middle).abs() < 8.) {
+                middles.push(middle);
+            }
+        }
+        middles.len()
+    })
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) {
+    for (width, height, text_size, most) in [
+        (1280., 880., 13., 1),
+        (760., 560., 13., 2),
+        (760., 560., 20., 2),
+    ] {
+        let (_runtime, handle, pilot) = fixture(cx, width, height);
+        while cx
+            .update_window(handle, |_, window, _| window.rem_size())
+            .unwrap()
+            < px(text_size)
+        {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.press("secondary-=", cx)
+            })
+            .unwrap();
+        }
+        let pod = lowest_crash_looping_pod(&pilot, cx);
+        open_logs(handle, &pilot, "pods", &pod, cx);
+        settle(handle, cx);
+        let rows = tool_rows(handle, cx);
+        assert!(rows <= most, "{width}×{height} at {text_size}: {rows} rows");
+    }
 }

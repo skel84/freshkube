@@ -506,7 +506,7 @@ impl LogSource for WorkloadLogs {
         view.fit_chips(width, window, cx);
     }
 
-    fn controls(view: &WorkloadLogView, cx: &mut Context<WorkloadLogView>) -> Vec<AnyElement> {
+    fn notes(view: &WorkloadLogView, cx: &mut Context<WorkloadLogView>) -> Vec<AnyElement> {
         view.render_controls(cx)
     }
 

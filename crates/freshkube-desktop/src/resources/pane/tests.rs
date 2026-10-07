@@ -550,7 +550,10 @@ fn pods_and_what_runs_them_ask_the_dock_for_their_logs(cx: &mut TestAppContext) 
     let asked = asked_logs(&emitted);
     let targets: Vec<_> = asked.iter().map(|request| &request.target).collect();
     assert_eq!(targets, [&pod, &deployment, &deployment]);
-    assert!(asked.iter().all(|request| request.at.is_none()));
+    // A pod's opens on the container Overview picks; nothing asks for a
+    // previous instance.
+    assert!(asked[0].at.as_ref().is_some_and(|at| !at.previous));
+    assert!(asked[1..].iter().all(|request| request.at.is_none()));
 }
 
 #[gpui_kit::test]
@@ -713,15 +716,18 @@ fn a_crashing_pod_opens_on_why_with_its_restarts_and_relations(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
-fn a_healthy_pod_has_no_cause_and_logs_is_its_first_action(cx: &mut TestAppContext) {
+fn a_healthy_pod_has_no_cause_and_logs_is_one_button(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, emitted) = mount(cx);
     let (pod, _) = running_pod();
     cx.update_window(handle, |_, window, cx| {
         open(&pane, &pod, Duration::ZERO, cx);
         window.render_frame(cx);
         assert!(window.try_find("pod-cause").is_none());
-        assert!(window.find("pod-open-logs").visible());
-        window.click("pod-open-logs", cx);
+        // The header's Logs is the pane's only one; the Overview has none
+        // of its own.
+        assert!(window.try_find("pod-open-logs").is_none());
+        assert!(window.find("detail-open-logs").visible());
+        window.click("detail-open-logs", cx);
         window.render_frame(cx);
         assert_eq!(pane.read(cx).tab(), super::Tab::Overview);
     })

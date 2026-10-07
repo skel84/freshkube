@@ -366,6 +366,15 @@ impl DetailPane {
         self.rebuild_links();
         cx.notify();
     }
+    /// The header's Logs: a pod opens on the container at fault, if one
+    /// is, else its default.
+    pub(in crate::resources::pane) fn open_logs(&mut self, cx: &mut Context<Self>) {
+        match self.cross_links.logs.clone() {
+            Some(name) => self.container_logs(name, false, cx),
+            None => self.request_logs(None, cx),
+        }
+    }
+
     fn container_logs(&mut self, name: String, previous: bool, cx: &mut Context<Self>) {
         self.request_logs(
             Some(super::super::LogsAt {

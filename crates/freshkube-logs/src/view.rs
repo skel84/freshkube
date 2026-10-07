@@ -4,9 +4,10 @@ use gpui_kit::{
     SharedString, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
-        button::{Button, ButtonVariants, Toggle, ToggleVariants},
+        button::{Button, ButtonVariants},
         h_flex,
         input::Input,
+        menu::{DropdownMenu, PopupMenuItem},
         scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
         v_flex, v_virtual_list,
     },
@@ -24,7 +25,7 @@ use super::{
     SEARCH_CONTEXT, SelectAll,
 };
 use freshkube_ui::palette::palette;
-use freshkube_ui::ui::{self, Tone, dp};
+use freshkube_ui::ui::{self, dp};
 
 /// What a row's message column shows: its message, or the whole line when
 /// the message is blank.
@@ -229,47 +230,53 @@ impl<S: LogSource> LogView<S> {
             .into_any_element()
     }
 
+    /// One menu for the five levels, each with its count, so the levels
+    /// take one control's width in the toolbar's row.
     fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
-        let p = palette(cx);
         let counts = self.review.level_counts();
-        h_flex().gap_1().flex_wrap().children(
-            [
-                ("error", "Error", LogLevel::Error),
-                ("warning", "Warn", LogLevel::Warning),
-                ("info", "Info", LogLevel::Info),
-                ("debug", "Debug", LogLevel::Debug),
-                ("unknown", "Unknown", LogLevel::Unknown),
-            ]
-            .into_iter()
-            .enumerate()
-            .map(|(ix, (id, label, level))| {
-                let tone = level_tone(&level);
-                let active = self.review.logs.buffer().filters().levels.accepts(&level);
-                Toggle::new(SharedString::from(format!("level-{id}")))
-                    .outline()
-                    .small()
-                    .checked(active)
-                    .tooltip(format!("Show {label} lines"))
-                    .child(
-                        h_flex()
-                            .gap(dp(5.))
-                            .px(dp(3.))
-                            .children(tone.and_then(|tone| ui::status_glyph(tone, cx)))
-                            .child(label)
-                            .child(
-                                div()
-                                    .text_size(dp(11.))
-                                    .text_color(p.muted)
-                                    .child(counts[ix].to_string()),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                        this.capture_anchor();
-                        this.review.set_level(&level, *checked);
-                        cx.notify();
-                    }))
-            }),
-        )
+        let levels = LEVELS.map(|(label, level)| {
+            let active = self.review.logs.buffer().filters().levels.accepts(&level);
+            (label, level, active)
+        });
+        let shown = levels.iter().filter(|(_, _, active)| *active).count();
+        let summary = levels
+            .iter()
+            .zip(counts)
+            .map(|((label, _, _), count)| format!("{label} {count}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let view = cx.entity().downgrade();
+        Button::new("logs-levels")
+            .outline()
+            .small()
+            .icon(IconName::ListFilter)
+            .dropdown_caret(true)
+            .label(match (shown == LEVELS.len(), self.compact) {
+                (true, true) => String::new(),
+                (true, false) => "Levels".to_owned(),
+                (false, true) => format!("{shown}/{}", LEVELS.len()),
+                (false, false) => format!("{shown} of {} levels", LEVELS.len()),
+            })
+            .accessibility_label("Levels")
+            .tooltip(format!("Lines by level: {summary}"))
+            .dropdown_menu(move |mut menu, _, _| {
+                for ((label, level, active), count) in levels.clone().into_iter().zip(counts) {
+                    let view = view.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(format!("{label}  {count}"))
+                            .checked(active)
+                            .on_click(move |_, _, cx| {
+                                let level = level.clone();
+                                _ = view.update(cx, |this, cx| {
+                                    this.capture_anchor();
+                                    this.review.set_level(&level, !active);
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
     }
 
     fn render_notices(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -316,134 +323,155 @@ impl<S: LogSource> LogView<S> {
                 .position(|&matched| matched == id)
         });
         let selected = self.review.selected.len();
-        v_flex()
-            .gap(dp(12.))
-            .pb(dp(12.))
-            .children(S::controls(self, cx))
+        // One row: the source's tools, then the shared ones; a narrow
+        // panel or a large text size wraps it once.
+        let row = h_flex()
+            .id("logs-tools")
+            .test_support()
+            .flex_wrap()
+            .gap_x_2()
+            .gap_y(dp(4.))
+            .children(S::tools(self, cx))
+            .child(self.render_levels(cx))
             .child(
                 h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(self.render_levels(cx))
+                    .gap_1()
+                    .flex_1()
+                    .min_w(dp(180.))
                     .child(
-                        h_flex()
-                            .gap_1()
+                        div()
                             .flex_1()
-                            .min_w(dp(220.))
+                            .min_w_0()
+                            .key_context(SEARCH_CONTEXT)
+                            .on_action(cx.listener(|this, _: &LeaveSearch, window, cx| {
+                                this.leave_search(window, cx)
+                            }))
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .key_context(SEARCH_CONTEXT)
-                                    .on_action(cx.listener(|this, _: &LeaveSearch, window, cx| {
-                                        this.leave_search(window, cx)
-                                    }))
-                                    .child(
-                                        Input::new(&self.query)
-                                            .id("logs-search")
-                                            .aria_label("Search retained log lines")
-                                            .small()
-                                            .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                                    ),
-                            )
-                            .when(!self.review.query.is_empty(), |this| {
-                                this.child(
-                                    div()
-                                        .flex_none()
-                                        .text_size(dp(11.))
-                                        .text_color(p.muted)
-                                        .child(match (match_count, current_position) {
-                                            (0, _) => "No matches".to_owned(),
-                                            (count, Some(ix)) => format!("{} of {count}", ix + 1),
-                                            (count, None) => format!("– of {count}"),
-                                        }),
-                                )
-                            })
-                            .child(
-                                Button::new("logs-search-prev")
-                                    .ghost()
+                                Input::new(&self.query)
+                                    .id("logs-search")
+                                    .aria_label("Search retained log lines")
                                     .small()
-                                    .icon(IconName::ChevronUp)
-                                    .accessibility_label("Previous match")
-                                    .tooltip(format!(
-                                        "Previous match (Shift Enter, {}⇧G)",
-                                        ui::modifier()
-                                    ))
-                                    .disabled(self.review.query.is_empty())
-                                    .on_click(cx.listener(|this, _, _, cx| this.search(false, cx))),
-                            )
-                            .child(
-                                Button::new("logs-search-next")
-                                    .ghost()
-                                    .small()
-                                    .icon(IconName::ChevronDown)
-                                    .accessibility_label("Next match")
-                                    .tooltip(format!("Next match (Enter, {}G)", ui::modifier()))
-                                    .disabled(self.review.query.is_empty())
-                                    .on_click(cx.listener(|this, _, _, cx| this.search(true, cx))),
+                                    .prefix(Icon::new(IconName::Search).size(dp(14.))),
                             ),
                     )
+                    .when(!self.review.query.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .text_size(dp(11.))
+                                .text_color(p.muted)
+                                .child(match (match_count, current_position) {
+                                    (0, _) => "No matches".to_owned(),
+                                    (count, Some(ix)) => format!("{} of {count}", ix + 1),
+                                    (count, None) => format!("– of {count}"),
+                                }),
+                        )
+                    })
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new("logs-wrap")
-                                    .outline()
-                                    .small()
-                                    .icon(IconName::TextWrap)
-                                    .toggled(self.wrapped)
-                                    .selected(self.wrapped)
-                                    .accessibility_label("Wrap lines")
-                                    .tooltip("Wrap long lines")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.capture_anchor();
-                                        this.wrapped = !this.wrapped;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("logs-follow")
-                                    .outline()
-                                    .small()
-                                    .w(dp(104.))
-                                    .disabled(!S::live(self))
-                                    .toggled(self.following)
-                                    .selected(self.following)
-                                    .icon(if self.following {
-                                        IconName::ArrowDownToLine
-                                    } else {
-                                        IconName::Pause
-                                    })
-                                    .label(if self.following {
-                                        "Following"
-                                    } else {
-                                        "Paused"
-                                    })
-                                    .tooltip(if self.following {
-                                        S::follow_tooltip(self)
-                                    } else {
-                                        "Jump to the newest line and keep following".into()
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.set_following(!this.following, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("logs-copy")
-                                    .outline()
-                                    .small()
-                                    .icon(IconName::Copy)
-                                    .label(if selected > 0 {
-                                        format!("Copy {selected}")
-                                    } else {
-                                        "Copy".into()
-                                    })
-                                    .tooltip("Copy selected lines")
-                                    .disabled(self.review.copy_text(self.columns.time).is_err())
-                                    .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
-                            ),
+                        Button::new("logs-search-prev")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ChevronUp)
+                            .accessibility_label("Previous match")
+                            .tooltip(format!(
+                                "Previous match (Shift Enter, {}⇧G)",
+                                ui::modifier()
+                            ))
+                            .disabled(self.review.query.is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| this.search(false, cx))),
+                    )
+                    .child(
+                        Button::new("logs-search-next")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ChevronDown)
+                            .accessibility_label("Next match")
+                            .tooltip(format!("Next match (Enter, {}G)", ui::modifier()))
+                            .disabled(self.review.query.is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| this.search(true, cx))),
                     ),
             )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("logs-wrap")
+                            .outline()
+                            .small()
+                            .icon(IconName::TextWrap)
+                            .toggled(self.wrapped)
+                            .selected(self.wrapped)
+                            .accessibility_label("Wrap lines")
+                            .tooltip("Wrap long lines")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.capture_anchor();
+                                this.wrapped = !this.wrapped;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("logs-follow")
+                            .outline()
+                            .small()
+                            // Following and Paused take one width, so the
+                            // row doesn't move when it pauses; a narrow
+                            // toolbar shows the icon alone.
+                            .when(!self.compact, |this| this.w(dp(104.)))
+                            .disabled(!S::live(self))
+                            .toggled(self.following)
+                            .selected(self.following)
+                            .icon(if self.following {
+                                IconName::ArrowDownToLine
+                            } else {
+                                IconName::Pause
+                            })
+                            .accessibility_label(if self.following {
+                                "Following"
+                            } else {
+                                "Paused"
+                            })
+                            .when(!self.compact, |this| {
+                                this.label(if self.following {
+                                    "Following"
+                                } else {
+                                    "Paused"
+                                })
+                            })
+                            .tooltip(if self.following {
+                                S::follow_tooltip(self)
+                            } else {
+                                "Jump to the newest line and keep following".into()
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_following(!this.following, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("logs-copy")
+                            .outline()
+                            .small()
+                            .icon(IconName::Copy)
+                            .when(selected > 0, |this| this.label(selected.to_string()))
+                            .accessibility_label(if selected > 0 {
+                                format!("Copy {selected} lines")
+                            } else {
+                                "Copy".into()
+                            })
+                            .tooltip(if selected > 0 {
+                                format!("Copy the {selected} selected lines")
+                            } else {
+                                "Copy selected lines".into()
+                            })
+                            .disabled(self.review.copy_text(self.columns.time).is_err())
+                            .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
+                    ),
+            );
+        v_flex()
+            .gap(dp(6.))
+            .pb(dp(6.))
+            .children(S::controls(self, cx))
+            .child(row)
+            .children(S::notes(self, cx))
     }
 }
 
@@ -520,6 +548,9 @@ impl<S: LogSource> Render for LogView<S> {
             px(0.)
         };
         let notices_height = notices_natural.min(notices_cap);
+        // A toolbar narrower than this shows its buttons' icons alone, so
+        // it keeps to two rows.
+        self.compact = panel_width < window.rem_size() * COMPACT_REMS;
         S::prepare_controls(self, panel_width, window, cx);
         let mut toolbar_content = self.render_toolbar_content(cx).into_any_element();
         let toolbar_size = toolbar_content.layout_as_root(
@@ -688,13 +719,15 @@ impl<S: LogSource> Render for LogView<S> {
     }
 }
 
-/// The glyph beside a level's toggle. An application's errors aren't the
-/// cluster's health, so they take the information dot, as Observability's
-/// do; warnings take the warning glyph, and the other levels none.
-pub(crate) fn level_tone(level: &LogLevel) -> Option<Tone> {
-    match level {
-        LogLevel::Error => Some(Tone::Info),
-        LogLevel::Warning => Some(Tone::Warn),
-        _ => None,
-    }
-}
+/// Below this width, in rems, the toolbar's labelled buttons show their
+/// icon alone: 760 points at text size 20 is 28 rem, at 13 about 48.
+const COMPACT_REMS: f32 = 40.;
+
+/// The levels the toolbar's menu filters by, in its order.
+const LEVELS: [(&str, LogLevel); 5] = [
+    ("Error", LogLevel::Error),
+    ("Warn", LogLevel::Warning),
+    ("Info", LogLevel::Info),
+    ("Debug", LogLevel::Debug),
+    ("Unknown", LogLevel::Unknown),
+];

@@ -864,19 +864,6 @@ fn command_f_g_and_a_find_and_select_from_the_lines_or_the_search(cx: &mut TestA
     .unwrap();
 }
 
-#[test]
-fn level_toggles_draw_the_shared_glyphs() {
-    use crate::view::level_tone;
-    use freshkube_core::types::LogLevel;
-    use freshkube_ui::ui::Tone;
-    // An application's errors are information, not the cluster's health.
-    assert_eq!(level_tone(&LogLevel::Error), Some(Tone::Info));
-    assert_eq!(level_tone(&LogLevel::Warning), Some(Tone::Warn));
-    for level in [LogLevel::Info, LogLevel::Debug, LogLevel::Unknown] {
-        assert_eq!(level_tone(&level), None, "{level}");
-    }
-}
-
 /// A frame that scrolls around a log, as a short node pane does.
 struct Frame {
     panel: Entity<LogPanel>,
@@ -941,7 +928,7 @@ fn mount_framed(
 
 #[gpui_kit::test]
 fn a_wheel_over_a_short_logs_controls_scrolls_the_log_and_not_the_frame(cx: &mut TestAppContext) {
-    let (_runtime, panel, scroll, handle) = mount_framed(cx, 240.);
+    let (_runtime, panel, scroll, handle) = mount_framed(cx, 180.);
     panel.update(cx, |view, cx| {
         view.source_mut().banner = true;
         cx.notify();

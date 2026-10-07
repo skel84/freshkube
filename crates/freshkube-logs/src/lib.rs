@@ -191,8 +191,23 @@ pub trait LogSource: Sized + 'static {
     ) {
     }
 
-    /// Toolbar rows above the shared filters, search and buttons.
-    fn controls(view: &LogView<Self>, cx: &mut Context<LogView<Self>>) -> Vec<AnyElement>;
+    /// Toolbar rows above the toolbar's row of tools.
+    fn controls(_view: &LogView<Self>, _cx: &mut Context<LogView<Self>>) -> Vec<AnyElement> {
+        Vec::new()
+    }
+
+    /// The source's own tools, first in the toolbar's row before the
+    /// shared levels, search and buttons. Keep them compact: the row is
+    /// one line in a wide panel and wraps once in a narrow one.
+    fn tools(_view: &LogView<Self>, _cx: &mut Context<LogView<Self>>) -> Vec<AnyElement> {
+        Vec::new()
+    }
+
+    /// Lines under the toolbar's row, such as where the stream stands when
+    /// there is something to say.
+    fn notes(_view: &LogView<Self>, _cx: &mut Context<LogView<Self>>) -> Vec<AnyElement> {
+        Vec::new()
+    }
 
     /// What the list says while no line is visible.
     fn empty_message(view: &LogView<Self>) -> SharedString;
@@ -242,6 +257,8 @@ pub struct LogView<S: LogSource> {
     scroll: VirtualListScrollHandle,
     manual_review: Rc<Cell<bool>>,
     width: Option<Pixels>,
+    /// The toolbar is narrow: buttons show their icons alone.
+    compact: bool,
     panel_height: Option<Pixels>,
     /// Scrolls the whole panel when it is shorter than its controls and
     /// notices over the list's least height, so none of them is cut.
@@ -334,6 +351,7 @@ impl<S: LogSource> LogView<S> {
             focus: cx.focus_handle().tab_stop(true),
             scroll: VirtualListScrollHandle::new(),
             width: None,
+            compact: false,
             panel_height: None,
             panel_scroll: ScrollHandle::new(),
             least_height: Pixels::ZERO,

@@ -137,6 +137,12 @@ impl<S: LogSource> LogView<S> {
         self.generation
     }
 
+    /// The toolbar is narrow, as the last frame laid it out: a source's
+    /// tools show their icons alone too.
+    pub fn compact(&self) -> bool {
+        self.compact
+    }
+
     pub fn columns(&self) -> Columns {
         self.columns
     }

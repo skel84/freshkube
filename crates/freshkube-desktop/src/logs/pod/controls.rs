@@ -1,16 +1,16 @@
-//! The Logs tab's own controls, above the shared filters and search: the
-//! container and tail pickers, Stop and Resume, the previous instance and
-//! timestamps, then where the stream stands.
+//! A pod log's own tools, first in the toolbar's row: the container and
+//! tail pickers, Previous, Timestamps, Stop or Resume and where the stream
+//! stands; under the row, one note when there is something to say.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, Context, Div, Role, SharedString, TestSupportExt,
+    AnyElement, Context, Role, SharedString, TestSupportExt,
     component::{
-        Disableable, Icon, Sizable,
+        Disableable, Icon, Selectable, Sizable,
         button::Button,
-        checkbox::Checkbox,
         h_flex,
         menu::{DropdownMenu, PopupMenuItem},
+        tooltip::Tooltip,
     },
     div,
     prelude::*,
@@ -37,36 +37,20 @@ fn tail_label(tail: Option<i64>) -> String {
     format!("Last {grouped}")
 }
 
-/// The Logs tab's toolbar rows.
+/// The pod's tools in the toolbar's row, and the note under it.
 pub(super) trait Controls: Sized + 'static {
-    fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
+    /// The container and tail pickers, Previous, Timestamps, Stop or
+    /// Resume, and where the stream stands.
+    fn render_tools(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
 
-    /// The container and tail pickers, and Stop or Resume.
-    fn render_pickers(&self, cx: &mut Context<Self>) -> Div;
-
-    /// The previous instance and the timestamps column.
-    fn render_options(&self, cx: &mut Context<Self>) -> Div;
-
-    /// Where the stream stands: a tag, and a sentence when there is more
-    /// to say. A failure says it in the banner below instead.
-    fn render_status(&self, cx: &mut Context<Self>) -> AnyElement;
-
-    /// A failure with Retry, or the hint that the container keeps crashing.
-    fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement>;
+    /// A failure with Retry, or one line, cut short with a tooltip, on why
+    /// the log waits and how the container last ended, when there is
+    /// something to say.
+    fn render_notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement>;
 }
 
 impl Controls for PodLogView {
-    fn render_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut rows = vec![
-            self.render_pickers(cx).into_any_element(),
-            self.render_options(cx).into_any_element(),
-            self.render_status(cx).into_any_element(),
-        ];
-        rows.extend(self.render_banner(cx));
-        rows
-    }
-
-    fn render_pickers(&self, cx: &mut Context<Self>) -> Div {
+    fn render_tools(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let source = self.source();
         let view = cx.entity().downgrade();
         let choices = source.choices.clone();
@@ -131,6 +115,35 @@ impl Controls for PodLogView {
                 }
                 menu
             });
+        let has_previous = source.has_previous();
+        let previous = Button::new("pod-logs-previous")
+            .outline()
+            .small()
+            .icon(IconName::RotateCcw)
+            .when(!self.compact(), |this| this.label("Previous"))
+            .toggled(source.previous)
+            .selected(source.previous)
+            .accessibility_label("Previous instance")
+            .tooltip(match (has_previous, source.previous) {
+                (false, _) => "No previous instance",
+                (true, false) => "Show the instance before this one, read to its end",
+                (true, true) => "Back to the running instance",
+            })
+            .disabled(!has_previous && !source.previous)
+            .on_click(cx.listener(|view, _, _, cx| {
+                let previous = !view.source().previous;
+                view.set_previous(previous, cx)
+            }));
+        let time = self.columns().time;
+        let timestamps = Button::new("pod-logs-timestamps")
+            .outline()
+            .small()
+            .icon(IconName::Clock)
+            .toggled(time)
+            .selected(time)
+            .accessibility_label("Timestamps")
+            .tooltip("Show each line's time. Copy copies what shows.")
+            .on_click(cx.listener(move |view, _, _, cx| view.set_timestamps(!time, cx)));
         let running = source.running();
         let stream = Button::new("pod-logs-stream")
             .outline()
@@ -140,11 +153,11 @@ impl Controls for PodLogView {
             } else {
                 IconName::Play
             })
-            .label(if running { "Stop" } else { "Resume" })
+            .accessibility_label(if running { "Stop" } else { "Resume" })
             .tooltip(if running {
                 "Stop reading the log. What was read stays."
             } else {
-                "Read on from the last line"
+                "Resume: read on from the last line"
             })
             .disabled(source.previous || !(running || source.state == StreamState::Stopped))
             .on_click(cx.listener(|view, _, _, cx| {
@@ -154,81 +167,42 @@ impl Controls for PodLogView {
                     view.resume(cx);
                 }
             }));
-        h_flex()
-            .gap_2()
-            .child(container)
-            .child(tails)
-            .child(div().flex_1())
-            .child(stream)
-    }
-
-    fn render_options(&self, cx: &mut Context<Self>) -> Div {
-        let has_previous = self.source().has_previous();
-        h_flex()
-            .gap_4()
-            .child(
-                Checkbox::new("pod-logs-previous")
-                    .small()
-                    .label("Previous instance")
-                    .checked(self.source().previous)
-                    .disabled(!has_previous)
-                    .tooltip(if has_previous {
-                        "The log of the instance before this one, read to its end"
-                    } else {
-                        "No previous instance"
-                    })
-                    .on_click(
-                        cx.listener(|view, checked: &bool, _, cx| view.set_previous(*checked, cx)),
-                    ),
-            )
-            .child(
-                Checkbox::new("pod-logs-timestamps")
-                    .small()
-                    .label("Timestamps")
-                    .checked(self.columns().time)
-                    .tooltip("Show each line's time. Copy copies what shows.")
-                    .on_click(
-                        cx.listener(|view, checked: &bool, _, cx| {
-                            view.set_timestamps(*checked, cx)
-                        }),
-                    ),
-            )
-    }
-
-    fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
-        let status = &self.source().status;
-        let failed = matches!(self.source().state, StreamState::Failed(_));
-        h_flex()
+        let status = &source.status;
+        let tag = h_flex()
             .id("pod-logs-status")
             .test_support()
             .role(Role::Status)
             .aria_label(status.label.clone())
-            .gap_2()
-            .min_h(dp(22.))
-            .text_size(dp(12.))
-            .text_color(palette(cx).muted)
             .when(!status.tag.is_empty(), |this| {
                 this.child(ui::tag(status.tone, None, status.tag.clone(), cx))
-            })
-            .when(!failed, |this| {
-                this.child(div().flex_1().min_w_0().child(status.text.clone()))
-            })
-            .into_any_element()
+            });
+        vec![
+            container.into_any_element(),
+            tails.into_any_element(),
+            h_flex()
+                .gap_1()
+                .child(previous)
+                .child(timestamps)
+                .child(stream)
+                .into_any_element(),
+            tag.into_any_element(),
+        ]
     }
 
-    fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if let StreamState::Failed(_) = &self.source().state {
+    fn render_notes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let source = self.source();
+        if let StreamState::Failed(_) = &source.state {
             let p = palette(cx);
-            return Some(
+            return vec![
                 h_flex()
                     .id("pod-logs-failed")
                     .test_support()
                     .role(Role::Alert)
-                    .aria_label(self.source().status.text.clone())
+                    .aria_label(source.status.text.clone())
                     .items_start()
                     .gap_2p5()
                     .px_3()
-                    .py_2p5()
+                    .py_2()
                     .rounded(px(8.))
                     .border_1()
                     .border_color(p.crit.opacity(0.45))
@@ -241,12 +215,7 @@ impl Controls for PodLogView {
                             .text_color(p.crit_ink)
                             .mt(dp(1.)),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.source().status.text.clone()),
-                    )
+                    .child(div().flex_1().min_w_0().child(source.status.text.clone()))
                     .child(
                         Button::new("pod-logs-retry")
                             .outline()
@@ -256,34 +225,35 @@ impl Controls for PodLogView {
                             .on_click(cx.listener(|view, _, _, cx| view.resume(cx))),
                     )
                     .into_any_element(),
-            );
+            ];
         }
-        let hint = self
-            .source()
-            .hint
-            .clone()
-            .filter(|_| !self.source().previous)?;
-        Some(
-            div()
-                .id("pod-logs-hint")
+        let Some(note) = source.note.clone() else {
+            return Vec::new();
+        };
+        let p = palette(cx);
+        vec![
+            h_flex()
+                .id("pod-logs-note")
                 .test_support()
                 .role(Role::Status)
-                .aria_label(hint.clone())
-                .child(ui::warning_banner(
-                    None,
-                    hint,
-                    Some(
-                        Button::new("pod-logs-show-previous")
-                            .outline()
-                            .small()
-                            .label("Show previous instance")
-                            .on_click(cx.listener(|view, _, _, cx| view.set_previous(true, cx)))
-                            .into_any_element(),
-                    ),
-                    cx,
-                ))
+                .aria_label(note.text.clone())
+                // One line: a long note ends in an ellipsis, and its
+                // tooltip says it all.
+                .tooltip({
+                    let text = note.text.clone();
+                    move |window, cx| Tooltip::new(text.clone()).build(window, cx)
+                })
+                .items_center()
+                .gap_2()
+                .text_size(dp(12.))
+                .line_height(dp(16.))
+                .text_color(if note.warn { p.warn_ink } else { p.muted })
+                .when(note.warn, |this| {
+                    this.child(Icon::new(IconName::TriangleAlert).size(dp(14.)).flex_none())
+                })
+                .child(div().flex_1().min_w_0().truncate().child(note.text))
                 .into_any_element(),
-        )
+        ]
     }
 }
 
