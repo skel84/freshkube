@@ -389,6 +389,132 @@ fn pods_never_listed_leave_node_pods_and_requests_unknown() {
 }
 
 #[test]
+fn pods_failed_without_data_leave_node_pods_and_requests_unknown() {
+    use k8s_openapi::api::core::v1::Node;
+    let session = session();
+    let node: Node = serde_json::from_value(
+        json!({"metadata":{"name":"node","uid":"node-uid","resourceVersion":"1"}}),
+    )
+    .unwrap();
+    sync(&session, vec![node]);
+    session.fail(
+        0,
+        Source::Pods,
+        ObservationFailure::Read(FailureKind::Forbidden),
+    );
+    let publication = session.derive(now());
+    assert!(matches!(publication.summary.pods, Part::Refused(_)));
+    assert!(publication.summary.pods.loaded().is_none());
+    let node = &publication.summary.nodes.loaded().unwrap()[0];
+    assert_eq!(node.pods, 0);
+    assert!(!node.pods_current);
+    assert!(!node.pods_observed);
+    assert_eq!(node.requests, crate::resources::Amounts::default());
+}
+
+/// A part's states short of current: never listed, failed with nothing listed
+/// (refused or failed), and failed after a list, which it keeps as stale.
+fn assert_part_unavailable_and_stale<T: Clone + PartialEq + std::fmt::Debug>(
+    source: Source,
+    list: impl Fn(&Session),
+    part: impl Fn(&KubernetesSummary) -> &Part<T>,
+    listed: T,
+) {
+    let never_listed = session();
+    let publication = never_listed.derive(now());
+    let waiting = part(&publication.summary);
+    assert!(
+        matches!(waiting, Part::Failed(_)),
+        "{source:?}: {waiting:?}"
+    );
+    assert!(waiting.loaded().is_none());
+    assert_eq!(waiting.error(), Some("Waiting for the initial list"));
+    assert!(!publication.summary.observations[&source].is_stale());
+
+    for (failure, refused) in [
+        (ObservationFailure::Read(FailureKind::Forbidden), true),
+        (ObservationFailure::Read(FailureKind::Timeout), false),
+    ] {
+        let failed = session();
+        failed.fail(0, source, failure.clone());
+        let publication = failed.derive(now());
+        let unavailable = part(&publication.summary);
+        assert_eq!(
+            matches!(unavailable, Part::Refused(_)),
+            refused,
+            "{source:?}: {unavailable:?}"
+        );
+        assert!(!unavailable.is_current());
+        assert!(unavailable.loaded().is_none());
+        assert_eq!(unavailable.error(), Some(failure.message()));
+        assert!(!publication.summary.observations[&source].is_stale());
+    }
+
+    let session = session();
+    list(&session);
+    let publication = session.derive(now());
+    assert_eq!(part(&publication.summary), &Part::Loaded(listed.clone()));
+    session.fail(0, source, ObservationFailure::Read(FailureKind::Timeout));
+    let publication = session.derive(now());
+    let stale = part(&publication.summary);
+    assert!(matches!(stale, Part::Failed(_)), "{source:?}: {stale:?}");
+    assert!(!stale.is_current());
+    assert_eq!(stale.loaded(), Some(&listed));
+    assert_eq!(stale.error(), Some("The Kubernetes read timed out"));
+    let observation = &publication.summary.observations[&source];
+    assert!(observation.is_stale());
+    assert_eq!(observation.last_success(), Some(now()));
+}
+
+#[test]
+fn available_volumes_are_unavailable_until_listed_and_stale_after_a_failure() {
+    use k8s_openapi::api::core::v1::PersistentVolume;
+    assert_part_unavailable_and_stale(
+        Source::Volumes,
+        |session| {
+            sync::<PersistentVolume>(
+                session,
+                objects(json!([
+                    {"metadata":{"name":"pv-free"},"status":{"phase":"Available"}},
+                    {"metadata":{"name":"pv-used"},"status":{"phase":"Bound"}}
+                ])),
+            )
+        },
+        |summary| &summary.available_volumes,
+        1,
+    );
+}
+
+#[test]
+fn namespaces_are_unavailable_until_listed_and_stale_after_a_failure() {
+    use k8s_openapi::api::core::v1::Namespace;
+    assert_part_unavailable_and_stale(
+        Source::Namespaces,
+        |session| {
+            sync::<Namespace>(
+                session,
+                objects(json!([
+                    {"metadata":{"name":"batch"}},
+                    {"metadata":{"name":"payments"}}
+                ])),
+            )
+        },
+        |summary| &summary.namespaces,
+        2,
+    );
+}
+
+#[test]
+fn version_is_unavailable_until_read_and_stale_after_a_failure() {
+    assert_part_unavailable_and_stale(
+        Source::Version,
+        |session| session.version(0, "v1.34.1".into(), now()),
+        |summary| &summary.version,
+        "v1.34.1".to_string(),
+    );
+}
+
+#[test]
 fn a_pending_claims_reason_is_last_known_while_events_are_stale() {
     use k8s_openapi::api::core::v1::PersistentVolumeClaim;
     let session = session();
@@ -452,11 +578,11 @@ fn workloads_are_unavailable_only_when_every_source_failed_without_data() {
             .collect(),
     };
 
-    let never_listed = session();
+    let failed_without_data = session();
     for source in workload_sources {
-        never_listed.fail(0, source, ObservationFailure::Read(FailureKind::Forbidden));
+        failed_without_data.fail(0, source, ObservationFailure::Read(FailureKind::Forbidden));
     }
-    let outcome = never_listed.derive(now()).summary.workloads.clone();
+    let outcome = failed_without_data.derive(now()).summary.workloads.clone();
     assert!(matches!(
         outcome,
         WorkloadCollectionOutcome::Unavailable { .. }
