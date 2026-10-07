@@ -20,6 +20,7 @@
 //! - [`resources`] - Read-only listing and watching of any Kubernetes kind
 //! - [`monitoring`] - Prometheus dashboards through the service proxy, GET only
 
+mod base_url;
 mod client_cache;
 pub mod cluster_overview;
 pub mod cluster_source;

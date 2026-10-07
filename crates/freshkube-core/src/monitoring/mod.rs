@@ -23,6 +23,8 @@ mod tests;
 
 use std::fmt;
 
+use crate::base_url::{BaseUrlError, parse_base_url};
+
 pub use discovery::{
     Candidate, Discovery, LOOKED_FOR, Rank, Tried, confirm, confirm_url, discover, list_candidates,
     rank,
@@ -179,20 +181,18 @@ impl Endpoint {
 /// `https`, a host, and no user, password, query or fragment, since a
 /// token is entered separately and never kept in the URL.
 pub fn normalise_url(text: &str) -> Result<String, String> {
-    let url = url::Url::parse(text.trim())
-        .map_err(|_| "Enter a full URL, such as https://metrics.example.com".to_owned())?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err("The URL must start with http:// or https://".into());
-    }
-    if url.host_str().is_none_or(str::is_empty) {
-        return Err("The URL has no host".into());
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err("Leave the user and password out of the URL; use a token instead".into());
-    }
-    if url.query().is_some() || url.fragment().is_some() {
-        return Err("The URL can't have a query or fragment".into());
-    }
+    let url = parse_base_url(text.trim()).map_err(|error| {
+        match error {
+            BaseUrlError::NotAUrl => "Enter a full URL, such as https://metrics.example.com",
+            BaseUrlError::Scheme => "The URL must start with http:// or https://",
+            BaseUrlError::NoHost => "The URL has no host",
+            BaseUrlError::UserInfo => {
+                "Leave the user and password out of the URL; use a token instead"
+            }
+            BaseUrlError::QueryOrFragment => "The URL can't have a query or fragment",
+        }
+        .to_owned()
+    })?;
     let path = normalise_path(url.path());
     let mut base = format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
     if let Some(port) = url.port() {
