@@ -112,6 +112,8 @@ pub struct GroupRow {
     subject: Option<SharedString>,
     detail: Vec<String>,
     actions: Vec<AnyElement>,
+    after: Vec<String>,
+    room: Option<f32>,
     height: f32,
 }
 
@@ -129,6 +131,8 @@ impl GroupRow {
             subject: None,
             detail: Vec::new(),
             actions: Vec::new(),
+            after: Vec::new(),
+            room: None,
             height,
         }
     }
@@ -149,6 +153,22 @@ impl GroupRow {
         self
     }
 
+    /// Details drawn after the actions, joined with `·`, so the actions
+    /// stay near the start where a drawer may cover the row's end.
+    pub fn after(mut self, after: Vec<String>) -> Self {
+        self.after = after;
+        self
+    }
+
+    /// The width in dp left in sight, when something covers the row's
+    /// end, such as a drawer over the list: the row lays its text and
+    /// actions out within it, the text truncating so that the glyph and
+    /// the actions keep their width.
+    pub fn room(mut self, room: Option<f32>) -> Self {
+        self.room = room;
+        self
+    }
+
     pub fn render(self, cx: &App) -> Observed<Stateful<Div>> {
         let p = palette(cx);
         let color = match self.tone {
@@ -158,47 +178,129 @@ impl GroupRow {
             _ => p.muted,
         };
         let detail = self.detail.join(" · ");
+        let after = self.after.join(" · ");
         let glyph = glyph_slot(self.tone, cx)
             .id((self.id.clone(), "glyph"))
-            .test_support();
-        let label = (self.id.clone(), "label");
+            .test_support()
+            .into_any_element();
+        let id = self.id.clone();
+        let aria = if after.is_empty() {
+            format!("{} · {detail}", self.label)
+        } else {
+            format!("{} · {detail} · {after}", self.label)
+        };
+        let (height, room) = (self.height, self.room);
+        let contents = self.contents(glyph, color, detail, after, p.muted);
         h_flex()
-            .id(self.id)
+            .id(id)
             .test_support()
             .role(Role::Heading)
-            .aria_label(format!("{} · {detail}", self.label))
+            .aria_label(aria)
             .w_full()
-            .h(dp(self.height))
-            .pr_3()
-            .gap(dp(CELL_PAD))
+            .h(dp(height))
             .bg(p.track.opacity(0.45))
             .border_b_1()
             .border_color(p.line)
             .text_size(dp(12.))
-            .child(glyph)
             .child(
-                div()
-                    .id(label)
-                    .test_support()
-                    .flex_none()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(color)
-                    .child(self.label),
-            )
-            .when_some(self.subject, |this, subject| {
-                this.child(div().flex_none().font_family(MONO_FONT).child(subject))
-            })
-            // The actions follow the text, so a table wider than its view
-            // still shows them.
-            .child(
-                div()
+                h_flex()
+                    .h_full()
+                    .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .text_color(p.muted)
-                    .child(format!("· {detail}")),
+                    .when_some(room, |this, room| this.flex_none().w(dp(room)))
+                    .pr_3()
+                    .gap(dp(CELL_PAD))
+                    .overflow_hidden()
+                    .children(contents),
             )
-            .child(h_flex().flex_none().gap_1().children(self.actions))
     }
+
+    /// The row's parts. What gives way when the room is short goes from
+    /// the end: the details after the actions, then the count, and, only
+    /// beside a cover (`room`), the subject and then the label. Each part
+    /// keeps its whole width until the one before it in that order is
+    /// gone: shared shrink factors would cut every part a little at once,
+    /// so each run that must outlast the next sits in a box that doesn't
+    /// shrink and is capped at its parent's width (`run`).
+    fn contents(
+        self,
+        glyph: AnyElement,
+        color: gpui_kit::Hsla,
+        detail: String,
+        after: String,
+        muted: gpui_kit::Hsla,
+    ) -> Vec<AnyElement> {
+        let covered = self.room.is_some();
+        let part = |what: &'static str| {
+            div()
+                .id((self.id.clone(), what))
+                .test_support()
+                .whitespace_nowrap()
+        };
+        let label = part("label")
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(color)
+            .child(self.label);
+        let subject = self
+            .subject
+            .map(|subject| part("subject").font_family(MONO_FONT).child(subject));
+        let count = part("count")
+            .min_w_0()
+            .truncate()
+            .text_color(muted)
+            .child(format!("· {detail}"));
+        let actions = h_flex()
+            .id((self.id.clone(), "actions"))
+            .test_support()
+            .flex_none()
+            .gap_1()
+            .children(self.actions);
+        let after = (!after.is_empty()).then(|| {
+            part("after")
+                .min_w_0()
+                .truncate()
+                .text_color(muted)
+                .child(format!("· {after}"))
+        });
+        let mut parts = vec![glyph];
+        // The text before the actions, and the actions after it: the run
+        // stays whole while the details after it give way.
+        let leading = if covered {
+            // Beside a cover, the label and subject give way too, after
+            // the count: the subject first, the label last.
+            let named = run()
+                .child(label.flex_shrink_0().max_w_full().truncate())
+                .children(subject.map(|subject| subject.min_w_0().truncate()));
+            h_flex()
+                .min_w_0()
+                .gap(dp(CELL_PAD))
+                .child(named)
+                .child(count)
+                .into_any_element()
+        } else {
+            // Otherwise they keep their width, as the table's other pages
+            // expect, and the count alone gives way.
+            parts.push(label.flex_none().into_any_element());
+            parts.extend(subject.map(|subject| subject.flex_none().into_any_element()));
+            count.into_any_element()
+        };
+        parts.push(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(dp(CELL_PAD))
+                .child(run().child(leading).child(actions))
+                .children(after)
+                .into_any_element(),
+        );
+        parts
+    }
+}
+
+/// A run of a group row's parts that keeps its width while what follows
+/// it gives way, then gives way itself within its parent's width.
+fn run() -> Div {
+    h_flex().flex_shrink_0().max_w_full().gap(dp(CELL_PAD))
 }
 
 /// A line's leading glyph in a slot where a row's glyph column sits:
@@ -426,5 +528,141 @@ mod tests {
         // Characters, not bytes.
         let tree: SharedString = "├─ │  ".into();
         assert_eq!(fit("", [&tree].into_iter(), WIDEST), 6. * 7.5 + 24.);
+    }
+
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AnyWindowHandle, Context, Entity, Render, TestAppContext, Window, size};
+
+    use crate::ui::dp_px;
+
+    /// A group row as Pods draws one, beside a cover `room` dp wide, or
+    /// uncovered in a window `width` wide.
+    struct Covered {
+        room: Option<f32>,
+        width: f32,
+    }
+
+    impl Render for Covered {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let row = GroupRow::new("g", Tone::Warn, "Node not ready", 26.)
+                .subject(Some("talos-wk-fra1-02"))
+                .detail(vec!["3 pods".into()])
+                .action(div().id("g-act").flex_none().w(dp(60.)).h(dp(18.)))
+                .after(vec![
+                    "NotReady for 4m".into(),
+                    "metrics are last known".into(),
+                ])
+                .room(self.room)
+                .render(cx);
+            div().w(dp(self.width)).child(row)
+        }
+    }
+
+    fn open_row(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Covered>) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(1600.), px(200.)), |window, cx| {
+            let row = cx.new(|_| Covered {
+                room: None,
+                width: 1200.,
+            });
+            view = Some(row.clone());
+            Root::new(row, window, cx)
+        });
+        (handle.into(), view.unwrap())
+    }
+
+    /// The parts' widths, in the order they give way.
+    const ORDER: [&str; 4] = ["after", "count", "subject", "label"];
+
+    fn widths(window: &mut Window, cx: &mut App) -> Vec<f32> {
+        window.render_frame(cx);
+        ORDER
+            .iter()
+            .map(|part| {
+                f32::from(
+                    window
+                        .find((ElementId::from("g"), *part))
+                        .bounds()
+                        .size
+                        .width,
+                )
+            })
+            .collect()
+    }
+
+    /// Beside a cover, each part keeps its whole width until the one
+    /// before it in the order is gone, and the actions stay in the room.
+    #[gpui_kit::test]
+    fn a_covered_group_row_gives_way_one_part_at_a_time(cx: &mut TestAppContext) {
+        let (handle, view) = open_row(cx);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |v, _| v.room = Some(1200.));
+            let whole = widths(window, cx);
+            assert!(whole.iter().all(|w| *w > 20.), "{whole:?}");
+            let mut room = 1200.;
+            let mut seen = [false; 4];
+            while room > 150. {
+                room -= 4.;
+                view.update(cx, |v, _| v.room = Some(room));
+                let now = widths(window, cx);
+                for (ix, (w, full)) in now.iter().zip(&whole).enumerate() {
+                    if *w < full - 0.5 {
+                        seen[ix] = true;
+                        for (before, gone) in now[..ix].iter().enumerate() {
+                            assert!(
+                                *gone <= 0.5,
+                                "room {room}: {} gives way while {} is {gone} wide",
+                                ORDER[ix],
+                                ORDER[before]
+                            );
+                        }
+                    }
+                }
+                let action = window.find((ElementId::from("g"), "actions")).bounds();
+                let row = window.find("g").bounds();
+                assert!(
+                    f32::from(action.right() - row.left()) <= room + 0.5,
+                    "room {room}: the action ends at {:?}",
+                    action.right()
+                );
+                assert_eq!(f32::from(action.size.width), f32::from(dp_px(60., window)));
+            }
+            assert_eq!(seen, [true; 4], "every part gave way by 150 dp");
+        })
+        .unwrap();
+    }
+
+    /// Uncovered, as on every page but Pods beside its drawer, the label
+    /// and subject keep their width while the details give way, the
+    /// details after the actions first.
+    #[gpui_kit::test]
+    fn an_uncovered_group_row_keeps_its_label_and_subject(cx: &mut TestAppContext) {
+        let (handle, view) = open_row(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let whole = widths(window, cx);
+            let mut width = 1200.;
+            while width > 300. {
+                width -= 4.;
+                view.update(cx, |v, _| v.width = width);
+                let now = widths(window, cx);
+                assert_eq!(
+                    &now[2..],
+                    &whole[2..],
+                    "width {width}: label or subject cut"
+                );
+                if now[1] < whole[1] - 0.5 {
+                    assert!(now[0] <= 0.5, "width {width}: count cut before the rest");
+                }
+            }
+            assert!(widths(window, cx)[1] < whole[1], "the count gave way");
+        })
+        .unwrap();
     }
 }

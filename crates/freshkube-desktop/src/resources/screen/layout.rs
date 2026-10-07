@@ -15,8 +15,10 @@ const MAX_COLUMN: f32 = 280.;
 const MAX_FLEXIBLE: f32 = 440.;
 /// The status glyph's column: 16 for the glyph and its padding.
 pub(super) use freshkube_ui::table::GLYPH_WIDTH;
-/// A pod's `0/1 ↻14`.
-const READY_WIDTH: f32 = 88.;
+/// A pod's `0/1`, under its label and sort arrow.
+const READY_WIDTH: f32 = 72.;
+/// A pod's restart count, under its label and sort arrow.
+const RESTARTS_WIDTH: f32 = 88.;
 /// A use figure and its 44-wide bullet.
 const USAGE_WIDTH: f32 = 116.;
 const MAX_OWNER: f32 = 132.;
@@ -36,8 +38,10 @@ pub(super) enum ColumnSource {
     /// The status glyph, or a check where the row is marked.
     Glyph,
     Owner,
-    /// A pod's ready containers and restarts.
+    /// A pod's ready containers of all.
     Ready,
+    /// A pod's restarts, all its containers' together.
+    Restarts,
     Cpu,
     Memory,
     Node,
@@ -65,7 +69,8 @@ impl DisplayColumn {
             ColumnSource::Namespace => SortKey::Namespace,
             ColumnSource::Glyph => return None,
             ColumnSource::Owner => SortKey::Owner,
-            ColumnSource::Ready => SortKey::Restarts,
+            ColumnSource::Ready => SortKey::Ready,
+            ColumnSource::Restarts => SortKey::Restarts,
             ColumnSource::Cpu => SortKey::Cpu,
             ColumnSource::Memory => SortKey::Memory,
             ColumnSource::Node => SortKey::Node,
@@ -169,8 +174,8 @@ impl TableLayout {
             let (ix, first) = (*ix, position == 0);
             let is_flexible = flexible == Some(ix);
             let is_name = name == Some(ix);
-            // A pod's status follows its name, and its readiness and
-            // restarts share a column.
+            // A pod's status follows its name; its readiness and restarts
+            // come from its facts.
             if pods && !is_name && column.kind != ColumnKind::Age {
                 continue;
             }
@@ -245,21 +250,23 @@ impl TableLayout {
     }
 }
 
-/// A pod's columns between its name and its age.
-fn pod_columns(store: &ResourceStore) -> [DisplayColumn; 5] {
+/// A pod's columns between its name and its age, in Freelens's order
+/// (#291).
+fn pod_columns(store: &ResourceStore) -> [DisplayColumn; 6] {
     let widest = store.widest();
     let fit =
         |chars: usize, max: f32| (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max);
     let node = widest.node.saturating_sub(store.node_prefix());
     [
+        DisplayColumn::new("Ready", ColumnSource::Ready, READY_WIDTH),
+        DisplayColumn::new("CPU", ColumnSource::Cpu, USAGE_WIDTH),
+        DisplayColumn::new("Memory", ColumnSource::Memory, USAGE_WIDTH),
+        DisplayColumn::new("Restarts", ColumnSource::Restarts, RESTARTS_WIDTH),
         DisplayColumn::new(
             "Owner",
             ColumnSource::Owner,
             fit(widest.owner.max(7), MAX_OWNER),
         ),
-        DisplayColumn::new("Ready", ColumnSource::Ready, READY_WIDTH),
-        DisplayColumn::new("CPU", ColumnSource::Cpu, USAGE_WIDTH),
-        DisplayColumn::new("Memory", ColumnSource::Memory, USAGE_WIDTH),
         // Room for the NotReady mark before a name.
         DisplayColumn::new("Node", ColumnSource::Node, fit(node.max(6) + 2, MAX_NODE)),
     ]

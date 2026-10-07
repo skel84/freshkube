@@ -529,3 +529,42 @@ fn forward_lands_a_fresh_drawer_on_its_ports(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A group row beside the drawer lays out within the room the drawer
+/// leaves, its subject shrinking first, so its buttons stay in sight
+/// (#321).
+#[gpui_kit::test]
+fn group_buttons_stay_clear_of_the_drawer(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1320., 880.);
+    open_in_drawer(handle, &pilot, cx);
+    cx.update_window(handle, |_, window, _| {
+        let drawer = window.find("resource-drawer").bounds();
+        let list = window.find("resource-list-area").bounds();
+        assert!(
+            drawer.left() - list.left() < gpui_kit::px(400.),
+            "{list:?} {drawer:?}"
+        );
+        let mut seen = 0;
+        for key in [
+            "resource-group-failing",
+            "resource-group-node:talos-wk-fra1-02",
+        ] {
+            for action in ["open-node", "select"] {
+                let Some(button) =
+                    window.try_find(gpui_kit::SharedString::from(format!("{key}-{action}")))
+                else {
+                    continue;
+                };
+                seen += 1;
+                assert!(
+                    button.bounds().right() <= drawer.left(),
+                    "{key}-{action}: {:?} under the drawer at {:?}",
+                    button.bounds(),
+                    drawer.left()
+                );
+            }
+        }
+        assert_eq!(seen, 3);
+    })
+    .unwrap();
+}

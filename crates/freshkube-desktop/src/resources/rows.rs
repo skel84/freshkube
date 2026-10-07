@@ -109,11 +109,36 @@ pub(crate) struct PodRow {
     pub(crate) reason: String,
     /// Ready containers of all, as printed: `0/1`.
     pub(crate) ready: String,
+    /// `ready` read as numbers, when it parses, for sorting.
+    pub(crate) ready_counts: Option<(u64, u64)>,
+    /// Whether every container is ready, or the count doesn't parse.
+    pub(crate) all_ready: bool,
     pub(crate) restarts: u32,
+    /// The Restarts cell's text, its accessible label and its emphasis.
+    pub(crate) restarts_text: String,
+    pub(crate) restarts_label: String,
+    pub(crate) restarts_emphasis: Emphasis,
     pub(crate) node: String,
     pub(crate) requests: Amounts,
     pub(crate) limits: Amounts,
     pub(crate) containers: Vec<ContainerFacts>,
+}
+
+/// How a count stands out: none muted, a few in ink, many in amber.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Emphasis {
+    Muted,
+    Plain,
+    Warn,
+}
+
+/// Restarts' emphasis: none muted, five or more amber (#291).
+pub(crate) fn restarts_emphasis(restarts: u32) -> Emphasis {
+    match restarts {
+        0 => Emphasis::Muted,
+        1..5 => Emphasis::Plain,
+        _ => Emphasis::Warn,
+    }
 }
 
 /// A pod's row from its printed cells and, when the table included the
@@ -164,12 +189,20 @@ pub(crate) fn pod_row(
         },
         _ => status.clone(),
     };
+    let ready_counts = ready
+        .split_once('/')
+        .and_then(|(up, all)| Some((up.trim().parse().ok()?, all.trim().parse().ok()?)));
     PodRow {
         state,
         status,
         reason,
+        all_ready: ready_counts.is_none_or(|(up, all)| up == all),
+        ready_counts,
         ready,
         restarts,
+        restarts_text: restarts.to_string(),
+        restarts_label: format!("{restarts} restart{}", if restarts == 1 { "" } else { "s" }),
+        restarts_emphasis: restarts_emphasis(restarts),
         node,
         requests: facts.requests,
         limits: facts.limits,
@@ -368,5 +401,32 @@ mod tests {
         assert_eq!(shared_prefix(["alpha", "beta"]), 0);
         assert_eq!(shared_prefix(["a-b", "a-b-c"]), 2);
         assert_eq!(shared_prefix(["équipe-é1", "équipe-è2"]), "équipe-".len());
+    }
+
+    #[test]
+    fn restarts_and_ready_are_derived_with_the_row() {
+        let emphasis: Vec<_> = [0, 1, 4, 5, 14].map(restarts_emphasis).to_vec();
+        assert_eq!(
+            emphasis,
+            [
+                Emphasis::Muted,
+                Emphasis::Plain,
+                Emphasis::Plain,
+                Emphasis::Warn,
+                Emphasis::Warn
+            ]
+        );
+        let one = pod_row(&columns(), &cells("1/2", "Running", "1"), None, false);
+        assert_eq!(
+            (one.restarts_text.as_str(), one.restarts_label.as_str()),
+            ("1", "1 restart")
+        );
+        assert_eq!((one.ready_counts, one.all_ready), (Some((1, 2)), false));
+        let many = pod_row(&columns(), &cells("1/1", "Running", "14"), None, false);
+        assert_eq!(many.restarts_label, "14 restarts");
+        assert_eq!(many.restarts_emphasis, Emphasis::Warn);
+        assert!(many.all_ready);
+        let odd = pod_row(&columns(), &cells("", "Pending", "0"), None, false);
+        assert_eq!((odd.ready_counts, odd.all_ready), (None, true));
     }
 }

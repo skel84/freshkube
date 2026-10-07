@@ -9,7 +9,7 @@ use freshkube_core::resources::Amounts;
 use gpui_kit::component::tooltip::Tooltip;
 
 use super::super::model::ResourceRow;
-use super::super::rows::{PodRow, PodState, RowOwner, died};
+use super::super::rows::{Emphasis, PodRow, PodState, RowOwner, died};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
@@ -236,42 +236,39 @@ pub(super) fn owner(
     .into_any_element()
 }
 
-/// `0/1 ⟲14`: ready containers of all, then restarts when there were any.
+/// `0/1`: ready containers of all, in amber while some aren't.
 pub(super) fn ready(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -> AnyElement {
-    let all_ready = pod.ready.split_once('/').is_none_or(|(up, all)| up == all);
+    let all_ready = pod.all_ready;
     let pod_for_tip = pod.clone();
     tooltip(
         cell(column)
             .id("ready")
-            .flex()
-            .gap(dp(8.))
-            .child(
-                div()
-                    .when(!all_ready && pod.state != PodState::Completed, |this| {
-                        this.text_color(p.warn_ink)
-                    })
-                    .child(pod.ready.clone()),
-            )
-            .when(pod.restarts > 0, |this| {
-                let color = if pod.restarts >= 5 {
-                    p.warn_ink
-                } else {
-                    p.muted
-                };
-                this.child(
-                    h_flex()
-                        .gap(dp(2.))
-                        .text_color(color)
-                        .child(
-                            Icon::new(IconName::RotateCcw)
-                                .size(dp(11.))
-                                .text_color(color),
-                        )
-                        .child(pod.restarts.to_string()),
-                )
-            }),
+            .when(!all_ready && pod.state != PodState::Completed, |this| {
+                this.text_color(p.warn_ink)
+            })
+            .child(pod.ready.clone()),
         move || readiness(&pod_for_tip),
     )
+    .into_any_element()
+}
+
+/// A pod's restarts: none muted, five or more in amber (#291).
+pub(super) fn restarts(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -> AnyElement {
+    let color = match pod.restarts_emphasis {
+        Emphasis::Muted => p.muted,
+        Emphasis::Plain => p.ink,
+        Emphasis::Warn => p.warn_ink,
+    };
+    let pod_for_tip = pod.clone();
+    tooltip(
+        cell(column)
+            .id("restarts")
+            .text_color(color)
+            .child(pod.restarts_text.clone()),
+        move || readiness(&pod_for_tip),
+    )
+    .aria_label(pod.restarts_label.clone())
+    .test_support()
     .into_any_element()
 }
 
