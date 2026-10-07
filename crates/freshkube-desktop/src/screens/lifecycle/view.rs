@@ -15,18 +15,27 @@ impl LifecycleScreen {
             }))
     }
 
-    /// The roster as the shared table: carded among the page's cards, as
-    /// tall as its rows, and scrolling sideways when the view is narrower
-    /// than its columns, with the node's name kept at the left edge.
-    fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    /// The roster as the shared table: bare and edge to edge, as tall as
+    /// its rows, and scrolling sideways when the page is narrower than its
+    /// columns, with the node's name kept at the left edge. Until the first
+    /// answer it shows the loading rows under its header.
+    fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        // While it loads, a row for each node the target knows of.
+        let lines = match &self.source {
+            Some(source) if self.waiting() => source.nodes.len(),
+            _ => self.line_count(),
+        };
         DataTable::new()
-            .carded()
-            .fit(self.line_count().max(1))
+            .fit(lines.max(1))
             .render(self, window, cx)
             .w_full()
+            .flex_none()
+            // Over the table, as System services has it.
+            .child(self.loading_motion.clone())
+            .into_any_element()
     }
 
-    fn alerts_panel(&self, alerts: &[AlertRow], cx: &mut Context<Self>) -> Div {
+    fn alerts_panel(&self, alerts: &[AlertRow], cx: &mut Context<Self>) -> Stateful<Div> {
         let p = palette(cx);
         let body = if alerts.is_empty() {
             div()
@@ -64,13 +73,18 @@ impl LifecycleScreen {
                 }))
                 .into_any_element()
         };
-        panel(cx)
+        // A section under a hairline across the page, its heading inset as
+        // the toolbar's title is.
+        div()
+            .id("lifecycle-alerts-section")
+            .flex_none()
+            .border_t_1()
+            .border_color(p.line)
             .child(
                 div()
-                    .px_3()
-                    .py(dp(9.))
-                    .border_b_1()
-                    .border_color(p.line)
+                    .px(dp(page::PANE_PADDING))
+                    .pt(dp(page::PANE_PADDING_Y))
+                    .pb(dp(6.))
                     .child(ui::caption("Alerts", cx)),
             )
             .child(
@@ -182,6 +196,7 @@ impl LifecycleScreen {
         };
         panel(cx)
             .id("lifecycle-sources")
+            .test_support()
             .p_4()
             .gap_2p5()
             .child(ui::caption("Cluster identity and sources", cx))
@@ -251,8 +266,11 @@ impl LifecycleScreen {
             .into_any_element()
     }
 
-    fn details(&self, view: &LifecycleView, cx: &mut Context<Self>) -> AnyElement {
+    /// The selected node's or alert's details; nothing without a selection,
+    /// so at rest the table has the page's width.
+    fn details(&self, view: &LifecycleView, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = palette(cx);
+        let selected = self.selected.as_ref()?;
         let (rows, alerts) = self.rows_and_alerts();
         let empty = |text: &'static str| {
             panel(cx)
@@ -265,21 +283,16 @@ impl LifecycleScreen {
                 .child(text)
                 .into_any_element()
         };
-        match &self.selected {
-            None => empty("Select a node or an alert to see its details."),
-            Some(Item::Node(name)) => {
-                let Some(row) = rows.iter().find(|row| &row.name == name) else {
-                    return empty("The selected node is no longer in the roster.");
-                };
-                self.node_details(row, view, cx)
-            }
-            Some(Item::Alert(ix)) => {
-                let Some(alert) = alerts.get(*ix) else {
-                    return empty("The selected alert is no longer raised.");
-                };
-                self.alert_details(alert, cx)
-            }
-        }
+        Some(match selected {
+            Item::Node(name) => match rows.iter().find(|row| &row.name == name) {
+                Some(row) => self.node_details(row, view, cx),
+                None => empty("The selected node is no longer in the roster."),
+            },
+            Item::Alert(ix) => match alerts.get(*ix) {
+                Some(alert) => self.alert_details(alert, cx),
+                None => empty("The selected alert is no longer raised."),
+            },
+        })
     }
 
     fn node_details(
@@ -484,36 +497,47 @@ impl LifecycleScreen {
 impl Render for LifecycleScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(window, cx);
-        let state = gate(
-            self.source.as_ref(),
-            &self.loader,
-            Scope::Cluster,
-            "lifecycle status",
-            cx,
-        );
-        let page = page::padded("lifecycle-page")
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .child(header);
+        // Until the first answer the table shows its loading rows; the other
+        // states take its place.
+        let state = (!self.waiting())
+            .then(|| {
+                gate(
+                    self.source.as_ref(),
+                    &self.loader,
+                    Scope::Cluster,
+                    "lifecycle status",
+                    cx,
+                )
+            })
+            .flatten();
+        // The table runs edge to edge under the toolbar; the banners, a state
+        // in the table's place and the cards sit in insets.
+        let page = page::page("lifecycle-page")
+            .h_auto()
+            .flex_none()
+            .child(page::toolbar(cx).child(header));
         let page = match state {
             Some(state) => page.child(
-                div()
-                    .id("lifecycle-state")
-                    .test_support()
-                    .flex_none()
-                    .child(state),
+                page::inset().child(
+                    div()
+                        .id("lifecycle-state")
+                        .test_support()
+                        .role(Role::Status)
+                        .child(state),
+                ),
             ),
             None => page.children(self.render_body(window, cx)),
         };
         // The keys live on a wrapper drawn in every state, so the page keeps
         // them while a state shows.
         div()
+            .id("lifecycle-scroll")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
-            .flex()
-            .flex_col()
             .size_full()
             .min_h_0()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
             .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
@@ -541,60 +565,69 @@ impl LifecycleScreen {
         header.control(refresh).render(window, cx)
     }
 
-    /// The banners and the cards: the roster, the alerts, etcd and the
-    /// sources, with the details beside them or under the roster.
+    /// The banners, the roster with the details beside it or under it, the
+    /// alerts, and the etcd and sources cards. Before the first answer, the
+    /// roster's loading rows alone.
     fn render_body(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let table = self.nodes_panel(window, cx);
         let Some(view) = self.loader.data() else {
-            return Vec::new();
+            return vec![table];
         };
-        let alerts = view.display.alerts.clone();
-        let missing = view.display.missing.clone();
-        let nodes = self.nodes_panel(window, cx);
-        let alerts_panel = self.alerts_panel(&alerts, cx);
-        let etcd = self.etcd_panel(view, cx);
-        let sources = self.sources_panel(view, cx);
-        let details = self.details(view, cx);
-        // Details sit beside the lists only when the roster still fits whole;
-        // otherwise they'd push its last columns behind a horizontal scroll.
-        let wide = content_width(window) >= view.display.width + DETAILS_WIDTH + GAP;
-        let body = if wide {
-            h_flex()
-                .items_start()
-                .gap(dp(GAP))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(dp(GAP))
-                        .child(nodes)
-                        .child(alerts_panel)
-                        .child(etcd)
-                        .child(sources),
-                )
-                .child(div().w(dp(DETAILS_WIDTH)).flex_none().child(details))
-        } else {
-            v_flex()
-                .gap(dp(GAP))
-                .child(nodes)
-                .child(details)
-                .child(alerts_panel)
-                .child(etcd)
-                .child(sources)
-        };
-        failure_banner(&self.loader, cx)
+        let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
             .map(IntoElement::into_any_element)
             .into_iter()
-            .chain(partial_notice(missing, cx))
-            .chain(std::iter::once(
-                body.id("lifecycle-body")
-                    .test_support()
-                    .flex_none()
-                    .w_full()
+            .chain(partial_notice(view.display.missing.clone(), cx))
+            .collect();
+        // Details sit beside the roster only when it still fits whole;
+        // otherwise they'd push its last columns behind a horizontal scroll.
+        let beside = page_width(window) >= view.display.width + DETAILS_WIDTH + GAP;
+        // The card keeps the inset on its outer edges until the Inspector.
+        let details = self.details(view, cx).map(|details| {
+            div()
+                .when_else(
+                    beside,
+                    |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
+                    |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
+                )
+                .child(details)
+                .into_any_element()
+        });
+        let cards = page::inset()
+            .flex()
+            .flex_wrap()
+            .items_start()
+            .gap(dp(GAP))
+            .child(card_cell(self.etcd_panel(view, cx)))
+            .child(card_cell(self.sources_panel(view, cx)));
+        let mut body = Vec::new();
+        if !banners.is_empty() {
+            body.push(
+                page::inset()
+                    .flex()
+                    .flex_col()
+                    .gap(dp(page::PANE_PADDING_Y))
+                    .children(banners)
                     .into_any_element(),
-            ))
-            .collect()
+            );
+        }
+        body.push(split_narrow("lifecycle-split", beside, table, details));
+        body.push(
+            self.alerts_panel(&view.display.alerts, cx)
+                .into_any_element(),
+        );
+        body.push(cards.into_any_element());
+        body
     }
 }
+
+/// A card beside another while the page has room for both, each at least
+/// [`CARD_MIN`] wide; otherwise across the page.
+fn card_cell(card: AnyElement) -> Div {
+    div().flex_1().min_w(dp(CARD_MIN)).child(card)
+}
+
+/// The narrowest an etcd or sources card gets beside the other.
+const CARD_MIN: f32 = 320.;
 
 // ---------------------------------------------------------------------------
 // Example data

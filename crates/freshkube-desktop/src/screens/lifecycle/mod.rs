@@ -26,17 +26,18 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, content_width, failure_banner, field,
-    gate, mono, panel, partial_notice, refresh_control, segment,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
+    page_width, panel, partial_notice, refresh_control, segment, split_narrow,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::status::{self, Segment};
-use freshkube_ui::table::TableState;
+use freshkube_ui::table::{self as data_table, TableState};
 
 const CONTEXT: &str = "TalosLifecycle";
 const PREFIX: &str = "lifecycle";
-/// The details pane, when it sits beside the lists.
+/// The details pane, when it sits beside the roster: `split_narrow`'s pane
+/// and gap.
 const DETAILS_WIDTH: f32 = 340.;
 const GAP: f32 = 14.;
 
@@ -77,6 +78,11 @@ pub(crate) struct LifecycleScreen {
     loader: Loader<LifecycleView>,
     selected: Option<Item>,
     table: TableState,
+    /// The roster's rows until the first answer, under the columns the
+    /// table has before any row sizes them, and their motion.
+    loading: data_table::LoadingRows,
+    loading_motion: Entity<data_table::LoadingMotion>,
+    loading_columns: (Vec<table::Column>, f32),
     focus: FocusHandle,
     /// The status bar's segment, and what it was derived from.
     status: Option<Segment>,
@@ -99,6 +105,8 @@ impl ScreenPanel for LifecycleScreen {
             KeyBinding::new("end", LastItem, Some(CONTEXT)),
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
+        let loading = data_table::LoadingRows::new(PREFIX);
+        let loading_motion = cx.new(|_| loading.motion(data_table::Look::Pulse));
         Self {
             runtime,
             source: None,
@@ -107,6 +115,9 @@ impl ScreenPanel for LifecycleScreen {
             loader: Loader::default(),
             selected: None,
             table: TableState::new("lifecycle"),
+            loading,
+            loading_motion,
+            loading_columns: table::columns(&[]),
             focus: cx.focus_handle(),
             status: None,
             status_key: None,
@@ -878,6 +889,14 @@ impl LifecycleScreen {
         self.selected = Some(item);
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    /// Whether the first answer for the target is still to come: the table
+    /// shows its loading rows rather than a state.
+    fn waiting(&self) -> bool {
+        self.source.is_some()
+            && self.loader.data().is_none()
+            && (self.loader.is_loading() || self.loader.error().is_none())
     }
 
     fn can_target(&self, node: &str) -> bool {
