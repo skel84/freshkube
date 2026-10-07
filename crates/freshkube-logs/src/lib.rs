@@ -651,11 +651,6 @@ impl<S: LogSource> LogView<S> {
         cx.notify();
     }
 
-    /// The next or previous retained line that matches the search.
-    pub fn find_next(&mut self, forward: bool, cx: &mut Context<Self>) {
-        self.search(forward, cx);
-    }
-
     /// Selects every visible line, up to the selection limit, newest
     /// first.
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
@@ -694,7 +689,8 @@ impl<S: LogSource> LogView<S> {
         cx.notify();
     }
 
-    fn search(&mut self, forward: bool, cx: &mut Context<Self>) {
+    /// Steps to the next or previous retained line that matches the search.
+    pub fn search(&mut self, forward: bool, cx: &mut Context<Self>) {
         self.set_following(false, cx);
         let hit = self.review.search(forward);
         self.pending_reveal = hit.map(|hit| hit.id);

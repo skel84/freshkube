@@ -83,13 +83,13 @@ impl Pilot {
                 Log::Node(view) => view.update(cx, |view, cx| {
                     view.search_for(&query, window, cx);
                     if find {
-                        view.find_next(true, cx);
+                        view.search(true, cx);
                     }
                 }),
                 Log::Application(view) => view.update(cx, |view, cx| {
                     view.search_for(&query, window, cx);
                     if find {
-                        view.find_next(true, cx);
+                        view.search(true, cx);
                     }
                 }),
             };
