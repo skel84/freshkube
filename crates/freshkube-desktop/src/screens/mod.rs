@@ -404,9 +404,9 @@ pub(crate) fn content_width(window: &Window) -> f32 {
 const SPLIT_WIDTH: f32 = 900.;
 const PANE_WIDTH: f32 = 460.;
 /// A detail with a few short fields, such as a disk's or a volume's.
-const NARROW_PANE_WIDTH: f32 = 340.;
+pub(crate) const NARROW_PANE_WIDTH: f32 = 340.;
 const PANE_MIN_WIDTH: f32 = 320.;
-const SPLIT_GAP: f32 = 14.;
+pub(crate) const SPLIT_GAP: f32 = 14.;
 
 /// Whether a list's detail fits beside it: on the page, or in the node
 /// inspector when the screen is `embedded` there.

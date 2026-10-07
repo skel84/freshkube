@@ -5,30 +5,156 @@ use super::*;
 /// The column's children before its first row: the area's caption.
 const FIRST_ROW: usize = 1;
 
-/// Scrolls a column's `item` into view. Scrolling needs the column's size,
-/// which the first frame of a window doesn't know yet; then this asks for
-/// another frame and returns false.
-pub(super) fn reveal_item(scroll: &ScrollHandle, item: Option<usize>, window: &mut Window) -> bool {
+/// Scrolls a list's `item` into view, clear of the fades, in two frames.
+/// The first scrolls it into view with `scroll_to_item`, which resolves
+/// against that frame's own layout and asks for another frame; the second,
+/// with that layout current, moves it clear of the fades. `pass` holds the
+/// `key` of a reveal between the two, so a new reveal (another item, size or
+/// state) starts over at the first. Scrolling also needs the list's size,
+/// which the first frame of a window doesn't know yet. Returns whether the
+/// reveal is done.
+pub(super) fn reveal_item<K: PartialEq>(
+    scroll: &ScrollHandle,
+    pass: &mut Option<K>,
+    key: K,
+    item: Option<usize>,
+    window: &mut Window,
+) -> bool {
     if scroll.bounds().size.height <= px(0.) {
         window.request_animation_frame();
         return false;
     }
-    if let Some(item) = item {
+    let Some(item) = item else {
+        *pass = None;
+        return true;
+    };
+    if pass.as_ref() != Some(&key) {
         scroll.scroll_to_item(item);
+        *pass = Some(key);
+        window.request_animation_frame();
+        return false;
+    }
+    *pass = None;
+    if let Some(bounds) = scroll.bounds_for_item(item) {
+        clear_of_fades(scroll, bounds, window);
     }
     true
 }
 
-/// A column's scrolling list with Kit's scrollbar over it, shown on hover.
+/// Moves an item at `bounds`, as the last layout placed it before its
+/// scroll, clear of the fades over the list's cut edges where room allows.
+/// The list's prepaint keeps the offset within its new range, so an item at
+/// either end meets the end itself.
+fn clear_of_fades(scroll: &ScrollHandle, bounds: Bounds<Pixels>, window: &Window) {
+    let view = scroll.bounds();
+    let spare = (view.size.height - bounds.size.height).max(px(0.));
+    let margin = ui::dp_px(FADE, window).min(spare / 2.);
+    let mut offset = scroll.offset();
+    let top = bounds.top() + offset.y;
+    let bottom = bounds.bottom() + offset.y;
+    if top < view.top() + margin {
+        offset.y += view.top() + margin - top;
+    } else if bottom > view.bottom() - margin {
+        offset.y -= bottom - (view.bottom() - margin);
+    } else {
+        return;
+    }
+    scroll.set_offset(offset);
+}
+
+/// The room a window gives its lists, as its height and its rem size: a
+/// reveal keyed with it runs again when the window or the text size
+/// changes, which can cut an item that showed.
+pub(in crate::desktop) type Room = (Pixels, Pixels);
+
+pub(in crate::desktop) fn room(window: &Window) -> Room {
+    (window.viewport_size().height, window.rem_size())
+}
+
+/// How far a fade reaches into a list from an edge it cuts.
+const FADE: f32 = 28.;
+
+/// Which edges of a scrolling list cut its content, as (top, bottom), from
+/// what its last layout measured.
+pub(in crate::desktop) fn cut_edges(scroll: &ScrollHandle) -> (bool, bool) {
+    let scrolled = -scroll.offset().y;
+    let max = scroll.max_offset().y;
+    (scrolled > px(0.5), scrolled < max - px(0.5))
+}
+
+/// A scrolling list that fades into `background` at each edge it cuts, so a
+/// list taller than its room shows that it scrolls (#406). The fades are
+/// painted after the list has laid out, from its handle, so they follow
+/// the frame's own measurements; a scroll notifies the list's view, which
+/// paints them again.
+fn with_edge_fades(list: impl IntoElement, scroll: &ScrollHandle, background: Hsla) -> Div {
+    let scroll = scroll.clone();
+    let fades = canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let (top, bottom) = cut_edges(&scroll);
+            let height = ui::dp_px(FADE, window).min(bounds.size.height / 2.);
+            let clear = background.opacity(0.);
+            if top {
+                window.paint_quad(fill(
+                    Bounds::new(bounds.origin, size(bounds.size.width, height)),
+                    linear_gradient(
+                        180.,
+                        linear_color_stop(background, 0.),
+                        linear_color_stop(clear, 1.),
+                    ),
+                ));
+            }
+            if bottom {
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(bounds.origin.x, bounds.bottom() - height),
+                        size(bounds.size.width, height),
+                    ),
+                    linear_gradient(
+                        0.,
+                        linear_color_stop(background, 0.),
+                        linear_color_stop(clear, 1.),
+                    ),
+                ));
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
+    div().relative().child(list).child(fades)
+}
+
+/// A scrolling rail or column, faded where it is cut, with Kit's scrollbar
+/// over it, shown on hover.
 pub(super) fn with_scrollbar(
     list: impl IntoElement,
     scroll: &ScrollHandle,
     id: &'static str,
+    background: Hsla,
 ) -> Div {
-    div().relative().child(list).child(
+    with_edge_fades(list, scroll, background).child(
         Scrollbar::vertical(scroll)
             .id(id)
             .mode(ScrollbarMode::Hover),
+    )
+}
+
+/// A scrolling strip of icons, faded where it is cut, with Kit's scrollbar
+/// shown whenever it overflows: a cut can fall in the gap between two
+/// icons, where a fade has nothing to dim.
+pub(super) fn icon_strip(
+    list: impl IntoElement,
+    scroll: &ScrollHandle,
+    id: &'static str,
+    background: Hsla,
+) -> Div {
+    with_edge_fades(list, scroll, background).child(
+        Scrollbar::vertical(scroll)
+            .id(id)
+            .mode(ScrollbarMode::Always),
     )
 }
 
@@ -66,9 +192,11 @@ impl Pilot {
         };
         // Rows still being discovered will grow the column; it is revealed
         // again once they arrive.
-        if self.column_reveal.is_some()
+        if let Some(key) = self.column_reveal.clone()
             && reveal_item(
                 &self.column_scroll,
+                &mut self.column_reveal_pass,
+                key,
                 reveal.map(|row| FIRST_ROW + row),
                 window,
             )
@@ -84,7 +212,10 @@ impl Pilot {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .track_scroll(&self.column_scroll)
-            .on_scroll_wheel(cx.listener(|view, _, _, _| view.column_reveal = None))
+            .on_scroll_wheel(cx.listener(|view, _, _, _| {
+                view.column_reveal = None;
+                view.column_reveal_pass = None;
+            }))
             .px(dp(10.))
             .py(dp(16.))
             .gap(dp(2.))
@@ -94,14 +225,19 @@ impl Pilot {
                 this.child(self.render_namespaces(cx))
             });
         Some(
-            with_scrollbar(column, &self.column_scroll, "nav-column-scrollbar")
-                .w(dp(COLUMN_WIDTH))
-                .flex_none()
-                .h_full()
-                .bg(cx.theme().background)
-                .border_r_1()
-                .border_color(p.line)
-                .into_any_element(),
+            with_scrollbar(
+                column,
+                &self.column_scroll,
+                "nav-column-scrollbar",
+                cx.theme().background,
+            )
+            .w(dp(COLUMN_WIDTH))
+            .flex_none()
+            .h_full()
+            .bg(cx.theme().background)
+            .border_r_1()
+            .border_color(p.line)
+            .into_any_element(),
         )
     }
 

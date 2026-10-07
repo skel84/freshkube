@@ -360,14 +360,27 @@ pub(crate) struct Pilot {
     /// Problem dots on the rail, from the overview's cards.
     rail_marks: shell::RailMarks,
     column_scroll: ScrollHandle,
+    /// The icon rail, which scrolls when the window is short or the text
+    /// large.
+    rail_scroll: ScrollHandle,
+    /// The collapsed column's icons, which scroll in the same way.
+    compact_column_scroll: ScrollHandle,
     /// A column row to scroll into view on the next frame.
     column_reveal: Option<ColumnReveal>,
+    /// The column row scrolled into view and waiting to clear the fades.
+    column_reveal_pass: Option<ColumnReveal>,
+    /// The active area, and the room it had, last scrolled into view.
+    rail_revealed: Option<(Area, shell::Room)>,
+    /// The rail button scrolled into view and waiting to clear the fades.
+    rail_reveal_pass: Option<(Area, shell::Room)>,
     /// The Observability column's list, which scrolls when the window is
     /// short or the text large.
     obs_column_scroll: ScrollHandle,
-    /// The destination, and whether the column was collapsed, last scrolled
-    /// into view.
-    obs_column_revealed: Option<(crate::observability::Destination, bool)>,
+    /// The destination, whether the column was collapsed and the room it
+    /// had, last scrolled into view.
+    obs_column_revealed: Option<(crate::observability::Destination, bool, shell::Room)>,
+    /// The destination scrolled into view and waiting to clear the fades.
+    obs_column_reveal_pass: Option<(crate::observability::Destination, bool, shell::Room)>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
     /// Set without Talos: contexts come from a kubeconfig and only the
@@ -862,9 +875,15 @@ impl Pilot {
             last_control: Page::Etcd,
             rail_marks: Default::default(),
             column_scroll: ScrollHandle::new(),
+            rail_scroll: ScrollHandle::new(),
+            compact_column_scroll: ScrollHandle::new(),
             column_reveal: None,
+            column_reveal_pass: None,
+            rail_revealed: None,
+            rail_reveal_pass: None,
             obs_column_scroll: ScrollHandle::new(),
             obs_column_revealed: None,
+            obs_column_reveal_pass: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
             settings_open: false,
