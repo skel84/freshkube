@@ -30,3 +30,32 @@ pub(crate) fn parse_base_url(text: &str) -> Result<Url, BaseUrlError> {
     }
     Ok(url)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_refusal_names_its_reason() {
+        for (text, error) in [
+            ("not a url", BaseUrlError::NotAUrl),
+            ("prom.lan:9090", BaseUrlError::Scheme),
+            ("ftp://prom.example.test", BaseUrlError::Scheme),
+            (
+                "https://user:secret@prom.example.test",
+                BaseUrlError::UserInfo,
+            ),
+            (
+                "https://prom.example.test/?token=x",
+                BaseUrlError::QueryOrFragment,
+            ),
+            (
+                "https://prom.example.test/#top",
+                BaseUrlError::QueryOrFragment,
+            ),
+        ] {
+            assert_eq!(parse_base_url(text).unwrap_err(), error, "{text}");
+        }
+        assert!(parse_base_url("https://prom.example.test:8481/x").is_ok());
+    }
+}

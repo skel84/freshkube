@@ -19,7 +19,7 @@ pub async fn get_metadata(
     name: &str,
 ) -> Result<ObjectMeta, Failure> {
     let resource = api_resource(kind);
-    let api: Api<DynamicObject> = match namespace {
+    let api: Api<DynamicObject> = match namespace.filter(|_| kind.namespaced) {
         Some(namespace) => Api::namespaced_with(client.clone(), namespace, &resource),
         None => Api::all_with(client.clone(), &resource),
     };
