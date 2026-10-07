@@ -4,7 +4,7 @@
 
 use std::{
     fs::OpenOptions,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -23,22 +23,7 @@ fn file(preferences: &Path) -> PathBuf {
 }
 
 pub(crate) fn load(preferences: &Path) -> Option<Selection> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let opened = options.open(file(preferences)).ok()?;
-    if !opened.metadata().ok()?.is_file() {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    opened.take(64 * 1024 + 1).read_to_end(&mut bytes).ok()?;
-    if bytes.len() > 64 * 1024 {
-        return None;
-    }
+    let bytes = freshkube_core::read_bounded_regular_file(&file(preferences), 64 * 1024).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let path = PathBuf::from(value.get("talosconfig")?.as_str()?);
     let context = value.get("context")?.as_str()?.to_owned();

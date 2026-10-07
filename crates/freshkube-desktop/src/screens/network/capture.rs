@@ -159,12 +159,10 @@ pub(super) fn file_name(node: &str, now: chrono::DateTime<chrono::Local>) -> Str
 
 /// Where the save dialog starts: Downloads when there is one.
 fn default_directory() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    home.map(|home| {
-        let downloads = home.join("Downloads");
-        if downloads.is_dir() { downloads } else { home }
-    })
-    .unwrap_or_else(std::env::temp_dir)
+    dirs::download_dir()
+        .filter(|downloads| downloads.is_dir())
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 /// A few Ethernet frames, as a stream of transport chunks, for example data.

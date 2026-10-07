@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use freshkube_graph::layout::{Node, Route, route};
+use freshkube_graph::layout::{Route, route};
 use gpui_kit::{
     AnyElement, App, Context, ScrollHandle, ScrollStrategy, SharedString, UniformListScrollHandle,
     Window,
@@ -138,16 +138,6 @@ struct Placed {
     node: usize,
     x: f32,
     y: f32,
-}
-
-impl Node for Placed {
-    fn position(&self) -> (f32, f32) {
-        (self.x, self.y)
-    }
-
-    fn set_position(&mut self, x: f32, y: f32) {
-        (self.x, self.y) = (x, y);
-    }
 }
 
 /// A call drawn on the current page, along its route.
@@ -453,10 +443,7 @@ impl<K: Clone + Ord> GraphState<K> {
             .enumerate()
             .map(|(local, &node)| (node, local))
             .collect();
-        let mut placed: Vec<_> = on_page
-            .iter()
-            .map(|&node| Placed { node, x: 0., y: 0. })
-            .collect();
+        let mut corners = vec![(0., 0.); on_page.len()];
         // Lay out by every call between these boxes, not only the filtered
         // ones, so the filter doesn't move the boxes.
         let mut routed = BTreeMap::new();
@@ -467,7 +454,12 @@ impl<K: Clone + Ord> GraphState<K> {
             .filter_map(|(from, to)| Some((*local.get(from)?, *local.get(to)?)))
             .filter(|&link| routed.insert(link, routed.len()).is_none())
             .collect();
-        let layout = route(&mut placed, &links);
+        let layout = route(&mut corners, &links);
+        let placed: Vec<_> = on_page
+            .iter()
+            .zip(&corners)
+            .map(|(&node, &(x, y))| Placed { node, x, y })
+            .collect();
         let shown: Vec<_> = self
             .visible
             .iter()

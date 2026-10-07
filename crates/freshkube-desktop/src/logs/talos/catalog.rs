@@ -6,6 +6,7 @@
 //! services" and joins the collection row, so the picker takes no row of
 //! its own.
 
+use freshkube_core::pluralize;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use gpui_kit::assets::IconName;
@@ -99,8 +100,8 @@ const LABEL_WIDTH: f32 = 90.;
 fn more_label(hidden: usize, total: usize, collecting: usize) -> SharedString {
     if hidden == total {
         format!(
-            "{collecting} of {total} {}",
-            if total == 1 { "service" } else { "services" }
+            "{collecting} of {}",
+            pluralize(total, "service", "services")
         )
         .into()
     } else {

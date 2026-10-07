@@ -371,12 +371,13 @@ fn items(snapshot: &SecurityAuditSnapshot) -> Vec<Item> {
 /// Sources that didn't fully answer, for the partial notice.
 fn missing(snapshot: &SecurityAuditSnapshot) -> Vec<String> {
     fn note<T>(label: &str, source: &SourceSnapshot<T>, out: &mut Vec<String>) {
-        match source {
-            SourceSnapshot::Available(_) => {}
-            SourceSnapshot::Partial { warnings, .. } => {
-                out.push(format!("{label} (partial): {}", warnings.join("; ")))
-            }
-            SourceSnapshot::Unavailable { reason } => out.push(format!("{label}: {reason}")),
+        if let Some(problem) = source.problem() {
+            let partial = if matches!(source, SourceSnapshot::Partial { .. }) {
+                " (partial)"
+            } else {
+                ""
+            };
+            out.push(format!("{label}{partial}: {problem}"));
         }
     }
     let mut out = Vec::new();

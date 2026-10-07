@@ -55,9 +55,7 @@ impl Pilot {
                 let Some(source) = self.kube_source() else {
                     return;
                 };
-                self.object_open_job = None;
-                self.object_open_task = None;
-                self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
+                self.cancel_object_open();
                 let sequence = self.object_open_sequence;
                 let epoch = self.epoch;
                 let origin = self.resources.read(cx).detail_identity(cx).cloned();

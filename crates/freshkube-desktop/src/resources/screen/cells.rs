@@ -3,6 +3,7 @@
 //! and restarts, its use against its request and limit, and its node.
 //! Tooltips are built when hovered, from what the row already holds.
 
+use freshkube_core::pluralize;
 use std::sync::Arc;
 
 use freshkube_core::resources::Amounts;
@@ -337,10 +338,9 @@ pub(super) fn restarts(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -
 
 fn readiness(pod: &PodRow) -> String {
     let mut lines = vec![format!(
-        "{} containers ready · {} restart{}",
+        "{} containers ready · {}",
         pod.ready,
-        pod.restarts,
-        if pod.restarts == 1 { "" } else { "s" }
+        pluralize(pod.restarts as usize, "restart", "restarts")
     )];
     for container in &pod.containers {
         let mut line = format!(

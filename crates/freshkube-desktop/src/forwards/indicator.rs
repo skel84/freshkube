@@ -2,6 +2,7 @@
 //! its popover: every forward with Copy address, Open in browser, Stop,
 //! Start again and Remove, on any page and in any context.
 
+use freshkube_core::pluralize;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Sizable,
@@ -51,8 +52,7 @@ impl ForwardsIndicator {
         let list = self.list.read(cx);
         self.label = match list.running {
             0 => "⇄ Forwards".into(),
-            1 => "⇄ 1 forward".into(),
-            count => format!("⇄ {count} forwards").into(),
+            count => format!("⇄ {}", pluralize(count, "forward", "forwards")).into(),
         };
         if list.items.is_empty() {
             self.open = false;

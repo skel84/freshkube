@@ -41,17 +41,6 @@ impl TableColumn for Column {
     }
 }
 
-/// DESIGN.md's widths: 7.5 a character plus 24, between 64 and 280; the
-/// glyph's is 34.
-fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>) -> f32 {
-    let chars = texts
-        .map(|text| text.chars().count())
-        .chain([label.len()])
-        .max()
-        .unwrap_or_default();
-    (chars as f32 * 7.5 + 24.).clamp(64., 280.)
-}
-
 /// The Member column's widest: a longer name truncates, and the row's
 /// tooltip holds it, so the figures stay in view beside the details.
 const MEMBER_WIDTH: f32 = 200.;
@@ -66,32 +55,40 @@ pub(super) fn columns(rows: &[MemberRow]) -> (Vec<Column>, f32) {
         width,
     };
     let columns = vec![
-        column(Field::Glyph, "", 34.),
+        column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
             Field::Member,
             "Member",
-            fit("Member", rows.iter().map(|row| &row.name)).min(MEMBER_WIDTH),
+            table::fit("Member", rows.iter().map(|row| &row.name), table::WIDEST).min(MEMBER_WIDTH),
         ),
         column(Field::Role, "Role", ROLE_WIDTH),
         column(
             Field::Endpoint,
             "Endpoint",
-            fit("Endpoint", rows.iter().map(|row| &row.endpoint)),
+            table::fit(
+                "Endpoint",
+                rows.iter().map(|row| &row.endpoint),
+                table::WIDEST,
+            ),
         ),
         column(
             Field::Db,
             "DB size",
-            fit("DB size", rows.iter().map(|row| &row.db)),
+            table::fit("DB size", rows.iter().map(|row| &row.db), table::WIDEST),
         ),
         column(
             Field::Raft,
             "Raft index",
-            fit("Raft index", rows.iter().map(|row| &row.raft)),
+            table::fit(
+                "Raft index",
+                rows.iter().map(|row| &row.raft),
+                table::WIDEST,
+            ),
         ),
         column(
             Field::Issues,
             "Issues",
-            fit("Issues", rows.iter().map(|row| &row.issues)),
+            table::fit("Issues", rows.iter().map(|row| &row.issues), table::WIDEST),
         ),
     ];
     let width = columns.iter().map(|column| column.width).sum();

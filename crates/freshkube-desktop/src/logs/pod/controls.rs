@@ -2,6 +2,7 @@
 //! tail pickers, Previous, Timestamps, Stop or Resume and where the stream
 //! stands; under the row, one note when there is something to say.
 
+use freshkube_core::group_digits;
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     AnyElement, Context, Role, SharedString, TestSupportExt,
@@ -28,15 +29,7 @@ fn tail_label(tail: Option<i64>) -> String {
     let Some(tail) = tail else {
         return "All lines".to_owned();
     };
-    let digits = tail.to_string();
-    let mut grouped = String::new();
-    for (ix, digit) in digits.chars().enumerate() {
-        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    format!("Last {grouped}")
+    format!("Last {}", group_digits(tail.unsigned_abs()))
 }
 
 /// The pod's tools in the toolbar's row, and the note under it.

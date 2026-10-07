@@ -9,9 +9,6 @@ pub(super) fn id(key: &str) -> api::AppId {
     let (ns, name) = key.split_once('/').unwrap_or(("_", key));
     api::AppId::new(format!("fixture:{ns}:Deployment:{name}"))
 }
-pub(super) fn threshold(_: &str, report: Report) -> &'static str {
-    report.default_threshold()
-}
 
 pub(super) fn applications() -> Vec<api::Application> {
     let records = [

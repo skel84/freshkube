@@ -156,6 +156,7 @@ mod resources;
 mod screens;
 mod secrets;
 mod state;
+mod stream_status;
 #[cfg(feature = "stress")]
 mod stress;
 mod ui;

@@ -516,7 +516,7 @@ fn classify(status: u16, bytes: &[u8]) -> Result<Value, QueryError> {
 }
 
 /// The most common `scrapeInterval` among active targets.
-fn scrape_interval(data: &Value) -> Option<f64> {
+pub(super) fn scrape_interval(data: &Value) -> Option<f64> {
     let mut counts: Vec<(u64, usize)> = Vec::new();
     for target in data.get("activeTargets")?.as_array()? {
         let Some(seconds) = target
@@ -537,9 +537,4 @@ fn scrape_interval(data: &Value) -> Option<f64> {
         .into_iter()
         .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
         .map(|(millis, _)| millis as f64 / 1000.)
-}
-
-#[cfg(test)]
-pub(super) fn scrape_interval_of(data: &Value) -> Option<f64> {
-    scrape_interval(data)
 }

@@ -295,7 +295,7 @@ pub async fn confirm_url(
     url: String,
     token: Option<String>,
 ) -> Result<(Prometheus, BuildInfo), QueryError> {
-    finish(Prometheus::direct(url, token)?.with_timeout(super::REQUEST_TIMEOUT)).await
+    finish(Prometheus::direct(url, token)?).await
 }
 
 async fn finish(prometheus: Prometheus) -> Result<(Prometheus, BuildInfo), QueryError> {

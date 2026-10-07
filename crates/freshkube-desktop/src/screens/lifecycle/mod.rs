@@ -13,6 +13,7 @@ use freshkube_core::kubernetes_summary::{Part, Publication, SessionIdentity, Sub
 use freshkube_core::lifecycle_versions::{
     KubeletSkew, KubeletVersions, kubelet_skew, kubernetes_support, newest_kubelet,
 };
+use freshkube_core::pluralize;
 use freshkube_core::security_lifecycle::{
     ClusterIdentity, DiscoveryRosterEntry, EtcdPreOperationAudit, KubernetesNodeRosterEntry,
     LifecycleAlert, LifecycleAlertKind, LifecycleCollector, LifecycleSnapshot,
@@ -779,12 +780,8 @@ fn etcd_verdict(etcd: &SourceSnapshot<EtcdPreOperationAudit>) -> EtcdVerdict {
 /// Sources that didn't answer fully, for the partial notice.
 fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
     fn note<T>(out: &mut Vec<String>, label: &str, source: &SourceSnapshot<T>) {
-        match source {
-            SourceSnapshot::Available(_) => {}
-            SourceSnapshot::Partial { warnings, .. } => {
-                out.push(format!("{label}: {}", warnings.join("; ")))
-            }
-            SourceSnapshot::Unavailable { reason } => out.push(format!("{label}: {reason}")),
+        if let Some(problem) = source.problem() {
+            out.push(format!("{label}: {problem}"));
         }
     }
     let snapshot = &view.snapshot;
@@ -831,10 +828,6 @@ fn presence_text(value: Option<bool>, roster: &str) -> String {
         Some(false) => format!("not listed in {roster}"),
         None => format!("unknown ({roster} wasn't read)"),
     }
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 // ---------------------------------------------------------------------------

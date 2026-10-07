@@ -13,12 +13,6 @@ pub const ARROW: f32 = 7.;
 /// A column taller than this wraps into another beside it.
 pub const MAX_ROWS: usize = 8;
 
-/// A box the layout places, by its top-left corner in dp.
-pub trait Node {
-    fn position(&self) -> (f32, f32);
-    fn set_position(&mut self, x: f32, y: f32);
-}
-
 /// Space between two lines that share a gutter.
 pub const LANE: f32 = 6.;
 /// The gap between two boxes in a column.
@@ -74,7 +68,7 @@ impl Route {
 ///
 /// The same input always gives the same layout. It is not free: run it
 /// when the graph changes, never while drawing.
-pub fn route<N: Node>(nodes: &mut [N], links: &[(usize, usize)]) -> Layout {
+pub fn route(nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
     let n = nodes.len();
     if n == 0 {
         return Layout {
@@ -115,7 +109,7 @@ pub fn route<N: Node>(nodes: &mut [N], links: &[(usize, usize)]) -> Layout {
     let mut rows = 0;
     for (c, chunk) in grid.loose.chunks(MAX_ROWS).enumerate() {
         for (r, &ix) in chunk.iter().enumerate() {
-            nodes[ix].set_position(PAD + (columns + c) as f32 * COLUMN, PAD + r as f32 * ROW);
+            nodes[ix] = (PAD + (columns + c) as f32 * COLUMN, PAD + r as f32 * ROW);
         }
         rows = rows.max(chunk.len());
     }
@@ -364,7 +358,7 @@ impl Grid {
 
     /// Gives every box its place and every lane its line, and returns the
     /// bottom of the tallest column.
-    fn place<N: Node>(&mut self, nodes: &mut [N]) -> f32 {
+    fn place(&mut self, nodes: &mut [(f32, f32)]) -> f32 {
         let n = nodes.len();
         self.x = vec![0.; self.left.len()];
         self.y = vec![0.; self.left.len()];
@@ -377,7 +371,7 @@ impl Grid {
                 if item < n {
                     y += lanes_in(&lanes, y, first, &mut self.y);
                     lanes.clear();
-                    nodes[item].set_position(x, y);
+                    nodes[item] = (x, y);
                     self.y[item] = y;
                     y += NODE_H;
                     first = false;
@@ -393,8 +387,8 @@ impl Grid {
 
     /// From the caller's right edge, through a lane in each column it
     /// crosses, to the arrowhead at the callee's left edge.
-    fn forward_route<N: Node>(&self, nodes: &[N], ix: usize, from: usize, to: usize) -> Route {
-        let (from_x, from_y) = nodes[from].position();
+    fn forward_route(&self, nodes: &[(f32, f32)], ix: usize, from: usize, to: usize) -> Route {
+        let (from_x, from_y) = nodes[from];
         let mut at = (from_x + NODE_W, from_y + NODE_H / 2.);
         let mut segments = vec![];
         for &waypoint in &self.chains[ix] {
@@ -405,7 +399,7 @@ impl Grid {
             segments.push(straight((x - ARROW, y), (x + NODE_W, y)));
             at = (x + NODE_W, y);
         }
-        let (to_x, to_y) = nodes[to].position();
+        let (to_x, to_y) = nodes[to];
         let end = (to_x - ARROW, to_y + NODE_H / 2.);
         segments.push(bend(at, end));
         Route::new(segments, (to_x, end.1))
@@ -413,9 +407,9 @@ impl Grid {
 
     /// Down from the caller's bottom into its lane, left through the
     /// gutters, and up into the callee's bottom.
-    fn back_route<N: Node>(&self, nodes: &[N], ix: usize, from: usize, to: usize) -> Route {
+    fn back_route(&self, nodes: &[(f32, f32)], ix: usize, from: usize, to: usize) -> Route {
         let (leave, enter) = self.ports[ix];
-        let ((from_x, from_y), (to_x, to_y)) = (nodes[from].position(), nodes[to].position());
+        let ((from_x, from_y), (to_x, to_y)) = (nodes[from], nodes[to]);
         // Calls sharing a box leave and enter it side by side.
         let rank = |port: usize, of: usize| {
             self.below[of].iter().position(|&p| p == port).unwrap_or(0) as f32
@@ -546,18 +540,8 @@ fn crosses(p1: (f32, f32), p2: (f32, f32), q1: (f32, f32), q2: (f32, f32)) -> bo
 mod tests {
     use super::*;
 
-    #[derive(Clone, Copy, Debug, Default, PartialEq)]
-    struct Box(f32, f32);
-
-    impl Node for Box {
-        fn position(&self) -> (f32, f32) {
-            (self.0, self.1)
-        }
-
-        fn set_position(&mut self, x: f32, y: f32) {
-            (self.0, self.1) = (x, y);
-        }
-    }
+    /// A box's top-left corner, as `route` takes it.
+    type Box = (f32, f32);
 
     fn place(count: usize, links: &[(usize, usize)]) -> (Vec<Box>, (f32, f32)) {
         let (nodes, layout) = routed(count, links);
@@ -577,7 +561,7 @@ mod tests {
     #[test]
     fn one_box_is_padded_on_every_side() {
         let (nodes, size) = place(1, &[]);
-        assert_eq!(nodes[0], Box(PAD, PAD));
+        assert_eq!(nodes[0], (PAD, PAD));
         assert_eq!(size, (NODE_W + 2. * PAD, NODE_H + 2. * PAD));
     }
 

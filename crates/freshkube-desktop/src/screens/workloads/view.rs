@@ -74,7 +74,7 @@ impl WorkloadsScreen {
                         "Issues",
                         mono(match issues_in(namespace) {
                             0 => "none".to_owned(),
-                            count => plural(count, "issue", "issues"),
+                            count => pluralize(count, "issue", "issues"),
                         }),
                         cx,
                     ))

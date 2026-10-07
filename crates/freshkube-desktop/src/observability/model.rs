@@ -126,7 +126,7 @@ impl Report {
         }
     }
     pub(super) fn index(self) -> usize {
-        Self::ALL.iter().position(|r| *r == self).unwrap_or(0)
+        self as usize
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,4 +292,16 @@ pub(super) struct Chart {
     pub ticks: [String; 4],
     pub deploy: f32,
     pub event: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Report;
+
+    #[test]
+    fn a_report_index_is_its_place_in_all() {
+        for (place, report) in Report::ALL.into_iter().enumerate() {
+            assert_eq!(report.index(), place);
+        }
+    }
 }
