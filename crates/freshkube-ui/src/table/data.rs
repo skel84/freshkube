@@ -6,11 +6,13 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Div, ElementId, Hsla, Role, ScrollHandle, ScrollStrategy,
-    SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla, Role, ScrollHandle,
+    ScrollStrategy, SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px,
+    uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -215,6 +217,23 @@ pub trait TableSource: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+    }
+    /// The focus a row's context menu dispatches its actions to: the
+    /// page's list, where their keys are bound. `None`, the default, gives
+    /// the rows no menu.
+    fn menu_focus(&self, _cx: &App) -> Option<FocusHandle> {
+        None
+    }
+    /// A row's context menu, asked as it opens (DESIGN.md change 10). The
+    /// page selects the row first, through its usual selection, so every
+    /// item acts on the selection as its key does. Empty, it shows nothing.
+    fn row_menu(
+        &mut self,
+        _key: &Self::Key,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<super::RowAction> {
+        Vec::new()
     }
     /// What replaces the rows until the first answer: the
     /// [`super::LoadingRows`] the page keeps, drawn still under the real
@@ -710,15 +729,25 @@ fn render_line<S: TableSource>(
         ));
     }
     let key = row.key;
-    Some(
-        element
-            .when(clickable, |this| {
-                this.on_click(
-                    cx.listener(move |view, event, window, cx| view.click(&key, event, window, cx)),
-                )
+    let menu = source
+        .menu_focus(cx)
+        .map(|focus| (focus, key.clone(), cx.entity().downgrade()));
+    let element = element.when(clickable, |this| {
+        this.on_click(
+            cx.listener(move |view, event, window, cx| view.click(&key, event, window, cx)),
+        )
+    });
+    Some(match menu {
+        Some((focus, key, view)) => element
+            .context_menu(move |menu, window, cx| {
+                let actions = view
+                    .update(cx, |view, cx| view.row_menu(&key, window, cx))
+                    .unwrap_or_default();
+                super::menu::row_menu(menu, actions, &focus)
             })
             .into_any_element(),
-    )
+        None => element.into_any_element(),
+    })
 }
 
 #[cfg(test)]

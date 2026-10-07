@@ -18,6 +18,7 @@ use crate::palette::palette;
 mod data;
 mod flash;
 mod loading;
+mod menu;
 mod pinned;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
@@ -26,6 +27,7 @@ pub use data::{
 };
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look};
+pub use menu::{RowAction, row_menu};
 pub use pinned::widest_pinned_run;
 
 /// Every table's row height. Group rows take the same height, so the list
@@ -104,7 +106,9 @@ pub fn glyph_cell(column: &impl TableColumn) -> Div {
 }
 
 /// A group's header row: its glyph and label, an optional subject such as
-/// a node, the details after them and the group's actions.
+/// a node, its count, and a foldable group's chevron. The group's actions
+/// are the page's context menu and keys (DESIGN.md change 10), not
+/// buttons on the row.
 pub struct GroupRow {
     id: ElementId,
     tone: Tone,
@@ -148,6 +152,15 @@ impl GroupRow {
         self
     }
 
+    /// A foldable group's chevron, after its count, where it stays in the
+    /// room a cover leaves.
+    pub fn chevron(mut self, chevron: impl IntoElement) -> Self {
+        self.actions.push(chevron.into_any_element());
+        self
+    }
+
+    /// A button on the row. Only Nodes' healthy fold still uses it, until
+    /// it moves to its menu and key (#46 6.10).
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.actions.push(action.into_any_element());
         self

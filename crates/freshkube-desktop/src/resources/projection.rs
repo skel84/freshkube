@@ -211,6 +211,15 @@ impl ResourceProjection {
             .count()
     }
 
+    /// The group a visible row is under, when the rows are grouped.
+    pub(crate) fn group_of(&self, row: usize) -> Option<&Group> {
+        self.groups
+            .iter()
+            .rev()
+            .find(|group| group.start <= row)
+            .filter(|group| row < group.start + group.shown)
+    }
+
     /// Every row of `group` the filter keeps, shown or collapsed.
     pub(crate) fn group_rows(&self, store: &ResourceStore, group: &Group) -> Vec<ResourceIdentity> {
         let Some(grouping) = &self.grouping else {
