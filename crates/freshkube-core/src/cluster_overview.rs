@@ -820,9 +820,11 @@ async fn client_from_roster_config(
                         "Could not load credentials for the validated Kubernetes source".into(),
                     )
                 })?;
-            crate::kube_client::client(config).map_err(|_| {
+            crate::kube_client::client(config).map_err(|error| {
                 K8sError::ClientCreate(
-                    "Could not construct a client for the validated Kubernetes source".into(),
+                    error.message(
+                        "Could not construct a client for the validated Kubernetes source",
+                    ),
                 )
             })
         })
