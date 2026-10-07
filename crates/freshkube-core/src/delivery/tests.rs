@@ -55,7 +55,7 @@ fn naming() -> StageNaming {
     }
 }
 
-async fn run_configured(
+pub(super) async fn run_configured(
     world: &World,
     contexts: &[(&str, &str)],
     github: &FixtureGitHub,
@@ -93,10 +93,13 @@ pub(super) fn one(trail: &Trail, from: Hop, to: Hop) -> &super::join::Link {
 async fn a_healthy_change_joins_from_the_commit_to_the_pods() {
     let trail = run(&healthy(), &[("env-a", "https://env-a.example:6443")]).await;
     let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
-    assert_eq!(commit.confidence, Confidence::Confirmed);
+    // The label and the revision parameter are both declared: no result
+    // reports the commit.
+    assert_eq!(commit.confidence, Confidence::Claimed);
+    assert!(commit.reason.contains("both declared"), "{}", commit.reason);
     assert_eq!(commit.key, Key::Sha(SHA.into()));
     let chain = one(&trail, Hop::PipelineRun, Hop::SupplyChain);
-    assert_eq!(chain.confidence, Confidence::Confirmed);
+    assert_eq!(chain.confidence, Confidence::Claimed);
     assert!(
         chain
             .reason
@@ -181,9 +184,12 @@ async fn a_freight_can_join_on_the_commit_alone() {
         one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
         Confidence::Unknown
     );
-    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    // No build is named: the change stands against the Freight's commit.
+    assert!(link(&trail, Hop::PipelineRun, Hop::Freight).is_empty());
+    let freight = one(&trail, Hop::Commit, Hop::Freight);
     assert_eq!(freight.confidence, Confidence::Confirmed);
     assert_eq!(freight.key, Key::Sha(SHA.into()));
+    assert_eq!(freight.subject, "storefront/f-new");
 }
 
 #[tokio::test]
@@ -449,7 +455,7 @@ async fn a_squash_merged_pull_request_joins_through_its_merge_commit() {
     let runs = link(&trail, Hop::PullRequest, Hop::PipelineRun);
     assert_eq!(runs.len(), 2, "{trail:#?}");
     let merged_run = runs.iter().find(|l| l.key == Key::Sha(SHA.into())).unwrap();
-    assert_eq!(merged_run.confidence, Confidence::Confirmed);
+    assert_eq!(merged_run.confidence, Confidence::Claimed);
     let head_run = runs
         .iter()
         .find(|l| l.key == Key::Sha(OTHER_SHA.into()))
@@ -460,8 +466,17 @@ async fn a_squash_merged_pull_request_joins_through_its_merge_commit() {
         head_run.reason
     );
     // The head's image is old freight in Kargo: joined on the digest.
+    // The head build is tied to the head commit by declared fields only, so
+    // the link is a claim, though GitHub and the build each report their part.
     let freight = one(&trail, Hop::PullRequest, Hop::Freight);
-    assert_eq!(freight.confidence, Confidence::Confirmed);
+    assert_eq!(freight.confidence, Confidence::Claimed);
+    assert!(
+        freight
+            .reason
+            .contains("no result of the build reports the head commit"),
+        "{}",
+        freight.reason
+    );
     assert_eq!(freight.subject, "storefront/f-old");
     assert!(matches!(&freight.key, Key::Digest(d) if d.as_str() == OLD));
     // The rest of the chain is untouched.
@@ -614,7 +629,7 @@ async fn task_runs_that_cannot_be_read_leave_the_build_standing() {
     world.tekton = world.tekton.refusing("taskruns");
     let trail = run(&world, &ENV).await;
     let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
-    assert_eq!(commit.confidence, Confidence::Confirmed);
+    assert_eq!(commit.confidence, Confidence::Claimed);
     assert!(
         commit.reason.contains("its TaskRuns were not read"),
         "{}",
@@ -652,7 +667,14 @@ fn two_builds() -> World {
             "pipelineruns",
             vec![pipeline_run(SHA, true, Some(NEW)), second],
         )
-        .with("taskruns", vec![task_run(), second_task]);
+        .with(
+            "taskruns",
+            vec![
+                task_run(),
+                clone_task_run("storefront-push-x", SHA),
+                second_task,
+            ],
+        );
     world
 }
 
@@ -679,7 +701,7 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
         .iter()
         .find(|b| b.run.name == "storefront-push-x")
         .unwrap();
-    assert_eq!(read_one.tasks.len(), 1);
+    assert_eq!(read_one.tasks.len(), 2);
     assert_eq!(read_one.tasks_unread, None);
     let refused = builds
         .iter()
@@ -692,13 +714,14 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
     let commits = link(&trail, Hop::Commit, Hop::PipelineRun);
     assert_eq!(commits.len(), 2, "{trail:#?}");
     let x = of(&commits, "storefront-push-x");
+    // x's TaskRuns were read whole, and its clone result reports the commit.
     assert_eq!(x.confidence, Confidence::Confirmed);
     assert!(!x.reason.contains("not read"), "{}", x.reason);
     let y = of(&commits, "storefront-push-y");
     assert_eq!(
         y.confidence,
-        Confidence::Confirmed,
-        "the run's own revision still confirms it"
+        Confidence::Claimed,
+        "the run's own revision is declared, so it only claims"
     );
     assert!(
         y.reason
@@ -1247,9 +1270,13 @@ async fn only_upstream_commit_names_are_read_unless_more_are_configured() {
         plan.commit_names.params = vec!["made-up-param".into()]
     })
     .await;
-    assert_eq!(
-        one(&configured, Hop::Commit, Hop::PipelineRun).confidence,
-        Confidence::Confirmed
+    // The configured parameter is read, but it is declared: a claim.
+    let configured = one(&configured, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(configured.confidence, Confidence::Claimed);
+    assert!(
+        configured.reason.contains("both declared"),
+        "{}",
+        configured.reason
     );
 
     // Results: upstream's `commit` counts, an unknown name doesn't.

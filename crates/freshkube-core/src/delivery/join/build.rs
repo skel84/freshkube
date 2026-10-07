@@ -2,8 +2,9 @@ use crate::delivery::digest::{Digest, repository, tag};
 use crate::delivery::github::PullRequest;
 use crate::delivery::kargo::Freight;
 use crate::delivery::source::{Source, cap_note};
-use crate::delivery::tekton::{Build, CommitNames, EvidenceResult};
+use crate::delivery::tekton::{Build, CommitNames, EvidenceResult, WitnessSource};
 
+use super::argo::short_commit;
 use super::observe::{
     built_image, chains_signed, change, concluded, freight_side, pull_request, run_commit,
 };
@@ -153,7 +154,8 @@ fn head_build_links(
     let mut links = Vec::new();
     for build in builds {
         let run = commit_link(head, build, &evidence.commit_names);
-        let head_run = run_commit(build, &evidence.commit_names);
+        let run_confidence = run.confidence;
+        let head_run = run_commit(build, &evidence.commit_names, head);
         let digests: Vec<Digest> = build.images().into_iter().map(|i| i.digest).collect();
         let shipped = digests.iter().any(|digest| deployed.contains(digest));
         let note = if digests.is_empty() {
@@ -209,8 +211,12 @@ fn head_build_links(
                         Hop::Freight,
                         format!("{}/{}", item.project, item.name),
                         Key::Digest(digest.clone()),
-                        Confidence::Confirmed,
-                        "Kargo holds the image the pull request's head commit built",
+                        run_confidence,
+                        if run_confidence == Confidence::Confirmed {
+                            "Kargo holds the image the pull request's head commit built".to_owned()
+                        } else {
+                            "Kargo holds the image the pull request's head build made; no result of the build reports the head commit, so its tie to it is declared".to_owned()
+                        },
                     )
                     .observed(on_freight),
                 );
@@ -231,19 +237,66 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
         None => outcome,
     };
     let mut evidence = vec![change(sha)];
-    evidence.extend(run_commit(build, names));
-    let link = match build.witnessed_commit(names) {
-        Some(witness) if witness.eq_ignore_ascii_case(sha) => {
-            evidence.push(concluded("PaC label == the run's own revision", sha));
+    evidence.extend(run_commit(build, names, sha));
+    let label_is = build
+        .run
+        .sha
+        .as_deref()
+        .is_some_and(|label| label.eq_ignore_ascii_case(sha));
+    let others: Vec<String> = {
+        let mut seen = Vec::new();
+        for witness in build.reported_witnesses(names) {
+            let commit = short_commit(&witness.commit);
+            if !seen.contains(&commit) {
+                seen.push(commit);
+            }
+        }
+        seen
+    };
+    let reported_other = !others.is_empty();
+    let link = match build.witness(names, sha) {
+        Some(witness) if witness.reported() && witness.commit.eq_ignore_ascii_case(sha) => {
+            let rule = match witness.source {
+                WitnessSource::TaskResult(_) => "a task result == the change",
+                _ => "a run result == the change",
+            };
+            evidence.push(concluded(rule, sha));
             Link::new(
                 Hop::Commit,
                 Hop::PipelineRun,
                 subject,
                 Key::Sha(sha.to_owned()),
                 Confidence::Confirmed,
-                format!("PaC label and the run's own revision agree; {outcome}"),
+                format!("a result of the build reports the commit; {outcome}"),
             )
         }
+        Some(_) if reported_other => Link::new(
+            Hop::Commit,
+            Hop::PipelineRun,
+            subject,
+            Key::Sha(sha.to_owned()),
+            Confidence::Claimed,
+            format!(
+                "the build's results report other commits ({}), not this one; {outcome}",
+                others.join(", ")
+            ),
+        ),
+        Some(witness) if witness.commit.eq_ignore_ascii_case(sha) => Link::new(
+            Hop::Commit,
+            Hop::PipelineRun,
+            subject,
+            Key::Sha(sha.to_owned()),
+            Confidence::Claimed,
+            if label_is {
+                format!(
+                    "the PaC label and the run's revision parameter agree, both declared; no result reports the commit; {outcome}"
+                )
+            } else {
+                format!(
+                    "only the run's revision parameter says so, declared; no result reports the commit; {outcome}"
+                )
+            },
+        ),
         Some(_) => Link::new(
             Hop::Commit,
             Hop::PipelineRun,
@@ -301,7 +354,7 @@ pub(super) fn supply_chain_links(
         Some(Some(record)) => {
             let same_commit = record.commit.as_deref().is_some_and(|sha| {
                 build
-                    .witnessed_commit(names)
+                    .witnessed_commit(names, sha)
                     .or_else(|| build.run.sha.clone())
                     .is_some_and(|seen| seen.eq_ignore_ascii_case(sha))
             });
@@ -333,7 +386,12 @@ pub(super) fn supply_chain_links(
         .into_iter()
         .map(|image| {
             let (confidence, chains) = match build.chains_state().as_deref() {
-                Some("true") => (Confidence::Confirmed, "signed by Chains".to_owned()),
+                // Nothing read in the cluster verifies a signature: Chains'
+                // annotation says so, and only a claim can stand on it.
+                Some("true") => (
+                    Confidence::Claimed,
+                    "Chains' annotation says signed; the signature was not verified".to_owned(),
+                ),
                 Some(state) => (
                     Confidence::Unknown,
                     format!("Chains reports signed={state}"),
