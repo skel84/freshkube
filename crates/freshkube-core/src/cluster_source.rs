@@ -50,6 +50,9 @@ impl fmt::Debug for ClusterAccess {
 /// for one id never show for another, and the same id keeps what was found.
 #[derive(Clone, Debug)]
 pub struct ClusterSource {
+    /// The opaque access key derived from [`crate::AccessIdentity`], as the
+    /// shell's `KubeSource.id` carries it; never a context name. A context
+    /// keeps its name when its credentials change, and its key does not.
     pub id: String,
     /// The context the page names.
     pub context: String,
