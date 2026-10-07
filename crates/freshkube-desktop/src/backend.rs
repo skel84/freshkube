@@ -85,6 +85,11 @@ fn read_config_file(path: &Path) -> Result<TalosConfig, String> {
 /// Also fingerprints the exact bytes parsed, so a connection can be reused only
 /// while the talosconfig is unchanged.
 fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIdentity), String> {
+    // Windows refuses to open a directory at all, so ask first; the opened
+    // file's own metadata below is what decides.
+    if std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_file()) {
+        return Err("Talos configuration must be a regular file".into());
+    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

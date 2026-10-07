@@ -6,13 +6,14 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla, Role, ScrollHandle,
-    ScrollStrategy, SharedString, TestSupportExt, UniformListScrollHandle, Window, div, px,
-    uniform_list,
+    ScrollStrategy, SharedString, Stateful, TestSupportExt, UniformListScrollHandle, Window, div,
+    px, uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -609,67 +610,18 @@ fn render_line<S: TableSource>(
     // Rows draw while the list lays out, after the sideways scroll has
     // clamped its offset, so this is the offset the frame paints with.
     let state = source.table_state();
-    let scrolled = state.scrolled();
     let row = match source.line(line, cx)? {
-        // A group's line stays in view. In a table wider than its view
-        // the line is as wide as the view, so its details truncate before
-        // its actions; one that fits draws it as wide as the table.
-        Line::Group(group) => {
-            let group = source.group(group, cx)?;
-            let view = state.sideways.bounds().size.width;
-            let overflows = view > px(0.) && ui::dp_px(source.width(), window) > view + px(0.5);
-            return Some(if overflows {
-                Pinned::new(&state.sideways, div().w(view).child(group)).into_any_element()
-            } else if scrolled {
-                Pinned::new(&state.sideways, group).into_any_element()
-            } else {
-                group
-            });
-        }
+        Line::Group(group) => return render_group_line(source, group, window, cx),
         Line::Row(row) => row,
     };
     let selected = source.selected_key() == Some(&row.key);
-    let (marked, muted) = (row.marked, row.muted);
     let mut p = palette(cx);
-    if selected || marked {
+    if selected || row.marked {
         p.muted = p.ink_2;
     }
     let style = RowStyle { selected, p };
     let clickable = source.clickable();
-    let mut element = h_flex()
-        .group(ROW_GROUP)
-        .id(row.id.clone())
-        .test_support()
-        .role(Role::ListBoxOption)
-        .aria_selected(selected)
-        .aria_label(row.label.clone())
-        .w_full()
-        .h(dp(ROW_HEIGHT))
-        .border_1()
-        .border_color(if selected {
-            p.accent
-        } else {
-            ui::transparent()
-        })
-        .font_family(MONO_FONT)
-        .text_size(dp(12.5))
-        .when(muted, |this| this.text_color(p.muted))
-        .when(marked && !selected, |this| this.bg(p.hover))
-        .when(selected, |this| this.bg(p.accent_soft))
-        .when(clickable, |this| this.cursor_pointer())
-        .when(clickable && !selected, |this| {
-            this.hover(|style| {
-                let style = style.bg(p.hover);
-                if muted {
-                    style.text_color(p.ink_2)
-                } else {
-                    style
-                }
-            })
-        })
-        .when_some(row.tooltip.clone(), |this, tooltip| {
-            this.follow_tooltip(tooltip)
-        });
+    let mut element = row_frame(&row, &style, clickable);
     let columns = source.columns();
     let (count, run) = pinned_run(columns);
     let pinned = count > 0 && state.pins(run, window);
@@ -688,45 +640,8 @@ fn render_line<S: TableSource>(
         });
     }
     if pinned {
-        let cells: Vec<_> = (columns.iter().take(count))
-            .map(|column| source.cell(&row, &style, column, cx))
-            .collect();
-        // Opaque, so the cells passing under them don't show through: the
-        // table's fill with the row's own over it, in each of its
-        // states. They stay inside the row, so its hover, tooltip and click
-        // reach them unchanged.
-        let tint = |this: Div| {
-            this.when(marked && !selected, |this| this.bg(p.hover))
-                .when(selected, |this| this.bg(p.accent_soft))
-                .when(clickable && !selected, |this| {
-                    this.group_hover(ROW_GROUP, |style| style.bg(p.hover))
-                })
-        };
-        // The row's left border, transparent unless it is selected, would
-        // let the passing cells show through; this edge covers it.
-        let edge = div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(px(-1.))
-            .w(px(1.))
-            .bg(if selected { p.accent } else { fill })
-            .when(!selected, |this| this.child(tint(div().size_full())));
-        element = element.relative().child(Pinned::overlay(
-            &state.sideways,
-            run,
-            div()
-                .id((state.ids.pinned.clone(), line))
-                .test_support()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left_0()
-                .w(dp(run))
-                .bg(fill)
-                .child(edge)
-                .child(tint(h_flex().size_full()).children(cells)),
-            p.line,
+        element = element.relative().child(pinned_overlay(
+            source, &row, &style, line, fill, count, run, clickable, cx,
         ));
     }
     let menu_id = ElementId::from((row.id.clone(), "menu"));
@@ -763,6 +678,132 @@ fn render_line<S: TableSource>(
             .into_any_element(),
         None => element.into_any_element(),
     })
+}
+
+/// A group's line, which stays in view. In a table wider than its view
+/// the line is as wide as the view, so its details truncate before its
+/// actions; one that fits draws it as wide as the table.
+fn render_group_line<S: TableSource>(
+    source: &S,
+    group: usize,
+    window: &Window,
+    cx: &mut Context<S>,
+) -> Option<AnyElement> {
+    let state = source.table_state();
+    let scrolled = state.scrolled();
+    let group = source.group(group, cx)?;
+    let view = state.sideways.bounds().size.width;
+    let overflows = view > px(0.) && ui::dp_px(source.width(), window) > view + px(0.5);
+    Some(if overflows {
+        Pinned::new(&state.sideways, div().w(view).child(group)).into_any_element()
+    } else if scrolled {
+        Pinned::new(&state.sideways, group).into_any_element()
+    } else {
+        group
+    })
+}
+
+/// A row's frame, before its cells: its id and role, its border and its
+/// fill in each of its states, its hover and its tooltip.
+fn row_frame<K, R>(
+    row: &TableRow<K, R>,
+    style: &RowStyle,
+    clickable: bool,
+) -> Observed<Stateful<Div>> {
+    let (selected, p) = (style.selected, style.p);
+    let (marked, muted) = (row.marked, row.muted);
+    h_flex()
+        .group(ROW_GROUP)
+        .id(row.id.clone())
+        .test_support()
+        .role(Role::ListBoxOption)
+        .aria_selected(selected)
+        .aria_label(row.label.clone())
+        .w_full()
+        .h(dp(ROW_HEIGHT))
+        .border_1()
+        .border_color(if selected {
+            p.accent
+        } else {
+            ui::transparent()
+        })
+        .font_family(MONO_FONT)
+        .text_size(dp(12.5))
+        .when(muted, |this| this.text_color(p.muted))
+        .when(marked && !selected, |this| this.bg(p.hover))
+        .when(selected, |this| this.bg(p.accent_soft))
+        .when(clickable, |this| this.cursor_pointer())
+        .when(clickable && !selected, |this| {
+            this.hover(|style| {
+                let style = style.bg(p.hover);
+                if muted {
+                    style.text_color(p.ink_2)
+                } else {
+                    style
+                }
+            })
+        })
+        .when_some(row.tooltip.clone(), |this, tooltip| {
+            this.follow_tooltip(tooltip)
+        })
+}
+
+/// The row's pinned run, drawn over the cells that pass under it.
+#[allow(clippy::too_many_arguments)]
+fn pinned_overlay<S: TableSource>(
+    source: &S,
+    row: &TableRow<S::Key, S::Row<'_>>,
+    style: &RowStyle,
+    line: usize,
+    fill: Hsla,
+    count: usize,
+    run: f32,
+    clickable: bool,
+    cx: &mut Context<S>,
+) -> Pinned {
+    let state = source.table_state();
+    let (selected, p) = (style.selected, style.p);
+    let marked = row.marked;
+    let cells: Vec<_> = (source.columns().iter().take(count))
+        .map(|column| source.cell(row, style, column, cx))
+        .collect();
+    // Opaque, so the cells passing under them don't show through: the
+    // table's fill with the row's own over it, in each of its
+    // states. They stay inside the row, so its hover, tooltip and click
+    // reach them unchanged.
+    let tint = |this: Div| {
+        this.when(marked && !selected, |this| this.bg(p.hover))
+            .when(selected, |this| this.bg(p.accent_soft))
+            .when(clickable && !selected, |this| {
+                this.group_hover(ROW_GROUP, |style| style.bg(p.hover))
+            })
+    };
+    // The row's left border, transparent unless it is selected, would
+    // let the passing cells show through; this edge covers it.
+    let edge = div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(px(-1.))
+        .w(px(1.))
+        .bg(if selected { p.accent } else { fill })
+        .when(!selected, |this| this.child(tint(div().size_full())));
+    Pinned::overlay(
+        &state.sideways,
+        run,
+        div()
+            .id((state.ids.pinned.clone(), line))
+            .test_support()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(dp(run))
+            .bg(fill)
+            .child(edge)
+            .child(tint(h_flex().size_full()).children(cells)),
+        p.line,
+    )
 }
 
 #[cfg(test)]

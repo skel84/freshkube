@@ -105,19 +105,25 @@ protoc, uncached and within 90 minutes. It continues on error: its failures
 show on the run without turning the workflow red, until the suite has been
 made to pass on Windows ([#353](https://github.com/skel84/freshkube/issues/353)).
 
-These checks are **advisory**, separate from the macOS workflow used to promote
-release bundles. A red native run blocks the lead's approval, but it is not a
-required merge-button check; branch protection remains unchanged. Tests
+Two checks are required for merging: **Check, lint and test (macOS)** from the
+macOS workflow, and **Compile and lint (Linux)** from this one. Linux is a job
+of its own, not a matrix entry, so that a docs-only change, which skips it,
+still reports its name; a skipped matrix job would report an unexpanded name
+and a required check would never complete. **Compile and lint (Windows)** and
+**Tests (Windows)** stay advisory. The workflow is separate from the macOS
+workflow used to promote release bundles. A red Linux run blocks the merge; a
+red Windows run blocks the lead's approval but is not a required check. Tests
 (Windows) is the exception while it continues on error: a red run there does
-not block approval. Once it is green on main, a test that newly fails there
-does. Every job installs protoc; Linux also installs the pinned GPUI Kit
-version's X11, Wayland, font, WebKit and Vulkan prerequisites. A green run establishes
+not block approval. The whole suite has passed on Windows since
+[#383](https://github.com/skel84/freshkube/pull/383); once Tests (Windows) is
+green on main, a test that newly fails there does block approval. Every job
+installs protoc; Linux also installs the pinned GPUI Kit version's X11,
+Wayland, font, WebKit and Vulkan prerequisites. A green run establishes
 compilation, linting and the headless tests: the whole suite on Linux, the
-keyboard tests on Windows. The whole suite on Windows counts only where its own
-job passed; running-app checks, credential stores and packaging remain separate
-work. The first uncached main run was green (Linux 16m23s,
-Windows 32m42s); Linux becoming required will be reconsidered if its warm
-runtime approaches macOS's.
+keyboard tests on Windows, plus the whole suite in its advisory job. Running-app
+checks, credential stores and packaging remain separate work. The first
+uncached main run was green (Linux 16m23s, Windows 32m42s); the Linux
+requirement will be reconsidered if its warm runtime approaches macOS's.
 
 Linux uses `Swatinem/rust-cache` with the `platform-check-Linux-tests` key,
 named for the test dependencies it holds since the job runs the suite; the

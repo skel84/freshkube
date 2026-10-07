@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use k8s_openapi::api::core::v1::{Pod, PodSpec, ServicePort};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+use kube::core::Selector;
 use serde_yaml::Value;
 
 use crate::resources::kinds::{ResourceKind, builtin};
@@ -152,17 +153,14 @@ fn protocol(value: Option<&Value>) -> String {
 /// A Service's selector as a label selector, or `None` when it selects no
 /// pods (an ExternalName Service, or one with hand-made endpoints).
 pub(crate) fn service_selector(selector: Option<&BTreeMap<String, String>>) -> Option<String> {
-    let selector = selector.filter(|selector| !selector.is_empty())?;
-    Some(
-        selector
-            .iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join(","),
-    )
+    let selector: Selector = selector?.clone().into_iter().collect();
+    (!selector.selects_all()).then(|| selector.to_string())
 }
 
 /// A workload's selector as a label selector, or `None` when it has none.
+///
+/// Built by hand rather than with `kube::core::Selector`, which sorts an
+/// `In` set's values and so would change the selector text sent.
 pub(crate) fn label_selector(selector: Option<&LabelSelector>) -> Option<String> {
     let selector = selector?;
     let mut terms: Vec<String> = selector

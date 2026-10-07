@@ -436,6 +436,6 @@ async fn main() {
         environment: &env.client,
         github: &github,
     };
-    let evidence = collect(&clusters, &plan).await;
+    let evidence = collect(&clusters, &plan, chrono::Utc::now()).await;
     print!("{}", render(&join(&evidence)));
 }

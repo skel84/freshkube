@@ -5,13 +5,13 @@
 use std::collections::BTreeMap;
 
 use futures::Stream;
-use http::{Request, header};
 use kube::Client;
 use kube::core::WatchEvent;
 use serde::Deserialize;
 
-use super::failure::{Failure, FailureKind};
+use super::failure::Failure;
 use super::kinds::ResourceKind;
+use super::object::json_get;
 use super::pod_row::{self, PodFacts, PodSpec, PodStatus, lenient};
 
 /// Asks for a table, falling back to plain JSON on servers without one.
@@ -145,13 +145,6 @@ impl TableRow {
     }
 }
 
-fn table_request(path: String) -> Result<Request<Vec<u8>>, Failure> {
-    Request::get(path)
-        .header(header::ACCEPT, TABLE_ACCEPT)
-        .body(Vec::new())
-        .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))
-}
-
 /// Lists every page of a collection as one table.
 pub async fn list_table(
     client: &Client,
@@ -176,7 +169,7 @@ pub async fn list_table(
             path.push_str(&query_value(&continue_token));
         }
         let page: Table = client
-            .request(table_request(path)?)
+            .request(json_get(path, TABLE_ACCEPT)?)
             .await
             .map_err(Failure::from_kube)?;
         if table.column_definitions.is_empty() {
@@ -211,7 +204,7 @@ pub(crate) async fn watch_table(
         path.push_str(&query_value(selector));
     }
     client
-        .request_events::<Table>(table_request(path)?)
+        .request_events::<Table>(json_get(path, TABLE_ACCEPT)?)
         .await
         .map_err(Failure::from_kube)
 }

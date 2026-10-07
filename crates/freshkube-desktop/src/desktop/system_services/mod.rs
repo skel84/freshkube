@@ -1,5 +1,6 @@
 //! Cluster service snapshots from the shell, as a table page; this list
-//! makes no requests.
+//! makes no requests. Its actions, Logs and Open node, act on the selected
+//! row from the toolbar, the row menu and their keys (DESIGN.md change 11).
 mod source;
 #[cfg(test)]
 mod tests;
@@ -14,8 +15,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     assets::IconName,
     component::{
-        Icon, Sizable,
-        button::{Button, ButtonVariants},
+        Disableable, Icon, Sizable,
+        button::Button,
         input::{Input, InputEvent, InputState},
         menu::{DropdownMenu, PopupMenuItem},
     },
@@ -26,6 +27,25 @@ use std::rc::Rc;
 
 /// The page's id prefix: `system-services-title`, `-list`, `-tally-…`.
 const PREFIX: &str = "system-services";
+/// The list's key context, around the table, so the filter types the
+/// letters the list takes.
+pub(super) const CONTEXT: &str = "SystemServices";
+
+gpui_kit::actions!(
+    system_services,
+    [
+        /// Selects the next service.
+        NextService,
+        /// Selects the previous service.
+        PreviousService,
+        /// Opens the selected service's node on its Services tab.
+        OpenServiceNode,
+        /// Opens the selected service's logs on its node.
+        ServiceLogs,
+        /// Clears the selection.
+        ClearService
+    ]
+);
 
 #[derive(Clone)]
 pub(crate) struct ServiceRow {
@@ -82,6 +102,12 @@ fn status_index(health: Health) -> usize {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Act {
+    Logs,
+    Open,
+}
+
 pub(super) enum ServiceEvent {
     Logs(String, String),
     Open(String, String),
@@ -105,6 +131,10 @@ pub(super) struct SystemServices {
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     filter: Entity<InputState>,
+    /// The list's focus, where its keys and the row menu's actions run.
+    focus: FocusHandle,
+    /// The selected row's id, kept while a refresh or filter shows it.
+    selected: Option<SharedString>,
     health: Option<Health>,
     node: Option<String>,
     nodes: Vec<String>,
@@ -150,6 +180,8 @@ impl SystemServices {
             loading_motion,
             page_scroll: ScrollHandle::new(),
             filter,
+            focus: cx.focus_handle(),
+            selected: None,
             health: None,
             node: None,
             nodes: Vec::new(),
@@ -250,6 +282,42 @@ impl SystemServices {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.refilter(cx);
     }
+    /// Puts the keyboard on the list, where its keys are bound.
+    pub(super) fn focus(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.focus, cx);
+    }
+    fn selected_row(&self) -> Option<&ServiceRow> {
+        let key = self.selected.as_ref()?;
+        self.rows.iter().find(|row| &row.id == key)
+    }
+    fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
+        self.selected = Some(key);
+        table::reveal(self, ScrollStrategy::Nearest);
+        cx.notify();
+    }
+    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if let Some(key) = table::step(self, delta, cx) {
+            self.select(key, cx);
+        }
+    }
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selected.take().is_some() {
+            cx.notify();
+        } else {
+            cx.propagate();
+        }
+    }
+    /// Runs an action on the selected row; with none, it does nothing.
+    fn act(&mut self, act: Act, cx: &mut Context<Self>) {
+        let Some(row) = self.selected_row() else {
+            return;
+        };
+        let (node, service) = (row.node.to_string(), row.service.to_string());
+        cx.emit(match act {
+            Act::Logs => ServiceEvent::Logs(node, service),
+            Act::Open => ServiceEvent::Open(node, service),
+        });
+    }
     /// A filter changed: the lines again, from the top.
     fn refilter(&mut self, cx: &mut Context<Self>) {
         self.rebuild(cx);
@@ -288,6 +356,16 @@ impl SystemServices {
             }
             self.lines.push(Entry::Row(ix));
         }
+        // A row the filters hide, or that went, is no longer selected, so
+        // the toolbar never acts on a row out of sight.
+        if self.selected.as_ref().is_some_and(|key| {
+            !self
+                .lines
+                .iter()
+                .any(|entry| matches!(entry, Entry::Row(ix) if &self.rows[*ix].id == key))
+        }) {
+            self.selected = None;
+        }
         cx.notify();
     }
     fn toggle_health(&mut self, health: Health, cx: &mut Context<Self>) {
@@ -324,15 +402,54 @@ impl SystemServices {
         let nodes = self.node_items(cx);
         let picked = self.node.clone();
         let value = picked.clone().unwrap_or_else(|| "All nodes".into());
+        let (logs, logs_fold) = self.render_action("logs", "Logs", Act::Logs, &ServiceLogs, cx);
+        let (open, open_fold) =
+            self.render_action("open", "Open node", Act::Open, &OpenServiceNode, cx);
         header
             .filter(filter)
             .chips(Some(chips))
+            // The picker narrows the list, as a source would, so it comes
+            // first; the actions fold before it.
             .foldable(
                 self.render_node_picker(nodes.clone()),
                 page::Fold::from(page::submenu_value("Node", value, nodes))
                     .changed(picked.map(|node| format!("Node {node}").into())),
             )
+            .foldable(logs, logs_fold)
+            .foldable(open, open_fold)
             .render(window, cx)
+    }
+    /// A toolbar button for an action on the selected row, with its key in
+    /// the tooltip, and its folded form; both disabled with no selection.
+    fn render_action(
+        &self,
+        id: &str,
+        label: &'static str,
+        act: Act,
+        action: &dyn Action,
+        cx: &Context<Self>,
+    ) -> (Button, page::MenuItems) {
+        let enabled = self.selected.is_some();
+        let run = page::handler(cx, move |this, _, cx| this.act(act, cx));
+        let fold = if enabled {
+            page::item(label, run.clone())
+        } else {
+            page::disabled_item(label)
+        };
+        let tooltip = if enabled {
+            format!("{label} for the selected service")
+        } else {
+            format!("{label}: select a service first")
+        };
+        let button = Button::new(SharedString::from(format!("system-service-{id}")))
+            .outline()
+            .small()
+            .h(dp(crate::ui::CONTROL_HEIGHT))
+            .label(label)
+            .disabled(!enabled)
+            .tooltip_with_action(tooltip, action, Some(CONTEXT))
+            .on_click(move |_, window, cx| run(window, cx));
+        (button, fold)
     }
     /// All nodes, then each node, as checked items: the node picker's menu,
     /// and its folded form.
@@ -368,6 +485,29 @@ impl SystemServices {
             .dropdown_menu(move |menu, window, cx| items(menu, window, cx))
     }
 }
+impl SystemServices {
+    /// The table in the list's key context, drawn in every state, so the
+    /// keys work while it shows no rows.
+    fn render_list(&mut self, short: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        div()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &NextService, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &PreviousService, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &OpenServiceNode, _, cx| this.act(Act::Open, cx)))
+            .on_action(cx.listener(|this, _: &ServiceLogs, _, cx| this.act(Act::Logs, cx)))
+            .on_action(cx.listener(|this, _: &ClearService, _, cx| this.clear_selection(cx)))
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+            // The motion over its loading rows goes beside the page, in
+            // the shell (`loading_motion`).
+            .child(table::data_table(self, window, cx).flex_1().min_h_0())
+    }
+}
+
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
@@ -379,11 +519,6 @@ impl Render for SystemServices {
                 this.overflow_y_scroll().restrict_scroll_to_axis()
             })
             .child(page::toolbar(cx).child(self.render_header(window, cx)))
-            .child(
-                table::data_table(self, window, cx)
-                    .flex_1()
-                    .min_h_0()
-                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT))),
-            )
+            .child(self.render_list(short, window, cx))
     }
 }

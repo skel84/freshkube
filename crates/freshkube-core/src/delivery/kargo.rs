@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use super::digest::{Digest, text};
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope};
 use super::source::{Source, Truncation};
 use super::versions::resolve;
@@ -42,10 +43,15 @@ pub struct Freight {
     pub project: String,
     /// Kargo's content hash, the object's name.
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub alias: Option<String>,
     pub warehouse: Option<String>,
     pub commits: Vec<FreightCommit>,
     pub images: Vec<FreightImage>,
+    /// Where `commits` and `images` sit: empty at the top (newer Kargo), or
+    /// `/spec`.
+    pub contents_at: &'static str,
     /// Stages that verified it.
     pub verified_in: Vec<String>,
     /// Stages it was approved for.
@@ -56,12 +62,18 @@ pub struct Freight {
 pub struct Stage {
     pub project: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub warehouses: Vec<String>,
     /// Names of the freight the Stage says it currently runs.
     pub current_freight: Vec<String>,
     /// Digests of the images in that Freight, as the Stage's own record holds
     /// them (`freightHistory` items, `currentFreight`, `lastPromotion`).
     pub current_digests: Vec<Digest>,
+    /// The pointer each of `current_digests` was read from.
+    pub current_digests_at: Vec<&'static str>,
+    /// The pointer each of `current_freight` was read from.
+    pub current_freight_at: Vec<&'static str>,
     pub last_promotion: Option<String>,
     pub health: Option<String>,
     /// Why the Stage is not healthy, as Kargo's health checks say.
@@ -73,6 +85,8 @@ pub struct Stage {
 pub struct Promotion {
     pub project: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub stage: Option<String>,
     pub freight: Option<String>,
     pub phase: Option<String>,
@@ -82,6 +96,11 @@ pub struct Promotion {
     pub creator: Creator,
     /// Digests of the Freight's images, as the Promotion's status records.
     pub freight_digests: Vec<Digest>,
+    /// The pointer each of `freight_digests` was read from.
+    pub freight_digests_at: Vec<&'static str>,
+    /// Whether `freight` is `spec.freight`, a declaration; else it is
+    /// `status.freight.name`, which Kargo reports.
+    pub freight_declared: bool,
     /// Commits its steps pushed (a step's `commit` output).
     pub pushed_commits: Vec<String>,
     /// Commits its steps checked out (a step's `commits` map), the source.
@@ -147,6 +166,8 @@ impl Creator {
 pub struct Warehouse {
     pub project: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub image_repos: Vec<String>,
 }
 
@@ -173,9 +194,15 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
     } else {
         value.get("spec").unwrap_or(value)
     };
+    let contents_at = if std::ptr::eq(body, value) || value.get("spec").is_none() {
+        ""
+    } else {
+        "/spec"
+    };
     Some(Freight {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         alias: text(value, "/metadata/labels/kargo.akuity.io~1alias")
             .or_else(|| text(value, "/alias")),
         warehouse: text(body, "/origin/name").or_else(|| text(value, "/origin/name")),
@@ -200,6 +227,7 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
                 })
             })
             .collect(),
+        contents_at,
         verified_in: names(value, "/status/verifiedIn"),
         approved_for: names(value, "/status/approvedFor"),
     })
@@ -207,41 +235,58 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
 
 pub fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
-    let mut digests: Vec<Digest> = Vec::new();
+    let mut current_at: Vec<&'static str> = Vec::new();
+    let mut digests: Vec<(Digest, &'static str)> = Vec::new();
     // Newer Kargo: the newest entry of `freightHistory` holds a map of
     // origin -> freight.
     if let Some(items) = value
         .pointer("/status/freightHistory/0/items")
         .and_then(Value::as_object)
     {
-        current.extend(items.values().filter_map(|item| text(item, "/name")));
-        digests.extend(items.values().flat_map(image_digests));
+        let at = "/status/freightHistory/0/items";
+        for name in items.values().filter_map(|item| text(item, "/name")) {
+            current.push(name);
+            current_at.push(at);
+        }
+        digests.extend(items.values().flat_map(image_digests).map(|d| (d, at)));
     }
-    // Older Kargo: one `currentFreight`.
+    // Older Kargo: one `currentFreight`, and the last Promotion's.
     if current.is_empty() {
         if let Some(name) = text(value, "/status/currentFreight/name") {
             current.push(name);
+            current_at.push("/status/currentFreight/name");
         }
         if let Some(name) = text(value, "/status/lastPromotion/freight/name")
             && !current.contains(&name)
         {
             current.push(name);
+            current_at.push("/status/lastPromotion/freight/name");
         }
-        for freight in ["/status/currentFreight", "/status/lastPromotion/freight"] {
+        for (freight, at) in [
+            ("/status/currentFreight", "/status/currentFreight/images"),
+            (
+                "/status/lastPromotion/freight",
+                "/status/lastPromotion/freight/images",
+            ),
+        ] {
             if let Some(freight) = value.pointer(freight) {
-                digests.extend(image_digests(freight));
+                digests.extend(image_digests(freight).into_iter().map(|d| (d, at)));
             }
         }
     }
-    digests.dedup();
+    digests.dedup_by(|a, b| a.0 == b.0);
+    let (digests, digests_at): (Vec<Digest>, Vec<&'static str>) = digests.into_iter().unzip();
     Some(Stage {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         warehouses: array(value, "/spec/requestedFreight")
             .filter_map(|request| text(request, "/origin/name"))
             .collect(),
         current_freight: current,
         current_digests: digests,
+        current_digests_at: digests_at,
+        current_freight_at: current_at,
         last_promotion: text(value, "/status/lastPromotion/name"),
         health: text(value, "/status/health/status"),
         health_issues: array(value, "/status/health/issues")
@@ -288,25 +333,37 @@ fn step_commits(value: &Value) -> (Vec<String>, Vec<String>) {
 
 pub fn parse_promotion(value: &Value) -> Option<Promotion> {
     let (pushed_commits, source_commits) = step_commits(value);
-    let mut freight_digests = value
+    let mut freight_digests: Vec<(Digest, &'static str)> = value
         .pointer("/status/freight")
         .map(image_digests)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(|digest| (digest, "/status/freight/images"))
+        .collect();
     for collected in value
         .pointer("/status/freightCollection/items")
         .and_then(Value::as_object)
         .into_iter()
         .flat_map(|items| items.values())
     {
-        freight_digests.extend(image_digests(collected));
+        freight_digests.extend(
+            image_digests(collected)
+                .into_iter()
+                .map(|digest| (digest, "/status/freightCollection/items")),
+        );
     }
-    freight_digests.dedup();
+    freight_digests.dedup_by(|a, b| a.0 == b.0);
+    let (freight_digests, freight_digests_at): (Vec<Digest>, Vec<&'static str>) =
+        freight_digests.into_iter().unzip();
     Some(Promotion {
         pushed_commits,
         source_commits,
         freight_digests,
+        freight_digests_at,
+        freight_declared: text(value, "/spec/freight").is_some(),
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         stage: text(value, "/spec/stage"),
         freight: text(value, "/spec/freight").or_else(|| text(value, "/status/freight/name")),
         phase: text(value, "/status/phase"),
@@ -324,10 +381,83 @@ pub fn parse_warehouse(value: &Value) -> Option<Warehouse> {
     Some(Warehouse {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         image_repos: array(value, "/spec/subscriptions")
             .filter_map(|subscription| text(subscription, "/image/repoURL"))
             .collect(),
     })
+}
+
+impl Freight {
+    /// The pointer `field` (`images` or `commits`) is read at.
+    pub fn pointer(&self, field: &str) -> String {
+        format!("{}/{field}", self.contents_at)
+    }
+
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Freight",
+            Some(&self.project),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+impl Stage {
+    /// Where the Stage's status names `freight` as current.
+    pub fn freight_pointer(&self, freight: &str) -> &'static str {
+        let at = self.current_freight.iter().position(|name| name == freight);
+        at.and_then(|at| self.current_freight_at.get(at).copied())
+            .unwrap_or("/status")
+    }
+
+    /// Where the Stage's status holds `digest`.
+    pub fn digest_pointer(&self, digest: &Digest) -> &'static str {
+        let at = self.current_digests.iter().position(|d| d == digest);
+        at.and_then(|at| self.current_digests_at.get(at).copied())
+            .unwrap_or("/status")
+    }
+
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(GROUP, "Stage", Some(&self.project), &self.name, &self.meta)
+    }
+}
+
+impl Promotion {
+    /// Where the Promotion's status holds `digest`.
+    pub fn digest_pointer(&self, digest: &Digest) -> &'static str {
+        let at = self.freight_digests.iter().position(|d| d == digest);
+        at.and_then(|at| self.freight_digests_at.get(at).copied())
+            .unwrap_or("/status")
+    }
+
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Promotion",
+            Some(&self.project),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+impl Warehouse {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Warehouse",
+            Some(&self.project),
+            &self.name,
+            &self.meta,
+        )
+    }
 }
 
 /// Everything Kargo knows about one project's delivery.

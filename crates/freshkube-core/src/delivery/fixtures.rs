@@ -30,6 +30,9 @@ pub struct FixtureReader {
     capped: HashSet<String>,
     /// Kinds refused for one label selector, by plural and selector.
     refused_selectors: HashSet<(String, String)>,
+    /// Answers carry an invented `uid` and `resourceVersion` where an item
+    /// has none; off, so a world can exercise objects without them.
+    stamp_meta: bool,
     /// Every request, as a path-like description.
     pub requests: RefCell<Vec<String>>,
 }
@@ -47,6 +50,12 @@ impl FixtureReader {
             (group.into(), version.into()),
             plurals.iter().map(|p| (*p).to_owned()).collect(),
         );
+        self
+    }
+
+    /// Items answer with an invented `uid` and `resourceVersion` of their own.
+    pub fn with_meta(mut self) -> Self {
+        self.stamp_meta = true;
         self
     }
 
@@ -85,6 +94,25 @@ impl FixtureReader {
         );
         self
     }
+}
+
+/// The object with an invented `uid` and `resourceVersion` where it has
+/// none, as a server's answer always has them.
+fn stamped(mut item: Value, plural: &str, index: usize) -> Value {
+    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
+        let name = metadata
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed")
+            .to_owned();
+        metadata
+            .entry("uid")
+            .or_insert_with(|| Value::from(format!("uid-{plural}-{name}")));
+        metadata
+            .entry("resourceVersion")
+            .or_insert_with(|| Value::from(format!("{}", 1000 + index)));
+    }
+    item
 }
 
 /// `key=value` terms, and a bare `key` for a label that exists.
@@ -147,6 +175,11 @@ impl Reader for FixtureReader {
                 })
             })
             .filter(|item| selector.as_deref().is_none_or(|s| matches(item, s)))
+            .enumerate()
+            .map(|(index, item)| match self.stamp_meta {
+                true => stamped(item, &request.resource.plural, index),
+                false => item,
+            })
             .collect();
         let truncated = self
             .capped
@@ -414,6 +447,17 @@ pub struct World {
     pub argocd: FixtureReader,
     pub tekton: FixtureReader,
     pub environment: FixtureReader,
+}
+
+impl World {
+    /// Every reader answers with a `uid` and `resourceVersion` for its items.
+    pub fn with_meta(mut self) -> Self {
+        self.kargo = self.kargo.with_meta();
+        self.argocd = self.argocd.with_meta();
+        self.tekton = self.tekton.with_meta();
+        self.environment = self.environment.with_meta();
+        self
+    }
 }
 
 pub fn healthy() -> World {

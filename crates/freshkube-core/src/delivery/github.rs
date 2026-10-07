@@ -9,6 +9,7 @@
 use serde_json::Value;
 
 use super::digest::{is_full_sha, text};
+use super::observation::{Meta, ObjectRef};
 use crate::resources::{Failure, FailureKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +25,21 @@ pub struct PullRequest {
     /// rebase merge it is not the head commit.
     pub merge_sha: Option<String>,
     pub base_branch: Option<String>,
+}
+
+impl PullRequest {
+    /// The pull request as an object. GitHub's answer has no Kubernetes
+    /// `uid` or `resourceVersion`, so it carries neither; the repository
+    /// stands where a namespace would.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            "github.com",
+            "PullRequest",
+            Some(&self.repo),
+            &self.number.to_string(),
+            &Meta::default(),
+        )
+    }
 }
 
 pub fn parse_pull_request(repo: &str, value: &Value) -> Option<PullRequest> {

@@ -1,10 +1,12 @@
 name: Platform checks
 
-# Advisory: a red native run blocks review approval, not the merge button.
+# Compile and lint (Linux) is a required check; Compile and lint (Windows) and
+# Tests (Windows) stay advisory: a red advisory run blocks review approval, not
+# the merge button. Linux is not a matrix entry because a skipped matrix job
+# reports its unexpanded name, which a required check would never match.
 # Keep failures separate from CI: releases promote that workflow's macOS bundles.
 # Linux and Windows check and lint every target; Linux runs the whole test
-# suite in that job, and Windows runs it in its own job, Tests (Windows),
-# which continues on error until the suite passes there.
+# suite in that job, and Windows runs it in its own job, Tests (Windows).
 on:
   pull_request:
     branches: [main]
@@ -60,20 +62,15 @@ jobs:
             echo "app=false" >> "$GITHUB_OUTPUT"
           fi
 
-  check:
-    name: Compile and lint (${{ matrix.platform }})
+  # Linux is a job of its own, not a matrix entry: when `changes` skips a
+  # matrix job, GitHub reports its unexpanded name, "Compile and lint
+  # (${{ matrix.platform }})", and a required check would never report.
+  linux:
+    name: Compile and lint (Linux)
     needs: changes
     if: needs.changes.outputs.app == 'true'
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: Linux
-            runner: ubuntu-latest
-          - platform: Windows
-            runner: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,7 +79,6 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-        if: runner.os == 'Linux'
         with:
           key: platform-check-Linux-tests
           # Linux only until its size and the surviving macOS caches are audited.
@@ -96,7 +92,6 @@ jobs:
           version: '36.2'
           repo-token: ${{ github.token }}
       - name: Install GPUI Linux dependencies
-        if: runner.os == 'Linux'
         # GPUI Kit 0.7.0's script/install-linux.sh, plus Vulkan headers:
         # https://github.com/longbridge/gpui-kit/blob/0c830f4d257e69fdd17200650533ab4ca9a40cc0/script/install-linux.sh
         run: |
@@ -110,12 +105,33 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
-        if: runner.os == 'Linux'
         # GPUI's test platform needs no display; the workspace run includes
         # the terminal keyboard tests.
         run: cargo test --workspace --locked --no-fail-fast
+
+  windows:
+    name: Compile and lint (Windows)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '36.2'
+          repo-token: ${{ github.token }}
+      - name: Check every target
+        run: cargo check --workspace --all-targets --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Terminal keyboard UI tests
-        if: runner.os == 'Windows'
         run: cargo test -p freshkube-terminal --lib keyboard --locked
 
   windows-tests:
@@ -124,8 +140,9 @@ jobs:
     if: needs.changes.outputs.app == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
-    # Advisory twice over: a failure here shows on the run but leaves the
-    # workflow green until the Windows suite has been made to pass.
+    # Advisory: a failure here shows on the run but leaves the workflow green.
+    # The suite has passed on Windows since #383 (9efd075); it stays advisory
+    # until a later decision makes it count.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
