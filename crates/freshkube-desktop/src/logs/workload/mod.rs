@@ -700,6 +700,19 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 }
 
 impl LogSource for WorkloadLogs {
+    fn download_name(view: &WorkloadLogView) -> String {
+        let source = view.source();
+        let mut name = match &source.workload {
+            Some(workload) => format!("{}-{}", workload.namespace, workload.name),
+            None => "workload".into(),
+        };
+        // Visible lines are the picked pod's.
+        if let Some(pod) = &source.pod {
+            name = format!("{name}-{pod}");
+        }
+        name
+    }
+
     fn prepare_controls(
         view: &mut WorkloadLogView,
         width: Pixels,
@@ -738,6 +751,10 @@ impl LogSource for WorkloadLogs {
 
     fn source_label(&self, service: &ServiceId) -> Option<SharedString> {
         self.labels.get(service).cloned()
+    }
+
+    fn tags_lines(&self) -> bool {
+        true
     }
 }
 

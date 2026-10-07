@@ -444,6 +444,21 @@ fn clock(time: DateTime<Utc>) -> String {
 }
 
 impl LogSource for PodLogs {
+    fn download_name(view: &PodLogView) -> String {
+        let source = view.source();
+        let mut name = match &source.pod {
+            Some(pod) => format!("{}-{}", pod.namespace, pod.name),
+            None => "pod".into(),
+        };
+        if let Some(container) = &source.container {
+            name = format!("{name}-{container}");
+        }
+        if source.previous {
+            name.push_str("-previous");
+        }
+        name
+    }
+
     fn tools(view: &PodLogView, cx: &mut Context<PodLogView>) -> Vec<AnyElement> {
         view.render_tools(cx)
     }

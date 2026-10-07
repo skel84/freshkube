@@ -88,6 +88,23 @@ impl TalosLogs {
 }
 
 impl LogSource for TalosLogs {
+    fn download_name(view: &LogPanel) -> String {
+        let source = view.source();
+        let node = source
+            .target
+            .as_ref()
+            .map(|(target, _)| target.node.as_str())
+            .or(source
+                .fixture_target
+                .as_ref()
+                .map(|target| target.node.as_str()))
+            .unwrap_or("node");
+        match source.collecting.iter().collect::<Vec<_>>().as_slice() {
+            [service] => format!("{node}-{}", service.as_str()),
+            _ => format!("{node}-services"),
+        }
+    }
+
     fn prepare_controls(
         view: &mut LogPanel,
         width: Pixels,

@@ -631,3 +631,13 @@ fn a_short_window_puts_the_service_picker_on_the_collection_row(cx: &mut TestApp
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_talos_download_is_named_by_its_node(cx: &mut TestAppContext) {
+    use super::{LogSource, TalosLogs};
+    let (_runtime, panel, _handle) = mount(cx);
+    cx.update(|cx| {
+        let name = TalosLogs::download_name(panel.read(cx));
+        assert!(name.starts_with("fixture-node-"), "{name}");
+    });
+}
