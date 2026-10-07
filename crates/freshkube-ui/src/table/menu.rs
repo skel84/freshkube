@@ -5,12 +5,14 @@
 //! keymap binds it in the page's context, in the platform's form
 //! (`⇧X` on macOS, `Shift+X` elsewhere).
 
-use gpui_kit::component::menu::PopupMenu;
-use gpui_kit::{Action, Context, FocusHandle, SharedString};
+use std::rc::Rc;
+
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::{Action, App, Context, FocusHandle, SharedString};
 
 /// One line of a row's menu.
 pub enum RowAction {
-    /// An item that dispatches `action` on the page's focus.
+    /// An item that runs `action` on the page's list.
     Item {
         label: SharedString,
         action: Box<dyn Action>,
@@ -41,17 +43,24 @@ impl RowAction {
     }
 }
 
-/// Adds `actions` to `menu`, dispatched to `focus`: the page's list, where
-/// their keys are bound, so each item shows its key and runs its handler.
-/// A separator at either end or next to another is dropped. While the
-/// menu is open, no row tooltip draws over it.
+/// Adds `actions` to `menu`, run on `focus`: the page's list, where their
+/// keys are bound, so each item shows its key and runs the key's handler.
+/// The menu stays open while the list changes under it, so an item acts
+/// only while `live` holds: the row it was opened for is still listed and
+/// selected. Otherwise it does nothing, rather than act on whatever row
+/// took its place. A separator at either end or next to another is dropped.
+/// While the menu is open, no row tooltip draws over it. An item runs its
+/// action at once, while Kit holds the menu, so a handler must not update
+/// the menu itself, such as by opening another.
 pub fn row_menu(
     menu: PopupMenu,
     actions: Vec<RowAction>,
     focus: &FocusHandle,
+    live: impl Fn(&App) -> bool + 'static,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     crate::tooltip::hide_while_open(cx);
+    let live = Rc::new(live);
     let mut menu = menu.action_context(focus.clone());
     let mut separate = false;
     let mut any = false;
@@ -67,7 +76,19 @@ pub fn row_menu(
                     menu = menu.separator();
                     separate = false;
                 }
-                menu = menu.menu_with_disabled(label, action, !enabled);
+                let (live, focus, run) = (live.clone(), focus.clone(), action.boxed_clone());
+                menu = menu.item(
+                    PopupMenuItem::new(label)
+                        .action(action)
+                        .disabled(!enabled)
+                        .on_click(move |_, window, cx| {
+                            if live(cx) {
+                                // At once, on the list: the key's own path.
+                                focus.focus(window, cx);
+                                focus.dispatch_action(run.as_ref(), window, cx);
+                            }
+                        }),
+                );
                 any = true;
             }
         }

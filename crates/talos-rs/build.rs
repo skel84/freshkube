@@ -10,9 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/google/rpc/status.proto",
                 "proto/common/common.proto",
                 "proto/machine/machine.proto",
-                "proto/storage/storage.proto",
                 "proto/time/time.proto",
-                "proto/inspect/inspect.proto",
             ],
             &["proto"],
         )?;

@@ -702,7 +702,8 @@ gpui_kit::actions!(
         BackNode,
         NextNodeTab,
         PreviousNodeTab,
-        OpenNode
+        OpenNode,
+        ToggleHealthyNodes
     ]
 );
 
