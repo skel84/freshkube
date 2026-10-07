@@ -1,3 +1,4 @@
+use super::Reading;
 use crate::desktop::{Page, layout_check, tests::fixture};
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 
@@ -92,11 +93,54 @@ fn the_table_waits_for_the_talos_overview_until_it_answers_or_fails(cx: &mut Tes
         window.find(("system-services-sort", 1usize));
         assert!(window.try_find("system-services-empty").is_none());
 
-        // A failed read waits no more.
+        // A failed read waits no more, and says why.
         view.update(cx, |pilot, cx| pilot.simulate_failure(cx));
         window.render_frame(cx);
         assert!(window.try_find("system-services-loading").is_none());
         assert!(window.find("system-services-empty").visible());
+        let reading = view.read(cx).system_services.read(cx).reading().clone();
+        assert!(
+            matches!(&reading, Reading::Failed(reason) if reason.contains("didn't answer within 10 s")),
+            "{reading:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_loading_rows_give_way_to_the_services_when_the_overview_answers(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        let nodes = view.update(cx, |pilot, cx| {
+            let nodes = std::mem::take(&mut pilot.nodes);
+            let answer = pilot.overview.data().cloned();
+            pilot.overview = crate::state::Snapshot::default();
+            pilot
+                .system_services
+                .update(cx, |services, cx| services.set_nodes(&[], cx));
+            pilot.rebuild_joined_nodes(cx);
+            (nodes, answer)
+        });
+        window.render_frame(cx);
+        assert!(window.find("system-services-loading").visible());
+
+        view.update(cx, |pilot, cx| {
+            let (nodes, answer) = nodes;
+            let request = pilot.overview.begin(pilot.applied.clone());
+            pilot
+                .overview
+                .apply(&request, Ok(answer.expect("the example answered")));
+            pilot.nodes = nodes;
+            pilot.rebuild_joined_nodes(cx);
+            let summaries = pilot.nodes.clone();
+            pilot
+                .system_services
+                .update(cx, |services, cx| services.set_nodes(&summaries, cx));
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("system-services-loading").is_none());
+        assert!(window.find(UNHEALTHY).visible());
     })
     .unwrap();
 }

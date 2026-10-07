@@ -235,6 +235,9 @@ pub(crate) struct ResourcesScreen {
     store: ResourceStore,
     projection: ResourceProjection,
     layout: TableLayout,
+    /// The kind and namespace scope `layout` was built from by a list, so
+    /// a relist of the same keeps its header over the loading rows.
+    layout_for: Option<(ResourceKind, bool)>,
     hidden_columns: BTreeSet<layout::ColumnSource>,
     visible: bool,
     /// The selection to find again once a restarted read lists it.
@@ -414,6 +417,7 @@ impl ResourcesScreen {
             store: ResourceStore::new(),
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
+            layout_for: None,
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
@@ -740,14 +744,19 @@ impl ResourcesScreen {
         self.marked.clear();
         self.usage_state = UsageState::Unknown;
         self.regroup();
-        // The list's header over its loading rows until it answers.
-        self.layout = TableLayout::new(
-            &ResourceStore::provisional(),
-            self.lists_all_namespaces(),
-            self.lists_pods(),
-            !self.embedded,
-        );
-        self.layout.hide(&self.hidden_columns);
+        // The list's header over its loading rows until it answers: the
+        // last list's for the same kind and scope, else Name and Age.
+        let scope = (self.kind.clone(), self.lists_all_namespaces());
+        if self.layout_for.as_ref() != Some(&scope) {
+            self.layout_for = None;
+            self.layout = TableLayout::new(
+                &ResourceStore::provisional(),
+                scope.1,
+                self.lists_pods(),
+                !self.embedded,
+            );
+            self.layout.hide(&self.hidden_columns);
+        }
         self.updated = None;
         self.now = live::now();
         cx.notify();
@@ -859,6 +868,8 @@ impl ResourcesScreen {
                 !self.embedded,
             );
             self.layout.hide(&self.hidden_columns);
+            self.layout_for = (!self.store.columns().is_empty())
+                .then(|| (self.kind.clone(), self.lists_all_namespaces()));
             drop(_span);
             // A restarted read selects the same object again if it still
             // exists; only its first list can tell.

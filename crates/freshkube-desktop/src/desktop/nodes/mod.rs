@@ -10,6 +10,7 @@ mod table;
 mod tests;
 mod view;
 
+use super::system_services::Reading;
 use super::{NodeView, Page, Pilot};
 use crate::{
     resources::{DetailEvent, DetailPane, Tab, detail::DetailTarget, model::ResourceIdentity},
@@ -309,14 +310,27 @@ impl Pilot {
         }
     }
 
+    /// Whether the Nodes table shows its loading rows.
+    #[cfg(test)]
+    pub(super) fn nodes_wait(&self) -> bool {
+        matches!(self.node_workspace.empty, Some(Empty::Loading))
+    }
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
         // System services waits as long as the Talos overview has neither
-        // answered nor failed.
-        let waiting = self.kubernetes_only.is_none()
-            && self.overview.data().is_none()
-            && self.overview.error().is_none();
+        // answered nor failed, and says why when nothing can answer.
+        let failure = self
+            .config_error
+            .as_deref()
+            .or_else(|| self.overview.error());
+        let reading = if self.kubernetes_only.is_some() || self.overview.data().is_some() {
+            Reading::Answered
+        } else if let Some(failure) = failure {
+            Reading::Failed(failure.to_owned().into())
+        } else {
+            Reading::Waiting
+        };
         self.system_services
-            .update(cx, |services, cx| services.set_waiting(waiting, cx));
+            .update(cx, |services, cx| services.set_reading(reading, cx));
         self.column_state
             .prepare(self.kubernetes_summary.data().map(|s| s.as_ref()));
         let kubernetes = self
@@ -350,6 +364,7 @@ impl Pilot {
                 .data()
                 .and_then(|summary| summary.nodes.error())
                 .or_else(|| self.kubernetes_summary.error())
+                .or(self.config_error.as_deref())
                 .or_else(|| self.overview.error());
             Some(if let Some(error) = error {
                 Empty::Failed(error.to_owned().into())

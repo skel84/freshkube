@@ -236,7 +236,8 @@ impl ResourcesScreen {
         table::data_table(self, window, cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
-            // Over the table, so its frames redraw only the motion.
+            // Over the table. Its frames still redraw this page and the
+            // shell above it, as the skeleton's did.
             .child(self.loading_motion.clone())
             .into_any_element()
     }

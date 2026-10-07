@@ -982,7 +982,10 @@ impl Pilot {
                         view.remember_connection(window, cx);
                         view.refresh(window, cx);
                     }
-                    Err(error) => view.config_error = Some(error),
+                    Err(error) => {
+                        view.config_error = Some(error);
+                        view.rebuild_joined_nodes(cx);
+                    }
                 }
                 cx.notify();
             });

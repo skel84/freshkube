@@ -531,6 +531,84 @@ fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// How many sortable header cells the list draws.
+fn header_cells(window: &gpui_kit::Window) -> usize {
+    (0usize..40)
+        .filter(|ix| window.try_find(("resource-sort", *ix)).is_some())
+        .count()
+}
+
+#[gpui_kit::test]
+fn the_loading_rows_give_way_to_a_refusal_or_a_failure(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, None);
+    cx.update_window(handle, |_, window, cx| {
+        for (connection, state, shown) in [
+            (
+                "homelab",
+                ReadState::Refused("pods is forbidden".into()),
+                "resource-refused",
+            ),
+            (
+                "staging-eu",
+                ReadState::Failed("Timeout".into()),
+                "resource-failed",
+            ),
+        ] {
+            // Hidden, the page waits for its first list.
+            screen.update(cx, |screen, cx| {
+                screen.set_visible(false, window, cx);
+                screen.set_source(Some(source(connection)), window, cx);
+            });
+            window.render_frame(cx);
+            assert!(window.find("resource-loading").visible());
+
+            deliver(&screen, vec![ResourceEvent::Read(state)], cx);
+            window.render_frame(cx);
+            assert!(window.find(shown).visible(), "{shown}");
+            assert!(window.try_find("resource-loading").is_none(), "{shown}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_relist_of_the_same_kind_keeps_its_header_over_the_loading_rows(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("deployments.apps"), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).kind, kind("deployments.apps"));
+        assert!(!screen.read(cx).store.is_empty());
+        let listed = header_cells(window);
+        assert!(listed > 2, "{listed}");
+
+        // Refresh and a namespace change start again from no rows; the
+        // header stays the kind's while they wait.
+        screen.update(cx, |screen, cx| {
+            screen.set_visible(false, window, cx);
+            screen.restart(window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-loading").visible());
+        assert_eq!(header_cells(window), listed);
+
+        // Another kind waits under Name and Age.
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("statefulsets.apps"), window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-loading").visible());
+        assert!(header_cells(window) < listed);
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_clicked_row_shows_its_details_in_the_drawer_over_the_list(cx: &mut TestAppContext) {
     // Here the page is the whole window: 1280 has room for the drawer
@@ -1205,7 +1283,7 @@ fn n_does_nothing_for_a_kind_without_namespaces(cx: &mut TestAppContext) {
 
 /// The index of the first row whose pod runs.
 fn running_row(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> usize {
-    (0..)
+    (0usize..)
         .find(|&ix| {
             let identity = identity_at(screen, ix, cx);
             screen.read(cx).store.get(&identity).unwrap().cells[2] == "Running"
