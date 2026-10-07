@@ -1653,6 +1653,28 @@ async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn a_cold_nodes_table_draws_its_header_over_the_loading_rows(cx: &mut TestAppContext) {
+    // Nothing has answered: neither Talos nor the summary built the rows.
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-2", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert!(view.read(cx).nodes_wait());
+        assert!(window.find("nodes-loading").visible());
+        let header: Vec<_> = (0usize..12)
+            .filter_map(|ix| window.try_find(("nodes-sort", ix)))
+            .filter_map(|cell| cell.label().map(str::to_owned))
+            .collect();
+        assert!(
+            header.iter().any(|label| label == "Name") && header.len() > 4,
+            "{header:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("services"), None);
     wait_until(cx, handle, "the kubeconfig to load", |_, cx| {

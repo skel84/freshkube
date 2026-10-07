@@ -479,7 +479,9 @@ impl Pilot {
             pilot: pilot.clone(),
             page: Page::Nodes,
         });
-        let node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        let mut node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        // The header the loading rows sit under before anything answers.
+        node_workspace.rebuild_columns(!options.kubernetes_only);
         let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let services_page = cx.new(|_| PageHost {
             pilot,
@@ -843,7 +845,7 @@ impl Pilot {
             automatic: true,
             elapsed: Duration::ZERO,
             fixture: options.fixture,
-            fixture_hold: options.fixture && crate::fixture::hold().talos,
+            fixture_hold: options.fixture && options.hold_talos,
             fixture_tick: 0,
             focus: cx.focus_handle(),
             node_focus: cx.focus_handle(),
