@@ -15,6 +15,10 @@ const MAX_COLUMN: f32 = 280.;
 const MAX_FLEXIBLE: f32 = 440.;
 /// The status glyph's column: 16 for the glyph and its padding.
 pub(super) use freshkube_ui::table::GLYPH_WIDTH;
+/// A pod's container squares, at most eight and a `+N`, inside the cell's
+/// padding: 130.
+const CONTAINERS_WIDTH: f32 = freshkube_ui::squares::width(freshkube_ui::squares::SHOWN + 1)
+    + 2. * freshkube_ui::table::CELL_PAD;
 /// A pod's `0/1`, under its label and sort arrow.
 const READY_WIDTH: f32 = 72.;
 /// A pod's restart count, under its label and sort arrow.
@@ -38,6 +42,8 @@ pub(super) enum ColumnSource {
     /// The status glyph, or a check where the row is marked.
     Glyph,
     Owner,
+    /// A pod's container squares, init containers first.
+    Containers,
     /// A pod's ready containers of all.
     Ready,
     /// A pod's restarts, all its containers' together.
@@ -69,6 +75,7 @@ impl DisplayColumn {
             ColumnSource::Namespace => SortKey::Namespace,
             ColumnSource::Glyph => return None,
             ColumnSource::Owner => SortKey::Owner,
+            ColumnSource::Containers => SortKey::Containers,
             ColumnSource::Ready => SortKey::Ready,
             ColumnSource::Restarts => SortKey::Restarts,
             ColumnSource::Cpu => SortKey::Cpu,
@@ -252,12 +259,13 @@ impl TableLayout {
 
 /// A pod's columns between its name and its age, in Freelens's order
 /// (#291).
-fn pod_columns(store: &ResourceStore) -> [DisplayColumn; 6] {
+fn pod_columns(store: &ResourceStore) -> [DisplayColumn; 7] {
     let widest = store.widest();
     let fit =
         |chars: usize, max: f32| (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max);
     let node = widest.node.saturating_sub(store.node_prefix());
     [
+        DisplayColumn::new("Containers", ColumnSource::Containers, CONTAINERS_WIDTH),
         DisplayColumn::new("Ready", ColumnSource::Ready, READY_WIDTH),
         DisplayColumn::new("CPU", ColumnSource::Cpu, USAGE_WIDTH),
         DisplayColumn::new("Memory", ColumnSource::Memory, USAGE_WIDTH),

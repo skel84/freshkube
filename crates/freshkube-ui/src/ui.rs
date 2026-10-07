@@ -239,8 +239,14 @@ pub fn badge_dot(tone: Tone, ring: Option<Hsla>, cx: &App) -> Div {
 
 /// A tone's drawing and its colour.
 fn glyph(tone: Tone, cx: &App) -> Option<(&'static [u8], Hsla)> {
-    let p = palette(cx);
-    let color = match tone {
+    Some((drawing(tone)?, glyph_color(tone, &palette(cx))?))
+}
+
+/// The colour a tone's status glyph is drawn in, for marks that must
+/// agree with the glyphs, such as a pod's container squares. Accent and
+/// Outline have no glyph.
+pub fn glyph_color(tone: Tone, p: &Palette) -> Option<Hsla> {
+    Some(match tone {
         Tone::Good => p.good,
         Tone::Warn => p.warn_ink,
         Tone::Crit | Tone::Died => p.crit,
@@ -248,8 +254,7 @@ fn glyph(tone: Tone, cx: &App) -> Option<(&'static [u8], Hsla)> {
         Tone::Integration => p.integration,
         Tone::Info => p.accent,
         Tone::Accent | Tone::Outline => return None,
-    };
-    Some((drawing(tone)?, color))
+    })
 }
 
 /// A tone's G6 drawing: a single-colour SVG on a 16 grid that GPUI draws as

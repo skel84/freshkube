@@ -224,6 +224,9 @@ pub(crate) enum SortKey {
     Namespace,
     /// The owner's short kind and name.
     Owner,
+    /// A pod's worst container square, worst first, then how many
+    /// containers share it.
+    Containers,
     /// A pod's ready share of its containers, least ready first, then
     /// how many it has.
     Ready,

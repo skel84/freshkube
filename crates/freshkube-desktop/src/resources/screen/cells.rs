@@ -236,6 +236,21 @@ pub(super) fn owner(
     .into_any_element()
 }
 
+/// A pod's container squares (#291), each named in the tooltip and the
+/// accessible label, derived with the row.
+pub(super) fn containers(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -> AnyElement {
+    let tip = pod.containers_tip.clone();
+    tooltip(
+        cell(column)
+            .id("containers")
+            .child(freshkube_ui::squares::squares(&pod.squares, p)),
+        move || tip.to_string(),
+    )
+    .aria_label(pod.containers_label.clone())
+    .test_support()
+    .into_any_element()
+}
+
 /// `0/1`: ready containers of all, in amber while some aren't.
 pub(super) fn ready(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -> AnyElement {
     let all_ready = pod.all_ready;

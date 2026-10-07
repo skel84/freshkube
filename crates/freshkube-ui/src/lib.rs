@@ -13,6 +13,7 @@ pub mod meters;
 pub mod motion;
 pub mod page;
 pub mod palette;
+pub mod squares;
 pub mod status;
 pub mod table;
 pub mod text_size;
