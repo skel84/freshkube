@@ -769,9 +769,12 @@ fn open_first(
 fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
     let directory = std::env::temp_dir().join(format!(
-        "freshkube-resources-width-{}-{:?}",
+        "freshkube-resources-width-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
     cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
