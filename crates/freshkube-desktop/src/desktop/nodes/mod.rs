@@ -429,7 +429,12 @@ impl Pilot {
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
             // Only a stacked inspector shrinks the table it opens under.
             if crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
-                reveal_when_settled(cx.entity().downgrade(), None, false, 6, window);
+                // Closed or expanded, there is no table to reveal it in.
+                freshkube_ui::table::reveal_when_settled(
+                    cx.entity().downgrade(),
+                    |pilot| pilot.node_workspace.open && !pilot.node_workspace.expanded,
+                    window,
+                );
             }
         }
         self.node_workspace.open = true;
@@ -712,43 +717,3 @@ gpui_kit::actions!(
         ToggleHealthyNodes
     ]
 );
-
-/// Reveals the selected row on each of the next frames until the table's
-/// height has changed and then held: a stacked inspector's split learns its
-/// heights while drawing and applies them on a later frame, and a row
-/// revealed in the taller table would end up under it. Each reveal asks for
-/// the next frame, so the split's change is drawn; `frames` bounds the wait
-/// when the height never changes.
-fn reveal_when_settled(
-    view: WeakEntity<Pilot>,
-    last: Option<Pixels>,
-    changed: bool,
-    frames: usize,
-    window: &Window,
-) {
-    window.on_next_frame(move |window, cx| {
-        // Closed or expanded, there is no table to reveal it in.
-        let Some(height) = view
-            .update(cx, |pilot, cx| {
-                if !pilot.node_workspace.open || pilot.node_workspace.expanded {
-                    return None;
-                }
-                freshkube_ui::table::reveal(pilot, ScrollStrategy::Nearest);
-                cx.notify();
-                Some(
-                    (pilot.node_workspace.table.scroll.0.borrow().last_item_size)
-                        .map(|size| size.item.height),
-                )
-            })
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        let settled = changed && height == last;
-        if frames > 1 && !settled {
-            let changed = changed || (last.is_some() && height != last);
-            reveal_when_settled(view, height, changed, frames - 1, window);
-        }
-    });
-}
