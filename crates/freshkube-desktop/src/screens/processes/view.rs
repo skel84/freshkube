@@ -7,15 +7,20 @@ impl ProcessesScreen {
         let header = PageHeader::new(PREFIX, "Processes").untitled(self.embedded);
         let header = match &self.derived {
             Some(derived) => {
-                let filter = div().child(
-                    Input::new(&self.query)
-                        .id("process-filter")
-                        .aria_label("Filter processes by command, path or arguments")
-                        .small()
-                        .h(dp(ui::CONTROL_HEIGHT))
-                        .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).size(dp(14.))),
-                );
+                let filter = div()
+                    .key_context(FILTER_CONTEXT)
+                    .on_action(cx.listener(|view, _: &LeaveFilter, window, cx| {
+                        view.leave_filter(window, cx)
+                    }))
+                    .child(
+                        Input::new(&self.query)
+                            .id("process-filter")
+                            .aria_label("Filter processes by command, path or arguments")
+                            .small()
+                            .h(dp(ui::CONTROL_HEIGHT))
+                            .cleanable(true)
+                            .prefix(Icon::new(IconName::Search).size(dp(14.))),
+                    );
                 // The rightmost folds first: the widest, the states.
                 let header = header
                     .filter(filter)

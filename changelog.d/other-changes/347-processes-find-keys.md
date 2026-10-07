@@ -1,0 +1,1 @@
+- Processes: the find field now takes every letter you type. Before, t, d, y and z ran the list's shortcuts instead, so typing `etcd` gave `ec`. Escape in the field clears it, then hands the keyboard back to the list; it no longer resets the zombie or disk-wait filter, which Escape on the list still clears.
