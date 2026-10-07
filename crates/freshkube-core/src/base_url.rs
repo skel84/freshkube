@@ -58,4 +58,14 @@ mod tests {
         }
         assert!(parse_base_url("https://prom.example.test:8481/x").is_ok());
     }
+
+    #[test]
+    fn a_trailing_slash_and_a_path_prefix_are_kept() {
+        let bare = parse_base_url("https://prom.example.test").unwrap();
+        assert_eq!(bare.path(), "/");
+        let prefixed = parse_base_url("https://prom.example.test/select/0/prometheus/").unwrap();
+        assert_eq!(prefixed.path(), "/select/0/prometheus/");
+        let unslashed = parse_base_url("https://prom.example.test/select/0").unwrap();
+        assert_eq!(unslashed.path(), "/select/0");
+    }
 }
