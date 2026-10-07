@@ -123,6 +123,11 @@ pub(super) struct SystemServices {
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
+    /// Whether the Talos overview has answered, and what the table shows
+    /// while it hasn't, with their motion drawn over it.
+    reading: Reading,
+    loading: table::LoadingRows,
+    loading_motion: Entity<table::LoadingMotion>,
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     filter: Entity<InputState>,
@@ -140,6 +145,16 @@ pub(super) struct SystemServices {
     _subscription: Subscription,
 }
 
+/// Where the Talos overview the services come from stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Reading {
+    /// Neither answered nor failed: the table shows its loading rows.
+    Waiting,
+    /// Nothing answered, for this reason: no service is shown as missing.
+    Failed(SharedString),
+    Answered,
+}
+
 impl EventEmitter<ServiceEvent> for SystemServices {}
 impl SystemServices {
     pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -151,6 +166,8 @@ impl SystemServices {
             }
         });
         let (columns, width) = source::columns(&[]);
+        let loading = table::LoadingRows::new(PREFIX);
+        let loading_motion = cx.new(|_| loading.motion(table::Look::Pulse));
         Self {
             rows: Vec::new(),
             lines: Vec::new(),
@@ -158,6 +175,9 @@ impl SystemServices {
             columns,
             width,
             table: table::TableState::new(PREFIX),
+            reading: Reading::Waiting,
+            loading,
+            loading_motion,
             page_scroll: ScrollHandle::new(),
             filter,
             focus: cx.focus_handle(),
@@ -234,6 +254,16 @@ impl SystemServices {
             )],
         );
         self.rebuild(cx);
+    }
+    pub(super) fn set_reading(&mut self, reading: Reading, cx: &mut Context<Self>) {
+        if reading != self.reading {
+            self.reading = reading;
+            cx.notify();
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn reading(&self) -> &Reading {
+        &self.reading
     }
     #[cfg(test)]
     pub(super) fn is_unhealthy_filter(&self) -> bool {
@@ -466,7 +496,14 @@ impl SystemServices {
             .flex_1()
             .min_h_0()
             .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
-            .child(table::data_table(self, window, cx).flex_1().min_h_0())
+            .child(
+                table::data_table(self, window, cx)
+                    .flex_1()
+                    .min_h_0()
+                    // Over the table. Its frames still redraw this page and
+                    // the shell above it, as the skeleton's did.
+                    .child(self.loading_motion.clone()),
+            )
     }
 }
 

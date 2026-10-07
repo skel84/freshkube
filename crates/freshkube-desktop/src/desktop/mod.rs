@@ -960,7 +960,7 @@ impl Pilot {
         self.kubernetes_summary = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
-        self.rebuild_joined_nodes();
+        self.rebuild_joined_nodes(cx);
         self.push_node_rows(cx);
         self.prepare_context_display(window, cx);
         self.node_workspace
@@ -1013,7 +1013,10 @@ impl Pilot {
                         view.remember_connection(window, cx);
                         view.refresh(window, cx);
                     }
-                    Err(error) => view.config_error = Some(error),
+                    Err(error) => {
+                        view.config_error = Some(error);
+                        view.rebuild_joined_nodes(cx);
+                    }
                 }
                 cx.notify();
             });
@@ -1414,7 +1417,7 @@ impl Pilot {
             &request,
             Err("Example: the Talos API didn't answer within 10 s".into()),
         );
-        self.rebuild_joined_nodes();
+        self.rebuild_joined_nodes(cx);
         cx.notify();
     }
 

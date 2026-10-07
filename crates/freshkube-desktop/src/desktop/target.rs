@@ -22,7 +22,7 @@ impl Pilot {
             });
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
-        self.rebuild_joined_nodes();
+        self.rebuild_joined_nodes(cx);
         self.push_talos_nodes(cx);
         self.push_node_rows(cx);
         self.prepare_context_display(window, cx);

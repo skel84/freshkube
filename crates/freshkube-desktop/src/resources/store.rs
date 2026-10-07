@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use freshkube_core::resources::Amounts;
 
-use super::model::{ReadState, ResourceColumn, ResourceIdentity, ResourceRow};
+use super::model::{ColumnKind, ReadState, ResourceColumn, ResourceIdentity, ResourceRow};
 use super::rows;
 
 /// One change to observed state, in the shape of a list/watch stream:
@@ -196,6 +196,19 @@ impl ResourceStore {
             widest: Widest::default(),
             usage: Usage::new(),
             node_prefix: 0,
+        }
+    }
+
+    /// An empty store printing the columns every kind prints, Name and
+    /// Age: the header a list shows over its loading rows until its first
+    /// answer brings the kind's own.
+    pub(crate) fn provisional() -> Self {
+        Self {
+            columns: vec![
+                ResourceColumn::new("Name", ColumnKind::Text, false),
+                ResourceColumn::new("Age", ColumnKind::Age, false),
+            ],
+            ..Self::new()
         }
     }
 

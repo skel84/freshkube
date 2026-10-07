@@ -308,7 +308,7 @@ impl Pilot {
             .apply(&request, Ok(publication.summary.clone()));
         self.summary_health = Some(health.clone());
         self.deliver_workloads(health, cx);
-        self.rebuild_joined_nodes();
+        self.rebuild_joined_nodes(cx);
         self.push_node_rows(cx);
         self.prepare_context_display(window, cx);
         self.deliver_summary_nodes(cx);
