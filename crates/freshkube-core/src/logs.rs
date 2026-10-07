@@ -48,22 +48,6 @@ impl From<&str> for ServiceId {
     }
 }
 
-/// Explicit node and service identity for a single-service log request.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LogTarget {
-    pub node_address: String,
-    pub service: ServiceId,
-}
-
-impl LogTarget {
-    pub fn new(node_address: impl Into<String>, service: impl Into<ServiceId>) -> Self {
-        Self {
-            node_address: node_address.into(),
-            service: service.into(),
-        }
-    }
-}
-
 /// Display and ordering information extracted from a log timestamp.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogTimestamp {
@@ -211,14 +195,8 @@ impl LogEntry {
         self.marker
     }
 
-    /// Checks a case-insensitive query without rebuilding the line text.
-    /// Markers never match.
-    pub fn matches_query(&self, query: &str) -> bool {
-        self.matches_lowercase_query(&query.to_lowercase())
-    }
-
-    /// Like [`Self::matches_query`] for a query the caller already lowercased,
-    /// so scanning many entries lowercases the query once.
+    /// Checks a query the caller already lowercased, so scanning many entries
+    /// lowercases the query once. Markers never match.
     pub fn matches_lowercase_query(&self, lowercase_query: &str) -> bool {
         !self.marker && self.search_text.contains(lowercase_query)
     }
@@ -409,34 +387,11 @@ impl LogFilters {
     }
 }
 
-/// Stream presentation state owned by the caller.
-///
-/// Pausing does not discard received events; it lets the caller stop advancing
-/// its viewport while the bounded buffer continues retaining the newest data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LogStreamState {
-    pub paused: bool,
-    pub following: bool,
-}
-
-impl Default for LogStreamState {
-    fn default() -> Self {
-        Self {
-            paused: false,
-            following: true,
-        }
-    }
-}
-
-/// A bounded log collection with deterministic filtering and match navigation.
+/// A bounded log collection with deterministic filtering.
 #[derive(Debug, Clone)]
 pub struct LogBuffer {
     entries: Vec<LogEntry>,
     filters: LogFilters,
-    query: String,
-    query_lower: String,
-    stream: LogStreamState,
-    current_match: Option<usize>,
     next_sequence: u64,
     /// Total length of every retained raw line, kept in step with `entries`.
     retained_bytes: usize,
@@ -456,10 +411,6 @@ impl LogBuffer {
         Self {
             entries: Vec::new(),
             filters: LogFilters::default(),
-            query: String::new(),
-            stream: LogStreamState::default(),
-            query_lower: String::new(),
-            current_match: None,
             next_sequence: 0,
             retained_bytes: 0,
             ordered: true,
@@ -473,14 +424,6 @@ impl LogBuffer {
     /// Evicts the oldest prefix until complete raw lines fit the supplied byte
     /// budget. Returns the number of removed entries so UI identity/selection
     /// sidecars can apply the same retention operation without copying records.
-    pub fn retain_newest_bytes(&mut self, max_bytes: usize) -> usize {
-        let removed = self.evict_bytes(max_bytes);
-        if !removed.is_empty() {
-            self.reset_match();
-        }
-        removed.len()
-    }
-
     fn evict_bytes(&mut self, max_bytes: usize) -> Vec<LogEntry> {
         let mut retained_bytes = self.retained_bytes;
         let mut removed = 0;
@@ -508,46 +451,13 @@ impl LogBuffer {
 
     pub fn set_filters(&mut self, filters: LogFilters) {
         self.filters = filters;
-        self.reset_match();
     }
 
-    pub fn query(&self) -> &str {
-        &self.query
-    }
-
-    pub fn set_query(&mut self, query: impl Into<String>) {
-        self.query = query.into();
-        self.query_lower = self.query.to_lowercase();
-        self.reset_match();
-    }
-
-    pub fn clear_query(&mut self) {
-        self.set_query(String::new());
-    }
-
-    pub fn stream_state(&self) -> LogStreamState {
-        self.stream
-    }
-
-    pub fn set_stream_state(&mut self, stream: LogStreamState) {
-        self.stream = stream;
-    }
-
-    pub fn set_paused(&mut self, paused: bool) {
-        self.stream.paused = paused;
-    }
-
-    pub fn set_following(&mut self, following: bool) {
-        self.stream.following = following;
-    }
-
-    /// Appends an event and returns whether it contained a non-empty log line.
     pub fn append(&mut self, event: LogEvent) -> bool {
         let appended = self.append_unbounded(event);
         if appended {
             self.ordered = false;
             self.retain_newest();
-            self.reset_match();
         }
         appended
     }
@@ -564,7 +474,6 @@ impl LogBuffer {
         if appended > 0 {
             self.ordered = false;
             self.retain_newest();
-            self.reset_match();
         }
         appended
     }
@@ -577,14 +486,12 @@ impl LogBuffer {
         self.entries.clear();
         self.retained_bytes = 0;
         self.next_sequence = 0;
-        self.current_match = None;
         self.append_batch(events);
     }
 
     /// Whether an entry passes service, level, and query filtering.
     pub fn accepts(&self, entry: &LogEntry) -> bool {
         self.filters.accepts(entry)
-            && (self.query_lower.is_empty() || entry.matches_lowercase_query(&self.query_lower))
     }
 
     /// Entry indices that pass service, level, and query filtering in entry order.
@@ -598,62 +505,6 @@ impl LogBuffer {
     }
 
     /// Ordered matching entry indices in the currently filtered view.
-    pub fn match_indices(&self) -> Vec<usize> {
-        if self.query.is_empty() {
-            Vec::new()
-        } else {
-            self.visible_indices()
-        }
-    }
-
-    pub fn current_match(&self) -> Option<usize> {
-        self.current_match
-    }
-
-    /// Select the first matching entry, if any.
-    pub fn select_first_match(&mut self) -> Option<usize> {
-        let first = self.match_indices().into_iter().next();
-        self.current_match = first;
-        first
-    }
-
-    /// Select the next match, wrapping at the end and disabling follow mode.
-    pub fn next_match(&mut self) -> Option<usize> {
-        self.navigate_match(true)
-    }
-
-    /// Select the previous match, wrapping at the beginning and disabling follow mode.
-    pub fn previous_match(&mut self) -> Option<usize> {
-        self.navigate_match(false)
-    }
-
-    pub fn is_current_match(&self, index: usize) -> bool {
-        self.current_match == Some(index)
-    }
-
-    fn navigate_match(&mut self, forward: bool) -> Option<usize> {
-        let matches = self.match_indices();
-        let selected = match matches.len() {
-            0 => None,
-            _ => Some(
-                match self
-                    .current_match
-                    .and_then(|current| matches.iter().position(|&index| index == current))
-                {
-                    Some(position) if forward => matches[(position + 1) % matches.len()],
-                    Some(0) => matches[matches.len() - 1],
-                    Some(position) => matches[position - 1],
-                    None => matches[0],
-                },
-            ),
-        };
-        self.current_match = selected;
-        if selected.is_some() {
-            self.stream.following = false;
-        }
-        selected
-    }
-
     fn append_unbounded(&mut self, event: LogEvent) -> bool {
         if event.line.trim().is_empty() {
             return false;
@@ -665,10 +516,6 @@ impl LogBuffer {
         true
     }
 
-    fn reset_match(&mut self) {
-        self.current_match = self.match_indices().into_iter().next();
-    }
-
     fn retain_newest(&mut self) {
         let excess = self.entries.len().saturating_sub(MAX_LOG_ENTRIES);
         if excess > 0 {
@@ -678,56 +525,6 @@ impl LogBuffer {
                 .map(|entry| entry.raw.len())
                 .sum::<usize>();
         }
-    }
-}
-
-/// A single service's bounded log model.
-#[derive(Debug, Clone)]
-pub struct SingleServiceLogs {
-    pub target: LogTarget,
-    buffer: LogBuffer,
-}
-
-impl SingleServiceLogs {
-    pub fn new(target: LogTarget) -> Self {
-        Self {
-            target,
-            buffer: LogBuffer::new(),
-        }
-    }
-
-    pub fn buffer(&self) -> &LogBuffer {
-        &self.buffer
-    }
-
-    pub fn buffer_mut(&mut self) -> &mut LogBuffer {
-        &mut self.buffer
-    }
-
-    pub fn append_line(&mut self, line: impl Into<String>) -> bool {
-        self.buffer
-            .append(LogEvent::new(self.target.service.clone(), line))
-    }
-
-    pub fn append_batch<I, S>(&mut self, lines: I) -> usize
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        let service = self.target.service.clone();
-        self.buffer.append_batch(
-            lines
-                .into_iter()
-                .map(|line| LogEvent::new(service.clone(), line)),
-        )
-    }
-
-    pub fn replace_content(&mut self, content: &str) {
-        self.buffer.replace(
-            content
-                .lines()
-                .map(|line| LogEvent::new(self.target.service.clone(), line)),
-        );
     }
 }
 
@@ -803,9 +600,6 @@ impl MultiServiceLogs {
             }
         }
         outcome.evicted.extend(self.buffer.evict_bytes(max_bytes));
-        if !outcome.added.is_empty() || !outcome.evicted.is_empty() {
-            self.buffer.reset_match();
-        }
         outcome
     }
 
@@ -816,7 +610,6 @@ impl MultiServiceLogs {
         self.buffer.entries.clear();
         self.buffer.retained_bytes = 0;
         self.buffer.next_sequence = 0;
-        self.buffer.current_match = None;
         self.append_batch(events);
     }
 
@@ -1452,7 +1245,7 @@ mod tests {
         let marker = &entries[1];
         assert!(marker.is_marker());
         assert_eq!(marker.message, "app restarted (exit 1 Error)");
-        assert!(!marker.matches_query("restarted"));
+        assert!(!marker.matches_lowercase_query("restarted"));
         let filters = LogFilters {
             levels: LevelFilter {
                 unknown: false,
@@ -1464,7 +1257,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_queries_and_navigates_in_entry_order() {
+    fn filters_in_entry_order() {
         let mut logs = MultiServiceLogs::new("10.0.0.1");
         logs.append_batch([
             LogEvent::new("kubelet", "2026-01-09T16:40:01Z INFO alpha"),
@@ -1472,12 +1265,6 @@ mod tests {
             LogEvent::new("kubelet", "2026-01-09T16:40:03Z WARN gamma"),
         ]);
         let buffer = logs.buffer_mut();
-        buffer.set_query("ALPHA");
-        assert_eq!(buffer.match_indices(), vec![0, 1]);
-        assert_eq!(buffer.current_match(), Some(0));
-        assert_eq!(buffer.next_match(), Some(1));
-        assert_eq!(buffer.next_match(), Some(0));
-        assert!(!buffer.stream_state().following);
 
         let filters = LogFilters {
             services: Some(BTreeSet::from([ServiceId::from("etcd")])),
@@ -1517,24 +1304,6 @@ mod tests {
             buffer.entries().last().unwrap().message,
             format!("line-{MAX_LOG_ENTRIES}")
         );
-    }
-
-    #[test]
-    fn byte_budget_evicts_complete_oldest_lines_and_resets_matches() {
-        let mut buffer = LogBuffer::new();
-        buffer.append_batch([
-            LogEvent::new("apid", "INFO oldest"),
-            LogEvent::new("apid", "ERROR newest"),
-        ]);
-        buffer.set_query("newest");
-        assert_eq!(buffer.current_match(), Some(1));
-        assert_eq!(buffer.retain_newest_bytes("ERROR newest".len()), 1);
-        assert_eq!(buffer.entries()[0].raw, "ERROR newest");
-        assert_eq!(buffer.current_match(), Some(0));
-        assert_eq!(buffer.retain_newest_bytes("ERROR newest".len()), 0);
-        assert_eq!(buffer.retain_newest_bytes(0), 1);
-        assert!(buffer.entries().is_empty());
-        assert_eq!(buffer.current_match(), None);
     }
 
     #[test]

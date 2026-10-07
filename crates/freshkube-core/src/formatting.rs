@@ -115,5 +115,4 @@ mod tests {
         assert_eq!(pluralize(1, "node", "nodes"), "1 node");
         assert_eq!(pluralize(5, "node", "nodes"), "5 nodes");
     }
-
 }
