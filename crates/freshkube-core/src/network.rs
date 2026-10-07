@@ -3,70 +3,6 @@
 //! Provides port-to-service mapping and network connection analysis
 //! for Talos Linux and Kubernetes clusters.
 
-/// Well-known service information
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ServicePort {
-    /// Port number
-    pub port: u16,
-    /// Service name
-    pub name: &'static str,
-    /// Short description
-    pub description: &'static str,
-    /// Whether this is a Talos-specific service
-    pub is_talos: bool,
-    /// Whether this is a Kubernetes control plane service
-    pub is_controlplane: bool,
-}
-
-impl ServicePort {
-    const fn new(
-        port: u16,
-        name: &'static str,
-        description: &'static str,
-        is_talos: bool,
-        is_controlplane: bool,
-    ) -> Self {
-        Self {
-            port,
-            name,
-            description,
-            is_talos,
-            is_controlplane,
-        }
-    }
-}
-
-/// Well-known Talos and Kubernetes service ports
-pub const KNOWN_PORTS: &[ServicePort] = &[
-    // Talos services
-    ServicePort::new(50000, "apid", "Talos API daemon", true, false),
-    ServicePort::new(50001, "trustd", "Talos trust daemon", true, false),
-    ServicePort::new(51821, "kubernetesd", "Kubernetes daemon", true, true),
-    // etcd
-    ServicePort::new(2379, "etcd-client", "etcd client API", false, true),
-    ServicePort::new(2380, "etcd-peer", "etcd peer communication", false, true),
-    // Kubernetes control plane
-    ServicePort::new(6443, "kube-apiserver", "Kubernetes API server", false, true),
-    ServicePort::new(10250, "kubelet", "Kubelet API", false, false),
-    ServicePort::new(10259, "kube-scheduler", "Kubernetes scheduler", false, true),
-    ServicePort::new(
-        10257,
-        "kube-controller-manager",
-        "Controller manager",
-        false,
-        true,
-    ),
-    // Kubernetes networking
-    ServicePort::new(10256, "kube-proxy", "Kubernetes proxy", false, false),
-    ServicePort::new(8472, "flannel-vxlan", "Flannel VXLAN overlay", false, false),
-    ServicePort::new(4240, "cilium-health", "Cilium health check", false, false),
-    ServicePort::new(4244, "cilium-hubble", "Cilium Hubble relay", false, false),
-    // Common services
-    ServicePort::new(53, "dns", "DNS", false, false),
-    ServicePort::new(443, "https", "HTTPS", false, false),
-    ServicePort::new(80, "http", "HTTP", false, false),
-];
-
 /// Get service name for a port
 ///
 /// Returns the service name if the port is a well-known Talos/K8s port.
@@ -81,10 +17,30 @@ pub const KNOWN_PORTS: &[ServicePort] = &[
 /// assert_eq!(port_to_service(12345), None);
 /// ```
 pub fn port_to_service(port: u16) -> Option<&'static str> {
-    KNOWN_PORTS
-        .iter()
-        .find(|sp| sp.port == port)
-        .map(|sp| sp.name)
+    Some(match port {
+        // Talos services
+        50000 => "apid",
+        50001 => "trustd",
+        51821 => "kubernetesd",
+        // etcd
+        2379 => "etcd-client",
+        2380 => "etcd-peer",
+        // Kubernetes control plane
+        6443 => "kube-apiserver",
+        10250 => "kubelet",
+        10259 => "kube-scheduler",
+        10257 => "kube-controller-manager",
+        // Kubernetes networking
+        10256 => "kube-proxy",
+        8472 => "flannel-vxlan",
+        4240 => "cilium-health",
+        4244 => "cilium-hubble",
+        // Common services
+        53 => "dns",
+        443 => "https",
+        80 => "http",
+        _ => return None,
+    })
 }
 
 /// Get service name for a u32 port (for compatibility)
@@ -93,21 +49,6 @@ pub fn port_to_service_u32(port: u32) -> Option<&'static str> {
         return None;
     }
     port_to_service(port as u16)
-}
-
-/// Get full service info for a port
-pub fn get_service_info(port: u16) -> Option<&'static ServicePort> {
-    KNOWN_PORTS.iter().find(|sp| sp.port == port)
-}
-
-/// Check if a port is a Talos-specific service
-pub fn is_talos_port(port: u16) -> bool {
-    get_service_info(port).is_some_and(|sp| sp.is_talos)
-}
-
-/// Check if a port is a control plane service
-pub fn is_controlplane_port(port: u16) -> bool {
-    get_service_info(port).is_some_and(|sp| sp.is_controlplane)
 }
 
 /// Connection direction
@@ -151,28 +92,6 @@ mod tests {
     fn test_port_to_service_u32() {
         assert_eq!(port_to_service_u32(6443), Some("kube-apiserver"));
         assert_eq!(port_to_service_u32(70000), None); // Out of u16 range
-    }
-
-    #[test]
-    fn test_is_talos_port() {
-        assert!(is_talos_port(50000)); // apid
-        assert!(is_talos_port(50001)); // trustd
-        assert!(!is_talos_port(6443)); // kube-apiserver is not Talos-specific
-    }
-
-    #[test]
-    fn test_is_controlplane_port() {
-        assert!(is_controlplane_port(6443)); // kube-apiserver
-        assert!(is_controlplane_port(2379)); // etcd-client
-        assert!(!is_controlplane_port(10250)); // kubelet runs on all nodes
-    }
-
-    #[test]
-    fn test_get_service_info() {
-        let info = get_service_info(6443).unwrap();
-        assert_eq!(info.name, "kube-apiserver");
-        assert!(info.is_controlplane);
-        assert!(!info.is_talos);
     }
 
     #[test]
