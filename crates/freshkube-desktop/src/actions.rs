@@ -10,15 +10,9 @@ use freshkube_core::diagnostic_runner::{
 };
 use talos_rs::TalosClient;
 
-/// Services whose restart can cut the node off from the cluster or from this
-/// tool. A restart is still allowed, but only after an explicit warning.
-const CRITICAL_SERVICES: [&str; 4] = ["etcd", "apid", "trustd", "machined"];
-
-pub(crate) fn is_critical_service(id: &str) -> bool {
-    CRITICAL_SERVICES.contains(&id)
-}
-
-/// What losing this service means, for the confirmation's warning.
+/// What losing this service means, for the confirmation's warning. Only the
+/// services whose restart can cut the node off from the cluster or from this
+/// tool have one; a restart is still allowed, but only after that warning.
 pub(crate) fn critical_warning(id: &str) -> Option<&'static str> {
     match id {
         "etcd" => Some(

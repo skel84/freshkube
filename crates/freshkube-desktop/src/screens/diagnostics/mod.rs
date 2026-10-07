@@ -476,7 +476,7 @@ impl DiagnosticsScreen {
         let critical = matches!(
             &fix.action,
             DiagnosticFixAction::RestartService { service_id }
-                if actions::is_critical_service(service_id)
+                if actions::critical_warning(service_id).is_some()
         );
         let mut facts: Vec<(SharedString, SharedString)> = vec![
             ("Context".into(), source.target.context.clone().into()),

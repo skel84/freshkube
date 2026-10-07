@@ -485,7 +485,7 @@ impl ObservabilityPage {
             .thresholds
             .get(&key)
             .cloned()
-            .unwrap_or_else(|| example::threshold(&key.0, self.report).into());
+            .unwrap_or_else(|| self.report.default_threshold().into());
         self.threshold
             .update(cx, |input, cx| input.set_value(value, window, cx));
         let input = self.threshold.clone();

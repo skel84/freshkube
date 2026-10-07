@@ -2278,9 +2278,9 @@ fn dangerous_services_are_confirmed_by_name(cx: &mut TestAppContext) {
         .unwrap();
         cx.run_until_parked();
     }
-    assert!(crate::actions::is_critical_service("etcd"));
-    assert!(crate::actions::is_critical_service("machined"));
-    assert!(!crate::actions::is_critical_service("containerd"));
+    assert!(crate::actions::critical_warning("etcd").is_some());
+    assert!(crate::actions::critical_warning("machined").is_some());
+    assert!(!crate::actions::critical_warning("containerd").is_some());
 }
 
 #[gpui_kit::test]

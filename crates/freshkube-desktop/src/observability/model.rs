@@ -126,7 +126,7 @@ impl Report {
         }
     }
     pub(super) fn index(self) -> usize {
-        Self::ALL.iter().position(|r| *r == self).unwrap_or(0)
+        self as usize
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
