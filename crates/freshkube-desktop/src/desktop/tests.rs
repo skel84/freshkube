@@ -1529,9 +1529,20 @@ fn short_window_node_log(cx: &mut TestAppContext, text_size: Option<f32>) {
             crate::text_size::set(text_size, cx);
         }
         // The log's width, then its toolbar and the body around it, settle.
-        for _ in 0..6 {
+        // A frame draws only when one was asked for, as on screen, so the
+        // body's height reaches it only through its own redraw.
+        window.render_frame(cx);
+        let mut asked = 0;
+        for _ in 0..8 {
+            let frames = window.simulate_next_frame(cx);
+            if frames == 0 {
+                break;
+            }
+            asked += frames;
             window.render_frame(cx);
         }
+        assert!(asked > 0, "the body never asked to draw again");
+        assert_eq!(window.simulate_next_frame(cx), 0, "frames never settled");
         // The frame scrolled to the pane when it opened, at the text size
         // of the time.
         let frame = view.read(cx).node_workspace.page_scroll.clone();

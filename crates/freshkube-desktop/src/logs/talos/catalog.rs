@@ -11,8 +11,15 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     Anchor, AnyElement, App, AvailableSpace, Context, FocusHandle, KeyBinding, Pixels, Role,
-    SharedString, TestSupportExt, Toggled, WeakEntity, Window,
-    component::{Icon, Sizable, button::Button, h_flex, popover::Popover, v_flex},
+    ScrollHandle, SharedString, TestSupportExt, Toggled, WeakEntity, Window,
+    component::{
+        Icon, Sizable,
+        button::Button,
+        h_flex,
+        popover::Popover,
+        scroll::{Scrollbar, ScrollbarMode},
+        v_flex,
+    },
     div,
     prelude::*,
     px, size,
@@ -80,6 +87,8 @@ pub(super) struct Picker {
     measured: Option<u64>,
     /// The open list's, which holds the keyboard when nothing had it before.
     focus: Option<FocusHandle>,
+    /// The open list's pills, which scroll in a short window.
+    scroll: ScrollHandle,
 }
 
 /// The "Services" caption before the rows, and the gap after it.
@@ -255,6 +264,7 @@ fn picker_button(view: &LogPanel, hidden: usize, cx: &mut Context<LogPanel>) -> 
         .clone()
         .unwrap_or_else(|| cx.focus_handle());
     let list_focus = focus.clone();
+    let scroll = view.source().picker.scroll.clone();
     // The list's pills are made only while it's open.
     let chips: Vec<ServiceChip> = if view.source().picker.open {
         view.source()
@@ -288,19 +298,20 @@ fn picker_button(view: &LogPanel, hidden: usize, cx: &mut Context<LogPanel>) -> 
                 })
                 .tooltip("Every service: what to collect, and what to show"),
         )
-        .content(move |_, window, cx| list(&chips, &handle, &focus, window, cx))
+        .content(move |_, window, cx| list(&chips, &handle, &focus, &scroll, window, cx))
         .into_any_element()
 }
 
 /// Kit's margin between a popover and the window's edges.
 const LIST_MARGIN: Pixels = px(8.);
 
-/// The open list: a note, then every service's pill, scrolling when the
-/// window is too short for them.
+/// The open list: a note, then every service's pill, scrolling with a
+/// scrollbar when the window is too short for them.
 fn list(
     chips: &[ServiceChip],
     view: &WeakEntity<LogPanel>,
     focus: &FocusHandle,
+    scroll: &ScrollHandle,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -326,19 +337,34 @@ fn list(
                 ),
         )
         .child(
-            div()
-                .id("logs-services-list-scroll")
-                .test_support()
+            v_flex()
+                .relative()
                 .flex_shrink(1.)
                 .min_h_0()
-                .overflow_y_scroll()
-                .restrict_scroll_to_axis()
                 .child(
-                    h_flex().flex_wrap().gap(ui::dp(6.)).children(
-                        chips
-                            .iter()
-                            .map(|chip| service_chip(chip, "list-", view.clone(), cx)),
-                    ),
+                    div()
+                        .id("logs-services-list-scroll")
+                        .test_support()
+                        .flex_shrink(1.)
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .track_scroll(scroll)
+                        .child(
+                            // Clear of the scrollbar.
+                            h_flex()
+                                .flex_wrap()
+                                .gap(ui::dp(6.))
+                                .pr(ui::dp(12.))
+                                .children(chips.iter().map(|chip| {
+                                    service_chip(chip, "list-", view.clone(), cx)
+                                })),
+                        ),
+                )
+                .child(
+                    Scrollbar::vertical(scroll)
+                        .id("logs-services-list-scrollbar")
+                        .mode(ScrollbarMode::Always),
                 ),
         )
         .into_any_element()
@@ -397,7 +423,8 @@ fn collect_toggle(
             Toggled::False
         })
         .aria_label(format!("Collect {}", service.as_str()))
-        .tab_index(0)
+        // A full pill can't be pressed, so the keyboard passes it by.
+        .when(!full, |this| this.tab_index(0))
         .h_full()
         .pl(ui::dp(10.))
         .pr(ui::dp(if collecting || count > 0 { 4. } else { 10. }))

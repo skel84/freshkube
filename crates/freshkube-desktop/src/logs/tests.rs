@@ -499,6 +499,69 @@ fn closing_a_list_the_mouse_opened_gives_the_keyboard_to_the_lines(cx: &mut Test
 }
 
 #[gpui_kit::test]
+fn the_list_closes_when_every_pill_fits_again(cx: &mut TestAppContext) {
+    let (_runtime, _panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+    })
+    .unwrap();
+    // Wide enough for every pill: no "+N" is left to hold the list.
+    cx.simulate_window_resize(handle.into(), size(px(1100.), px(820.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(in_rows(window), CATALOG.to_vec());
+        assert!(window.try_find("logs-services-more").is_none());
+        assert!(window.try_find("logs-services-list").is_none());
+    })
+    .unwrap();
+}
+
+/// With sixteen services collected, the others can't be pressed, so Tab
+/// passes them by, and Enter never reaches the list to close it.
+#[gpui_kit::test]
+fn a_full_pill_is_no_tab_stop(cx: &mut TestAppContext) {
+    let services: Vec<String> = (0..20).map(|ix| format!("ext-example-{ix:02}")).collect();
+    let (_runtime, panel, handle) = mount_services(cx, 460., 820., services.clone());
+    cx.update_window(handle.into(), |_, window, cx| {
+        panel.update(cx, |view, cx| {
+            for service in &services {
+                view.toggle_collection(ServiceId::from(service.as_str()), true, cx);
+            }
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let collecting = panel.read(cx).source().collecting.clone();
+        assert_eq!(collecting.len(), 16);
+        panel.update(cx, |view, cx| view.focus_lines(window, cx));
+        window.render_frame(cx);
+        tab_to(window, "logs-services-more", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+        let full: Vec<_> = services
+            .iter()
+            .filter(|service| !collecting.contains(&ServiceId::from(service.as_str())))
+            .map(|service| SharedString::from(format!("list-collect-{service}")))
+            .collect();
+        assert!(!full.is_empty());
+        for _ in 0..48 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            for pill in &full {
+                assert_ne!(window.find(pill.clone()).focused(), Some(true), "{pill}");
+            }
+        }
+        assert!(window.find("logs-services-list").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_long_list_scrolls_inside_a_short_window(cx: &mut TestAppContext) {
     // Thirty services at 20 px text in the shortest window.
     let services: Vec<String> = (0..30).map(|ix| format!("ext-example-{ix:02}")).collect();

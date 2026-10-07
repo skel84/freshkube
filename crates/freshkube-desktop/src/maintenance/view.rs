@@ -131,7 +131,7 @@ impl MaintenanceView {
         let p = palette(cx);
         TitleBar::new()
             // The app header's height, where the window puts its traffic lights.
-            .h(dp(freshkube_ui::page::HEADER_HEIGHT))
+            .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
             .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
             .child(
                 h_flex()
