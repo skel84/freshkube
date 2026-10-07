@@ -2497,3 +2497,46 @@ fn stepping_nodes_while_expanded_keeps_the_heading_in_view(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+/// Enter in a node log's search steps to the next match and Shift-Enter
+/// to the previous one, with the keyboard kept in the search (#316): the
+/// node workspace's own Enter doesn't take it.
+#[gpui_kit::test]
+fn enter_in_a_node_logs_search_steps_through_its_matches(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+        });
+        for _ in 0..3 {
+            window.render_frame(cx);
+        }
+        window.click("logs-search", cx);
+        window.input("cilium", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut seen = Vec::new();
+    for key in ["enter", "enter", "shift-enter"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press(key, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let current = pilot.read(cx).logs.read(cx).current_match();
+            assert_eq!(
+                window.find("logs-search").focused(),
+                Some(true),
+                "{key} keeps the keyboard in the search"
+            );
+            seen.push(current.expect("a current match"));
+        })
+        .unwrap();
+    }
+    // Enter moves on, and Shift-Enter comes back.
+    assert_ne!(seen[0], seen[1], "{seen:?}");
+    assert_eq!(seen[2], seen[0], "{seen:?}");
+}

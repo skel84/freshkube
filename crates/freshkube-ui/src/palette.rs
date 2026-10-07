@@ -33,7 +33,11 @@ pub struct Palette {
     pub unk: Hsla,
     pub unk_ink: Hsla,
     pub unk_soft: Hsla,
+    /// The current search match.
     pub mark: Hsla,
+    /// The other search matches, well below `mark` so the current one
+    /// stands out in both themes.
+    pub mark_soft: Hsla,
     pub memory: Hsla,
     pub integration: Hsla,
     pub on_fill: Hsla,
@@ -77,6 +81,7 @@ fn light() -> Palette {
         unk_ink: hex(0x566070),
         unk_soft: hexa(0x8A93A226),
         mark: hexa(0xFAB21966),
+        mark_soft: hexa(0xFAB21924),
         memory: hex(0x7560B9),
         integration: hex(0x7560B9),
         on_fill: hex(0xFFFFFF),
@@ -113,7 +118,9 @@ fn dark() -> Palette {
         unk: hex(0x737A85),
         unk_ink: hex(0xA0A7B2),
         unk_soft: hexa(0xA0A7B224),
-        mark: hexa(0xF2C46D52),
+        // 40% keeps the ink at 4.5:1 on the current match.
+        mark: hexa(0xF2C46D66),
+        mark_soft: hexa(0xF2C46D1A),
         memory: hex(0xB7AAF7),
         integration: hex(0xB7AAF7),
         on_fill: hex(0x14223B),
@@ -178,4 +185,75 @@ pub fn heat_color(level: usize, error: bool) -> Hsla {
     const BLUE: [u32; 6] = [0x323845, 0x33466A, 0x3D5C92, 0x5379BB, 0x7AA0E6, 0xB3CEFA];
     const ERROR: [u32; 6] = [0x3A3036, 0x604044, 0x885553, 0xB36962, 0xD97B72, 0xF28B82];
     hex(if error { ERROR } else { BLUE }[level.min(5)])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `top` laid over the opaque `under`, as the screen shows it.
+    fn over(top: Hsla, under: Hsla) -> [f32; 3] {
+        let (t, u) = (top.to_rgb(), under.to_rgb());
+        let a = t.a;
+        [
+            t.r * a + u.r * (1. - a),
+            t.g * a + u.g * (1. - a),
+            t.b * a + u.b * (1. - a),
+        ]
+    }
+
+    fn luminance([r, g, b]: [f32; 3]) -> f32 {
+        let linear = |c: f32| {
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    }
+
+    fn contrast(a: [f32; 3], b: [f32; 3]) -> f32 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// The page content's background in a theme of `assets/theme.json`.
+    fn content(mode: &str) -> Hsla {
+        let themes: serde_json::Value =
+            serde_json::from_str(include_str!("../assets/theme.json")).unwrap();
+        let theme = (themes["themes"].as_array().unwrap().iter())
+            .find(|theme| theme["mode"] == mode)
+            .unwrap();
+        let value = theme["colors"]["background"].as_str().unwrap();
+        hex(u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap())
+    }
+
+    /// The current search match reads at 4.5:1 and stands well apart from
+    /// the other matches in both themes (#316). A log's rows lie on
+    /// `surface`; the YAML pane's lines show the page content through.
+    #[test]
+    fn the_current_match_stands_out_and_stays_readable() {
+        for (theme, p) in [("light", light()), ("dark", dark())] {
+            for (under, background) in [("surface", p.surface), ("content", content(theme))] {
+                let ink = over(p.ink, background);
+                let current = over(p.mark, background);
+                let other = over(p.mark_soft, background);
+                let readable = contrast(ink, current);
+                assert!(
+                    readable >= 4.5,
+                    "{theme} on {under}: ink on the current match {readable}"
+                );
+                // Light tells them apart by hue as much as by lightness;
+                // dark has only lightness, which was 1.7:1 before #316.
+                let apart = contrast(current, other);
+                if theme == "dark" {
+                    assert!(
+                        apart >= 2.,
+                        "{theme} on {under}: current against other matches {apart}"
+                    );
+                }
+            }
+        }
+    }
 }

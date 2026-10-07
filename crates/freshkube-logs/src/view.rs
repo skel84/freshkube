@@ -23,7 +23,7 @@ use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
     FirstLine, FocusSearch, LIST_LEAST_REMS, LastLine, LeaveSearch, LogSource, LogView,
     ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
-    SEARCH_CONTEXT, SelectAll,
+    SEARCH_CONTEXT, SelectAll, StayInSearch,
     review::{Mark, shown_message},
 };
 use freshkube_ui::palette::{Palette, palette};
@@ -119,7 +119,7 @@ impl<S: LogSource> LogView<S> {
             .when(selected, |element| element.bg(p.accent_soft))
             .when(!selected && current, |element| element.bg(p.mark))
             .when(!selected && matched && !current, |element| {
-                element.bg(p.mark.opacity(0.35))
+                element.bg(p.mark_soft)
             })
             .when(!selected && !matched && !current, |element| {
                 element.hover(|style| style.bg(p.hover))
@@ -167,7 +167,7 @@ impl<S: LogSource> LogView<S> {
                             lines.into_iter().map(|(range, mark)| {
                                 let background = match mark {
                                     Mark::Current => p.mark,
-                                    Mark::Match => p.mark.opacity(0.35),
+                                    Mark::Match => p.mark_soft,
                                 };
                                 (
                                     range,
@@ -376,6 +376,7 @@ impl<S: LogSource> LogView<S> {
                             .on_action(cx.listener(|this, _: &LeaveSearch, window, cx| {
                                 this.leave_search(window, cx)
                             }))
+                            .on_action(|_: &StayInSearch, _, _| {})
                             .child(
                                 Input::new(&self.query)
                                     .id("logs-search")

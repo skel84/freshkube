@@ -1069,6 +1069,65 @@ fn command_f_g_and_a_find_and_select_from_the_lines_or_the_search(cx: &mut TestA
     .unwrap();
 }
 
+/// Enter in the search steps to the next match and Shift-Enter to the
+/// previous one, and the keyboard stays in the search, as in a browser
+/// (#316). Escape's steps don't change.
+#[gpui_kit::test]
+fn enter_in_the_search_steps_through_the_matches_and_keeps_the_keyboard(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let lines = panel.read(cx).focus.clone();
+        window.focus(&lines, cx);
+        window.press("secondary-f", cx);
+        window.input("needle", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let current = |cx: &mut gpui_kit::App| panel.read(cx).review.current_match.map(|hit| hit.id);
+    let in_search = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        let query = gpui_kit::Focusable::focus_handle(panel.read(cx).query.read(cx), cx);
+        query.is_focused(window)
+    };
+    for (key, expected) in [
+        ("enter", 10),
+        ("enter", 90),
+        ("enter", 10),
+        ("shift-enter", 90),
+        ("shift-enter", 10),
+    ] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press(key, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(current(cx), Some(expected), "after {key}");
+            assert!(
+                in_search(window, cx),
+                "{key} keeps the keyboard in the search"
+            );
+        })
+        .unwrap();
+    }
+    cx.update_window(handle.into(), |_, window, cx| {
+        // Escape clears the search and stays; a second hands the keyboard
+        // to the lines.
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(panel.read(cx).review.query.is_empty());
+        assert!(in_search(window, cx));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(panel.read(cx).focus.is_focused(window));
+    })
+    .unwrap();
+}
+
 /// A frame that scrolls around a log, as a short node pane does.
 struct Frame {
     panel: Entity<LogPanel>,

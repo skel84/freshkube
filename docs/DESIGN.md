@@ -115,7 +115,7 @@ Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette 
 | Integration required | Lavender ring with a plus |
 | Information, such as an application's log errors in Observability | Small blue dot, `Tone::Info`: something to know that isn't a fault |
 
-Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. Prose links, breadcrumbs, selection and focus are blue. A chosen chip or outline toggle takes the primary outline (`ui::choice`); a chosen segment of a ghost segmented control on a `surface_2` track takes the accent tint (`ui::segment`), since Kit's own selected ghost colour matches that track. Dense cross-references use secondary text with dotted underlines and become blue on hover.
+Shape and colour communicate severity; words explain the cause when the group header has not already done so. Logs use neutral source identifiers. A search marks its current match with `mark` and the other matches with `mark_soft`, in logs and the YAML pane alike; each theme sets both, and a view never derives one by opacity. Dark's `mark` keeps primary text at 4.5:1 and reads at 2:1 against `mark_soft` (`palette.rs`'s tests). Prose links, breadcrumbs, selection and focus are blue. A chosen chip or outline toggle takes the primary outline (`ui::choice`); a chosen segment of a ghost segmented control on a `surface_2` track takes the accent tint (`ui::segment`), since Kit's own selected ghost colour matches that track. Dense cross-references use secondary text with dotted underlines and become blue on hover.
 
 ## G7: tables
 
