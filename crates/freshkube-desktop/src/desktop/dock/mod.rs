@@ -180,6 +180,9 @@ pub(crate) struct Dock {
     save: Option<Task<()>>,
     /// The selected tab's least height when the dock last heard of it.
     last_least: Option<Pixels>,
+    /// Whether the user dragged the height since the app started; until
+    /// then a short window halves it.
+    dragged: bool,
     /// The selected tab's notice above its lines, in dp, as last measured.
     notice_height: f32,
     /// The tab body's width, as last laid out, which the notice is
@@ -217,6 +220,7 @@ impl Dock {
             restore: None,
             save: None,
             last_least: None,
+            dragged: false,
             notice_height: 0.,
             body_width: None,
         };
@@ -252,7 +256,17 @@ impl Dock {
         }
         let room = open_room(window);
         let least = self.least_height(window, cx).min(room);
-        self.height.max(least).min(room)
+        // Until the user drags it, a window too short for a table page
+        // gives the dock at most half the page cell, so the page keeps the
+        // row the logs came from.
+        let short =
+            window.viewport_size().height / dp_px(1., window) < freshkube_ui::page::SHORT_HEIGHT;
+        let height = if short && !self.dragged {
+            self.height.min(available_height(window) / 2.)
+        } else {
+            self.height
+        };
+        height.max(least).min(room)
     }
 
     /// The least an open dock keeps: [`MIN_HEIGHT`], or the bar, the
@@ -656,6 +670,7 @@ impl Dock {
         }
         let height = height.min(open_room(window));
         self.maximized = false;
+        self.dragged = true;
         if !self.open {
             self.open = true;
             self.sync_shown(cx);

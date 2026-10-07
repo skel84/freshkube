@@ -424,6 +424,13 @@ impl Render for ResourcesScreen {
         crate::desktop::probe::hit("resources");
         let _span = crate::perf::span("table.render");
         self.status();
+        // A dock that opens or grows takes the list's room from below;
+        // the list scrolls as it lays out to keep its selection in sight.
+        let below = page::below();
+        if below > self.below {
+            self.scroll_to_selection(ScrollStrategy::Nearest);
+        }
+        self.below = below;
         // The table runs edge to edge; a state in its place keeps the inset.
         let list = self
             .placeholder(cx)

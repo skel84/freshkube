@@ -221,6 +221,9 @@ pub(crate) struct ResourcesScreen {
     /// The table's scrolls.
     table: table::TableState,
     page_scroll: ScrollHandle,
+    /// The dock's height under the page when it last drew, in dp: when the
+    /// dock takes more, the shorter list keeps its selected row in sight.
+    below: f32,
     watch: Option<(OwnedJob, Task<()>)>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
     tick: Option<Task<()>>,
@@ -372,6 +375,7 @@ impl ResourcesScreen {
             focus: cx.focus_handle(),
             table: table::TableState::new("resource"),
             page_scroll: ScrollHandle::new(),
+            below: 0.,
             watch: None,
             namespace_job: None,
             tick: None,

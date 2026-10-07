@@ -905,3 +905,79 @@ fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
     let older: SavedDock = serde_json::from_str(r#"{"hidden":true,"height":120}"#).unwrap();
     assert_eq!(older.height, 120.);
 }
+
+#[gpui_kit::test]
+fn l_in_the_smallest_window_keeps_the_row_in_sight_above_three_lines(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    let dock = dock(&pilot, cx);
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+    });
+    // The pane opens on a running pod, whose logs need no more than the
+    // dock's usual height, and the keyboard goes back to the list, where
+    // L opens the pod's logs in the dock.
+    let running = running_pods(&pilot, cx);
+    step(cx, &|window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(
+                builtin("pods").unwrap(),
+                running[0].clone().into(),
+                Tab::Overview,
+                window,
+                cx,
+            )
+        });
+    });
+    step(cx, &|window, cx| window.press("escape", cx));
+    step(cx, &|window, cx| {
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+        window.press("l", cx);
+    });
+    settle(handle, cx);
+    assert_eq!(titles(&dock, cx).len(), 1);
+    let pod = cx.update(|cx| dock.read(cx).tabs[0].target.identity.clone());
+    let view = pod_view(&dock, 0, cx);
+    cx.update_window(handle, |_, window, cx| {
+        let cell = window.find("page-cell").bounds();
+        let dock_bounds = window.find("dock").bounds();
+        // An undragged dock takes at most half the page cell, unless the
+        // tab's notices and three lines need more.
+        let least = crate::ui::dp_px(dock.read(cx).least_height(window, cx), window);
+        assert!(
+            dock_bounds.size.height <= (cell.size.height / 2.).max(least) + px(1.),
+            "{cell:?} {dock_bounds:?} {least:?}"
+        );
+        assert!(dock_bounds.bottom() <= cell.bottom() + px(1.));
+        // The row the logs came from still shows whole above the dock.
+        let row = window.find(format!(
+            "resource-row:{}/{}/{}",
+            pod.namespace, pod.name, pod.uid
+        ));
+        assert!(row.visible(), "{row:?}");
+        let row = row.bounds();
+        let body = window.find("resource-body").bounds();
+        assert!(row.top() >= body.top().max(cell.top()), "{row:?} {body:?}");
+        assert!(
+            row.bottom() <= body.bottom().min(dock_bounds.top()),
+            "{row:?} {dock_bounds:?}"
+        );
+        // At least three lines show, with nothing to scroll to reach them.
+        assert_eq!(view.read(cx).panel_max_offset(), px(0.));
+        let panel = window.within("dock").find("logs-panel").bounds();
+        let lines = window.within("dock").find("logs-viewport").bounds();
+        let least = window.rem_size() * freshkube_logs::LIST_LEAST_REMS;
+        assert!(lines.size.height + px(1.) >= least, "{lines:?}");
+        assert!(lines.top() >= panel.top() && lines.bottom() <= panel.bottom() + px(1.));
+        assert!(panel.bottom() <= dock_bounds.bottom() + px(1.));
+    })
+    .unwrap();
+}
