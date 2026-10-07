@@ -2,24 +2,11 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use k8s_openapi::api::core::v1::{Event, Node, Pod};
+use k8s_openapi::api::core::v1::{Event, Node};
 
 use super::{EventSummary, NodeCondition, NodeSummary, Warning};
 
-pub(super) fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary> {
-    let mut counts = BTreeMap::new();
-    let mut requests = BTreeMap::new();
-    for pod in pods {
-        if let Some(name) = pod.spec.as_ref().and_then(|spec| spec.node_name.as_deref()) {
-            *counts.entry(name).or_insert(0) += 1;
-            if super::requests::active(pod) {
-                super::requests::add(
-                    requests.entry(name).or_insert(super::requests::ZERO),
-                    super::requests::of(pod),
-                );
-            }
-        }
-    }
+pub(super) fn summarize_nodes(nodes: Vec<Node>) -> Vec<NodeSummary> {
     nodes
         .into_iter()
         .map(|node| {
@@ -28,11 +15,8 @@ pub(super) fn summarize_nodes(nodes: Vec<Node>, pods: &[Pod]) -> Vec<NodeSummary
             let name = node.metadata.name.unwrap_or_default();
             NodeSummary {
                 uid: node.metadata.uid.clone().unwrap_or_default(),
-                pods: counts.get(name.as_str()).copied().unwrap_or_default(),
-                requests: requests
-                    .get(name.as_str())
-                    .copied()
-                    .unwrap_or(super::requests::ZERO),
+                pods: 0,
+                requests: super::requests::ZERO,
                 pods_current: true,
                 pods_observed: true,
                 name,
