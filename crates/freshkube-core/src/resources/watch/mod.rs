@@ -4,13 +4,16 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use kube::Client;
-use kube::core::WatchEvent as KubeWatchEvent;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use super::failure::Failure;
 use super::kinds::ResourceKind;
 use super::table::{Table, TableColumn, TableRow, list_table, watch_table};
+
+mod batch;
+
+use batch::{Batcher, Mapped, map_event};
 
 /// How long events are collected before they're delivered as one batch, so a
 /// frontend rebuilds at most about once per frame however fast changes arrive.
@@ -157,10 +160,9 @@ async fn watch_once(
         Err(failure) => return WatchEnd::Failed(failure),
     };
     let mut stream = std::pin::pin!(stream);
-    let mut pending = Vec::new();
-    let mut deadline: Option<Instant> = None;
+    let mut batcher = Batcher::new(BATCH_WINDOW, MAX_BATCH);
     loop {
-        let item = match deadline {
+        let item = match batcher.deadline() {
             Some(at) => tokio::select! {
                 item = stream.next() => Some(item),
                 _ = tokio::time::sleep_until(at) => None,
@@ -171,58 +173,22 @@ async fn watch_once(
             // The batch window elapsed.
             None => None,
             Some(None) => Some(WatchEnd::Resume),
-            Some(Some(Ok(event))) => match event {
-                KubeWatchEvent::Added(table) | KubeWatchEvent::Modified(table) => {
-                    for row in table.rows {
-                        track_version(resource_version, &row);
-                        pending.push(WatchEvent::Upsert(row));
-                    }
+            Some(Some(item)) => match map_event(item, resource_version) {
+                Mapped::Events(events) => {
+                    batcher.extend(events);
                     None
                 }
-                KubeWatchEvent::Deleted(table) => {
-                    for row in table.rows {
-                        track_version(resource_version, &row);
-                        pending.push(WatchEvent::Delete(row));
-                    }
-                    None
-                }
-                KubeWatchEvent::Bookmark(bookmark) => {
-                    *resource_version = bookmark.metadata.resource_version;
-                    None
-                }
-                KubeWatchEvent::Error(status) if status.code == 410 => Some(WatchEnd::Relist),
-                KubeWatchEvent::Error(status) => Some(WatchEnd::Failed(Failure::from_kube(
-                    kube::Error::Api(status),
-                ))),
+                Mapped::End(end) => Some(end),
             },
-            // A 410 can also arrive as the response itself rather than an event.
-            Some(Some(Err(kube::Error::Api(status)))) if status.code == 410 => {
-                Some(WatchEnd::Relist)
-            }
-            Some(Some(Err(error))) => Some(WatchEnd::Failed(Failure::from_kube(error))),
         };
-        let window_elapsed = deadline.is_some_and(|at| Instant::now() >= at);
-        if !pending.is_empty() && (end.is_some() || window_elapsed || pending.len() >= MAX_BATCH) {
-            if !send(sink, std::mem::take(&mut pending)).await {
-                return WatchEnd::Closed;
-            }
-            deadline = None;
-        } else if !pending.is_empty() && deadline.is_none() {
-            deadline = Some(Instant::now() + BATCH_WINDOW);
-        } else if pending.is_empty() {
-            deadline = None;
+        if let Some(batch) = batcher.flush(Instant::now(), end.is_some())
+            && !send(sink, batch).await
+        {
+            return WatchEnd::Closed;
         }
         if let Some(end) = end {
             return end;
         }
-    }
-}
-
-fn track_version(resource_version: &mut String, row: &TableRow) {
-    if let Some(metadata) = row.metadata()
-        && !metadata.resource_version.is_empty()
-    {
-        resource_version.clone_from(&metadata.resource_version);
     }
 }
 
