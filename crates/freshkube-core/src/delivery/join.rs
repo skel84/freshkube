@@ -226,7 +226,7 @@ fn owned_replica_sets<'a>(
     replica_sets: Option<&'a [ReplicaSet]>,
 ) -> impl Iterator<Item = &'a ReplicaSet> {
     replica_sets.into_iter().flatten().filter(|set| {
-        set.namespace == rollout.namespace && set.rollout.as_deref() == Some(rollout.name.as_str())
+        set.namespace == rollout.namespace && rollout.uid.is_some() && set.owner_uid == rollout.uid
     })
 }
 
@@ -856,10 +856,10 @@ fn freight_summary(freight: &Freight, sha: &str) -> String {
                 .revision
                 .as_deref()
                 .map(|revision| {
-                    let whose = if revision.eq_ignore_ascii_case(sha) {
-                        "this change's commit"
-                    } else {
-                        "not this change's commit"
+                    let whose = match same_commit(revision, sha) {
+                        Some(true) => "this change's commit",
+                        Some(false) => "not this change's commit",
+                        None => "which can't be compared with this change's commit",
                     };
                     format!(
                         "; its OCI revision annotation names {}, {whose}",
@@ -999,7 +999,7 @@ fn promotion_link(promotion: &Promotion, freight: &Freight) -> Link {
             .as_deref()
             .map(|message| format!(" ({})", redact_message(message)))
             .unwrap_or_default(),
-        promotion.creator().describe()
+        promotion.creator.describe()
     );
     let subject = id(&promotion.project, &promotion.name);
     match shared_digest(freight, &promotion.freight_digests) {
@@ -1185,6 +1185,26 @@ fn stage_application_proof(
     )
 }
 
+/// Whether `revision`, a full or abbreviated commit id, names the commit
+/// `sha`. An abbreviation of seven or more characters is the start of the
+/// full id, case aside. `None` when the two can't be compared: a shorter
+/// abbreviation, an id longer than the commit's (another hash algorithm),
+/// or one that differs from a SHA-256 commit, which may also be known by a
+/// SHA-1 id.
+fn same_commit(revision: &str, sha: &str) -> Option<bool> {
+    const SHORTEST: usize = 7;
+    let (revision, sha) = (revision.as_bytes(), sha.as_bytes());
+    if revision.len() < SHORTEST || revision.len() > sha.len() {
+        None
+    } else if revision.eq_ignore_ascii_case(&sha[..revision.len()]) {
+        Some(true)
+    } else if revision.len() == sha.len() || sha.len() == 40 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 fn short_commit(commit: &str) -> String {
     commit.chars().take(12).collect()
 }
@@ -1199,12 +1219,12 @@ fn describe_destination(destination: &DestinationMatch) -> String {
         DestinationMatch::ArgoCd(context) => {
             format!("destination is Argo CD's own cluster ({IN_CLUSTER_NAME}), context {context}")
         }
-        DestinationMatch::Named { name, context } => {
-            format!("destination by cluster name {name}, mapped to context {context}")
+        DestinationMatch::Named { context, .. } => {
+            format!("destination by a cluster name, mapped to context {context}")
         }
         DestinationMatch::None => "destination matches no known context".to_owned(),
-        DestinationMatch::ByName(name) => {
-            format!("destination by cluster name {name}, which no context is mapped to")
+        DestinationMatch::ByName(_) => {
+            "destination by a cluster name no context is mapped to".to_owned()
         }
         DestinationMatch::Unspecified => "no destination".to_owned(),
     }
@@ -1226,8 +1246,8 @@ fn rollout_namespace(app: &Application, managed: &ManagedObject) -> Option<Strin
 fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
     let env = &evidence.environment;
     let why = match evidence.destinations.get(app_id) {
-        Some(DestinationMatch::ByName(name)) => format!(
-            "the cluster name {name} is mapped to no context; if it is the environment cluster, map it with --known-as-name {env}={name}"
+        Some(DestinationMatch::ByName(_)) => format!(
+            "its cluster name is mapped to no context; if it is the environment cluster, map the name the Application gives with --known-as-name {env}=<cluster name>"
         ),
         Some(DestinationMatch::None) => format!(
             "its server matches no context; if it is the environment cluster's, add it with --known-as {env}=<server>"
@@ -1414,11 +1434,12 @@ fn which_pods(evidence: &Evidence, rollout: &Rollout, set: &PodSet) -> String {
     let read = evidence.replica_sets.read().map(Vec::as_slice);
     let which = match set {
         PodSet::Pinned(sets) => format!(
-            "the pods of ReplicaSet {}, whose template pins the Freight's digest",
+            "the pods of ReplicaSet {}, whose template pins the Freight's digest{}",
             sets.iter()
                 .map(|(name, _)| name.as_str())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            cap_note(evidence.replica_sets.capped())
         ),
         PodSet::Current(hash) => {
             let why = match evidence.replica_sets.why_not_read() {

@@ -1383,17 +1383,21 @@ async fn an_unmapped_cluster_name_says_how_to_map_it() {
     let rollout = one(&trail, Hop::Application, Hop::Rollout);
     assert_eq!(rollout.confidence, Confidence::Unknown);
     assert!(
-        rollout
-            .reason
-            .contains("map it with --known-as-name env-a=workloads"),
+        rollout.reason.contains(
+            "map the name the Application gives with --known-as-name env-a=<cluster name>"
+        ),
         "{}",
         rollout.reason
     );
     assert!(
         one(&trail, Hop::Stage, Hop::Application)
             .reason
-            .contains("cluster name workloads, which no context is mapped to")
+            .contains("destination by a cluster name no context is mapped to")
     );
+    // A cluster name may carry a cloud account or project; it is never printed.
+    for link in &trail.links {
+        assert!(!link.reason.contains("workloads"), "{}", link.reason);
+    }
     assert!(world.environment.requests.borrow().is_empty());
     assert!(
         trail.summary().starts_with(
@@ -1414,8 +1418,11 @@ async fn a_mapped_cluster_name_reaches_the_pods() {
     assert!(
         one(&trail, Hop::Stage, Hop::Application)
             .reason
-            .contains("cluster name workloads, mapped to context env-a")
+            .contains("destination by a cluster name, mapped to context env-a")
     );
+    for link in &trail.links {
+        assert!(!link.reason.contains("workloads"), "{}", link.reason);
+    }
     assert_eq!(
         one(&trail, Hop::Rollout, Hop::Pod).confidence,
         Confidence::Confirmed
@@ -1458,7 +1465,9 @@ async fn only_the_replica_set_at_the_promoted_digest_is_judged() {
         let environment = world.environment.requests.borrow().join("\n");
         assert!(environment.contains("rollouts-pod-template-hash=5d9c"));
         assert!(!environment.contains("rollouts-pod-template-hash=7f3b"));
-        assert!(environment.contains("LIST apps/v1/replicasets ns=Some(\"shop\")"));
+        assert!(environment.contains(
+            "LIST apps/v1/replicasets ns=Some(\"shop\") selector=Some(\"rollouts-pod-template-hash\")"
+        ));
     }
 }
 
@@ -1503,7 +1512,7 @@ fn promotion_by(actor: Option<&str>) -> World {
 #[tokio::test]
 async fn a_promotion_says_auto_or_manual_and_the_commit_it_pushed() {
     for (actor, words) in [
-        (None, "auto-promoted"),
+        (None, "likely auto-promoted"),
         (
             Some("controller:kargo-controller"),
             "created by a Kargo controller",
@@ -1511,6 +1520,10 @@ async fn a_promotion_says_auto_or_manual_and_the_commit_it_pushed() {
         (Some("email:someone@example.test"), "promoted by hand"),
         (Some("kubernetes:someone"), "promoted by hand"),
         (Some("admin"), "promoted by hand"),
+        (
+            Some("kubernetes:system:serviceaccount:delivery:someone"),
+            "created by a service account, an API client",
+        ),
         (Some("unknown actor"), "its creator is not known"),
     ] {
         let trail = run(&promotion_by(actor), &ENV).await;
@@ -1551,9 +1564,18 @@ async fn an_unhealthy_stage_says_why() {
 
 #[tokio::test]
 async fn the_freight_says_whether_its_image_revision_is_the_commit() {
+    let sha_256 = "a".repeat(64);
     for (revision, words) in [
         (SHA, "names aaaaaaaaaaaa, this change's commit"),
         (OTHER_SHA, "names bbbbbbbbbbbb, not this change's commit"),
+        // An abbreviation is compared as the start of the full id, case aside.
+        ("AAAAAAA", "names aaaaaaa, this change's commit"),
+        ("aaaaaaab", "names aaaaaaab, not this change's commit"),
+        // A longer id than the commit's is another hash algorithm's.
+        (
+            sha_256.as_str(),
+            "names aaaaaaaaaaaa, which can't be compared with this change's commit",
+        ),
     ] {
         let mut world = healthy();
         let mut item = freight("f-new", NEW, SHA);
@@ -1624,5 +1646,51 @@ async fn the_summary_says_whether_the_change_runs() {
         trail.summary().starts_with("running only as claimed"),
         "{}",
         trail.summary()
+    );
+}
+
+#[tokio::test]
+async fn a_replica_set_of_another_rollout_with_the_same_name_is_not_its_own() {
+    // The pinned ReplicaSet's owner is a Rollout of the same name and kind
+    // that was deleted and made again: another UID, so not this Rollout's.
+    let mut world = beside_a_stale_replica_set("7f3b");
+    let mut orphan = replica_set("5d9c", &format!("{REPO}@{NEW}"), 2, 2);
+    orphan["metadata"]["ownerReferences"][0]["uid"] =
+        serde_json::json!("0f0e0d0c-0000-4000-8000-000000000002");
+    let mut other_group = replica_set("6e1a", &format!("{REPO}@{NEW}"), 1, 1);
+    other_group["metadata"]["ownerReferences"][0]["apiVersion"] =
+        serde_json::json!("example.test/v1");
+    world.environment = world.environment.with(
+        "replicasets",
+        vec![
+            replica_set("7f3b", &format!("{REPO}@{OLD}"), 1, 0),
+            orphan,
+            other_group,
+        ],
+    );
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert!(
+        pods.reason
+            .contains("the pods of the Rollout's current pod hash 7f3b"),
+        "{}",
+        pods.reason
+    );
+    assert!(!pods.reason.contains("storefront-5d9c"), "{}", pods.reason);
+    assert!(!pods.reason.contains("storefront-6e1a"), "{}", pods.reason);
+}
+
+#[tokio::test]
+async fn a_capped_replica_set_listing_says_so_when_one_pins_the_digest() {
+    let mut world = beside_a_stale_replica_set("5d9c");
+    world.environment = world.environment.capped("replicasets");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert!(
+        pods.reason.contains(
+            "whose template pins the Freight's digest; the listing stopped at the page cap"
+        ),
+        "{}",
+        pods.reason
     );
 }

@@ -18,6 +18,8 @@ pub const POD_HASH_LABEL: &str = "rollouts-pod-template-hash";
 pub struct Rollout {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid`, which its ReplicaSets' owner references carry.
+    pub uid: Option<String>,
     pub phase: Option<String>,
     pub current_pod_hash: Option<String>,
     pub stable_hash: Option<String>,
@@ -40,8 +42,8 @@ pub struct AnalysisRun {
 pub struct ReplicaSet {
     pub namespace: String,
     pub name: String,
-    /// The Rollout named by its controller owner reference.
-    pub rollout: Option<String>,
+    /// The UID of the Rollout its controller owner reference names.
+    pub owner_uid: Option<String>,
     /// Its `rollouts-pod-template-hash` label, which its pods carry too.
     pub pod_hash: Option<String>,
     /// `spec.template.spec.containers[].image`, as written.
@@ -75,20 +77,25 @@ fn count(value: &Value, pointer: &str) -> u64 {
 }
 
 pub fn parse_replica_set(value: &Value) -> Option<ReplicaSet> {
-    let rollout = value
+    let owner_uid = value
         .pointer("/metadata/ownerReferences")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .find(|owner| {
             text(owner, "/kind").as_deref() == Some("Rollout")
-                && owner.get("controller").and_then(Value::as_bool) != Some(false)
+                && text(owner, "/apiVersion").is_some_and(|version| {
+                    version
+                        .split_once('/')
+                        .is_some_and(|(group, _)| group == GROUP)
+                })
+                && owner.get("controller").and_then(Value::as_bool) == Some(true)
         })
-        .and_then(|owner| text(owner, "/name"));
+        .and_then(|owner| text(owner, "/uid"));
     Some(ReplicaSet {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
-        rollout,
+        owner_uid,
         pod_hash: value
             .pointer("/metadata/labels")
             .and_then(|labels| labels.get(POD_HASH_LABEL))
@@ -105,6 +112,7 @@ pub fn parse_rollout(value: &Value) -> Option<Rollout> {
     Some(Rollout {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        uid: text(value, "/metadata/uid"),
         phase: text(value, "/status/phase"),
         current_pod_hash: text(value, "/status/currentPodHash"),
         stable_hash: text(value, "/status/stableRS"),
@@ -169,7 +177,9 @@ pub async fn read_analysis_runs<R: Reader>(
     )
 }
 
-/// The ReplicaSets of one namespace; the caller keeps those of its Rollouts.
+/// The ReplicaSets of one namespace that carry the Rollouts' pod-template
+/// hash label, so only those a Rollout made; the caller keeps those its
+/// Rollouts own.
 pub async fn read_replica_sets<R: Reader>(reader: &R, namespace: &str) -> Source<Vec<ReplicaSet>> {
     async fn run<R: Reader>(
         reader: &R,
@@ -178,7 +188,12 @@ pub async fn read_replica_sets<R: Reader>(reader: &R, namespace: &str) -> Source
         let listing = reader
             .list(&ListRequest {
                 resource: Resource::new("apps", "v1", "replicasets", true),
-                scope: Scope::Namespace(namespace.to_owned()),
+                // A constant key, so nothing read from an object reaches the
+                // selector.
+                scope: Scope::Labels {
+                    namespace: Some(namespace.to_owned()),
+                    selector: POD_HASH_LABEL.to_owned(),
+                },
             })
             .await?;
         Ok(listing.parse(parse_replica_set))

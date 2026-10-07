@@ -18,6 +18,8 @@ pub const NEW: &str = "sha256:11111111111111111111111111111111111111111111111111
 pub const OLD: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 pub const PUSHED: &str = "dddddddddddddddddddddddddddddddddddddddd";
 pub const REPO: &str = "registry.example/acme/storefront";
+/// An invented UID for the storefront Rollout.
+pub const ROLLOUT_UID: &str = "0f0e0d0c-0000-4000-8000-000000000001";
 
 #[derive(Default)]
 pub struct FixtureReader {
@@ -85,15 +87,16 @@ impl FixtureReader {
     }
 }
 
+/// `key=value` terms, and a bare `key` for a label that exists.
 fn matches(item: &Value, selector: &str) -> bool {
-    selector.split(',').all(|term| {
-        let Some((key, value)) = term.split_once('=') else {
-            return false;
-        };
+    let label = |key: &str| {
         item.pointer("/metadata/labels")
             .and_then(|labels| labels.get(key))
             .and_then(Value::as_str)
-            == Some(value)
+    };
+    selector.split(',').all(|term| match term.split_once('=') {
+        Some((key, value)) => label(key) == Some(value),
+        None => label(term).is_some(),
     })
 }
 
@@ -255,7 +258,7 @@ pub fn application(server: Option<&str>) -> Value {
 
 pub fn rollout(image: &str) -> Value {
     json!({
-        "metadata": {"name": "storefront", "namespace": "shop"},
+        "metadata": {"name": "storefront", "namespace": "shop", "uid": ROLLOUT_UID},
         "spec": {"template": {"spec": {"containers": [{"name": "app", "image": image}]}}},
         "status": {"phase": "Healthy", "currentPodHash": "5d9c", "stableRS": "5d9c"}
     })
@@ -294,7 +297,8 @@ pub fn replica_set(hash: &str, image: &str, replicas: u64, ready: u64) -> Value 
         "metadata": {"name": format!("storefront-{hash}"), "namespace": "shop",
                       "labels": {"rollouts-pod-template-hash": hash},
                       "ownerReferences": [{"apiVersion": "argoproj.io/v1alpha1", "kind": "Rollout",
-                                           "name": "storefront", "controller": true}]},
+                                           "name": "storefront", "uid": ROLLOUT_UID,
+                                           "controller": true}]},
         "spec": {"template": {"spec": {"containers": [{"name": "app", "image": image}]}}},
         "status": {"replicas": replicas, "readyReplicas": ready}
     })

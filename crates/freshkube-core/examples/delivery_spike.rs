@@ -21,7 +21,9 @@
 //! the context at that address or one `--known-as` adds; by cluster name,
 //! only to an alias `--known-as-name` maps that name to. `in-cluster` and
 //! `https://kubernetes.default.svc` are Argo CD's names for the cluster it
-//! runs in, so they match the `--argocd` alias without being mapped.
+//! runs in, so they match the `--argocd` alias without being mapped. Give
+//! one context one alias: with `--argocd a=ctx --env b=ctx`, `in-cluster` is
+//! `a`, which is not the environment `b`, so the join stops at the Rollout.
 //!
 //! The optional settings describe conventions that differ between setups,
 //! so none has a default:

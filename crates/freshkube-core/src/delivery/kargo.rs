@@ -77,8 +77,9 @@ pub struct Promotion {
     pub freight: Option<String>,
     pub phase: Option<String>,
     pub message: Option<String>,
-    /// The `kargo.akuity.io/create-actor` annotation, when set.
-    pub create_actor: Option<String>,
+    /// Who created it, by its `kargo.akuity.io/create-actor` annotation.
+    /// Only the kind of actor is kept; the actor, often an identity, is not.
+    pub creator: Creator,
     /// Digests of the Freight's images, as the Promotion's status records.
     pub freight_digests: Vec<Digest>,
     /// Commits its steps pushed (a step's `commit` output).
@@ -91,45 +92,53 @@ pub struct Promotion {
 /// the actor's kind; the actor itself, often an identity, is never kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Creator {
-    /// No actor: the Stage controller's auto-promotions set none.
-    Auto,
+    /// No actor. The Stage controller's auto-promotions set none, but the
+    /// absence is all that says so.
+    LikelyAuto,
     /// `controller:<name>`, a Kargo controller other than auto-promotion.
     Controller,
     /// A user, through Kargo's API (`email:`, `subject:`, `admin`) or the
-    /// Kubernetes API (`kubernetes:`).
+    /// Kubernetes API (`kubernetes:<user>`).
     User,
+    /// A service account through the Kubernetes API
+    /// (`kubernetes:system:serviceaccount:…`): automation or a person.
+    ServiceAccount,
     /// An actor Kargo couldn't name, or one this doesn't know.
     Unknown,
 }
 
 impl Creator {
-    pub fn describe(self) -> &'static str {
-        match self {
-            Self::Auto => "auto-promoted (no create-actor, as on Kargo's auto-promotions)",
-            Self::Controller => "created by a Kargo controller",
-            Self::User => "promoted by hand (a user created it)",
-            Self::Unknown => "its creator is not known",
-        }
-    }
-}
-
-impl Promotion {
-    pub fn creator(&self) -> Creator {
-        let Some(actor) = self.create_actor.as_deref().map(str::trim) else {
-            return Creator::Auto;
-        };
+    /// The kind of actor `kargo.akuity.io/create-actor` names.
+    pub fn of(actor: Option<&str>) -> Self {
+        let actor = actor.map(str::trim).unwrap_or_default();
         if actor.is_empty() {
-            Creator::Auto
+            Self::LikelyAuto
         } else if actor.starts_with("controller:") {
-            Creator::Controller
+            Self::Controller
+        } else if actor.starts_with("kubernetes:system:serviceaccount:") {
+            Self::ServiceAccount
         } else if actor == "admin"
             || ["email:", "subject:", "kubernetes:"]
                 .iter()
                 .any(|prefix| actor.starts_with(prefix))
         {
-            Creator::User
+            Self::User
         } else {
-            Creator::Unknown
+            Self::Unknown
+        }
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::LikelyAuto => {
+                "likely auto-promoted (no create-actor, as on Kargo's auto-promotions)"
+            }
+            Self::Controller => "created by a Kargo controller",
+            Self::User => "promoted by hand (a user created it)",
+            Self::ServiceAccount => {
+                "created by a service account, an API client that may be automation or a person"
+            }
+            Self::Unknown => "its creator is not known",
         }
     }
 }
@@ -296,11 +305,12 @@ pub fn parse_promotion(value: &Value) -> Option<Promotion> {
         freight: text(value, "/spec/freight").or_else(|| text(value, "/status/freight/name")),
         phase: text(value, "/status/phase"),
         message: text(value, "/status/message"),
-        create_actor: value
-            .pointer("/metadata/annotations")
-            .and_then(|annotations| annotations.get(CREATE_ACTOR))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        creator: Creator::of(
+            value
+                .pointer("/metadata/annotations")
+                .and_then(|annotations| annotations.get(CREATE_ACTOR))
+                .and_then(Value::as_str),
+        ),
     })
 }
 
