@@ -111,7 +111,9 @@ pub struct Operation {
     /// The operation's message, redacted.
     pub message: Option<String>,
     pub retry_count: Option<i64>,
-    /// `syncResult.revisions`, else `syncResult.revision`.
+    /// `syncResult.revisions`, else `syncResult.revision`; without a sync
+    /// result (an operation that failed before it synced), the revisions
+    /// the operation asked for, `operation.sync`.
     pub revisions: Vec<String>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -251,6 +253,9 @@ pub struct Application {
     pub destination_name: Option<String>,
     pub destination_namespace: Option<String>,
     pub sync: Option<String>,
+    /// `status.sync.revision` followed by `status.sync.revisions`, as the
+    /// join matches them; to compare revisions with the operation's or
+    /// history's, use `compared_revisions`, read as they are.
     pub sync_revisions: Vec<String>,
     pub health: Option<String>,
     /// `<project>:<stage>` from the Kargo annotation, a claim.
@@ -392,10 +397,15 @@ fn parse_operation(state: &Value) -> Operation {
         phase: text(state, "/phase"),
         message: redacted(state, "/message"),
         retry_count: number(state, "/retryCount"),
-        revisions: state
-            .get("syncResult")
-            .map(revisions_of)
-            .unwrap_or_default(),
+        revisions: [
+            object(state, "/syncResult"),
+            object(state, "/operation/sync"),
+        ]
+        .into_iter()
+        .flatten()
+        .map(revisions_of)
+        .find(|revisions| !revisions.is_empty())
+        .unwrap_or_default(),
         started_at: text(state, "/startedAt"),
         finished_at: text(state, "/finishedAt"),
     }
@@ -1182,6 +1192,26 @@ mod tests {
             }),
         );
         assert!(!unknown.reconciliation().superseded);
+        // An operation that failed before it synced names the revisions it
+        // asked for, and ages out by them.
+        let unsynced = app(
+            json!({}),
+            json!({
+                "sync": {"status": "Synced", "revision": COMMIT_A},
+                "operationState": {
+                    "phase": "Failed",
+                    "message": "rpc error: manifest generation failed",
+                    "finishedAt": "2026-09-01T10:20:00Z",
+                    "operation": {"sync": {"revision": COMMIT_B}},
+                },
+            }),
+        );
+        let reconciliation = unsynced.reconciliation();
+        assert_eq!(
+            reconciliation.operation_revisions,
+            vec![COMMIT_B.to_owned()]
+        );
+        assert!(reconciliation.superseded);
         let uncompared = app(
             json!({}),
             json!({"operationState": {"phase": "Failed", "syncResult": {"revision": COMMIT_B}}}),
