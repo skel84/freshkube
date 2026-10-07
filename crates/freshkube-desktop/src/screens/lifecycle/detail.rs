@@ -12,6 +12,8 @@ type DetailKey = (u64, Option<(SessionIdentity, u64)>, Item);
 /// What the Inspector shows for the selection.
 pub(super) struct Detail {
     key: DetailKey,
+    /// The heading's accessibility label.
+    aria: SharedString,
     shown: Shown,
 }
 
@@ -169,7 +171,7 @@ impl LifecycleScreen {
                 Some(row) => Shown::Node(node_detail(row, view, self.can_target(name))),
                 None => Shown::Gone(Some(name.clone()), "No longer in the roster."),
             },
-            Item::Alert(ix) => match view.display.alerts.get(*ix) {
+            Item::Alert(key) => match view.display.alerts.iter().find(|alert| &alert.key == key) {
                 Some(alert) => {
                     let (tone, icon, label) = health_tone(&alert.health);
                     Shown::Alert(AlertDetail {
@@ -188,7 +190,14 @@ impl LifecycleScreen {
                 None => Shown::Gone(None, "The selected alert is no longer raised."),
             },
         };
-        self.detail = Some(Detail { key, shown });
+        let aria = match &shown {
+            Shown::Node(NodeDetail { name, .. }) | Shown::Gone(Some(name), _) => {
+                format!("Details of node {name}").into()
+            }
+            Shown::Alert(alert) => format!("Details of alert: {}", alert.message).into(),
+            Shown::Gone(None, _) => SharedString::default(),
+        };
+        self.detail = Some(Detail { key, aria, shown });
     }
 
     /// The Inspector for the selection, or `None` without one.
@@ -196,15 +205,15 @@ impl LifecycleScreen {
         let detail = self.detail.as_ref()?;
         let inspector = Inspector::new("lifecycle-detail");
         let inspector = match &detail.shown {
-            Shown::Node(node) => self.render_node(inspector, node, cx),
-            Shown::Alert(alert) => self.render_alert(inspector, alert, cx),
+            Shown::Node(node) => self.render_node(inspector, node, detail.aria.clone(), cx),
+            Shown::Alert(alert) => self.render_alert(inspector, alert, detail.aria.clone(), cx),
             Shown::Gone(name, why) => {
                 let inspector = match name {
                     Some(name) => inspector.heading(
                         div()
                             .id("lifecycle-detail-title")
                             .test_support()
-                            .aria_label(format!("Details of node {name}"))
+                            .aria_label(detail.aria.clone())
                             .font_family(MONO_FONT)
                             .text_size(dp(14.))
                             .font_weight(FontWeight::SEMIBOLD)
@@ -230,13 +239,14 @@ impl LifecycleScreen {
         &self,
         inspector: Inspector,
         node: &NodeDetail,
+        aria: SharedString,
         cx: &mut Context<Self>,
     ) -> Inspector {
         let p = palette(cx);
         let title = h_flex()
             .id("lifecycle-detail-title")
             .test_support()
-            .aria_label(format!("Details of node {}", node.name))
+            .aria_label(aria)
             .gap_2()
             .flex_wrap()
             .min_w_0()
@@ -282,13 +292,14 @@ impl LifecycleScreen {
         &self,
         inspector: Inspector,
         alert: &AlertDetail,
+        aria: SharedString,
         cx: &mut Context<Self>,
     ) -> Inspector {
         let p = palette(cx);
         let title = v_flex()
             .id("lifecycle-detail-title")
             .test_support()
-            .aria_label(format!("Details of alert: {}", alert.message))
+            .aria_label(aria)
             .gap_2()
             .min_w_0()
             .child(h_flex().child(ui::tag(alert.tone, alert.icon, alert.label, cx)))
@@ -362,7 +373,9 @@ fn render_value(value: &Value, cx: &App) -> AnyElement {
             tag_first,
         } => {
             let tag = tag.map(|(tone, label)| ui::tag(tone, None, label, cx));
-            let text = mono(text.clone());
+            // Within the row's width, so a long value wraps in a narrow
+            // Inspector rather than running past its edge.
+            let text = mono(text.clone()).max_w_full();
             let row = h_flex().gap_2().flex_wrap();
             if *tag_first {
                 row.children(tag).child(text)

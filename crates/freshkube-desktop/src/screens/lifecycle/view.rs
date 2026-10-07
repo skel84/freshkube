@@ -50,7 +50,8 @@ impl LifecycleScreen {
             v_flex()
                 .children(alerts.iter().enumerate().map(|(ix, alert)| {
                     let (tone, icon, label) = health_tone(&alert.health);
-                    let selected = self.selected == Some(Item::Alert(ix));
+                    let item = Item::Alert(alert.key.clone());
+                    let selected = self.selected.as_ref() == Some(&item);
                     h_flex()
                         .id(("lifecycle-alert", ix))
                         .test_support()
@@ -68,7 +69,7 @@ impl LifecycleScreen {
                         .child(ui::tag(tone, icon, label, cx))
                         .child(div().flex_1().min_w_0().child(alert.message.clone()))
                         .on_click(cx.listener(move |view, _, window, cx| {
-                            view.select(Item::Alert(ix), window, cx);
+                            view.select(item.clone(), window, cx);
                         }))
                 }))
                 .into_any_element()
@@ -353,11 +354,12 @@ impl LifecycleScreen {
             .chain(partial_notice(view.display.missing.clone(), cx))
             .collect();
         // The Inspector sits beside the roster only when the roster still
-        // fits whole; otherwise it would push the last columns behind a
-        // horizontal scroll.
+        // fits whole beside its least width, and takes at most the rest,
+        // however wide it was dragged before; otherwise it goes under it.
         let width = page_width(window);
         let beside =
-            width >= inspector::SPLIT_WIDTH && width >= view.display.width + self.split.width();
+            width >= inspector::SPLIT_WIDTH && width >= view.display.width + inspector::MIN_WIDTH;
+        self.split.keep_lead(view.display.width, width);
         // Stacked, the roster keeps the height of its rows.
         let rows =
             data_table::HEADER_HEIGHT + self.line_count().max(1) as f32 * data_table::ROW_HEIGHT;

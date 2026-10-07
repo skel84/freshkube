@@ -66,7 +66,8 @@ struct KubeletEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Item {
     Node(String),
-    Alert(usize),
+    /// By the alert's key, so a refresh that reorders the alerts keeps it.
+    Alert(String),
 }
 
 pub(crate) struct LifecycleScreen {
@@ -512,6 +513,9 @@ fn node_rows(view: &LifecycleView) -> Vec<NodeRow> {
 
 #[derive(Clone, Debug)]
 struct AlertRow {
+    /// What the alert is about, not its wording, which names nodes: it
+    /// keeps the alert selected while those change.
+    key: String,
     health: HealthIndicator,
     message: String,
     /// Where the alert comes from, shown in its details.
@@ -565,6 +569,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
             ),
         };
         alerts.push(AlertRow {
+            key: "derived:kubelet-skew".into(),
             health: HealthIndicator::Warning,
             message,
             origin: DERIVED,
@@ -586,6 +591,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         if !outside.is_empty() {
             let outside_names: Vec<&str> = outside.iter().map(|version| version.node()).collect();
             alerts.push(AlertRow {
+                key: "derived:kubelet-support".into(),
                 health: HealthIndicator::Warning,
                 message: format!(
                     "Kubelet on {} is outside the Kubernetes range Talos {talos} supports (v1.{low} – v1.{high})",
@@ -629,6 +635,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         if !only_discovery.is_empty() {
             let shown: Vec<&str> = only_discovery.iter().map(String::as_str).collect();
             alerts.push(AlertRow {
+                key: "derived:discovery-only".into(),
                 health: HealthIndicator::Warning,
                 message: format!(
                     "In Talos discovery but not registered in Kubernetes: {}",
@@ -652,6 +659,7 @@ fn alert_rows(view: &LifecycleView, rows: &[NodeRow]) -> Vec<AlertRow> {
         if !only_kubernetes.is_empty() {
             let shown: Vec<&str> = only_kubernetes.iter().map(String::as_str).collect();
             alerts.push(AlertRow {
+                key: "derived:kubernetes-only".into(),
                 health: HealthIndicator::Warning,
                 message: format!(
                     "In Kubernetes but not in Talos discovery: {}",
@@ -731,7 +739,12 @@ fn core_alert(alert: &LifecycleAlert, view: &LifecycleView, rows: &[NodeRow]) ->
         .filter(|(label, _)| rows.iter().any(|row| &row.name == label))
         .map(|(label, _)| label.clone())
         .collect();
+    let key = match alert.kind() {
+        LifecycleAlertKind::Other => format!("collector:{}", alert.message),
+        kind => format!("collector:{kind:?}"),
+    };
     AlertRow {
+        key,
         health: alert.health,
         message: alert.message.clone(),
         origin: COLLECTOR,
@@ -878,7 +891,7 @@ impl LifecycleScreen {
         let (rows, alerts) = self.rows_and_alerts();
         rows.into_iter()
             .map(|row| Item::Node(row.name))
-            .chain((0..alerts.len()).map(Item::Alert))
+            .chain(alerts.into_iter().map(|alert| Item::Alert(alert.key)))
             .collect()
     }
 

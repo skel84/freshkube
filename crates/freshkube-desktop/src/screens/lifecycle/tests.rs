@@ -972,3 +972,86 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     cx.read(|cx| assert_eq!(screen.read(cx).split.width(), 400.));
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+/// A width saved wider than the room beside the roster still opens beside
+/// it, the Inspector taking only the rest, so the split never sticks
+/// stacked with no handle to drag it back.
+#[gpui_kit::test]
+fn an_oversized_saved_width_stays_beside_the_roster(cx: &mut TestAppContext) {
+    use crate::navigation_file::NavigationFile;
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-lifecycle-oversized-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let preferences = directory.join("preferences.json");
+    cx.update(|cx| {
+        let file = NavigationFile::open(Some(&preferences));
+        file.set_inspector_width("lifecycle", 2000., cx);
+        cx.set_global(file);
+    });
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(node("talos-cp-fra1-01"), cx);
+        window.render_frame(cx);
+        let roster = screen.read(cx).loader.data().unwrap().display.width;
+        let scroll = window.find("lifecycle-table-scroll").bounds();
+        let detail = window.find("lifecycle-detail").bounds();
+        let split = window.find("lifecycle-split").bounds();
+        assert!(
+            detail.left() >= scroll.right() - px(0.5),
+            "stacked: {detail:?}"
+        );
+        assert!(
+            scroll.size.width >= crate::ui::dp_px(roster, window) - px(0.5),
+            "the roster scrolls sideways: {scroll:?}, {roster} dp"
+        );
+        assert!(
+            detail.right() <= split.right() + px(0.5),
+            "{detail:?} {split:?}"
+        );
+    })
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// An alert stays selected by what it is about: a refresh that raises
+/// another alert ahead of it keeps the Inspector on the same one.
+#[gpui_kit::test]
+fn a_selected_alert_survives_a_new_alert_ahead_of_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("lifecycle-alert", 0usize), cx);
+        window.render_frame(cx);
+        let title = |window: &gpui_kit::Window| {
+            (window.find("lifecycle-detail-title").label())
+                .unwrap()
+                .to_owned()
+        };
+        assert!(title(window).contains("skew"), "{}", title(window));
+        screen.update(cx, |screen, cx| {
+            let mut view = example_view();
+            view.snapshot
+                .alerts
+                .push(freshkube_core::security_lifecycle::LifecycleAlert {
+                    health: HealthIndicator::Warning,
+                    message: "Configuration drift detected across nodes".into(),
+                });
+            let target = screen.source.as_ref().unwrap().target.clone();
+            screen.resolve(target, Ok(view));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("lifecycle-alert", 1usize)).selected(),
+            Some(true)
+        );
+        assert!(title(window).contains("skew"), "{}", title(window));
+    })
+    .unwrap();
+}
