@@ -185,13 +185,21 @@ impl Pilot {
                 .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                 .child(display.roster.clone())
         });
+        // The header's switcher reads the same state, so the two agree.
+        let (connection, ink) = match self.context_display.state {
+            _ if stale => ("Stale snapshot", Some(p.warn_ink)),
+            1 => ("Connected", None),
+            2 => ("Couldn't connect", Some(p.crit_ink)),
+            _ => ("Connecting…", None),
+        };
         let mut meta = vec![
             div()
                 .id("overview-connection")
                 .test_support()
                 .flex_none()
-                .when(stale, |this| this.text_color(p.warn_ink))
-                .child(if stale { "Stale snapshot" } else { "Connected" })
+                .when_some(ink, |this, ink| this.text_color(ink))
+                .aria_label(connection)
+                .child(connection)
                 .into_any_element(),
         ];
         for part in [drift, roster].into_iter().flatten() {

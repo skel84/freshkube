@@ -722,3 +722,33 @@ fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn overview_says_connecting_until_talos_answers(cx: &mut TestAppContext) {
+    let connection = |window: &mut gpui_kit::Window| {
+        window
+            .find("overview-connection")
+            .label()
+            .map(str::to_owned)
+    };
+    // The Talos overview never answers: the header's switcher says
+    // Connecting…, and so must the Overview's heading.
+    let (_runtime, handle, _pilot) = crate::desktop::tests::mount(
+        cx,
+        crate::GpuiOptions::fixture().holding_talos(),
+        1280.,
+        880.,
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(connection(window).as_deref(), Some("Connecting…"));
+    })
+    .unwrap();
+
+    let (_runtime, handle, _pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(connection(window).as_deref(), Some("Connected"));
+    })
+    .unwrap();
+}
