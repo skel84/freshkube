@@ -289,7 +289,7 @@ fn waiting_cards_show_a_skeleton(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.kubernetes_summary = Default::default();
-            pilot.rebuild_joined_nodes();
+            pilot.rebuild_joined_nodes(cx);
             cx.notify();
         });
         window.render_frame(cx);

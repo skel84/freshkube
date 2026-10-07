@@ -100,6 +100,10 @@ pub(super) struct Nodes {
     /// The node document's Escape, stepping back from its last level.
     _document_subscription: Subscription,
     table: freshkube_ui::table::TableState,
+    /// What the table shows until the summaries answer, and their motion,
+    /// drawn over the table.
+    loading: freshkube_ui::table::LoadingRows,
+    loading_motion: Entity<freshkube_ui::table::LoadingMotion>,
     all_columns: Vec<table::Column>,
     menu_columns: Arc<Vec<(table::Field, SharedString)>>,
     columns: Vec<table::Column>,
@@ -182,6 +186,8 @@ impl Nodes {
                     pilot.node_back(window, cx);
                 }
             });
+        let loading = freshkube_ui::table::LoadingRows::new("nodes");
+        let loading_motion = cx.new(|_| loading.motion(freshkube_ui::table::Look::Pulse));
         Self {
             rows: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
@@ -199,6 +205,8 @@ impl Nodes {
             _query_subscription: subscription,
             _document_subscription: document_subscription,
             table: freshkube_ui::table::TableState::new("nodes"),
+            loading,
+            loading_motion,
             all_columns: Vec::new(),
             menu_columns: Arc::new(Vec::new()),
             columns: Vec::new(),
@@ -301,7 +309,14 @@ impl Pilot {
         }
     }
 
-    pub(super) fn rebuild_joined_nodes(&mut self) {
+    pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
+        // System services waits as long as the Talos overview has neither
+        // answered nor failed.
+        let waiting = self.kubernetes_only.is_none()
+            && self.overview.data().is_none()
+            && self.overview.error().is_none();
+        self.system_services
+            .update(cx, |services, cx| services.set_waiting(waiting, cx));
         self.column_state
             .prepare(self.kubernetes_summary.data().map(|s| s.as_ref()));
         let kubernetes = self

@@ -97,6 +97,11 @@ pub(super) struct SystemServices {
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
+    /// Whether the Talos overview has yet to answer, and what the table
+    /// shows meanwhile, with their motion drawn over it.
+    waiting: bool,
+    loading: table::LoadingRows,
+    loading_motion: Entity<table::LoadingMotion>,
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     filter: Entity<InputState>,
@@ -121,6 +126,8 @@ impl SystemServices {
             }
         });
         let (columns, width) = source::columns(&[]);
+        let loading = table::LoadingRows::new(PREFIX);
+        let loading_motion = cx.new(|_| loading.motion(table::Look::Pulse));
         Self {
             rows: Vec::new(),
             lines: Vec::new(),
@@ -128,6 +135,9 @@ impl SystemServices {
             columns,
             width,
             table: table::TableState::new(PREFIX),
+            waiting: true,
+            loading,
+            loading_motion,
             page_scroll: ScrollHandle::new(),
             filter,
             health: None,
@@ -202,6 +212,12 @@ impl SystemServices {
             )],
         );
         self.rebuild(cx);
+    }
+    pub(super) fn set_waiting(&mut self, waiting: bool, cx: &mut Context<Self>) {
+        if waiting != self.waiting {
+            self.waiting = waiting;
+            cx.notify();
+        }
     }
     #[cfg(test)]
     pub(super) fn is_unhealthy_filter(&self) -> bool {
@@ -346,7 +362,9 @@ impl Render for SystemServices {
                 table::data_table(self, window, cx)
                     .flex_1()
                     .min_h_0()
-                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT))),
+                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+                    // Over the table, so its frames redraw only the motion.
+                    .child(self.loading_motion.clone()),
             )
     }
 }

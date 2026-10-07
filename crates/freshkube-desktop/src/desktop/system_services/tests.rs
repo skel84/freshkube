@@ -69,6 +69,39 @@ fn status_chips_filter_the_services_and_clear(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_table_waits_for_the_talos_overview_until_it_answers_or_fails(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        view.update(cx, |pilot, cx| {
+            pilot.overview = crate::state::Snapshot::default();
+            pilot.nodes.clear();
+            pilot
+                .system_services
+                .update(cx, |services, cx| services.set_nodes(&[], cx));
+            pilot.rebuild_joined_nodes(cx);
+        });
+        window.render_frame(cx);
+        // The table's loading rows, under its header.
+        assert!(
+            window
+                .within("system-services-list")
+                .find("system-services-loading")
+                .visible()
+        );
+        window.find(("system-services-sort", 1usize));
+        assert!(window.try_find("system-services-empty").is_none());
+
+        // A failed read waits no more.
+        view.update(cx, |pilot, cx| pilot.simulate_failure(cx));
+        window.render_frame(cx);
+        assert!(window.try_find("system-services-loading").is_none());
+        assert!(window.find("system-services-empty").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_filter_with_no_match_says_so(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {

@@ -503,11 +503,19 @@ fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
         });
         window.render_frame(cx);
         assert!(screen.read(cx).store.is_empty());
-        assert!(window.find("resource-loading").visible());
+        // The table's loading rows, under the header the kind will keep.
+        assert!(
+            window
+                .within("resource-list")
+                .find("resource-loading")
+                .visible()
+        );
+        window.find(("resource-sort", 1usize));
 
         screen.update(cx, |screen, cx| screen.set_visible(true, window, cx));
         window.render_frame(cx);
         assert_eq!(screen.read(cx).store.len(), 22);
+        assert!(window.try_find("resource-loading").is_none());
         let first = identity_at(&screen, 0, cx);
         window.within(row_id(&first)).click("name", cx);
 

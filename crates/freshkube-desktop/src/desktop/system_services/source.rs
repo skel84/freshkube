@@ -218,6 +218,10 @@ impl TableSource for SystemServices {
         false
     }
 
+    fn loading(&self) -> Option<&table::LoadingRows> {
+        (self.waiting && self.rows.is_empty()).then_some(&self.loading)
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if !self.lines.is_empty() {
             return None;

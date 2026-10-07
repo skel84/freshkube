@@ -380,6 +380,11 @@ impl TableSource for Pilot {
     ) {
         self.open_node(key.clone(), window, cx);
     }
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        matches!(self.node_workspace.empty, Some(Empty::Loading))
+            .then_some(&self.node_workspace.loading)
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if self.node_workspace.lines.is_empty() {
             Some(

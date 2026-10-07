@@ -236,6 +236,8 @@ impl ResourcesScreen {
         table::data_table(self, window, cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
+            // Over the table, so its frames redraw only the motion.
+            .child(self.loading_motion.clone())
             .into_any_element()
     }
 
@@ -294,8 +296,9 @@ impl ResourcesScreen {
             }))
     }
 
-    /// What replaces the table: no connection, the first list, a refusal,
-    /// a failure with nothing to show, or a kind the example data lacks.
+    /// What replaces the table: no connection, a refusal, a failure with
+    /// nothing to show, or a kind the example data lacks. The first list
+    /// shows the table's loading rows instead.
     fn placeholder(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let title = self.title();
         let scope = match self.namespace.as_ref().filter(|_| self.kind.namespaced) {
@@ -326,13 +329,8 @@ impl ResourcesScreen {
             );
         };
         match self.store.read_state() {
-            ReadState::Loading => state(
-                "resource-loading",
-                page::card(cx)
-                    .p_3()
-                    .gap_3()
-                    .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.)))),
-            ),
+            // The table draws its header over loading rows.
+            ReadState::Loading => None,
             ReadState::Refused(reason) => state(
                 "resource-refused",
                 ui::empty_state(
