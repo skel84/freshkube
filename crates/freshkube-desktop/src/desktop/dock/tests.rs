@@ -633,14 +633,45 @@ fn losing_the_source_closes_every_tab_and_its_return_reopens_none(cx: &mut TestA
     let source = cx.update(|cx| pilot.read(cx).kube_source());
     cx.update_window(handle, |_, window, cx| {
         dock.update(cx, |dock, cx| {
-            dock.set_source(None, window, cx);
+            dock.set_source(None, None, window, cx);
             assert!(dock.tabs.is_empty());
             // The same connection back opens nothing it had.
-            dock.set_source(source.clone(), window, cx);
+            dock.set_source(source.clone(), None, window, cx);
             assert!(dock.tabs.is_empty());
         })
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_source_missing_for_a_while_keeps_the_tabs_and_their_shells(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    start_shell(handle, &pilot, &pods[1], cx);
+    let source = cx.update(|cx| pilot.read(cx).kube_source()).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            // As Talos without its overview or client: the same access.
+            dock.set_source(None, Some(&source.id), window, cx);
+            assert_eq!(dock.tabs.len(), 2);
+            dock.set_source(Some(source.clone()), Some(&source.id), window, cx);
+            assert_eq!(dock.tabs.len(), 2);
+        })
+    })
+    .unwrap();
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            // Another identity closes them, its source loaded or not.
+            dock.set_source(None, Some("access:another"), window, cx);
+            assert!(dock.tabs.is_empty());
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(shell::running_anywhere).is_empty());
 }
 
 #[gpui_kit::test]
@@ -678,7 +709,7 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
             dock.height = saved.height;
             dock.open = saved.open;
             dock.restore = Some(saved);
-            dock.set_source(source, window, cx);
+            dock.set_source(source, None, window, cx);
         })
     })
     .unwrap();
@@ -1627,9 +1658,9 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         let source = pilot.read(cx).kube_source();
         dock.update(cx, |dock, cx| {
-            dock.set_source(None, window, cx);
+            dock.set_source(None, None, window, cx);
             dock.restore = Some(saved);
-            dock.set_source(source, window, cx);
+            dock.set_source(source, None, window, cx);
         })
     })
     .unwrap();

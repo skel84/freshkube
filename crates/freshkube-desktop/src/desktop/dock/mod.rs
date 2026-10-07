@@ -964,16 +964,25 @@ impl Dock {
     /// tab, as the Resources page starts over: whoever changed it asked
     /// about running shells first (`Pilot::unless_shell`). The first one restores the
     /// saved tabs when its context is theirs.
+    /// The Kubernetes source, and the access identity it is for. A source
+    /// missing for a while under the same identity, as Talos's without its
+    /// overview or Kubernetes client, keeps the tabs and their shells;
+    /// another identity, or none while another context loads, closes them.
     pub(crate) fn set_source(
         &mut self,
         source: Option<KubeSource>,
+        identity: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(source) = source else {
             // Before the first connection there is nothing to close, and
             // the saved tabs wait for it.
-            if self.source.take().is_some() {
+            let kept = self
+                .source
+                .as_ref()
+                .is_some_and(|current| identity == Some(current.id.as_str()));
+            if !kept && self.source.take().is_some() {
                 let ids = self.ids(|_| true);
                 self.remove_tabs(&ids, window, cx);
             }
