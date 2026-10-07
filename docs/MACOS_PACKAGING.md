@@ -107,9 +107,11 @@ made to pass on Windows ([#353](https://github.com/skel84/freshkube/issues/353))
 
 These checks are **advisory**, separate from the macOS workflow used to promote
 release bundles. A red native run blocks the lead's approval, but it is not a
-required merge-button check; branch protection remains unchanged. Both install
-protoc; Linux also installs the pinned GPUI Kit version's X11, Wayland, font,
-WebKit and Vulkan prerequisites. A green run establishes
+required merge-button check; branch protection remains unchanged. Tests
+(Windows) is the exception while it continues on error: a red run there does
+not block approval. Once it is green on main, a test that newly fails there
+does. Every job installs protoc; Linux also installs the pinned GPUI Kit
+version's X11, Wayland, font, WebKit and Vulkan prerequisites. A green run establishes
 compilation, linting and the headless tests: the whole suite on Linux, the
 keyboard tests on Windows. The whole suite on Windows counts only where its own
 job passed; running-app checks, credential stores and packaging remain separate
@@ -121,8 +123,8 @@ Linux uses `Swatinem/rust-cache` with the `platform-check-Linux-tests` key,
 named for the test dependencies it holds since the job runs the suite; the
 action never replaces an entry whose key already exists, so a change in what
 the job compiles needs a new key before main will save it. Both Windows
-jobs remain uncached until an audit shows that adding it would preserve the macOS
-entries. Only successful `main` push, scheduled or manual runs save; PRs and
+jobs remain uncached until an audit shows that adding a cache would preserve
+the macOS entries. Only successful `main` push, scheduled or manual runs save; PRs and
 dispatches on other branches restore without saving. The
 action caches dependencies, excluding workspace crates and installed Cargo
 tools, so each PR does not add its own copy. Check the Linux entry size and
