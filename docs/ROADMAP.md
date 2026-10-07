@@ -321,7 +321,7 @@ One ordered list. A step starts when the one above it is done or explicitly runs
 #46 closed on 7 October 2026 after its closing `smoke.sh pages` pass at `915f9a5`: 16 pages in light and dark, at 1280 × 880 and 760 × 560, at 13 and 20 px text. Those captures are the new baseline.
 
 What remains, the pass's follow-ups:
-- Pages not yet like Pods: Operations' uppercase labels and carded table ([#402](https://github.com/skel84/freshkube/issues/402)), and the empty detail card on Health, Security and Lifecycle instead of the Inspector ([#399](https://github.com/skel84/freshkube/issues/399)).
+- Pages not yet like Pods: the empty detail card on Health and Security instead of the Inspector ([#399](https://github.com/skel84/freshkube/issues/399)).
 - Smaller: ages in hours beside days ([#398](https://github.com/skel84/freshkube/issues/398)), the Observability column's offset ([#403](https://github.com/skel84/freshkube/issues/403)), a hovered flame frame in light ([#404](https://github.com/skel84/freshkube/issues/404)), Deployments' width when stacked ([#405](https://github.com/skel84/freshkube/issues/405)), and the rail and column cutting icons at 760 × 560 and 20 px ([#406](https://github.com/skel84/freshkube/issues/406)).
 - [#396](https://github.com/skel84/freshkube/issues/396): tell code generation from clocks in #385's `pod-logs` process CPU, with a build whose shell parts are present but uncached, on an idle Air.
 

@@ -507,7 +507,7 @@ pub(crate) fn split_fill(
         .into_any_element()
 }
 
-fn split_at(
+pub(crate) fn split_at(
     id: &'static str,
     beside: bool,
     pane_width: f32,
@@ -843,42 +843,6 @@ pub(crate) fn stat(label: &str, value: impl Into<SharedString>, cx: &App) -> Div
                 .text_size(dp(18.))
                 .child(value.into()),
         )
-}
-
-/// A table column: a fixed width, or `None` to take the remaining space.
-#[derive(Clone, Copy)]
-pub(crate) struct Column {
-    pub(crate) label: &'static str,
-    pub(crate) width: Option<f32>,
-}
-
-pub(crate) fn cell(column: Column) -> Div {
-    let cell = div().px_3().min_w_0().whitespace_nowrap().truncate();
-    match column.width {
-        Some(width) => cell.flex_none().w(dp(width)),
-        None => cell.flex_1().min_w(dp(160.)),
-    }
-}
-
-pub(crate) fn table_head(columns: &[Column], cx: &App) -> Div {
-    let p = palette(cx);
-    h_flex()
-        .py(dp(9.))
-        .border_b_1()
-        .border_color(p.line)
-        .children(
-            columns
-                .iter()
-                .map(|column| cell(*column).child(ui::caption(column.label, cx))),
-        )
-}
-
-/// Width a table needs before it scrolls sideways, in `dp`.
-pub(crate) fn table_width(columns: &[Column]) -> f32 {
-    columns
-        .iter()
-        .map(|column| column.width.unwrap_or(160.) + 24.)
-        .sum()
 }
 
 fn skeleton(cx: &App) -> AnyElement {

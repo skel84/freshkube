@@ -1,5 +1,6 @@
 use super::*;
 use freshkube_ui::page::{self, PageHeader};
+use freshkube_ui::table::DataTable;
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -277,108 +278,17 @@ impl OperationsScreen {
         )
     }
 
-    fn render_node(
-        &self,
-        ix: usize,
-        node: &RosterNode,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let order = self.selected.iter().position(|t| t == &node.target);
-        let on = order.is_some();
-        let under_cursor = self.cursor == ix;
-        let target = node.target.clone();
-        h_flex()
-            .id(("ops-node", ix))
-            .test_support()
-            .role(Role::ListBoxOption)
-            .aria_selected(on)
-            .aria_label(format!(
-                "{} · {} · {} · {}{}",
-                node.target.name,
-                node.target.address,
-                node.role.label(),
-                match order {
-                    Some(k) => format!("selected, run order {}", k + 1),
-                    None => "not selected".to_owned(),
-                },
-                if node.responding {
-                    ""
-                } else {
-                    " · not responding to the Talos API"
-                }
-            ))
+    /// The roster as the shared table: bare and edge to edge, as tall as
+    /// its rows, scrolling sideways when the page is narrower than its
+    /// columns, with the run order and the node's name kept at the left
+    /// edge.
+    fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        DataTable::new()
+            .fit(self.roster.len().max(1))
+            .render(self, window, cx)
             .w_full()
-            .h(dp(ROW_HEIGHT))
-            .font_family(MONO_FONT)
-            .text_size(dp(12.))
-            .cursor_pointer()
-            .when(on, |this| this.bg(p.accent_soft).text_color(p.accent))
-            .when(!on, |this| this.hover(|style| style.bg(p.hover)))
-            .when(under_cursor, |this| {
-                this.border_l_2().border_color(p.accent)
-            })
-            .child(match order {
-                Some(k) => cell(COLUMNS[0])
-                    .flex()
-                    .items_center()
-                    .gap(dp(4.))
-                    .child(Icon::new(IconName::Check).size(dp(14.)))
-                    .child((k + 1).to_string()),
-                None => cell(COLUMNS[0]).child("·"),
-            })
-            .child(cell(COLUMNS[1]).child(node.target.name.clone()))
-            .child(cell(COLUMNS[2]).child(node.target.address.clone()))
-            .child(cell(COLUMNS[3]).child(node.role.label()))
-            .on_click(cx.listener(move |screen, _, window, cx| {
-                screen.cursor = ix;
-                window.focus(&screen.focus, cx);
-                screen.toggle(target.clone(), window, cx);
-            }))
-    }
-
-    fn nodes_panel(&self, roster: &[RosterNode], cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let list = if roster.is_empty() {
-            div()
-                .px_3()
-                .py_3p5()
-                .text_size(dp(12.5))
-                .text_color(p.muted)
-                .child("No node roster is available, so there is nothing to select.")
-                .into_any_element()
-        } else {
-            v_flex()
-                .children(
-                    roster
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, node)| self.render_node(ix, node, cx)),
-                )
-                .into_any_element()
-        };
-        panel(cx).overflow_hidden().child(
-            div()
-                .id("ops-node-scroll")
-                .test_support()
-                .overflow_x_scroll()
-                .child(
-                    v_flex()
-                        .w_full()
-                        .min_w(dp(table_width(&COLUMNS)))
-                        .child(table_head(&COLUMNS, cx))
-                        .child(
-                            div()
-                                .id("ops-nodes")
-                                .test_support()
-                                .role(Role::ListBox)
-                                .aria_label(
-                                    "Nodes; arrows move, Space selects, Alt+arrows reorder the run, Escape clears",
-                                )
-                                .child(list),
-                        ),
-                ),
-        )
+            .flex_none()
+            .into_any_element()
     }
 
     fn verdict_row(&self, k: usize, node: &NodeView, cx: &App) -> impl IntoElement + use<> {
@@ -972,23 +882,32 @@ impl OperationsScreen {
 impl Render for OperationsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(window, cx);
-        let page = page::padded("ops-page")
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .child(header);
-        match self.source.clone() {
+        // The table runs edge to edge under the toolbar; the notices, the
+        // operation and its options, the run and the audit sit in insets.
+        let page = page::page("ops-page")
+            .h_auto()
+            .flex_none()
+            .child(page::toolbar(cx).child(header));
+        let page = match self.source.clone() {
             Some(source) => page.child(self.render_body(&source, window, cx)),
-            None => page.child(div().id("ops-state").test_support().flex_none().child(
-                ui::empty_state(
+            None => page.child(
+                page::inset().child(div().id("ops-state").test_support().child(ui::empty_state(
                     IconName::Server,
                     "No node selected",
                     "Pick a target node in the title bar.",
                     None,
                     Vec::new(),
                     cx,
-                ),
-            )),
-        }
+                ))),
+            ),
+        };
+        div()
+            .id("ops-scroll")
+            .size_full()
+            .min_h_0()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(page)
     }
 }
 
@@ -1015,7 +934,6 @@ impl OperationsScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let roster = self.roster();
         let p = palette(cx);
         let busy = Operations::current(cx);
         let own_running = self.run.as_ref().is_some_and(|run| !run.finished);
@@ -1056,23 +974,19 @@ impl OperationsScreen {
                 .aria_label(text.clone())
                 .child(ui::warning_banner(None, text, None, cx))
         });
-        let nodes = self.nodes_panel(&roster, cx);
-        let plan = self.plan_panel(cx);
-        let wide = content_width(window) >= table_width(&COLUMNS) + PLAN_WIDTH + GAP;
-        let selection = if wide {
-            h_flex()
-                .items_start()
-                .gap(dp(GAP))
-                .child(div().flex_1().min_w_0().child(nodes))
-                .child(div().w(dp(PLAN_WIDTH)).flex_none().child(plan))
-                .into_any_element()
-        } else {
-            v_flex()
-                .gap(dp(GAP))
-                .child(nodes)
-                .child(plan)
-                .into_any_element()
-        };
+        let nodes = self.nodes_panel(window, cx);
+        // The plan sits beside the roster only while the roster still fits
+        // whole; otherwise it goes under it.
+        let beside = page_width(window) >= self.columns.1 + PLAN_WIDTH + GAP;
+        let plan = div()
+            .when_else(
+                beside,
+                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
+                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
+            )
+            .child(self.plan_panel(cx))
+            .into_any_element();
+        let selection = split_at("ops-split", beside, PLAN_WIDTH, nodes, Some(plan));
         let run = self
             .run
             .as_ref()
@@ -1080,12 +994,12 @@ impl OperationsScreen {
         let audit = self.audit_panel(cx);
         let kinds = self.kinds_panel(cx);
         let options = self.options_panel(cx);
-        v_flex()
-            .id("ops-body")
-            .test_support()
+        // The notices, the operation and its options in an inset over the
+        // roster, which the keys and the plan share.
+        let choice = page::inset()
+            .flex()
+            .flex_col()
             .gap(dp(GAP))
-            .flex_none()
-            .w_full()
             .children(busy_banner)
             .children(notice)
             .child(
@@ -1094,14 +1008,29 @@ impl OperationsScreen {
                     .text_color(p.muted)
                     .child("Changes the cluster. Every operation is previewed, confirmed and recorded in the audit log."),
             )
+            .child(kinds)
+            .child(options);
+        v_flex()
+            .id("ops-body")
+            .test_support()
+            .flex_none()
+            .w_full()
             .child(
                 div()
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
                     .on_action(cx.listener(|screen, _: &NextNode, _, cx| screen.step_cursor(1, cx)))
-                    .on_action(cx.listener(|screen, _: &PreviousNode, _, cx| screen.step_cursor(-1, cx)))
-                    .on_action(cx.listener(|screen, _: &FirstNode, _, cx| screen.step_cursor(isize::MIN, cx)))
-                    .on_action(cx.listener(|screen, _: &LastNode, _, cx| screen.step_cursor(isize::MAX, cx)))
+                    .on_action(
+                        cx.listener(|screen, _: &PreviousNode, _, cx| screen.step_cursor(-1, cx)),
+                    )
+                    .on_action(cx.listener(|screen, _: &FirstNode, _, cx| {
+                        screen.step_cursor(isize::MIN, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|screen, _: &LastNode, _, cx| {
+                            screen.step_cursor(isize::MAX, cx)
+                        }),
+                    )
                     .on_action(cx.listener(|screen, _: &ToggleNode, window, cx| {
                         if let Some(target) = screen.cursor_target() {
                             screen.toggle(target, window, cx);
@@ -1117,15 +1046,16 @@ impl OperationsScreen {
                         screen.selected.clear();
                         screen.plan_changed(window, cx);
                     }))
-                    .child(
-                        v_flex()
-                            .gap(dp(GAP))
-                            .child(kinds)
-                            .child(options)
-                            .child(selection),
-                    ),
+                    .child(choice)
+                    .child(selection),
             )
-            .children(run)
-            .child(audit)
+            .child(
+                page::inset()
+                    .flex()
+                    .flex_col()
+                    .gap(dp(GAP))
+                    .children(run)
+                    .child(audit),
+            )
     }
 }
