@@ -531,46 +531,6 @@ impl LogSource for WorkloadLogs {
     }
 }
 
-/// How many chips fit in `rows` rows of `room`, leaving the last row room
-/// for the "+N" chip when some don't. Every chip fits when they all do.
-fn chips_that_fit(
-    widths: &[Pixels],
-    more: Pixels,
-    gap: Pixels,
-    room: Pixels,
-    rows: usize,
-) -> usize {
-    // Where each chip lands, packed left to right and row by row: its row
-    // and where it ends.
-    let mut placed: Vec<(usize, Pixels)> = Vec::with_capacity(widths.len());
-    for &width in widths {
-        let (row, end) = match placed.last() {
-            None => (0, width),
-            Some(&(row, end)) if end + gap + width <= room => (row, end + gap + width),
-            Some(&(row, _)) => (row + 1, width),
-        };
-        if row >= rows {
-            break;
-        }
-        placed.push((row, end));
-    }
-    if placed.len() == widths.len() {
-        return widths.len();
-    }
-    // Some don't fit: take chips off the end until "+N" fits after the
-    // last one, or alone at the start of its row.
-    while let Some(&(row, end)) = placed.last() {
-        if end + gap + more <= room {
-            break;
-        }
-        placed.pop();
-        if placed.last().is_none_or(|&(previous, _)| previous < row) {
-            break;
-        }
-    }
-    placed.len()
-}
-
 /// Short labels for `pod/container` tags: each pod name without the prefix
 /// all of them share, up to a `-` (a ReplicaSet's pods keep their random
 /// suffix, a StatefulSet's their ordinal), and the container only when

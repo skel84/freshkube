@@ -5,18 +5,15 @@ use std::{
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, Pixels, Role, SharedString, Task, TestSupportExt, Toggled,
-    Window,
+    AnyElement, Context, Pixels, Role, SharedString, Task, TestSupportExt, Window,
     component::{
-        Disableable, Icon, Sizable,
+        Disableable, Sizable,
         button::{Button, ButtonVariants},
         h_flex,
-        scroll::ScrollableElement,
         tooltip::Tooltip,
     },
     div,
     prelude::*,
-    px, size,
 };
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::{runtime::Handle, sync::mpsc};
@@ -25,8 +22,9 @@ use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::{LogPanel, LogSource};
 use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
-use crate::palette::palette;
 use crate::ui;
+
+mod catalog;
 
 /// The Logs page's source: one Talos node's service catalog, the services
 /// being collected, their stream and their failures.
@@ -45,8 +43,8 @@ pub(crate) struct TalosLogs {
     pub(super) collection_active: bool,
     /// The latest failure of each collected service.
     errors: BTreeMap<ServiceId, String>,
-    /// The service catalog's height this frame: at most two rows of chips.
-    catalog_height: Pixels,
+    /// What the controls draw of the service catalog.
+    picker: catalog::Picker,
 }
 
 impl TalosLogs {
@@ -64,7 +62,7 @@ impl TalosLogs {
             delivery: None,
             collection_active: false,
             errors: BTreeMap::new(),
-            catalog_height: px(0.),
+            picker: catalog::Picker::default(),
         }
     }
 
@@ -96,24 +94,22 @@ impl LogSource for TalosLogs {
         window: &mut Window,
         cx: &mut Context<LogPanel>,
     ) {
-        let mut catalog_content = view.render_catalog_content(cx).into_any_element();
-        let catalog_size = catalog_content.layout_as_root(
-            size(
-                AvailableSpace::Definite((width - ui::dp_px(90., window)).max(px(0.))),
-                AvailableSpace::MinContent,
-            ),
-            window,
-            cx,
-        );
-        view.source_mut().catalog_height =
-            catalog_size.height.min(ui::dp_px(26. * 2. + 6., window));
+        catalog::fit(view, width, window, cx);
     }
 
     fn controls(view: &LogPanel, cx: &mut Context<LogPanel>) -> Vec<AnyElement> {
-        vec![
-            view.render_header(cx).into_any_element(),
-            view.render_services(cx).into_any_element(),
-        ]
+        let header = view.render_header(cx);
+        let mut controls = vec![match catalog::compact(view, cx) {
+            Some(picker) => h_flex()
+                .items_center()
+                .gap_3()
+                .child(picker)
+                .child(header.flex_1().min_w_0())
+                .into_any_element(),
+            None => header.into_any_element(),
+        }];
+        controls.extend(view.render_services(cx).map(IntoElement::into_any_element));
+        controls
     }
 
     fn empty_message(view: &LogPanel) -> SharedString {
@@ -180,6 +176,7 @@ pub(crate) trait TalosPanel: Sized + 'static {
 
 impl TalosPanel for LogPanel {
     fn new(runtime: Handle, tail: i32, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.bind_keys(catalog::key_bindings());
         Self::with_source(TalosLogs::new(runtime, tail), window, cx)
     }
 
@@ -208,6 +205,7 @@ impl TalosPanel for LogPanel {
             source.collecting.clear();
             source.defaults_applied = false;
             source.errors.clear();
+            source.picker.open = false;
         }
         self.source_mut().target = target;
         let mut catalog: Vec<_> = services
@@ -278,6 +276,7 @@ impl TalosPanel for LogPanel {
         let source = self.source_mut();
         source.collecting = TalosLogs::default_collection(&source.services);
         source.errors.clear();
+        source.picker.open = false;
         self.preload(events, cx);
         self.set_shown(self.source().services.iter().cloned().collect());
         self.reveal_last();
@@ -405,10 +404,8 @@ pub(super) trait Collection: Sized + 'static {
     /// The title, the node and the Start or Stop button.
     fn render_header(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
 
-    /// The service catalog: what to collect, and what to show.
-    fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
-
-    fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div;
+    /// The service catalog's rows: what to collect, and what to show.
+    fn render_services(&self, cx: &mut Context<Self>) -> Option<gpui_kit::Div>;
 }
 
 impl Collection for LogPanel {
@@ -637,148 +634,35 @@ impl Collection for LogPanel {
             )
     }
 
-    fn render_services(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let catalog_height = self.source().catalog_height;
-        h_flex()
-            .items_start()
-            .gap_2()
-            .child(
-                div()
-                    .id("logs-services-label")
-                    .pt(ui::dp(6.))
-                    .tooltip(|window, cx| {
-                        Tooltip::new("Collect up to 16 services. The eye hides a service's lines without stopping collection.")
-                            .build(window, cx)
-                    })
-                    .child(ui::caption("Services", cx)),
-            )
-            .child(
-                div()
-                    .id("logs-services")
-                    .role(Role::Group)
-                    .aria_label("Services to collect and show")
-                    .flex_1()
-                    .min_w_0()
-                    .h(catalog_height)
-                    .min_h_0()
-                    .child(
-                        self.render_catalog_content(cx)
-                            .h_full()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .id("logs-services-scroll"),
-                    ),
-            )
-    }
-
-    fn render_catalog_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let p = palette(cx);
-        h_flex()
-            .flex_wrap()
-            .gap(ui::dp(6.))
-            .children(self.source().services.iter().map(|service| {
-                let collect_service = service.clone();
-                let show_service = service.clone();
-                let collecting = self.source().collecting.contains(service);
-                let showing = self.shown().contains(service);
-                let count = self.service_count(service);
-                let full = !collecting && self.source().collecting.len() >= 16;
-                h_flex()
-                    .h(ui::dp(26.))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(if collecting {
-                        p.accent_line
-                    } else {
-                        p.line_strong
-                    })
-                    .bg(if collecting { p.accent_soft } else { p.surface })
-                    .overflow_hidden()
-                    .child(
-                        h_flex()
-                            .id(SharedString::from(format!("collect-{}", service.as_str())))
-                            .test_support()
-                            .role(Role::CheckBox)
-                            .aria_toggled(if collecting {
-                                Toggled::True
-                            } else {
-                                Toggled::False
-                            })
-                            .aria_label(format!("Collect {}", service.as_str()))
-                            .tab_index(0)
-                            .h_full()
-                            .pl(ui::dp(10.))
-                            .pr(ui::dp(if collecting || count > 0 { 4. } else { 10. }))
-                            .gap(ui::dp(5.))
-                            .when(!full, |this| this.cursor_pointer())
-                            .when(full, |this| this.opacity(0.5))
-                            .font_family(ui::MONO_FONT)
-                            .text_size(ui::dp(12.))
-                            .text_color(if collecting { p.ink } else { p.muted })
-                            .when(collecting, |this| {
-                                this.child(
-                                    Icon::new(IconName::Check)
-                                        .size(ui::dp(13.))
-                                        .text_color(p.accent),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .when(!showing, |this| this.line_through().text_color(p.muted))
-                                    .child(service.as_str().to_owned()),
-                            )
-                            .when(count > 0, |this| {
-                                this.child(
-                                    div()
-                                        .text_size(ui::dp(10.5))
-                                        .text_color(p.muted)
-                                        .child(count.to_string()),
-                                )
-                            })
-                            .when(!full, |this| {
-                                this.on_click(cx.listener(move |this, _, _, cx| {
-                                    let checked =
-                                        !this.source().collecting.contains(&collect_service);
-                                    this.toggle_collection(collect_service.clone(), checked, cx)
-                                }))
-                            }),
-                    )
-                    .when(collecting || count > 0, |this| {
-                        this.child(
-                            h_flex()
-                                .id(SharedString::from(format!("show-{}", service.as_str())))
-                                .test_support()
-                                .role(Role::CheckBox)
-                                .aria_toggled(if showing {
-                                    Toggled::True
-                                } else {
-                                    Toggled::False
-                                })
-                                .aria_label(format!(
-                                    "{} {} lines",
-                                    if showing { "Hide" } else { "Show" },
-                                    service.as_str()
-                                ))
-                                .tab_index(0)
-                                .h_full()
-                                .pl(ui::dp(4.))
-                                .pr(ui::dp(9.))
-                                .cursor_pointer()
-                                .child(
-                                    Icon::new(if showing {
-                                        IconName::Eye
-                                    } else {
-                                        IconName::EyeOff
-                                    })
-                                    .size(ui::dp(13.))
-                                    .text_color(p.muted),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.toggle_shown(&show_service, cx);
-                                })),
-                        )
-                    })
-            }))
+    fn render_services(&self, cx: &mut Context<Self>) -> Option<gpui_kit::Div> {
+        let rows = catalog::rows(self, cx)?;
+        Some(
+            h_flex()
+                .items_start()
+                .gap_2()
+                .child(
+                    div()
+                        .id("logs-services-label")
+                        .flex_none()
+                        .w(ui::dp(82.))
+                        .pt(ui::dp(6.))
+                        .tooltip(|window, cx| {
+                            Tooltip::new("Collect up to 16 services. The eye hides a service's lines without stopping collection.")
+                                .build(window, cx)
+                        })
+                        .child(ui::caption("Services", cx)),
+                )
+                .child(
+                    div()
+                        .id("logs-services")
+                        .test_support()
+                        .role(Role::Group)
+                        .aria_label("Services to collect and show")
+                        .flex_1()
+                        .min_w_0()
+                        .child(rows),
+                ),
+        )
     }
 }
 

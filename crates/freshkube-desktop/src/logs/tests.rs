@@ -1,5 +1,5 @@
 use gpui_kit::{
-    AppContext, Entity, ScrollDelta, TestAppContext, WindowHandle,
+    AppContext, Entity, ScrollDelta, SharedString, TestAppContext, WindowHandle,
     component::Root,
     point, px, size,
     test::{TestAppContextExt, TestWindowExt},
@@ -163,7 +163,12 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             window.click("logs-follow", cx);
             assert!(!panel.read(cx).following());
             assert!(panel.read(cx).source().collection_active);
-            window.click("show-apid", cx);
+            // The test window is short, so the eye is in the services list.
+            window.click("logs-services-more", cx);
+            window.render_frame(cx);
+            window.click("list-show-apid", cx);
+            window.render_frame(cx);
+            window.click("logs-services-more", cx);
             let view = panel.read(cx);
             assert!(!view.shown().contains(&ServiceId::from("apid")));
             assert_eq!(view.source().collecting, collected);
@@ -261,4 +266,368 @@ fn talos_logs_keep_the_shared_stream_wording(cx: &mut TestAppContext) {
             "Pause to review. Collection keeps running."
         )
     });
+}
+
+/// Twelve services, one line each, in a window of the given size.
+fn mount_catalog(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<LogPanel>, WindowHandle<Root>) {
+    mount_services(cx, width, height, CATALOG.map(str::to_owned).to_vec())
+}
+
+/// These services, one line each, in a window of the given size.
+fn mount_services(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    services: Vec<String>,
+) -> (Runtime, Entity<LogPanel>, WindowHandle<Root>) {
+    let runtime = Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+    });
+    let events: Vec<LogEvent> = services
+        .iter()
+        .map(|service| LogEvent::new(service.as_str(), format!("info {service} started")))
+        .collect();
+    let mut panel = None;
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = LogPanel::new(runtime.handle().clone(), 100, window, cx);
+            view.set_fixture(events, window, cx);
+            view
+        });
+        panel = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    (runtime, panel.unwrap(), handle)
+}
+
+const CATALOG: [&str; 12] = [
+    "apid",
+    "auditd",
+    "containerd",
+    "cri",
+    "dashboard",
+    "etcd",
+    "kubelet",
+    "machined",
+    "syslogd",
+    "trustd",
+    "udevd",
+    "ext-example",
+];
+
+/// The services whose pill draws in the panel's rows.
+fn in_rows(window: &gpui_kit::Window) -> Vec<&'static str> {
+    CATALOG
+        .into_iter()
+        .filter(|service| {
+            window
+                .try_find(SharedString::from(format!("collect-{service}")))
+                .is_some()
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn a_wide_panel_shows_every_service_in_its_rows(cx: &mut TestAppContext) {
+    let (_runtime, _panel, handle) = mount_catalog(cx, 1100., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(in_rows(window), CATALOG.to_vec());
+        assert!(window.try_find("logs-services-more").is_none());
+        assert!(window.find("logs-services").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_narrow_panel_fits_two_rows_and_lists_every_service(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let shown = in_rows(window);
+        assert!(
+            !shown.is_empty() && shown.len() < CATALOG.len(),
+            "{shown:?}"
+        );
+        // The pills that fit come first, in the catalog's order, in two
+        // rows at most, and "+N" counts the rest.
+        assert_eq!(shown, CATALOG[..shown.len()].to_vec());
+        let mut tops: Vec<_> = shown
+            .iter()
+            .map(|service| {
+                window
+                    .find(SharedString::from(format!("collect-{service}")))
+                    .bounds()
+                    .top()
+            })
+            .collect();
+        tops.dedup();
+        assert!(tops.len() <= 2, "{tops:?}");
+        let hidden = CATALOG.len() - shown.len();
+        assert_eq!(
+            window.find("logs-services-more").label(),
+            Some(format!("+{hidden}").as_str())
+        );
+
+        // The list holds every service; a hidden one collects from it.
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+        for service in CATALOG {
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("list-collect-{service}")))
+                    .is_some()
+            );
+        }
+        let last = CATALOG[CATALOG.len() - 1];
+        window.click(SharedString::from(format!("list-collect-{last}")), cx);
+        window.render_frame(cx);
+        assert!(
+            panel
+                .read(cx)
+                .source()
+                .collecting
+                .contains(&ServiceId::from(last))
+        );
+        assert_eq!(
+            window
+                .find(SharedString::from(format!("list-collect-{last}")))
+                .checked(),
+            Some(true)
+        );
+        // Its eye joins it, and hides its lines without stopping it.
+        window.click(SharedString::from(format!("list-show-{last}")), cx);
+        window.render_frame(cx);
+        assert!(!panel.read(cx).shown().contains(&ServiceId::from(last)));
+        assert!(
+            panel
+                .read(cx)
+                .source()
+                .collecting
+                .contains(&ServiceId::from(last))
+        );
+    })
+    .unwrap();
+}
+
+/// Presses Tab until `id`, whose focus is observed, has the keyboard.
+fn tab_to(window: &mut gpui_kit::Window, id: &str, cx: &mut gpui_kit::App) {
+    for _ in 0..64 {
+        if window.find(SharedString::from(id.to_owned())).focused() == Some(true) {
+            return;
+        }
+        window.press("tab", cx);
+        window.render_frame(cx);
+    }
+    panic!("{id} is not reachable with Tab");
+}
+
+#[gpui_kit::test]
+fn the_keyboard_toggles_pills_in_the_list_and_escape_hands_it_back(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        panel.update(cx, |view, cx| view.focus_lines(window, cx));
+        window.render_frame(cx);
+        tab_to(window, "logs-services-more", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+
+        // The list's first pill takes the next Tab. Space and Enter toggle
+        // it, and the list stays open.
+        let first = ServiceId::from(CATALOG[0]);
+        let collecting = |cx: &gpui_kit::App| panel.read(cx).source().collecting.contains(&first);
+        let before = collecting(cx);
+        window.press("tab", cx);
+        window.render_frame(cx);
+        window.press("space", cx);
+        window.render_frame(cx);
+        assert_eq!(collecting(cx), !before);
+        assert!(window.find("logs-services-list").visible());
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(collecting(cx), before);
+        assert!(window.find("logs-services-list").visible());
+        // Its eye hides its lines.
+        window.press("tab", cx);
+        window.render_frame(cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(!panel.read(cx).shown().contains(&first));
+        assert_eq!(collecting(cx), before);
+        assert!(window.find("logs-services-list").visible());
+
+        // Escape closes the list and gives the keyboard back to its button.
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("logs-services-list").is_none());
+        assert_eq!(window.find("logs-services-more").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn closing_a_list_the_mouse_opened_gives_the_keyboard_to_the_lines(cx: &mut TestAppContext) {
+    let (_runtime, _panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("logs-services-list").is_none());
+        assert_eq!(window.find("logs-viewport").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_list_closes_when_every_pill_fits_again(cx: &mut TestAppContext) {
+    let (_runtime, _panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+    })
+    .unwrap();
+    // Wide enough for every pill: no "+N" is left to hold the list.
+    cx.simulate_window_resize(handle.into(), size(px(1100.), px(820.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(in_rows(window), CATALOG.to_vec());
+        assert!(window.try_find("logs-services-more").is_none());
+        assert!(window.try_find("logs-services-list").is_none());
+    })
+    .unwrap();
+}
+
+/// With sixteen services collected, the others can't be pressed, so Tab
+/// passes them by, and Enter never reaches the list to close it.
+#[gpui_kit::test]
+fn a_full_pill_is_no_tab_stop(cx: &mut TestAppContext) {
+    let services: Vec<String> = (0..20).map(|ix| format!("ext-example-{ix:02}")).collect();
+    let (_runtime, panel, handle) = mount_services(cx, 460., 820., services.clone());
+    cx.update_window(handle.into(), |_, window, cx| {
+        panel.update(cx, |view, cx| {
+            for service in &services {
+                view.toggle_collection(ServiceId::from(service.as_str()), true, cx);
+            }
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let collecting = panel.read(cx).source().collecting.clone();
+        assert_eq!(collecting.len(), 16);
+        panel.update(cx, |view, cx| view.focus_lines(window, cx));
+        window.render_frame(cx);
+        tab_to(window, "logs-services-more", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+        let full: Vec<_> = services
+            .iter()
+            .filter(|service| !collecting.contains(&ServiceId::from(service.as_str())))
+            .map(|service| SharedString::from(format!("list-collect-{service}")))
+            .collect();
+        assert!(!full.is_empty());
+        for _ in 0..48 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            for pill in &full {
+                assert_ne!(window.find(pill.clone()).focused(), Some(true), "{pill}");
+            }
+        }
+        assert!(window.find("logs-services-list").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_long_list_scrolls_inside_a_short_window(cx: &mut TestAppContext) {
+    // Thirty services at 20 px text in the shortest window.
+    let services: Vec<String> = (0..30).map(|ix| format!("ext-example-{ix:02}")).collect();
+    let (_runtime, _panel, handle) = mount_services(cx, 760., 560., services.clone());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.set_rem_size(px(20.));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let list = window.find("logs-services-list").bounds();
+        assert!(list.top() >= px(0.), "{list:?}");
+        assert!(list.bottom() <= px(560.), "{list:?}");
+        // The pills scroll inside it: the last starts below its room.
+        let scroll = window.find("logs-services-list-scroll").bounds();
+        assert!(scroll.bottom() <= list.bottom());
+        let last = window
+            .find(SharedString::from(format!(
+                "list-collect-{}",
+                services[services.len() - 1]
+            )))
+            .bounds();
+        assert!(last.top() > scroll.bottom(), "{last:?} {scroll:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_short_window_puts_the_service_picker_on_the_collection_row(cx: &mut TestAppContext) {
+    // Short at any text size; the test window's rem is 16 px.
+    let (_runtime, panel, handle) = mount_catalog(cx, 760., 560.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        // No row of pills: the picker sits beside Start collecting.
+        assert!(in_rows(window).is_empty());
+        assert!(window.try_find("logs-services").is_none());
+        let picker = window.find("logs-services-more");
+        assert_eq!(picker.label(), Some("3 of 12 services"));
+        let start = window.find("logs-collection").bounds();
+        assert!(picker.bounds().bottom() > start.top() && picker.bounds().top() < start.bottom());
+
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+        window.click("list-collect-cri", cx);
+        window.render_frame(cx);
+        assert!(
+            panel
+                .read(cx)
+                .source()
+                .collecting
+                .contains(&ServiceId::from("cri"))
+        );
+        assert_eq!(
+            window.find("logs-services-more").label(),
+            Some("4 of 12 services")
+        );
+
+        // Another node's catalog starts with the list closed.
+        panel.update(cx, |view, cx| {
+            view.set_fixture(fixture_events(), window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("logs-services-list").is_none());
+    })
+    .unwrap();
 }

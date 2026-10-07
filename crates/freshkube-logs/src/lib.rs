@@ -240,6 +240,49 @@ pub trait LogSource: Sized + 'static {
     }
 }
 
+/// What sits above the list in the panel: the toolbar, then any notices,
+/// which take their whole height up to a quarter of what the list leaves.
+#[derive(Clone, Copy, Default)]
+struct Chrome {
+    toolbar: Pixels,
+    /// The notices' whole height, before the cap; zero without notices.
+    notices: Pixels,
+    /// Between the notices and the list.
+    gap: Pixels,
+    /// The list's least height.
+    least_list: Pixels,
+}
+
+impl Chrome {
+    fn new(toolbar: Pixels, notices: Pixels, gap: Pixels, rem: Pixels) -> Self {
+        Self {
+            toolbar,
+            notices,
+            gap,
+            least_list: rem * LIST_LEAST_REMS,
+        }
+    }
+
+    /// The notices' height in a panel this tall.
+    fn notices_in(&self, panel: Pixels) -> Pixels {
+        let budget = (panel - self.least_list).max(px(0.));
+        self.notices.min(budget * 0.25)
+    }
+
+    fn height_for_list(&self, list: Pixels) -> Pixels {
+        let list = list.max(self.least_list);
+        let fixed = self.toolbar + self.gap;
+        let whole = list + fixed + self.notices;
+        if self.notices_in(whole) >= self.notices {
+            whole
+        } else {
+            // The notices are capped: a quarter of what grows the panel
+            // goes to them.
+            (list + fixed - self.least_list * 0.25) / 0.75
+        }
+    }
+}
+
 pub struct LogView<S: LogSource> {
     source: S,
     /// Sources whose lines are shown; the others stay retained but hidden.
@@ -263,12 +306,11 @@ pub struct LogView<S: LogSource> {
     /// until the counts change.
     levels_tip: ([usize; 5], SharedString),
     panel_height: Option<Pixels>,
+    /// What sits above the list, as last measured.
+    chrome: Chrome,
     /// Scrolls the whole panel when it is shorter than its controls and
     /// notices over the list's least height, so none of them is cut.
     panel_scroll: ScrollHandle,
-    /// The height the whole toolbar, the notices and the list's least
-    /// height take, as last drawn: the least a host should give the panel.
-    least_height: Pixels,
     measured: Option<MeasurementKey>,
     sizes: Rc<Vec<Size<Pixels>>>,
     /// The sum of the heights in `sizes`, kept in step with every change to
@@ -357,8 +399,8 @@ impl<S: LogSource> LogView<S> {
             compact: false,
             levels_tip: ([usize::MAX; 5], SharedString::default()),
             panel_height: None,
+            chrome: Chrome::default(),
             panel_scroll: ScrollHandle::new(),
-            least_height: Pixels::ZERO,
             measured: None,
             sizes: Rc::new(Vec::new()),
             sizes_height: 0.,
@@ -473,16 +515,25 @@ impl<S: LogSource> LogView<S> {
     /// its whole toolbar and notices, as last drawn, and the list's least
     /// height, room for three lines. Zero until the view first draws.
     pub fn least_height(&self) -> Pixels {
-        self.least_height
+        self.chrome.height_for_list(Pixels::ZERO)
     }
 
-    /// Keeps the least height measured while drawing; a change asks for a
-    /// frame, so a host that sizes the panel by it sees it.
-    fn note_least_height(&mut self, least: Pixels, window: &mut Window, cx: &mut Context<Self>) {
-        if (self.least_height - least).abs() < px(0.5) {
+    /// The panel's height that leaves the list `list`, or its least height,
+    /// under the toolbar and notices, as last measured. A frame that
+    /// scrolls around the log gives it this height, so the list fills the
+    /// frame's room once the frame has scrolled past them.
+    pub fn height_for_list(&self, list: Pixels) -> Pixels {
+        self.chrome.height_for_list(list)
+    }
+
+    /// Keeps what sits above the list as measured while drawing; a change
+    /// asks for a frame, so a host that sizes the panel by it sees it.
+    fn note_chrome(&mut self, chrome: Chrome, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self.chrome;
+        self.chrome = chrome;
+        if (before.height_for_list(Pixels::ZERO) - self.least_height()).abs() < px(0.5) {
             return;
         }
-        self.least_height = least;
         let view = cx.entity().downgrade();
         window.on_next_frame(move |_, cx| {
             _ = view.update(cx, |_, cx| cx.notify());

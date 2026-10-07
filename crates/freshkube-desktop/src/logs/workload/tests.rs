@@ -944,7 +944,7 @@ fn chips_fit_their_rows_and_leave_room_for_more() {
     use gpui_kit::px;
     let fit = |widths: &[f32], rows| {
         let widths: Vec<_> = widths.iter().map(|&width| px(width)).collect();
-        super::chips_that_fit(&widths, px(30.), px(6.), px(100.), rows)
+        crate::logs::chips_that_fit(&widths, px(30.), px(6.), px(100.), rows)
     };
     // All fit: no "+N" needed.
     assert_eq!(fit(&[40., 40.], 1), 2);

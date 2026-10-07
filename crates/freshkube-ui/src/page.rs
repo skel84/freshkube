@@ -36,6 +36,10 @@ pub const SHORT_HEIGHT: f32 = 620.;
 pub const SHORT_LIST_HEIGHT: f32 = 180.;
 /// A toolbar row's height: the header's row, and its secondary row.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
+/// The app frame's header, above every page, in dp.
+pub const APP_HEADER_HEIGHT: f32 = 52.;
+/// The app frame's status bar, below every page, in dp.
+pub const STATUS_BAR_HEIGHT: f32 = 28.;
 /// The header's filter beside the title, at its full width.
 const FILTER_WIDTH: f32 = 150.;
 /// The filter's width when the row is full with every control folded.
