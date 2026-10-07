@@ -189,8 +189,6 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-/// The rows the fit checks read: the unhealthy one, and one of the
-/// baremetal node's, whose long name is the widest and truncates.
 /// The selected row's id, read from the page.
 fn selected(view: &gpui_kit::Entity<crate::desktop::Pilot>, cx: &gpui_kit::App) -> Option<String> {
     view.read(cx)
@@ -260,13 +258,13 @@ fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click(UNHEALTHY, cx);
         window.click("system-service-filter", cx);
-        window.input("kubelet", cx);
+        window.input("talos-wk-fra1-02", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        // l, o and e went into the filter, not to the selected row.
+        // l and o went into the filter, not to the selected row.
         assert_eq!(view.read(cx).page, Page::SystemServices);
         assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
         assert!(window.try_find(HEALTHY).is_none());
@@ -297,6 +295,9 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
         window.render_frame(cx);
+        // Another row is selected: the menu takes its own row.
+        window.click(UNHEALTHY, cx);
+        window.render_frame(cx);
         window.right_click(HEALTHY, cx);
     })
     .unwrap();
@@ -324,11 +325,37 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
     cx.update_window(handle, |_, _, cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.page, Page::Nodes);
+        assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
         assert_eq!(pilot.selected_service.as_deref(), Some("apid"));
         assert_eq!(
             pilot.node_workspace.tab,
             crate::desktop::nodes::NodeTab::Services
         );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_empty_state_has_no_menu(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-7", cx);
+        window.render_frame(cx);
+        window.click("system-service-filter", cx);
+        window.input("no-such-service", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.right_click("system-services-empty", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("popup-menu").is_none());
+        assert_eq!(selected(&view, cx), None);
     })
     .unwrap();
 }
