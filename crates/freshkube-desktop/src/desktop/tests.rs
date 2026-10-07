@@ -1862,6 +1862,38 @@ fn the_nodes_loading_motion_stops_on_a_failure_or_the_cards(cx: &mut TestAppCont
     .unwrap();
 }
 
+/// Lifecycle's roster pulses through the shell while it waits for its
+/// first answer, and the motion stops when the rows or a failure arrive.
+#[gpui_kit::test]
+fn the_lifecycle_loading_motion_stops_on_its_answer_or_a_failure(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| window.press("secondary-9", cx))
+        .unwrap();
+    cx.run_until_parked();
+    let lifecycle = cx.update(|cx| view.read(cx).lifecycle.clone());
+    for (ok, shown) in [(true, "lifecycle-list"), (false, "lifecycle-state")] {
+        cx.update(|cx| lifecycle.update(cx, |lifecycle, cx| lifecycle.wait_again(cx)));
+        cx.run_until_parked();
+        motion_frame(cx, handle);
+        assert!(motion_frame(cx, handle) > 0, "the rows move before {shown}");
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.find("lifecycle-loading").visible());
+            assert!(view.read(cx).page_loading_motion(cx).is_some());
+        })
+        .unwrap();
+        cx.update(|cx| lifecycle.update(cx, |lifecycle, cx| lifecycle.answer(ok, cx)));
+        cx.run_until_parked();
+        assert_motion_stopped(cx, handle, shown);
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.find(shown).visible());
+            assert!(window.try_find("lifecycle-loading").is_none());
+            assert!(view.read(cx).page_loading_motion(cx).is_none());
+        })
+        .unwrap();
+    }
+}
+
 /// A page that hides takes its motion with it: the shell no longer mounts
 /// it, so nothing asks frames, and a shell redraw doesn't draw it.
 #[gpui_kit::test]
