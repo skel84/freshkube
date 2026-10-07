@@ -8,7 +8,7 @@ use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
 use super::observe::{
-    hashes_agree, manages, pods_running, pods_running_other, rollout_pods,
+    freight_side, hashes_agree, manages, pods_running, pods_running_other, rollout_pods,
     rollout_state as rollout_seen, summary_images,
 };
 use super::*;
@@ -88,6 +88,9 @@ pub(super) fn rollout_links(
         let state = rollout_state(rollout, evidence.analysis_runs.read());
         let mut seen = vec![manages(app, rollout)];
         seen.extend(rollout_seen(rollout, pinned.as_ref()));
+        if let Some(digest) = &pinned {
+            seen.extend(freight_side(freight, &Key::Digest(digest.clone())));
+        }
         links.push(match pinned {
             Some(digest) => Link::new(
                 Hop::Application,

@@ -190,13 +190,13 @@ pub(super) fn freight_side(freight: &Freight, key: &Key) -> Vec<Observation> {
         return Vec::new();
     };
     let field = match key {
-        Key::Digest(_) => "/images",
-        _ => "/commits",
+        Key::Digest(_) => freight.pointer("images"),
+        _ => freight.pointer("commits"),
     };
     vec![Observation::reported(
         role::KARGO,
         freight.object_ref(),
-        field,
+        &field,
         Some(&value),
     )]
 }
@@ -206,7 +206,7 @@ pub(super) fn promotion_digest(promotion: &Promotion, digest: &Digest) -> Vec<Ob
     vec![Observation::reported(
         role::KARGO,
         promotion.object_ref(),
-        promotion.digests_at,
+        promotion.digest_pointer(digest),
         Some(digest.as_str()),
     )]
 }
@@ -232,7 +232,7 @@ pub(super) fn stage_digest(stage: &Stage, digest: &Digest) -> Vec<Observation> {
     vec![Observation::reported(
         role::KARGO,
         stage.object_ref(),
-        stage.digests_at,
+        stage.digest_pointer(digest),
         Some(digest.as_str()),
     )]
 }
@@ -242,7 +242,7 @@ pub(super) fn stage_names(stage: &Stage, freight: &str) -> Vec<Observation> {
     vec![Observation::reported(
         role::KARGO,
         stage.object_ref(),
-        stage.freight_at,
+        stage.freight_pointer(freight),
         Some(freight),
     )]
 }

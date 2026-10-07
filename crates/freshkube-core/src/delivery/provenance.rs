@@ -6,7 +6,7 @@ use super::fixtures::*;
 use super::join::{Confidence, Hop, Key, Link, Trail, render};
 use super::observation::{Fact, Observation, role};
 use super::source::Source;
-use super::tests::{ENV, link, observed_at, one, promoted, run, run_with};
+use super::tests::{ENV, link, observed_at, one, promoted, run, run_with, squash_world};
 use crate::resources::{Failure, FailureKind};
 
 /// The kinds of read object whose observations stand on a hop's side of a
@@ -64,6 +64,9 @@ const KNOWN_GAPS: &[(&str, &str, &str)] = &[
     // would be reported (see the test on a task result).
     ("commit", "PipelineRun", "PipelineRun"),
     ("pull request", "PipelineRun", "PipelineRun"),
+    // The commit joined a Freight with no build read, or with a build that
+    // reports no digest: only its declared labels name the commit.
+    ("PipelineRun", "Freight", "PipelineRun"),
     // Chains' `signed` annotation is all that says it, and it is declared.
     ("PipelineRun", "supply chain", "supply chain"),
     // The Rollout's spec pin is declared, and Argo CD's resource list names
@@ -97,9 +100,30 @@ async fn confirmed() -> Trail {
     run_with(&world, &ENV, &github(), Some(GH_REPO)).await
 }
 
+/// Every world the file builds, and some where a side has little to show.
+async fn every_trail() -> Vec<Trail> {
+    // The commit joins a Freight with no build read at all.
+    let mut alone = healthy();
+    alone.tekton = alone.tekton.with("pipelineruns", vec![]);
+    // The build reports no image digest, so only labels name the commit.
+    let mut no_digest = healthy();
+    no_digest.tekton = no_digest
+        .tekton
+        .with("pipelineruns", vec![pipeline_run(SHA, true, None)]);
+    vec![
+        confirmed().await,
+        run(&healthy(), &ENV).await,
+        run(&promoted(NEW, "Succeeded", PUSHED), &ENV).await,
+        run_with(&squash_world(), &ENV, &github(), Some(GH_REPO)).await,
+        run(&without_rollouts(), &ENV).await,
+        run(&alone, &ENV).await,
+        run(&no_digest, &ENV).await,
+    ]
+}
+
 #[tokio::test]
 async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
-    let trails = [confirmed().await];
+    let trails = every_trail().await;
     let mut checked = BTreeSet::new();
     let mut gaps = BTreeSet::new();
     for trail in &trails {
@@ -169,7 +193,7 @@ async fn a_result_that_names_the_commit_is_reported_evidence_for_the_run() {
 }
 
 #[tokio::test]
-async fn a_conclusion_is_the_joins_and_names_no_field() {
+async fn a_conclusion_is_the_joins_and_never_an_objects() {
     let trail = confirmed().await;
     let concluded: Vec<&Observation> = trail
         .links
@@ -406,13 +430,7 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
     let healthy = run(&healthy(), &ENV).await;
     let promoted = run(&promoted(NEW, "Succeeded", PUSHED), &ENV).await;
     let confirmed = confirmed().await;
-    let squash = run_with(
-        &super::tests::squash_world(),
-        &ENV,
-        &github(),
-        Some(GH_REPO),
-    )
-    .await;
+    let squash = run_with(&squash_world(), &ENV, &github(), Some(GH_REPO)).await;
     let got: Vec<[usize; 3]> = [&healthy, &promoted, &confirmed, &squash]
         .iter()
         .map(|trail| {
@@ -475,4 +493,66 @@ fn the_rule_fails_on_a_side_with_nothing_read() {
     // What the pods or another hop report is not this side.
     assert!(!stands_on(&link(vec![reported.clone()]), Hop::Application));
     assert!(stands_on(&link(vec![declared, reported]), Hop::Rollout));
+}
+
+#[test]
+fn each_value_keeps_the_field_it_was_read_from() {
+    use super::kargo::{parse_freight, parse_promotion, parse_stage};
+    use super::observation::pointer_segment;
+    let digest = |hex: char| format!("sha256:{}", hex.to_string().repeat(64));
+    let (x, y) = (digest('1'), digest('2'));
+    let parsed = |d: &str| super::Digest::parse(d).unwrap();
+    // Older Kargo: the current Freight A, and the last Promotion's B.
+    let stage = parse_stage(&serde_json::json!({
+        "metadata": {"namespace": "storefront", "name": "dev"},
+        "status": {
+            "currentFreight": {"name": "a", "images": [{"digest": x}]},
+            "lastPromotion": {"name": "p", "freight": {"name": "b", "images": [{"digest": y}]}},
+        }
+    }))
+    .unwrap();
+    assert_eq!(stage.freight_pointer("a"), "/status/currentFreight/name");
+    assert_eq!(
+        stage.freight_pointer("b"),
+        "/status/lastPromotion/freight/name"
+    );
+    assert_eq!(
+        stage.digest_pointer(&parsed(&x)),
+        "/status/currentFreight/images"
+    );
+    assert_eq!(
+        stage.digest_pointer(&parsed(&y)),
+        "/status/lastPromotion/freight/images"
+    );
+    // A Promotion that holds one digest in each place.
+    let promotion = parse_promotion(&serde_json::json!({
+        "metadata": {"namespace": "storefront", "name": "p"},
+        "status": {
+            "freight": {"name": "a", "images": [{"digest": x}]},
+            "freightCollection": {"items": {"k": {"images": [{"digest": y}]}}},
+        }
+    }))
+    .unwrap();
+    assert_eq!(
+        promotion.digest_pointer(&parsed(&x)),
+        "/status/freight/images"
+    );
+    assert_eq!(
+        promotion.digest_pointer(&parsed(&y)),
+        "/status/freightCollection/items"
+    );
+    // Older Kargo keeps a Freight's contents under `spec`.
+    let old = parse_freight(&serde_json::json!({
+        "metadata": {"namespace": "storefront", "name": "f"},
+        "spec": {"images": [{"repoURL": "registry.example/acme/app", "digest": x}]},
+    }))
+    .unwrap();
+    assert_eq!(old.pointer("images"), "/spec/images");
+    let new = parse_freight(&serde_json::json!({
+        "metadata": {"namespace": "storefront", "name": "f"},
+        "images": [{"repoURL": "registry.example/acme/app", "digest": x}],
+    }))
+    .unwrap();
+    assert_eq!(new.pointer("images"), "/images");
+    assert_eq!(pointer_segment("a/b"), "a~1b");
 }

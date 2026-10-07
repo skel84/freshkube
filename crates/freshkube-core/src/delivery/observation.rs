@@ -93,7 +93,10 @@ impl std::fmt::Display for ObjectRef {
 /// What kind of statement an observation is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fact {
-    /// A controller's status: it says what it did or saw.
+    /// A controller's status: it says what it did or saw. A label a
+    /// controller writes on what it makes, such as a pod's
+    /// `rollouts-pod-template-hash`, is its report of which set made it; a
+    /// label or annotation that someone writes is declared.
     Reported,
     /// A label, annotation or spec field: someone wrote it down.
     Declared,

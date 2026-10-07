@@ -153,6 +153,7 @@ fn head_build_links(
     let mut links = Vec::new();
     for build in builds {
         let run = commit_link(head, build, &evidence.commit_names);
+        let head_run = run_commit(build, &evidence.commit_names);
         let digests: Vec<Digest> = build.images().into_iter().map(|i| i.digest).collect();
         let shipped = digests.iter().any(|digest| deployed.contains(digest));
         let note = if digests.is_empty() {
@@ -169,8 +170,8 @@ fn head_build_links(
                     .join(", ")
             )
         };
-        let mut evidence = pull_request(pr);
-        evidence.extend(without_change(run.evidence));
+        let mut on_run = pull_request(pr);
+        on_run.extend(without_change(run.evidence));
         links.push(
             Link::new(
                 Hop::PullRequest,
@@ -180,7 +181,7 @@ fn head_build_links(
                 run.confidence,
                 format!("built from the head commit; {note}; {}", run.reason),
             )
-            .observed(evidence),
+            .observed(on_run),
         );
         // A head build whose digest Kargo holds joins the PR to that Freight
         // on the digest, whatever the merge commit was.
@@ -193,13 +194,15 @@ fn head_build_links(
             {
                 // The pull request's head commit built the image: GitHub
                 // reports the head, the build reports the digest.
-                let mut evidence = pull_request(pr);
-                evidence.extend(built_image(build, digest));
-                evidence.push(concluded(
+                // The head build's own tie to the head commit comes first.
+                let mut on_freight = pull_request(pr);
+                on_freight.extend(head_run.iter().cloned());
+                on_freight.extend(built_image(build, digest));
+                on_freight.push(concluded(
                     "the head build's digest == the Freight's",
                     digest.as_str(),
                 ));
-                evidence.extend(freight_side(item, &Key::Digest(digest.clone())));
+                on_freight.extend(freight_side(item, &Key::Digest(digest.clone())));
                 links.push(
                     Link::new(
                         Hop::PullRequest,
@@ -209,7 +212,7 @@ fn head_build_links(
                         Confidence::Confirmed,
                         "Kargo holds the image the pull request's head commit built",
                     )
-                    .observed(evidence),
+                    .observed(on_freight),
                 );
             }
         }
