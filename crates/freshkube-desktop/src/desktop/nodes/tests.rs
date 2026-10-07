@@ -928,6 +928,72 @@ fn arrows_from_a_hidden_open_node_move_to_the_visible_rows(cx: &mut TestAppConte
     .unwrap();
 }
 
+/// The Processes find in the node pane (#347): Escape clears it, then
+/// hands the keyboard to the list, then steps back to the table with the
+/// pane left open.
+#[gpui_kit::test]
+fn escape_steps_back_from_the_processes_find_in_the_node_pane(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        crate::desktop::tests::open_node_tab(window, cx, NodeTab::Processes);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.active_screen().unwrap().focus(window, cx)
+        });
+        window.press("/", cx);
+        for key in ["e", "t", "c", "d"] {
+            window.press(key, cx);
+        }
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Init, PID 1, is listed unless the find hides it.
+    let init_shown = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        window.render_frame(cx);
+        window.try_find(("process", 1usize)).is_some()
+    };
+    let escape = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+            .unwrap();
+        cx.run_until_parked();
+    };
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!init_shown(window, cx), "etcd hides init");
+    })
+    .unwrap();
+    escape(cx);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(init_shown(window, cx), "the find is clear");
+        let nodes = &pilot.read(cx).node_workspace;
+        assert!(nodes.open && nodes.tab == NodeTab::Processes);
+        assert!(!pilot.read(cx).node_focus.is_focused(window));
+    })
+    .unwrap();
+    escape(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .pane_focus
+                .contains_focused(window, cx)
+        );
+        assert!(!pilot.read(cx).node_focus.is_focused(window));
+    })
+    .unwrap();
+    escape(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
