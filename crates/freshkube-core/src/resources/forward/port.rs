@@ -316,8 +316,12 @@ mod tests {
             let barrier = barrier.clone();
             tasks.push(tokio::task::spawn_blocking(move || {
                 barrier.wait();
-                let listeners = bind_automatic(9876).unwrap();
+                let listeners = bind_automatic(9876);
+                // Every task reaches the second wait, bound or not, so a
+                // failed bind fails the test instead of leaving the others
+                // waiting.
                 barrier.wait();
+                let listeners = listeners.unwrap();
                 let v4 = listeners.v4.into_std().unwrap();
                 assert!(matches!(v4.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock), "a bind must not open a connection to another forward");
                 if let Some(v6) = listeners.v6 {
