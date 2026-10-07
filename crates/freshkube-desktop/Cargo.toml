@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+base64.workspace = true
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-logs.workspace = true

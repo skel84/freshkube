@@ -1,4 +1,5 @@
 use super::*;
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 pub(super) fn certificate_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
     let (namespace, name, issuer, ready) = CERTIFICATES[ix];
@@ -59,25 +60,6 @@ pub(super) fn timestamp(seconds: i64) -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-/// Standard base64, for Secret data.
-pub(super) fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let bits = chunk.iter().enumerate().fold(0u32, |bits, (ix, byte)| {
-            bits | u32::from(*byte) << (16 - 8 * ix)
-        });
-        for ix in 0..4 {
-            encoded.push(if ix <= chunk.len() {
-                ALPHABET[(bits >> (18 - 6 * ix) & 63) as usize] as char
-            } else {
-                '='
-            });
-        }
-    }
-    encoded
-}
-
 /// The metadata block every example object starts with.
 pub(super) fn metadata(kind: &str, api_version: &str, row: &ResourceRow, extra: &str) -> String {
     let identity = &row.identity;
@@ -136,7 +118,7 @@ pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDo
             let mut yaml = metadata("Secret", "v1", &row, "");
             yaml.push_str(&format!("type: {secret_type}\ndata:\n"));
             for (key, value) in *data {
-                yaml.push_str(&format!("  {key}: {}\n", base64(value)));
+                yaml.push_str(&format!("  {key}: {}\n", STANDARD.encode(value)));
             }
             yaml
         }

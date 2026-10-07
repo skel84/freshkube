@@ -2461,6 +2461,7 @@ dependencies = [
 name = "freshkube-desktop"
 version = "0.7.0"
 dependencies = [
+ "base64",
  "bytes",
  "chrono",
  "color-eyre",
