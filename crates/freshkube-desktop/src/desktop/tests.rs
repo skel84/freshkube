@@ -43,6 +43,42 @@ pub(super) fn mount(
     (runtime, window.into(), view.unwrap())
 }
 
+/// Starts a shell in `pod`'s first running container, in a dock tab, as a
+/// pick from the pane's Shell menu does.
+pub(crate) fn start_shell(
+    handle: AnyWindowHandle,
+    pilot: &Entity<Pilot>,
+    pod: &crate::resources::model::ResourceIdentity,
+    cx: &mut TestAppContext,
+) {
+    use crate::resources::{ResourceLink, ShellRequest, detail::DetailTarget, example, live};
+    let containers = example::document(pod, live::now())
+        .unwrap()
+        .overview
+        .pod
+        .unwrap();
+    let container = crate::resources::shell::choices(&containers)
+        .into_iter()
+        .find(|choice| choice.enabled)
+        .unwrap()
+        .name;
+    let request = ShellRequest {
+        target: DetailTarget {
+            identity: pod.clone(),
+            kind: freshkube_core::resources::builtin("pods").unwrap(),
+        },
+        container,
+        containers: None,
+    };
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.resource_link(ResourceLink::Shell(request), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
 fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entity<Pilot> {
     window
         .root::<Root>()
@@ -3048,10 +3084,9 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     // A healthy pod is folded under the problems; All lists it.
     step(cx, &|window, cx| window.click("resource-view-all", cx));
     step(cx, &|window, cx| window.click(row.clone(), cx));
-    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
+    start_shell(handle, &view, &pod, cx);
     let running = |cx: &mut TestAppContext| cx.read(shell::running_anywhere);
-    assert_eq!(running(cx).as_deref(), Some(pod.name.as_str()));
+    assert_eq!(running(cx), [SharedString::from(pod.name.clone())]);
     // The terminal hands the keyboard back with Command-Escape on macOS and
     // Ctrl-Shift-Q elsewhere.
     let leave = if cfg!(target_os = "macos") {
@@ -3078,7 +3113,7 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         cx.read(|cx| view.read(cx).applied.context.clone()),
         Some(context.clone())
     );
-    assert!(running(cx).is_some());
+    assert_eq!(running(cx).len(), 1);
 
     // Closing the window asks too, and closes only once the user agrees.
     let closed = Rc::new(Cell::new(false));
@@ -3095,11 +3130,11 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         assert_eq!(closed.get(), closes);
     }
     // Agreeing ended the shell before the window went.
-    assert_eq!(running(cx), None);
+    assert!(running(cx).is_empty());
 
     // Agreeing to another connection ends the shell and moves on.
     step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    assert!(running(cx).is_some());
+    assert_eq!(running(cx).len(), 1);
     step(cx, &|window, cx| window.press(leave, cx));
     step(cx, &|window, cx| window.press("alt-down", cx));
     cx.simulate_prompt_answer("End the shell");
@@ -3108,7 +3143,7 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
         cx.read(|cx| view.read(cx).applied.context.clone()),
         Some(context)
     );
-    assert_eq!(running(cx), None);
+    assert!(running(cx).is_empty());
     // With no shell running, nothing asks.
     let close = cx
         .update_window(handle, |_, window, cx| {
@@ -3432,8 +3467,8 @@ fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
-fn coroot_links_honor_shell_confirmation_and_recheck_access(cx: &mut TestAppContext) {
-    use crate::resources::{Tab, example, live, model::ObjectRef, shell};
+fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) {
+    use crate::resources::{example, live, shell};
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     let (pods, access) = cx.read(|cx| {
         let source = view.read(cx).kube_source().unwrap();
@@ -3456,26 +3491,9 @@ fn coroot_links_honor_shell_confirmation_and_recheck_access(cx: &mut TestAppCont
         .unwrap();
         cx.run_until_parked();
     };
-    step(cx, &|window, cx| {
-        view.update(cx, |view, cx| {
-            view.open_object(
-                example::kind("pods").unwrap(),
-                ObjectRef {
-                    namespace: pods[0].namespace.clone(),
-                    name: pods[0].name.clone(),
-                    uid: pods[0].uid.clone(),
-                },
-                Tab::Shell,
-                window,
-                cx,
-            );
-        })
-    });
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    assert_eq!(
-        cx.read(shell::running_anywhere).as_deref(),
-        Some(pods[0].name.as_str())
-    );
+    start_shell(handle, &view, &pods[0], cx);
+    let running = vec![SharedString::from(pods[0].name.clone())];
+    assert_eq!(cx.read(shell::running_anywhere), running);
     step(cx, &|window, cx| {
         view.update(cx, |view, cx| {
             view.navigate(Page::Observability, window, cx);
@@ -3484,57 +3502,12 @@ fn coroot_links_honor_shell_confirmation_and_recheck_access(cx: &mut TestAppCont
             });
         })
     });
+    // The shell lives in the dock, so following a link leaves it be.
     step(cx, &|window, cx| window.click("obs-open-object", cx));
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
     cx.read(|cx| {
-        assert_eq!(view.read(cx).page, Page::Observability);
-        assert_eq!(
-            shell::running_anywhere(cx).as_deref(),
-            Some(pods[0].name.as_str())
-        );
-    });
-    step(cx, &|window, cx| window.click("obs-open-object", cx));
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
-    cx.read(|cx| {
-        assert_eq!(shell::running_anywhere(cx), None);
+        assert_eq!(shell::running_anywhere(cx), running);
         assert_eq!(view.read(cx).page, Page::Resources);
-        assert_eq!(
-            view.read(cx).resources.read(cx).detail_identity(cx),
-            Some(&pods[1])
-        );
-    });
-    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    step(cx, &|window, cx| {
-        view.update(cx, |view, cx| {
-            view.navigate(Page::Observability, window, cx);
-            view.observability.update(cx, |page, cx| {
-                page.fixture_link(access.clone(), &pods[0].namespace, &pods[0].name, cx);
-            });
-        })
-    });
-    step(cx, &|window, cx| window.click("obs-open-object", cx));
-    assert!(cx.has_pending_prompt());
-    // Isolate the access check from normal epoch/job cancellation: a
-    // confirmation captured the old access even if the epoch is unchanged.
-    cx.update(|cx| {
-        view.update(cx, |view, _| {
-            view.applied.context = Some("staging-eu".into())
-        })
-    });
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
-    cx.read(|cx| {
-        // An obsolete confirmation must have no side effects, including ending
-        // the shell captured by a different access identity.
-        assert_eq!(
-            shell::running_anywhere(cx).as_deref(),
-            Some(pods[1].name.as_str())
-        );
-        assert_eq!(view.read(cx).page, Page::Observability);
         assert_eq!(
             view.read(cx).resources.read(cx).detail_identity(cx),
             Some(&pods[1])

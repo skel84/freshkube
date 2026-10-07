@@ -1,13 +1,14 @@
 //! The detail pane beside the resource list: one object's overview, YAML,
-//! events; for a pod, a shell. Logs open in the dock (`desktop/dock/`): a
-//! Logs action here asks for them with `DetailEvent::Link`. It reads the object when
+//! events. Logs and shells open in the dock (`desktop/dock/`): the Logs
+//! button and the Shell menu ask for them with `DetailEvent::Link`. It reads the object when
 //! opened and again whenever the list shows a new version of it, at most once
 //! a second, and watches the object's events while open on a visible page.
 //! Secret values stay hidden until one is revealed. Nothing here changes the
-//! cluster except a shell the user starts (`shell/`).
+//! cluster.
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::{DateTime, Local, Utc};
@@ -26,7 +27,7 @@ use super::detail::{
 };
 use super::model::ResourceIdentity;
 use super::screen::KubeAccess;
-use super::{LogsAt, LogsRequest, ResourceLink, example, live};
+use super::{LogsAt, LogsRequest, ResourceLink, ShellRequest, example, live};
 use crate::backend::{self, OwnedJob};
 use crate::monitoring::history::{HistorySource, HistoryView};
 use freshkube_core::monitoring::history::Subject;
@@ -40,7 +41,7 @@ mod tests;
 mod view;
 mod yaml;
 
-use super::shell::{ShellEvent, ShellView};
+use super::shell::Choice;
 use events::EventLine;
 use overview::Summary;
 use ports::PortsView;
@@ -89,19 +90,12 @@ pub(crate) enum Tab {
     /// Not a tab: asking for it opens the object's logs in the dock, for
     /// pods and the workloads that run them.
     Logs,
-    Shell,
     /// Pods, Services and the workloads that run pods.
     Ports,
 }
 
 impl Tab {
-    const POD: &[Tab] = &[
-        Tab::Overview,
-        Tab::Yaml,
-        Tab::Events,
-        Tab::Shell,
-        Tab::Ports,
-    ];
+    const POD: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Ports];
     const FORWARDABLE: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events, Tab::Ports];
     const OTHER: &[Tab] = &[Tab::Overview, Tab::Yaml, Tab::Events];
 
@@ -169,9 +163,8 @@ pub(crate) struct DetailPane {
     feedback: Option<SharedString>,
     focus: FocusHandle,
     yaml_scroll: UniformListScrollHandle,
-    /// The open pod's shell. A session lives while the pod stays open, on
-    /// any tab and any page.
-    pub(super) shell: Entity<ShellView>,
+    /// The Shell menu's containers, derived when the document changes.
+    shell_choices: Rc<Vec<Choice>>,
     /// The object's ports, and the forwards running from them.
     ports: Entity<PortsView>,
     /// A pod's CPU and memory over the last hour, on its Overview.
@@ -221,18 +214,11 @@ impl DetailPane {
             KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some("NodeDocument")),
         ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
-        let shell = cx.new(|cx| ShellView::new(runtime.clone(), window, cx));
         let ports = cx.new(|cx| PortsView::new(runtime.clone(), window, cx));
         let history = cx.new(|_| HistoryView::new(runtime.clone(), "pod"));
         let subscriptions = vec![
-            // The Shell tab's label shows whether a session runs, and its
-            // tooltip the shell's title.
-            cx.observe(&shell, |_, _, cx| cx.notify()),
             // Whether the pod's history shows, which this cached view draws.
             cx.observe(&history, |_, _, cx| cx.notify()),
-            cx.subscribe(&shell, |_, _, event, cx| match event {
-                ShellEvent::Leave => cx.emit(DetailEvent::Leave),
-            }),
             cx.subscribe_in(&find, window, |this, input, event, _, cx| match event {
                 InputEvent::Change => {
                     let query = input.read(cx).value().to_string();
@@ -281,7 +267,7 @@ impl DetailPane {
             feedback: None,
             focus: cx.focus_handle(),
             yaml_scroll: UniformListScrollHandle::new(),
-            shell,
+            shell_choices: Rc::default(),
             ports,
             history,
             _subscriptions: subscriptions,
@@ -293,11 +279,6 @@ impl DetailPane {
         self.set_tab(tab, cx);
     }
 
-    #[cfg(test)]
-    pub(crate) fn terminal_size(&self, cx: &App) -> crate::terminal::TerminalSize {
-        self.shell.read(cx).terminal.read(cx).size()
-    }
-
     pub(crate) fn target_identity(&self) -> Option<&ResourceIdentity> {
         self.detail.as_ref().map(|detail| &detail.target.identity)
     }
@@ -306,16 +287,8 @@ impl DetailPane {
         self.detail.as_ref().map(|detail| &detail.target)
     }
 
-    /// The pod whose shell runs in the pane. While one does, the pane stays
-    /// on it, and the page asks before showing anything else.
-    pub(crate) fn running_shell(&self, cx: &App) -> Option<SharedString> {
-        self.shell.read(cx).running_pod()
-    }
-
     /// Fresh handles for the same connection.
     pub(crate) fn set_access(&mut self, access: KubeAccess, cx: &mut Context<Self>) {
-        self.shell
-            .update(cx, |shell, _| shell.set_access(access.clone()));
         self.ports
             .update(cx, |ports, _| ports.set_access(access.clone()));
         self.access = Some(access);
@@ -349,7 +322,6 @@ impl DetailPane {
             return;
         }
         self.stop_reads();
-        let pod = target.kind.is_pod().then(|| target.identity.clone());
         if !Tab::of(&target.kind).contains(&self.tab) {
             self.tab = Tab::Overview;
         }
@@ -360,8 +332,7 @@ impl DetailPane {
                 cx,
             )
         });
-        self.shell
-            .update(cx, |shell, cx| shell.show_pod(pod, Some(access), cx));
+        self.shell_choices = Rc::default();
         self.title = target.identity.address().into();
         self.detail = Some(Detail::new(target));
         // Another object may have other tabs, so its strip starts unscrolled.
@@ -392,8 +363,7 @@ impl DetailPane {
 
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         self.stop_reads();
-        self.shell
-            .update(cx, |shell, cx| shell.show_pod(None, None, cx));
+        self.shell_choices = Rc::default();
         self.ports
             .update(cx, |ports, cx| ports.show(None, None, cx));
         self.detail = None;
@@ -577,9 +547,8 @@ impl DetailPane {
         let Some(view) = self.detail.as_ref().and_then(|detail| detail.view.clone()) else {
             return;
         };
-        if let Some(containers) = view.document.overview.pod.clone() {
-            self.shell
-                .update(cx, |shell, cx| shell.set_containers(containers, cx));
+        if let Some(containers) = &view.document.overview.pod {
+            self.shell_choices = Rc::new(super::shell::choices(containers));
         }
         if let Some(declared) = view.document.overview.ports.clone() {
             self.ports
@@ -855,13 +824,9 @@ impl DetailPane {
         Some(tab)
     }
 
-    /// Puts the keyboard on what the current tab shows: the terminal on the
-    /// Shell tab once it has a session, the pane otherwise.
+    /// Puts the keyboard on the pane.
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.tab {
-            Tab::Shell if self.shell.update(cx, |shell, cx| shell.focus(window, cx)) => {}
-            _ => window.focus(&self.focus, cx),
-        }
+        window.focus(&self.focus, cx);
     }
 
     /// Command-Shift-] and [ in the pane: the next tab, with the keyboard
@@ -900,6 +865,26 @@ impl DetailPane {
         cx.emit(DetailEvent::Link(ResourceLink::Logs(LogsRequest {
             target: detail.target.clone(),
             at,
+        })));
+    }
+
+    /// The Shell menu's pick: a shell in `container`, in a dock tab. The
+    /// pick is the explicit Start.
+    pub(crate) fn request_shell(&mut self, container: String, cx: &mut Context<Self>) {
+        let Some(detail) = self.detail.as_ref() else {
+            return;
+        };
+        if !detail.target.kind.is_pod() {
+            return;
+        }
+        let containers = detail
+            .view
+            .as_ref()
+            .and_then(|view| view.document.overview.pod.clone());
+        cx.emit(DetailEvent::Link(ResourceLink::Shell(ShellRequest {
+            target: detail.target.clone(),
+            container,
+            containers,
         })));
     }
 
@@ -989,14 +974,13 @@ impl DetailPane {
     fn find_match(&mut self, forward: bool, cx: &mut Context<Self>) {
         match self.tab {
             Tab::Yaml => self.step_match(if forward { 1 } else { -1 }, cx),
-            Tab::Overview | Tab::Events | Tab::Logs | Tab::Shell | Tab::Ports => {}
+            Tab::Overview | Tab::Events | Tab::Logs | Tab::Ports => {}
         }
     }
 
     fn select_all(&mut self, cx: &mut Context<Self>) {
         match self.tab {
-            // Command-A in the terminal waits for a later step.
-            Tab::Logs | Tab::Shell | Tab::Ports => return,
+            Tab::Logs | Tab::Ports => return,
             _ => {}
         }
         let Some(count) = self.view().map(|view| view.lines.len()) else {
@@ -1012,11 +996,10 @@ impl DetailPane {
         cx.notify();
     }
 
-    /// Command-F: the YAML search, but on the Shell tab, whose search waits
-    /// for a later step. The dock's logs have their own.
+    /// Command-F: the YAML search. The dock's logs have their own.
     fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.tab {
-            Tab::Logs | Tab::Shell | Tab::Ports => return,
+            Tab::Logs | Tab::Ports => return,
             _ => {}
         }
         self.set_tab(Tab::Yaml, cx);

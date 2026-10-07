@@ -1,0 +1,7 @@
+- **Shells in the dock:** a pod's Shell menu starts a shell in the container
+  you pick, in a dock tab of its own that keeps running whatever page or
+  object shows; navigating no longer asks to end it. Closing a running
+  shell's tab asks first, and a shell tab saved with the dock comes back
+  idle, starting nothing until Start. The compact Levels button keeps its
+  chevron at large text sizes, and a crash loop's log note starts with
+  "Previous shows the last run" and wraps in its tooltip.

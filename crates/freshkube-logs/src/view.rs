@@ -224,8 +224,6 @@ impl<S: LogSource> LogView<S> {
             .into_any_element()
     }
 
-    /// One menu for the five levels, each with its count, so the levels
-    /// take one control's width in the toolbar's row.
     /// Derives the levels menu's tooltip when the counts behind it change.
     fn derive_levels_tip(&mut self) {
         let counts = self.review.level_counts();
@@ -241,6 +239,8 @@ impl<S: LogSource> LogView<S> {
         self.levels_tip = (counts, format!("Lines by level: {summary}").into());
     }
 
+    /// One menu for the five levels, each with its count, so the levels
+    /// take one control's width in the toolbar's row.
     fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
         let counts = self.levels_tip.0;
         let levels = LEVELS.map(|(label, level)| {
@@ -261,7 +261,12 @@ impl<S: LogSource> LogView<S> {
             .small()
             .icon(IconName::ListFilter)
             .dropdown_caret(true)
-            .when_some(label, |this, label| this.label(label))
+            .map(|this| match label {
+                Some(label) => this.label(label),
+                // Kit draws a button with an icon alone as a square, which
+                // clips the chevron; an empty child keeps its padding.
+                None => this.child(div()),
+            })
             .accessibility_label(if all {
                 "Levels: all shown".to_owned()
             } else {
@@ -343,7 +348,8 @@ impl<S: LogSource> LogView<S> {
             .gap_x_2()
             .gap_y(dp(4.))
             .children(S::tools(self, cx))
-            .child(self.render_levels(cx))
+            // At its natural width: a shrunk button clips its chevron.
+            .child(div().flex_none().child(self.render_levels(cx)))
             .child(
                 h_flex()
                     .gap_1()

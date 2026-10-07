@@ -154,6 +154,7 @@ fn mount(cx: &mut TestAppContext) -> Mounted {
             KeyBinding::new("tab", AppKey, None),
             KeyBinding::new("escape", AppKey, None),
             KeyBinding::new("ctrl-tab", AppKey, None),
+            KeyBinding::new("ctrl-.", AppKey, None),
             KeyBinding::new("ctrl-c", AppKey, None),
             KeyBinding::new("ctrl-v", AppKey, None),
             KeyBinding::new("cmd-a", AppKey, None),
@@ -250,6 +251,8 @@ fn keyboard_terminal_takes_keys_before_the_apps_bindings(cx: &mut TestAppContext
     terminal.press(cx, "tab");
     terminal.press(cx, "escape");
     terminal.press(cx, "ctrl-tab");
+    // A Control key that sends nothing still stays in the terminal.
+    terminal.press(cx, "ctrl-.");
     assert_eq!(terminal.output(), b"\t\x1b\t");
     assert_eq!(*terminal.app_keys.borrow(), 0);
     // Command shortcuts other than the terminal's own reach the app.

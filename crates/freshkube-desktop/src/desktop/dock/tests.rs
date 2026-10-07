@@ -9,6 +9,7 @@ use crate::desktop::{Page, Pilot};
 use crate::logs::PodLogPanel;
 use crate::logs::PodLogView;
 use crate::resources::model::ResourceIdentity;
+use crate::resources::shell::{self, ShellState, ShellView};
 use crate::resources::{Tab, example, live};
 use freshkube_ui::dock::{DEFAULT_HEIGHT, MIN_HEIGHT};
 
@@ -78,7 +79,7 @@ fn titles(dock: &Entity<Dock>, cx: &mut TestAppContext) -> Vec<String> {
 fn pod_view(dock: &Entity<Dock>, ix: usize, cx: &mut TestAppContext) -> Entity<PodLogView> {
     cx.update(|cx| match &dock.read(cx).tabs[ix].kind {
         TabKind::Pod(view) => view.clone(),
-        TabKind::Workload(_) => panic!("a workload's tab"),
+        TabKind::Workload(_) | TabKind::Shell(_) => panic!("not a pod's log tab"),
     })
 }
 
@@ -655,6 +656,7 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
         name: pod.name.clone(),
         container: None,
         previous: false,
+        shell: false,
     };
     let saved = SavedDock {
         height: 260.,
@@ -969,6 +971,7 @@ fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
             name: "api-0".into(),
             container: Some("api".into()),
             previous: true,
+            shell: false,
         }],
     };
     let json = serde_json::to_string(&saved).unwrap();
@@ -1203,7 +1206,282 @@ fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) 
                 previous > icon * 2.,
                 "{text_size}: Previous {previous:?} beside an icon {icon:?}"
             );
+            // Levels keeps room for its icon and its chevron.
+            let levels = width("logs-levels");
+            assert!(
+                levels > icon * 1.5,
+                "{text_size}: Levels {levels:?} beside an icon {icon:?}"
+            );
         })
         .unwrap();
     }
+}
+
+fn shell_view(dock: &Entity<Dock>, ix: usize, cx: &mut TestAppContext) -> Entity<ShellView> {
+    cx.update(|cx| match &dock.read(cx).tabs[ix].kind {
+        TabKind::Shell(view) => view.clone(),
+        _ => panic!("not a shell tab"),
+    })
+}
+
+fn shell_state(dock: &Entity<Dock>, ix: usize, cx: &mut TestAppContext) -> ShellState {
+    let view = shell_view(dock, ix, cx);
+    cx.update(|cx| view.read(cx).state.clone())
+}
+
+/// Opens `pod` in the pane and picks its first running container from
+/// the Shell menu, as the user does.
+fn pick_shell(
+    handle: AnyWindowHandle,
+    pilot: &Entity<Pilot>,
+    pod: &ResourceIdentity,
+    cx: &mut TestAppContext,
+) {
+    let target = pod.clone();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(
+                builtin("pods").unwrap(),
+                target.into(),
+                Tab::Overview,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Kit's first Down lands on the first entry, a heading when the pod's
+    // containers have several roles.
+    let containers = example::document(pod, live::now())
+        .unwrap()
+        .overview
+        .pod
+        .unwrap();
+    let choices = shell::choices(&containers);
+    let mixed = choices.iter().any(|choice| choice.role != choices[0].role);
+    let keys: &[&str] = if mixed {
+        &["", "down", "down", "enter"]
+    } else {
+        &["", "down", "enter"]
+    };
+    for key in keys {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            if key.is_empty() {
+                window.click("detail-open-shell", cx);
+            } else {
+                window.press(key, cx);
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    draw(handle, cx);
+}
+
+#[gpui_kit::test]
+fn a_pick_from_the_shell_menu_starts_a_shell_in_a_tab_of_its_own(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(
+                builtin("pods").unwrap(),
+                pods[0].clone().into(),
+                Tab::Overview,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Opening the menu runs nothing.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("detail-open-shell", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(titles(&dock, cx).is_empty());
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+        .unwrap();
+    cx.run_until_parked();
+
+    pick_shell(handle, &pilot, &pods[0], cx);
+    assert_eq!(titles(&dock, cx), [format!("Shell {}", pods[0].name)]);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(window.find("terminal").focused(), Some(true));
+        assert_eq!(window.find("dock-toggle").label(), Some("1 shell"));
+    })
+    .unwrap();
+
+    // Another pod's shell takes another tab, and a log tab counts apart.
+    pick_shell(handle, &pilot, &pods[1], cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    assert_eq!(
+        titles(&dock, cx),
+        [
+            format!("Shell {}", pods[0].name),
+            format!("Shell {}", pods[1].name),
+            format!("Pod {}", pods[0].name),
+        ]
+    );
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(window.find("dock-toggle").label(), Some("1 log · 2 shells"));
+    })
+    .unwrap();
+    assert_eq!(cx.read(shell::running_anywhere).len(), 2);
+
+    // The same container again selects its tab, and starts again a shell
+    // that ended.
+    let first = shell_view(&dock, 0, cx);
+    cx.update(|cx| first.update(cx, |view, cx| view.end(cx)));
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Ended);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    assert_eq!(titles(&dock, cx).len(), 3);
+    assert_eq!(cx.update(|cx| dock.read(cx).selected()), Some(0));
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+}
+
+#[gpui_kit::test]
+fn closing_a_running_shells_tab_asks_first(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    pick_shell(handle, &pilot, &pods[1], cx);
+    let click = |id: &'static str, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(id, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+
+    // The tab's ×: Cancel keeps it and its shell.
+    click("dock-tab-1-close", cx);
+    let (message, _) = cx.pending_prompt().unwrap();
+    assert_eq!(message, format!("End the shell in {}?", pods[1].name));
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(titles(&dock, cx).len(), 2);
+    assert_eq!(cx.read(shell::running_anywhere).len(), 2);
+
+    // The chrome's × asks once for both.
+    click("dock-close-all", cx);
+    let (message, _) = cx.pending_prompt().unwrap();
+    assert_eq!(message, "End 2 shells?");
+    cx.simulate_prompt_answer("End the shells");
+    cx.run_until_parked();
+    assert!(titles(&dock, cx).is_empty());
+    assert!(cx.read(shell::running_anywhere).is_empty());
+
+    // A shell that has ended closes without asking.
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let view = shell_view(&dock, 0, cx);
+    cx.update(|cx| view.update(cx, |view, cx| view.end(cx)));
+    let id = cx.update(|cx| dock.read(cx).tabs[0].id);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("dock-tab-{id}-close"), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
+    assert!(titles(&dock, cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn the_terminal_keeps_control_period_and_comma(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    pick_shell(handle, &pilot, &pods[1], cx);
+    assert_eq!(cx.update(|cx| dock.read(cx).selected()), Some(1));
+    for key in ["ctrl-.", "ctrl-,"] {
+        cx.update_window(handle, |_, window, cx| window.press(key, cx))
+            .unwrap();
+        cx.run_until_parked();
+        // The shell has them; the tab stays.
+        assert_eq!(cx.update(|cx| dock.read(cx).selected()), Some(1));
+    }
+    // Command-Escape hands the keyboard back, and the keys step the tabs.
+    let leave = if cfg!(target_os = "macos") {
+        "secondary-escape"
+    } else {
+        "ctrl-shift-q"
+    };
+    cx.update_window(handle, |_, window, cx| window.press(leave, cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.press("ctrl-.", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| dock.read(cx).selected()), Some(0));
+    assert_eq!(shell_state(&dock, 1, cx), ShellState::Running);
+}
+
+#[gpui_kit::test]
+fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let container = {
+        let view = shell_view(&dock, 0, cx);
+        cx.update(|cx| view.read(cx).container().unwrap().to_owned())
+    };
+    let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let saved = SavedDock {
+        height: 260.,
+        open: true,
+        maximized: false,
+        selected: Some(0),
+        tabs: vec![SavedTab {
+            kind: "pods".into(),
+            context,
+            namespace: pods[0].namespace.clone(),
+            name: pods[0].name.clone(),
+            container: Some(container.clone()),
+            previous: false,
+            shell: true,
+        }],
+    };
+    // What the running tab saves is what comes back.
+    let written = cx.update(|cx| dock.read(cx).saved(cx));
+    assert_eq!(written.tabs, saved.tabs);
+    cx.update_window(handle, |_, window, cx| {
+        let source = pilot.read(cx).kube_source();
+        dock.update(cx, |dock, cx| {
+            dock.set_source(None, window, cx);
+            dock.restore = Some(saved);
+            dock.set_source(source, window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert_eq!(titles(&dock, cx), [format!("Shell {}", pods[0].name)]);
+    // Shown and selected, it runs nothing until Start.
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(window.find("pod-shell-start").label(), Some("Start"));
+        window.click("pod-shell-start", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+    let view = shell_view(&dock, 0, cx);
+    assert_eq!(
+        cx.update(|cx| view.read(cx).container().map(str::to_owned)),
+        Some(container)
+    );
 }

@@ -7,6 +7,7 @@ use std::rc::Rc;
 use freshkube_ui::dock::{self, Frame};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ElementExt as _, Sizable as _, v_flex};
 
 use super::feed::FeedState;
@@ -15,6 +16,27 @@ use crate::ui::{self, dp};
 
 /// The space around a tab's log view, in dp, which its least height adds.
 pub(super) const BODY_PADDING: f32 = 8.;
+
+/// A shell tab's tooltip: its container, and the title the shell set,
+/// read when the pointer rests on it.
+fn shell_tip(tab: &DockTab) -> Option<impl Fn(&mut Window, &mut App) -> AnyView + 'static> {
+    let TabKind::Shell(view) = &tab.kind else {
+        return None;
+    };
+    let view = view.downgrade();
+    Some(move |window: &mut Window, cx: &mut App| {
+        let text = view
+            .read_with(cx, |shell, _| {
+                let container = shell.container().unwrap_or_default();
+                match shell.title() {
+                    Some(title) => format!("{container} · {title}"),
+                    None => container.to_owned(),
+                }
+            })
+            .unwrap_or_default();
+        Tooltip::new(text).build(window, cx)
+    })
+}
 
 impl Dock {
     fn render_tabs(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -35,6 +57,7 @@ impl Dock {
                     close,
                     cx,
                 )
+                .when_some(shell_tip(tab), |this, tip| this.tooltip(tip))
                 .on_click(cx.listener(move |dock, _, window, cx| dock.select(id, true, window, cx)))
                 // A middle-click closes the tab, as in a browser.
                 .on_mouse_down(
@@ -124,7 +147,11 @@ impl Dock {
         let notice = match &tab.feed.state {
             FeedState::Gone => Some(ui::warning_banner(
                 Some("This pod is gone.".into()),
-                "Its lines stay; nothing more is read.",
+                if tab.is_log() {
+                    "Its lines stay; nothing more is read."
+                } else {
+                    "The shell's screen stays; no shell can start in it again."
+                },
                 None,
                 cx,
             )),
@@ -192,6 +219,7 @@ impl Dock {
         let lines = match &tab.kind {
             TabKind::Pod(view) => view.clone().into_any_element(),
             TabKind::Workload(view) => view.clone().into_any_element(),
+            TabKind::Shell(view) => view.clone().into_any_element(),
         };
         Some(
             v_flex()

@@ -964,18 +964,16 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert_eq!(focused(window, "resource-body"), Some(true));
         assert!(shown(&screen, cx).is_some());
         // From the list, the brackets switch the tab and keep the keyboard
-        // on the list. A pod's tabs wrap round to Ports, then Shell.
+        // on the list. A pod's tabs wrap round to Ports.
         window.press("secondary-}", cx);
         assert_eq!(window.find("detail-tab-events").selected(), Some(true));
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
         window.press("secondary-{", cx);
-        window.press("secondary-{", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
         assert_eq!(focused(window, "resource-body"), Some(true));
-        // Enter on the open row hands the keyboard to the pane, which has
-        // no session to give it to.
+        // Enter on the open row hands the keyboard to the pane.
         window.press("enter", cx);
         window.render_frame(cx);
         assert_eq!(focused(window, "resource-detail"), Some(true));
@@ -1020,129 +1018,6 @@ fn running_row(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> usize {
             screen.read(cx).store.get(&identity).unwrap().cells[2] == "Running"
         })
         .unwrap()
-}
-
-/// Dragging the split resizes the shell's terminal, so a program in it
-/// draws at the pane's new width.
-#[gpui_kit::test]
-fn dragging_the_split_resizes_the_shell(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
-    let step = |cx: &mut TestAppContext,
-                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            act(window, cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-    };
-    step(cx, &|window, cx| {
-        let pod = identity_at(&screen, running_row(&screen, cx), cx);
-        window.within(row_id(&pod)).click("name", cx);
-    });
-    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    step(cx, &|_, _| {});
-    let columns = |cx: &mut TestAppContext| {
-        cx.read(|cx| screen.read(cx).detail.read(cx).terminal_size(cx).columns)
-    };
-    let before = columns(cx);
-    step(cx, &|window, cx| {
-        let pane = window.find("detail-inspector").bounds().size.width;
-        let state = screen.read(cx).split.beside_state().clone();
-        state.update(cx, |state, cx| {
-            state.resize_panel(1, pane + px(200.), window, cx)
-        });
-    });
-    // The terminal resizes at most every 100 ms.
-    cx.executor()
-        .advance_clock(std::time::Duration::from_millis(200));
-    step(cx, &|_, _| {});
-    let after = columns(cx);
-    assert!(after > before + 10, "{before} → {after}");
-}
-
-#[gpui_kit::test]
-fn a_running_shell_pins_the_pane_until_the_user_ends_it(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
-    let step = |cx: &mut TestAppContext,
-                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            act(window, cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-    };
-    let pinned = Rc::new(RefCell::new(None));
-    step(cx, &|window, cx| {
-        let ix = running_row(&screen, cx);
-        let pod = identity_at(&screen, ix, cx);
-        window.within(row_id(&pod)).click("name", cx);
-        *pinned.borrow_mut() = Some(pod);
-    });
-    let pod = pinned.borrow().clone().unwrap();
-    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    step(cx, &|window, cx| {
-        assert!(window.find("detail-shell-running").visible());
-        // The list takes the keyboard back; the arrows move the selection
-        // but leave the pane on the shell's pod.
-        screen.update(cx, |screen, cx| screen.focus(window, cx));
-        window.press("down", cx);
-    });
-    cx.executor().advance_clock(KEYBOARD_PAUSE);
-    cx.run_until_parked();
-    step(cx, &|_, cx| {
-        assert_ne!(selected(&screen, cx).as_ref(), Some(&pod));
-        assert_eq!(shown(&screen, cx).as_ref(), Some(&pod));
-    });
-    assert!(!cx.has_pending_prompt());
-    let enter = |cx: &mut TestAppContext| {
-        step(cx, &|window, cx| window.press("enter", cx));
-        assert!(cx.has_pending_prompt());
-        let (message, _) = cx.pending_prompt().unwrap();
-        assert_eq!(message, format!("End the shell in {}?", pod.name));
-    };
-    // Enter on another row asks; Cancel keeps the shell and its pod.
-    enter(cx);
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    step(cx, &|window, cx| {
-        assert_eq!(shown(&screen, cx).as_ref(), Some(&pod));
-        assert!(window.find("detail-shell-running").visible());
-        // Another kind keeps the pane too, and Escape asks.
-        screen.update(cx, |screen, cx| {
-            screen.set_kind(kind("deployments.apps"), window, cx)
-        });
-        window.render_frame(cx);
-        assert_eq!(shown(&screen, cx).as_ref(), Some(&pod));
-        screen.update(cx, |screen, cx| screen.set_kind(kind("pods"), window, cx));
-        window.press("escape", cx);
-    });
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    step(cx, &|window, cx| {
-        assert_eq!(shown(&screen, cx).as_ref(), Some(&pod));
-        // Clicking the shell's own row doesn't ask.
-        window.within(row_id(&pod)).click("name", cx);
-    });
-    assert!(!cx.has_pending_prompt());
-    step(cx, &|window, cx| {
-        screen.update(cx, |screen, cx| screen.focus(window, cx));
-        window.press("down", cx);
-    });
-    enter(cx);
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
-    step(cx, &|window, cx| {
-        let next = selected(&screen, cx);
-        assert!(next.is_some() && next.as_ref() != Some(&pod));
-        assert_eq!(shown(&screen, cx), next);
-        assert!(window.try_find("detail-shell-running").is_none());
-        assert_eq!(window.find("resource-detail").focused(), Some(true));
-    });
 }
 
 #[gpui_kit::test]

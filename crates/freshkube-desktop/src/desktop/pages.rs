@@ -278,8 +278,8 @@ impl Pilot {
         });
     }
 
-    /// Runs `then` at once, or, with a shell running on the Resources page,
-    /// once the user agrees to end it: `then` leaves the connection.
+    /// Runs `then` at once, or, with shells running in the dock, once the
+    /// user agrees to end them: `then` leaves the connection.
     pub(super) fn unless_shell(
         &mut self,
         window: &mut Window,
@@ -589,7 +589,7 @@ impl Pilot {
 }
 
 impl Pilot {
-    /// Every object link follows this path and the existing shell pin.
+    /// Every object link follows this path.
     pub(crate) fn open_object(
         &mut self,
         kind: ResourceKind,
@@ -619,13 +619,6 @@ impl Pilot {
         };
         let same = self.resources.read(cx).showing(&identity, cx);
         let open = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-            // A shell confirmation may outlive the access used by this link.
-            if this
-                .kube_source()
-                .is_none_or(|current| current.id != source.id)
-            {
-                return;
-            }
             if !same {
                 this.resources
                     .update(cx, |resources, cx| resources.close_for_link(cx));
@@ -718,10 +711,6 @@ impl Pilot {
                 });
             }));
         };
-        if same {
-            open(self, window, cx);
-        } else {
-            self.unless_shell(window, cx, open);
-        }
+        open(self, window, cx);
     }
 }

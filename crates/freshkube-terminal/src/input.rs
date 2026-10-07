@@ -72,7 +72,8 @@ fn is_shortcut(keystroke: &Keystroke) -> bool {
 }
 
 /// Runs before any binding: a key for a focused terminal goes to it, unless
-/// it is a platform shortcut or text the input handler will deliver.
+/// it is a platform shortcut or text the input handler will deliver. Every
+/// other Control key stops there, even one that sends nothing.
 fn intercept(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     let keystroke = &event.keystroke;
     if is_shortcut(keystroke)
@@ -100,7 +101,10 @@ fn intercept(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
             None => false,
         }
     });
-    if handled {
+    // A Control key the shell has no bytes for is still the shell's: the
+    // app's Control bindings, such as the dock's Control-. and Control-,,
+    // wait until the keyboard leaves the terminal.
+    if handled || keystroke.modifiers.control {
         cx.stop_propagation();
     }
 }

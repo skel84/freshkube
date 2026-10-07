@@ -1,6 +1,8 @@
-//! The dock in `navigation.json`: its height and state, and its log tabs by
-//! name, never their lines or any credential. Saved tabs come back only
-//! for the context they were opened in, and read nothing until one shows.
+//! The dock in `navigation.json`: its height and state, and its tabs by
+//! name, never their lines, a shell's screen or any credential. Saved tabs
+//! come back only for the context they were opened in, and read nothing
+//! until one shows; a shell tab comes back idle, and runs nothing until
+//! Start.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +37,9 @@ pub(crate) struct SavedTab {
     pub(super) container: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) previous: bool,
+    /// A shell tab, in `container`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) shell: bool,
 }
 
 fn default_height() -> f32 {
@@ -66,12 +71,18 @@ impl Dock {
         if self.restore.is_some() {
             return;
         }
+        let saved = self.saved(cx);
+        NavigationFile::global(cx).set_dock(&saved, cx);
+    }
+
+    /// The dock as it saves: its height, state and tabs by name.
+    pub(super) fn saved(&self, cx: &App) -> SavedDock {
         let context = self
             .source
             .as_ref()
             .map(|source| source.context.clone())
             .unwrap_or_default();
-        let saved = SavedDock {
+        SavedDock {
             height: self.height.round(),
             open: self.open,
             maximized: self.maximized,
@@ -83,6 +94,9 @@ impl Dock {
                     // A container still waiting for the pod's containers
                     // is the one the tab was asked for.
                     let (container, previous) = match (&tab.at, &tab.kind) {
+                        (_, TabKind::Shell(view)) => {
+                            (view.read(cx).container().map(str::to_owned), false)
+                        }
                         (Some(at), _) => (Some(at.container.clone()), at.previous),
                         (None, TabKind::Pod(view)) => {
                             let view = view.read(cx);
@@ -93,6 +107,7 @@ impl Dock {
                         }
                         (None, TabKind::Workload(_)) => (None, false),
                     };
+                    let shell = !tab.is_log();
                     SavedTab {
                         kind: tab.target.kind.key(),
                         context: context.clone(),
@@ -100,11 +115,11 @@ impl Dock {
                         name: tab.target.identity.name.clone(),
                         container,
                         previous,
+                        shell,
                     }
                 })
                 .collect(),
-        };
-        NavigationFile::global(cx).set_dock(&saved, cx);
+        }
     }
 
     /// Opens the saved tabs that belong to this connection's context. They
@@ -120,16 +135,20 @@ impl Dock {
             return;
         };
         let mut ids = Vec::new();
+        let mut logs = 0;
         // The selected tab, if it is one that comes back; the saved
         // position counts every context's tabs.
         let mut selected = None;
         for (ix, saved) in restore.tabs.into_iter().enumerate() {
-            if saved.context != source.context || ids.len() >= MAX_LOG_TABS {
+            if saved.context != source.context || (!saved.shell && logs >= MAX_LOG_TABS) {
                 continue;
             }
             let Some(kind) = log_kind(&saved.kind) else {
                 continue;
             };
+            if saved.shell && !kind.is_pod() {
+                continue;
+            }
             let mut identity = ResourceIdentity {
                 connection: source.id.clone(),
                 resource: kind.key(),
@@ -151,11 +170,20 @@ impl Dock {
             {
                 identity = row.identity;
             }
-            let at = saved.container.map(|container| LogsAt {
-                container,
-                previous: saved.previous,
-            });
-            let id = self.add_tab(DetailTarget { identity, kind }, at, window, cx);
+            let target = DetailTarget { identity, kind };
+            let id = if saved.shell {
+                let Some(container) = saved.container else {
+                    continue;
+                };
+                self.add_shell(target, container, window, cx)
+            } else {
+                logs += 1;
+                let at = saved.container.map(|container| LogsAt {
+                    container,
+                    previous: saved.previous,
+                });
+                self.add_tab(target, at, window, cx)
+            };
             if restore.selected == Some(ix) {
                 selected = Some(id);
             }

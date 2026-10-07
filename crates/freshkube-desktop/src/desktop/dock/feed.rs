@@ -53,7 +53,7 @@ impl Dock {
         if let KubeAccess::Example = access {
             let overview = example::document(&identity, live::now()).map(|doc| doc.overview);
             tab.feed.state = match (&tab.kind, overview) {
-                (TabKind::Pod(_), Some(overview)) => {
+                (TabKind::Pod(_) | TabKind::Shell(_), Some(overview)) => {
                     if let Some(containers) = overview.pod {
                         set_containers(tab, containers, cx);
                     }
@@ -68,6 +68,7 @@ impl Dock {
                     view.update(cx, |view, cx| view.end(cx));
                     FeedState::Gone
                 }
+                (TabKind::Shell(_), None) => FeedState::Gone,
                 (TabKind::Workload(_), None) => {
                     FeedState::Failed("Example data has no such object".into())
                 }
@@ -232,10 +233,15 @@ impl Dock {
 }
 
 /// Gives a pod tab its pod's containers, then opens the container the tab
-/// was asked for, if any.
+/// was asked for, if any. A shell tab learns whether its container runs.
 fn set_containers(tab: &mut DockTab, containers: PodContainers, cx: &mut Context<Dock>) {
-    let TabKind::Pod(view) = &tab.kind else {
-        return;
+    let view = match &tab.kind {
+        TabKind::Pod(view) => view,
+        TabKind::Shell(view) => {
+            view.update(cx, |view, cx| view.set_containers(containers, cx));
+            return;
+        }
+        TabKind::Workload(_) => return,
     };
     let at = tab.at.take();
     view.update(cx, |view, cx| {

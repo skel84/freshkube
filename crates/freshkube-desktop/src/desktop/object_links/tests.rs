@@ -130,54 +130,37 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
     }
 }
 #[gpui_kit::test]
-fn pod_node_link_asks_and_cancel_keeps_the_pane_and_target(cx: &mut TestAppContext) {
+fn pod_node_link_goes_at_once_and_the_shell_runs_on(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1700., 1200.);
     let (identity, _) = pod();
-    let target = cx.update(|cx| pilot.read(cx).selected_node.clone());
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_object(
                 freshkube_core::resources::builtin("pods").unwrap(),
                 identity.clone().into(),
-                Tab::Shell,
+                Tab::Overview,
                 window,
                 cx,
             )
         });
-        window.render_frame(cx);
-        window.click("pod-shell-start", cx);
     })
     .unwrap();
     cx.run_until_parked();
+    crate::desktop::tests::start_shell(handle, &pilot, &identity, cx);
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("detail-tab-overview", cx);
         window.render_frame(cx);
         window.click("pod-runs-on", cx);
     })
     .unwrap();
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(pilot.read(cx).page, Page::Resources);
-        assert_eq!(pilot.read(cx).selected_node, target);
-        assert_eq!(
-            pilot.read(cx).resources.read(cx).detail_identity(cx),
-            Some(&identity)
-        );
-        assert!(window.find("detail-shell-running").visible());
-        window.click("pod-runs-on", cx);
-    })
-    .unwrap();
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("End the shell");
+    assert!(!cx.has_pending_prompt());
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).page, Page::Nodes);
-        assert!(window.try_find("detail-shell-running").is_none());
+        assert_eq!(
+            crate::resources::shell::running_anywhere(cx),
+            [gpui_kit::SharedString::from(identity.name.clone())]
+        );
     })
     .unwrap();
 }
@@ -310,60 +293,66 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
-fn owner_and_service_links_respect_a_running_shell(cx: &mut TestAppContext) {
+fn owner_and_service_links_go_at_once_while_a_shell_runs(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1700., 1400.);
     let (identity, document) = pod();
+    let open_pod = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(
+                    freshkube_core::resources::builtin("pods").unwrap(),
+                    identity.clone().into(),
+                    Tab::Overview,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    open_pod(cx);
+    crate::desktop::tests::start_shell(handle, &pilot, &identity, cx);
+    let running = vec![gpui_kit::SharedString::from(identity.name.clone())];
+    let owner = &document.overview.owners[0];
     cx.update_window(handle, |_, window, cx| {
-        pilot.update(cx, |pilot, cx| {
-            pilot.open_object(
-                freshkube_core::resources::builtin("pods").unwrap(),
-                identity.clone().into(),
-                Tab::Shell,
-                window,
-                cx,
-            )
-        });
         window.render_frame(cx);
-        window.click("pod-shell-start", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.find("detail-shell-running").visible());
-        window.click("detail-tab-overview", cx);
-        window.render_frame(cx);
-        let owner = &document.overview.owners[0];
         window.within("pod-cross-links").click(
             format!("owner-{}-{}-{}", owner.kind, identity.namespace, owner.name),
             cx,
         );
     })
     .unwrap();
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
+    assert!(!cx.has_pending_prompt());
     cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        let shown = pilot
+            .read(cx)
+            .resources
+            .read(cx)
+            .detail_identity(cx)
+            .cloned();
+        assert_eq!(shown.map(|shown| shown.name), Some(owner.name.clone()));
+        assert_eq!(crate::resources::shell::running_anywhere(cx), running);
+    })
+    .unwrap();
+
+    open_pod(cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(
-            pilot.read(cx).resources.read(cx).detail_identity(cx),
-            Some(&identity)
-        );
-        assert!(window.find("detail-shell-running").visible());
         window
             .within("selected-service-payments-worker")
             .click("pod-service-forward", cx);
     })
     .unwrap();
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("End the shell");
+    assert!(!cx.has_pending_prompt());
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).resource_kind.key(), "services");
         assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Ports);
         assert!(window.find("ports").visible());
-        assert!(window.try_find("detail-shell-running").is_none());
+        assert_eq!(crate::resources::shell::running_anywhere(cx), running);
     })
     .unwrap();
 }

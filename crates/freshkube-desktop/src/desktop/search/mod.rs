@@ -152,11 +152,11 @@ impl Pilot {
         match destination {
             Destination::Page(page) => self.navigate(page, window, cx),
             Destination::Kind(kind) => self.open_kind(kind, window, cx),
-            Destination::Node(name) => self.unless_shell(window, cx, move |this, window, cx| {
-                this.resources
+            Destination::Node(name) => {
+                self.resources
                     .update(cx, |resources, cx| resources.close_for_link(cx));
-                this.open_node_by_name(&name, super::nodes::NodeTab::Overview, window, cx)
-            }),
+                self.open_node_by_name(&name, super::nodes::NodeTab::Overview, window, cx)
+            }
             Destination::Object(kind, object) => {
                 self.open_object(kind, object, resources::Tab::Overview, window, cx)
             }

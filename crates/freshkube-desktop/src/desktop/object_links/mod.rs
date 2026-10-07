@@ -17,12 +17,13 @@ impl Pilot {
             ResourceLink::Logs(request) => self
                 .dock
                 .update(cx, |dock, cx| dock.open_logs(request, window, cx)),
+            ResourceLink::Shell(request) => self
+                .dock
+                .update(cx, |dock, cx| dock.open_shell(request, window, cx)),
             ResourceLink::Node(name, tab) => {
-                self.unless_shell(window, cx, move |this, window, cx| {
-                    this.resources
-                        .update(cx, |resources, cx| resources.close_for_link(cx));
-                    this.open_node_by_name(&name, tab, window, cx);
-                })
+                self.resources
+                    .update(cx, |resources, cx| resources.close_for_link(cx));
+                self.open_node_by_name(&name, tab, window, cx);
             }
             ResourceLink::Owner {
                 api_version,
