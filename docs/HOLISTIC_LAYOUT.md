@@ -112,9 +112,9 @@ Taken with the user on 2 October 2026.
 
 ### The Kubernetes summary
 
-Core gets `kubernetes_summary.rs`. It provides `collect_kubernetes_summary(client) -> KubernetesSummary`, which reads concurrently on Tokio with a 15 s timeout.
+Core's `kubernetes_summary/` keeps a `Session` of reflector stores (AGENTS.md describes it). The summary has one derivation, `kubernetes_summary/project.rs`, from the session's retained objects.
 
-This section records the first, polling design. The watch migration replaced its reads and refresh with a `Session` of reflector stores (AGENTS.md describes it), and #258 removed the polling collector: the summary has one derivation, `kubernetes_summary/project.rs`, from the session's retained objects. The parts below and what each keeps are unchanged.
+This section records the first, polling design. Core got `kubernetes_summary.rs`, whose `collect_kubernetes_summary(client) -> KubernetesSummary` read concurrently on Tokio with a 15 s timeout. The watch migration replaced its reads and refresh with the session, and #258 removed the polling collector. The parts below and what each keeps are unchanged.
 
 - **Reads.**
   - The server version.
