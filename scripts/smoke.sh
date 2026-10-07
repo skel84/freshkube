@@ -7,6 +7,7 @@
 #   scripts/smoke.sh shot NAME [SETTLE_SECONDS]   capture the window to target/smoke/<worktree>/NAME.png
 #   scripts/smoke.sh key 'keystroke "k" using command down'   any System Events key clause
 #   scripts/smoke.sh click X Y                    click at points from the window's top-left
+#   scripts/smoke.sh right-click X Y              the same with the right button: a context menu
 #   scripts/smoke.sh hover X Y                    move the pointer to X Y, without a click or wheel
 #   scripts/smoke.sh scroll X Y DY [DX]           scroll at X Y by DY points down, DX right
 #   scripts/smoke.sh full NAME [X Y] [MAX]        NAME-0.png, NAME-1.png, … one per screenful,
@@ -159,6 +160,13 @@ click() {
   helper click $((x + ${1:?x})) $((y + ${2:?y}))
 }
 
+right_click() {
+  front
+  local x y w h
+  read -r x y w h < <(helper bounds "$(pid)")
+  helper right-click $((x + ${1:?x})) $((y + ${2:?y}))
+}
+
 # Only a pointer move: a wheel event, even of 0, hides a tooltip already
 # shown, so tooltips are checked with this rather than `scroll X Y 0`.
 hover() {
@@ -220,5 +228,6 @@ pages() {
 
 case ${1:-} in
   start | shot | key | click | hover | scroll | full | stop | pages) cmd=$1; shift; "$cmd" "$@" ;;
-  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  right-click) shift; right_click "$@" ;;
+  *) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

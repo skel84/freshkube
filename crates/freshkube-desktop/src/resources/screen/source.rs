@@ -36,7 +36,7 @@ impl TableSource for ResourcesScreen {
 
     fn list_label(&self) -> String {
         format!(
-            "{}; arrows select and show details, Enter moves to them, X marks a row, L opens a pod's logs, slash or Command-F filters, N chooses the namespace, Escape clears the filter, then closes the details",
+            "{}; arrows select and show details, Enter moves to them, X marks a row, Shift-X its group, O opens a pod's node, H shows or folds the healthy pods, L opens a pod's logs, a right-click shows a row's actions, slash or Command-F filters, N chooses the namespace, Escape clears the filter, then closes the details",
             self.title()
         )
     }
@@ -238,6 +238,21 @@ impl TableSource for ResourcesScreen {
         // closes it.
         cx.stop_propagation();
         self.click_row(key, window, cx);
+    }
+
+    /// The node pane's pods list has no menu: its keys are its own.
+    fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
+        (!self.embedded).then(|| self.focus.clone())
+    }
+
+    fn row_menu(
+        &mut self,
+        key: &ResourceIdentity,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<table::RowAction> {
+        self.select_for_menu(key, window, cx);
+        self.menu_actions(cx)
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

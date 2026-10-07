@@ -9,7 +9,7 @@ use freshkube_core::resources::{FailureKind, PodUsage, list_pod_usage};
 use gpui_kit::{ClipboardItem, Context, ScrollStrategy, Window};
 
 use super::super::model::ResourceIdentity;
-use super::super::projection::{Group, Grouping};
+use super::super::projection::{Cause, Group, Grouping};
 use super::super::store::Usage;
 use super::super::{LogsRequest, ResourceLink, detail::DetailTarget, example};
 use super::{KubeAccess, ResourcesScreen};
@@ -93,8 +93,12 @@ impl ResourcesScreen {
         cx.notify();
     }
 
-    /// Shows or folds the healthy pods under the problems.
+    /// H, or the healthy group's chevron, shows or folds the healthy pods
+    /// under the problems, while they may fold.
     pub(super) fn toggle_healthy(&mut self, cx: &mut Context<Self>) {
+        if !self.projection.folds_healthy() {
+            return;
+        }
         self.healthy_open = !self.healthy_open;
         self.regroup();
         cx.notify();
@@ -109,6 +113,44 @@ impl ResourcesScreen {
             self.marked.insert(identity);
         }
         cx.notify();
+    }
+
+    /// The group the selected row is under, when the pods are grouped.
+    pub(super) fn selected_group(&self) -> Option<&Group> {
+        self.projection
+            .selected_index()
+            .and_then(|row| self.projection.group_of(row))
+    }
+
+    /// Shift-X marks every row of the selected row's group; the healthy
+    /// group, which isn't a problem, isn't marked whole.
+    pub(super) fn select_group(&mut self, cx: &mut Context<Self>) {
+        if let Some(group) = self
+            .selected_group()
+            .filter(|group| group.cause != Cause::Healthy)
+            .cloned()
+        {
+            self.mark_group(&group, cx);
+        }
+    }
+
+    /// The node the selected pod runs on, if it is scheduled.
+    pub(super) fn selected_node(&self) -> Option<String> {
+        let row = self
+            .projection
+            .row(&self.store, self.projection.selected_index()?)?;
+        let node = &row.pod.as_ref()?.node;
+        (!node.is_empty()).then(|| node.clone())
+    }
+
+    /// O opens the selected pod's node.
+    pub(super) fn open_selected_node(&mut self, cx: &mut Context<Self>) {
+        if self.embedded {
+            return;
+        }
+        if let Some(node) = self.selected_node() {
+            self.open_node(node, cx);
+        }
     }
 
     /// Marks every row of a group, shown or collapsed.

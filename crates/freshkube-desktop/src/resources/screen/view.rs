@@ -2,6 +2,7 @@ use super::super::model::format_age;
 use super::super::projection::{Cause, PodFilter};
 use super::*;
 use gpui_kit::base::Selectable;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use std::rc::Rc;
 
 impl ResourcesScreen {
@@ -125,45 +126,40 @@ impl ResourcesScreen {
         .detail(vec![count])
         .after(detail)
         .room(self.room_beside_drawer(cx));
-        if let Some(node) = node {
-            row = row.action(
-                Button::new(SharedString::from(format!("{key}-open-node")))
-                    .ghost()
-                    .xsmall()
-                    .label("Open node")
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        cx.stop_propagation();
-                        view.open_node(node.clone(), cx)
-                    })),
-            );
-        }
-        if group.cause != Cause::Healthy {
-            let target = group.clone();
-            row = row.action(
-                Button::new(SharedString::from(format!("{key}-select")))
-                    .ghost()
-                    .xsmall()
-                    .label(format!("Select all {}", group.total))
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        cx.stop_propagation();
-                        view.mark_group(&target, cx)
-                    })),
-            );
-        }
         // A filter keeps every healthy pod in sight, so it offers no fold.
         if group.cause == Cause::Healthy && self.projection.folds_healthy() {
-            row = row.action(
+            let what = if collapsed { "Expand" } else { "Collapse" };
+            row = row.chevron(
                 Button::new(SharedString::from(format!("{key}-toggle")))
                     .ghost()
                     .xsmall()
-                    .label(if collapsed { "Expand" } else { "Collapse" })
+                    .icon(if collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .tooltip_with_action(what, &ToggleHealthy, Some(CONTEXT))
+                    .accessibility_label(format!("{what} healthy pods"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         cx.stop_propagation();
                         view.toggle_healthy(cx)
                     })),
             );
         }
-        Some(row.render(cx).into_any_element())
+        // Select all and Open node are the menu's and the keys' (change 10).
+        let (view, focus, target) = (cx.entity().downgrade(), self.focus.clone(), group.clone());
+        let line = div()
+            .id(SharedString::from(format!("{key}-line")))
+            .test_support()
+            .w_full()
+            .child(row.render(cx))
+            .context_menu(move |menu, window, cx| {
+                let actions = view
+                    .update(cx, |view, cx| view.group_menu(&target, window, cx))
+                    .unwrap_or_default();
+                table::row_menu(menu, actions, &focus, cx)
+            });
+        Some(line.into_any_element())
     }
 
     /// The footer's counts: the marked rows and their actions, and while
@@ -275,6 +271,9 @@ impl ResourcesScreen {
             }))
             .on_action(cx.listener(|view, _: &ToggleMark, _, cx| view.toggle_mark(cx)))
             .on_action(cx.listener(|view, _: &OpenLogs, window, cx| view.open_logs(window, cx)))
+            .on_action(cx.listener(|view, _: &SelectGroup, _, cx| view.select_group(cx)))
+            .on_action(cx.listener(|view, _: &OpenNode, _, cx| view.open_selected_node(cx)))
+            .on_action(cx.listener(|view, _: &ToggleHealthy, _, cx| view.toggle_healthy(cx)))
             .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
             .flex_1()
