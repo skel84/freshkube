@@ -1,6 +1,6 @@
 //! `navigation.json` beside the preferences: whether the sidebar is
-//! collapsed, how wide each page's inspector is, in dp, and the dock's
-//! state and log tabs (`desktop/dock/saved.rs`). The shell opens
+//! collapsed, how wide each page's inspector and drawer are, in dp, and
+//! the dock's state and log tabs (`desktop/dock/saved.rs`). The shell opens
 //! it once and makes it a global, so every writer saves the same snapshot
 //! and none drops another's key.
 //!
@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 
 const COLLAPSED: &str = "collapsed";
 const INSPECTOR: &str = "inspector";
+const DRAWER: &str = "drawer";
 const DOCK: &str = "dock";
 
 #[derive(Clone, Default)]
@@ -69,16 +70,33 @@ impl NavigationFile {
 
     /// The width `page`'s inspector was left at, in dp.
     pub(crate) fn inspector_width(&self, page: &str) -> Option<f32> {
+        self.width(INSPECTOR, page)
+    }
+
+    pub(crate) fn set_inspector_width(&self, page: &str, width: f32, cx: &App) {
+        self.set_width(INSPECTOR, page, width, cx);
+    }
+
+    /// The width `page`'s drawer was left at, in dp.
+    pub(crate) fn drawer_width(&self, page: &str) -> Option<f32> {
+        self.width(DRAWER, page)
+    }
+
+    pub(crate) fn set_drawer_width(&self, page: &str, width: f32, cx: &App) {
+        self.set_width(DRAWER, page, width, cx);
+    }
+
+    fn width(&self, group: &str, page: &str) -> Option<f32> {
         self.read(|map| {
-            let width = map.get(INSPECTOR)?.get(page)?.as_f64()? as f32;
+            let width = map.get(group)?.get(page)?.as_f64()? as f32;
             (width.is_finite() && width > 0.).then_some(width)
         })
     }
 
-    pub(crate) fn set_inspector_width(&self, page: &str, width: f32, cx: &App) {
+    fn set_width(&self, group: &str, page: &str, width: f32, cx: &App) {
         self.change(cx, |map| {
             let widths = map
-                .entry(INSPECTOR)
+                .entry(group)
                 .or_insert_with(|| Value::Object(Map::new()));
             if !widths.is_object() {
                 *widths = Value::Object(Map::new());

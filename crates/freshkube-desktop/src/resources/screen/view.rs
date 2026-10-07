@@ -2,6 +2,7 @@ use super::super::model::format_age;
 use super::super::projection::{Cause, PodFilter};
 use super::*;
 use gpui_kit::base::Selectable;
+use std::rc::Rc;
 
 impl ResourcesScreen {
     /// The pods page's Problems and All, with how many pods each glyph
@@ -441,17 +442,9 @@ impl Render for ResourcesScreen {
             })
             .unwrap_or_else(|| self.table(window, cx));
         let list = self.keyed(list, cx);
-        let beside = page_width(window) >= inspector::SPLIT_WIDTH;
-        // A short page scrolls its frame, and the split keeps its least
-        // heights in it.
+        let body = self.body(list, window, cx);
+        // A short page scrolls its frame.
         let short = page::is_short(window);
-        let pane = self.detail.read(cx).target_identity().is_some().then(|| {
-            // Cached: list updates and age ticks don't redraw the pane.
-            AnyView::from(self.detail.clone())
-                .cached(StyleRefinement::default().size_full())
-                .into_any_element()
-        });
-        let body = inspector::split("resource-split", &self.split, beside, list, pane, window);
         page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| {
@@ -463,5 +456,92 @@ impl Render for ResourcesScreen {
                     .map(|banner| page::inset().child(banner)),
             )
             .child(body)
+    }
+}
+
+impl ResourcesScreen {
+    /// The list, and over its right edge the drawer with the selected
+    /// object. A click on the list that isn't on a row, such as on a column
+    /// header or under the rows, closes the drawer and keeps the row
+    /// selected; a row swaps its object.
+    fn body(&self, list: AnyElement, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let open = self.detail.read(cx).target_identity().is_some();
+        // A short page scrolls its frame and the list keeps a few rows in
+        // it. The drawer scrolls itself, so it takes no more: taller, it
+        // would push its own header and the toolbar out of sight.
+        let least = page::SHORT_LIST_HEIGHT;
+        div()
+            .id("resource-split")
+            .test_support()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .w_full()
+            .min_w_0()
+            .min_h(dp(least))
+            .child(
+                div()
+                    .id("resource-list-area")
+                    .test_support()
+                    .flex()
+                    .flex_col()
+                    .size_full()
+                    .min_h_0()
+                    .min_w_0()
+                    .when(open, |this| {
+                        this.on_click(cx.listener(|view, _, window, cx| {
+                            view.hide_detail(cx);
+                            window.focus(&view.focus, cx);
+                        }))
+                    })
+                    .child(list),
+            )
+            .child(self.measure_body(cx))
+            .children(open.then(|| self.drawer(window, cx)))
+            .into_any_element()
+    }
+
+    /// Learns the list's width as it lays out, for the drawer's bounds,
+    /// and draws again when it changed.
+    fn measure_body(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let measured = self.body_width.clone();
+        let this = cx.entity().downgrade();
+        canvas(
+            move |bounds, window, _| {
+                let width = bounds.size.width / crate::ui::dp_px(1., window);
+                if measured
+                    .get()
+                    .is_some_and(|last| (last - width).abs() < 0.5)
+                {
+                    return;
+                }
+                measured.set(Some(width));
+                let this = this.clone();
+                window.on_next_frame(move |_, cx| {
+                    _ = this.update(cx, |_, cx| cx.notify());
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+
+    fn drawer(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let this = cx.entity().downgrade();
+        let frame = drawer::Frame {
+            id: "resource-drawer".into(),
+            label: "Details".into(),
+            fit: drawer::fit(self.drawer_width, self.drawer_room(window)),
+            // Cached: list updates and age ticks don't redraw the pane.
+            body: AnyView::from(self.detail.clone())
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+            on_resize: Rc::new(move |width, window, cx| {
+                _ = this.update(cx, |view, cx| view.resize_drawer(width, window, cx));
+            }),
+        };
+        drawer::frame(frame, cx).into_any_element()
     }
 }

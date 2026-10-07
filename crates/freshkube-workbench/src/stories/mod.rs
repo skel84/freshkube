@@ -7,6 +7,7 @@ use gpui_kit::{AnyView, App, Window};
 
 pub mod data_table;
 pub mod dock;
+pub mod drawer;
 pub mod graph;
 pub mod motion;
 
@@ -41,6 +42,12 @@ pub const STORIES: &[Story] = &[
         title: "Dock",
         icon: || IconName::PanelBottom,
         build: dock::build,
+    },
+    Story {
+        slug: "drawer",
+        title: "Drawer",
+        icon: || IconName::PanelRight,
+        build: drawer::build,
     },
     Story {
         slug: "loading",

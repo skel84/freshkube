@@ -214,17 +214,22 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         .unwrap()
         .name
         .clone();
-    cx.update_window(handle, |_, window, cx| {
+    // Logs open in the dock and close the drawer, so each action opens
+    // the pod's Overview again first.
+    let reopen = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_object(
                 freshkube_core::resources::builtin("pods").unwrap(),
-                identity.into(),
+                identity.clone().into(),
                 Tab::Overview,
                 window,
                 cx,
             )
         });
         window.render_frame(cx);
+    };
+    cx.update_window(handle, |_, window, cx| {
+        reopen(window, cx);
         window
             .within(format!("pod-container-{name}"))
             .click("pod-container-previous", cx);
@@ -234,7 +239,8 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         // The container's previous instance opens in the dock; the pane
-        // stays on Overview.
+        // closes on Overview.
+        assert!(window.try_find("resource-drawer").is_none());
         assert_eq!(
             pilot.read(cx).resources.read(cx).detail_tab(cx),
             Tab::Overview
@@ -249,6 +255,7 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
                 .as_deref(),
             Some(name.as_str())
         );
+        reopen(window, cx);
         window
             .within(format!("pod-container-{name}"))
             .click("pod-container-logs", cx);
@@ -260,6 +267,7 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         // The same tab turns to the current instance.
         assert_eq!(pilot.read(cx).dock.read(cx).tabs.len(), 1);
         assert_eq!(window.find("pod-logs-previous").checked(), Some(false));
+        reopen(window, cx);
         window.click("detail-tab-overview", cx);
         window.render_frame(cx);
         // Recent events sit below the history; scroll until the link is
