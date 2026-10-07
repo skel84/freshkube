@@ -162,13 +162,14 @@ impl ResourcesScreen {
                 .update(cx, |view, cx| view.group_menu(&target, window, cx))
                 .unwrap_or_default();
             let view = view.clone();
-            table::row_menu(menu, actions, &focus, move |cx| match &row {
+            let live = move |cx: &gpui_kit::App| match &row {
                 // The fold alone acts on no row.
                 None => true,
                 Some(row) => view
                     .upgrade()
                     .is_some_and(|view| view.read(cx).projection.selected() == Some(row)),
-            })
+            };
+            table::row_menu(menu, actions, &focus, live, cx)
         });
         Some(line.into_any_element())
     }

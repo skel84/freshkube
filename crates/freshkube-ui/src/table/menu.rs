@@ -8,7 +8,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::{Action, App, FocusHandle, SharedString};
+use gpui_kit::{Action, App, Context, FocusHandle, SharedString};
 
 /// One line of a row's menu.
 pub enum RowAction {
@@ -49,12 +49,15 @@ impl RowAction {
 /// only while `live` holds: the row it was opened for is still listed and
 /// selected. Otherwise it does nothing, rather than act on whatever row
 /// took its place. A separator at either end or next to another is dropped.
+/// While the menu is open, no row tooltip draws over it.
 pub fn row_menu(
     menu: PopupMenu,
     actions: Vec<RowAction>,
     focus: &FocusHandle,
     live: impl Fn(&App) -> bool + 'static,
+    cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
+    crate::tooltip::hide_while_open(cx);
     let live = Rc::new(live);
     let mut menu = menu.action_context(focus.clone());
     let mut separate = false;

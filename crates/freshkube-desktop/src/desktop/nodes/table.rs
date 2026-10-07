@@ -381,6 +381,7 @@ impl TableSource for Pilot {
                     vec![table::RowAction::new(label, ToggleHealthyNodes)],
                     &focus,
                     |_| true,
+                    cx,
                 )
             })
             .into_any_element(),
