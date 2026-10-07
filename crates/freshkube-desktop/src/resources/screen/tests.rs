@@ -148,7 +148,7 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         // namespace when listing every one, the owner, readiness with
         // restarts, use, the node and age. IP stays left out.
         assert!(window.try_find(("resource-sort", 0usize)).is_none());
-        let labels: Vec<String> = (1..9usize)
+        let labels: Vec<String> = (1..10usize)
             .map(|ix| {
                 window
                     .find(("resource-sort", ix))
@@ -160,10 +160,18 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         assert_eq!(
             labels,
             [
-                "Name", "Ready", "CPU", "Memory", "Restarts", "Owner", "Node", "Age"
+                "Name",
+                "Containers",
+                "Ready",
+                "CPU",
+                "Memory",
+                "Restarts",
+                "Owner",
+                "Node",
+                "Age"
             ]
         );
-        assert!(window.try_find(("resource-sort", 9usize)).is_none());
+        assert!(window.try_find(("resource-sort", 10usize)).is_none());
 
         let third = identity_at(&screen, 2, cx);
         window.within(row_id(&third)).click("name", cx);
@@ -237,7 +245,7 @@ fn a_namespace_narrows_namespaced_kinds_and_persists_across_kinds(cx: &mut TestA
         assert!(!view.layout.namespaced);
         assert_eq!(
             window.find(("resource-sort", 2usize)).label(),
-            Some("Ready")
+            Some("Containers")
         );
 
         // Cluster-scoped kinds have no namespace picker and list all.
@@ -1771,6 +1779,60 @@ fn ready_and_restarts_sort_on_their_own(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Containers sorts the pod with the worst container first, and each
+/// row's squares name every container, init containers first (#291).
+#[gpui_kit::test]
+fn containers_sort_the_worst_first_and_name_each_container(cx: &mut TestAppContext) {
+    use crate::resources::model::SortKey;
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_list_view(ListView::All, cx);
+            screen.sort_by(SortKey::Containers, cx);
+        });
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        let rows: Vec<_> = (0..view.projection.len())
+            .map(|ix| view.projection.row(&view.store, ix).unwrap())
+            .collect();
+        let worst: Vec<u8> = rows
+            .iter()
+            .map(|row| row.pod.as_ref().unwrap().worst)
+            .collect();
+        assert!(worst.is_sorted(), "{worst:?}");
+        assert_eq!(worst[0], 0, "a failing container leads");
+        let first = rows[0].identity.clone();
+        let pod = rows[0].pod.as_ref().unwrap();
+        let cell = window.within(row_id(&first)).find("containers");
+        assert_eq!(cell.label(), Some(pod.containers_label.as_str()));
+        for container in &pod.containers {
+            assert!(
+                pod.containers_label.contains(&container.name),
+                "{}",
+                pod.containers_label
+            );
+        }
+        // Ledger migrates first: its init container leads its squares,
+        // dimmed, and its line.
+        let ledger = rows
+            .iter()
+            .find(|row| row.identity.name.starts_with("ledger-"))
+            .unwrap()
+            .pod
+            .as_ref()
+            .unwrap();
+        assert!(ledger.squares[0].dim);
+        assert!(
+            ledger
+                .containers_label
+                .starts_with("migrate (init): exited 0"),
+            "{}",
+            ledger.containers_label
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn pod_rows_show_owner_readiness_use_and_node(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
@@ -1874,13 +1936,14 @@ fn fog_glyph_filters_and_column_choices_change_the_table(cx: &mut TestAppContext
             let before = screen.read(cx).layout.width;
             window.click("resource-columns", cx);
             window.render_frame(cx);
-            // The first optional column is Ready; the Name and glyph stay fixed.
+            // The first optional column is Containers; the Name and glyph
+            // stay fixed.
             window.within("popup-menu").click(0usize, cx);
             assert!(
                 screen
                     .read(cx)
                     .hidden_columns
-                    .contains(&super::layout::ColumnSource::Ready)
+                    .contains(&super::layout::ColumnSource::Containers)
             );
             assert!(screen.read(cx).layout.width < before);
             before

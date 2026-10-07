@@ -121,7 +121,19 @@ Shape and colour communicate severity; words explain the cause when the group he
 
 Pods start on Problems when problems exist, grouped by cause, with healthy rows folded. The toolbar contains title, text filter, glyph/count filters and Columns. A blue-tinted banner states how many rows are shown and provides Show all; selected rows expose bulk copy/clear actions. Rows are 26 dp and table headers 26 dp; group headers take the row height, since the list is uniform. There is no density control: the text size scales rows for anyone who wants them larger.
 
-The status is a glyph, replaced by a checkbox on a marked row. Pods order their columns as Freelens does (#291): Name, Ready (`0/1`), CPU, Memory, Restarts, Owner, Node, Age. Ready sorts the least ready first; Restarts has its own sortable column, `0` muted and five or more in amber. Owner prefixes are muted (`deploy/`, `sts/`). Namespace prefixes are muted; random suffixes are faint. Remove a common node prefix only when detected and keep the full name in its tooltip. Sort arrows, a blue focus outline, ↑↓, Enter, X and L keep their existing behavior.
+The status is a glyph, replaced by a checkbox on a marked row. Pods order their columns as Freelens does (#291): Name, Containers, Ready (`0/1`), CPU, Memory, Restarts, Owner, Node, Age. Ready sorts the least ready first; Restarts has its own sortable column, `0` muted and five or more in amber.
+
+Containers draws a square per container (`freshkube_ui::squares`), 8 dp with 3 dp between, in the order the pod runs them: init containers first, at half opacity. At most eight show, then a muted `+N`. The tooltip and the accessible label name each container, its state and reason, and its restarts, so colour never carries the state alone. The column sorts the worst square first.
+
+| Container | Square |
+| --- | --- |
+| Running and ready | `good`, filled |
+| Running and ready, restarted | `good`, outlined |
+| Running, not ready; waiting to start | `warn` (outlined once restarted) |
+| Waiting that won't clear (`CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`, `CreateContainerConfigError`, …) | `crit` (outlined once restarted) |
+| Exited non-zero, or `OOMKilled` | `crit` (outlined once restarted) |
+| Exited 0 | `unk`, filled |
+| No state reported yet | `unk`, outlined | Owner prefixes are muted (`deploy/`, `sts/`). Namespace prefixes are muted; random suffixes are faint. Remove a common node prefix only when detected and keep the full name in its tooltip. Sort arrows, a blue focus outline, ↑↓, Enter, X and L keep their existing behavior.
 
 Resource meters are 44×10 dp capsules. A resource-coloured 28% band extends to the request; a 4 dp bar shows use; the end is the limit. CPU is blue and memory lavender. Above request, brighten that resource's bar; at ≥85% of a known limit, use amber. Stale data is diagonally striped in its resource colour. Values remain neutral. No request ticks. The tooltip is `meters::tip`, for Pods and Nodes alike: use and its share of the end, the request and its share, the end (`limit none` on a pod without one, `allocatable unknown` on a node), `(last known)` on stale use, and the state in words, `above request` or `at least 85% of limit` (or allocatable), from the same emphasis the bar is coloured by; percentages round down. A page appends its own provenance after it. The footer explains the states. Unknown limits must be identified, never represented as known capacities. Every per-row CPU and memory value uses these shared resource meters.
 

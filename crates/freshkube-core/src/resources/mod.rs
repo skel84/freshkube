@@ -58,7 +58,7 @@ pub use pod_logs::{
     MAX_LINE_BYTES, PodContainers, PodLogUpdate, Termination, follow_pod_log, pod_containers,
 };
 pub use pod_row::{
-    Amounts, ContainerFacts, PodFacts, PodUsage, cpu_millis, list_pod_usage, quantity,
+    Amounts, ContainerFacts, PodFacts, PodUsage, RunState, cpu_millis, list_pod_usage, quantity,
 };
 pub use table::{OwnerReference, RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};

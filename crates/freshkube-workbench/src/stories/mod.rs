@@ -10,6 +10,7 @@ pub mod dock;
 pub mod drawer;
 pub mod graph;
 pub mod motion;
+pub mod squares;
 
 /// A story the list offers.
 pub struct Story {
@@ -48,6 +49,12 @@ pub const STORIES: &[Story] = &[
         title: "Drawer",
         icon: || IconName::PanelRight,
         build: drawer::build,
+    },
+    Story {
+        slug: "squares",
+        title: "Container squares",
+        icon: || IconName::LayoutGrid,
+        build: squares::build,
     },
     Story {
         slug: "loading",

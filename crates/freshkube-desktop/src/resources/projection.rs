@@ -494,6 +494,21 @@ fn compare(
             }
             label(left).cmp(&label(right))
         }
+        (SortKey::Containers, _) => {
+            // The worst square first, then the more containers in that
+            // state; a row without squares last.
+            let worst = |row: &ResourceRow| {
+                row.pod.as_ref().map_or((u8::MAX, 0), |pod| {
+                    let alike = pod
+                        .squares
+                        .iter()
+                        .filter(|square| super::rows::severity(square) == pod.worst)
+                        .count();
+                    (pod.worst, usize::MAX - alike)
+                })
+            };
+            worst(left).cmp(&worst(right))
+        }
         (SortKey::Ready, _) => {
             // By the ready share, cross-multiplied, so 1/2 comes before
             // 2/3; equal shares, such as 0/1 and 0/3, by the count of all.

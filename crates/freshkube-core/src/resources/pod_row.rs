@@ -27,11 +27,30 @@ pub struct ContainerFacts {
     pub name: String,
     pub ready: bool,
     pub restarts: u32,
+    /// What it is doing now.
+    pub state: RunState,
     /// Why it waits, such as `CrashLoopBackOff` or `ImagePullBackOff`.
     pub waiting: Option<String>,
     /// How its previous run ended, when it ended.
     pub last_exit_code: Option<i32>,
     pub last_reason: Option<String>,
+}
+
+/// What a container is doing now, from its status's `state`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RunState {
+    /// The status names no state, or the container has no status yet.
+    #[default]
+    Unknown,
+    Running,
+    /// Waiting to start or start again; its reason is
+    /// [`ContainerFacts::waiting`].
+    Waiting,
+    /// Ran and stopped: `Completed` with 0, or `Error`, `OOMKilled`.
+    Terminated {
+        exit_code: i32,
+        reason: Option<String>,
+    },
 }
 
 /// A pod's facts for its row. Requests and limits sum its app containers.
@@ -42,7 +61,11 @@ pub struct PodFacts {
     pub qos: String,
     pub requests: Amounts,
     pub limits: Amounts,
+    /// The app containers, as the status lists them.
     pub containers: Vec<ContainerFacts>,
+    /// The init containers, in the order they run. Kept apart, so readiness
+    /// and restarts stay the app containers', as `kubectl` prints them.
+    pub init_containers: Vec<ContainerFacts>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -52,10 +75,14 @@ pub(crate) struct PodSpec {
     node_name: String,
     #[serde(default, deserialize_with = "nullable")]
     containers: Vec<SpecContainer>,
+    #[serde(default, deserialize_with = "nullable")]
+    init_containers: Vec<SpecContainer>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 struct SpecContainer {
+    #[serde(default, deserialize_with = "nullable")]
+    name: String,
     #[serde(default, deserialize_with = "nullable")]
     resources: Requirements,
 }
@@ -77,6 +104,8 @@ pub(crate) struct PodStatus {
     qos_class: String,
     #[serde(default, deserialize_with = "nullable")]
     container_statuses: Vec<ContainerStatus>,
+    #[serde(default, deserialize_with = "nullable")]
+    init_container_statuses: Vec<ContainerStatus>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -96,6 +125,8 @@ struct ContainerStatus {
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 struct State {
+    #[serde(default)]
+    running: Option<serde_json::Value>,
     #[serde(default)]
     waiting: Option<Reason>,
     #[serde(default)]
@@ -151,32 +182,66 @@ pub(crate) fn facts(spec: &PodSpec, status: Option<&PodStatus>) -> PodFacts {
         qos: status.qos_class.clone(),
         requests: sum(|resources| &resources.requests),
         limits: sum(|resources| &resources.limits),
-        containers: status
-            .container_statuses
-            .iter()
-            .map(|status| ContainerFacts {
-                name: status.name.clone(),
-                ready: status.ready,
-                restarts: status.restart_count,
-                waiting: status
-                    .state
-                    .waiting
-                    .as_ref()
-                    .map(|waiting| waiting.reason.clone())
-                    .filter(|reason| !reason.is_empty()),
-                last_exit_code: status
-                    .last_state
-                    .terminated
-                    .as_ref()
-                    .map(|ended| ended.exit_code),
-                last_reason: status
-                    .last_state
-                    .terminated
-                    .as_ref()
-                    .map(|ended| ended.reason.clone())
-                    .filter(|reason| !reason.is_empty()),
-            })
-            .collect(),
+        containers: containers(&spec.containers, &status.container_statuses),
+        init_containers: containers(&spec.init_containers, &status.init_container_statuses),
+    }
+}
+
+/// The spec's containers in its order, each with its status, or with an
+/// unknown state while it has none (a pod not yet scheduled), then any
+/// status the spec doesn't name.
+fn containers(spec: &[SpecContainer], statuses: &[ContainerStatus]) -> Vec<ContainerFacts> {
+    let named = |name: &str| spec.iter().any(|container| container.name == name);
+    spec.iter()
+        .map(|declared| {
+            statuses
+                .iter()
+                .find(|status| status.name == declared.name)
+                .map(container)
+                .unwrap_or_else(|| ContainerFacts {
+                    name: declared.name.clone(),
+                    ..ContainerFacts::default()
+                })
+        })
+        .chain(
+            statuses
+                .iter()
+                .filter(|status| !named(&status.name))
+                .map(container),
+        )
+        .collect()
+}
+
+fn container(status: &ContainerStatus) -> ContainerFacts {
+    let reason = |text: &str| Some(text.to_owned()).filter(|reason| !reason.is_empty());
+    let state = &status.state;
+    ContainerFacts {
+        name: status.name.clone(),
+        ready: status.ready,
+        restarts: status.restart_count,
+        state: match (&state.running, &state.waiting, &state.terminated) {
+            (Some(_), _, _) => RunState::Running,
+            (_, Some(_), _) => RunState::Waiting,
+            (_, _, Some(ended)) => RunState::Terminated {
+                exit_code: ended.exit_code,
+                reason: reason(&ended.reason),
+            },
+            _ => RunState::Unknown,
+        },
+        waiting: state
+            .waiting
+            .as_ref()
+            .and_then(|waiting| reason(&waiting.reason)),
+        last_exit_code: status
+            .last_state
+            .terminated
+            .as_ref()
+            .map(|ended| ended.exit_code),
+        last_reason: status
+            .last_state
+            .terminated
+            .as_ref()
+            .and_then(|ended| reason(&ended.reason)),
     }
 }
 
@@ -325,8 +390,15 @@ mod tests {
               "spec":{"nodeName":"wk-1","containers":[
                 {"name":"app","resources":{"requests":{"cpu":"100m","memory":"64Mi"},
                   "limits":{"cpu":"1","memory":"256Mi"}}},
-                {"name":"proxy","resources":{"requests":{"cpu":"50m","memory":"32Mi"}}}]},
-              "status":{"phase":"Running","qosClass":"Burstable","containerStatuses":[
+                {"name":"proxy","resources":{"requests":{"cpu":"50m","memory":"32Mi"}}}],
+                "initContainers":[{"name":"migrate"},{"name":"mesh"},{"name":"warm"}]},
+              "status":{"phase":"Running","qosClass":"Burstable",
+                "initContainerStatuses":[
+                  {"name":"migrate","ready":false,"restartCount":0,
+                    "state":{"terminated":{"exitCode":0,"reason":"Completed"}}},
+                  {"name":"mesh","ready":true,"restartCount":1,
+                    "state":{"running":{"startedAt":"2026-10-07T10:00:00Z"}}}],
+                "containerStatuses":[
                 {"name":"app","ready":false,"restartCount":14,
                   "state":{"waiting":{"reason":"CrashLoopBackOff"}},
                   "lastState":{"terminated":{"exitCode":1,"reason":"Error"}}},
@@ -349,7 +421,32 @@ mod tests {
         assert_eq!(app.restarts, 14);
         assert_eq!(app.waiting.as_deref(), Some("CrashLoopBackOff"));
         assert_eq!(app.last_exit_code, Some(1));
+        assert_eq!(app.state, RunState::Waiting);
         assert!(facts.containers[1].ready);
+        assert_eq!(facts.containers[1].state, RunState::Running);
+        // Init containers stay apart from the app containers, in order.
+        assert_eq!(facts.containers.len(), 2);
+        let init: Vec<_> = facts
+            .init_containers
+            .iter()
+            .map(|c| (c.name.as_str(), &c.state, c.restarts))
+            .collect();
+        assert_eq!(
+            init,
+            [
+                (
+                    "migrate",
+                    &RunState::Terminated {
+                        exit_code: 0,
+                        reason: Some("Completed".into())
+                    },
+                    0
+                ),
+                ("mesh", &RunState::Running, 1),
+                // Declared, but no status yet.
+                ("warm", &RunState::Unknown, 0),
+            ]
+        );
     }
 
     #[test]

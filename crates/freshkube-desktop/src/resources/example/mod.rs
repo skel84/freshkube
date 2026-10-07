@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use freshkube_core::resources::{
     Amounts, ApiGroup, ContainerFacts, Failure, FailureKind, GroupKinds, ObjectDocument,
-    ObjectEvent, PodFacts, PodLogUpdate, PodUsage, ResourceKind, SecretValue, Termination,
-    WorkloadPod, builtin, object_from_yaml,
+    ObjectEvent, PodFacts, PodLogUpdate, PodUsage, ResourceKind, RunState, SecretValue,
+    Termination, WorkloadPod, builtin, object_from_yaml,
 };
 
 use super::model::{ColumnKind, ResourceColumn, ResourceIdentity, ResourceRow};
@@ -381,7 +381,12 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
             BTreeMap::from([("pod-template-hash".to_owned(), hash.clone())]),
         )
     };
-    let facts = pod_facts(ix, ready == "1/1", status);
+    let restarts = row.cells[3]
+        .split_whitespace()
+        .next()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    let facts = pod_facts(ix, ready == "1/1", status, restarts);
     rows::derive(
         &mut row,
         &pod_columns(),
@@ -392,9 +397,10 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
     row
 }
 
-/// The example pod's one container and its resources: requests and limits
-/// vary by workload, and some pods set no limits.
-fn pod_facts(ix: usize, ready: bool, status: &str) -> PodFacts {
+/// The example pod's app container, an init container for the workloads
+/// that migrate or prepare data first, and its resources: requests and
+/// limits vary by workload, and some pods set no limits.
+fn pod_facts(ix: usize, ready: bool, status: &str, restarts: u32) -> PodFacts {
     let workload = ix % WORKLOADS.len();
     let mebi = 1024. * 1024.;
     let cpu = 50. * (workload % 4 + 1) as f64;
@@ -410,16 +416,55 @@ fn pod_facts(ix: usize, ready: bool, status: &str) -> PodFacts {
             cpu_millis: limited.then_some(cpu * 4.),
             memory_bytes: limited.then_some(memory * 2.),
         },
-        containers: vec![ContainerFacts {
-            name: "app".into(),
-            ready,
-            restarts: if status == "CrashLoopBackOff" { 14 } else { 0 },
-            waiting: (status == "CrashLoopBackOff").then(|| status.to_owned()),
-            last_exit_code: (status == "CrashLoopBackOff").then_some(1),
-            last_reason: (status == "CrashLoopBackOff").then(|| "Error".to_owned()),
-        }],
+        containers: vec![app_container(ready, status, restarts)],
+        init_containers: init_container(WORKLOADS[workload].1, status),
         ..PodFacts::default()
     }
+}
+
+fn app_container(ready: bool, status: &str, restarts: u32) -> ContainerFacts {
+    let crashing = status == "CrashLoopBackOff";
+    let state = match status {
+        "Running" => RunState::Running,
+        "Completed" => RunState::Terminated {
+            exit_code: 0,
+            reason: Some("Completed".into()),
+        },
+        "Pending" => RunState::Unknown,
+        _ => RunState::Waiting,
+    };
+    ContainerFacts {
+        name: "app".into(),
+        ready,
+        restarts,
+        waiting: (state == RunState::Waiting).then(|| status.to_owned()),
+        state,
+        last_exit_code: crashing.then_some(1),
+        last_reason: crashing.then(|| "Error".to_owned()),
+    }
+}
+
+/// Ledger migrates its schema and Prometheus prepares its data folder
+/// before the app starts; a pod not yet scheduled has run neither.
+fn init_container(app: &str, status: &str) -> Vec<ContainerFacts> {
+    let name = match app {
+        "ledger" => "migrate",
+        "prometheus" => "init-data",
+        _ => return Vec::new(),
+    };
+    let state = match status {
+        "Pending" => RunState::Unknown,
+        "ContainerCreating" => RunState::Running,
+        _ => RunState::Terminated {
+            exit_code: 0,
+            reason: Some("Completed".into()),
+        },
+    };
+    vec![ContainerFacts {
+        name: name.into(),
+        state,
+        ..ContainerFacts::default()
+    }]
 }
 
 /// What metrics-server would report for the example pods of `context`
