@@ -4,7 +4,10 @@
 //! follows only from its position, or from its level when the series read
 //! as quantiles or histogram buckets. A threshold step's colour gives only
 //! its meaning: of several steps the highest is critical and the rest are
-//! warnings, and a single step is a warning.
+//! warnings, and a single step is a warning. The one exception is a Coroot
+//! chart, whose series name their colour: it draws in the nearest Console
+//! colour.
+use freshkube_core::coroot::SeriesColor;
 use freshkube_core::monitoring::model::{color::Rgba, spec::Step};
 use gpui_kit::{Hsla, rgb};
 
@@ -28,6 +31,8 @@ pub(crate) enum Ink {
     Overflow(usize),
     /// A level on the blue ramp, 0 (lowest, darkest) to 1 (highest).
     Level(f32),
+    /// A Coroot series' own colour, as the nearest Console colour.
+    Named(SeriesColor),
 }
 
 impl Ink {
@@ -38,7 +43,21 @@ impl Ink {
             Ink::Overflow(slot) if focused => hex(SLOTS[slot % SLOTS.len()]),
             Ink::Overflow(_) => hex(OVERFLOW),
             Ink::Level(level) => ramp(level),
+            Ink::Named(color) => hex(named(color)),
         }
+    }
+}
+
+/// The Console colour drawn for a Coroot colour (docs/DESIGN.md, Tokens).
+fn named(color: SeriesColor) -> u32 {
+    match color {
+        SeriesColor::Critical => 0xF28B82,
+        SeriesColor::Warning => 0xF2C46D,
+        SeriesColor::Ok => 0x82D4AB,
+        SeriesColor::Blue => SLOTS[0],
+        SeriesColor::Orange => SLOTS[1],
+        SeriesColor::Purple => 0xB7AAF7,
+        SeriesColor::Grey => OVERFLOW,
     }
 }
 
@@ -59,19 +78,32 @@ pub(crate) fn ramp(level: f32) -> Hsla {
     hex(mix(16) | mix(8) | mix(0))
 }
 
-/// Inks for series in frame order: the ramp when every series reads as a
-/// level, else the slots with grey past the second.
-pub(crate) fn inks(series: &[(&str, &[(String, String)])]) -> Vec<Ink> {
-    if let Some(levels) = levels(series) {
-        return levels;
-    }
-    (0..series.len())
-        .map(|index| {
-            if index < SLOTS.len() {
-                Ink::Slot(index)
-            } else {
-                Ink::Overflow(index)
-            }
+/// Inks for series in frame order: a colour `named` gives the series by
+/// its name; otherwise the ramp when every series reads as a level, else
+/// the slots with grey past the second.
+pub(crate) fn inks(
+    series: &[(&str, &[(String, String)])],
+    named: &[(String, SeriesColor)],
+) -> Vec<Ink> {
+    let ordered = levels(series).unwrap_or_else(|| {
+        (0..series.len())
+            .map(|index| {
+                if index < SLOTS.len() {
+                    Ink::Slot(index)
+                } else {
+                    Ink::Overflow(index)
+                }
+            })
+            .collect()
+    });
+    series
+        .iter()
+        .zip(ordered)
+        .map(|((name, _), ink)| {
+            named
+                .iter()
+                .find(|(n, _)| n == name)
+                .map_or(ink, |(_, color)| Ink::Named(*color))
         })
         .collect()
 }
@@ -205,7 +237,7 @@ mod tests {
     fn named(names: &[&str]) -> Vec<Ink> {
         let series: Vec<(&str, &[(String, String)])> =
             names.iter().map(|name| (*name, &[][..])).collect();
-        inks(&series)
+        inks(&series, &[])
     }
 
     #[test]
@@ -245,13 +277,41 @@ mod tests {
     fn buckets_and_quantile_labels_are_levels() {
         let label = |key: &str, value: &str| vec![(key.to_owned(), value.to_owned())];
         let (a, b, c) = (label("le", "0.1"), label("le", "+Inf"), label("le", "1"));
-        let inks = inks(&[("x", &a[..]), ("y", &b[..]), ("z", &c[..])]);
+        let inks = inks(&[("x", &a[..]), ("y", &b[..]), ("z", &c[..])], &[]);
         assert_eq!(inks, [Ink::Level(0.), Ink::Level(1.), Ink::Level(0.5)]);
         let (a, b) = (label("quantile", "0.5"), label("quantile", "0.99"));
         assert_eq!(
-            super::inks(&[("a", &a[..]), ("b", &b[..])]),
+            super::inks(&[("a", &a[..]), ("b", &b[..])], &[]),
             [Ink::Level(0.), Ink::Level(1.)]
         );
+    }
+
+    #[test]
+    fn a_coroot_colour_wins_and_the_rest_keep_their_turn() {
+        let series: Vec<(&str, &[(String, String)])> = ["error", "info", "debug", "other"]
+            .iter()
+            .map(|name| (*name, &[][..]))
+            .collect();
+        let named = [
+            ("error".to_owned(), SeriesColor::Critical),
+            ("info".to_owned(), SeriesColor::Blue),
+            ("debug".to_owned(), SeriesColor::Ok),
+        ];
+        let inks = inks(&series, &named);
+        assert_eq!(
+            inks,
+            [
+                Ink::Named(SeriesColor::Critical),
+                Ink::Named(SeriesColor::Blue),
+                Ink::Named(SeriesColor::Ok),
+                Ink::Overflow(3),
+            ]
+        );
+        // Drawn in its colour whether focused or not, unlike grey.
+        assert_eq!(inks[0].color(false), hex(0xF28B82));
+        assert_eq!(inks[0].color(true), hex(0xF28B82));
+        assert_eq!(Ink::Named(SeriesColor::Warning).color(false), hex(0xF2C46D));
+        assert_eq!(inks[2].color(false), hex(0x82D4AB));
     }
 
     #[test]

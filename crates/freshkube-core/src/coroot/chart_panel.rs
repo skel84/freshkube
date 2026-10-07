@@ -25,6 +25,48 @@ pub struct ChartPanel {
     /// Coroot's deployment annotations. Incidents and other events have no
     /// marker kind yet, so they are left out.
     pub markers: Vec<Marker>,
+    /// The Console colour of each series whose Coroot colour has one, by
+    /// the series' name; the rest take the next colour in turn.
+    pub colors: Vec<(String, SeriesColor)>,
+}
+
+/// The Console colour nearest a Coroot colour. Coroot names Material
+/// colours, such as `red-darken1` for errors and `orange-lighten1` for
+/// warnings; their shade doesn't change the colour drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeriesColor {
+    Critical,
+    Warning,
+    Ok,
+    Blue,
+    Orange,
+    Purple,
+    Grey,
+}
+
+impl SeriesColor {
+    /// None for a name Coroot doesn't use or an empty one, which takes the
+    /// next colour in turn.
+    pub fn from_coroot(name: &str) -> Option<Self> {
+        let hue = name
+            .trim()
+            .split_once(|c: char| c.is_ascii_digit())
+            .map_or(name.trim(), |(hue, _)| hue);
+        let hue = ["-lighten", "-darken", "-accent"]
+            .iter()
+            .find_map(|shade| hue.strip_suffix(shade))
+            .unwrap_or(hue);
+        Some(match hue {
+            "red" | "pink" => Self::Critical,
+            "orange" | "amber" | "yellow" | "lime" => Self::Warning,
+            "green" | "light-green" | "teal" => Self::Ok,
+            "blue" | "light-blue" | "cyan" | "indigo" => Self::Blue,
+            "deep-orange" | "brown" => Self::Orange,
+            "purple" | "deep-purple" => Self::Purple,
+            "grey" | "blue-grey" | "black" | "white" => Self::Grey,
+            _ => return None,
+        })
+    }
 }
 
 /// The series' name as its legend shows it.
@@ -155,6 +197,9 @@ impl ChartPanel {
                 label: a.name.replace("<br>", " · "),
             })
             .collect();
+        let colors = all()
+            .filter_map(|s| Some((label(s).to_owned(), SeriesColor::from_coroot(&s.color)?)))
+            .collect();
         Some(Self {
             spec,
             result: PanelResult {
@@ -164,6 +209,7 @@ impl ChartPanel {
             },
             window,
             markers,
+            colors,
         })
     }
 }
@@ -339,6 +385,53 @@ mod tests {
         assert_eq!(panel.markers[0].kind, MarkerKind::Deploy);
         assert_eq!(panel.markers[0].at, 1_760_000_060);
         assert_eq!(panel.markers[0].label, "deployment worker:1.8.2");
+    }
+
+    #[test]
+    fn coroot_colours_take_the_nearest_console_colour() {
+        let color = SeriesColor::from_coroot;
+        assert_eq!(color("red-darken1"), Some(SeriesColor::Critical));
+        assert_eq!(color("red"), Some(SeriesColor::Critical));
+        assert_eq!(color("orange-lighten1"), Some(SeriesColor::Warning));
+        assert_eq!(color("amber"), Some(SeriesColor::Warning));
+        assert_eq!(color("blue-lighten2"), Some(SeriesColor::Blue));
+        assert_eq!(color("green-lighten2"), Some(SeriesColor::Ok));
+        assert_eq!(color("grey-lighten1"), Some(SeriesColor::Grey));
+        assert_eq!(color("deep-orange-accent2"), Some(SeriesColor::Orange));
+        assert_eq!(color("deep-purple"), Some(SeriesColor::Purple));
+        assert_eq!(color("blue-grey-darken3"), Some(SeriesColor::Grey));
+        // Empty or unknown: the next colour in turn.
+        assert_eq!(color(""), None);
+        assert_eq!(color("chartreuse"), None);
+    }
+
+    #[test]
+    fn series_carry_their_coroot_colour_by_name() {
+        let coloured = |name: &str, color: &str| Series {
+            color: color.into(),
+            ..series(name, vec![Some(1.), Some(2.)])
+        };
+        let panel = ChartPanel::new(&Chart {
+            series: vec![
+                coloured("error", "red-darken1"),
+                coloured("warning", "orange-lighten1"),
+                coloured("info", "blue-lighten2"),
+                coloured("unknown", ""),
+                coloured("odd", "chartreuse"),
+            ],
+            stacked: true,
+            column: true,
+            ..chart()
+        })
+        .unwrap();
+        assert_eq!(
+            panel.colors,
+            [
+                ("error".to_owned(), SeriesColor::Critical),
+                ("warning".to_owned(), SeriesColor::Warning),
+                ("info".to_owned(), SeriesColor::Blue),
+            ]
+        );
     }
 
     #[test]

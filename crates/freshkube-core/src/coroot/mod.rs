@@ -16,7 +16,7 @@ pub use app_view::{
     DeploymentSummary, Heatmap as AppHeatmap, MapApp, MapInstance, MapLink, Series, Table, Widget,
     WidgetKind,
 };
-pub use chart_panel::ChartPanel;
+pub use chart_panel::{ChartPanel, SeriesColor};
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
     AppHealth, AppId, Application, BurnRate, Credentials, Incident, IncidentQuery, IncidentState,

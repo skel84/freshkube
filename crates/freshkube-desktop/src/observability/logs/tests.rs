@@ -90,6 +90,33 @@ fn the_logs_report_shows_coroot_s_histogram_and_messages_at_coroot_s_levels(
 }
 
 #[gpui_kit::test]
+fn the_histogram_draws_each_severity_in_its_coroot_colour(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    open(cx, &page, example::WORKER);
+    draw(cx, handle);
+    let colors = cx.read(|cx| {
+        let logs = &page.read(cx).live_logs;
+        let histogram = logs.histogram.as_ref().expect("a histogram");
+        histogram.read(cx).series_colors()
+    });
+    let hex = |value: u32| gpui_kit::Hsla::from(gpui_kit::rgb(value));
+    let color = |name: &str| {
+        colors
+            .iter()
+            .find(|(series, _)| series == name)
+            .map(|(_, color)| *color)
+            .unwrap_or_else(|| panic!("no {name} series in {colors:?}"))
+    };
+    // Coroot's red-darken1 and orange-lighten1 are Console's critical and
+    // warning colours, not the first two series slots (#226).
+    assert_eq!(color("error"), hex(0xF28B82));
+    assert_eq!(color("warning"), hex(0xF2C46D));
+    assert_eq!(color("info"), hex(0x5E93E6));
+    assert_eq!(color("debug"), hex(0x82D4AB));
+    assert_eq!(color("unknown"), hex(0x737A85));
+}
+
+#[gpui_kit::test]
 fn a_long_trace_is_one_row_and_a_search_finds_its_last_line(cx: &mut TestAppContext) {
     // Tall enough that the whole list is on screen below the map and checks.
     let (_runtime, handle, page) = super::super::tests::mount_size(cx, true, 1260., 1800.);

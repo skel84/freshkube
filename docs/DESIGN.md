@@ -179,7 +179,7 @@ Use 2 px series lines, solid hairline grids, recessive axes and legends for mult
 
 Two series use `#5E93E6` and `#CC7C4A`. Additional dashboard series remain neutral until focused in the existing legend; this avoids introducing an unreviewed larger categorical palette. Ordered quantiles use a blue ramp (`#5379BB`, `#7AA0E6`, `#B3CEFA`).
 
-Heatmap levels: `#323845`, `#33466A`, `#3D5C92`, `#5379BB`, `#7AA0E6`, `#B3CEFA`; errors use coral steps from `#3A3036` to `#F28B82`. Flame differences: less `#3F65A0` / `#3F5A80`, same `#454B56`, more `#7E4A49` / `#A64B46`, with white labels. Status colours never stand in for ordinary chart series.
+Heatmap levels: `#323845`, `#33466A`, `#3D5C92`, `#5379BB`, `#7AA0E6`, `#B3CEFA`; errors use coral steps from `#3A3036` to `#F28B82`. Flame differences: less `#3F65A0` / `#3F5A80`, same `#454B56`, more `#7E4A49` / `#A64B46`, with white labels. Status colours never stand in for ordinary chart series. A Coroot chart's series keep the colour Coroot names, as its nearest Console colour, so its errors are critical and its warnings amber ([MONITORING.md](MONITORING.md)).
 
 ## Motion
 
