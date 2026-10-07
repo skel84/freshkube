@@ -242,6 +242,22 @@ fn a_source_that_is_not_a_stream_names_its_panel_and_follow_in_its_own_words(
 }
 
 #[gpui_kit::test]
+fn a_rows_level_follows_its_severity(cx: &mut TestAppContext) {
+    use freshkube_core::types::LogLevel;
+    use freshkube_ui::palette::palette;
+
+    let (_runtime, _panel, _handle) = mount(cx);
+    cx.update(|cx| {
+        let p = palette(cx);
+        let style = |level| super::view::level_style(&level, &p);
+        // An error reads as more severe than a warning, not as information.
+        assert_eq!(style(LogLevel::Error), ("ERROR", p.crit_ink, p.crit));
+        assert_eq!(style(LogLevel::Warning), ("WARN", p.warn_ink, p.warn));
+        assert_eq!(style(LogLevel::Info).1, p.muted);
+    });
+}
+
+#[gpui_kit::test]
 fn the_first_frame_redraws_once_the_list_knows_its_width(cx: &mut TestAppContext) {
     // Opening the window draws the first frame, with rows measured against
     // the window because the list's width is learned in that prepaint.

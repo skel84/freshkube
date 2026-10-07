@@ -1,6 +1,6 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, FontWeight, ListSizingBehavior, Render, Role,
+    AnyElement, AvailableSpace, Context, FontWeight, Hsla, ListSizingBehavior, Render, Role,
     SharedString, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
@@ -24,7 +24,7 @@ use super::{
     ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
     SEARCH_CONTEXT, SelectAll,
 };
-use freshkube_ui::palette::palette;
+use freshkube_ui::palette::{Palette, palette};
 use freshkube_ui::ui::{self, dp};
 
 /// What a row's message column shows: its message, or the whole line when
@@ -66,13 +66,7 @@ impl<S: LogSource> LogView<S> {
         let matched = self.review.is_match(row_ix);
         let current = self.review.current_match == Some(id);
         let p = palette(cx);
-        let (level, level_color, stripe) = match entry.level {
-            LogLevel::Error => ("ERROR", p.accent, p.accent),
-            LogLevel::Warning => ("WARN", p.warn_ink, p.warn),
-            LogLevel::Info => ("INFO", p.muted, ui::transparent()),
-            LogLevel::Debug => ("DEBUG", p.muted, ui::transparent()),
-            LogLevel::Unknown => ("—", p.muted, ui::transparent()),
-        };
+        let (level, level_color, stripe) = level_style(&entry.level, &p);
         let time = entry
             .timestamp
             .as_ref()
@@ -736,6 +730,20 @@ impl<S: LogSource> Render for LogView<S> {
                     })
                     .child(viewport),
             )
+    }
+}
+
+/// A row's level label, its ink and its left stripe. The level follows the
+/// line's severity, as a log reader expects: ERROR in the error tone, WARN
+/// in the warning tone. It is no health verdict; error lines stay out of
+/// every health count.
+pub(super) fn level_style(level: &LogLevel, p: &Palette) -> (&'static str, Hsla, Hsla) {
+    match level {
+        LogLevel::Error => ("ERROR", p.crit_ink, p.crit),
+        LogLevel::Warning => ("WARN", p.warn_ink, p.warn),
+        LogLevel::Info => ("INFO", p.muted, ui::transparent()),
+        LogLevel::Debug => ("DEBUG", p.muted, ui::transparent()),
+        LogLevel::Unknown => ("—", p.muted, ui::transparent()),
     }
 }
 
