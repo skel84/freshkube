@@ -26,7 +26,11 @@
 //! retry.
 //!
 //! Windows refuses a port it reserves with `PermissionDenied`, not
-//! `AddrInUse`; the automatic rule steps past it as past a taken one.
+//! `AddrInUse`; there the automatic rule steps past it as past a taken one.
+//!
+//! ::1 is left out only when the machine has no IPv6 loopback. Any other
+//! failure there fails the bind, so localhost:p never reaches whatever
+//! holds ::1:p.
 
 use std::collections::HashSet;
 use std::io;
@@ -134,12 +138,25 @@ pub fn is_taken(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::AddrInUse
 }
 
-/// The system keeps the port from us: on Windows, one in a range it
-/// reserves. The automatic ports are all above 10000, where Unix needs no
-/// privilege.
+/// Windows keeps the port from us: one in a range it reserves.
 fn is_reserved(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::PermissionDenied
+    cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied
 }
+
+/// The system has no IPv6 loopback: ::1 isn't configured, or IPv6 isn't
+/// there at all.
+fn no_ipv6(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::AddrNotAvailable | io::ErrorKind::Unsupported
+    ) || error.raw_os_error() == Some(NO_ADDRESS_FAMILY)
+}
+
+/// "Address family not supported", which std leaves uncategorized.
+#[cfg(unix)]
+const NO_ADDRESS_FAMILY: i32 = libc::EAFNOSUPPORT;
+#[cfg(windows)]
+const NO_ADDRESS_FAMILY: i32 = windows_sys::Win32::Networking::WinSock::WSAEAFNOSUPPORT;
 
 fn bind_both(port: u16) -> io::Result<Listeners> {
     // Keep the check, both binds and reservation together: another bind
@@ -150,9 +167,11 @@ fn bind_both(port: u16) -> io::Result<Listeners> {
     let port = v4.local_addr()?.port();
     let v6 = match bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port)), ports) {
         Ok(listener) => Some(listener),
-        Err(error) if is_taken(&error) => return Err(error),
-        // No IPv6 loopback on this Mac: 127.0.0.1 alone will do.
-        Err(_) => None,
+        // No IPv6 loopback on this machine: 127.0.0.1 alone will do.
+        Err(error) if no_ipv6(&error) => None,
+        // Taken, refused or anything else: serving 127.0.0.1 alone would
+        // leave localhost:p to whatever holds ::1:p.
+        Err(error) => return Err(error),
     };
     ports.insert(port);
     Ok(Listeners {
@@ -382,6 +401,14 @@ mod tests {
         for task in tasks {
             task.await.unwrap();
         }
+    }
+
+    #[test]
+    fn only_a_missing_ipv6_loopback_leaves_out_ipv6() {
+        assert!(no_ipv6(&io::ErrorKind::AddrNotAvailable.into()));
+        assert!(no_ipv6(&io::Error::from_raw_os_error(NO_ADDRESS_FAMILY)));
+        assert!(!no_ipv6(&io::ErrorKind::PermissionDenied.into()));
+        assert!(!no_ipv6(&io::ErrorKind::AddrInUse.into()));
     }
 
     #[tokio::test]
