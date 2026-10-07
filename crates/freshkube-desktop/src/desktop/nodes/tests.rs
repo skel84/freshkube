@@ -810,6 +810,60 @@ fn enter_and_pane_clicks_move_the_keyboard_into_the_node_pane(cx: &mut TestAppCo
     .unwrap();
 }
 
+/// Leaving a tab whose list or log holds the keyboard for one whose screen
+/// takes no keys gives the keyboard to the tab strip, not to the previous
+/// tab's handle, which isn't drawn any more; Escape then still reaches the
+/// pane and hands the keyboard to the table (#343 review). A headless click
+/// on a tab focuses the strip on its mouse-down first, so the switch is
+/// asked straight, as More's items and Overview's links ask it.
+#[gpui_kit::test]
+fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        window.click("node-talos-cp-fra1-01", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    for from in [NodeTab::Pods, NodeTab::Logs] {
+        for to in [NodeTab::Overview, NodeTab::Services] {
+            cx.update_window(handle, |_, window, cx| {
+                pilot.update(cx, |pilot, cx| {
+                    pilot.show_node_tab(from, window, cx);
+                    pilot.focus_node_pane(window, cx);
+                });
+                window.render_frame(cx);
+                let tab_strip = pilot.read(cx).node_workspace.tab_focus.clone();
+                let pane = pilot.read(cx).node_workspace.pane_focus.clone();
+                assert!(pane.contains_focused(window, cx), "{from:?}");
+                assert!(!tab_strip.is_focused(window), "{from:?}");
+                pilot.update(cx, |pilot, cx| {
+                    pilot.show_node_tab(to, window, cx);
+                    pilot.focus_node_pane(window, cx);
+                });
+                window.render_frame(cx);
+                assert_eq!(pilot.read(cx).node_workspace.tab, to);
+                assert!(tab_strip.is_focused(window), "{from:?} → {to:?}");
+                window.press("escape", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(pilot.read(cx).node_workspace.open, "{from:?} → {to:?}");
+                assert!(
+                    pilot.read(cx).node_focus.is_focused(window),
+                    "{from:?} → {to:?}"
+                );
+            })
+            .unwrap();
+        }
+    }
+}
+
 /// With the open node hidden by the filter, Down and Up move the pane to the
 /// first and last rows the table shows (#339's selection rule).
 #[gpui_kit::test]

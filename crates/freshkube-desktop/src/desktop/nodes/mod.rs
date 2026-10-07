@@ -554,13 +554,10 @@ impl Pilot {
                 .update(cx, |pane, cx| pane.focus(window, cx)),
             _ => {
                 // Most screens keep no keyboard of their own, so the tab
-                // strip takes it unless it is already in the pane; a screen
-                // with its own then takes it from there. A screen shown for
-                // the first time isn't in the dispatch tree yet, so it must
-                // come last, not be asked whether it has it.
-                if !self.node_workspace.pane_focus.contains_focused(window, cx) {
-                    window.focus(&self.node_workspace.tab_focus, cx);
-                }
+                // strip takes it; a screen with its own then takes it from
+                // there. Always the strip first: a previous tab's list,
+                // log or screen may hold it, and isn't drawn next frame.
+                window.focus(&self.node_workspace.tab_focus, cx);
                 if let Some(screen) = self.active_screen() {
                     screen.focus(window, cx);
                 }
