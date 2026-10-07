@@ -23,8 +23,12 @@ impl Pilot {
             .restrict_scroll_to_axis()
     }
 
-    /// The talosconfig couldn't be read; shown on every screen.
+    /// The talosconfig couldn't be read; shown on every screen. Without
+    /// Talos it is the kubeconfig that couldn't be read.
     pub(super) fn config_error_state(&self, error: String, cx: &mut Context<Self>) -> AnyElement {
+        if self.kubernetes_only.is_some() {
+            return self.kubeconfig_error_state(error, cx);
+        }
         ui::empty_state(
             IconName::FolderOpen,
             "Freshkube can't read your talosconfig",
@@ -42,6 +46,45 @@ impl Pilot {
                     .label("Retry")
                     .on_click(
                         cx.listener(|view, _, window, cx| view.load_configuration(window, cx)),
+                    )
+                    .into_any_element(),
+                Button::new("use-kubernetes-only")
+                    .outline()
+                    .icon(IconName::Boxes)
+                    .label("Use Kubernetes only")
+                    .tooltip(
+                        "Choose a kubeconfig file and a context; nothing connects before you do",
+                    )
+                    .on_click(
+                        cx.listener(|view, _, window, cx| view.choose_kubernetes_only(window, cx)),
+                    )
+                    .into_any_element(),
+            ],
+            cx,
+        )
+        .into_any_element()
+    }
+
+    /// The kubeconfig couldn't be read or has no contexts, in Kubernetes-only
+    /// mode.
+    fn kubeconfig_error_state(&self, error: String, cx: &mut Context<Self>) -> AnyElement {
+        ui::empty_state(
+            IconName::FolderOpen,
+            "Freshkube can't read your kubeconfig",
+            "Choose a kubeconfig file, or set the KUBECONFIG environment variable and retry.",
+            Some(error),
+            vec![
+                Button::new("browse-kubeconfig-empty")
+                    .primary()
+                    .icon(IconName::FolderOpen)
+                    .label("Browse…")
+                    .on_click(cx.listener(|view, _, window, cx| view.browse_kubeconfig(window, cx)))
+                    .into_any_element(),
+                Button::new("retry-kubeconfig")
+                    .outline()
+                    .label("Retry")
+                    .on_click(
+                        cx.listener(|view, _, window, cx| view.load_kube_contexts(window, cx)),
                     )
                     .into_any_element(),
             ],

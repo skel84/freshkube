@@ -87,22 +87,174 @@ fn row_key(screen: &WorkloadsScreen, ix: usize) -> ItemKey {
     rows[ix].key(&screen.loader.data().unwrap().snapshot)
 }
 
+/// The Inspector shows only with a selection: beside the table on a wide
+/// page and under it on a narrow one, edge to edge and in no card.
 #[gpui_kit::test]
-fn details_sit_beside_a_wide_list_and_below_a_narrow_one(cx: &mut TestAppContext) {
-    for (width, beside) in [(1500., true), (900., false)] {
-        let (_runtime, _screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
+fn the_inspector_opens_with_a_selection_beside_or_under_the_table(cx: &mut TestAppContext) {
+    for width in [1500., 900.] {
+        let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
-            let list = window.find("workload-list").bounds();
-            let details = window.find("workload-details").bounds();
+            assert!(window.try_find("workload-detail").is_none(), "{width}");
+            window.click(row_id(screen.read(cx), 0), cx);
+            window.render_frame(cx);
+            layout_check::assert_inspector(
+                window,
+                cx,
+                "workloads-split",
+                "workloads-table",
+                "workload-detail",
+                "workload-detail-title",
+            );
+            let table = window.find("workloads-table").bounds();
+            let detail = window.find("workload-detail").bounds();
+            let beside = crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
             if beside {
-                assert!(details.left() >= list.right(), "{width}: {details:?}");
+                assert!(detail.left() >= table.right(), "{width}: {detail:?}");
             } else {
-                assert!(details.top() >= list.bottom(), "{width}: {details:?}");
+                assert!(detail.top() >= table.bottom(), "{width}: {detail:?}");
             }
+            assert_eq!(width > 1200., beside, "{width}");
         })
         .unwrap();
     }
+}
+
+/// Escape steps back one level at a time: it clears the filters first,
+/// keeping the selection, then clears the selection, which closes the
+/// Inspector.
+#[gpui_kit::test]
+fn escape_clears_the_filter_then_closes_the_inspector(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row_id(screen.read(cx), 0), cx);
+        window.press("u", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).only_unhealthy);
+        window.find("workload-detail");
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(!screen.read(cx).only_unhealthy);
+        assert!(screen.read(cx).selected.is_some());
+        window.find("workload-detail");
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).selected.is_none());
+        assert!(window.try_find("workload-detail").is_none());
+        // The table keeps the keyboard and the arrows select again.
+        window.press("down", cx);
+        window.render_frame(cx);
+        window.find("workload-detail-title");
+    })
+    .unwrap();
+}
+
+/// A selected item the cluster no longer reports keeps the Inspector open
+/// and says so, rather than showing stale details.
+#[gpui_kit::test]
+fn a_selection_the_cluster_no_longer_reports_says_so(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.select(ItemKey::Namespace("removed-namespace".into()), cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("workload-detail-gone").visible());
+        assert_eq!(
+            window.find("workload-detail-title").label(),
+            Some("removed-namespace")
+        );
+    })
+    .unwrap();
+}
+
+/// A selected pod that leaves the cluster's answer, as one that recovers
+/// does, keeps the Inspector open under its name and says it is no longer
+/// listed, not that the cluster stopped reporting it.
+#[gpui_kit::test]
+fn a_selected_pod_the_next_answer_drops_keeps_its_name(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let (namespace, pod) = {
+            let data = screen.read(cx).loader.data().unwrap();
+            let namespace = (data.snapshot.namespaces.iter())
+                .find(|ns| !ns.problem_pods.is_empty())
+                .unwrap();
+            (
+                namespace.name.clone(),
+                namespace.problem_pods[0].name.clone(),
+            )
+        };
+        let key = ItemKey::Pod {
+            namespace: namespace.clone(),
+            name: pod.clone(),
+        };
+        screen.update(cx, |screen, cx| screen.select(key.clone(), cx));
+        window.render_frame(cx);
+        assert!(window.try_find("workload-detail-gone").is_none());
+        let title = window
+            .find("workload-detail-title")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(title.contains(&pod), "{title}");
+        screen.update(cx, |screen, cx| {
+            let mut snapshot = screen.loader.data().unwrap().snapshot.clone();
+            for ns in &mut snapshot.namespaces {
+                if ns.name == namespace {
+                    ns.problem_pods.retain(|p| p.name != pod);
+                }
+            }
+            let outcome = freshkube_core::workloads::WorkloadCollectionOutcome::Complete(snapshot);
+            screen.apply_summary("prod-fra", WorkloadData::from_outcome(&outcome), cx);
+        });
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).selected, Some(key));
+        let gone = window.find("workload-detail-gone");
+        assert!(gone.visible());
+        assert_eq!(
+            window.find("workload-detail-title").label(),
+            Some(pod.as_str())
+        );
+    })
+    .unwrap();
+}
+
+/// A width dragged to is saved under `health` in `navigation.json`, and
+/// the next page opens its Inspector at it.
+#[gpui_kit::test]
+fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
+    use crate::navigation_file::NavigationFile;
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-health-inspector-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let preferences = directory.join("preferences.json");
+    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row_id(screen.read(cx), 0), cx);
+        window.render_frame(cx);
+        let state = screen.read(cx).split.beside_state().clone();
+        state.update(cx, |state, cx| {
+            state.resize_panel(1, crate::ui::dp_px(520., window), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reopened = NavigationFile::open(Some(&preferences));
+    assert_eq!(reopened.inspector_width("health"), Some(520.));
+    cx.update(|cx| cx.set_global(reopened));
+    let (_runtime, screen, _handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.read(|cx| assert_eq!(screen.read(cx).split.width(), 520.));
+    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[gpui_kit::test]
@@ -676,11 +828,11 @@ fn a_namespace_row_is_tinted_at_the_row_height(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-/// At 1280 with the details beside it, the table fits its list: the Issue
-/// column truncates rather than run past the edge, and each row's tooltip
-/// holds the whole issue.
+/// Beside the Inspector the table stops at its left edge: rows narrower
+/// than the table's columns scroll sideways inside it, as Nodes' do, and
+/// never run under the Inspector.
 #[gpui_kit::test]
-fn issue_truncates_beside_the_details(cx: &mut TestAppContext) {
+fn the_table_stops_at_the_inspector(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = app(cx, 1280., 880.);
     let screen = cx.update(|cx| view.read(cx).workloads());
     cx.update_window(handle, |_, window, cx| {
@@ -693,10 +845,12 @@ fn issue_truncates_beside_the_details(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click(row_id(screen.read(cx), 1), cx);
         window.render_frame(cx);
-        let list = window.find("workload-list").bounds();
-        let details = window.find("workload-details").bounds();
-        assert!(details.left() >= list.right(), "{list:?} {details:?}");
         let scroll = window.find("workload-table-scroll").bounds();
+        let details = window.find("workload-detail").bounds();
+        assert!(
+            (details.left() - scroll.right()).abs() <= px(0.5),
+            "{scroll:?} {details:?}"
+        );
         let mut rows = 0usize;
         for line in 0..screen.read(cx).line_count() {
             let Some(row) = window.try_find(row_id(screen.read(cx), line)) else {
@@ -704,12 +858,16 @@ fn issue_truncates_beside_the_details(cx: &mut TestAppContext) {
             };
             let row = row.bounds();
             assert!(
-                row.right() <= scroll.right() + px(0.5),
-                "row {line} {row:?} runs past the table {scroll:?}"
+                (row.left() - scroll.left()).abs() <= px(0.5),
+                "row {line} {row:?} starts outside the table {scroll:?}"
             );
             rows += 1;
         }
         assert!(rows > 0);
+        // The table's columns are wider than its room, so it scrolls
+        // sideways rather than squeezing the Issue column below its least.
+        let width = crate::ui::dp_px(screen.read(cx).width(), window);
+        assert!(width > scroll.size.width, "{width:?} {scroll:?}");
     })
     .unwrap();
 }
@@ -733,4 +891,52 @@ fn a_row_tooltip_holds_its_issue(cx: &mut TestAppContext) {
         assert!(tips.iter().any(|tip| tip == "coredns"), "{tips:?}");
     })
     .unwrap();
+}
+
+/// Stacked, the Inspector a click opens shrinks the table; the clicked row,
+/// low in the full table, comes back into view once the table settles, at
+/// the default text size and at 20.
+#[gpui_kit::test]
+fn a_stacked_inspector_keeps_the_clicked_row_in_view(cx: &mut TestAppContext) {
+    for text in [None, Some(20.)] {
+        let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 900.);
+        cx.update_window(handle.into(), |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
+            }
+            window.render_frame(cx);
+            assert!(crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH);
+            let scroll = window.find("workload-table-scroll").bounds();
+            let low = (0..screen.read(cx).line_count())
+                .filter(|&line| {
+                    window
+                        .try_find(row_id(screen.read(cx), line))
+                        .is_some_and(|row| row.bounds().bottom() <= scroll.bottom())
+                })
+                .max()
+                .unwrap();
+            assert!(low > 4, "only {low} rows in the full table");
+            let id = row_id(screen.read(cx), low);
+            window.click(id.clone(), cx);
+            window.render_frame(cx);
+            for _ in 0..10 {
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            let scroll = window.find("workload-table-scroll").bounds();
+            let detail = window.find("workload-detail").bounds();
+            assert!(
+                detail.top() >= scroll.bottom() - px(0.5),
+                "{detail:?} {scroll:?}"
+            );
+            let row = window.find(id).bounds();
+            assert!(
+                row.top() >= scroll.top() && row.bottom() <= scroll.bottom() + px(0.5),
+                "row {low} {row:?} out of the table {scroll:?}"
+            );
+        })
+        .unwrap();
+    }
 }

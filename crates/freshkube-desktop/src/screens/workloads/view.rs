@@ -1,203 +1,6 @@
-//! What the Workloads page draws: its header, the list beside or above the
-//! details, and the states in the table's place.
+//! What the Workloads page draws: its header, the table with the
+//! Inspector beside or under it, and the states in the table's place.
 use super::*;
-
-impl WorkloadsScreen {
-    fn details(&self, cx: &mut Context<Self>) -> Div {
-        let p = palette(cx);
-        let hint = |text: &'static str| {
-            panel(cx)
-                .p_4()
-                .text_color(p.muted)
-                .text_size(dp(12.5))
-                .child(text)
-        };
-        let (Some(key), Some(data)) = (self.selected.as_ref(), self.loader.data()) else {
-            return hint("Select a namespace, workload or pod to see its details.");
-        };
-        let namespaces = &data.snapshot.namespaces;
-        let gone = || hint("The selected item is no longer reported by the cluster.");
-        let title = |name: String, health: HealthState, tone: Tone, cx: &App| {
-            h_flex()
-                .id("workload-detail-title")
-                .test_support()
-                .aria_label(format!("{name} · {}", health_label(health)))
-                .gap_2()
-                .flex_wrap()
-                .child(
-                    div()
-                        .font_family(MONO_FONT)
-                        .text_size(dp(14.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(name),
-                )
-                .child(ui::tag(tone, None, health_label(health), cx))
-        };
-        match key {
-            ItemKey::Namespace(name) => {
-                let Some(namespace) = namespaces.iter().find(|ns| &ns.name == name) else {
-                    return gone();
-                };
-                let failing = namespace
-                    .problem_pods
-                    .iter()
-                    .filter(|pod| pod.issue.severity() == HealthState::Failing)
-                    .count();
-                panel(cx)
-                    .p_4()
-                    .gap_2p5()
-                    .child(title(
-                        namespace.name.clone(),
-                        namespace.health,
-                        health_tone(namespace.health),
-                        cx,
-                    ))
-                    .child(field("Kind", mono("Namespace"), cx))
-                    .child(field(
-                        "Workloads",
-                        mono(format!(
-                            "{} of {} healthy",
-                            namespace.healthy_workloads, namespace.total_workloads
-                        )),
-                        cx,
-                    ))
-                    .child(field(
-                        "Pods needing attention",
-                        mono(format!(
-                            "{} ({failing} failing)",
-                            namespace.problem_pods.len()
-                        )),
-                        cx,
-                    ))
-                    .child(field(
-                        "Issues",
-                        mono(match issues_in(namespace) {
-                            0 => "none".to_owned(),
-                            count => pluralize(count, "issue", "issues"),
-                        }),
-                        cx,
-                    ))
-            }
-            ItemKey::Workload {
-                namespace,
-                name,
-                kind,
-            } => {
-                let Some(workload) =
-                    namespaces
-                        .iter()
-                        .find(|ns| &ns.name == namespace)
-                        .and_then(|ns| {
-                            ns.workloads
-                                .iter()
-                                .find(|workload| &workload.name == name && workload.kind == *kind)
-                        })
-                else {
-                    return gone();
-                };
-                panel(cx)
-                    .p_4()
-                    .gap_2p5()
-                    .child(title(
-                        workload.name.clone(),
-                        workload.health,
-                        health_tone(workload.health),
-                        cx,
-                    ))
-                    .child(field("Namespace", mono(workload.namespace.clone()), cx))
-                    .child(field("Kind", mono(workload.kind.label()), cx))
-                    .child(field(
-                        "Ready / desired",
-                        mono(format!("{} / {}", workload.ready, workload.desired)),
-                        cx,
-                    ))
-                    .child(field(
-                        "Issues",
-                        v_flex()
-                            .id("workload-issues")
-                            .test_support()
-                            .aria_label(if workload.issues.is_empty() {
-                                "none reported".to_owned()
-                            } else {
-                                workload.issues.join("; ")
-                            })
-                            .children(if workload.issues.is_empty() {
-                                vec![div().text_color(p.muted).child("none reported")]
-                            } else {
-                                workload
-                                    .issues
-                                    .iter()
-                                    .map(|issue| div().child(issue.clone()))
-                                    .collect()
-                            }),
-                        cx,
-                    ))
-            }
-            ItemKey::Pod { namespace, name } => {
-                let Some(pod) = namespaces
-                    .iter()
-                    .find(|ns| &ns.name == namespace)
-                    .and_then(|ns| ns.problem_pods.iter().find(|pod| &pod.name == name))
-                else {
-                    return gone();
-                };
-                let known_node = pod.node.as_ref().filter(|node| {
-                    self.source
-                        .as_ref()
-                        .is_some_and(|source| source.nodes.iter().any(|n| &n.name == *node))
-                });
-                panel(cx)
-                    .p_4()
-                    .gap_2p5()
-                    .child(title(
-                        pod.name.clone(),
-                        pod.issue.severity(),
-                        pod_tone(&pod.issue),
-                        cx,
-                    ))
-                    .child(field("Namespace", mono(pod.namespace.clone()), cx))
-                    .child(field("Kind", mono("Pod"), cx))
-                    .child(field(
-                        "Node",
-                        h_flex()
-                            .gap_2()
-                            .child(match &pod.node {
-                                Some(node) => mono(node.clone()),
-                                None => div().text_color(p.muted).child("not scheduled"),
-                            })
-                            .when_some(known_node.cloned(), |this, node| {
-                                this.child(
-                                    Button::new("select-node")
-                                        .link()
-                                        .small()
-                                        .label("Inspect node")
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.emit(ScreenEvent::SelectNode(node.clone()))
-                                        })),
-                                )
-                            }),
-                        cx,
-                    ))
-                    .child(field("Phase", mono(pod.phase.clone()), cx))
-                    .child(field("Issue", mono(issue_detail(&pod.issue)), cx))
-                    .child(field("Restarts", mono(pod.restarts.to_string()), cx))
-                    .child(field(
-                        "Created",
-                        mono(match pod.created_at {
-                            Some(created) => format!(
-                                "{} ({} ago)",
-                                created.format("%Y-%m-%d %H:%M UTC"),
-                                age(Some(created))
-                            ),
-                            None => "unknown".to_owned(),
-                        }),
-                        cx,
-                    ))
-            }
-        }
-    }
-}
 
 impl WorkloadsScreen {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -292,32 +95,33 @@ impl WorkloadsScreen {
         .map(IntoElement::into_any_element)
     }
 
-    /// The table edge to edge, with the selection's details beside it on a
-    /// wide page and below it on a narrow one.
-    fn render_split(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window, false);
+    /// The table edge to edge, with the selection's details in the
+    /// Inspector beside it on a wide page and under it on a narrow one.
+    fn render_split(
+        &self,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let table = div()
             .id("workloads-table")
+            .test_support()
             .flex()
             .flex_col()
-            .flex_1()
+            .size_full()
+            .min_w_0()
             .min_h_0()
             .child(DataTable::new().render(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let details = div()
-            .id("workload-details")
-            .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .when_else(
-                beside,
-                |this| this.pr(dp(page::PANE_PADDING)).py(dp(page::PANE_PADDING_Y)),
-                |this| this.px(dp(page::PANE_PADDING)).pb(dp(page::PANE_PADDING_Y)),
-            )
-            .child(self.details(cx))
-            .into_any_element();
-        crate::screens::split_fill("workloads-split", beside, DETAILS_HEIGHT, table, details)
+        let detail = self.render_detail(cx);
+        inspector::split(
+            "workloads-split",
+            &self.split,
+            beside,
+            table,
+            detail,
+            window,
+        )
     }
 }
 
@@ -325,8 +129,13 @@ impl Render for WorkloadsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("workloads");
         self.sync(cx);
-        let beside = crate::screens::beside(window, false);
-        self.fit_name_column(crate::screens::split_fill_list_width(window, beside));
+        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let inspector = if beside && self.detail.is_some() {
+            self.split.live_width(cx)
+        } else {
+            0.
+        };
+        self.fit_name_column(crate::screens::page_width(window) - inspector);
         let header = self.render_header(window, cx);
         // The table runs edge to edge under the toolbar; the banners and a
         // state in the table's place sit in an inset between them. A short
@@ -357,7 +166,7 @@ impl Render for WorkloadsScreen {
                             .children(banners),
                     )
                 })
-                .child(self.render_split(window, cx))
+                .child(self.render_split(beside, window, cx))
             }
             (None, None) => page,
         };
@@ -372,12 +181,12 @@ impl Render for WorkloadsScreen {
             .flex_col()
             .size_full()
             .min_h_0()
-            .on_action(cx.listener(|view, _: &NextItem, _, cx| view.step(1, cx)))
-            .on_action(cx.listener(|view, _: &PreviousItem, _, cx| view.step(-1, cx)))
-            .on_action(cx.listener(|view, _: &FirstItem, _, cx| view.step(isize::MIN, cx)))
-            .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
-            .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
+            .on_action(cx.listener(|view, _: &NextItem, w, cx| view.step(1, w, cx)))
+            .on_action(cx.listener(|view, _: &PreviousItem, w, cx| view.step(-1, w, cx)))
+            .on_action(cx.listener(|view, _: &FirstItem, w, cx| view.step(isize::MIN, w, cx)))
+            .on_action(cx.listener(|view, _: &LastItem, w, cx| view.step(isize::MAX, w, cx)))
+            .on_action(cx.listener(|view, _: &NextPage, w, cx| view.step(PAGE_ROWS, w, cx)))
+            .on_action(cx.listener(|view, _: &PreviousPage, w, cx| view.step(-PAGE_ROWS, w, cx)))
             .on_action(cx.listener(|view, _: &ToggleExpanded, _, cx| view.toggle_expanded(cx)))
             .on_action(cx.listener(|view, _: &ToggleUnhealthy, _, cx| {
                 view.set_only_unhealthy(!view.only_unhealthy, cx)
@@ -386,9 +195,7 @@ impl Render for WorkloadsScreen {
                 let focus = view.query.read(cx).focus_handle(cx);
                 window.focus(&focus, cx);
             }))
-            .on_action(
-                cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
-            )
+            .on_action(cx.listener(|view, _: &ClearFilter, window, cx| view.escape(window, cx)))
             .child(page)
     }
 }

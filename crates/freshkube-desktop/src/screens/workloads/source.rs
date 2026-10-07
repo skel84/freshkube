@@ -307,8 +307,10 @@ impl WorkloadsScreen {
     pub(super) fn sync(&mut self, cx: &App) {
         let Some(data) = self.loader.data().cloned() else {
             self.derived = None;
+            self.detail = None;
             return;
         };
+        self.sync_detail(Some(&data));
         let settings = self.settings(cx);
         let current = self.derived.as_ref().is_some_and(|derived| {
             Arc::ptr_eq(&derived.data, &data) && derived.settings == settings
@@ -519,7 +521,9 @@ impl TableSource for WorkloadsScreen {
         cx: &mut Context<Self>,
     ) {
         let was_selected = self.selected.as_ref() == Some(key);
+        let was_open = self.selected.is_some();
         self.select(key.clone(), cx);
+        self.reveal_if_opened(was_open, window, cx);
         if matches!(key, ItemKey::Namespace(_)) && was_selected {
             self.toggle_expanded(cx);
         }
