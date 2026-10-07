@@ -4,9 +4,10 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
-    Sizable,
+    Disableable, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
+    menu::{DropdownMenu, PopupMenuItem},
     tooltip::Tooltip,
     v_flex,
 };
@@ -17,6 +18,7 @@ use super::{
     CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, FindNextMatch,
     FindPreviousMatch, NextTab, PreviousTab, SelectAllLines, TABS_CONTEXT, Tab,
 };
+use crate::logs::role_heading;
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -78,6 +80,14 @@ impl DetailPane {
                     ),
                 )
             })
+            .when(detail.target.kind.is_pod(), |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .mt(dp(10.))
+                        .child(self.render_shell_menu(cx)),
+                )
+            })
             .when(detail.view.is_some(), |this| {
                 this.child(
                     div().flex_none().mt(dp(10.)).child(
@@ -102,6 +112,46 @@ impl DetailPane {
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailEvent::Closed))),
                 ),
             )
+    }
+
+    /// The Shell menu: "Start shell in ⟨container⟩" for each container,
+    /// enabled for running ones only. Picking one starts it in a dock tab; opening the
+    /// menu runs nothing.
+    fn render_shell_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let pane = cx.entity().downgrade();
+        let choices = self.shell_choices.clone();
+        Button::new("detail-open-shell")
+            .outline()
+            .xsmall()
+            .icon(IconName::SquareTerminal)
+            .label("Shell")
+            .dropdown_caret(true)
+            .tooltip("Starts a shell in a container, in the dock. Whatever you type there runs in the pod.")
+            .disabled(choices.is_empty())
+            .dropdown_menu(move |mut menu, _, _| {
+                // Headings only when there's more than one kind to tell apart.
+                let mixed = choices.iter().any(|choice| choice.role != choices[0].role);
+                let mut role = None;
+                for choice in choices.iter() {
+                    if mixed && role != Some(choice.role) {
+                        if role.is_some() {
+                            menu = menu.separator();
+                        }
+                        menu = menu.label(role_heading(choice.role));
+                        role = Some(choice.role);
+                    }
+                    let (pane, name) = (pane.clone(), choice.name.clone());
+                    menu = menu.item(
+                        PopupMenuItem::new(choice.label.clone())
+                            .disabled(!choice.enabled)
+                            .on_click(move |_, _, cx| {
+                                let name = name.clone();
+                                _ = pane.update(cx, |pane, cx| pane.request_shell(name, cx));
+                            }),
+                    );
+                }
+                menu
+            })
     }
 
     /// Deleted and stale documents say so above the tabs.
@@ -234,20 +284,6 @@ impl DetailPane {
                 }),
                 None,
             ))
-            .when(detail.target.kind.is_pod(), |this| {
-                let shell = self.shell.read(cx);
-                let running = shell.running().then(|| {
-                    ui::status_mark("detail-shell-running", Tone::Good, "A shell runs", cx)
-                });
-                let title = shell.title().cloned();
-                this.child(tab(
-                    "detail-tab-shell",
-                    Tab::Shell,
-                    "Shell".into(),
-                    running,
-                    title,
-                ))
-            })
             .when(Tab::of(&detail.target.kind).contains(&Tab::Ports), |this| {
                 this.child(tab(
                     "detail-tab-ports",
@@ -331,7 +367,6 @@ impl Render for DetailPane {
             (Tab::Overview, Some(_), Some(summary)) => self.overview(detail, summary, cx),
             (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
             (Tab::Events, ..) => self.events(detail, cx),
-            (Tab::Shell, ..) => self.shell.clone().into_any_element(),
             (Tab::Ports, ..) => self.ports.clone().into_any_element(),
             _ => self.document_state(detail, cx),
         };

@@ -173,9 +173,8 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     });
     step(cx, &|window, cx| window.click("resource-view-all", cx));
     step(cx, &|window, cx| window.click(row.clone(), cx));
-    step(cx, &|window, cx| window.click("detail-tab-shell", cx));
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    assert!(cx.read(resources::shell::running_anywhere).is_some());
+    crate::desktop::tests::start_shell(handle, &view, &pod, cx);
+    assert!(!cx.read(resources::shell::running_anywhere).is_empty());
     view.update(cx, |view, _| {
         // The replacement fails before connecting: no real cluster is read.
         view.fixture = false;
@@ -202,7 +201,7 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     assert!(cx.has_pending_prompt());
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
-    assert!(cx.read(resources::shell::running_anywhere).is_some());
+    assert!(!cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
         cx.read(|cx| view.read(cx).access_configuration),
         Some(before)
@@ -216,7 +215,7 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     step(cx, &deliver);
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();
-    assert!(cx.read(resources::shell::running_anywhere).is_none());
+    assert!(cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
         cx.read(|cx| view.read(cx).access_configuration),
         Some(after)

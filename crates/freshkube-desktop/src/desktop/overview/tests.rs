@@ -456,8 +456,8 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
-fn object_frontdoor_asks_before_navigation_and_cancel_keeps_the_shell(cx: &mut TestAppContext) {
-    use crate::resources::{example, model::ObjectRef};
+fn object_frontdoor_navigates_at_once_while_a_shell_runs(cx: &mut TestAppContext) {
+    use crate::resources::{example, model::ObjectRef, shell};
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1000.);
     let pod = example::read("prod-fra", "pods", None, chrono::Utc::now().timestamp())
         .unwrap()
@@ -466,47 +466,8 @@ fn object_frontdoor_asks_before_navigation_and_cancel_keeps_the_shell(cx: &mut T
         .find(|row| row.cells.iter().any(|cell| cell == "Running"))
         .unwrap()
         .identity;
+    crate::desktop::tests::start_shell(handle, &pilot, &pod, cx);
     cx.update_window(handle, |_, window, cx| {
-        pilot.update(cx, |pilot, cx| {
-            pilot.open_object(
-                freshkube_core::resources::builtin("pods").unwrap(),
-                pod.clone().into(),
-                Tab::Shell,
-                window,
-                cx,
-            )
-        });
-        window.render_frame(cx);
-        window.click("pod-shell-start", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.find("detail-shell-running").visible());
-        pilot.update(cx, |pilot, cx| {
-            pilot.open_object(
-                freshkube_core::resources::builtin("persistentvolumeclaims").unwrap(),
-                ObjectRef {
-                    namespace: "batch".into(),
-                    name: "report-data".into(),
-                    uid: String::new(),
-                },
-                Tab::Overview,
-                window,
-                cx,
-            )
-        });
-        assert_eq!(pilot.read(cx).resource_kind.key(), "pods");
-    })
-    .unwrap();
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(pilot.read(cx).resource_kind.key(), "pods");
-        assert!(window.find("detail-shell-running").visible());
         pilot.update(cx, |pilot, cx| {
             pilot.open_object(
                 freshkube_core::resources::builtin("persistentvolumeclaims").unwrap(),
@@ -522,13 +483,15 @@ fn object_frontdoor_asks_before_navigation_and_cancel_keeps_the_shell(cx: &mut T
         });
     })
     .unwrap();
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("End the shell");
+    assert!(!cx.has_pending_prompt());
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).resource_kind.key(), "persistentvolumeclaims");
-        assert!(window.try_find("detail-shell-running").is_none());
+        assert_eq!(
+            shell::running_anywhere(cx),
+            [gpui_kit::SharedString::from(pod.name.clone())]
+        );
     })
     .unwrap();
 }

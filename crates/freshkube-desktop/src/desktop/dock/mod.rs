@@ -1,13 +1,16 @@
 //! The dock under the page: a full-width strip of tabs, one per object
-//! whose logs are open, as Freelens has. The shell owns it, app-wide, like
-//! the forwards. A tab's stream starts when the user opens the tab and
-//! lives until the tab closes, whatever page or object shows and whether
-//! the dock is minimized. Another connection closes every tab.
+//! whose logs are open and one per container with a shell, as Freelens
+//! has. The app shell owns it, app-wide, like the forwards. A log tab's
+//! stream starts when the user opens the tab, and a shell tab's session
+//! when the user picks its container or presses Start; both live until the
+//! tab closes, whatever page or object shows and whether the dock is
+//! minimized. Closing a running shell's tab asks first. Another connection
+//! closes every tab, once a running shell may end.
 //!
 //! A tab knows its own object: a pod's tab watches that pod for its
 //! containers (`feed.rs`), a workload's reads its selector once. The tabs
 //! are saved in `navigation.json` (`saved.rs`) and come back for the same
-//! context, reading nothing until one shows.
+//! context, reading nothing until one shows; a shell tab comes back idle.
 
 mod feed;
 mod saved;
@@ -27,14 +30,20 @@ use tokio::runtime::Handle;
 use crate::logs::{PodLogPanel, PodLogView, WorkloadLogPanel, WorkloadLogView};
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{KubeAccess, KubeSource, LogsAt, LogsRequest};
+use crate::resources::shell::{self, ShellEvent, ShellView};
+use crate::resources::{KubeAccess, KubeSource, LogsAt, LogsRequest, ShellRequest};
 use crate::ui::dp_px;
 use feed::Feed;
 
 /// The dock's key context, on its root in every state that draws it.
 pub(crate) const CONTEXT: &str = "Dock";
 /// At most this many log tabs; opening another asks to close the oldest.
+/// Shell tabs don't count.
 pub(crate) const MAX_LOG_TABS: usize = 8;
+/// At most this many shell tabs, each a connection to a pod's exec while
+/// it runs; another takes the place of the oldest, which asks first if its
+/// shell runs. Log tabs don't count.
+pub(crate) const MAX_SHELL_TABS: usize = 8;
 /// The header and the status bar, in dp, which the dock never covers.
 const FRAME_CHROME: f32 = 52. + 28.;
 /// The page's least height under an open dock, in dp, unless the dock is
@@ -70,7 +79,7 @@ impl EventEmitter<DockEvent> for Dock {}
 /// What makes two tabs the same: opening an object that has a tab selects it.
 /// A pod's UID is part of it, since a pod created again with the name, as a
 /// StatefulSet's is, is another pod with its own log.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct TabKey {
     connection: String,
     resource: String,
@@ -82,6 +91,8 @@ pub(crate) struct TabKey {
     /// A pod asked for by name that its watch hasn't settled yet: it shows
     /// any pod of the name. Finding the pod, or finding it gone, ends it.
     wildcard: bool,
+    /// A shell tab's container; empty for a log tab.
+    container: String,
 }
 
 impl TabKey {
@@ -97,6 +108,15 @@ impl TabKey {
                 String::new()
             },
             wildcard: pod && identity.uid.is_empty(),
+            container: String::new(),
+        }
+    }
+
+    /// A shell tab's key: its pod and container.
+    fn shell(identity: &ResourceIdentity, container: &str) -> Self {
+        Self {
+            container: container.to_owned(),
+            ..Self::of(identity, true)
         }
     }
 
@@ -107,20 +127,23 @@ impl TabKey {
             && self.resource == other.resource
             && self.namespace == other.namespace
             && self.name == other.name
+            && self.container == other.container
             && (self.uid == other.uid || self.wildcard || other.wildcard)
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum TabKind {
     Pod(Entity<PodLogView>),
     Workload(Entity<WorkloadLogView>),
+    Shell(Entity<ShellView>),
 }
 
 pub(crate) struct DockTab {
     pub(crate) id: u64,
     key: TabKey,
     target: DetailTarget,
-    /// "Pod ⟨name⟩" or "⟨Kind⟩ ⟨name⟩".
+    /// "Pod ⟨name⟩", "⟨Kind⟩ ⟨name⟩" or "Shell ⟨pod⟩".
     base: String,
     /// The base, with "(2)" when another tab has it too; derived when the
     /// tabs change.
@@ -131,7 +154,7 @@ pub(crate) struct DockTab {
     /// Whether its log is read. A restored tab waits until it first shows.
     started: bool,
     feed: Feed,
-    _observe: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl DockTab {
@@ -139,20 +162,33 @@ impl DockTab {
         match &self.kind {
             TabKind::Pod(view) => view.read(cx).least_height(),
             TabKind::Workload(view) => view.read(cx).least_height(),
+            TabKind::Shell(view) => view.read(cx).least_height(),
         }
     }
 
-    fn focus_lines(&self, window: &mut Window, cx: &mut App) {
+    /// Puts the keyboard in the tab: its lines, or a shell's terminal once
+    /// it shows a session. Returns whether it did.
+    fn focus_lines(&self, window: &mut Window, cx: &mut App) -> bool {
         match &self.kind {
             TabKind::Pod(view) => view.update(cx, |view, cx| view.focus_lines(window, cx)),
             TabKind::Workload(view) => view.update(cx, |view, cx| view.focus_lines(window, cx)),
+            TabKind::Shell(view) => {
+                let focus = view.read(cx).focus_target(cx);
+                let Some(focus) = focus else {
+                    return false;
+                };
+                window.focus(&focus, cx);
+            }
         }
+        true
     }
 
     fn set_visible(&self, visible: bool, cx: &mut App) {
         match &self.kind {
             TabKind::Pod(view) => view.update(cx, |view, cx| view.set_visible(visible, cx)),
             TabKind::Workload(view) => view.update(cx, |view, cx| view.set_visible(visible, cx)),
+            // A session runs whether its tab shows or not.
+            TabKind::Shell(_) => {}
         }
     }
 
@@ -160,6 +196,41 @@ impl DockTab {
         match &self.kind {
             TabKind::Pod(view) => view.update(cx, |view, _| view.set_access(access.clone())),
             TabKind::Workload(view) => view.update(cx, |view, _| view.set_access(access.clone())),
+            TabKind::Shell(view) => view.update(cx, |view, _| view.set_access(access.clone())),
+        }
+    }
+
+    /// A tab asked for by name, as a restored one, takes the UID of the
+    /// pod it finds; a shell's view needs it to start.
+    fn settle_uid(&mut self, uid: &str, cx: &mut App) {
+        if !self.target.identity.uid.is_empty() || uid.is_empty() {
+            return;
+        }
+        self.target.identity.uid = uid.to_owned();
+        self.key.uid = uid.to_owned();
+        self.key.wildcard = false;
+        if let TabKind::Shell(view) = &self.kind {
+            view.update(cx, |view, _| view.settle_uid(uid));
+        }
+    }
+
+    fn is_log(&self) -> bool {
+        !matches!(self.kind, TabKind::Shell(_))
+    }
+
+    /// The pod of a shell running in this tab.
+    fn running_shell(&self, cx: &App) -> Option<SharedString> {
+        match &self.kind {
+            TabKind::Shell(view) => view.read(cx).running_pod(),
+            _ => None,
+        }
+    }
+
+    fn entity_id(&self) -> EntityId {
+        match &self.kind {
+            TabKind::Pod(view) => view.entity_id(),
+            TabKind::Workload(view) => view.entity_id(),
+            TabKind::Shell(view) => view.entity_id(),
         }
     }
 }
@@ -193,6 +264,8 @@ pub(crate) struct Dock {
     /// The tab body's width, as last laid out, which the notice is
     /// measured at.
     body_width: Option<Pixels>,
+    /// The status bar's "2 logs · 1 shell", derived when the tabs change.
+    pub(crate) count_label: SharedString,
 }
 
 impl Dock {
@@ -228,6 +301,7 @@ impl Dock {
             dragged: false,
             notice_height: 0.,
             body_width: None,
+            count_label: SharedString::default(),
         };
         if let Some(restore) = restore {
             dock.height = restore.height.max(MIN_HEIGHT);
@@ -337,8 +411,13 @@ impl Dock {
             self.select(id, true, window, cx);
             return;
         }
-        if self.tabs.len() >= MAX_LOG_TABS {
-            let Some(oldest) = self.tabs.iter().min_by_key(|tab| tab.id) else {
+        if self.log_tabs() >= MAX_LOG_TABS {
+            let Some(oldest) = self
+                .tabs
+                .iter()
+                .filter(|tab| tab.is_log())
+                .min_by_key(|tab| tab.id)
+            else {
                 return;
             };
             let (oldest, title) = (oldest.id, oldest.title.clone());
@@ -356,10 +435,8 @@ impl Dock {
                     return;
                 }
                 _ = this.update_in(cx, |dock, window, cx| {
-                    if dock.position(oldest).is_some() {
-                        dock.close_tab(oldest, window, cx);
-                    }
-                    if dock.tabs.len() < MAX_LOG_TABS {
+                    dock.remove_tabs(&[oldest], window, cx);
+                    if dock.log_tabs() < MAX_LOG_TABS {
                         dock.open_logs(request, window, cx);
                     }
                 });
@@ -370,6 +447,102 @@ impl Dock {
         let id = self.add_tab(request.target, request.at, window, cx);
         self.start_tab(id, cx);
         self.select(id, true, window, cx);
+    }
+
+    fn log_tabs(&self) -> usize {
+        self.tabs.iter().filter(|tab| tab.is_log()).count()
+    }
+
+    fn shell_tabs(&self) -> usize {
+        self.tabs.iter().filter(|tab| !tab.is_log()).count()
+    }
+
+    /// The pane's Shell menu: a shell in `request`'s container, in a tab of
+    /// its own, started at once. The container's tab, if it has one, is
+    /// selected, and its shell started again if it ended. The pick is the
+    /// explicit Start. A ninth shell tab takes the place of the oldest.
+    pub(crate) fn open_shell(
+        &mut self,
+        request: ShellRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.source.as_ref() else {
+            return;
+        };
+        if request.target.identity.connection != source.id || !request.target.kind.is_pod() {
+            return;
+        }
+        let key = TabKey::shell(&request.target.identity, &request.container);
+        let found = self
+            .tabs
+            .iter()
+            .rev()
+            .find(|tab| !tab.is_log() && tab.key.shows(&key))
+            .map(|tab| tab.id);
+        let id = match found {
+            Some(id) => {
+                // A tab asked for by name takes the picked pod's UID.
+                if let Some(ix) = self.position(id) {
+                    self.tabs[ix].settle_uid(&request.target.identity.uid, cx);
+                }
+                id
+            }
+            None if self.shell_tabs() >= MAX_SHELL_TABS => {
+                self.make_room_for_shell(request, window, cx);
+                return;
+            }
+            None => {
+                let id = self.add_shell(request.target, request.container, window, cx);
+                self.start_tab(id, cx);
+                id
+            }
+        };
+        self.select(id, false, window, cx);
+        let Some(TabKind::Shell(view)) = self.position(id).map(|ix| &self.tabs[ix].kind) else {
+            return;
+        };
+        let view = view.clone();
+        // What has the keyboard now gets it back when the terminal leaves.
+        self.take_focus(window, cx);
+        view.update(cx, |view, cx| {
+            if let Some(containers) = request.containers {
+                view.set_containers(containers, cx);
+            }
+            view.start(window, cx);
+        });
+    }
+
+    /// Makes room for `request`'s shell tab and opens it: the oldest shell
+    /// tab that runs nothing closes without asking; when every one runs,
+    /// the oldest asks "End the shell in ⟨pod⟩?" first.
+    fn make_room_for_shell(
+        &mut self,
+        request: ShellRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shells = || self.tabs.iter().filter(|tab| !tab.is_log());
+        let idle = shells()
+            .filter(|tab| tab.running_shell(cx).is_none())
+            .min_by_key(|tab| tab.id)
+            .map(|tab| tab.id);
+        if let Some(idle) = idle {
+            self.remove_tabs(&[idle], window, cx);
+            return self.open_shell(request, window, cx);
+        }
+        let Some((oldest, pod)) = shells()
+            .min_by_key(|tab| tab.id)
+            .and_then(|tab| Some((tab.id, tab.running_shell(cx)?)))
+        else {
+            return;
+        };
+        shell::unless_shell(self, vec![pod], window, cx, move |dock, window, cx| {
+            dock.remove_tabs(&[oldest], window, cx);
+            if dock.shell_tabs() < MAX_SHELL_TABS {
+                dock.open_shell(request, window, cx);
+            }
+        });
     }
 
     /// Adds a tab that reads nothing yet, and returns its id.
@@ -399,9 +572,62 @@ impl Dock {
         } else {
             format!("{} {}", target.kind.kind, target.identity.name)
         };
+        let key = TabKey::of(&target.identity, target.kind.is_pod());
+        self.push_tab(id, key, target, base, kind, at, vec![observe], cx);
+        id
+    }
+
+    /// Adds a shell tab for `container` that runs nothing yet, and returns
+    /// its id.
+    fn add_shell(
+        &mut self,
+        target: DetailTarget,
+        container: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let runtime = self.runtime.clone();
+        let view = cx.new(|cx| ShellView::new(runtime, window, cx));
+        let subscriptions = vec![
+            cx.observe(&view, Self::tab_changed),
+            // Command-Escape in the terminal hands the keyboard back.
+            cx.subscribe(&view, |dock, _, event: &ShellEvent, cx| match event {
+                ShellEvent::Leave => cx.emit(DockEvent::Leave(dock.return_focus.take())),
+            }),
+        ];
+        let base = format!("Shell {}", target.identity.name);
+        let key = TabKey::shell(&target.identity, &container);
+        view.update(cx, |view, cx| view.choose_container(container, cx));
+        self.push_tab(
+            id,
+            key,
+            target,
+            base,
+            TabKind::Shell(view),
+            None,
+            subscriptions,
+            cx,
+        );
+        id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_tab(
+        &mut self,
+        id: u64,
+        key: TabKey,
+        target: DetailTarget,
+        base: String,
+        kind: TabKind,
+        at: Option<LogsAt>,
+        subscriptions: Vec<Subscription>,
+        cx: &mut Context<Self>,
+    ) {
         self.tabs.push(DockTab {
             id,
-            key: TabKey::of(&target.identity, target.kind.is_pod()),
+            key,
             target,
             base,
             title: SharedString::default(),
@@ -409,21 +635,17 @@ impl Dock {
             at,
             started: false,
             feed: Feed::default(),
-            _observe: observe,
+            _subscriptions: subscriptions,
         });
         self.derive_titles();
         self.schedule_save(cx);
-        id
     }
 
     fn tab_changed<V: 'static>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
         let least = self
             .tabs
             .iter()
-            .find(|tab| match &tab.kind {
-                TabKind::Pod(pod) => pod.entity_id() == view.entity_id(),
-                TabKind::Workload(workload) => workload.entity_id() == view.entity_id(),
-            })
+            .find(|tab| tab.entity_id() == view.entity_id())
             .filter(|tab| Some(tab.id) == self.selected)
             .map(|tab| tab.least_height(cx));
         if let Some(least) = least
@@ -483,6 +705,15 @@ impl Dock {
                 view.set_active(true, cx);
                 view.want(cx);
             }),
+            // Its pod, and nothing run: a session starts only from the
+            // Shell menu or Start.
+            TabKind::Shell(view) => view.update(cx, |view, cx| {
+                let container = view.container().map(str::to_owned);
+                view.show_pod(Some(identity), Some(access.clone()), cx);
+                if let Some(container) = container {
+                    view.choose_container(container, cx);
+                }
+            }),
         }
         self.start_feed(id, access, cx);
     }
@@ -514,8 +745,13 @@ impl Dock {
         if !self.focus.contains_focused(window, cx) {
             self.return_focus = window.focused(cx);
         }
-        if let Some(tab) = self.selected_tab() {
-            tab.focus_lines(window, cx);
+        let focused = self
+            .selected_tab()
+            .is_some_and(|tab| tab.focus_lines(window, cx));
+        // A shell that hasn't started has nothing to type into; the dock
+        // keeps the keyboard, so its keys still work.
+        if !focused {
+            window.focus(&self.focus, cx);
         }
     }
 
@@ -551,30 +787,17 @@ impl Dock {
         self.select(id, true, window, cx);
     }
 
-    /// Closes one tab and drops its stream. The next tab, or the one
-    /// before, is selected; the last one closed hands the keyboard back.
+    /// Closes one tab and drops its stream; a running shell asks first.
+    /// The next tab, or the one before, is selected; the last one closed
+    /// hands the keyboard back.
     pub(crate) fn close_tab(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ix) = self.position(id) else {
-            return;
-        };
-        let had_focus = self.focus.contains_focused(window, cx);
-        self.tabs.remove(ix);
-        if self.selected == Some(id) {
-            self.selected = self
-                .tabs
-                .get(ix)
-                .or_else(|| ix.checked_sub(1).and_then(|ix| self.tabs.get(ix)))
-                .map(|tab| tab.id);
-        }
-        self.after_close(had_focus, window, cx);
+        self.close_tabs(vec![id], window, cx);
     }
 
     /// The tab menu: closes every tab but `keep`.
     pub(crate) fn close_others(&mut self, keep: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let had_focus = self.focus.contains_focused(window, cx);
-        self.tabs.retain(|tab| tab.id == keep);
-        self.selected = self.tabs.first().map(|tab| tab.id);
-        self.after_close(had_focus, window, cx);
+        let ids = self.ids(|tab| tab.id != keep);
+        self.close_tabs(ids, window, cx);
     }
 
     /// The tab menu: closes the tabs after `from`.
@@ -587,19 +810,68 @@ impl Dock {
         let Some(ix) = self.position(from) else {
             return;
         };
-        let had_focus = self.focus.contains_focused(window, cx);
-        self.tabs.truncate(ix + 1);
-        if self.selected.and_then(|id| self.position(id)).is_none() {
-            self.selected = Some(from);
-        }
-        self.after_close(had_focus, window, cx);
+        let ids = self.tabs[ix + 1..].iter().map(|tab| tab.id).collect();
+        self.close_tabs(ids, window, cx);
     }
 
-    /// Closes every tab: the tab menu's Close all, or another connection.
+    /// Closes every tab: the tab menu's Close all and the chrome's ×.
     pub(crate) fn close_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.ids(|_| true);
+        self.close_tabs(ids, window, cx);
+    }
+
+    fn ids(&self, pick: impl Fn(&DockTab) -> bool) -> Vec<u64> {
+        self.tabs
+            .iter()
+            .filter(|tab| pick(tab))
+            .map(|tab| tab.id)
+            .collect()
+    }
+
+    /// Closes `ids`, once the user agrees to end the shells running in
+    /// them: "End the shell in ⟨pod⟩?" or "End 3 shells?".
+    fn close_tabs(&mut self, ids: Vec<u64>, window: &mut Window, cx: &mut Context<Self>) {
+        let running = self
+            .tabs
+            .iter()
+            .filter(|tab| ids.contains(&tab.id))
+            .filter_map(|tab| tab.running_shell(cx))
+            .collect();
+        shell::unless_shell(self, running, window, cx, move |dock, window, cx| {
+            dock.remove_tabs(&ids, window, cx)
+        });
+    }
+
+    /// Removes `ids` at once, ending their shells politely. The next tab,
+    /// or the one before, is selected.
+    fn remove_tabs(&mut self, ids: &[u64], window: &mut Window, cx: &mut Context<Self>) {
         let had_focus = self.focus.contains_focused(window, cx);
-        self.tabs.clear();
-        self.selected = None;
+        let anchor = self.selected.and_then(|id| self.position(id));
+        let mut removed = Vec::new();
+        self.tabs.retain(|tab| {
+            let close = ids.contains(&tab.id);
+            if close {
+                removed.push(tab.kind.clone());
+            }
+            !close
+        });
+        if removed.is_empty() {
+            return;
+        }
+        for kind in removed {
+            if let TabKind::Shell(view) = kind {
+                view.update(cx, |view, cx| view.close_session(cx));
+            }
+        }
+        if self.selected.is_some_and(|id| self.position(id).is_none()) {
+            self.selected = anchor.and_then(|ix| {
+                self.tabs
+                    .get(ix)
+                    .or_else(|| ix.checked_sub(1).and_then(|ix| self.tabs.get(ix)))
+                    .or(self.tabs.last())
+                    .map(|tab| tab.id)
+            });
+        }
         self.after_close(had_focus, window, cx);
     }
 
@@ -687,21 +959,31 @@ impl Dock {
         }
     }
 
-    /// The connection the tabs read with. The same one refreshes their
-    /// handles; another, or none while a new one is set up, closes every
-    /// tab, as the Resources page starts over. The first one restores the
+    /// The connection the tabs read with, and the access identity it is
+    /// for. The same one refreshes their handles. A source missing for a
+    /// while under the same identity, as Talos's without its overview or
+    /// Kubernetes client, keeps the tabs and their shells. Another identity,
+    /// or none while another context loads, closes every tab, as the
+    /// Resources page starts over: whoever changed it asked about running
+    /// shells first (`Pilot::unless_shell`). The first source restores the
     /// saved tabs when its context is theirs.
     pub(crate) fn set_source(
         &mut self,
         source: Option<KubeSource>,
+        identity: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(source) = source else {
             // Before the first connection there is nothing to close, and
             // the saved tabs wait for it.
-            if self.source.take().is_some() {
-                self.close_all(window, cx);
+            let kept = self
+                .source
+                .as_ref()
+                .is_some_and(|current| identity == Some(current.id.as_str()));
+            if !kept && self.source.take().is_some() {
+                let ids = self.ids(|_| true);
+                self.remove_tabs(&ids, window, cx);
             }
             return;
         };
@@ -711,7 +993,10 @@ impl Dock {
                     tab.set_access(&source.access, cx);
                 }
             }
-            Some(_) => self.close_all(window, cx),
+            Some(_) => {
+                let ids = self.ids(|_| true);
+                self.remove_tabs(&ids, window, cx);
+            }
             None => {}
         }
         let first = self.source.is_none();
@@ -740,6 +1025,19 @@ impl Dock {
         for (tab, title) in self.tabs.iter_mut().zip(titles) {
             tab.title = title;
         }
+        let logs = self.log_tabs();
+        let shells = self.tabs.len() - logs;
+        let count = |count: usize, one: &str, many: &str| match count {
+            0 => None,
+            1 => Some(format!("1 {one}")),
+            count => Some(format!("{count} {many}")),
+        };
+        self.count_label = [count(logs, "log", "logs"), count(shells, "shell", "shells")]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+            .into();
     }
 
     #[cfg(test)]
@@ -777,7 +1075,7 @@ impl Dock {
     pub(crate) fn selected_container(&self, cx: &App) -> Option<String> {
         match &self.selected_tab()?.kind {
             TabKind::Pod(view) => view.read(cx).selected_container().map(str::to_owned),
-            TabKind::Workload(_) => None,
+            TabKind::Workload(_) | TabKind::Shell(_) => None,
         }
     }
 }

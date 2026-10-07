@@ -579,18 +579,14 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.press("left", cx);
         window.press("left", cx);
         window.render_frame(cx);
-        // A pod's tabs wrap round to Ports, after Shell.
+        // A pod's tabs wrap round to Ports.
         assert_eq!(tab(window, "detail-tab-ports"), (Some(true), Some(true)));
-        window.press("left", cx);
-        window.render_frame(cx);
-        assert_eq!(tab(window, "detail-tab-shell"), (Some(true), Some(true)));
         window.press("left", cx);
         window.render_frame(cx);
         assert_eq!(tab(window, "detail-tab-events"), (Some(true), Some(true)));
 
         // From the pane, Command-Shift-] and [ switch the tab and hand the
-        // keyboard to what it shows: the pane, and the pane on Shell until
-        // a session shows there.
+        // keyboard to the pane.
         pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Overview, cx));
         let focus = pane.read(cx).focus.clone();
         window.focus(&focus, cx);
@@ -601,7 +597,7 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         assert_eq!(window.find("resource-detail").focused(), Some(true));
         window.press("secondary-{", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
+        assert_eq!(window.find("detail-tab-events").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
         window.press("secondary-}", cx);
         window.press("secondary-}", cx);
@@ -813,7 +809,6 @@ fn every_tab_is_28_high_at_any_text_size(cx: &mut TestAppContext) {
                 "detail-tab-overview",
                 "detail-tab-yaml",
                 "detail-tab-events",
-                "detail-tab-shell",
             ] {
                 let tab = window.find(id).bounds();
                 assert!(
@@ -872,6 +867,8 @@ fn the_keyboard_reaches_the_tabs_a_narrow_pane_cuts(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     cx.update(|cx| crate::text_size::install(None, cx));
     cx.update(|cx| crate::text_size::set(20., cx));
+    // Narrower than the other tests' pane, so four tabs don't fit.
+    cx.simulate_window_resize(handle, gpui_kit::size(px(400.), px(820.)));
     let (pod, _) = running_pod();
     let in_view = |window: &mut gpui_kit::Window, id: &'static str| {
         let row = window.find("detail-tabs").bounds();

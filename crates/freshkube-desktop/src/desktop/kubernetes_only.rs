@@ -373,7 +373,7 @@ impl Pilot {
             return;
         }
         let replacement = (report.revision, None);
-        if crate::resources::shell::running_anywhere(cx).is_some()
+        if !crate::resources::shell::running_anywhere(cx).is_empty()
             && self.prompted_access == Some(replacement)
         {
             return;

@@ -479,25 +479,20 @@ pub(super) fn settings_content(
 }
 
 impl Pilot {
-    /// "3 logs" while the dock has tabs: opens a minimized dock, or
-    /// minimizes an open one.
+    /// "3 logs · 1 shell" while the dock has tabs: opens a minimized dock,
+    /// or minimizes an open one.
     fn render_dock_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dock = self.dock.read(cx);
         if !dock.has_tabs() {
             return None;
         }
-        let count = dock.tabs.len();
         let shown = dock.is_open();
         Some(
             Button::new("dock-toggle")
                 .ghost()
                 .xsmall()
                 .icon(IconName::PanelBottom)
-                .label(if count == 1 {
-                    "1 log".to_owned()
-                } else {
-                    format!("{count} logs")
-                })
+                .label(dock.count_label.clone())
                 .tooltip(if shown {
                     "Minimize the dock"
                 } else {

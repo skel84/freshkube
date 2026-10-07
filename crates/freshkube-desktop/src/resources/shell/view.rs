@@ -1,92 +1,44 @@
-//! The Shell tab's frame: the container picker and Start or End, where the
-//! session stands, a failure with Retry, and the terminal, which keeps the
-//! last session's screen.
+//! A shell tab drawn: where the session stands, then Start or End, a
+//! failure with Retry, and the terminal, which keeps the last session's
+//! screen.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
-    h_flex,
-    menu::{DropdownMenu, PopupMenuItem},
-    v_flex,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{ShellState, ShellView};
-use crate::logs::role_heading;
 use crate::palette::palette;
-use crate::ui::{self, dp};
+use crate::ui::{self, dp, dp_px};
+
+/// The controls' row and three of the terminal's lines, in dp.
+const LEAST_HEIGHT: f32 = 30. + 3. * 18. + 8.;
 
 impl ShellView {
-    /// The container picker, then Start or End.
-    fn render_controls(&self, cx: &mut Context<Self>) -> Div {
-        let view = cx.entity().downgrade();
-        let choices = self.choices.clone();
-        let current = self.container.clone().unwrap_or_default();
-        let running = self.running();
-        let container = Button::new("pod-shell-container")
-            .outline()
-            .small()
-            .dropdown_caret(true)
-            .label(if current.is_empty() {
-                SharedString::from("No containers")
-            } else {
-                SharedString::from(current.clone())
-            })
-            .accessibility_label("Container")
-            .tooltip(if running {
-                "End the shell to choose another container"
-            } else {
-                "The container the shell runs in; only a running one can take a shell"
-            })
-            .disabled(choices.is_empty() || running)
-            .dropdown_menu(move |mut menu, _, _| {
-                let mut role = None;
-                for choice in choices.iter() {
-                    if role != Some(choice.role) {
-                        if role.is_some() {
-                            menu = menu.separator();
-                        }
-                        menu = menu.label(role_heading(choice.role));
-                        role = Some(choice.role);
-                    }
-                    let (view, name) = (view.clone(), choice.name.clone());
-                    menu = menu.item(
-                        PopupMenuItem::new(choice.label.clone())
-                            .checked(choice.name == current)
-                            .disabled(!choice.enabled)
-                            .on_click(move |_, _, cx| {
-                                let name = name.clone();
-                                let _ = view.update(cx, |view, cx| view.choose_container(name, cx));
-                            }),
-                    );
-                }
-                menu
-            });
-        let action = if running {
-            Button::new("pod-shell-end")
+    /// Start, Start again or End.
+    fn render_action(&self, cx: &mut Context<Self>) -> Button {
+        if self.running() {
+            return Button::new("pod-shell-end")
                 .outline()
                 .small()
                 .icon(IconName::Square)
                 .label("End")
                 .tooltip("Send Control-C, then Control-D, and close the connection")
-                .on_click(cx.listener(|view, _, _, cx| view.end(cx)))
-        } else {
-            Button::new("pod-shell-start")
-                .primary()
-                .small()
-                .icon(IconName::SquareTerminal)
-                .label("Start")
-                .tooltip("Run a shell in the container. Everything typed reaches it.")
-                .disabled(!self.can_start())
-                .on_click(cx.listener(|view, _, window, cx| view.start(window, cx)))
-        };
-        h_flex()
-            .gap_2()
-            .child(container)
-            .child(div().flex_1())
-            .child(action)
+                .on_click(cx.listener(|view, _, _, cx| view.end(cx)));
+        }
+        let again = self.used;
+        Button::new("pod-shell-start")
+            .primary()
+            .small()
+            .icon(IconName::SquareTerminal)
+            .label(if again { "Start again" } else { "Start" })
+            .tooltip("Run a shell in the container. Everything typed reaches it.")
+            .disabled(!self.can_start())
+            .on_click(cx.listener(|view, _, window, cx| view.start(window, cx)))
     }
 
     /// Where the session stands: a tag, and a sentence when there is more
@@ -99,6 +51,8 @@ impl ShellView {
             .test_support()
             .role(Role::Status)
             .aria_label(status.label.clone())
+            .flex_1()
+            .min_w_0()
             .gap_2()
             .min_h(dp(22.))
             .text_size(dp(12.))
@@ -173,7 +127,7 @@ impl ShellView {
                 .child(ui::empty_state(
                     IconName::SquareTerminal,
                     "No shell running",
-                    "Start runs a shell in the chosen container. It changes nothing by itself, but whatever you type there runs in the pod.",
+                    "Start runs a shell in the container. It changes nothing by itself, but whatever you type there runs in the pod.",
                     None,
                     Vec::new(),
                     cx,
@@ -182,8 +136,25 @@ impl ShellView {
     }
 }
 
+impl ShellView {
+    /// Keeps the least height for the text size drawn; a change asks for
+    /// the next frame, as the log view's does, so the dock that sizes the
+    /// tab by it hears of it without a notify from render.
+    fn note_least(&mut self, least: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        if self.least == least {
+            return;
+        }
+        self.least = least;
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            _ = view.update(cx, |_, cx| cx.notify());
+        });
+    }
+}
+
 impl Render for ShellView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.note_least(dp_px(LEAST_HEIGHT, window), window, cx);
         let p = palette(cx);
         v_flex()
             .id("pod-shell")
@@ -192,12 +163,14 @@ impl Render for ShellView {
             .min_h_0()
             .child(
                 v_flex()
-                    .gap_2()
-                    .px(dp(freshkube_ui::page::PANE_PADDING))
-                    .pt_2p5()
-                    .pb_2()
-                    .child(self.render_controls(cx))
-                    .child(self.render_status(cx))
+                    .gap(dp(6.))
+                    .pb(dp(6.))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(self.render_status(cx))
+                            .child(self.render_action(cx)),
+                    )
                     .children(self.render_failure(cx)),
             )
             .child(
@@ -205,7 +178,9 @@ impl Render for ShellView {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .border_t_1()
+                    .border_1()
+                    .rounded(px(8.))
+                    .overflow_hidden()
                     .border_color(p.line)
                     .child(self.terminal.clone())
                     .children(self.render_idle(cx)),

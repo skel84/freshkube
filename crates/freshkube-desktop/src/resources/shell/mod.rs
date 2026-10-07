@@ -1,14 +1,14 @@
-//! The Shell tab: a shell in one of the pod's running containers, started
-//! only from Start (docs/POD_EXEC.md). It is the one place the browsing
-//! pages change the cluster. A session lives while its pod stays open in the
-//! pane, whichever tab or page shows, and ends when the shell exits, the
-//! user ends it, or the pane moves on, which the page asks about first
-//! (`unless_shell`). In example mode a local shell answers instead.
+//! A shell tab in the dock: a shell in one of a pod's running containers,
+//! started only by an explicit action, the pane's Shell menu or the tab's
+//! Start (docs/POD_EXEC.md). It is one of the two places the browsing pages
+//! change the cluster. A session lives while its tab is open, whatever page
+//! shows, and ends when the shell exits, the user ends it, or the tab
+//! closes, which the dock asks about first (`unless_shell`). In example
+//! mode a local shell answers instead.
 //!
-//! One terminal serves every session of the pane: a new session clears it,
+//! One terminal serves every session of the tab: a new session clears it,
 //! so the remote side starts at the size the terminal already has.
 
-use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::resources::{
@@ -45,7 +45,7 @@ const CLOSE_GRACE: Duration = Duration::from_secs(1);
 
 /// Where the session stands.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum ShellState {
+pub(crate) enum ShellState {
     Idle,
     Connecting,
     Running,
@@ -54,14 +54,28 @@ pub(super) enum ShellState {
     Failed,
 }
 
-/// One entry of the container picker.
+/// One entry of the pane's Shell menu.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Choice {
-    pub(super) name: String,
-    pub(super) role: ContainerRole,
-    pub(super) label: SharedString,
+pub(crate) struct Choice {
+    pub(crate) name: String,
+    pub(crate) role: ContainerRole,
+    pub(crate) label: SharedString,
     /// Only a running container can take a shell.
-    pub(super) enabled: bool,
+    pub(crate) enabled: bool,
+}
+
+/// The Shell menu's entries for a pod's containers.
+pub(crate) fn choices(containers: &PodContainers) -> Vec<Choice> {
+    containers
+        .containers
+        .iter()
+        .map(|container| Choice {
+            name: container.name.clone(),
+            role: container.role,
+            label: format!("Start shell in {}", choice_label(container)).into(),
+            enabled: matches!(container.state, ContainerState::Running(_)),
+        })
+        .collect()
 }
 
 /// What the controls say about the session, derived when it changes.
@@ -74,7 +88,7 @@ pub(super) struct Status {
     pub(super) label: SharedString,
 }
 
-/// What the pane hears from its shell.
+/// What the dock hears from a shell tab.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ShellEvent {
     /// The terminal's leave shortcut: hand the keyboard back.
@@ -106,9 +120,10 @@ pub(crate) struct ShellView {
     containers: PodContainers,
     /// Whether `containers` was read for this pod yet.
     known: bool,
-    pub(super) choices: Rc<Vec<Choice>>,
+    /// The pod is gone: no shell starts in it again.
+    gone: bool,
     pub(super) container: Option<String>,
-    pub(super) state: ShellState,
+    pub(crate) state: ShellState,
     pub(super) status: Status,
     pub(super) terminal: Entity<TerminalView>,
     /// The terminal shows an earlier session, which a new one clears.
@@ -116,8 +131,10 @@ pub(crate) struct ShellView {
     session: Option<Session>,
     /// Advances with each session; anything from an older one is dropped.
     seq: u64,
-    /// The title the shell set, for the tab's tooltip.
+    /// The title the shell set, for its dock tab's tooltip.
     title: Option<SharedString>,
+    /// Its controls and three lines, as last drawn.
+    least: Pixels,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -149,7 +166,7 @@ impl ShellView {
             pod: None,
             containers: PodContainers::default(),
             known: false,
-            choices: Rc::default(),
+            gone: false,
             container: None,
             state: ShellState::Idle,
             status: Status {
@@ -163,6 +180,7 @@ impl ShellView {
             session: None,
             seq: 0,
             title: None,
+            least: Pixels::ZERO,
             _subscriptions: subscriptions,
         };
         view.describe(None);
@@ -192,24 +210,43 @@ impl ShellView {
         self.pod = pod;
         self.containers = PodContainers::default();
         self.known = false;
+        self.gone = false;
         self.container = None;
         self.state = ShellState::Idle;
         self.title = None;
         if std::mem::take(&mut self.used) {
             self.terminal.update(cx, |terminal, cx| terminal.reset(cx));
         }
-        self.derive_choices();
         self.describe(None);
         cx.notify();
     }
 
-    /// The pod's containers as last read. The first read picks the default
-    /// container, or the first running one when the default isn't.
+    /// The pod is gone, as its tab's watch found: Start stays off.
+    pub(crate) fn set_gone(&mut self, cx: &mut Context<Self>) {
+        if !self.gone {
+            self.gone = true;
+            cx.notify();
+        }
+    }
+
+    /// The UID of a pod asked for by name, as a restored tab's, once it is
+    /// found: a session starts only on a pod known by its UID.
+    pub(crate) fn settle_uid(&mut self, uid: &str) {
+        if let Some(pod) = self.pod.as_mut()
+            && pod.uid.is_empty()
+        {
+            pod.uid = uid.to_owned();
+        }
+    }
+
+    /// The pod's containers as last read. Without a chosen container the
+    /// first read picks the default, or the first running one when the
+    /// default isn't.
     pub(crate) fn set_containers(&mut self, containers: PodContainers, cx: &mut Context<Self>) {
         if self.pod.is_none() || (self.known && self.containers == containers) {
             return;
         }
-        if !self.known {
+        if self.container.is_none() {
             let running = |name: &str| {
                 containers
                     .get(name)
@@ -230,7 +267,6 @@ impl ShellView {
         }
         self.known = true;
         self.containers = containers;
-        self.derive_choices();
         if self.state == ShellState::Idle {
             self.describe(None);
         }
@@ -250,18 +286,30 @@ impl ShellView {
             .flatten()
     }
 
+    /// The title the shell set, which its dock tab's tooltip shows.
     pub(crate) fn title(&self) -> Option<&SharedString> {
         self.title.as_ref()
     }
 
-    /// Puts the keyboard in the terminal once it shows a session, and
-    /// returns whether it did.
-    pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) -> bool {
-        if self.state == ShellState::Idle {
-            return false;
-        }
-        window.focus(&self.terminal.focus_handle(cx), cx);
-        true
+    #[cfg(test)]
+    pub(crate) fn pod(&self) -> Option<&ResourceIdentity> {
+        self.pod.as_ref()
+    }
+
+    /// The container the shell runs in.
+    pub(crate) fn container(&self) -> Option<&str> {
+        self.container.as_deref()
+    }
+
+    /// The least height the tab needs: its controls and three lines.
+    pub(crate) fn least_height(&self) -> Pixels {
+        self.least
+    }
+
+    /// The terminal's handle once it shows a session: what takes the
+    /// keyboard when its tab is selected.
+    pub(crate) fn focus_target(&self, cx: &App) -> Option<FocusHandle> {
+        (self.state != ShellState::Idle).then(|| self.terminal.focus_handle(cx))
     }
 
     fn chosen_running(&self) -> bool {
@@ -272,15 +320,17 @@ impl ShellView {
     }
 
     /// Whether Start can start a session now.
-    pub(super) fn can_start(&self) -> bool {
-        self.pod.is_some() && self.access.is_some() && !self.running() && self.chosen_running()
+    pub(crate) fn can_start(&self) -> bool {
+        !self.gone
+            && self.pod.as_ref().is_some_and(|pod| !pod.uid.is_empty())
+            && self.access.is_some()
+            && !self.running()
+            && self.chosen_running()
     }
 
-    pub(super) fn choose_container(&mut self, name: String, cx: &mut Context<Self>) {
-        if self.running()
-            || self.container.as_ref() == Some(&name)
-            || self.containers.get(&name).is_none()
-        {
+    /// The container the tab's shell runs in, chosen before any session.
+    pub(crate) fn choose_container(&mut self, name: String, cx: &mut Context<Self>) {
+        if self.running() || self.container.as_ref() == Some(&name) {
             return;
         }
         self.container = Some(name);
@@ -292,7 +342,7 @@ impl ShellView {
 
     /// Starts a session in the chosen container, with a clear terminal that
     /// takes the keyboard.
-    pub(super) fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_start() {
             return;
         }
@@ -491,7 +541,7 @@ impl ShellView {
 
     /// End: a starting session stops at once; a running one closes its
     /// input, and its last output still shows.
-    pub(super) fn end(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn end(&mut self, cx: &mut Context<Self>) {
         match self.state {
             ShellState::Connecting => {
                 self.drop_session(cx);
@@ -525,8 +575,9 @@ impl ShellView {
         self.seq += 1;
     }
 
-    /// Ends the session for good, as the window closes or the app quits.
-    fn close_session(&mut self, cx: &mut Context<Self>) {
+    /// Ends the session for good, as its tab or the window closes or the
+    /// app quits.
+    pub(crate) fn close_session(&mut self, cx: &mut Context<Self>) {
         match self.state {
             ShellState::Connecting => {
                 self.drop_session(cx);
@@ -596,22 +647,6 @@ impl ShellView {
         }
     }
 
-    /// Derives the picker's entries from the containers.
-    fn derive_choices(&mut self) {
-        self.choices = Rc::new(
-            self.containers
-                .containers
-                .iter()
-                .map(|container| Choice {
-                    name: container.name.clone(),
-                    role: container.role,
-                    label: choice_label(container).into(),
-                    enabled: matches!(container.state, ContainerState::Running(_)),
-                })
-                .collect(),
-        );
-    }
-
     /// Derives what the controls say; `ended` is how the session ended.
     fn describe(&mut self, ended: Option<String>) {
         let container = self.container.clone().unwrap_or_default();
@@ -641,7 +676,7 @@ impl ShellView {
                 Tone::Good,
                 "Running",
                 format!(
-                    "{container} · {} returns to the list",
+                    "{container} · {} leaves the terminal",
                     crate::terminal::leave_shortcut_label()
                 ),
             ),
@@ -662,43 +697,74 @@ impl ShellView {
     }
 }
 
-/// The pod of a shell running anywhere in the app.
-pub(crate) fn running_anywhere(cx: &App) -> Option<SharedString> {
-    cx.try_global::<Shells>()?
+/// The pod of each shell running anywhere in the app.
+pub(crate) fn running_anywhere(cx: &App) -> Vec<SharedString> {
+    let Some(shells) = cx.try_global::<Shells>() else {
+        return Vec::new();
+    };
+    shells
         .views
         .iter()
         .filter_map(WeakEntity::upgrade)
-        .find_map(|shell| shell.read(cx).running_pod())
+        .filter_map(|shell| shell.read(cx).running_pod())
+        .collect()
 }
 
-/// Asks "End the shell in ⟨pod⟩?"; resolves to whether the user agreed.
-fn ask(pod: &str, window: &mut Window, cx: &mut App) -> impl Future<Output = bool> + use<> {
+/// "End the shell in ⟨pod⟩?" or "End 3 shells?", with its detail and the
+/// agreeing answer.
+fn ending_question(pods: &[SharedString]) -> (String, &'static str, &'static str) {
+    match pods {
+        [pod] => (
+            format!("End the shell in {pod}?"),
+            SHELL_DETAIL,
+            "End the shell",
+        ),
+        pods => (
+            format!("End {} shells?", pods.len()),
+            SHELLS_DETAIL,
+            "End the shells",
+        ),
+    }
+}
+
+const SHELL_DETAIL: &str = "Freshkube sends Control-C, then Control-D, to stop what runs and end \
+                            the shell. A program that ignores them, such as an open editor, \
+                            keeps running in the pod.";
+const SHELLS_DETAIL: &str = "Freshkube sends Control-C, then Control-D, to stop what runs and \
+                             end each shell. A program that ignores them, such as an open \
+                             editor, keeps running in its pod.";
+
+/// Asks to end the shells in `pods`; resolves to whether the user agreed.
+fn ask(
+    pods: &[SharedString],
+    window: &mut Window,
+    cx: &mut App,
+) -> impl Future<Output = bool> + use<> {
+    let (question, detail, answer) = ending_question(pods);
     let answer = window.prompt(
         PromptLevel::Warning,
-        &format!("End the shell in {pod}?"),
-        Some(
-            "Freshkube sends Control-C, then Control-D, to stop what runs and end the shell. \
-             A program that ignores them, such as an open editor, keeps running in the pod.",
-        ),
-        &["End the shell", "Cancel"],
+        &question,
+        Some(detail),
+        &[answer, "Cancel"],
         cx,
     );
     async move { answer.await == Ok(0) }
 }
 
-/// Runs `then` at once when no shell runs (`pod` is `None`), or once the
-/// user agrees to end the one in `pod`. Cancel leaves everything as it was.
+/// Runs `then` at once when no shell runs (`pods` is empty), or once the
+/// user agrees to end the shells in `pods`. Cancel leaves everything as it
+/// was.
 pub(crate) fn unless_shell<V: 'static>(
     view: &mut V,
-    pod: Option<SharedString>,
+    pods: Vec<SharedString>,
     window: &mut Window,
     cx: &mut Context<V>,
     then: impl FnOnce(&mut V, &mut Window, &mut Context<V>) + 'static,
 ) {
-    let Some(pod) = pod else {
+    if pods.is_empty() {
         return then(view, window, cx);
-    };
-    let agreed = ask(&pod, window, cx);
+    }
+    let agreed = ask(&pods, window, cx);
     cx.spawn_in(window, async move |this, cx| {
         if agreed.await {
             _ = this.update_in(cx, then);
@@ -715,12 +781,12 @@ pub(crate) fn may_close(
     cx: &mut App,
     close: impl FnOnce(&mut Window, &mut App) + 'static,
 ) -> bool {
-    let pod = running_anywhere(cx);
+    let pods = running_anywhere(cx);
     let forwards = forwards::running(cx);
-    if pod.is_none() && forwards == 0 {
+    if pods.is_empty() && forwards == 0 {
         return true;
     }
-    let agreed = ask_closing(pod.as_deref(), forwards, window, cx);
+    let agreed = ask_closing(&pods, forwards, window, cx);
     window
         .spawn(cx, async move |cx| {
             if !agreed.await {
@@ -739,12 +805,12 @@ pub(crate) fn may_close(
 /// Asks before quitting or closing the window: "End the shell in ⟨pod⟩?",
 /// "Stop 2 forwards?" or both in one. Resolves to whether the user agreed.
 fn ask_closing(
-    pod: Option<&str>,
+    pods: &[SharedString],
     forwards: usize,
     window: &mut Window,
     cx: &mut App,
 ) -> impl Future<Output = bool> + use<> {
-    let (question, detail, answer) = closing_question(pod, forwards);
+    let (question, detail, answer) = closing_question(pods, forwards);
     let answer = window.prompt(
         PromptLevel::Warning,
         &question,
@@ -756,32 +822,28 @@ fn ask_closing(
 }
 
 /// The question, its detail and the agreeing answer.
-fn closing_question(pod: Option<&str>, forwards: usize) -> (String, String, String) {
+fn closing_question(pods: &[SharedString], forwards: usize) -> (String, String, String) {
     let stop = match forwards {
         1 => "stop 1 forward".to_owned(),
         count => format!("stop {count} forwards"),
     };
-    let shell_detail = "Freshkube sends Control-C, then Control-D, to stop what runs and end \
-                        the shell. A program that ignores them, such as an open editor, keeps \
-                        running in the pod.";
     let forward_detail = "Stopping closes each local port and every connection through it.";
-    match (pod, forwards) {
-        (Some(pod), 0) => (
-            format!("End the shell in {pod}?"),
-            shell_detail.to_owned(),
-            "End the shell".to_owned(),
-        ),
-        (Some(pod), _) => (
-            format!("End the shell in {pod} and {stop}?"),
-            format!("{shell_detail} {forward_detail}"),
-            "End and stop".to_owned(),
-        ),
-        (None, _) => (
+    if pods.is_empty() {
+        return (
             format!("{}?", capitalized(&stop)),
             forward_detail.to_owned(),
             "Stop".to_owned(),
-        ),
+        );
     }
+    let (question, detail, answer) = ending_question(pods);
+    if forwards == 0 {
+        return (question, detail.to_owned(), answer.to_owned());
+    }
+    (
+        format!("{} and {stop}?", question.trim_end_matches('?')),
+        format!("{detail} {forward_detail}"),
+        "End and stop".to_owned(),
+    )
 }
 
 fn capitalized(text: &str) -> String {

@@ -43,7 +43,7 @@ impl Pilot {
                     || collected
                         .access
                         .is_some_and(|new| self.access.is_some_and(|old| old != new));
-                if changed && resources::shell::running_anywhere(cx).is_some() {
+                if changed && !resources::shell::running_anywhere(cx).is_empty() {
                     // Cancel leaves the original explicit session in place. Mark
                     // ordinary data stale, and ask once per replacement; manual
                     // Refresh allows another confirmation after a cancellation.

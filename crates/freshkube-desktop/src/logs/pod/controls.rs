@@ -240,10 +240,14 @@ impl Controls for PodLogView {
                 .role(Role::Status)
                 .aria_label(note.text.clone())
                 // One line: a long note ends in an ellipsis, and its
-                // tooltip says it all.
+                // tooltip says it all, wrapped to stay inside the window.
                 .tooltip({
                     let text = note.text.clone();
-                    move |window, cx| Tooltip::new(text.clone()).build(window, cx)
+                    move |window, cx| {
+                        let text = text.clone();
+                        Tooltip::element(move |_, _| div().max_w(dp(360.)).child(text.clone()))
+                            .build(window, cx)
+                    }
                 })
                 .items_center()
                 .gap_2()

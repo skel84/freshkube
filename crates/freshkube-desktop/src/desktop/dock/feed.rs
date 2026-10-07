@@ -53,7 +53,7 @@ impl Dock {
         if let KubeAccess::Example = access {
             let overview = example::document(&identity, live::now()).map(|doc| doc.overview);
             tab.feed.state = match (&tab.kind, overview) {
-                (TabKind::Pod(_), Some(overview)) => {
+                (TabKind::Pod(_) | TabKind::Shell(_), Some(overview)) => {
                     if let Some(containers) = overview.pod {
                         set_containers(tab, containers, cx);
                     }
@@ -66,6 +66,10 @@ impl Dock {
                 }
                 (TabKind::Pod(view), None) => {
                     view.update(cx, |view, cx| view.end(cx));
+                    FeedState::Gone
+                }
+                (TabKind::Shell(view), None) => {
+                    view.update(cx, |view, cx| view.set_gone(cx));
                     FeedState::Gone
                 }
                 (TabKind::Workload(_), None) => {
@@ -167,11 +171,7 @@ impl Dock {
                 Some(pod) => {
                     // A tab asked for by name, as a restored one, is the
                     // first pod it finds: one made again later is another.
-                    if tab.target.identity.uid.is_empty() && !pod.uid.is_empty() {
-                        tab.target.identity.uid = pod.uid.clone();
-                        tab.key.uid = pod.uid.clone();
-                        tab.key.wildcard = false;
-                    }
+                    tab.settle_uid(&pod.uid, cx);
                     set_containers(tab, pod.containers, cx);
                     FeedState::Ready
                 }
@@ -187,8 +187,10 @@ impl Dock {
         if gone {
             // Nothing more of this pod is read: neither its log, which would
             // retry by name, nor its watch.
-            if let TabKind::Pod(view) = &tab.kind {
-                view.update(cx, |view, cx| view.end(cx));
+            match &tab.kind {
+                TabKind::Pod(view) => view.update(cx, |view, cx| view.end(cx)),
+                TabKind::Shell(view) => view.update(cx, |view, cx| view.set_gone(cx)),
+                TabKind::Workload(_) => {}
             }
             tab.feed.job = None;
         }
@@ -232,10 +234,15 @@ impl Dock {
 }
 
 /// Gives a pod tab its pod's containers, then opens the container the tab
-/// was asked for, if any.
+/// was asked for, if any. A shell tab learns whether its container runs.
 fn set_containers(tab: &mut DockTab, containers: PodContainers, cx: &mut Context<Dock>) {
-    let TabKind::Pod(view) = &tab.kind else {
-        return;
+    let view = match &tab.kind {
+        TabKind::Pod(view) => view,
+        TabKind::Shell(view) => {
+            view.update(cx, |view, cx| view.set_containers(containers, cx));
+            return;
+        }
+        TabKind::Workload(_) => return,
     };
     let at = tab.at.take();
     view.update(cx, |view, cx| {

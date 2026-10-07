@@ -30,7 +30,6 @@ use super::model::{
     ColumnKind, ReadState, ResourceIdentity, SortDirection, SortKey, StatusTone, natural_cmp,
     status_tone,
 };
-use super::pane::shell::unless_shell;
 use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
 use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
@@ -817,7 +816,7 @@ impl ResourcesScreen {
         let Some(target) = self.detail.read(cx).target().cloned() else {
             return;
         };
-        // A pane pinned by its shell may show what this list doesn't cover.
+        // A pane opened from a link may show what this list doesn't cover.
         let covered = target.kind == self.kind
             && self
                 .namespace
@@ -876,14 +875,7 @@ impl ResourcesScreen {
         cx.notify();
     }
 
-    /// The pod whose shell runs in the pane, which keeps the pane on it:
-    /// the selection moves freely, and only an explicit open asks first.
-    fn pinned(&self, cx: &App) -> Option<SharedString> {
-        self.detail.read(cx).running_shell(cx)
-    }
-
-    /// Opens `identity` in the pane at once, then runs `then`. A shell
-    /// running there for another object asks first.
+    /// Opens `identity` in the pane at once, then runs `then`.
     fn open_now(
         &mut self,
         identity: ResourceIdentity,
@@ -891,34 +883,20 @@ impl ResourcesScreen {
         then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
-        let pinned = self
-            .pinned(cx)
-            .filter(|_| self.detail.read(cx).target_identity() != Some(&identity));
-        unless_shell(self, pinned, window, cx, move |this, window, cx| {
-            this.open_detail(identity, Duration::ZERO, cx);
-            then(this, window, cx);
-        });
+        self.open_detail(identity, Duration::ZERO, cx);
+        then(self, window, cx);
     }
 
-    /// Closes the pane, once a shell running there may end, and hands the
-    /// keyboard to the list.
+    /// Closes the pane and hands the keyboard to the list.
     fn close_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pinned = self.pinned(cx);
-        unless_shell(self, pinned, window, cx, |this, window, cx| {
-            this.close_detail(cx);
-            window.focus(&this.focus, cx);
-        });
+        self.close_detail(cx);
+        window.focus(&self.focus, cx);
     }
 
     /// The list moves on to rows the pane's object isn't among: the pane
-    /// closes, unless a shell pins it.
+    /// closes.
     fn leave_detail(&mut self, cx: &mut Context<Self>) {
-        if self.pinned(cx).is_some() {
-            self.projection.select(&self.store, None);
-            self.restore = None;
-        } else {
-            self.close_detail(cx);
-        }
+        self.close_detail(cx);
     }
 
     /// Closes the pane and clears the selection it showed.
@@ -1151,9 +1129,7 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll_to_selection(ScrollStrategy::Nearest);
-        if let Some(identity) = self.projection.selected().cloned()
-            && self.pinned(cx).is_none()
-        {
+        if let Some(identity) = self.projection.selected().cloned() {
             self.open_detail(identity, KEYBOARD_PAUSE, cx);
         }
         cx.notify();

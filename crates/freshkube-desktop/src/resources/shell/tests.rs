@@ -10,19 +10,20 @@ use gpui_kit::{AnyWindowHandle, AppContext, Entity, Focusable, Task, TestAppCont
 use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use super::{Session, ShellState, ShellView, closing_question, running_anywhere};
+use super::{
+    Session, ShellEvent, ShellState, ShellView, choices, closing_question, running_anywhere,
+};
 use crate::backend::OwnedJob;
 use crate::resources::detail::DetailTarget;
-use crate::resources::pane::{DetailEvent, DetailPane};
 use crate::resources::screen::KubeAccess;
 use crate::resources::{example, live};
 use crate::terminal::TerminalSize;
 
-type Emitted = Rc<RefCell<Vec<DetailEvent>>>;
+type Emitted = Rc<RefCell<Vec<ShellEvent>>>;
 
+/// A shell view alone in a window, as a dock tab shows it.
 struct Mounted {
     _runtime: Runtime,
-    pane: Entity<DetailPane>,
     shell: Entity<ShellView>,
     window: AnyWindowHandle,
     emitted: Emitted,
@@ -42,15 +43,20 @@ impl Mounted {
         cx.run_until_parked();
     }
 
-    /// Opens `pod` in the pane on its Shell tab.
+    /// Shows `pod` with its containers, as a new shell tab does, running
+    /// nothing.
     fn open(&self, cx: &mut TestAppContext, pod: &DetailTarget) {
-        let pod = pod.clone();
-        self.step(cx, |window, cx| {
-            self.pane.update(cx, |pane, cx| {
-                pane.open(pod, KubeAccess::Example, "1", std::time::Duration::ZERO, cx)
-            });
-            window.render_frame(cx);
-            window.click("detail-tab-shell", cx);
+        let identity = pod.identity.clone();
+        let containers = example::document(&identity, live::now())
+            .unwrap()
+            .overview
+            .pod
+            .unwrap();
+        self.step(cx, |_, cx| {
+            self.shell.update(cx, |shell, cx| {
+                shell.show_pod(Some(identity), Some(KubeAccess::Example), cx);
+                shell.set_containers(containers, cx);
+            })
         });
     }
 
@@ -88,22 +94,17 @@ fn mount(cx: &mut TestAppContext) -> Mounted {
         cx.set_reduce_motion(true);
     });
     let runtime = Runtime::new().unwrap();
-    let mut pane = None;
-    let window = cx.open_window(size(px(720.), px(820.)), |window, cx| {
-        let view = cx.new(|cx| {
-            let mut pane = DetailPane::new(runtime.handle().clone(), window, cx);
-            pane.set_active(true, cx);
-            pane
-        });
-        pane = Some(view.clone());
+    let mut shell = None;
+    let window = cx.open_window(size(px(720.), px(520.)), |window, cx| {
+        let view = cx.new(|cx| ShellView::new(runtime.handle().clone(), window, cx));
+        shell = Some(view.clone());
         Root::new(view, window, cx)
     });
-    let pane = pane.unwrap();
-    let shell = cx.read(|cx| pane.read(cx).shell.clone());
+    let shell = shell.unwrap();
     let emitted = Emitted::default();
     let sink = emitted.clone();
     cx.update(|cx| {
-        cx.subscribe(&pane, move |_, event: &DetailEvent, _| {
+        cx.subscribe(&shell, move |_, event: &ShellEvent, _| {
             sink.borrow_mut().push(event.clone())
         })
         .detach()
@@ -111,7 +112,6 @@ fn mount(cx: &mut TestAppContext) -> Mounted {
     cx.run_until_parked();
     Mounted {
         _runtime: runtime,
-        pane,
         shell,
         window: window.into(),
         emitted,
@@ -146,11 +146,8 @@ fn nothing_runs_until_start_which_opens_the_default_container(cx: &mut TestAppCo
         format!("Start runs a shell in {container}, as kubectl exec does.")
     );
     assert_eq!(shell.state(cx), ShellState::Idle);
-    shell.step(cx, |window, cx| {
-        assert!(window.find("detail-tab-shell").selected().unwrap());
-        assert!(window.try_find("detail-shell-running").is_none());
-        window.click("pod-shell-start", cx);
-    });
+    assert!(cx.read(running_anywhere).is_empty());
+    shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
     assert_eq!(shell.state(cx), ShellState::Running);
     assert!(shell.status(cx).starts_with("Running: "));
     assert!(
@@ -162,20 +159,14 @@ fn nothing_runs_until_start_which_opens_the_default_container(cx: &mut TestAppCo
         shell.screen(cx)
     );
     shell.step(cx, |window, cx| {
-        // The keyboard is in the terminal, and the tab says a shell runs.
+        // The keyboard is in the terminal, and the app knows a shell runs.
         assert_eq!(window.find("terminal").focused(), Some(true));
-        assert!(window.find("detail-shell-running").visible());
         assert_eq!(
-            window.find("detail-shell-running").label(),
-            Some("A shell runs")
+            running_anywhere(cx),
+            [gpui_kit::SharedString::from(pod.identity.name.clone())]
         );
-        assert_eq!(
-            shell.pane.read(cx).running_shell(cx).as_deref(),
-            Some(pod.identity.name.as_str())
-        );
-        assert!(running_anywhere(cx).is_some());
     });
-    // The shell's title is the tab's tooltip.
+    // The shell's title is its dock tab's tooltip.
     let title = cx.read(|cx| shell.shell.read(cx).title().cloned());
     assert_eq!(
         title.as_deref(),
@@ -199,7 +190,7 @@ fn typing_reaches_the_shell_and_its_exit_ends_the_session(cx: &mut TestAppContex
     // takes input.
     assert!(ended(cx));
     shell.step(cx, |window, _| {
-        assert!(window.try_find("detail-shell-running").is_none());
+        assert_eq!(window.find("pod-shell-start").label(), Some("Start again"));
     });
     // The ended screen stays; typing goes nowhere.
     shell.type_line(cx, "ls");
@@ -229,56 +220,25 @@ fn end_stops_the_session_and_keeps_its_screen(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_session_lives_on_other_tabs_and_pages_and_ends_with_the_pod(cx: &mut TestAppContext) {
+fn another_pod_starts_over_and_closing_the_session_ends_it(cx: &mut TestAppContext) {
     let shell = mount(cx);
     let pod = running_pod();
     shell.open(cx, &pod);
     shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
-    shell.step(cx, |window, cx| {
-        window.click("detail-tab-events", cx);
-        shell.pane.update(cx, |pane, cx| pane.set_active(false, cx));
-    });
     assert_eq!(shell.state(cx), ShellState::Running);
-    shell.step(cx, |window, cx| {
-        shell.pane.update(cx, |pane, cx| pane.set_active(true, cx));
-        window.render_frame(cx);
-        window.click("detail-tab-shell", cx);
-    });
-    assert_eq!(shell.state(cx), ShellState::Running);
-    assert!(shell.screen(cx).contains("Example shell in"));
 
-    // Another pod, which the page asked about, starts over.
     let other = pod_named_other_than(&pod);
     shell.open(cx, &other);
     assert_eq!(shell.state(cx), ShellState::Idle);
     assert!(!shell.screen(cx).contains("Example shell in"));
     shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
     assert_eq!(shell.state(cx), ShellState::Running);
-    // Closing the pane ends it, and another kind has no Shell tab.
-    shell.step(cx, |_, cx| shell.pane.update(cx, |pane, cx| pane.close(cx)));
-    assert_eq!(shell.state(cx), ShellState::Idle);
-    let deployment = DetailTarget {
-        identity: example::read("homelab", "deployments.apps", None, live::now())
-            .unwrap()
-            .1[0]
-            .identity
-            .clone(),
-        kind: builtin("deployments.apps").unwrap(),
-    };
-    shell.step(cx, |window, cx| {
-        shell.pane.update(cx, |pane, cx| {
-            pane.open(
-                deployment,
-                KubeAccess::Example,
-                "1",
-                std::time::Duration::ZERO,
-                cx,
-            )
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("detail-tab-shell").is_none());
-        assert_eq!(window.find("detail-tab-overview").selected(), Some(true));
+    // A closing tab ends its session.
+    shell.step(cx, |_, cx| {
+        shell.shell.update(cx, |view, cx| view.close_session(cx))
     });
+    assert!(!cx.read(|cx| shell.shell.read(cx).running()));
+    assert!(cx.read(running_anywhere).is_empty());
 }
 
 fn pod_named_other_than(pod: &DetailTarget) -> DetailTarget {
@@ -294,8 +254,16 @@ fn a_container_that_isnt_running_cant_take_a_shell(cx: &mut TestAppContext) {
     assert!(status.starts_with("Not running: "), "{status}");
     shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
     assert_eq!(shell.state(cx), ShellState::Idle);
-    // The picker offers only running containers.
-    let choices = cx.read(|cx| shell.shell.read(cx).choices.clone());
+    // The pane's Shell menu offers only running containers.
+    let containers = example::document(
+        &pod(|status, _| status == "CrashLoopBackOff").identity,
+        live::now(),
+    )
+    .unwrap()
+    .overview
+    .pod
+    .unwrap();
+    let choices = choices(&containers);
     assert!(!choices.is_empty());
     assert!(choices.iter().all(|choice| !choice.enabled));
 }
@@ -333,7 +301,6 @@ fn failures_keep_their_category_and_offer_retry(cx: &mut TestAppContext) {
             window.find("pod-shell-failed").label(),
             Some("Not permitted: Forbidden · Not allowed to run a shell in this pod")
         );
-        assert!(window.try_find("detail-shell-running").is_none());
     });
     shell.step(cx, |window, cx| window.click("pod-shell-retry", cx));
     assert_eq!(shell.state(cx), ShellState::Running);
@@ -397,23 +364,7 @@ fn escape_reaches_the_shell_and_command_escape_leaves_it(cx: &mut TestAppContext
         "ctrl-shift-q"
     };
     shell.step(cx, |window, cx| window.press(leave, cx));
-    assert_eq!(*shell.emitted.borrow(), [DetailEvent::Leave]);
-
-    // Command-Shift-] and [ still switch tabs from the terminal, and
-    // coming back puts the keyboard in it again.
-    shell.step(cx, |window, cx| {
-        shell.pane.update(cx, |pane, cx| pane.focus(window, cx));
-    });
-    assert!(terminal_focused(cx));
-    shell.step(cx, |window, cx| window.press("secondary-}", cx));
-    shell.step(cx, |window, cx| {
-        assert_eq!(window.find("detail-tab-ports").selected(), Some(true));
-        window.press("secondary-{", cx);
-    });
-    shell.step(cx, |window, _| {
-        assert_eq!(window.find("detail-tab-shell").selected(), Some(true));
-    });
-    assert!(terminal_focused(cx));
+    assert_eq!(*shell.emitted.borrow(), [ShellEvent::Leave]);
     assert_eq!(shell.state(cx), ShellState::Running);
 }
 
@@ -439,32 +390,40 @@ fn the_example_shell_draws_a_full_screen_at_the_terminals_size(cx: &mut TestAppC
 
 #[test]
 fn the_closing_question_names_the_shell_and_the_forwards() {
-    let question = |pod, forwards| {
-        let (question, _, answer) = closing_question(pod, forwards);
+    let question = |pods: &[&str], forwards| {
+        let pods: Vec<gpui_kit::SharedString> = pods.iter().map(|pod| (*pod).into()).collect();
+        let (question, _, answer) = closing_question(&pods, forwards);
         (question, answer)
     };
     assert_eq!(
-        question(Some("web-1"), 0),
+        question(&["web-1"], 0),
         (
             "End the shell in web-1?".to_owned(),
             "End the shell".to_owned()
         )
     );
     assert_eq!(
-        question(None, 1),
+        question(&[], 1),
         ("Stop 1 forward?".to_owned(), "Stop".to_owned())
     );
     assert_eq!(
-        question(None, 2),
+        question(&[], 2),
         ("Stop 2 forwards?".to_owned(), "Stop".to_owned())
     );
     assert_eq!(
-        question(Some("web-1"), 2),
+        question(&["web-1"], 2),
         (
             "End the shell in web-1 and stop 2 forwards?".to_owned(),
             "End and stop".to_owned()
         )
     );
-    let (_, detail, _) = closing_question(Some("web-1"), 2);
+    assert_eq!(
+        question(&["web-1", "api-2"], 1),
+        (
+            "End 2 shells and stop 1 forward?".to_owned(),
+            "End and stop".to_owned()
+        )
+    );
+    let (_, detail, _) = closing_question(&["web-1".into()], 2);
     assert!(detail.contains("Control-C") && detail.contains("every connection"));
 }
