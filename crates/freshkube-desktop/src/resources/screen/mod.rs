@@ -126,6 +126,30 @@ impl KubeAccess {
     }
 }
 
+/// Pages outside Resources reach a live cluster through this, so a clone
+/// shares the client the Talos or kubeconfig access caches.
+impl freshkube_core::cluster_source::KubeClientSource for KubeAccess {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+        Box::pin(KubeAccess::client(self))
+    }
+}
+
+impl KubeSource {
+    /// This connection as Monitoring and Observability take it.
+    pub(crate) fn cluster(&self) -> freshkube_core::cluster_source::ClusterSource {
+        use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
+        let access = match &self.access {
+            KubeAccess::Example => ClusterAccess::Example,
+            live => ClusterAccess::Live(std::sync::Arc::new(live.clone())),
+        };
+        ClusterSource {
+            id: self.id.clone(),
+            context: self.context.clone(),
+            access,
+        }
+    }
+}
+
 /// One entry of the namespace picker; `None` lists every namespace.
 #[derive(Clone, Debug, PartialEq)]
 struct NamespaceChoice {

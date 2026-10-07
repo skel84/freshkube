@@ -13,7 +13,6 @@ homepage = "https://github.com/skel84/freshkube"
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
 futures = "0.3"
 
 # gRPC
@@ -22,14 +21,11 @@ prost = "0.13"
 prost-types = "0.13"
 
 # TLS
-tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
     "ring",
 ] }
-rustls-pemfile = "2"
-rustls-pki-types = "1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -50,8 +46,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-dirs-next = "2"
-arboard = "3"
+dirs = "6"
 
 # Kubernetes client
 kube = { version = "0.98", features = [
@@ -59,6 +54,9 @@ kube = { version = "0.98", features = [
     "config",
     "runtime",
     "rustls-tls",
+    # An http:// proxy from HTTPS_PROXY or a kubeconfig's proxy-url, as
+    # kubectl takes it (#335).
+    "http-proxy",
     # Pod exec runs over a websocket (docs/POD_EXEC.md).
     "ws",
 ], default-features = false }

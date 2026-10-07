@@ -296,7 +296,7 @@ enum SelectionKey {
 fn ambient_files() -> Vec<(PathBuf, u64)> {
     let paths = match std::env::var_os("KUBECONFIG") {
         Some(value) if !value.is_empty() => std::env::split_paths(&value).collect(),
-        _ => dirs_next::home_dir()
+        _ => std::env::home_dir()
             .map(|home| vec![home.join(".kube").join("config")])
             .unwrap_or_default(),
     };
@@ -408,12 +408,6 @@ pub(crate) fn forget_kubernetes(client: &TalosClient, context: &str) {
     lock(&KUBERNETES_CLIENTS)
         .remove_where(|key| key.access.session == session && key.context == context);
     lock(&PREPARED).remove_where(|key| key.access.session == session && key.context == context);
-}
-
-pub(crate) fn forget_all_kubernetes() {
-    lock(&KUBERNETES_CLIENTS).remove_where(|_| true);
-    lock(&PREPARED).remove_where(|_| true);
-    lock(&NODE_CLIENTS).remove_where(|_| true);
 }
 
 pub(crate) fn node_client(client: &TalosClient, node: &str) -> Option<Client> {

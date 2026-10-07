@@ -2571,4 +2571,16 @@ fn a_menu_acts_only_on_the_row_it_was_opened_for(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.read(|cx| assert!(screen.read(cx).marked.is_empty()));
+
+    // With its row still selected, the same pick marks it, so the checks
+    // above can't pass on a missed click.
+    let first = cx.read(|cx| selected(&screen, cx)).unwrap();
+    let row = row_id(&first);
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row).right_click("name", cx)
+    });
+    cx.update_window(handle, |_, window, cx| pick(window, &items, "Mark", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert!(screen.read(cx).marked.contains(&first)));
 }

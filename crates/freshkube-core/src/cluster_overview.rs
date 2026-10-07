@@ -342,11 +342,6 @@ impl ClusterOverviewCollector {
         }
     }
 
-    /// Forgets every reused Kubernetes client, e.g. after a settings change.
-    pub fn forget_all_kubernetes_clients() {
-        client_cache::forget_all_kubernetes();
-    }
-
     fn kubernetes_key(&self, cluster: &ClusterOverview, client: &TalosClient) -> KubernetesKey {
         KubernetesKey::new(
             client,
@@ -596,46 +591,6 @@ impl ClusterOverviewCollector {
                 "Unable to reach any configured Talos endpoint. Check network connectivity and the endpoints in your talosconfig."
                     .to_string(),
             );
-        }
-    }
-
-    /// Refreshes the live metrics for one already-known node.
-    ///
-    /// This is intentionally narrower than [`Self::refresh`]: it avoids roster,
-    /// etcd, and Kubernetes discovery calls during the five-second foreground
-    /// refresh loop while preserving the latest data for every other node.
-    pub async fn refresh_node(&self, cluster: &mut ClusterOverview, node_name: &str) {
-        let Some(client) = cluster.client.clone() else {
-            return;
-        };
-        let Some(node_ip) = cluster.node_ips.get(node_name).cloned() else {
-            return;
-        };
-        let node_name = node_name.to_owned();
-        let node_client = client.with_node(&node_ip);
-
-        if let Ok(mut values) = node_client.services().await {
-            for value in &mut values {
-                value.node.clone_from(&node_name);
-            }
-            cluster.services.retain(|value| value.node != node_name);
-            cluster.services.extend(values);
-        }
-
-        if let Ok(mut values) = node_client.memory().await {
-            for value in &mut values {
-                value.node.clone_from(&node_name);
-            }
-            cluster.memory.retain(|value| value.node != node_name);
-            cluster.memory.extend(values);
-        }
-
-        if let Ok(mut values) = node_client.load_avg().await {
-            for value in &mut values {
-                value.node.clone_from(&node_name);
-            }
-            cluster.load_avg.retain(|value| value.node != node_name);
-            cluster.load_avg.extend(values);
         }
     }
 
@@ -1041,106 +996,6 @@ pub enum K8sError {
     ApiError(String),
 }
 
-/// Source of the kubeconfig used to create a Kubernetes client.
-#[derive(Debug, Clone)]
-pub enum KubeconfigSource {
-    /// `KUBECONFIG` or the default kubeconfig path.
-    Environment,
-    /// A specific Talos control plane node.
-    TalosNode(String),
-    /// Source is unknown or unavailable.
-    Unavailable(String),
-}
-
-/// Create a Kubernetes client from Talos-provided kubeconfig.
-pub async fn create_k8s_client(talos_client: &TalosClient) -> Result<Client, K8sError> {
-    let (client, _) = create_k8s_client_with_source(talos_client, None, None).await?;
-    Ok(client)
-}
-
-/// Create a Kubernetes client while preserving cluster identity when possible.
-///
-/// A pinned control plane's kubeconfig is the identity source. Ambient
-/// `KUBECONFIG` is used only when its current context has the same inline CA;
-/// otherwise it is ignored so a frontend never reads or mutates another cluster.
-pub async fn create_k8s_client_with_source(
-    talos_client: &TalosClient,
-    control_plane_ip: Option<&str>,
-    kubeconfig_client: Option<&TalosClient>,
-) -> Result<(Client, KubeconfigSource), K8sError> {
-    if let Some(node_ip) = control_plane_ip {
-        tracing::debug!("Targeting control plane node {} for kubeconfig", node_ip);
-        match fetch_node_kubeconfig(&talos_client.with_node(node_ip)).await {
-            Ok(node_kubeconfig) => {
-                let node_ca = current_context_cluster_ca(&node_kubeconfig);
-                match (node_ca.as_deref(), ambient_kubeconfig_ca()) {
-                    (Some(node_ca), Some(ambient_ca)) if node_ca == ambient_ca => {
-                        if let Ok(config) = Config::infer().await
-                            && let Ok(client) = crate::kube_client::client(config)
-                        {
-                            tracing::debug!("KUBECONFIG matches the Talos cluster; using it");
-                            return Ok((client, KubeconfigSource::Environment));
-                        }
-                        return Ok((
-                            client_from_kubeconfig(node_kubeconfig).await?,
-                            KubeconfigSource::TalosNode(node_ip.to_string()),
-                        ));
-                    }
-                    (Some(_), Some(_)) => {
-                        tracing::warn!(
-                            "KUBECONFIG points at a different cluster than control plane node {}; ignoring it and using the node's kubeconfig",
-                            node_ip
-                        );
-                        return Ok((
-                            client_from_kubeconfig(node_kubeconfig).await?,
-                            KubeconfigSource::TalosNode(node_ip.to_string()),
-                        ));
-                    }
-                    _ => {
-                        return Ok((
-                            client_from_kubeconfig(node_kubeconfig).await?,
-                            KubeconfigSource::TalosNode(node_ip.to_string()),
-                        ));
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to fetch kubeconfig from node {}: {} (falling back)",
-                    node_ip,
-                    error
-                );
-            }
-        }
-    }
-
-    if let Some(kubeconfig_client) = kubeconfig_client {
-        tracing::debug!("Trying provided kubeconfig client");
-        match fetch_kubeconfig_from_client(kubeconfig_client).await {
-            Ok(client) => {
-                return Ok((
-                    client,
-                    KubeconfigSource::TalosNode("control-plane".to_string()),
-                ));
-            }
-            Err(error) => {
-                tracing::warn!("Failed to fetch kubeconfig from provided client: {}", error);
-            }
-        }
-    }
-
-    if let Ok(config) = Config::infer().await
-        && let Ok(client) = crate::kube_client::client(config)
-    {
-        tracing::debug!("Using kubeconfig from environment (KUBECONFIG or default path)");
-        return Ok((client, KubeconfigSource::Environment));
-    }
-
-    tracing::debug!("Trying main Talos client for kubeconfig (may fail with multiple nodes)");
-    let client = fetch_kubeconfig_from_client(talos_client).await?;
-    Ok((client, KubeconfigSource::TalosNode("vip".to_string())))
-}
-
 /// Fetch a Kubernetes client directly from a control plane node without ever
 /// consulting ambient `KUBECONFIG`. Use this for node enumeration.
 pub async fn create_k8s_client_from_node(
@@ -1173,17 +1028,6 @@ pub fn forget_cached_k8s_client_from_node(talos_client: &TalosClient, control_pl
     client_cache::forget_node_client(talos_client, control_plane_ip);
 }
 
-/// Creates a Kubernetes client with a supplied control-plane kubeconfig source.
-///
-/// Kept for diagnostic callers that do not have a concrete control plane IP.
-pub async fn create_k8s_client_with_kubeconfig_source(
-    talos_client: &TalosClient,
-    kubeconfig_client: Option<&TalosClient>,
-) -> Result<Client, K8sError> {
-    let (client, _) = create_k8s_client_with_source(talos_client, None, kubeconfig_client).await?;
-    Ok(client)
-}
-
 async fn fetch_node_kubeconfig(client: &TalosClient) -> Result<kube::config::Kubeconfig, K8sError> {
     let kubeconfig = client
         .kubeconfig()
@@ -1201,41 +1045,6 @@ async fn client_from_kubeconfig(kubeconfig: kube::config::Kubeconfig) -> Result<
 
 async fn fetch_kubeconfig_from_client(client: &TalosClient) -> Result<Client, K8sError> {
     client_from_kubeconfig(fetch_node_kubeconfig(client).await?).await
-}
-
-fn current_context_cluster_ca(kubeconfig: &kube::config::Kubeconfig) -> Option<String> {
-    let context_name = kubeconfig.current_context.as_deref()?;
-    let context = kubeconfig
-        .contexts
-        .iter()
-        .find(|context| context.name == context_name)?;
-    let cluster_name = &context.context.as_ref()?.cluster;
-    let cluster = kubeconfig
-        .clusters
-        .iter()
-        .find(|cluster| &cluster.name == cluster_name)?;
-    cluster.cluster.as_ref()?.certificate_authority_data.clone()
-}
-
-fn ambient_kubeconfig_ca() -> Option<String> {
-    let kubeconfig = kube::config::Kubeconfig::read().ok()?;
-    current_context_cluster_ca(&kubeconfig)
-}
-
-/// Returns a warning only when ambient KUBECONFIG can be proven to identify a
-/// different cluster than the pinned control plane node.
-pub async fn kubeconfig_mismatch_warning(
-    talos_client: &TalosClient,
-    control_plane_ip: &str,
-) -> Option<String> {
-    let ambient_ca = ambient_kubeconfig_ca()?;
-    let node_kubeconfig = fetch_node_kubeconfig(&talos_client.with_node(control_plane_ip))
-        .await
-        .ok()?;
-    let node_ca = current_context_cluster_ca(&node_kubeconfig)?;
-    (ambient_ca != node_ca).then(|| format!(
-        "KUBECONFIG points at a different cluster than this Talos context — ignoring it. Kubernetes views (workloads, drain/cordon) use the kubeconfig from control plane node {control_plane_ip} instead."
-    ))
 }
 
 /// A Kubernetes node relevant to the Talos node roster.
@@ -1281,17 +1090,6 @@ pub async fn list_cluster_nodes(client: &Client) -> Result<Vec<K8sNodeInfo>, K8s
         .await
         .map_err(|error| K8sError::ApiError(format!("Failed to list nodes: {error}")))?;
     Ok(list.items.iter().map(node_info_from).collect())
-}
-
-/// Enumerates this cluster's complete node roster through a kubeconfig served
-/// by `control_plane_ip`; an ambient KUBECONFIG is never used for this path.
-pub async fn discovery_members_via_k8s(
-    talos_client: &TalosClient,
-    control_plane_ip: &str,
-) -> Result<Vec<DiscoveryMember>, K8sError> {
-    let k8s_client = create_k8s_client_from_node(talos_client, control_plane_ip).await?;
-    let nodes = list_cluster_nodes(&k8s_client).await?;
-    Ok(k8s_nodes_to_discovery_members(nodes))
 }
 
 /// Maps a Kubernetes roster to Talos discovery members, omitting nodes without

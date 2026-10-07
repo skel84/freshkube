@@ -4,4 +4,5 @@
   each with its key. New keys: Shift-X marks the selected pod's group,
   O opens its node, H shows or folds the healthy pods. The group rows
   lose their Select all and Open node buttons to the menu; the healthy
-  group keeps its chevron.
+  group keeps its chevron. A row's menu acts only on the row it was
+  opened for: if the list changes under it, it does nothing.

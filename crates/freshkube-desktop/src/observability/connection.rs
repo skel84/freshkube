@@ -2,7 +2,6 @@
 use super::*;
 use crate::{
     backend::{self, OwnedJob},
-    resources::KubeSource,
     state::Snapshot,
 };
 use freshkube_core::coroot as api;
@@ -177,8 +176,8 @@ impl ObservabilityPage {
             && api::ObjectSubject::for_app(source, app).as_ref() == Some(subject)
     }
 
-    pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
-        let access = source.map(|s| s.id);
+    /// The shell's connection id; answers for another one are dropped.
+    pub(crate) fn set_source(&mut self, access: Option<String>, cx: &mut Context<Self>) {
         if self.live.access == access {
             return;
         }

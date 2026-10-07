@@ -74,7 +74,7 @@ impl TalosConfig {
 
         tracing::debug!("TALOSCONFIG env var not set, using default path");
         // Fallback to default location
-        let home = dirs_next::home_dir().ok_or(TalosError::NoHomeDirectory)?;
+        let home = std::env::home_dir().ok_or(TalosError::NoHomeDirectory)?;
         Ok(home.join(".talos").join("config"))
     }
 
@@ -113,11 +113,6 @@ impl Context {
     pub fn client_key_pem(&self) -> Result<Vec<u8>, TalosError> {
         use base64::Engine;
         Ok(base64::engine::general_purpose::STANDARD.decode(&self.key)?)
-    }
-
-    /// Get the first endpoint URL
-    pub fn endpoint_url(&self) -> Option<String> {
-        self.endpoints.first().map(|e| normalize_endpoint(e))
     }
 
     /// Get all endpoint URLs (normalized).
@@ -233,7 +228,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx.endpoint_url(),
+            ctx.endpoint_urls().into_iter().next(),
             Some("https://192.0.2.100:50000".to_string())
         );
 
@@ -245,7 +240,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx2.endpoint_url(),
+            ctx2.endpoint_urls().into_iter().next(),
             Some("https://node1.example.com:50000".to_string())
         );
 
@@ -257,7 +252,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx3.endpoint_url(),
+            ctx3.endpoint_urls().into_iter().next(),
             Some("https://192.0.2.100:50000".to_string())
         );
     }
@@ -284,8 +279,6 @@ contexts:
                 "https://talos.example.com:6443".to_string(),
             ]
         );
-        // endpoint_url() still returns just the first, matching endpoint_urls[0].
-        assert_eq!(ctx.endpoint_url(), Some(ctx.endpoint_urls()[0].clone()));
     }
 
     #[test]
@@ -311,7 +304,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx.endpoint_url(),
+            ctx.endpoint_urls().into_iter().next(),
             Some("https://[2001:db8::1]:50000".to_string())
         );
 
@@ -324,7 +317,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx2.endpoint_url(),
+            ctx2.endpoint_urls().into_iter().next(),
             Some("https://[2001:db8::1]:50000".to_string())
         );
 
@@ -336,7 +329,10 @@ contexts:
             crt: "Yg==".to_string(),
             key: "Yw==".to_string(),
         };
-        assert_eq!(ctx3.endpoint_url(), Some("https://[::1]:50000".to_string()));
+        assert_eq!(
+            ctx3.endpoint_urls().into_iter().next(),
+            Some("https://[::1]:50000".to_string())
+        );
 
         // IPv6 with brackets but no port - should add default port
         let ctx4 = Context {
@@ -346,7 +342,10 @@ contexts:
             crt: "Yg==".to_string(),
             key: "Yw==".to_string(),
         };
-        assert_eq!(ctx4.endpoint_url(), Some("https://[::1]:50000".to_string()));
+        assert_eq!(
+            ctx4.endpoint_urls().into_iter().next(),
+            Some("https://[::1]:50000".to_string())
+        );
     }
 
     #[test]
@@ -359,7 +358,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx.endpoint_url(),
+            ctx.endpoint_urls().into_iter().next(),
             Some("https://192.0.2.100:443".to_string())
         );
     }
@@ -374,7 +373,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx.endpoint_url(),
+            ctx.endpoint_urls().into_iter().next(),
             Some("https://talos.example.com:50000".to_string())
         );
 
@@ -386,7 +385,7 @@ contexts:
             key: "Yw==".to_string(),
         };
         assert_eq!(
-            ctx2.endpoint_url(),
+            ctx2.endpoint_urls().into_iter().next(),
             Some("https://talos.example.com:8443".to_string())
         );
     }
@@ -421,7 +420,7 @@ contexts:
             crt: "Yg==".to_string(),
             key: "Yw==".to_string(),
         };
-        assert_eq!(ctx.endpoint_url(), None);
+        assert_eq!(ctx.endpoint_urls().into_iter().next(), None);
     }
 
     // Note: These tests manipulate environment variables and must run sequentially.
@@ -454,7 +453,7 @@ contexts:
             std::env::remove_var("TALOSCONFIG");
         }
         let path = TalosConfig::default_path().unwrap();
-        let home = dirs_next::home_dir().unwrap();
+        let home = std::env::home_dir().unwrap();
         let expected = home.join(".talos").join("config");
         assert_eq!(path, expected);
     }

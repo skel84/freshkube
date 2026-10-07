@@ -471,7 +471,7 @@ impl NetworkScreen {
             &self.runtime,
             "KubeSpan status",
             async move {
-                let snapshot = collect_kubespan_inspection(&target, Some(talosctl)).await;
+                let snapshot = collect_kubespan_inspection(&target, talosctl).await;
                 Ok(kubespan_state(&snapshot))
             },
             |screen: &mut Self| &mut screen.kubespan,
@@ -488,23 +488,19 @@ async fn collect(
     tick: u64,
 ) -> Result<NetworkData, String> {
     // KubeSpan is two `talosctl get` subprocesses: its tab asks for it.
-    let mut request = NetworkInspectionRequest::new(target, sample);
-    request.include_kubespan = false;
+    let request = NetworkInspectionRequest::new(target, sample);
     let snapshot = collect_network_inspection(client, request)
         .await
         .map_err(|error| error.to_string())?;
     Ok(NetworkData::new(snapshot, tick))
 }
 
-/// Maps core's KubeSpan snapshot; anything not queried stays unknown.
+/// Maps core's KubeSpan snapshot.
 fn kubespan_state(snapshot: &KubeSpanSnapshot) -> KubeSpanState {
     match snapshot {
         KubeSpanSnapshot::Enabled { peers } => KubeSpanState::Enabled(Arc::new(peers.clone())),
         KubeSpanSnapshot::Disabled => KubeSpanState::Disabled,
         KubeSpanSnapshot::Unavailable { message } => KubeSpanState::Unavailable(message.clone()),
-        KubeSpanSnapshot::NotRequested => {
-            KubeSpanState::Unavailable("KubeSpan was not queried".into())
-        }
     }
 }
 

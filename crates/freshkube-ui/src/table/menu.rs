@@ -49,7 +49,9 @@ impl RowAction {
 /// only while `live` holds: the row it was opened for is still listed and
 /// selected. Otherwise it does nothing, rather than act on whatever row
 /// took its place. A separator at either end or next to another is dropped.
-/// While the menu is open, no row tooltip draws over it.
+/// While the menu is open, no row tooltip draws over it. An item runs its
+/// action at once, while Kit holds the menu, so a handler must not update
+/// the menu itself, such as by opening another.
 pub fn row_menu(
     menu: PopupMenu,
     actions: Vec<RowAction>,

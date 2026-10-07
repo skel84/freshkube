@@ -14,14 +14,10 @@ prost-types.workspace = true
 
 # Async
 tokio.workspace = true
-tokio-stream.workspace = true
 futures.workspace = true
 
 # TLS
-tokio-rustls.workspace = true
 rustls.workspace = true
-rustls-pemfile.workspace = true
-rustls-pki-types.workspace = true
 
 # Serialization
 serde.workspace = true
@@ -30,9 +26,6 @@ base64.workspace = true
 
 # Error handling
 thiserror.workspace = true
-
-# Utilities
-dirs-next.workspace = true
 
 # Compression (for kubeconfig extraction)
 flate2 = "1.0"
@@ -46,6 +39,3 @@ fastrand = "2"
 
 [build-dependencies]
 tonic-build = "0.12"
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
