@@ -266,12 +266,18 @@ fn commit_id(value: &Value) -> Option<String> {
 }
 
 /// What a Promotion's steps recorded: commits pushed (`commit`) and commits
-/// checked out (`commits`, a map of path to commit), by step.
+/// checked out (`commits`, a map of path to commit), by step. A commit step
+/// and the push step after it record the same commit, so each pushed commit
+/// is kept once, in the order first seen.
 fn step_commits(value: &Value) -> (Vec<String>, Vec<String>) {
-    let (mut pushed, mut source) = (Vec::new(), Vec::new());
+    let (mut pushed, mut source) = (Vec::<String>::new(), Vec::new());
     if let Some(steps) = value.pointer("/status/state").and_then(Value::as_object) {
         for step in steps.values() {
-            pushed.extend(step.get("commit").and_then(commit_id));
+            if let Some(commit) = step.get("commit").and_then(commit_id)
+                && !pushed.contains(&commit)
+            {
+                pushed.push(commit);
+            }
             if let Some(checked_out) = step.get("commits").and_then(Value::as_object) {
                 source.extend(checked_out.values().filter_map(commit_id));
             }
