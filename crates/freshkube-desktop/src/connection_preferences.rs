@@ -1,4 +1,5 @@
-//! Remember the selected Talos file and context, without copying credentials.
+//! Remember the selected Talos file and context, or the Kubernetes-only
+//! kubeconfig and context, without copying credentials.
 //! This file is separate from text-size preferences so their writes cannot
 //! overwrite each other. File I/O runs at startup or on a background executor.
 
@@ -18,16 +19,51 @@ pub(crate) struct Selection {
     pub(crate) context: String,
 }
 
+/// A kubeconfig file and context chosen for Kubernetes-only mode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct KubeSelection {
+    pub(crate) path: PathBuf,
+    pub(crate) context: String,
+}
+
+/// What the last Finder launch should open: Talos on a talosconfig, or
+/// Kubernetes only on a kubeconfig. Choosing one replaces the other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Remembered {
+    Talos(Selection),
+    Kubernetes(KubeSelection),
+}
+
 fn file(preferences: &Path) -> PathBuf {
     preferences.with_file_name("connection.json")
 }
 
-pub(crate) fn load(preferences: &Path) -> Option<Selection> {
+pub(crate) fn load_remembered(preferences: &Path) -> Option<Remembered> {
     let bytes = freshkube_core::read_bounded_regular_file(&file(preferences), 64 * 1024).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let path = PathBuf::from(value.get("talosconfig")?.as_str()?);
     let context = value.get("context")?.as_str()?.to_owned();
-    (path.is_absolute() && !context.is_empty()).then_some(Selection { path, context })
+    if context.is_empty() {
+        return None;
+    }
+    if value.get("mode").and_then(|mode| mode.as_str()) == Some("kubernetes") {
+        let path = PathBuf::from(value.get("kubeconfig")?.as_str()?);
+        return path
+            .is_absolute()
+            .then_some(Remembered::Kubernetes(KubeSelection { path, context }));
+    }
+    let path = PathBuf::from(value.get("talosconfig")?.as_str()?);
+    path.is_absolute()
+        .then_some(Remembered::Talos(Selection { path, context }))
+}
+
+/// The remembered Talos selection; a remembered Kubernetes-only choice is
+/// not one.
+#[cfg(test)]
+pub(crate) fn load(preferences: &Path) -> Option<Selection> {
+    match load_remembered(preferences)? {
+        Remembered::Talos(selection) => Some(selection),
+        Remembered::Kubernetes(_) => None,
+    }
 }
 
 #[derive(Clone)]
@@ -35,7 +71,7 @@ pub(crate) struct ConnectionStore {
     file: PathBuf,
     // Background saves read this selection after acquiring the writer lock.
     // A delayed older task cannot restore an obsolete file or context.
-    latest: Arc<Mutex<Option<Selection>>>,
+    latest: Arc<Mutex<Option<Remembered>>>,
     writer: Arc<Mutex<()>>,
 }
 
@@ -49,7 +85,13 @@ impl ConnectionStore {
     }
 
     pub(crate) fn remember(&self, selection: Selection) {
-        *self.latest.lock().expect("connection preference mutex") = Some(selection);
+        *self.latest.lock().expect("connection preference mutex") =
+            Some(Remembered::Talos(selection));
+    }
+
+    pub(crate) fn remember_kubernetes(&self, selection: KubeSelection) {
+        *self.latest.lock().expect("connection preference mutex") =
+            Some(Remembered::Kubernetes(selection));
     }
 
     pub(crate) fn save_latest(&self) -> std::io::Result<()> {
@@ -68,10 +110,17 @@ impl ConnectionStore {
         let Some(selection) = latest else {
             return Ok(());
         };
-        let value = serde_json::json!({
-            "talosconfig": selection.path,
-            "context": selection.context,
-        });
+        let value = match selection {
+            Remembered::Talos(selection) => serde_json::json!({
+                "talosconfig": selection.path,
+                "context": selection.context,
+            }),
+            Remembered::Kubernetes(selection) => serde_json::json!({
+                "mode": "kubernetes",
+                "kubeconfig": selection.path,
+                "context": selection.context,
+            }),
+        };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -161,6 +210,49 @@ mod tests {
         store.remember(selection.clone());
         store.save_latest().unwrap();
         assert_eq!(load(&preferences), Some(selection));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_kubernetes_choice_replaces_a_talos_one_and_back() {
+        let directory =
+            std::env::temp_dir().join(format!("freshkube-selection-mode-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        let store = ConnectionStore::new(&preferences);
+        let talos = Selection {
+            path: directory.join("talosconfig"),
+            context: "alpha".into(),
+        };
+        let kube = KubeSelection {
+            path: directory.join("kubeconfig"),
+            context: "example".into(),
+        };
+        store.remember(talos.clone());
+        store.save_latest().unwrap();
+        assert_eq!(
+            load_remembered(&preferences),
+            Some(Remembered::Talos(talos.clone()))
+        );
+        store.remember_kubernetes(kube.clone());
+        store.save_latest().unwrap();
+        assert_eq!(
+            load_remembered(&preferences),
+            Some(Remembered::Kubernetes(kube))
+        );
+        // A Kubernetes-only choice is not a Talos selection.
+        assert_eq!(load(&preferences), None);
+        store.remember(talos.clone());
+        store.save_latest().unwrap();
+        assert_eq!(load(&preferences), Some(talos));
+        for text in [
+            r#"{"mode":"kubernetes","kubeconfig":"relative","context":"example"}"#,
+            r#"{"mode":"kubernetes","kubeconfig":"/absolute","context":""}"#,
+            r#"{"mode":"kubernetes","context":"example"}"#,
+        ] {
+            std::fs::write(file(&preferences), text).unwrap();
+            assert_eq!(load_remembered(&preferences), None);
+        }
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

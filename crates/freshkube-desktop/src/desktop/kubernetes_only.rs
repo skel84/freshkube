@@ -1,7 +1,7 @@
 //! Kubernetes-only mode: no talosconfig. The kubeconfig's contexts fill the
 //! contexts list, the Resources page reads the chosen one directly, and the
 //! Talos pages wait for a talosconfig.
-use super::{PAGE_PADDING, Pilot};
+use super::{PAGE_PADDING, Page, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::resources::direct::DirectAccess;
@@ -40,6 +40,13 @@ pub(super) struct KubernetesOnly {
     task: Option<Task<()>>,
     revision_check: Option<(OwnedJob, Task<()>)>,
     connection_generation: u64,
+    /// Remember the file and context chosen here for the next launch: set
+    /// when the window was switched to this mode in the app, or opened from
+    /// the remembered choice, never for a terminal's options.
+    remember: bool,
+    /// The user picked the file and still has to pick a context: nothing
+    /// connects, not even to the file's current context.
+    pub(super) choosing: bool,
 }
 
 impl KubernetesOnly {
@@ -55,7 +62,23 @@ impl KubernetesOnly {
             task: None,
             revision_check: None,
             connection_generation: 0,
+            remember: false,
+            choosing: false,
         }
+    }
+
+    /// Keeps the file and context chosen here for the next launch.
+    pub(super) fn remembering(mut self) -> Self {
+        self.remember = true;
+        self
+    }
+
+    /// The file to remember, when the choice is remembered: the one chosen,
+    /// by its absolute path.
+    pub(super) fn remembered_file(&self) -> Option<PathBuf> {
+        self.explicit
+            .clone()
+            .filter(|path| self.remember && path.is_absolute())
     }
 
     pub(super) fn access(&self) -> Option<&DirectAccess> {
@@ -168,6 +191,8 @@ impl Pilot {
         // The context asked for even when it's missing, so connecting says
         // so; never another one in its place.
         let wanted = kube.requested.take().or(report.current);
+        // Having chosen the file is not having chosen a context.
+        let wanted = if kube.choosing { None } else { wanted };
         self.use_kube_context(wanted, window, cx);
     }
 
@@ -180,6 +205,9 @@ impl Pilot {
     ) {
         if self.fixture {
             self.applied.context = context;
+            if let Some(kube) = self.kubernetes_only.as_mut() {
+                kube.choosing &= self.applied.context.is_none();
+            }
             self.invalidate_target(window, cx);
             self.ensure_summary(window, cx);
             self.prepare_context_display(window, cx);
@@ -188,6 +216,7 @@ impl Pilot {
         let Some(kube) = self.kubernetes_only.as_mut() else {
             return;
         };
+        kube.choosing &= context.is_none();
         kube.job = None;
         kube.task = None;
         kube.revision_check = None;
@@ -198,6 +227,7 @@ impl Pilot {
         self.applied.context = context;
         self.invalidate_target(window, cx);
         self.check_kube_connection(window, cx);
+        self.remember_kubernetes_connection(window, cx);
         cx.notify();
     }
 
@@ -418,8 +448,104 @@ impl Pilot {
             };
             kube.explicit = Some(path);
             kube.requested = None;
+            // Having chosen the file is not having chosen a context, and
+            // the choice is remembered only once a context is picked.
+            kube.choosing = true;
             this.load_kube_contexts(window, cx);
         });
+    }
+
+    /// Opens the kubeconfig chooser from Talos mode. Choosing a file reads its
+    /// contexts and connects to none of them: the user picks the context.
+    /// Cancelling changes nothing.
+    pub(super) fn choose_kubernetes_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kubernetes_only.is_some() || self.config_loading {
+            return;
+        }
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Use kubeconfig".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = selection.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            _ = this.update_in(cx, |view, window, cx| {
+                view.use_kubernetes_only(path, window, cx)
+            });
+        })
+        .detach();
+    }
+
+    /// Replaces the Talos session with Kubernetes-only mode on `path`, after
+    /// asking about open shells, as another connection does. Forwards keep
+    /// running on the connection they started with.
+    pub(super) fn use_kubernetes_only(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.kubernetes_only.is_some() {
+            return;
+        }
+        self.unless_shell(window, cx, move |this, window, cx| {
+            this.enter_kubernetes_only(path, window, cx)
+        });
+    }
+
+    /// Drops the Talos session and its jobs, as a context change does, and
+    /// starts the Kubernetes-only shell on `path` without connecting.
+    fn enter_kubernetes_only(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.config_task = None;
+        self.config_job = None;
+        self.config_generation = self.config_generation.wrapping_add(1);
+        self.config_loading = false;
+        self.config_error = None;
+        self.loaded_config_path = None;
+        self.context_nodes.clear();
+        self.contexts.clear();
+        self.applied.context = None;
+        // A Talos-mode kubeconfig read still in flight must not apply later.
+        self.kubeconfig_draft = Default::default();
+        let mut kube = KubernetesOnly::new(Some(path), None).remembering();
+        // Example mode connects to nothing, so it takes the first example
+        // context at once; a real file waits for the user's pick.
+        kube.choosing = !self.fixture;
+        if self.fixture {
+            kube.connection = KubeConnection::Connected {
+                version: self
+                    .kubernetes_summary
+                    .data()
+                    .and_then(|summary| summary.version.loaded())
+                    .cloned()
+                    .unwrap_or_default(),
+            };
+        }
+        self.kubernetes_only = Some(kube);
+        self.sync_nodes_source_mode();
+        if self.fixture {
+            self.contexts = crate::fixture::CONTEXTS
+                .iter()
+                .map(|name| (*name).into())
+                .collect();
+            let first = self.contexts.first().cloned();
+            self.use_kube_context(first, window, cx);
+        } else {
+            self.load_kube_contexts(window, cx);
+        }
+        self.navigate(Page::Overview, window, cx);
+        cx.notify();
     }
 
     /// Switches to Talos before a talosconfig loads. A kubeconfig named at
@@ -469,6 +595,17 @@ impl Pilot {
             (spinner(), "Reading the kubeconfig…".to_owned())
         } else {
             match connection {
+                KubeConnection::Idle
+                    if self
+                        .kubernetes_only
+                        .as_ref()
+                        .is_some_and(|kube| kube.choosing) =>
+                {
+                    (
+                        glyph(Tone::Unknown),
+                        "Choose a context from the kubeconfig to connect".to_owned(),
+                    )
+                }
                 KubeConnection::Idle => (
                     glyph(Tone::Unknown),
                     "The kubeconfig names no current context; choose one".to_owned(),
