@@ -62,7 +62,7 @@ The comps are in the canvas's [Desktop grade](https://claude.ai/artifact/U5UUnSU
 
 ### From today's app to desktop grade
 
-The changes below take what Pods drew (R) to desktop grade. All but change 11 have landed ([#46](https://github.com/skel84/freshkube/issues/46)). They are in order, and each is one PR in `freshkube-ui`'s page and table components, except that changes 6 and 12 land together, since both rebuild `PageHeader`'s row, and change 13 can land at any point. When the list was written, only Resources and System services drew with those components, so each change names the pages it reached then; every page draws with them now.
+The changes below take what Pods drew (R) to desktop grade. Every change has landed ([#46](https://github.com/skel84/freshkube/issues/46)). They are in order, and each is one PR in `freshkube-ui`'s page and table components, except that changes 6 and 12 land together, since both rebuild `PageHeader`'s row, and change 13 can land at any point. When the list was written, only Resources and System services drew with those components, so each change names the pages it reached then; every page draws with them now.
 
 Each PR updates the rows of [Components](#components) it changes, since that section describes the app as it is, and the numbers in `layout_check` and `scripts/check-style.sh` in the same change.
 
