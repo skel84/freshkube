@@ -10,12 +10,20 @@
 //! FRESHKUBE_KUBECONFIG=<file> cargo run -p freshkube-core --example delivery_spike -- \
 //!     --kargo kargo=<ctx> --argocd argocd=<ctx> --tekton tekton=<ctx> --env env=<ctx> \
 //!     --kargo-project <ns> --argocd-namespace <ns> --build-namespace <ns> \
-//!     [--known-as alias=server] \
+//!     [--known-as alias=server]... [--known-as-name alias=cluster-name]... \
 //!     [--evidence-result NAME --evidence-commit POINTER --evidence-digest POINTER] \
 //!     [--commit-param NAME]... [--commit-result NAME]... \
 //!     [--stage-project-key KEY --stage-name 'TEMPLATE with {project} and {stage}'] \
 //!     [--repo owner/name] (--sha <sha> | --pr <number>) [--discover] [--probe]
 //! ```
+//!
+//! An Application's destination is matched to the aliases: by server, to
+//! the context at that address or one `--known-as` adds; by cluster name,
+//! only to an alias `--known-as-name` maps that name to. `in-cluster` and
+//! `https://kubernetes.default.svc` are Argo CD's names for the cluster it
+//! runs in, so they match the `--argocd` alias without being mapped. Give
+//! one context one alias: with `--argocd a=ctx --env b=ctx`, `in-cluster` is
+//! `a`, which is not the environment `b`, so the join stops at the Rollout.
 //!
 //! The optional settings describe conventions that differ between setups,
 //! so none has a default:
@@ -64,6 +72,9 @@ struct Args {
     /// `alias=server`: another address an Application's destination may use
     /// for a context; a context may be reachable at more than one address.
     known_as: Vec<(String, String)>,
+    /// `alias=cluster name`: an Argo CD cluster name a destination may use
+    /// for a context, as its cluster Secret names it.
+    known_as_name: Vec<(String, String)>,
     evidence_result: Option<String>,
     evidence_commit: Option<String>,
     evidence_digest: Option<String>,
@@ -90,7 +101,8 @@ fn fail(message: &str) -> ! {
 }
 
 /// Every alias names one context, so a destination matched to an alias
-/// means one cluster; `--known-as` adds addresses only to those aliases.
+/// means one cluster; `--known-as` and `--known-as-name` add addresses and
+/// cluster names only to those aliases.
 fn check_aliases(args: &Args) {
     let mut contexts: BTreeMap<&str, &str> = BTreeMap::new();
     for named in [&args.kargo, &args.argocd, &args.tekton, &args.env]
@@ -105,14 +117,18 @@ fn check_aliases(args: &Args) {
             _ => {}
         }
     }
-    if let Some((alias, _)) = args
-        .known_as
-        .iter()
-        .find(|(alias, _)| !contexts.contains_key(alias.as_str()))
-    {
-        fail(&format!(
-            "--known-as {alias}=…: no context has the alias {alias}"
-        ));
+    for (flag, pairs) in [
+        ("--known-as", &args.known_as),
+        ("--known-as-name", &args.known_as_name),
+    ] {
+        if let Some((alias, _)) = pairs
+            .iter()
+            .find(|(alias, _)| !contexts.contains_key(alias.as_str()))
+        {
+            fail(&format!(
+                "{flag} {alias}=…: no context has the alias {alias}"
+            ));
+        }
     }
 }
 
@@ -139,6 +155,10 @@ fn parse() -> Args {
             "--known-as" => {
                 let Named { alias, context } = named(&value());
                 args.known_as.push((alias, context));
+            }
+            "--known-as-name" => {
+                let Named { alias, context } = named(&value());
+                args.known_as_name.push((alias, context));
             }
             "--kargo-project" => args.kargo_project = Some(value()),
             "--argocd-namespace" => args.argocd_namespace = Some(value()),
@@ -383,6 +403,8 @@ async fn main() {
         build_namespace: build_ns,
         github_repo: args.repo.clone(),
         environment: env.alias.clone(),
+        argocd: argocd.alias.clone(),
+        cluster_names: args.known_as_name.clone(),
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,

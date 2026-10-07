@@ -5,13 +5,17 @@
 
 use std::collections::BTreeMap;
 
-use super::argocd::{DestinationMatch, StageNaming, match_destination, read_applications};
+use super::argocd::{
+    DestinationMatch, Destinations, StageNaming, match_destination, read_applications,
+};
 use super::github::GitHub;
-use super::join::{Evidence, candidate_applications, candidate_rollouts};
+use super::join::{Evidence, RolloutPods, candidate_applications, candidate_rollouts, pod_set};
 use super::kargo::read_project;
 use super::pods::{read_namespace_pods, read_rollout_pods};
 use super::read::Reader;
-use super::rollouts::{AnalysisRun, Rollout, read_analysis_runs, read_rollouts};
+use super::rollouts::{
+    AnalysisRun, ReplicaSet, Rollout, read_analysis_runs, read_replica_sets, read_rollouts,
+};
 use super::source::Source;
 use super::tekton::{CommitNames, EvidenceResult, read_builds};
 
@@ -30,6 +34,13 @@ pub struct Plan {
     /// `(context name, server)` of the kubeconfig contexts a destination may
     /// be matched to. Servers are compared here and never output.
     pub contexts: Vec<(String, String)>,
+    /// `(context name, cluster name)`: Argo CD cluster names the user mapped
+    /// to contexts. A destination given by any other name matches nothing,
+    /// except `in-cluster`. Empty unless configured.
+    pub cluster_names: Vec<(String, String)>,
+    /// The context name of the cluster Argo CD runs in, one of `contexts`:
+    /// the cluster Argo CD calls `in-cluster`.
+    pub argocd: String,
     /// The context name of the environment cluster, one of `contexts`.
     /// Rollouts and pods of an Application are read from it only when the
     /// Application's destination is that context.
@@ -89,7 +100,14 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
                 .map(|app| {
                     (
                         format!("{}/{}", app.namespace, app.name),
-                        match_destination(app, &plan.contexts),
+                        match_destination(
+                            app,
+                            Destinations {
+                                contexts: &plan.contexts,
+                                names: &plan.cluster_names,
+                                argocd: &plan.argocd,
+                            },
+                        ),
                     )
                 })
                 .collect()
@@ -107,6 +125,7 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         environment: plan.environment.clone(),
         rollouts: Source::Read(Vec::new()),
         analysis_runs: Source::Read(Vec::new()),
+        replica_sets: Source::Read(Vec::new()),
         pods: BTreeMap::new(),
         namespace_pods: BTreeMap::new(),
         pull_requests: None,
@@ -116,32 +135,50 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
 
     // Only the Rollouts this change can reach are read, in their namespaces.
     let wanted = candidate_rollouts(&evidence);
-    let mut namespaces: Vec<&str> = wanted.iter().map(|(ns, _)| ns.as_str()).collect();
+    let mut namespaces: Vec<&str> = wanted.iter().map(|w| w.namespace.as_str()).collect();
     namespaces.sort_unstable();
     namespaces.dedup();
     let mut rollouts: Vec<Source<Vec<Rollout>>> = Vec::new();
     let mut analysis: Vec<Source<Vec<AnalysisRun>>> = Vec::new();
+    let mut replica_sets: Vec<Source<Vec<ReplicaSet>>> = Vec::new();
     for namespace in &namespaces {
         rollouts.push(read_rollouts(clusters.environment, namespace).await);
         analysis.push(read_analysis_runs(clusters.environment, namespace).await);
+        replica_sets.push(read_replica_sets(clusters.environment, namespace).await);
     }
     if !namespaces.is_empty() {
         evidence.rollouts = merge(rollouts);
         evidence.analysis_runs = merge(analysis);
+        evidence.replica_sets = merge(replica_sets);
     }
     if let Some(found) = evidence.rollouts.read() {
+        // A Rollout's pods are those of the ReplicaSet at the Freight's
+        // digest; an older one beside it, healthy or not, is not read.
         let mut pods = BTreeMap::new();
-        for (namespace, name) in &wanted {
-            let Some(hash) = found
+        for wanted in &wanted {
+            let Some(set) = found
                 .iter()
-                .find(|r| r.namespace == *namespace && r.name == *name)
-                .and_then(|r| r.current_pod_hash.clone())
+                .find(|r| r.namespace == wanted.namespace && r.name == wanted.name)
+                .and_then(|rollout| {
+                    pod_set(
+                        rollout,
+                        evidence.replica_sets.read().map(Vec::as_slice),
+                        &wanted.digests,
+                    )
+                })
             else {
                 continue;
             };
+            let mut read = Vec::new();
+            for hash in set.hashes() {
+                read.push(read_rollout_pods(clusters.environment, &wanted.namespace, hash).await);
+            }
             pods.insert(
-                format!("{namespace}/{name}"),
-                read_rollout_pods(clusters.environment, namespace, &hash).await,
+                format!("{}/{}", wanted.namespace, wanted.name),
+                RolloutPods {
+                    set,
+                    pods: merge(read),
+                },
             );
         }
         evidence.pods = pods;

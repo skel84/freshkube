@@ -1,4 +1,6 @@
-use super::argocd::{DestinationMatch, StageNaming, match_destination, parse_application};
+use super::argocd::{
+    DestinationMatch, Destinations, StageNaming, match_destination, parse_application,
+};
 use super::collect::{Clusters, Plan, collect, commit_of_pull_request};
 use super::fixtures::*;
 use super::join::{Confidence, Hop, Key, Trail, join};
@@ -14,6 +16,8 @@ fn plan(contexts: &[(&str, &str)]) -> Plan {
         build_namespace: "acme-builds".into(),
         github_repo: None,
         environment: "env-a".into(),
+        argocd: "core".into(),
+        cluster_names: Vec::new(),
         evidence_result: None,
         stage_naming: None,
         commit_names: Default::default(),
@@ -271,14 +275,19 @@ async fn an_ambiguous_destination_is_reported_not_guessed() {
 fn destinations_match_one_none_or_by_name() {
     let by_url = parse_application(&application(Some("https://env-a.example:6443"))).unwrap();
     let contexts = vec![("env-a".to_owned(), "https://env-a.example:6443/".to_owned())];
+    let to = |contexts| Destinations {
+        contexts,
+        names: &[],
+        argocd: "core",
+    };
     assert_eq!(
-        match_destination(&by_url, &contexts),
+        match_destination(&by_url, to(&contexts)),
         DestinationMatch::One("env-a".into())
     );
-    assert_eq!(match_destination(&by_url, &[]), DestinationMatch::None);
+    assert_eq!(match_destination(&by_url, to(&[])), DestinationMatch::None);
     let by_name = parse_application(&application(None)).unwrap();
     assert_eq!(
-        match_destination(&by_name, &contexts),
+        match_destination(&by_name, to(&contexts)),
         DestinationMatch::ByName("env-dev".into())
     );
 }
@@ -1237,5 +1246,451 @@ async fn only_upstream_commit_names_are_read_unless_more_are_configured() {
     assert_eq!(
         super::tekton::result_commit(&results("made-up-result"), &names),
         None
+    );
+}
+
+// ---- cluster names, ReplicaSets and the output gaps of #330 -------------
+
+/// The healthy world with its Application's destination given as the
+/// cluster name `name` instead of a server.
+fn destined_to(name: &str) -> World {
+    let mut world = healthy();
+    let mut app = application(None);
+    app["spec"]["destination"]["name"] = serde_json::json!(name);
+    world.argocd = world.argocd.with("applications", vec![app]);
+    world
+}
+
+#[test]
+fn argo_cds_own_names_match_its_context_and_other_names_only_when_mapped() {
+    let contexts = vec![
+        ("core".to_owned(), "https://core.example:6443".to_owned()),
+        ("env-a".to_owned(), "https://env-a.example:6443".to_owned()),
+    ];
+    let names = vec![("env-a".to_owned(), "workloads".to_owned())];
+    let to = Destinations {
+        contexts: &contexts,
+        names: &names,
+        argocd: "core",
+    };
+    let by = |destination: serde_json::Value| {
+        let mut app = application(None);
+        app["spec"]["destination"] = destination;
+        match_destination(&parse_application(&app).unwrap(), to)
+    };
+    use serde_json::json;
+    assert_eq!(
+        by(json!({"name": "in-cluster"})),
+        DestinationMatch::ArgoCd("core".into())
+    );
+    assert_eq!(
+        by(json!({"server": "https://kubernetes.default.svc:443/"})),
+        DestinationMatch::ArgoCd("core".into())
+    );
+    assert_eq!(
+        by(json!({"name": "workloads"})),
+        DestinationMatch::Named {
+            name: "workloads".into(),
+            context: "env-a".into()
+        }
+    );
+    // No default for any other name, and a name is never matched as a server.
+    assert_eq!(
+        by(json!({"name": "env-a"})),
+        DestinationMatch::ByName("env-a".into())
+    );
+    assert_eq!(
+        by(json!({"namespace": "shop"})),
+        DestinationMatch::Unspecified
+    );
+
+    // A name mapped to two contexts, or in-cluster mapped elsewhere, is not
+    // guessed between.
+    let twice = vec![
+        ("core".to_owned(), "workloads".to_owned()),
+        ("env-a".to_owned(), "workloads".to_owned()),
+        ("env-a".to_owned(), "in-cluster".to_owned()),
+    ];
+    let to = Destinations {
+        names: &twice,
+        ..to
+    };
+    let app = |name: &str| {
+        let mut app = application(None);
+        app["spec"]["destination"]["name"] = json!(name);
+        parse_application(&app).unwrap()
+    };
+    for name in ["workloads", "in-cluster"] {
+        assert_eq!(
+            match_destination(&app(name), to),
+            DestinationMatch::Ambiguous(vec!["core".into(), "env-a".into()]),
+            "{name}"
+        );
+    }
+    // Mapped by the user to Argo CD's context too, in-cluster is still one.
+    let same = vec![("core".to_owned(), "in-cluster".to_owned())];
+    assert_eq!(
+        match_destination(&app("in-cluster"), Destinations { names: &same, ..to }),
+        DestinationMatch::ArgoCd("core".into())
+    );
+}
+
+#[tokio::test]
+async fn in_cluster_reaches_the_pods_when_argo_cd_runs_in_the_environment() {
+    let world = destined_to("in-cluster");
+    let trail = run_configured(&world, &ENV, &FixtureGitHub::default(), None, |plan| {
+        plan.argocd = "env-a".into();
+    })
+    .await;
+    let app = one(&trail, Hop::Stage, Hop::Application);
+    assert!(
+        app.reason
+            .contains("destination is Argo CD's own cluster (in-cluster), context env-a"),
+        "{}",
+        app.reason
+    );
+    assert_ne!(
+        one(&trail, Hop::Application, Hop::Rollout).confidence,
+        Confidence::Unknown
+    );
+    assert_eq!(
+        one(&trail, Hop::Rollout, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+    assert_eq!(trail.running(), Some(Confidence::Confirmed));
+}
+
+#[tokio::test]
+async fn in_cluster_is_not_the_environment_when_argo_cd_runs_elsewhere() {
+    let world = destined_to("in-cluster");
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Unknown);
+    assert!(
+        rollout
+            .reason
+            .contains("it is context core, and the environment is env-a"),
+        "{}",
+        rollout.reason
+    );
+    assert!(world.environment.requests.borrow().is_empty());
+}
+
+#[tokio::test]
+async fn an_unmapped_cluster_name_says_how_to_map_it() {
+    let world = destined_to("workloads");
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Unknown);
+    assert!(
+        rollout.reason.contains(
+            "map the name the Application gives with --known-as-name env-a=<cluster name>"
+        ),
+        "{}",
+        rollout.reason
+    );
+    assert!(
+        one(&trail, Hop::Stage, Hop::Application)
+            .reason
+            .contains("destination by a cluster name no context is mapped to")
+    );
+    // A cluster name may carry a cloud account or project; it is never printed.
+    for link in &trail.links {
+        assert!(!link.reason.contains("workloads"), "{}", link.reason);
+    }
+    assert!(world.environment.requests.borrow().is_empty());
+    assert!(
+        trail.summary().starts_with(
+            "not found running, stopped at Application -> Rollout argocd/storefront-dev"
+        ),
+        "{}",
+        trail.summary()
+    );
+}
+
+#[tokio::test]
+async fn a_mapped_cluster_name_reaches_the_pods() {
+    let world = destined_to("workloads");
+    let trail = run_configured(&world, &ENV, &FixtureGitHub::default(), None, |plan| {
+        plan.cluster_names = vec![("env-a".into(), "workloads".into())];
+    })
+    .await;
+    assert!(
+        one(&trail, Hop::Stage, Hop::Application)
+            .reason
+            .contains("destination by a cluster name, mapped to context env-a")
+    );
+    for link in &trail.links {
+        assert!(!link.reason.contains("workloads"), "{}", link.reason);
+    }
+    assert_eq!(
+        one(&trail, Hop::Rollout, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn only_the_replica_set_at_the_promoted_digest_is_judged() {
+    // The Rollout's status reports the running ReplicaSet as current, or
+    // still the stale one (a status that lags its spec): the ReplicaSet whose
+    // template pins the Freight's digest is judged either way.
+    for current in ["5d9c", "7f3b"] {
+        let world = beside_a_stale_replica_set(current);
+        let trail = run(&world, &ENV).await;
+        let pods = one(&trail, Hop::Rollout, Hop::Pod);
+        assert_eq!(pods.confidence, Confidence::Confirmed, "{current}");
+        assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
+        assert!(
+            pods.reason.contains(
+                "2 container(s) run the Freight's digest, 2 ready of 2 pod container(s) read"
+            ),
+            "{current}: {}",
+            pods.reason
+        );
+        assert!(!pods.reason.contains("other container"), "{}", pods.reason);
+        assert!(
+            pods.reason.contains(
+                "the pods of ReplicaSet storefront-5d9c, whose template pins the Freight's digest"
+            ),
+            "{}",
+            pods.reason
+        );
+        assert!(
+            pods.reason.contains(
+                "not judged: the pods of ReplicaSet storefront-7f3b, whose template does not pin it"
+            ),
+            "{}",
+            pods.reason
+        );
+        let environment = world.environment.requests.borrow().join("\n");
+        assert!(environment.contains("rollouts-pod-template-hash=5d9c"));
+        assert!(!environment.contains("rollouts-pod-template-hash=7f3b"));
+        assert!(environment.contains(
+            "LIST apps/v1/replicasets ns=Some(\"shop\") selector=Some(\"rollouts-pod-template-hash\")"
+        ));
+    }
+}
+
+#[tokio::test]
+async fn without_a_replica_set_at_the_digest_the_current_pod_hash_is_read() {
+    // The healthy Rollout uses a tag, so no template pins the digest.
+    let trail = run(&healthy(), &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed);
+    assert!(
+        pods.reason.contains(
+            "the pods of the Rollout's current pod hash 5d9c; no ReplicaSet of it pins the Freight's digest"
+        ),
+        "{}",
+        pods.reason
+    );
+
+    // ReplicaSets that can't be read leave the pods readable, and say so.
+    let mut world = beside_a_stale_replica_set("5d9c");
+    world.environment = world.environment.refusing("replicasets");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed);
+    assert!(
+        pods.reason.contains("its ReplicaSets were not read"),
+        "{}",
+        pods.reason
+    );
+}
+
+fn promotion_by(actor: Option<&str>) -> World {
+    let mut world = promoted(NEW, "Succeeded", PUSHED);
+    let mut promotion = promotion_pushing("f-new", NEW, "Succeeded", PUSHED);
+    if let Some(actor) = actor {
+        promotion["metadata"]["annotations"] =
+            serde_json::json!({"kargo.akuity.io/create-actor": actor});
+    }
+    world.kargo = world.kargo.with("promotions", vec![promotion]);
+    world
+}
+
+#[tokio::test]
+async fn a_promotion_says_auto_or_manual_and_the_commit_it_pushed() {
+    for (actor, words) in [
+        (None, "likely auto-promoted"),
+        (
+            Some("controller:kargo-controller"),
+            "created by a Kargo controller",
+        ),
+        (Some("email:someone@example.test"), "promoted by hand"),
+        (Some("kubernetes:someone"), "promoted by hand"),
+        (Some("admin"), "promoted by hand"),
+        (
+            Some("kubernetes:system:serviceaccount:delivery:someone"),
+            "created by a service account, an API client",
+        ),
+        (Some("unknown actor"), "its creator is not known"),
+    ] {
+        let trail = run(&promotion_by(actor), &ENV).await;
+        let reason = &one(&trail, Hop::Freight, Hop::Promotion).reason;
+        assert!(reason.contains(words), "{actor:?}: {reason}");
+        assert!(reason.contains("it pushed dddddddddddd"), "{reason}");
+        // The actor is an identity and is never printed.
+        assert!(!reason.contains("someone"), "{reason}");
+    }
+    let trail = run(&healthy(), &ENV).await;
+    assert!(
+        one(&trail, Hop::Freight, Hop::Promotion)
+            .reason
+            .contains("it recorded no pushed commit")
+    );
+}
+
+#[tokio::test]
+async fn an_unhealthy_stage_says_why() {
+    let mut world = healthy();
+    let mut stage = stage(&["f-new"]);
+    stage["status"]["health"] = serde_json::json!({
+        "status": "Unhealthy",
+        "issues": [
+            "Argo CD Application \"argocd/storefront-dev\" is synced to eeeeeeeeeeee, not the desired revision dddddddddddd",
+            "fetching https://git.example.test/acme/config.git failed"
+        ]
+    });
+    world.kargo = world.kargo.with("stages", vec![stage]);
+    let trail = run(&world, &ENV).await;
+    let reason = &one(&trail, Hop::Freight, Hop::Stage).reason;
+    assert!(
+        reason.contains("health Unhealthy (Argo CD Application \"argocd/storefront-dev\" is synced to eeeeeeeeeeee, not the desired revision dddddddddddd; fetching <url> failed)"),
+        "{reason}"
+    );
+    assert!(!reason.contains("git.example.test"), "{reason}");
+}
+
+#[tokio::test]
+async fn the_freight_says_whether_its_image_revision_is_the_commit() {
+    let sha_256 = "a".repeat(64);
+    for (revision, words) in [
+        (SHA, "names aaaaaaaaaaaa, this change's commit"),
+        (OTHER_SHA, "names bbbbbbbbbbbb, not this change's commit"),
+        // An abbreviation is compared as the start of the full id, case aside.
+        ("AAAAAAA", "names aaaaaaa, this change's commit"),
+        ("aaaaaaab", "names aaaaaaab, not this change's commit"),
+        // A longer id than the commit's is another hash algorithm's.
+        (
+            sha_256.as_str(),
+            "names aaaaaaaaaaaa, which can't be compared with this change's commit",
+        ),
+    ] {
+        let mut world = healthy();
+        let mut item = freight("f-new", NEW, SHA);
+        item["images"][0]["annotations"] =
+            serde_json::json!({"org.opencontainers.image.revision": revision});
+        world.kargo = world.kargo.with("freights", vec![item]);
+        let trail = run(&world, &ENV).await;
+        let reason = &one(&trail, Hop::PipelineRun, Hop::Freight).reason;
+        assert!(reason.contains(words), "{reason}");
+    }
+    let trail = run(&healthy(), &ENV).await;
+    assert!(
+        !one(&trail, Hop::PipelineRun, Hop::Freight)
+            .reason
+            .contains("OCI revision")
+    );
+}
+
+#[tokio::test]
+async fn without_an_evidence_result_the_hint_names_the_runs_results() {
+    let trail = run(&healthy(), &ENV).await;
+    assert!(
+        supply_chain_reason(&trail)
+            .contains("no evidence result configured (the run's results: IMAGE_DIGEST, IMAGE_URL)"),
+        "{}",
+        supply_chain_reason(&trail)
+    );
+}
+
+#[tokio::test]
+async fn the_summary_says_whether_the_change_runs() {
+    let trail = run(&healthy(), &ENV).await;
+    assert!(
+        trail
+            .summary()
+            .starts_with("running, confirmed: pods run the digest; "),
+        "{}",
+        trail.summary()
+    );
+    let rendered = super::join::render(&trail);
+    assert!(
+        rendered
+            .lines()
+            .last()
+            .is_some_and(|line| line.starts_with("summary: running, confirmed")),
+        "{rendered}"
+    );
+    let counts = |c| trail.links.iter().filter(|l| l.confidence == c).count();
+    assert!(trail.summary().ends_with(&format!(
+        "{} confirmed, {} claimed, {} unknown",
+        counts(Confidence::Confirmed),
+        counts(Confidence::Claimed),
+        counts(Confidence::Unknown)
+    )));
+
+    // A moved tag: the pods run another digest, a claim at most.
+    let mut world = healthy();
+    world.environment = world.environment.with(
+        "pods",
+        vec![pod(
+            "storefront-5d9c-x",
+            &format!("{REPO}:v1.4.0"),
+            &format!("docker-pullable://{REPO}@{OLD}"),
+        )],
+    );
+    let trail = run(&world, &ENV).await;
+    assert!(
+        trail.summary().starts_with("running only as claimed"),
+        "{}",
+        trail.summary()
+    );
+}
+
+#[tokio::test]
+async fn a_replica_set_of_another_rollout_with_the_same_name_is_not_its_own() {
+    // The pinned ReplicaSet's owner is a Rollout of the same name and kind
+    // that was deleted and made again: another UID, so not this Rollout's.
+    let mut world = beside_a_stale_replica_set("7f3b");
+    let mut orphan = replica_set("5d9c", &format!("{REPO}@{NEW}"), 2, 2);
+    orphan["metadata"]["ownerReferences"][0]["uid"] =
+        serde_json::json!("0f0e0d0c-0000-4000-8000-000000000002");
+    let mut other_group = replica_set("6e1a", &format!("{REPO}@{NEW}"), 1, 1);
+    other_group["metadata"]["ownerReferences"][0]["apiVersion"] =
+        serde_json::json!("example.test/v1");
+    world.environment = world.environment.with(
+        "replicasets",
+        vec![
+            replica_set("7f3b", &format!("{REPO}@{OLD}"), 1, 0),
+            orphan,
+            other_group,
+        ],
+    );
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert!(
+        pods.reason
+            .contains("the pods of the Rollout's current pod hash 7f3b"),
+        "{}",
+        pods.reason
+    );
+    assert!(!pods.reason.contains("storefront-5d9c"), "{}", pods.reason);
+    assert!(!pods.reason.contains("storefront-6e1a"), "{}", pods.reason);
+}
+
+#[tokio::test]
+async fn a_capped_replica_set_listing_says_so_when_one_pins_the_digest() {
+    let mut world = beside_a_stale_replica_set("5d9c");
+    world.environment = world.environment.capped("replicasets");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert!(
+        pods.reason.contains(
+            "whose template pins the Freight's digest; the listing stopped at the page cap"
+        ),
+        "{}",
+        pods.reason
     );
 }
