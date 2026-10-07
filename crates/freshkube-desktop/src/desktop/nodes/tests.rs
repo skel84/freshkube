@@ -2540,3 +2540,39 @@ fn enter_in_a_node_logs_search_steps_through_its_matches(cx: &mut TestAppContext
     assert_ne!(seen[0], seen[1], "{seen:?}");
     assert_eq!(seen[2], seen[0], "{seen:?}");
 }
+
+#[gpui_kit::test]
+fn enter_opens_a_node_from_the_list_and_presses_a_focused_button(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        // On the list, Enter opens the selected node.
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        window.press("down", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        let node = pilot.read(cx).selected_node.clone();
+        assert!(node.is_some());
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_node_tab(NodeTab::Logs, window, cx)
+        });
+        window.render_frame(cx);
+        // On a focused button in the inspector, Enter presses the button.
+        window.click("logs-search", cx);
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("logs-wrap").focused(), Some(true));
+        let wrapped = window.find("logs-wrap").checked();
+        assert!(wrapped.is_some());
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_ne!(window.find("logs-wrap").checked(), wrapped);
+        assert_eq!(window.find("logs-wrap").focused(), Some(true));
+        assert_eq!(pilot.read(cx).selected_node, node);
+        assert!(pilot.read(cx).node_workspace.open);
+    })
+    .unwrap();
+}

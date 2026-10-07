@@ -121,6 +121,12 @@ impl Pilot {
             }))
             .on_action(cx.listener(|view, _: &OpenNode, window, cx| {
                 use freshkube_ui::table::{self, TableSource};
+                // Enter opens a node from the list alone; anywhere else in
+                // the workspace, such as on a focused button, it keeps its
+                // own meaning.
+                if !view.node_focus.is_focused(window) {
+                    return cx.propagate();
+                }
                 if let Some(key) = view
                     .node_workspace
                     .selected

@@ -398,6 +398,8 @@ impl<S: LogSource> LogView<S> {
                                     Tooltip::new(tip.clone()).build(window, cx)
                                 })
                                 .flex_none()
+                                // Clear of the field's focus ring.
+                                .ml(dp(4.))
                                 .text_size(dp(11.))
                                 .text_color(p.muted)
                                 .child(count.text),
