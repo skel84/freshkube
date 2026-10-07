@@ -230,7 +230,7 @@ impl GroupRow {
         after: String,
         muted: gpui_kit::Hsla,
     ) -> Vec<AnyElement> {
-        let covered = self.room.is_some();
+        let (covered, height) = (self.room.is_some(), self.height);
         let part = |what: &'static str| {
             div()
                 .id((self.id.clone(), what))
@@ -244,11 +244,14 @@ impl GroupRow {
         let subject = self
             .subject
             .map(|subject| part("subject").font_family(MONO_FONT).child(subject));
-        let count = part("count")
-            .min_w_0()
-            .truncate()
-            .text_color(muted)
-            .child(format!("· {detail}"));
+        let count = whole_or_gone(
+            part("count")
+                .truncate()
+                .text_color(muted)
+                .child(format!("· {detail}")),
+            height,
+        )
+        .min_w_0();
         let actions = h_flex()
             .id((self.id.clone(), "actions"))
             .test_support()
@@ -256,11 +259,14 @@ impl GroupRow {
             .gap_1()
             .children(self.actions);
         let after = (!after.is_empty()).then(|| {
-            part("after")
-                .min_w_0()
-                .truncate()
-                .text_color(muted)
-                .child(format!("· {after}"))
+            whole_or_gone(
+                part("after")
+                    .truncate()
+                    .text_color(muted)
+                    .child(format!("· {after}")),
+                height,
+            )
+            .min_w_0()
         });
         let mut parts = vec![glyph];
         // The text before the actions, and the actions after it: the run
@@ -269,8 +275,14 @@ impl GroupRow {
             // Beside a cover, the label and subject give way too, after
             // the count: the subject first, the label last.
             let named = run()
-                .child(label.flex_shrink_0().max_w_full().truncate())
-                .children(subject.map(|subject| subject.min_w_0().truncate()));
+                .child(
+                    whole_or_gone(label.truncate(), height)
+                        .flex_shrink_0()
+                        .max_w_full(),
+                )
+                .children(
+                    subject.map(|subject| whole_or_gone(subject.truncate(), height).min_w_0()),
+                );
             h_flex()
                 .min_w_0()
                 .gap(dp(CELL_PAD))
@@ -295,6 +307,23 @@ impl GroupRow {
         );
         parts
     }
+}
+
+/// The least width a part that gives way shows: a letter and the
+/// ellipsis. Narrower, it goes whole rather than leave a sliver.
+const LEAST_PART: f32 = 20.;
+
+/// A part that gives way by truncating, and goes whole once it can't
+/// show [`LEAST_PART`]: it then wraps onto a second line, out of sight
+/// below a strut as tall as the row, `height` dp.
+fn whole_or_gone(part: Observed<Stateful<Div>>, height: f32) -> Div {
+    h_flex()
+        .flex_wrap()
+        .content_start()
+        .h(dp(height))
+        .overflow_hidden()
+        .child(div().w_0().h(dp(height)))
+        .child(part.max_w_full().min_w(dp(LEAST_PART)))
 }
 
 /// A run of a group row's parts that keeps its width while what follows
@@ -581,18 +610,24 @@ mod tests {
     /// The parts' widths, in the order they give way.
     const ORDER: [&str; 4] = ["after", "count", "subject", "label"];
 
+    /// The parts' widths in sight: a part that went whole, wrapped
+    /// below the row, counts as 0. A part in sight is never narrower
+    /// than [`LEAST_PART`], so none leaves a sliver.
     fn widths(window: &mut Window, cx: &mut App) -> Vec<f32> {
         window.render_frame(cx);
+        let row = window.find("g").bounds();
+        let least = f32::from(dp_px(LEAST_PART, window)) - 0.5;
         ORDER
             .iter()
             .map(|part| {
-                f32::from(
-                    window
-                        .find((ElementId::from("g"), *part))
-                        .bounds()
-                        .size
-                        .width,
-                )
+                let bounds = window.find((ElementId::from("g"), *part)).bounds();
+                let width = f32::from(bounds.size.width);
+                // Below the row's text, above its 1 px border.
+                if bounds.top() >= row.bottom() - px(1.) {
+                    return 0.;
+                }
+                assert!(width >= least, "{part} shows a sliver {width} wide");
+                width
             })
             .collect()
     }
