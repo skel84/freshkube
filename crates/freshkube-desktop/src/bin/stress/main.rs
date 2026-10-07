@@ -424,7 +424,7 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
             let Scenario::Monitoring { processes, .. } = world.scenario else {
                 return json_response(json!({}));
             };
-            prometheus(processes, rest, &query)
+            prometheus(processes, rest, &param)
         }
         ["apis", "metrics.k8s.io", "v1beta1", "nodes"] => summary::node_metrics(),
         ["api", "v1", "services"] if watching => idle_stream(),
@@ -652,20 +652,11 @@ fn process(ix: usize) -> [(&'static str, String); 4] {
 /// Answers `/api/v1/<rest>` as Prometheus would, for `processes` Go
 /// processes: every query draws one series per process, or five for a GC
 /// duration summary, whatever its matchers say.
-fn prometheus(processes: usize, rest: &[&str], query: &str) -> Response<Body> {
-    let params: Vec<(String, String)> = query
-        .split('&')
-        .filter_map(|pair| {
-            let (key, value) = pair.split_once('=')?;
-            Some((decode(key), decode(value)))
-        })
-        .collect();
-    let param = |name: &str| {
-        params
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str())
-    };
+fn prometheus(
+    processes: usize,
+    rest: &[&str],
+    param: &dyn Fn(&str) -> Option<String>,
+) -> Response<Body> {
     let success = |data: Value| json_response(json!({"status": "success", "data": data}));
     match rest {
         ["status", "buildinfo"] => success(json!({"version": "3.4.0"})),
@@ -692,8 +683,8 @@ fn prometheus(processes: usize, rest: &[&str], query: &str) -> Response<Body> {
             success(json!(series))
         }
         ["query" | "query_range"] => {
-            let expr = param("query").unwrap_or("");
-            let metric = metric_name(expr);
+            let expr = param("query").unwrap_or_default();
+            let metric = metric_name(&expr);
             let quantiles: &[&str] = if metric.ends_with("_duration_seconds") {
                 &QUANTILES
             } else {
@@ -771,30 +762,4 @@ fn metric_name(expr: &str) -> &str {
         .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
         .map_or(0, |ix| ix + 1);
     &head[start..]
-}
-
-/// Percent-decoding for query parameters.
-fn decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut ix = 0;
-    while ix < bytes.len() {
-        match bytes[ix] {
-            b'%' if ix + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[ix + 1..ix + 3]).unwrap_or("");
-                match u8::from_str_radix(hex, 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        ix += 3;
-                        continue;
-                    }
-                    Err(_) => out.push(b'%'),
-                }
-            }
-            b'+' => out.push(b' '),
-            byte => out.push(byte),
-        }
-        ix += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }

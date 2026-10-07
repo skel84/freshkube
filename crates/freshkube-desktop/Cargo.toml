@@ -12,7 +12,6 @@ doctest = false
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
-freshkube-graph.workspace = true
 freshkube-logs.workspace = true
 freshkube-probe.workspace = true
 freshkube-terminal.workspace = true
@@ -28,7 +27,7 @@ serde_json.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
 # Where preferences live on each platform.
-dirs = "6"
+dirs.workspace = true
 # Keys the user asks to remember: Keychain, Credential Manager or Secret Service.
 keyring = "4"
 bytes = { version = "1", optional = true }
@@ -72,3 +71,5 @@ freshkube-logs = { workspace = true, features = ["testing"] }
 freshkube-ui = { workspace = true, features = ["testing"] }
 # Operations' tests run the example on a paused Tokio clock (`start_paused`).
 tokio = { workspace = true, features = ["test-util"] }
+# The map's tests measure its boxes in the graph's units (`observability/map.rs`).
+freshkube-graph.workspace = true

@@ -4,13 +4,16 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use kube::Client;
-use kube::core::WatchEvent as KubeWatchEvent;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use super::failure::Failure;
 use super::kinds::ResourceKind;
 use super::table::{Table, TableColumn, TableRow, list_table, watch_table};
+
+mod batch;
+
+use batch::{Batcher, map_event};
 
 /// How long events are collected before they're delivered as one batch, so a
 /// frontend rebuilds at most about once per frame however fast changes arrive.
@@ -157,10 +160,9 @@ async fn watch_once(
         Err(failure) => return WatchEnd::Failed(failure),
     };
     let mut stream = std::pin::pin!(stream);
-    let mut pending = Vec::new();
-    let mut deadline: Option<Instant> = None;
+    let mut batcher = Batcher::new(BATCH_WINDOW, MAX_BATCH);
     loop {
-        let item = match deadline {
+        let item = match batcher.deadline() {
             Some(at) => tokio::select! {
                 item = stream.next() => Some(item),
                 _ = tokio::time::sleep_until(at) => None,
@@ -171,58 +173,16 @@ async fn watch_once(
             // The batch window elapsed.
             None => None,
             Some(None) => Some(WatchEnd::Resume),
-            Some(Some(Ok(event))) => match event {
-                KubeWatchEvent::Added(table) | KubeWatchEvent::Modified(table) => {
-                    for row in table.rows {
-                        track_version(resource_version, &row);
-                        pending.push(WatchEvent::Upsert(row));
-                    }
-                    None
-                }
-                KubeWatchEvent::Deleted(table) => {
-                    for row in table.rows {
-                        track_version(resource_version, &row);
-                        pending.push(WatchEvent::Delete(row));
-                    }
-                    None
-                }
-                KubeWatchEvent::Bookmark(bookmark) => {
-                    *resource_version = bookmark.metadata.resource_version;
-                    None
-                }
-                KubeWatchEvent::Error(status) if status.code == 410 => Some(WatchEnd::Relist),
-                KubeWatchEvent::Error(status) => Some(WatchEnd::Failed(Failure::from_kube(
-                    kube::Error::Api(status),
-                ))),
-            },
-            // A 410 can also arrive as the response itself rather than an event.
-            Some(Some(Err(kube::Error::Api(status)))) if status.code == 410 => {
-                Some(WatchEnd::Relist)
-            }
-            Some(Some(Err(error))) => Some(WatchEnd::Failed(Failure::from_kube(error))),
+            Some(Some(item)) => map_event(item, resource_version, batcher.pending_mut()),
         };
-        let window_elapsed = deadline.is_some_and(|at| Instant::now() >= at);
-        if !pending.is_empty() && (end.is_some() || window_elapsed || pending.len() >= MAX_BATCH) {
-            if !send(sink, std::mem::take(&mut pending)).await {
-                return WatchEnd::Closed;
-            }
-            deadline = None;
-        } else if !pending.is_empty() && deadline.is_none() {
-            deadline = Some(Instant::now() + BATCH_WINDOW);
-        } else if pending.is_empty() {
-            deadline = None;
+        if let Some(batch) = batcher.flush(Instant::now(), end.is_some())
+            && !send(sink, batch).await
+        {
+            return WatchEnd::Closed;
         }
         if let Some(end) = end {
             return end;
         }
-    }
-}
-
-fn track_version(resource_version: &mut String, row: &TableRow) {
-    if let Some(metadata) = row.metadata()
-        && !metadata.resource_version.is_empty()
-    {
-        resource_version.clone_from(&metadata.resource_version);
     }
 }
 
@@ -446,6 +406,65 @@ pub(super) mod tests {
         assert!(watches[0].starts_with("/api/v1/pods?watch=1"));
         assert!(watches[0].contains("resourceVersion=10&timeoutSeconds=290"));
         assert!(watches[1].contains("resourceVersion=20"));
+    }
+
+    /// A burst followed by a 410 arrives as one batch, since the 410 ends the
+    /// watch, and the list after it as a batch of its own. (The window itself
+    /// is covered in `batch.rs`; this checks the batch boundaries.)
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_is_one_batch_and_a_relist_starts_a_new_one() {
+        let lists = Arc::new(Mutex::new(0));
+        let counter = lists.clone();
+        let (client, _) = server(move |uri| {
+            if !uri.contains("watch=1") {
+                let mut lists = counter.lock().unwrap();
+                *lists += 1;
+                return if *lists == 1 {
+                    (200, list("10", "", &["a"]))
+                } else {
+                    (200, list("20", "", &["a", "c"]))
+                };
+            }
+            if uri.contains("resourceVersion=10") {
+                let lines = [
+                    event("ADDED", "b", "11"),
+                    event("MODIFIED", "a", "12"),
+                    event("DELETED", "b", "13"),
+                    json!({"type": "ERROR", "object": serde_json::from_str::<serde_json::Value>(
+                        &status(410, "Expired")).unwrap()})
+                    .to_string(),
+                ];
+                (200, lines.join("\n"))
+            } else {
+                (403, status(403, "Forbidden"))
+            }
+        });
+        let (sender, mut receiver) = mpsc::channel(8);
+        tokio::spawn(watch_collection(
+            client,
+            builtin("pods").unwrap(),
+            None,
+            None,
+            sender,
+        ));
+        let mut batches = Vec::new();
+        while let Some(batch) = receiver.recv().await {
+            let kinds: Vec<&str> = batch
+                .events
+                .iter()
+                .map(|event| match event {
+                    WatchEvent::Reset { .. } => "reset",
+                    WatchEvent::Upsert(_) => "upsert",
+                    WatchEvent::Delete(_) => "delete",
+                    WatchEvent::Failed { .. } => "failed",
+                })
+                .collect();
+            batches.push(kinds.join(","));
+        }
+        assert_eq!(
+            batches,
+            ["reset", "upsert,upsert,delete", "reset", "failed"]
+        );
     }
 
     #[tokio::test(start_paused = true)]

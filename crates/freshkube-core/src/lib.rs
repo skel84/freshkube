@@ -45,6 +45,7 @@ pub mod operations;
 pub mod pcap;
 pub mod resources;
 pub mod security_lifecycle;
+pub mod talos_nodes;
 pub mod types;
 pub mod workloads;
 
