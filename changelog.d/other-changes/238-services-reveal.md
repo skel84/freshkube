@@ -1,1 +1,0 @@
-- Selecting a node's system service, by click or arrow key, scrolls its details into view when they sit under the list.

@@ -4,6 +4,59 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.7.0 (2026-10-07)
+
+### Coroot
+
+- A service map connection's evidence reads in its own units, such as 12 rps, 3 ms and 2.4 KB/s, instead of three fixed decimals.
+
+### Other changes
+
+- **Delivery chain spike:** core gains a read-only join from one commit or pull
+  request to the pods running its image, through Tekton builds, Kargo Freight,
+  Promotions and Stages, Argo CD Applications and Argo Rollouts, joined only on
+  commit SHA and image digest, with each link marked confirmed, claimed or
+  unknown. A `delivery_spike` example runs it against named contexts; setups
+  that differ are described by settings with no defaults.
+- Log search shows the matched line within a long multi-line message, such as a stack trace, instead of the message's middle.
+- In a short pane a log's controls and a crash-looping pod's restart banner show whole; the panel scrolls on to the lines instead of cutting the banner.
+- Selecting a node's system service, by click or arrow key, scrolls its details into view when they sit under the list.
+- A node's System services, Processes, Storage, Network, Diagnostics and Logs tabs no longer repeat the tab's name and the node above their own controls, so the list or log starts higher in the inspector.
+- **Reduced motion:** Freshkube follows the system's reduce-motion setting on
+  macOS, Windows and Linux, and its loading bars stand still under it. The
+  developer workbench adds stories for a shared table loading state and a
+  change flash on live rows ([motion](docs/DESIGN.md#motion)).
+- **Kubernetes summary internals:** the summary has one derivation, from the
+  watch-backed session; the unused one-shot collector is gone. Nothing changes
+  on screen.
+- **IPv6 nodes:** requests for a node addressed by IPv6, bare or as
+  `[address]:port`, reach that node; the address was cut at its first colon
+  before. A restart, configuration apply, reboot or shutdown with no node
+  left to target, for example only `localhost`, is refused instead of
+  reaching whichever machine the endpoint is.
+- **Workload logs:** a Deployment, StatefulSet, DaemonSet, ReplicaSet or Job
+  has a Logs tab that follows every pod it runs in one log view, lines
+  interleaved by time and tagged with their pod. Pods are picked up as they
+  start and dropped as they go; a container's lines can be hidden from its
+  chip, and at most 20 containers are read, the newest pods first.
+- **IPv6 nodes, continued:** Storage, the etcd status of each member, the
+  control-plane lookup and the overview's version fallback read an IPv6 node
+  address whole instead of cutting it at its first colon. Overview and
+  Lifecycle discovery and the KubeSpan check handle IPv6 endpoints too.
+- A detail pane too narrow for its tabs now scrolls them sideways: a cut end fades under an arrow that pages to the tabs beyond it, and the tab you're on, or move to with the keyboard, is always in view.
+- Stacked bar charts, such as an application's log histogram, now fill each column instead of a thin slice of it, and charts of whole counts label only whole numbers on their axis.
+- **Linux and Windows preview builds:** every push to `main` packages a Linux
+  tarball and a Windows zip and checks that each opens a window, on a machine that
+  didn't build it ([packaging](docs/PACKAGING.md)).
+- **Linux and Windows in releases:** a release draft attaches the Linux and Windows
+  preview builds of its commit when they passed CI, and warns at the top of the
+  notes when one is missing. [First-run reports](docs/FIRST_RUN.md) record when a
+  platform turns supported.
+- Monitoring's variables and Annotations toggles now sit in the page header's second row, sized like the other header controls, and auto-refresh says "Auto-refresh off" or its interval. Tables inside a card no longer show square corners at the card's rounded bottom.
+- Monitoring's dashboards and the pod and node CPU and memory history now send their Prometheus reads through one shared path, so both time out and report failures the same way.
+- Workloads rows are identified by the namespace, workload or pod they show rather than by their place in the list, so a selection or a test follows the same item through a refresh or a filter.
+- A narrow Workloads list scrolls sideways with each row's glyph and name kept at its left edge, as Nodes does; in a narrow window or at a large text size a long name truncates, and its tooltip and the details hold all of it.
+
 ## 0.6.0 (2026-10-06)
 
 ### Coroot

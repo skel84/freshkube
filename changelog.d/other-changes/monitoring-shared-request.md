@@ -1,1 +1,0 @@
-- Monitoring's dashboards and the pod and node CPU and memory history now send their Prometheus reads through one shared path, so both time out and report failures the same way.

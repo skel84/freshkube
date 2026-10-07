@@ -1,1 +1,0 @@
-- Workloads rows are identified by the namespace, workload or pod they show rather than by their place in the list, so a selection or a test follows the same item through a refresh or a filter.

@@ -2462,7 +2462,7 @@ dependencies = [
 
 [[package]]
 name = "freshkube"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "freshkube-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "freshkube-desktop"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -2544,11 +2544,11 @@ dependencies = [
 
 [[package]]
 name = "freshkube-graph"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "freshkube-logs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "freshkube-core",
  "freshkube-probe",
@@ -2559,14 +2559,14 @@ dependencies = [
 
 [[package]]
 name = "freshkube-probe"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
 ]
 
 [[package]]
 name = "freshkube-terminal"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "alacritty_terminal",
  "freshkube-probe",
@@ -2576,7 +2576,7 @@ dependencies = [
 
 [[package]]
 name = "freshkube-ui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ashpd",
  "block2 0.6.2",
@@ -2593,7 +2593,7 @@ dependencies = [
 
 [[package]]
 name = "freshkube-workbench"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "freshkube-graph",
  "freshkube-probe",
@@ -8165,7 +8165,7 @@ dependencies = [
 
 [[package]]
 name = "talos-rs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "dirs-next",

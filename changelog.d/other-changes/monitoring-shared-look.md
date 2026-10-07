@@ -1,1 +1,0 @@
-- Monitoring's variables and Annotations toggles now sit in the page header's second row, sized like the other header controls, and auto-refresh says "Auto-refresh off" or its interval. Tables inside a card no longer show square corners at the card's rounded bottom.
