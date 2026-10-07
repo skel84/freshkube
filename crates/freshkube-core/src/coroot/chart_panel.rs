@@ -25,6 +25,56 @@ pub struct ChartPanel {
     /// Coroot's deployment annotations. Incidents and other events have no
     /// marker kind yet, so they are left out.
     pub markers: Vec<Marker>,
+    /// The Console colour of each severity series, by the series' name;
+    /// empty unless the chart counts log severities ([`Self::severities`]).
+    /// Elsewhere Coroot's colours only tell series apart, so the series
+    /// take the next colour in turn.
+    pub colors: Vec<(String, SeriesColor)>,
+}
+
+/// The Console colour for a log severity's Coroot colour. Coroot names
+/// Material colours: `red-darken1` for errors, `orange-lighten1` for
+/// warnings, `black` for fatal; outside the severities its colours are
+/// categorical, so only a severity chart uses these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeriesColor {
+    Critical,
+    Warning,
+    Ok,
+    Blue,
+    Orange,
+    Purple,
+    Grey,
+}
+
+impl SeriesColor {
+    /// The colour drawn for a severity Coroot colours `name`: fatal's black
+    /// is critical, as error is; trace's faint green is grey, apart from
+    /// debug's green; any other colour takes the nearest Console colour,
+    /// whatever its shade. None for an empty or unknown name, which takes
+    /// the next colour in turn.
+    pub fn severity(name: &str) -> Option<Self> {
+        let name = name.trim();
+        let (hue, shade) = ["-lighten", "-darken", "-accent"]
+            .iter()
+            .find_map(|kind| {
+                let (hue, level) = name.split_once(kind)?;
+                Some((hue, Some((*kind, level))))
+            })
+            .unwrap_or((name, None));
+        Some(match (hue, shade) {
+            ("black", _) => Self::Critical,
+            ("green", Some(("-lighten", "3" | "4" | "5"))) => Self::Grey,
+            ("red" | "pink", _) => Self::Critical,
+            ("orange" | "amber" | "yellow" | "lime", _) => Self::Warning,
+            ("green" | "light-green" | "teal", _) => Self::Ok,
+            ("blue" | "light-blue" | "cyan" | "indigo", _) => Self::Blue,
+            ("deep-orange" | "brown", _) => Self::Orange,
+            ("purple" | "deep-purple", _) => Self::Purple,
+            ("grey" | "blue-grey" | "white", _) => Self::Grey,
+            _ => return None,
+        })
+    }
 }
 
 /// The series' name as its legend shows it.
@@ -164,7 +214,21 @@ impl ChartPanel {
             },
             window,
             markers,
+            colors: vec![],
         })
+    }
+
+    /// A chart of log messages by severity, as the Logs report's histogram
+    /// and a pattern's chart are: [`Self::new`], with each series drawn in
+    /// its severity's colour.
+    pub fn severities(chart: &Chart) -> Option<Self> {
+        let mut panel = Self::new(chart)?;
+        panel.colors = chart
+            .series
+            .iter()
+            .filter_map(|s| Some((label(s).to_owned(), SeriesColor::severity(&s.color)?)))
+            .collect();
+        Some(panel)
     }
 }
 
@@ -339,6 +403,64 @@ mod tests {
         assert_eq!(panel.markers[0].kind, MarkerKind::Deploy);
         assert_eq!(panel.markers[0].at, 1_760_000_060);
         assert_eq!(panel.markers[0].label, "deployment worker:1.8.2");
+    }
+
+    #[test]
+    fn severity_colours_take_the_nearest_console_colour() {
+        let color = SeriesColor::severity;
+        // Coroot's severities, most severe first.
+        assert_eq!(color("black"), Some(SeriesColor::Critical));
+        assert_eq!(color("red-darken1"), Some(SeriesColor::Critical));
+        assert_eq!(color("orange-lighten1"), Some(SeriesColor::Warning));
+        assert_eq!(color("blue-lighten2"), Some(SeriesColor::Blue));
+        assert_eq!(color("green-lighten2"), Some(SeriesColor::Ok));
+        assert_eq!(color("green-lighten4"), Some(SeriesColor::Grey));
+        assert_eq!(color("grey-lighten1"), Some(SeriesColor::Grey));
+        // Any other shade takes its hue's colour.
+        assert_eq!(color("red"), Some(SeriesColor::Critical));
+        assert_eq!(color("amber"), Some(SeriesColor::Warning));
+        assert_eq!(color("green-darken1"), Some(SeriesColor::Ok));
+        assert_eq!(color("deep-orange-accent2"), Some(SeriesColor::Orange));
+        assert_eq!(color("deep-purple"), Some(SeriesColor::Purple));
+        assert_eq!(color("blue-grey-darken3"), Some(SeriesColor::Grey));
+        // Empty or unknown: the next colour in turn.
+        assert_eq!(color(""), None);
+        assert_eq!(color("chartreuse"), None);
+    }
+
+    #[test]
+    fn only_a_severity_chart_carries_its_colours() {
+        let coloured = |name: &str, color: &str| Series {
+            color: color.into(),
+            ..series(name, vec![Some(1.), Some(2.)])
+        };
+        let chart = Chart {
+            series: vec![
+                coloured("fatal", "black"),
+                coloured("error", "red-darken1"),
+                coloured("warning", "orange-lighten1"),
+                coloured("info", "blue-lighten2"),
+                coloured("trace", "green-lighten4"),
+                coloured("unknown", ""),
+                coloured("odd", "chartreuse"),
+            ],
+            stacked: true,
+            column: true,
+            ..chart()
+        };
+        assert_eq!(
+            ChartPanel::severities(&chart).unwrap().colors,
+            [
+                ("fatal".to_owned(), SeriesColor::Critical),
+                ("error".to_owned(), SeriesColor::Critical),
+                ("warning".to_owned(), SeriesColor::Warning),
+                ("info".to_owned(), SeriesColor::Blue),
+                ("trace".to_owned(), SeriesColor::Grey),
+            ]
+        );
+        // Elsewhere Coroot's colours tell series apart: memory used is red
+        // on a healthy node, so the series take their turn.
+        assert!(ChartPanel::new(&chart).unwrap().colors.is_empty());
     }
 
     #[test]

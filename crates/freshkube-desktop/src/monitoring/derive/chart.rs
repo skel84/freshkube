@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use chrono::{Local, TimeZone};
+use freshkube_core::coroot::SeriesColor;
 use freshkube_core::monitoring::model::{
     chart::{self, StackMode, Stacking},
     spec::{
@@ -163,6 +164,7 @@ pub(super) fn chart(
     options: &TimeSeriesOptions,
     window: TimeWindow,
     capped: Option<Capped>,
+    named: &[(String, SeriesColor)],
 ) -> PanelData {
     let end = window.end as f64;
     let start = end - window.span as f64;
@@ -240,6 +242,7 @@ pub(super) fn chart(
             .iter()
             .map(|s| (s.name.as_str(), s.labels.as_slice()))
             .collect::<Vec<_>>(),
+        named,
     );
     let series: Vec<ChartSeries> = shown
         .iter()

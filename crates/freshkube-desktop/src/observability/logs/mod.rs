@@ -125,13 +125,14 @@ fn origin_slug(origin: api::LogOrigin) -> &'static str {
 }
 
 fn panel(id: &str, chart: &api::AppChart, title: &str, cx: &mut App) -> Option<Entity<PanelView>> {
-    let panel = ChartPanel::new(&api::AppChart {
+    let panel = ChartPanel::severities(&api::AppChart {
         title: title.into(),
         ..chart.clone()
     })?;
     let id = SharedString::from(id.to_owned());
     Some(cx.new(|cx| {
         let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+        view.set_named_colors(panel.colors.clone().into());
         view.set_result(panel.result.clone(), panel.window, cx);
         view.set_markers(panel.markers.clone().into(), cx);
         view
@@ -305,6 +306,7 @@ impl ObservabilityPage {
             let id = SharedString::from("obs-logs-pattern-chart");
             Some(cx.new(|cx| {
                 let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+                view.set_named_colors(panel.colors.clone().into());
                 view.set_result(panel.result.clone(), panel.window, cx);
                 view
             }))

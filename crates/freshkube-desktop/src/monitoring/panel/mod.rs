@@ -20,6 +20,7 @@ mod tests;
 use std::cell::Cell;
 use std::rc::Rc;
 
+use freshkube_core::coroot::SeriesColor;
 use freshkube_core::monitoring::{
     PanelResult, QueryError,
     markers::Marker,
@@ -87,6 +88,8 @@ pub(crate) struct PanelView {
     answer: Option<(Frame, TimeWindow)>,
     /// How a timeseries with many series draws: the highest peaks, or all.
     series: SeriesCap,
+    /// Series drawn in their own colour, by name: a Coroot severity chart's.
+    named: Rc<[(String, SeriesColor)]>,
 }
 
 impl EventEmitter<PanelEvent> for PanelView {}
@@ -116,7 +119,13 @@ impl PanelView {
             placed: Rc::from([]),
             answer: None,
             series: SeriesCap::Top,
+            named: Rc::from([]),
         }
+    }
+
+    /// Draws the series `named` names in their colours, from the next answer.
+    pub(crate) fn set_named_colors(&mut self, named: Rc<[(String, SeriesColor)]>) {
+        self.named = named;
     }
 
     /// A new answer over `window`: derives what it shows and drops any
@@ -164,7 +173,8 @@ impl PanelView {
         let Some((frame, window)) = &self.answer else {
             return;
         };
-        let data = derive::derive(&self.spec, frame.clone(), *window, self.series);
+        let data =
+            derive::derive_named(&self.spec, frame.clone(), *window, self.series, &self.named);
         self.plot = match &data.body {
             Body::Chart(chart) => Some(match self.plot.take() {
                 Some(plot) => {
@@ -273,6 +283,18 @@ impl PanelView {
     #[cfg(test)]
     pub(crate) fn table(&self) -> Option<Entity<TableView>> {
         self.table.clone()
+    }
+
+    /// Each drawn series' name and colour, for the page's tests.
+    #[cfg(test)]
+    pub(crate) fn series_colors(&self) -> Vec<(SharedString, gpui_kit::Hsla)> {
+        self.chart().map_or_else(Vec::new, |chart| {
+            chart
+                .series
+                .iter()
+                .map(|series| (series.name.clone(), series.ink.color(false)))
+                .collect()
+        })
     }
 
     /// Whether a timeseries shows, for the page's tests.

@@ -16,6 +16,7 @@ mod ticks;
 
 use std::rc::Rc;
 
+use freshkube_core::coroot::SeriesColor;
 use freshkube_core::monitoring::model::{
     PanelSpec, Viz,
     data::Frame,
@@ -60,13 +61,26 @@ pub(super) struct Shown {
     pub style: freshkube_core::monitoring::model::overrides::SeriesStyle,
 }
 
-/// Derives what `spec` shows of `frame`, read over `window`, a timeseries
-/// with as many series as `series` says.
+/// [`derive_named`] with no named colours, as a Prometheus panel has.
+#[cfg(test)]
 pub(crate) fn derive(
     spec: &PanelSpec,
     frame: Frame,
     window: TimeWindow,
     series: SeriesCap,
+) -> PanelData {
+    derive_named(spec, frame, window, series, &[])
+}
+
+/// Derives what `spec` shows of `frame`, read over `window`, a timeseries
+/// with as many series as `series` says, each drawn in the colour `named`
+/// gives it by name, as a Coroot severity chart's are, else in its turn.
+pub(crate) fn derive_named(
+    spec: &PanelSpec,
+    frame: Frame,
+    window: TimeWindow,
+    series: SeriesCap,
+    named: &[(String, SeriesColor)],
 ) -> PanelData {
     crate::desktop::probe::hit("monitoring-derive");
     let plain = |body| PanelData { body, unit: None };
@@ -83,7 +97,7 @@ pub(crate) fn derive(
                 return plain(Body::NoData);
             }
             let (shown, capped) = cap::cap(shown, series, options);
-            chart::chart(&frame.times, shown, options, window, capped)
+            chart::chart(&frame.times, shown, options, window, capped, named)
         }
         Viz::Stat(_) | Viz::Gauge(_) | Viz::BarGauge(_) | Viz::Pie(_) | Viz::BarChart(_) => {
             let shown = shown(spec, frame, |field, context| {
