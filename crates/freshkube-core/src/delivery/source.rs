@@ -155,11 +155,11 @@ pub fn redact_message(message: &str) -> String {
     redact_capped(message, redact_places)
 }
 
-/// What [`redact_message`] takes out, on text already short enough.
+/// What [`redact_message`] takes out, on text already short enough. Each
+/// pass is linear; IPv6 goes before IPv4, so `::ffff:192.0.2.1` goes whole.
 fn redact_places(message: &str) -> String {
-    redact_ipv6(&redact_credentials(&redact_location(&redact_identity(
-        message,
-    ))))
+    let located = redact_location(&redact_identity(message));
+    redact_ipv4(&redact_ipv6(&redact_credentials(&located)))
 }
 
 /// A failure as it is printed: its kind and [`printable`] message.
@@ -228,8 +228,9 @@ const ELLIPSIS: char = '…';
 ///
 /// A cut steps back at most [`MAX_CUT_STEP_BYTES`] to find its space or
 /// markup delimiter. A longer word that stands across the end of what is read
-/// is cut inside and redacted as what is left of it: a URL or a path still
-/// reads as one, and an `@` still takes the userinfo before it.
+/// is cut inside and redacted as what is left of it. A URL or a path still
+/// reads as one, but any other token at the cut can be split from what
+/// marks it: `user:secret` without its `@host`, `gitlab.i`, `jane%4`.
 pub fn redact_body(body: &str) -> String {
     redact_capped(body, |text| redact_hosts(&redact_places(text)))
 }
@@ -305,9 +306,10 @@ fn is_markup_delimiter(c: char) -> bool {
     matches!(c, '<' | '>' | '"' | '\'')
 }
 
-/// Replaces whatever stands before an `@` or its percent-encoding `%40`, and
-/// the host after it, with `<address>`: `user:pass@db.example.com:5432`,
-/// `user:p=ss@db.example.com`, `jane@example.com`, `jane%40example.com`. The
+/// Replaces whatever stands before an `@` or its percent-encoding (`%40`, or
+/// `%2540` when encoded twice), and the host after it, with `<address>`:
+/// `user:pass@db.example.com:5432`, `user:p=ss@db.example.com`,
+/// `dG9rZW4=@db.example.com`, `jane@example.com`, `jane%40example.com`. The
 /// whole of the userinfo goes, never only its password; a field's `key=`
 /// before it stays (`owner=jane@example.com`). An scp-style repository loses
 /// its owner too (`git@git.example.com:acme/app.git` keeps `/app.git`). An
@@ -334,6 +336,9 @@ fn redact_credentials(text: &str) -> String {
             1
         } else if text[at..].starts_with("%40") {
             3
+        } else if text[at..].starts_with("%2540") {
+            // Encoded twice: `%25` is the `%`.
+            5
         } else {
             from = at + 1;
             continue;
@@ -346,7 +351,7 @@ fn redact_credentials(text: &str) -> String {
         floor = host_at;
         let digest = marker == 1 && (host.starts_with("sha256:") || host.starts_with("sha512:"));
         // An encoded `@` counts only before a host (`50%40` is no address).
-        let encoded_alone = marker == 3 && !host.starts_with(|c: char| c.is_ascii_alphanumeric());
+        let encoded_alone = marker > 1 && !host.starts_with(|c: char| c.is_ascii_alphanumeric());
         if start == at || digest || encoded_alone {
             continue;
         }
@@ -370,11 +375,14 @@ fn redact_credentials(text: &str) -> String {
 }
 
 /// Where the userinfo starts in `run`, the characters before an `@`: after
-/// the last `=` of a field's `key=` (`owner=jane`), but an `=` past the first
-/// `:` is the password's (`user:p=ss`), so the whole of it goes.
+/// the last `=` of a field's `key=` (`owner=jane`). An `=` past the first `:`
+/// is the password's (`user:p=ss`), and one that ends the user is base64's
+/// padding (`dG9rZW4=`), so the whole of it goes.
 fn userinfo_start(run: &str) -> usize {
     let user = run.find(':').map_or(run, |colon| &run[..colon]);
-    user.rfind('=').map_or(0, |equals| equals + 1)
+    user.trim_end_matches('=')
+        .rfind('=')
+        .map_or(0, |equals| equals + 1)
 }
 
 /// How much of `text`, right after an scp-style `user@host`, names the
@@ -455,6 +463,57 @@ fn ipv6_in(run: &str) -> Option<&str> {
                 && candidate.contains(|c: char| c.is_ascii_hexdigit())
                 && candidate.parse::<std::net::Ipv6Addr>().is_ok()
         })
+}
+
+/// Replaces each IPv4 address that stands on its own, with its `:port` or
+/// its network's `/prefix`, wherever it stands (`ip=192.0.2.1`,
+/// `endpoint=10.0.0.5:443`, `10.0.0.0/24`). A run of digits and dots inside
+/// a word (`v1.2.3.4`) and one that isn't four octets (`1.2.3`) stay.
+fn redact_ipv4(text: &str) -> String {
+    let is_run_char = |c: char| c.is_ascii_digit() || c == '.';
+    let is_word_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let len = tail.find(|c: char| !is_run_char(c)).unwrap_or(tail.len());
+        let run = &tail[..len];
+        // A sentence's full stop after it, unless a word goes on after the
+        // dot (`10.0.0.1.example` is a host name).
+        let address = run.trim_end_matches('.');
+        let after = &tail[address.len()..];
+        let in_word = out.chars().next_back().is_some_and(is_word_char)
+            || after.trim_start_matches('.').starts_with(is_word_char);
+        if in_word || address.parse::<std::net::Ipv4Addr>().is_err() {
+            out.push_str(run);
+            rest = &tail[len..];
+            continue;
+        }
+        out.push_str("<address>");
+        let after = after_port(after);
+        rest = after_prefix(after);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` after a leading `/prefix` of 0 to 32 bits, or all of it.
+fn after_prefix(text: &str) -> &str {
+    let Some(digits) = text.strip_prefix('/') else {
+        return text;
+    };
+    let len = digits.len()
+        - digits
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .len();
+    let next = digits[len..].chars().next();
+    let bits = digits[..len].parse::<u8>().is_ok_and(|bits| bits <= 32);
+    if (1..=2).contains(&len) && bits && !next.is_some_and(|c| c.is_ascii_alphanumeric()) {
+        &digits[len..]
+    } else {
+        text
+    }
 }
 
 /// Replaces each run of host-name characters that is a dotted host name or
@@ -925,6 +984,34 @@ mod tests {
     }
 
     #[test]
+    fn base64_and_twice_encoded_userinfo_goes_whole() {
+        assert_eq!(
+            redact_message("auth dG9rZW4=@db.example.com and key=dG9rZW4=@db.example.com"),
+            "auth <address> and key=<address>"
+        );
+        assert_eq!(
+            redact_message("owner jane%2540example.com"),
+            "owner <address>"
+        );
+        assert_eq!(redact_body("owner jane%2540example.com"), "owner <address>");
+    }
+
+    #[test]
+    fn an_ipv4_address_goes_from_a_field_with_its_port_or_prefix() {
+        assert_eq!(
+            redact_message(
+                "pod ip=192.0.2.1, endpoint=10.0.0.5:443, pool 10.0.0.0/24; kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, image v1.2.3.4, host 10.0.0.1.example"
+            ),
+            "pod ip=<address>, endpoint=<address>, pool <address>; kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, image v1.2.3.4, host 10.0.0.1.example"
+        );
+        // A body keeps versions too, and loses the prefix with its network.
+        assert_eq!(
+            redact_body("kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, pool 10.0.0.0/24."),
+            "kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, pool <address>."
+        );
+    }
+
+    #[test]
     fn a_body_loses_a_host_between_dashes() {
         assert_eq!(
             redact_body("flag --api.example.com and api.example.com- end"),
@@ -971,6 +1058,18 @@ mod tests {
             (
                 r#"groups "ops" is forbidden"#,
                 r#"groups "<redacted>" is forbidden"#,
+            ),
+            // The API server's refusal whole: `API group ""` and the
+            // namespace stay.
+            (
+                r#"pods is forbidden: User "system:serviceaccount:shop:reader" cannot list resource "pods" in API group "" in the namespace "shop""#,
+                r#"pods is forbidden: User "<redacted>" cannot list resource "pods" in API group "" in the namespace "shop""#,
+            ),
+            // An impersonation refusal: a resource named "groups" stays, the
+            // group asked for goes.
+            (
+                r#"users "jane@example.com" is forbidden: User "system:serviceaccount:ci:deployer" cannot impersonate resource "groups" in API group "": groups "system:masters" not allowed"#,
+                r#"users "<redacted>" is forbidden: User "<redacted>" cannot impersonate resource "groups" in API group "": groups "<redacted>" not allowed"#,
             ),
             // Empty, adjacent, a nested quote, unterminated.
             (r#"User "" cannot"#, r#"User "<redacted>" cannot"#),
