@@ -4,6 +4,8 @@ use freshkube_ui::table::{
     self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
 use freshkube_ui::tooltip::FollowTooltip as _;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::prelude::*;
 use std::collections::BTreeSet;
 
@@ -328,30 +330,62 @@ impl TableSource for Pilot {
             table::ROW_HEIGHT,
         )
         .detail(detail);
-        let row = if status == projection::Status::Healthy
-            && self.node_workspace.counts[..status.index()]
-                .iter()
-                .any(|count| *count > 0)
-        {
+        let foldable = status == projection::Status::Healthy && self.node_workspace.folds_healthy();
+        let row = if foldable {
             use gpui_kit::component::{
                 Sizable,
                 button::{Button, ButtonVariants},
             };
-            row.action(
+            let what = if collapsed { "Expand" } else { "Collapse" };
+            row.chevron(
                 Button::new("nodes-healthy-toggle")
                     .ghost()
                     .xsmall()
-                    .label(if collapsed { "Expand" } else { "Collapse" })
+                    .icon(if collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .tooltip_with_action(what, &ToggleHealthyNodes, Some("NodeWorkspace"))
+                    .accessibility_label(format!("{what} healthy nodes"))
                     .on_click(cx.listener(|view, _, _, cx| {
-                        view.node_workspace.healthy_open = !view.node_workspace.healthy_open;
-                        view.node_workspace.rebuild_lines();
+                        cx.stop_propagation();
+                        view.node_workspace.toggle_healthy();
                         cx.notify();
                     })),
             )
         } else {
             row
         };
-        Some(row.render(cx).into_any_element())
+        // The healthy group's menu is its fold (DESIGN.md change 10).
+        let line = div()
+            .id(("nodes-group-line", group))
+            .test_support()
+            .w_full()
+            .child(row.render(cx));
+        if !foldable {
+            return Some(line.into_any_element());
+        }
+        let focus = self.node_focus.clone();
+        let label = if collapsed {
+            "Expand healthy nodes"
+        } else {
+            "Collapse healthy nodes"
+        };
+        Some(
+            line.context_menu(move |menu, window, cx| {
+                window.focus(&focus, cx);
+                // The fold acts on the group, not a row.
+                table::row_menu(
+                    menu,
+                    vec![table::RowAction::new(label, ToggleHealthyNodes)],
+                    &focus,
+                    |_| true,
+                    cx,
+                )
+            })
+            .into_any_element(),
+        )
     }
     fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         Some(self.nodes_meter_legend(window, cx))
@@ -379,6 +413,43 @@ impl TableSource for Pilot {
         cx: &mut Context<Self>,
     ) {
         self.open_node(key.clone(), window, cx);
+    }
+    /// The table's rows have a menu; the cards don't.
+    fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
+        (self.node_workspace.view != NodeView::Cards).then(|| self.node_focus.clone())
+    }
+    /// A right-click selects the node as an arrow does: an open pane
+    /// shows it, a closed one stays closed, so the table keeps its width
+    /// under the pointer and the menu opens where it was asked for. The
+    /// keyboard stays on the list, where the menu's actions are bound.
+    fn row_menu(
+        &mut self,
+        key: &NodeKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<table::RowAction> {
+        if self.node_workspace.selected.as_ref() != Some(key) {
+            if self.node_workspace.open {
+                self.open_node(key.clone(), window, cx);
+            } else {
+                self.node_workspace.selected = Some(key.clone());
+                cx.notify();
+            }
+        }
+        window.focus(&self.node_focus, cx);
+        let mut actions = vec![table::RowAction::new("Open", OpenNode)];
+        if self.node_workspace.folds_healthy() {
+            actions.push(table::RowAction::Separator);
+            actions.push(table::RowAction::new(
+                if self.node_workspace.healthy_collapsed() {
+                    "Expand healthy nodes"
+                } else {
+                    "Collapse healthy nodes"
+                },
+                ToggleHealthyNodes,
+            ));
+        }
+        actions
     }
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if self.node_workspace.lines.is_empty() {

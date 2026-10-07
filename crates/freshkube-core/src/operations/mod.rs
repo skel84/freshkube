@@ -21,7 +21,7 @@ use std::{
 use talos_rs::{RebootMode, TalosClient};
 use thiserror::Error;
 
-use crate::indicators::{QuorumState, SafetyStatus};
+use crate::indicators::SafetyStatus;
 use crate::inspection::EtcdHealthSnapshot;
 
 mod selection;
@@ -203,18 +203,6 @@ impl EtcdQuorumImpact {
     pub fn unavailable(reason: impl Into<String>) -> Self {
         Self::Unavailable {
             reason: reason.into(),
-        }
-    }
-
-    /// Convert the API counts to the existing shared quorum semantics.
-    pub fn quorum_state(&self) -> QuorumState {
-        match self {
-            Self::Known {
-                healthy_members,
-                total_members,
-                ..
-            } => QuorumState::from_counts(*healthy_members, *total_members),
-            Self::Unavailable { .. } => QuorumState::Unknown,
         }
     }
 }
@@ -658,81 +646,6 @@ pub struct OperationContext<'a> {
     pub is_cancelled: &'a CancellationPredicate,
 }
 
-/// Cordon a Kubernetes node after confirmation.
-pub async fn cordon_node(
-    target: NodeTarget,
-    context: &OperationContext<'_>,
-    confirmation: OperationConfirmation,
-    progress: &mut ProgressCallback,
-) -> NodeOperationResult {
-    run_node_operation(
-        NodeOperationRequest::new(OperationKind::Cordon, target),
-        context,
-        confirmation,
-        progress,
-    )
-    .await
-}
-
-/// Uncordon a Kubernetes node after confirmation.
-pub async fn uncordon_node(
-    target: NodeTarget,
-    context: &OperationContext<'_>,
-    confirmation: OperationConfirmation,
-    progress: &mut ProgressCallback,
-) -> NodeOperationResult {
-    run_node_operation(
-        NodeOperationRequest::new(OperationKind::Uncordon, target),
-        context,
-        confirmation,
-        progress,
-    )
-    .await
-}
-
-/// Drain a Kubernetes node after confirmation.
-pub async fn drain_node(
-    target: NodeTarget,
-    options: DrainOptions,
-    context: &OperationContext<'_>,
-    confirmation: OperationConfirmation,
-    progress: &mut ProgressCallback,
-) -> NodeOperationResult {
-    let mut request = NodeOperationRequest::new(OperationKind::Drain, target);
-    request.drain_options = options;
-    run_node_operation(request, context, confirmation, progress).await
-}
-
-/// Reboot a node after a frontend confirmation and etcd source-of-truth safety evaluation.
-pub async fn reboot_node(
-    target: NodeTarget,
-    etcd_impact: EtcdQuorumImpact,
-    options: DrainOptions,
-    context: &OperationContext<'_>,
-    confirmation: OperationConfirmation,
-    progress: &mut ProgressCallback,
-) -> NodeOperationResult {
-    let mut request = NodeOperationRequest::new(OperationKind::Reboot, target);
-    request.etcd_impact = etcd_impact;
-    request.drain_options = options;
-    run_node_operation(request, context, confirmation, progress).await
-}
-
-/// Shut down a node through Talos after a frontend confirmation and etcd safety evaluation.
-pub async fn shutdown_node(
-    target: NodeTarget,
-    etcd_impact: EtcdQuorumImpact,
-    options: DrainOptions,
-    context: &OperationContext<'_>,
-    confirmation: OperationConfirmation,
-    progress: &mut ProgressCallback,
-) -> NodeOperationResult {
-    let mut request = NodeOperationRequest::new(OperationKind::Shutdown, target);
-    request.etcd_impact = etcd_impact;
-    request.drain_options = options;
-    run_node_operation(request, context, confirmation, progress).await
-}
-
 /// Execute a confirmed single-node operation.
 ///
 /// For destructive operations the supplied etcd impact is evaluated before any Kubernetes
@@ -1121,14 +1034,12 @@ async fn destructive_operation(
     let talos_target = talos.with_node(&request.target.address);
     let request_accepted = if shutdown {
         match talos_target.shutdown(false).await {
-            Ok(result) if result.success => Ok(()),
-            Ok(_) => Err("Talos did not acknowledge the shutdown request".to_string()),
+            Ok(_) => Ok(()),
             Err(error) => Err(format!("Talos shutdown request failed: {error}")),
         }
     } else {
         match talos_target.reboot(RebootMode::Default).await {
-            Ok(result) if result.success => Ok(()),
-            Ok(_) => Err("Talos did not acknowledge the reboot request".to_string()),
+            Ok(_) => Ok(()),
             Err(error) => Err(format!("Talos reboot request failed: {error}")),
         }
     };

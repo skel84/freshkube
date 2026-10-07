@@ -665,7 +665,14 @@ fn render_line<S: TableSource>(
                 let actions = view
                     .update(cx, |view, cx| view.row_menu(&key, window, cx))
                     .unwrap_or_default();
-                super::menu::row_menu(menu, actions, &focus, cx)
+                let (view, key) = (view.clone(), key.clone());
+                let live = move |cx: &App| {
+                    view.upgrade().is_some_and(|view| {
+                        let view = view.read(cx);
+                        view.selected_key() == Some(&key) && view.line_of(&key).is_some()
+                    })
+                };
+                super::menu::row_menu(menu, actions, &focus, live, cx)
             })
             .into_any_element(),
         None => element.into_any_element(),
@@ -1044,7 +1051,7 @@ mod tests {
                         format!("{} rows", self.rows),
                         "a detail that runs on ".repeat(12),
                     ])
-                    .action(
+                    .chevron(
                         div()
                             .id("wide-group-action")
                             .test_support()

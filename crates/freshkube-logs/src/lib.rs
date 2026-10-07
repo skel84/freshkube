@@ -582,8 +582,6 @@ impl<S: LogSource> LogView<S> {
 
     fn set_following(&mut self, following: bool, cx: &mut Context<Self>) {
         self.following = following;
-        self.review.logs.buffer_mut().set_following(following);
-        self.review.logs.buffer_mut().set_paused(!following);
         if following {
             self.review_anchor = None;
             self.anchor_evicted = false;

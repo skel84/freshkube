@@ -119,6 +119,17 @@ impl Pilot {
             .on_action(cx.listener(|view, _: &PreviousNodeTab, window, cx| {
                 view.step_node_tab(-1, window, cx)
             }))
+            .on_action(cx.listener(|view, _: &ToggleHealthyNodes, window, cx| {
+                // H is the table's; the filter and the pane type it, and
+                // the cards show no fold to flip.
+                if !view.node_focus.is_focused(window)
+                    || view.node_workspace.view == NodeView::Cards
+                {
+                    return cx.propagate();
+                }
+                view.node_workspace.toggle_healthy();
+                cx.notify();
+            }))
             .on_action(cx.listener(|view, _: &OpenNode, window, cx| {
                 use freshkube_ui::table::{self, TableSource};
                 // Enter opens a node from the list alone; anywhere else in

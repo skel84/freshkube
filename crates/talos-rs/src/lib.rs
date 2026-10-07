@@ -6,12 +6,14 @@
 //! # Example
 //!
 //! ```no_run
-//! use talos_rs::TalosClient;
+//! use talos_rs::{TalosClient, TalosConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Connect using default talosconfig
-//!     let client = TalosClient::from_default_config().await?;
+//!     // Connect using the current context of the default talosconfig
+//!     let config = TalosConfig::load_default()?;
+//!     let ctx = config.current_context().ok_or("no current context")?;
+//!     let client = TalosClient::from_context(ctx).await?;
 //!
 //!     // Get version info
 //!     let versions = client.version().await?;
@@ -51,16 +53,8 @@ pub mod proto {
         tonic::include_proto!("machine");
     }
 
-    pub mod storage {
-        tonic::include_proto!("storage");
-    }
-
     pub mod time {
         tonic::include_proto!("time");
-    }
-
-    pub mod inspect {
-        tonic::include_proto!("inspect");
     }
 }
 
@@ -110,13 +104,11 @@ pub use client::{
 pub use config::{Context, TalosConfig};
 pub use error::TalosError;
 pub use talosctl::{
-    AddressStatus, DiscoveryMember, DiskInfo, GenConfigResult, InsecureApplyResult,
-    InsecureVersionInfo, KubeSpanPeerStatus, MachineConfigInfo, VolumeStatus,
-    apply_config_insecure, check_insecure_connection, gen_config, gen_config_with_install_disk,
-    get_address_status, get_discovery_members, get_discovery_members_for_context,
-    get_discovery_members_with_retry, get_disks, get_disks_for_node, get_disks_insecure,
-    get_kubespan_peers, get_kubespan_peers_for_node, get_machine_config, get_version_insecure,
-    get_volume_status, get_volume_status_for_node, get_volume_status_insecure, is_kubespan_enabled,
-    is_kubespan_enabled_for_node, reboot_insecure, shutdown_insecure,
+    DiscoveryMember, DiskInfo, GenConfigResult, InsecureApplyResult, InsecureVersionInfo,
+    KubeSpanPeerStatus, VolumeStatus, apply_config_insecure, gen_config_with_install_disk,
+    get_discovery_members_for_context, get_discovery_members_with_retry, get_disks_for_node,
+    get_disks_insecure, get_kubespan_peers, get_kubespan_peers_for_node, get_version_insecure,
+    get_volume_status_for_node, get_volume_status_insecure, is_kubespan_enabled,
+    is_kubespan_enabled_for_node,
 };
 pub use target::target_host;

@@ -226,15 +226,6 @@ pub struct InsecureMaintenanceSnapshot {
     pub volumes: SourceAvailability<Vec<VolumeStatus>>,
 }
 
-impl InsecureMaintenanceSnapshot {
-    /// Returns disks that Talos reports as safe candidates for installation.
-    pub fn installable_disks(&self) -> impl Iterator<Item = &DiskInfo> {
-        self.disks
-            .iter()
-            .filter(|disk| !disk.readonly && !disk.cdrom)
-    }
-}
-
 /// A user-selected install target that was validated against Talos disk data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallTarget {
@@ -1930,17 +1921,6 @@ pub fn confirmation_matches(expected: Option<String>, entered: &str) -> bool {
 }
 
 impl BootstrapSession {
-    /// The phrase that confirms applying the reviewed configuration, naming
-    /// the exact node and disk.
-    pub fn apply_confirmation_phrase(&self) -> Option<String> {
-        let confirmation = self.pending_confirmation.as_ref()?;
-        Some(format!(
-            "APPLY {} {}",
-            confirmation.endpoint(),
-            confirmation.install_target().device_path()
-        ))
-    }
-
     /// The phrase that confirms bootstrapping etcd. Only a control plane that
     /// has answered on its secure Talos API can bootstrap.
     pub fn bootstrap_confirmation_phrase(&self) -> Option<String> {
