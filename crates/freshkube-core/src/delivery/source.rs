@@ -149,17 +149,23 @@ pub fn printable(failure: &Failure) -> String {
 /// Text a cluster object carries, such as a status message, as it may be
 /// printed: without identities, URLs, addresses (IPv6 ones wherever they
 /// stand), absolute paths or whatever stands before an `@` (credentials, an
-/// email's local part), and cut as [`redact_body`] cuts. API group names
-/// (`pipelineruns.tekton.dev`) stay: only a body loses bare host names.
+/// email's local part), and cut as [`redact_body`] cuts. API group and
+/// resource names (`pipelineruns.tekton.dev`, `deployments.apps`) stay: a
+/// message loses a bare host name only where Go's errors write one
+/// (after `lookup `, or in an x509 `valid for` list), a webhook's quoted
+/// name goes as an identity does, and only a body loses every host name.
 pub fn redact_message(message: &str) -> String {
     redact_capped(message, redact_places)
 }
 
 /// What [`redact_message`] takes out, on text already short enough. Each
-/// pass is linear; IPv6 goes before IPv4, so `::ffff:192.0.2.1` goes whole.
+/// pass is linear; IPv6 goes before IPv4, so `::ffff:192.0.2.1` goes whole,
+/// and the hosts Go's errors name go last, when a DNS server already reads
+/// `<address>`.
 fn redact_places(message: &str) -> String {
     let located = redact_location(&redact_identity(message));
-    redact_ipv4(&redact_ipv6(&redact_credentials(&located)))
+    let addressed = redact_ipv4(&redact_ipv6(&redact_credentials(&located)));
+    redact_named_hosts(&addressed)
 }
 
 /// A failure as it is printed: its kind and [`printable`] message.
@@ -514,6 +520,162 @@ fn after_prefix(text: &str) -> &str {
     } else {
         text
     }
+}
+
+/// What redacts the text after one of [`HOST_PHRASES`], writing it to the
+/// output, and returns how much of the text it took.
+type Redact = fn(&str, &mut String) -> usize;
+
+/// The phrases Go's errors write a host name after, or a webhook's name,
+/// each with what redacts the text after it. A host name that stands
+/// anywhere else stays, so a message keeps the API groups and resources it
+/// names: `pipelineruns.tekton.dev`, `API group "tekton.dev"`, and `(get
+/// widgets.example.com)`, which apimachinery's `NewGenericServerResponse`
+/// (`pkg/api/errors/errors.go`) writes from a resource and its group: a
+/// kind, never a host.
+///
+/// No client-go or apimachinery error writes a host after `Host` or
+/// `server`, so neither is a phrase.
+static HOST_PHRASES: [(&str, Redact); 7] = [
+    // `net.DNSError.Error` (Go's `net/net.go`): `lookup <name>[ on
+    // <server>]: <err>`, `no such host` (`errNoSuchHost`) among its errors.
+    ("lookup ", named_host),
+    // `net.AddrError.Error` (`net/net.go`): `address <addr>: <err>`. A
+    // `dial tcp <host>:<port>`, `net.OpError.Error`'s, already went as a
+    // `host:port`, and a `Get "https://…"`, `url.Error`'s, as a URL.
+    ("address ", named_host),
+    // `x509.HostnameError.Error` (Go's `crypto/x509/verify.go`):
+    // `certificate is valid for <a>, <b>, not <host>`,
+    ("certificate is valid for ", valid_hosts),
+    // `certificate is valid for <n> names, but none matched <host>`,
+    ("but none matched ", one_host),
+    // and `certificate is not valid for any names, but wanted to match <host>`.
+    ("but wanted to match ", one_host),
+    // apiserver's `ErrCallingWebhook.Error` (`pkg/util/webhook/error.go`):
+    // `failed calling webhook "<name>": <err>`, and `ToStatusErr`
+    // (`pkg/admission/plugin/webhook/errors/statuserror.go`): `admission
+    // webhook "<name>" denied the request`. A webhook's name is a domain,
+    // often its owner's.
+    ("failed calling webhook ", quoted_name),
+    ("admission webhook ", quoted_name),
+];
+
+/// Replaces the host names Go's errors write after one of [`HOST_PHRASES`]:
+/// `lookup git.example.com on <address>: no such host`, `certificate is
+/// valid for a.example.com, *.example.com, not b.example.com`, and the
+/// quoted name after a webhook's phrase (`failed calling webhook
+/// "<redacted>"`). A phrase that
+/// ends a longer word (`nslookup `) is none.
+///
+/// One pass: each phrase is checked once at each space, and the text after
+/// one is read once by what redacts it.
+fn redact_named_hosts(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // Everything before `kept` is in `out`; the next space is looked for
+    // from `from`.
+    let mut kept = 0;
+    let mut from = 0;
+    while let Some(found) = text[from..].find(' ') {
+        let after = from + found + 1;
+        from = after;
+        let seen = &text[kept..after];
+        let phrase = HOST_PHRASES.iter().find(|(phrase, _)| {
+            seen.strip_suffix(*phrase)
+                .is_some_and(|before| !before.ends_with(|c: char| c.is_ascii_alphanumeric()))
+        });
+        let Some((_, redact)) = phrase else {
+            continue;
+        };
+        out.push_str(seen);
+        kept = after + redact(&text[after..], &mut out);
+        from = kept;
+    }
+    out.push_str(&text[kept..]);
+    out
+}
+
+/// After `lookup ` or `address `: a dotted host name, with a fully qualified
+/// name's root dot, before the `:` or ` on ` that follows it, or any name
+/// before ` on <address>`, the DNS server an earlier pass took
+/// (`lookup postgres on <address>`), or before `: no such host`, as the cgo
+/// resolver writes it without a server (`lookup postgres: no such host`). A
+/// word that names no host stays (`lookup failed: …`, `address already in
+/// use`).
+fn named_host(rest: &str, out: &mut String) -> usize {
+    let len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
+        .unwrap_or(rest.len());
+    let name = rest[..len].trim_end_matches('.');
+    let after = &rest[len..];
+    let dotted = is_host_name(name) && (after.starts_with(':') || after.starts_with(" on "));
+    let looked_up = after.starts_with(" on <address>") || after.starts_with(": no such host");
+    if name.is_empty() || !(dotted || looked_up) {
+        return 0;
+    }
+    out.push_str("<address>");
+    len
+}
+
+/// After `failed calling webhook ` or `admission webhook `: the webhook's
+/// quoted name, as `"<redacted>"`, as a quoted identity goes; all the rest
+/// when its quote never closes.
+fn quoted_name(rest: &str, out: &mut String) -> usize {
+    let Some(name) = rest.strip_prefix('"') else {
+        return 0;
+    };
+    out.push_str("\"<redacted>\"");
+    match name.find('"') {
+        Some(close) => 1 + close + 1,
+        None => rest.len(),
+    }
+}
+
+/// After x509's `certificate is valid for `: each name of its list, single
+/// labels (`kubernetes`) and wildcards (`*.example.com`) too, and the host
+/// after its `, not `. A count (`120 names, but none matched …`) stays.
+fn valid_hosts(rest: &str, out: &mut String) -> usize {
+    let mut used = 0;
+    loop {
+        let tail = &rest[used..];
+        let len = tail
+            .find(|c: char| c.is_whitespace() || c == ',')
+            .unwrap_or(tail.len());
+        if len == 0 || !tail[len..].starts_with(", ") {
+            break;
+        }
+        // An address an earlier pass took stays as it reads.
+        let name = &tail[..len];
+        out.push_str(if name.starts_with('<') {
+            name
+        } else {
+            "<address>"
+        });
+        out.push_str(", ");
+        used += len + 2;
+    }
+    if used == 0 {
+        return 0;
+    }
+    match rest[used..].strip_prefix("not ") {
+        Some(host) => {
+            out.push_str("not ");
+            used + "not ".len() + one_host(host, out)
+        }
+        None => used,
+    }
+}
+
+/// The host a phrase ends with, up to the space after it, without the quote,
+/// bracket or full stop after it. One an earlier pass took (`<address>`)
+/// stays.
+fn one_host(rest: &str, out: &mut String) -> usize {
+    let len = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let host = rest[..len].trim_end_matches(['"', '\'', '`', ')', ']', ',', ';', ':', '.']);
+    if host.is_empty() || host.starts_with('<') {
+        return 0;
+    }
+    out.push_str("<address>");
+    host.len()
 }
 
 /// Replaces each run of host-name characters that is a dotted host name or
@@ -1016,6 +1178,116 @@ mod tests {
         assert_eq!(
             redact_body("flag --api.example.com and api.example.com- end"),
             "flag --<address> and <address>- end"
+        );
+    }
+
+    #[test]
+    fn a_message_loses_the_hosts_go_names() {
+        for (message, redacted) in [
+            // net.DNSError, with its server and without, a fully qualified
+            // name, and a single label beside its server.
+            (
+                r#"Get "https://git.example.com/acme/app.git/info/refs": dial tcp: lookup git.example.com on 10.96.0.10:53: no such host"#,
+                r#"Get "<url>": dial tcp: lookup <address> on <address>: no such host"#,
+            ),
+            (
+                "lookup api.example.internal.: no such host",
+                "lookup <address>: no such host",
+            ),
+            (
+                "lookup postgres on 10.96.0.10:53: server misbehaving",
+                "lookup <address> on <address>: server misbehaving",
+            ),
+            // The cgo resolver's, a single label without a server.
+            (
+                "lookup postgres: no such host",
+                "lookup <address>: no such host",
+            ),
+            // net.OpError's `host:port`, as before, and net.AddrError.
+            (
+                "dial tcp api.example.com:6443: connect: connection refused",
+                "dial tcp <address>: connect: connection refused",
+            ),
+            (
+                "dial tcp: address api.example.com: missing port in address",
+                "dial tcp: address <address>: missing port in address",
+            ),
+            // x509.HostnameError: a list of names, single labels and
+            // wildcards too; a list of IP addresses; a count; no names.
+            (
+                "tls: failed to verify certificate: x509: certificate is valid for ingress.example.com, *.apps.example.com, kubernetes, not api.example.com",
+                "tls: failed to verify certificate: x509: certificate is valid for <address>, <address>, <address>, not <address>",
+            ),
+            (
+                "x509: certificate is valid for 192.0.2.10, 192.0.2.11, not 192.0.2.12",
+                "x509: certificate is valid for <address>, <address>, not <address>",
+            ),
+            (
+                "x509: certificate is valid for 120 names, but none matched api.example.com",
+                "x509: certificate is valid for 120 names, but none matched <address>",
+            ),
+            (
+                "x509: certificate is not valid for any names, but wanted to match api.example.com.",
+                "x509: certificate is not valid for any names, but wanted to match <address>.",
+            ),
+            // A webhook's quoted name, from ErrCallingWebhook and
+            // ToStatusErr.
+            (
+                r#"failed calling webhook "validate.example.com"; no further details available"#,
+                r#"failed calling webhook "<redacted>"; no further details available"#,
+            ),
+            (
+                r#"admission webhook "policy.example.com" denied the request: no"#,
+                r#"admission webhook "<redacted>" denied the request: no"#,
+            ),
+        ] {
+            assert_eq!(redact_message(message), redacted, "{message}");
+        }
+        // A body loses them too, the single label included.
+        assert_eq!(
+            redact_body("lookup postgres on 10.96.0.10:53: no such host"),
+            "lookup <address> on <address>: no such host"
+        );
+    }
+
+    #[test]
+    fn a_message_keeps_api_groups_and_resources_beside_hosts() {
+        for kept in [
+            "pipelineruns.tekton.dev is forbidden",
+            "deployments.apps",
+            r#"cannot list resource "pipelineruns" in API group "tekton.dev""#,
+            // apimachinery's NewGenericServerResponse writes `(verb
+            // resource.group[ name])`: a kind, not a host.
+            "the server could not find the requested resource (get widgets.example.com)",
+            "the server could not find the requested resource (get deployments.apps web)",
+            // A phrase before a word that names no host.
+            "lookup failed: no answer",
+            "address already in use",
+        ] {
+            assert_eq!(redact_message(kept), kept);
+        }
+        // Beside a host that goes, they stay.
+        assert_eq!(
+            redact_message(
+                r#"pipelineruns.tekton.dev "build" failed: Post "https://hooks.example.com/run": dial tcp: lookup hooks.example.com on 10.96.0.10:53: no such host, in API group "tekton.dev" for deployments.apps"#
+            ),
+            r#"pipelineruns.tekton.dev "build" failed: Post "<url>": dial tcp: lookup <address> on <address>: no such host, in API group "tekton.dev" for deployments.apps"#
+        );
+    }
+
+    #[test]
+    fn the_hosts_go_names_go_in_one_pass() {
+        assert_eq!(
+            redact_named_hosts(&"lookup a.example.com: ".repeat(200_000)),
+            "lookup <address>: ".repeat(200_000)
+        );
+        assert_eq!(
+            redact_named_hosts(&"certificate is valid for a, ".repeat(200_000)),
+            "certificate is valid for <address>, ".repeat(200_000)
+        );
+        assert_eq!(
+            redact_named_hosts(&r#"admission webhook "a" "#.repeat(200_000)),
+            r#"admission webhook "<redacted>" "#.repeat(200_000)
         );
     }
 
