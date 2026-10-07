@@ -130,7 +130,7 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
     })
     .await;
     let restored = GpuiOptions::kubernetes_only(None, None, 100)
-        .with_preferences(Some(directory.join("preferences.json")));
+        .with_preferences_in(Some(directory.join("preferences.json")), false);
     assert_eq!(restored.kubeconfig_path(), Some(file.as_path()));
     assert_eq!(restored.kube_context(), Some("beta"));
     assert!(restored.restored_kubernetes());
