@@ -19,8 +19,8 @@ pub const POD_HASH_LABEL: &str = "rollouts-pod-template-hash";
 pub struct Rollout {
     pub namespace: String,
     pub name: String,
-    /// `meta.uid` is what its ReplicaSets' owner references carry.
-    /// `metadata.uid` and `metadata.resourceVersion`.
+    /// `metadata.uid` and `metadata.resourceVersion`; the `uid` is what its
+    /// ReplicaSets' owner references carry.
     pub meta: Meta,
     pub phase: Option<String>,
     pub current_pod_hash: Option<String>,

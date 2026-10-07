@@ -18,6 +18,8 @@ pub mod role {
     pub const GITHUB: &str = "github";
     /// Where the change itself, which no cluster holds, is named.
     pub const CHANGE: &str = "change";
+    /// The join's own conclusions, which no object holds.
+    pub const JOIN: &str = "join";
 }
 
 /// The longest value an observation keeps, in characters. Values are SHAs,

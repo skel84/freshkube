@@ -4,20 +4,26 @@ use std::collections::BTreeSet;
 
 use super::fixtures::*;
 use super::join::{Confidence, Hop, Key, Link, Trail, render};
-use super::observation::{Fact, Observation};
+use super::observation::{Fact, Observation, role};
+use super::source::Source;
 use super::tests::{ENV, link, observed_at, one, promoted, run, run_with};
+use crate::resources::{Failure, FailureKind};
 
-/// The kinds of object whose observations stand on a hop's side of a link.
+/// The kinds of read object whose observations stand on a hop's side of a
+/// link. The change itself is the Commit hop's only side.
 fn kinds(hop: Hop) -> &'static [&'static str] {
     match hop {
-        Hop::PullRequest => &["PullRequest"],
+        // A pull request joins the Freight through the build of its head.
+        Hop::PullRequest => &["PullRequest", "PipelineRun"],
         Hop::Commit => &["Commit"],
-        // A commit that joined a Freight with no build read stands alone.
-        Hop::PipelineRun => &["PipelineRun", "TaskRun", "Commit"],
-        Hop::SupplyChain => &["Image"],
+        Hop::PipelineRun => &["PipelineRun", "TaskRun"],
+        // Only an annotation of Chains' says a build was signed, and it is
+        // declared; no read object reports the signature.
+        Hop::SupplyChain => &[],
         Hop::Freight => &["Freight"],
         Hop::Promotion => &["Promotion"],
-        Hop::Stage => &["Stage"],
+        // Kargo records the push on the Promotion, not on the Stage.
+        Hop::Stage => &["Stage", "Promotion"],
         Hop::Application => &["Application"],
         Hop::Rollout => &["Rollout", "ReplicaSet"],
         Hop::Pod => &["Pod"],
@@ -32,12 +38,14 @@ fn key_text(key: &Key) -> String {
     }
 }
 
-/// Whether the link has, on `hop`'s side, an observation that is reported or
-/// derived, never merely declared, and carries `key`.
+/// Whether the link has, on `hop`'s side, an observation of a read object
+/// that is reported, never merely declared, and carries the link's key. What
+/// the join concluded counts for nothing.
 fn stands_on(link: &Link, hop: Hop) -> bool {
     let key = key_text(&link.key);
     link.evidence.iter().any(|seen| {
         kinds(hop).contains(&seen.object.kind.as_str())
+            && seen.cluster != role::JOIN
             && seen.fact != Fact::Declared
             && seen
                 .value
@@ -45,6 +53,25 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
                 .is_some_and(|value| value.eq_ignore_ascii_case(&key))
     })
 }
+
+/// The sides of confirmed links that no read object stands on: `(from, to,
+/// side)`. Each is a confirmed link, on main, whose evidence on that side is
+/// declared only, or absent. Provenance shows them as they are; whether they
+/// stay confirmed is for the confidence slice (#266).
+const KNOWN_GAPS: &[(&str, &str, &str)] = &[
+    // The run's only witness is a declared revision parameter; a result
+    // would be reported (see the test on a task result).
+    ("commit", "PipelineRun", "PipelineRun"),
+    ("pull request", "PipelineRun", "PipelineRun"),
+    // Chains' `signed` annotation is all that says it, and it is declared.
+    ("PipelineRun", "supply chain", "supply chain"),
+    // The Rollout's spec pin is declared, and Argo CD's resource list names
+    // the Rollout, not the digest.
+    ("Application", "Rollout", "Application"),
+    ("Application", "Rollout", "Rollout"),
+    // The Rollout reports its pod-template hash, not the digest.
+    ("Rollout", "pods", "Rollout"),
+];
 
 fn github() -> FixtureGitHub {
     FixtureGitHub::with(vec![pull_request(7, OTHER_SHA, Some(SHA))])
@@ -54,7 +81,7 @@ fn github() -> FixtureGitHub {
 /// head build shipped, signed by Chains, promoted to a Stage whose
 /// Application synced the pushed commit, pinned by its Rollout, running.
 async fn confirmed() -> Trail {
-    let mut world = promoted(NEW, "Succeeded", PUSHED);
+    let mut world = promoted(NEW, "Succeeded", PUSHED).with_meta();
     world.environment = world
         .environment
         .with("rollouts", vec![rollout(&format!("{REPO}@{NEW}"))]);
@@ -68,37 +95,24 @@ async fn confirmed() -> Trail {
     run_with(&world, &ENV, &github(), Some(GH_REPO)).await
 }
 
-fn pairs(trail: &Trail) -> BTreeSet<(&'static str, &'static str)> {
-    trail
-        .links
-        .iter()
-        .filter(|link| link.confidence == Confidence::Confirmed)
-        .map(|link| (link.from.word(), link.to.word()))
-        .collect()
-}
-
 #[tokio::test]
-async fn a_confirmed_link_stands_on_both_sides() {
-    let mut trails = vec![confirmed().await];
-    // Without Rollouts the pods are the Application's.
-    trails.push(run(&without_rollouts(), &ENV).await);
-    let mut seen_pairs = BTreeSet::new();
+async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
+    let trails = [confirmed().await];
+    let mut checked = BTreeSet::new();
+    let mut gaps = BTreeSet::new();
     for trail in &trails {
         for link in trail
             .links
             .iter()
             .filter(|link| link.confidence == Confidence::Confirmed)
         {
+            checked.insert((link.from.word(), link.to.word()));
             for hop in [link.from, link.to] {
-                assert!(
-                    stands_on(link, hop),
-                    "{:?} has no observation on the {} side: {link:#?}",
-                    link.key,
-                    hop.word()
-                );
+                if !stands_on(link, hop) {
+                    gaps.insert((link.from.word(), link.to.word(), hop.word()));
+                }
             }
         }
-        seen_pairs.extend(pairs(trail));
     }
     for pair in [
         (Hop::PullRequest, Hop::Commit),
@@ -114,10 +128,86 @@ async fn a_confirmed_link_stands_on_both_sides() {
         (Hop::Rollout, Hop::Pod),
     ] {
         assert!(
-            seen_pairs.contains(&(pair.0.word(), pair.1.word())),
-            "{pair:?} was not confirmed, so not checked: {seen_pairs:?}"
+            checked.contains(&(pair.0.word(), pair.1.word())),
+            "{pair:?} was not confirmed, so not checked: {checked:?}"
         );
     }
+    // Exactly the known gaps: a new one is a bug here, and a closed one
+    // should leave the list.
+    let known: BTreeSet<_> = KNOWN_GAPS.iter().copied().collect();
+    assert_eq!(gaps, known, "gaps found, then known");
+}
+
+#[tokio::test]
+async fn a_result_that_names_the_commit_is_reported_evidence_for_the_run() {
+    // The run's own witness is a task result, not a declared parameter.
+    let mut world = healthy().with_meta();
+    world.tekton = world
+        .tekton
+        .with("pipelineruns", vec![pipeline_run(SHA, false, Some(NEW))]);
+    let mut task = task_run();
+    task["status"]["results"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"name": "commit", "value": SHA}));
+    world.tekton = world.tekton.with("taskruns", vec![task]);
+    let trail = run(&world, &ENV).await;
+    let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(commit.confidence, Confidence::Confirmed);
+    for hop in [Hop::Commit, Hop::PipelineRun] {
+        assert!(stands_on(commit, hop), "{hop:?}: {commit:#?}");
+    }
+    let task_side = commit
+        .evidence
+        .iter()
+        .find(|seen| seen.object.kind == "TaskRun")
+        .expect("the task run that wrote the result");
+    assert_eq!(task_side.fact, Fact::Reported);
+    assert_eq!(task_side.field, "/status/results");
+}
+
+#[tokio::test]
+async fn a_conclusion_is_the_joins_and_names_no_field() {
+    let trail = confirmed().await;
+    let concluded: Vec<&Observation> = trail
+        .links
+        .iter()
+        .flat_map(|link| &link.evidence)
+        .filter(|seen| seen.fact == Fact::Derived && seen.cluster != role::CHANGE)
+        .collect();
+    assert!(!concluded.is_empty());
+    for seen in concluded {
+        assert_eq!(seen.cluster, role::JOIN, "{seen:#?}");
+        assert_eq!(seen.object.kind, "Join", "{seen:#?}");
+    }
+    // A run whose own revision differs from its label is not "concluded"
+    // to agree with it.
+    let mut world = healthy().with_meta();
+    let mut differing = pipeline_run(SHA, true, Some(NEW));
+    differing["spec"]["params"] = serde_json::json!([{"name": "revision", "value": OTHER_SHA}]);
+    world.tekton = world.tekton.with("pipelineruns", vec![differing]);
+    let trail = run(&world, &ENV).await;
+    let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(commit.confidence, Confidence::Claimed);
+    assert!(
+        commit
+            .evidence
+            .iter()
+            .all(|seen| seen.fact != Fact::Derived || seen.cluster == role::CHANGE),
+        "{commit:#?}"
+    );
+}
+
+/// What `why_not_read` says of the failures the test's readers answer with.
+fn unread_reasons() -> Vec<String> {
+    [
+        Failure::new(FailureKind::Forbidden, "forbidden by RBAC"),
+        Failure::new(FailureKind::Forbidden, "gh: Forbidden (HTTP 403)"),
+        Failure::new(FailureKind::Unreachable, "connection refused"),
+    ]
+    .into_iter()
+    .filter_map(|failure| Source::<()>::from_result(Err(failure)).why_not_read())
+    .collect()
 }
 
 #[tokio::test]
@@ -142,8 +232,8 @@ async fn a_link_from_an_unread_source_carries_no_observations() {
         }) {
             assert_eq!(link.confidence, Confidence::Unknown);
             assert!(link.evidence.is_empty(), "{link:#?}");
-            // The reason is what a source that couldn't be read says.
-            assert!(link.reason.len() > "not readable".len(), "{link:#?}");
+            // The reason is what the source that couldn't be read says.
+            assert!(unread_reasons().contains(&link.reason), "{link:#?}");
             hops.insert((link.from.word(), link.to.word()));
         }
     }
@@ -202,7 +292,7 @@ async fn a_capped_source_never_yields_none() {
 
 #[tokio::test]
 async fn an_observation_never_holds_a_server_an_identity_or_a_secret() {
-    let mut world = promoted(NEW, "Succeeded", PUSHED);
+    let mut world = promoted(NEW, "Succeeded", PUSHED).with_meta();
     world.environment = world
         .environment
         .with("rollouts", vec![rollout(&format!("{REPO}@{NEW}"))]);

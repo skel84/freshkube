@@ -1,13 +1,19 @@
 //! The observations behind each link: what was read, from which object, to
-//! say what the link says. A link between two hops stands on two sides, and
-//! a confirmed link has, on each side, an observation that is not merely
-//! declared and carries the key both sides share.
+//! say what the link says. Each observation is of something read, with the
+//! field it was read from. A conclusion of the join's own is a [`concluded`]
+//! observation attributed to the join, never to a field it didn't read.
+//!
+//! A link between two hops stands on two sides. Where a side's only
+//! evidence is declared (a label, a spec field), the link shows just that;
+//! nothing here makes up an observation to fill the gap.
 
+use crate::delivery::argocd::{AUTHORIZED_STAGE, Application};
 use crate::delivery::digest::Digest;
 use crate::delivery::github::PullRequest;
 use crate::delivery::kargo::{Freight, Promotion, Stage};
-use crate::delivery::observation::{Fact, Meta, ObjectRef, Observation, pointer_segment, role};
+use crate::delivery::observation::{Meta, ObjectRef, Observation, pointer_segment, role};
 use crate::delivery::pods::RunningImage;
+use crate::delivery::rollouts::{ReplicaSet, Rollout};
 use crate::delivery::tekton::{
     Build, CHAINS_SIGNED, CommitNames, SHA_LABEL, WitnessSource, built_images,
 };
@@ -26,50 +32,32 @@ pub(super) fn key_value(key: &Key) -> Option<String> {
     }
 }
 
-/// The change itself, which no cluster holds: the caller named it.
-fn change_ref(sha: &str) -> ObjectRef {
-    ObjectRef::new("", "Commit", None, sha, &Meta::default())
-}
-
-/// The commit side of a link: the join's input, derived from nothing read.
+/// The commit side of a link: the change itself, which no cluster holds and
+/// the caller named.
 pub(super) fn change(sha: &str) -> Observation {
-    Observation::derived(role::CHANGE, change_ref(sha), "/sha", Some(sha))
+    Observation::derived(
+        role::CHANGE,
+        ObjectRef::new("", "Commit", None, sha, &Meta::default()),
+        "/sha",
+        Some(sha),
+    )
 }
 
-/// An image, known by its digest alone: its repository names a registry.
-fn image_ref(digest: &Digest) -> ObjectRef {
-    ObjectRef::new("", "Image", None, digest.as_str(), &Meta::default())
-}
-
-/// One side of a link: what was `seen`, and, when none of it, from an object
-/// of `object`'s API group, is more than declared and carries `key`, the join's own conclusion that this side
-/// holds `key`, at `field` of `object`. The pointer says where it was
-/// matched.
-pub(super) fn side(
-    mut seen: Vec<Observation>,
-    key: &str,
-    cluster: &str,
-    object: ObjectRef,
-    field: &str,
-) -> Vec<Observation> {
-    let proves = |seen: &Observation| {
-        seen.object.group == object.group
-            && seen.fact != Fact::Declared
-            && seen
-                .value
-                .as_deref()
-                .is_some_and(|value| value.eq_ignore_ascii_case(key))
-    };
-    if !seen.iter().any(proves) {
-        seen.push(Observation::derived(cluster, object, field, Some(key)));
-    }
-    seen
+/// What the join concluded from the observations beside it, named by the
+/// rule it applied (such as "label == witness"), with the key it found.
+pub(super) fn concluded(rule: &str, key: &str) -> Observation {
+    Observation::derived(
+        role::JOIN,
+        ObjectRef::new("", "Join", None, rule, &Meta::default()),
+        "/key",
+        Some(key),
+    )
 }
 
 // ---- GitHub ----------------------------------------------------------
 
-/// The pull request's side: what GitHub reports of its head commit, and of
-/// its merge commit when it has merged.
+/// What GitHub reports of the pull request's head commit, and of its merge
+/// commit once it has merged.
 pub(super) fn pull_request(pr: &PullRequest) -> Vec<Observation> {
     let mut seen = vec![Observation::reported(
         role::GITHUB,
@@ -86,17 +74,6 @@ pub(super) fn pull_request(pr: &PullRequest) -> Vec<Observation> {
         ));
     }
     seen
-}
-
-/// The pull request's side of a link on `key`.
-pub(super) fn pull_request_side(pr: &PullRequest, key: &str) -> Vec<Observation> {
-    side(
-        pull_request(pr),
-        key,
-        role::GITHUB,
-        pr.object_ref(),
-        "/head/sha",
-    )
 }
 
 // ---- builds ----------------------------------------------------------
@@ -119,33 +96,23 @@ pub(super) fn run_commit(build: &Build, names: &CommitNames) -> Vec<Observation>
         ));
     }
     if let Some(witness) = build.witness(names) {
+        let commit = Some(witness.commit.as_str());
         seen.push(match witness.source {
             WitnessSource::Param => {
-                Observation::declared(role::TEKTON, run, "/spec/params", Some(&witness.commit))
+                Observation::declared(role::TEKTON, run, "/spec/params", commit)
             }
             WitnessSource::RunResult => {
-                Observation::reported(role::TEKTON, run, "/status/results", Some(&witness.commit))
+                Observation::reported(role::TEKTON, run, "/status/results", commit)
             }
             WitnessSource::TaskResult(index) => Observation::reported(
                 role::TEKTON,
                 build.tasks[index].object_ref(),
                 "/status/results",
-                Some(&witness.commit),
+                commit,
             ),
         });
     }
     seen
-}
-
-/// The PipelineRun's side of a link on the commit `sha`.
-pub(super) fn run_commit_side(build: &Build, names: &CommitNames, sha: &str) -> Vec<Observation> {
-    side(
-        run_commit(build, names),
-        sha,
-        role::TEKTON,
-        build.run.object_ref(),
-        &sha_label_field(),
-    )
 }
 
 /// What the build's results say of an image it built: reported by the run,
@@ -156,12 +123,13 @@ pub(super) fn built_image(build: &Build, digest: &Digest) -> Option<Observation>
             .iter()
             .any(|image| &image.digest == digest)
     };
+    let value = Some(digest.as_str());
     if has(&build.run.results) {
         return Some(Observation::reported(
             role::TEKTON,
             build.run.object_ref(),
             "/status/results",
-            Some(digest.as_str()),
+            value,
         ));
     }
     build
@@ -169,17 +137,12 @@ pub(super) fn built_image(build: &Build, digest: &Digest) -> Option<Observation>
         .iter()
         .find(|task| has(&task.results))
         .map(|task| {
-            Observation::reported(
-                role::TEKTON,
-                task.object_ref(),
-                "/status/results",
-                Some(digest.as_str()),
-            )
+            Observation::reported(role::TEKTON, task.object_ref(), "/status/results", value)
         })
 }
 
-/// What Chains wrote on the run or the task it signed: declared, an
-/// annotation.
+/// What Chains wrote on the run or the task it signed: an annotation, so
+/// declared.
 pub(super) fn chains_signed(build: &Build) -> Option<Observation> {
     let field = format!("/metadata/annotations/{}", pointer_segment(CHAINS_SIGNED));
     if let Some(state) = &build.run.chains_state {
@@ -197,57 +160,31 @@ pub(super) fn chains_signed(build: &Build) -> Option<Observation> {
     })
 }
 
-/// The PipelineRun side of a link on `key`, from the builds that carry it.
-/// With no build (the commit joined a Freight alone) the side is the commit.
+/// The PipelineRun side of a link on `key`: what the builds that carry it
+/// report. Empty when none does (a commit that joined a Freight alone).
 pub(super) fn builds_side(builds: &[Build], names: &CommitNames, key: &Key) -> Vec<Observation> {
-    let Some(value) = key_value(key) else {
-        return Vec::new();
-    };
-    let mut seen = Vec::new();
     match key {
-        Key::Digest(digest) => {
-            seen.extend(builds.iter().filter_map(|build| built_image(build, digest)));
-        }
-        Key::Sha(sha) => {
-            for build in builds {
-                seen.extend(run_commit(build, names).into_iter().filter(|o| {
-                    o.value
-                        .as_deref()
-                        .is_some_and(|value| value.eq_ignore_ascii_case(sha))
-                }));
-            }
-        }
-        _ => {}
+        Key::Digest(digest) => builds
+            .iter()
+            .filter_map(|build| built_image(build, digest))
+            .collect(),
+        Key::Sha(sha) => builds
+            .iter()
+            .flat_map(|build| run_commit(build, names))
+            .filter(|seen| {
+                seen.value
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(sha))
+            })
+            .collect(),
+        _ => Vec::new(),
     }
-    match builds.first() {
-        Some(build) => side(
-            seen,
-            &value,
-            role::TEKTON,
-            build.run.object_ref(),
-            &sha_label_field(),
-        ),
-        None => side(seen, &value, role::CHANGE, change_ref(&value), "/sha"),
-    }
-}
-
-/// The supply-chain side: the image the build reported, and what Chains
-/// wrote of it.
-pub(super) fn supply_chain_side(build: &Build, digest: &Digest) -> Vec<Observation> {
-    let mut seen: Vec<Observation> = chains_signed(build).into_iter().collect();
-    seen.push(Observation::derived(
-        role::TEKTON,
-        image_ref(digest),
-        "/digest",
-        Some(digest.as_str()),
-    ));
-    seen
 }
 
 // ---- Kargo -----------------------------------------------------------
 
-/// The Freight side of a link on `key`: the digest of an image, or the
-/// commit, that the Freight holds. Kargo reports both.
+/// The Freight side of a link on `key`: the digest or the commit that the
+/// Freight holds, as Kargo wrote it.
 pub(super) fn freight_side(freight: &Freight, key: &Key) -> Vec<Observation> {
     let Some(value) = key_value(key) else {
         return Vec::new();
@@ -256,13 +193,12 @@ pub(super) fn freight_side(freight: &Freight, key: &Key) -> Vec<Observation> {
         Key::Digest(_) => "/images",
         _ => "/commits",
     };
-    let seen = vec![Observation::reported(
+    vec![Observation::reported(
         role::KARGO,
         freight.object_ref(),
         field,
         Some(&value),
-    )];
-    side(seen, &value, role::KARGO, freight.object_ref(), field)
+    )]
 }
 
 /// What a Promotion's status records of the Freight's image.
@@ -270,19 +206,25 @@ pub(super) fn promotion_digest(promotion: &Promotion, digest: &Digest) -> Vec<Ob
     vec![Observation::reported(
         role::KARGO,
         promotion.object_ref(),
-        "/status",
+        promotion.digests_at,
         Some(digest.as_str()),
     )]
 }
 
-/// The Promotion's own naming of the Freight: declared in its spec.
+/// The Promotion's naming of the Freight: declared in its spec, else
+/// reported in its status.
 pub(super) fn promotion_names(promotion: &Promotion) -> Vec<Observation> {
-    vec![Observation::declared(
-        role::KARGO,
-        promotion.object_ref(),
-        "/spec/freight",
-        promotion.freight.as_deref(),
-    )]
+    let name = promotion.freight.as_deref();
+    vec![if promotion.freight_declared {
+        Observation::declared(role::KARGO, promotion.object_ref(), "/spec/freight", name)
+    } else {
+        Observation::reported(
+            role::KARGO,
+            promotion.object_ref(),
+            "/status/freight/name",
+            name,
+        )
+    }]
 }
 
 /// What a Stage's status records of its current Freight's image.
@@ -290,12 +232,12 @@ pub(super) fn stage_digest(stage: &Stage, digest: &Digest) -> Vec<Observation> {
     vec![Observation::reported(
         role::KARGO,
         stage.object_ref(),
-        "/status",
+        stage.digests_at,
         Some(digest.as_str()),
     )]
 }
 
-/// The Stage's own naming of a Freight as current: reported in its status.
+/// The Stage's naming of a Freight as current: reported in its status.
 pub(super) fn stage_names(stage: &Stage, freight: &str) -> Vec<Observation> {
     vec![Observation::reported(
         role::KARGO,
@@ -305,12 +247,33 @@ pub(super) fn stage_names(stage: &Stage, freight: &str) -> Vec<Observation> {
     )]
 }
 
-/// The Stage side of the Promotion-to-Application link: the commit a
-/// succeeded Promotion to the Stage pushed, as its status records it, and
-/// the join's reading of it as the Stage's.
-pub(super) fn stage_pushed(
-    stage: &Stage,
+// ---- Argo CD and the environment ------------------------------------
+
+/// The Application's claim to a Stage: declared, an annotation or a name.
+pub(super) fn application_claim(app: &Application, stage: &Stage, annotated: bool) -> Observation {
+    if annotated {
+        let field = format!(
+            "/metadata/annotations/{}",
+            pointer_segment(AUTHORIZED_STAGE)
+        );
+        let claim = format!("{}:{}", stage.project, stage.name);
+        Observation::declared(role::ARGOCD, app.object_ref(), &field, Some(&claim))
+    } else {
+        Observation::declared(
+            role::ARGOCD,
+            app.object_ref(),
+            "/metadata/name",
+            Some(&app.name),
+        )
+    }
+}
+
+/// The Stage-to-Application link on a pushed commit: the Promotions that
+/// recorded the push, the revision Argo CD reports it synced, and the join's
+/// match of the two.
+pub(super) fn pushed_and_synced(
     promotions: &[&Promotion],
+    app: &Application,
     commit: &str,
 ) -> Vec<Observation> {
     let mut seen: Vec<Observation> = promotions
@@ -330,53 +293,116 @@ pub(super) fn stage_pushed(
             )
         })
         .collect();
-    seen.extend(side(
-        Vec::new(),
-        commit,
-        role::KARGO,
-        stage.object_ref(),
-        "/status",
-    ));
+    seen.extend(application_synced(app, commit));
+    seen.push(concluded("pushed commit == synced revision", commit));
     seen
 }
 
-// ---- Argo CD and the environment ------------------------------------
+/// A revision Argo CD reports the Application synced, if it holds `commit`.
+pub(super) fn application_synced(app: &Application, commit: &str) -> Option<Observation> {
+    let at = app
+        .sync_revisions
+        .iter()
+        .position(|revision| revision.eq_ignore_ascii_case(commit))?;
+    Some(Observation::reported(
+        role::ARGOCD,
+        app.object_ref(),
+        app.sync_revisions_at[at],
+        Some(commit),
+    ))
+}
 
-/// The Application's claim to a Stage: declared, an annotation or a name.
-pub(super) fn application_claim(
-    app: &crate::delivery::argocd::Application,
-    stage: &Stage,
-    annotated: bool,
-) -> Observation {
-    if annotated {
-        Observation::declared(
-            role::ARGOCD,
-            app.object_ref(),
-            &format!(
-                "/metadata/annotations/{}",
-                pointer_segment(crate::delivery::argocd::AUTHORIZED_STAGE)
-            ),
-            Some(&format!("{}:{}", stage.project, stage.name)),
-        )
-    } else {
-        Observation::declared(
-            role::ARGOCD,
-            app.object_ref(),
-            "/metadata/name",
-            Some(&app.name),
-        )
+/// The Application's first synced revision, whatever it is.
+pub(super) fn application_revision(app: &Application) -> Option<Observation> {
+    Some(Observation::reported(
+        role::ARGOCD,
+        app.object_ref(),
+        app.sync_revisions_at.first()?,
+        app.sync_revisions.first().map(String::as_str),
+    ))
+}
+
+/// The Application's side of a link to a Rollout it manages: Argo CD lists
+/// it among the Application's resources.
+pub(super) fn manages(app: &Application, rollout: &Rollout) -> Observation {
+    Observation::reported(
+        role::ARGOCD,
+        app.object_ref(),
+        "/status/resources",
+        Some(&format!("Rollout/{}", rollout.name)),
+    )
+}
+
+/// What the Rollout reports of itself, and its spec's pin of `digest` when
+/// the join found one.
+pub(super) fn rollout_state(rollout: &Rollout, pinned: Option<&Digest>) -> Vec<Observation> {
+    let mut seen = vec![Observation::reported(
+        role::ENVIRONMENT,
+        rollout.object_ref(),
+        "/status/phase",
+        rollout.phase.as_deref(),
+    )];
+    if let Some(digest) = pinned {
+        seen.push(Observation::declared(
+            role::ENVIRONMENT,
+            rollout.object_ref(),
+            "/spec/template/spec/containers",
+            Some(digest.as_str()),
+        ));
+        seen.push(concluded(
+            "Rollout spec pins the Freight's digest",
+            digest.as_str(),
+        ));
     }
+    seen
 }
 
-/// The revision Argo CD reports it synced.
-pub(super) fn application_synced(
-    app: &crate::delivery::argocd::Application,
-    commit: &str,
-) -> Observation {
-    Observation::reported(role::ARGOCD, app.object_ref(), "/status/sync", Some(commit))
+/// What ties a Rollout to the pods read for it: the pod-template hash it
+/// reports as current, and the ReplicaSets whose template pins the digest.
+pub(super) fn rollout_pods(
+    rollout: &Rollout,
+    pinned: &[(&ReplicaSet, Digest)],
+) -> Vec<Observation> {
+    let mut seen: Vec<Observation> = rollout
+        .current_pod_hash
+        .as_deref()
+        .map(|hash| {
+            Observation::reported(
+                role::ENVIRONMENT,
+                rollout.object_ref(),
+                "/status/currentPodHash",
+                Some(hash),
+            )
+        })
+        .into_iter()
+        .collect();
+    seen.extend(pinned.iter().map(|(set, digest)| {
+        Observation::declared(
+            role::ENVIRONMENT,
+            set.object_ref(),
+            "/spec/template/spec/containers",
+            Some(digest.as_str()),
+        )
+    }));
+    seen
 }
 
-/// The pods' side of a link: the containers that run `digest`, as the pods
+/// What Argo CD's image summary lists of `digests`.
+pub(super) fn summary_images(app: &Application, digests: &[Digest]) -> Vec<Observation> {
+    digests
+        .iter()
+        .map(|digest| {
+            Observation::reported(
+                role::ARGOCD,
+                app.object_ref(),
+                "/status/summary/images",
+                Some(digest.as_str()),
+            )
+        })
+        .collect()
+}
+
+/// The pods' side of a link: the containers that run a digest, as the pods
 /// report it, the first few of them.
 pub(super) fn pods_running(pods: &[(&RunningImage, &Digest)]) -> Vec<Observation> {
     pods.iter()

@@ -4,7 +4,7 @@ use crate::delivery::argocd::{
 use crate::delivery::kargo::{Freight, Promotion, Stage};
 use crate::delivery::source::cap_note;
 
-use super::observe::{application_claim, application_synced, stage_pushed};
+use super::observe::{application_claim, application_revision, pushed_and_synced};
 use super::workload::rollout_links;
 use super::*;
 
@@ -142,15 +142,10 @@ fn stage_application_proof(
                     .first()
                     .map_or("unknown".to_owned(), |r| short_commit(r))
             ),
-            app.sync_revisions
-                .first()
-                .map(|revision| application_synced(app, revision))
-                .into_iter()
-                .collect(),
+            application_revision(app).into_iter().collect(),
         );
     };
-    let mut seen = stage_pushed(stage, &promotions, commit);
-    seen.push(application_synced(app, commit));
+    let seen = pushed_and_synced(&promotions, app, commit);
     let shared = apps.iter().any(|other| {
         (other.namespace != app.namespace || other.name != app.name)
             && at(other, commit)

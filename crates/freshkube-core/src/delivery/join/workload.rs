@@ -1,23 +1,17 @@
 use crate::delivery::argocd::Application;
 use crate::delivery::digest::{Digest, repository};
 use crate::delivery::kargo::Freight;
-use crate::delivery::observation::{ObjectRef, Observation, role};
+use crate::delivery::observation::Observation;
 use crate::delivery::pods::RunningImage;
-use crate::delivery::rollouts::{AnalysisRun, Rollout};
+use crate::delivery::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
-use super::observe::{pods_running, pods_running_other, side};
+use super::observe::{
+    manages, pods_running, pods_running_other, rollout_pods, rollout_state as rollout_seen,
+    summary_images,
+};
 use super::*;
-
-/// The hop a pod link starts from, as the evidence for the link's first side
-/// reads: what was seen of it, and where the join would match the digest.
-struct Origin {
-    cluster: &'static str,
-    object: ObjectRef,
-    field: &'static str,
-    seen: Vec<Observation>,
-}
 
 pub(super) fn rollout_links(
     evidence: &Evidence,
@@ -92,52 +86,18 @@ pub(super) fn rollout_links(
                     .any(|image| image.digest.as_ref() == Some(digest))
             });
         let state = rollout_state(rollout, evidence.analysis_runs.read());
-        let managed = Observation::reported(
-            role::ARGOCD,
-            app.object_ref(),
-            "/status/resources",
-            Some(&format!("Rollout/{}", rollout.name)),
-        );
-        let phase = Observation::reported(
-            role::ENVIRONMENT,
-            rollout.object_ref(),
-            "/status/phase",
-            rollout.phase.as_deref(),
-        );
+        let mut seen = vec![manages(app, rollout)];
+        seen.extend(rollout_seen(rollout, pinned.as_ref()));
         links.push(match pinned {
-            Some(digest) => {
-                let value = digest.to_string();
-                let field = "/spec/template/spec/containers";
-                let mut seen = side(
-                    vec![managed],
-                    &value,
-                    role::ARGOCD,
-                    app.object_ref(),
-                    "/status/resources",
-                );
-                seen.push(phase);
-                seen.extend(side(
-                    vec![Observation::declared(
-                        role::ENVIRONMENT,
-                        rollout.object_ref(),
-                        field,
-                        Some(&value),
-                    )],
-                    &value,
-                    role::ENVIRONMENT,
-                    rollout.object_ref(),
-                    field,
-                ));
-                Link::new(
-                    Hop::Application,
-                    Hop::Rollout,
-                    rollout_id.clone(),
-                    Key::Digest(digest),
-                    Confidence::Confirmed,
-                    format!("the Rollout's spec pins the Freight's digest; {state}"),
-                )
-                .observed(seen)
-            }
+            Some(digest) => Link::new(
+                Hop::Application,
+                Hop::Rollout,
+                rollout_id.clone(),
+                Key::Digest(digest),
+                Confidence::Confirmed,
+                format!("the Rollout's spec pins the Freight's digest; {state}"),
+            )
+            .observed(seen),
             None => Link::new(
                 Hop::Application,
                 Hop::Rollout,
@@ -146,7 +106,7 @@ pub(super) fn rollout_links(
                 Confidence::Claimed,
                 format!("managed by the Application; its spec does not pin the digest; {state}"),
             )
-            .observed(vec![managed, phase]),
+            .observed(seen),
         });
         links.push(pod_link(evidence, freight, rollout, &rollout_id));
     }
@@ -210,22 +170,55 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
             );
         }
     };
-    let origin = Origin {
-        cluster: role::ENVIRONMENT,
-        object: rollout.object_ref(),
-        field: "/spec/template/spec/containers",
-        seen: Vec::new(),
-    };
+    let from = rollout_pods(rollout, &pinned_sets(evidence, rollout, freight, read));
     let mut link = judge_pods(
         Hop::Rollout,
         subject,
         pods,
         read.and_then(|read| read.pods.capped()),
         freight,
-        origin,
+        from,
     );
     link.reason = format!("{}; {which}", link.reason);
     link
+}
+
+/// The ReplicaSets of the pods read whose template pins one of the Freight's
+/// digests, with the digest.
+fn pinned_sets<'a>(
+    evidence: &'a Evidence,
+    rollout: &Rollout,
+    freight: &Freight,
+    read: Option<&RolloutPods>,
+) -> Vec<(&'a ReplicaSet, Digest)> {
+    let (
+        Some(RolloutPods {
+            set: PodSet::Pinned(sets),
+            ..
+        }),
+        Some(all),
+    ) = (read, evidence.replica_sets.read())
+    else {
+        return Vec::new();
+    };
+    sets.iter()
+        .filter_map(|(name, _)| {
+            let set = all
+                .iter()
+                .find(|set| set.namespace == rollout.namespace && &set.name == name)?;
+            let digest = set
+                .images
+                .iter()
+                .filter_map(|image| Digest::from_reference(image))
+                .find(|digest| {
+                    freight
+                        .images
+                        .iter()
+                        .any(|image| image.digest.as_ref() == Some(digest))
+                })?;
+            Some((set, digest))
+        })
+        .collect()
 }
 
 /// Which pods were judged, and which of the Rollout's other ReplicaSets with
@@ -311,33 +304,21 @@ fn workload_pod_link(
             } else {
                 "Argo CD's image summary does not list the Freight's digest"
             };
-            // What Argo CD's summary lists of the Freight's images.
-            let listed: Vec<Observation> = app
+            // What Argo CD's summary lists of the Freight's images: nothing
+            // when it doesn't list the digest.
+            let listed: Vec<Digest> = app
                 .digests()
-                .iter()
+                .into_iter()
                 .filter(|d| freight.images.iter().any(|i| i.digest.as_ref() == Some(d)))
-                .map(|digest| {
-                    Observation::reported(
-                        role::ARGOCD,
-                        app.object_ref(),
-                        "/status/summary/images",
-                        Some(digest.as_str()),
-                    )
-                })
                 .collect();
-            let origin = Origin {
-                cluster: role::ARGOCD,
-                object: app.object_ref(),
-                field: "/status/summary/images",
-                seen: listed,
-            };
+            let from = summary_images(app, &listed);
             let mut link = judge_pods(
                 Hop::Application,
                 app_id.to_owned(),
                 pods,
                 source.capped(),
                 freight,
-                origin,
+                from,
             );
             link.reason = format!("{summary}; {}", link.reason);
             link
@@ -356,7 +337,7 @@ fn judge_pods(
     pods: &[RunningImage],
     capped: Option<Truncation>,
     freight: &Freight,
-    origin: Origin,
+    from_side: Vec<Observation>,
 ) -> Link {
     let wanted: Vec<&Digest> = freight
         .images
@@ -394,13 +375,7 @@ fn judge_pods(
                 other.len()
             )
         };
-        let mut seen = side(
-            origin.seen,
-            digest.as_str(),
-            origin.cluster,
-            origin.object,
-            origin.field,
-        );
+        let mut seen = from_side;
         seen.extend(pods_running(&matching));
         Link::new(
             from,

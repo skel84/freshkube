@@ -5,8 +5,7 @@ use crate::delivery::source::{Source, cap_note};
 use crate::delivery::tekton::{Build, CommitNames, EvidenceResult};
 
 use super::observe::{
-    built_image, change, freight_side, pull_request, pull_request_side, run_commit_side, side,
-    supply_chain_side,
+    built_image, chains_signed, change, concluded, freight_side, pull_request, run_commit,
 };
 use super::*;
 
@@ -63,11 +62,7 @@ pub(super) fn pull_request_links(
                 "only by ancestry, as GitHub lists it; neither its head nor its merge commit",
             )
         };
-        let by_pr = if merge_is || head_is {
-            pull_request_side(pr, sha)
-        } else {
-            pull_request(pr)
-        };
+        let by_pr = pull_request(pr);
         let mut on_commit = by_pr.clone();
         on_commit.push(change(sha));
         links.push(
@@ -174,7 +169,7 @@ fn head_build_links(
                     .join(", ")
             )
         };
-        let mut evidence = pull_request_side(pr, head);
+        let mut evidence = pull_request(pr);
         evidence.extend(without_change(run.evidence));
         links.push(
             Link::new(
@@ -196,15 +191,14 @@ fn head_build_links(
                 .filter_map(|image| image.digest.as_ref())
                 .find(|digest| digests.contains(digest))
             {
-                // The pull request's side is the join's own reading of its
-                // head commit as the one that built the image.
-                let mut evidence = side(
-                    built_image(build, digest).into_iter().collect(),
+                // The pull request's head commit built the image: GitHub
+                // reports the head, the build reports the digest.
+                let mut evidence = pull_request(pr);
+                evidence.extend(built_image(build, digest));
+                evidence.push(concluded(
+                    "the head build's digest == the Freight's",
                     digest.as_str(),
-                    crate::delivery::observation::role::GITHUB,
-                    pr.object_ref(),
-                    "/head/sha",
-                );
+                ));
                 evidence.extend(freight_side(item, &Key::Digest(digest.clone())));
                 links.push(
                     Link::new(
@@ -234,16 +228,19 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
         None => outcome,
     };
     let mut evidence = vec![change(sha)];
-    evidence.extend(run_commit_side(build, names, sha));
+    evidence.extend(run_commit(build, names));
     let link = match build.witnessed_commit(names) {
-        Some(witness) if witness.eq_ignore_ascii_case(sha) => Link::new(
-            Hop::Commit,
-            Hop::PipelineRun,
-            subject,
-            Key::Sha(sha.to_owned()),
-            Confidence::Confirmed,
-            format!("PaC label and the run's own revision agree; {outcome}"),
-        ),
+        Some(witness) if witness.eq_ignore_ascii_case(sha) => {
+            evidence.push(concluded("PaC label == the run's own revision", sha));
+            Link::new(
+                Hop::Commit,
+                Hop::PipelineRun,
+                subject,
+                Key::Sha(sha.to_owned()),
+                Confidence::Confirmed,
+                format!("PaC label and the run's own revision agree; {outcome}"),
+            )
+        }
         Some(_) => Link::new(
             Hop::Commit,
             Hop::PipelineRun,
@@ -340,9 +337,11 @@ pub(super) fn supply_chain_links(
                 ),
                 None => (Confidence::Unknown, "no Chains annotation".to_owned()),
             };
+            // The build reports the digest; Chains' annotation, declared, is
+            // all that says it signed it.
             let mut evidence: Vec<Observation> =
                 built_image(build, &image.digest).into_iter().collect();
-            evidence.extend(supply_chain_side(build, &image.digest));
+            evidence.extend(chains_signed(build));
             Link::new(
                 Hop::PipelineRun,
                 Hop::SupplyChain,

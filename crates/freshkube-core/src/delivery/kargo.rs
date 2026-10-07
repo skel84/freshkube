@@ -67,6 +67,8 @@ pub struct Stage {
     /// Digests of the images in that Freight, as the Stage's own record holds
     /// them (`freightHistory` items, `currentFreight`, `lastPromotion`).
     pub current_digests: Vec<Digest>,
+    /// The pointer `current_digests` were read from.
+    pub digests_at: &'static str,
     pub last_promotion: Option<String>,
     pub health: Option<String>,
     /// Why the Stage is not healthy, as Kargo's health checks say.
@@ -89,6 +91,11 @@ pub struct Promotion {
     pub creator: Creator,
     /// Digests of the Freight's images, as the Promotion's status records.
     pub freight_digests: Vec<Digest>,
+    /// The pointer `freight_digests` were read from.
+    pub digests_at: &'static str,
+    /// Whether `freight` is `spec.freight`, a declaration; else it is
+    /// `status.freight.name`, which Kargo reports.
+    pub freight_declared: bool,
     /// Commits its steps pushed (a step's `commit` output).
     pub pushed_commits: Vec<String>,
     /// Commits its steps checked out (a step's `commits` map), the source.
@@ -218,6 +225,7 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
 pub fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut digests: Vec<Digest> = Vec::new();
+    let mut digests_at = "/status/freightHistory/0/items";
     // Newer Kargo: the newest entry of `freightHistory` holds a map of
     // origin -> freight.
     if let Some(items) = value
@@ -237,9 +245,18 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         {
             current.push(name);
         }
+        digests_at = "/status/currentFreight/images";
         for freight in ["/status/currentFreight", "/status/lastPromotion/freight"] {
             if let Some(freight) = value.pointer(freight) {
-                digests.extend(image_digests(freight));
+                let found = image_digests(freight);
+                if digests.is_empty() && !found.is_empty() {
+                    digests_at = if freight == "/status/currentFreight" {
+                        "/status/currentFreight/images"
+                    } else {
+                        "/status/lastPromotion/freight/images"
+                    };
+                }
+                digests.extend(found);
             }
         }
     }
@@ -253,6 +270,7 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
             .collect(),
         current_freight: current,
         current_digests: digests,
+        digests_at,
         last_promotion: text(value, "/status/lastPromotion/name"),
         health: text(value, "/status/health/status"),
         health_issues: array(value, "/status/health/issues")
@@ -303,6 +321,11 @@ pub fn parse_promotion(value: &Value) -> Option<Promotion> {
         .pointer("/status/freight")
         .map(image_digests)
         .unwrap_or_default();
+    let digests_at = if freight_digests.is_empty() {
+        "/status/freightCollection/items"
+    } else {
+        "/status/freight/images"
+    };
     for collected in value
         .pointer("/status/freightCollection/items")
         .and_then(Value::as_object)
@@ -316,6 +339,8 @@ pub fn parse_promotion(value: &Value) -> Option<Promotion> {
         pushed_commits,
         source_commits,
         freight_digests,
+        digests_at,
+        freight_declared: text(value, "/spec/freight").is_some(),
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
         meta: Meta::parse(value),

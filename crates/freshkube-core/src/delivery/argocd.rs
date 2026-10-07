@@ -263,6 +263,8 @@ pub struct Application {
     /// entry's revisions are read; to compare with those, use
     /// `compared_revisions`.
     pub sync_revisions: Vec<String>,
+    /// The pointer each of `sync_revisions` was read from.
+    pub sync_revisions_at: Vec<&'static str>,
     pub health: Option<String>,
     /// `<project>:<stage>` from the Kargo annotation, a claim.
     pub authorized_stage: Option<(String, String)>,
@@ -288,20 +290,21 @@ pub struct Application {
 }
 
 pub fn parse_application(value: &Value) -> Option<Application> {
-    let mut revisions: Vec<String> = Vec::new();
+    let mut found: Vec<(String, &'static str)> = Vec::new();
     if let Some(revision) = text(value, "/status/sync/revision") {
-        revisions.push(revision);
+        found.push((revision, "/status/sync/revision"));
     }
-    revisions.extend(
+    found.extend(
         value
             .pointer("/status/sync/revisions")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-            .map(str::to_owned),
+            .map(|revision| (revision.to_owned(), "/status/sync/revisions")),
     );
-    revisions.dedup();
+    found.dedup_by(|a, b| a.0 == b.0);
+    let (revisions, revisions_at): (Vec<String>, Vec<&'static str>) = found.into_iter().unzip();
     let metadata_annotations = strings(value, "/metadata/annotations");
     let authorized_stage = metadata_annotations
         .get(AUTHORIZED_STAGE)
@@ -317,6 +320,7 @@ pub fn parse_application(value: &Value) -> Option<Application> {
         destination_namespace: text(value, "/spec/destination/namespace"),
         sync: text(value, "/status/sync/status"),
         sync_revisions: revisions,
+        sync_revisions_at: revisions_at,
         health: text(value, "/status/health/status"),
         authorized_stage,
         metadata_annotations,
