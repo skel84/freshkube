@@ -410,12 +410,6 @@ pub(crate) fn forget_kubernetes(client: &TalosClient, context: &str) {
     lock(&PREPARED).remove_where(|key| key.access.session == session && key.context == context);
 }
 
-pub(crate) fn forget_all_kubernetes() {
-    lock(&KUBERNETES_CLIENTS).remove_where(|_| true);
-    lock(&PREPARED).remove_where(|_| true);
-    lock(&NODE_CLIENTS).remove_where(|_| true);
-}
-
 pub(crate) fn node_client(client: &TalosClient, node: &str) -> Option<Client> {
     lock(&NODE_CLIENTS).get(&(client.connection_id(), node.to_owned()), Instant::now())
 }
