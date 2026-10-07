@@ -739,6 +739,23 @@ iV6NtZU=\n-----END CERTIFICATE-----\n";
     }
 
     #[test]
+    fn named_foreign_context_is_refused_and_the_matching_current_one_is_not_tried() {
+        let directory = TemporaryDirectory::new();
+        let mut selected = config("alpha", CERTIFICATE);
+        let foreign = config("beta", &changed_certificate());
+        selected.contexts.extend(foreign.contexts);
+        selected.clusters.extend(foreign.clusters);
+        let path = directory.save("config", &selected);
+        let prepared = prepare_file(path, Some("beta"), Some(config("pinned", CERTIFICATE)));
+        assert!(!prepared.selected_file);
+        assert_eq!(prepared.options.context, None);
+        let warning = prepared.warning.unwrap();
+        assert!(warning.contains("context: beta"));
+        assert!(warning.contains("different cluster"));
+        assert!(!warning.contains("alpha"));
+    }
+
+    #[test]
     fn named_context_works_without_current_context_and_inspection_does_not_reject() {
         let directory = TemporaryDirectory::new();
         let mut selected = config("chosen", CERTIFICATE);

@@ -144,7 +144,7 @@ impl Pilot {
                 if view.kubernetes_only.is_some() {
                     view.use_kubeconfig_file(path, window, cx)
                 } else {
-                    view.inspect_kubeconfig_file(path, window, cx)
+                    view.inspect_kubeconfig_file(path, None, window, cx)
                 }
             });
         })
@@ -152,10 +152,13 @@ impl Pilot {
     }
 
     /// Lists the file's contexts on a worker. No credentials are loaded and
-    /// no auth plugin runs until the selection is used.
+    /// no auth plugin runs until the selection is used. With `context`, that
+    /// one is applied once listed, or the draft says the file lacks it; the
+    /// file's current context is never used in its place.
     pub(super) fn inspect_kubeconfig_file(
         &mut self,
         path: PathBuf,
+        context: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -181,7 +184,15 @@ impl Pilot {
                 draft.job = None;
                 draft.inspecting = false;
                 draft.inspection = Some(result);
-                if let Some(selection) = view.kubeconfig_file_selection(None) {
+                if let Some(wanted) = &context
+                    && let Some(Ok(info)) = &draft.inspection
+                    && !info.contexts.contains(wanted)
+                {
+                    draft.inspection = Some(Err(format!(
+                        "The context '{wanted}' isn't in this kubeconfig, so it wasn't used"
+                    )));
+                }
+                if let Some(selection) = view.kubeconfig_file_selection(context.clone()) {
                     view.apply_kubeconfig(selection, window, cx);
                 }
                 cx.notify();

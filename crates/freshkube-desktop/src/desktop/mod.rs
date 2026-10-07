@@ -935,7 +935,7 @@ impl Pilot {
         } else {
             view.load_configuration(window, cx);
             if let Some(path) = options.kubeconfig_path {
-                view.inspect_kubeconfig_file(path, window, cx);
+                view.inspect_kubeconfig_file(path, None, window, cx);
             }
         }
         view._subscriptions.push(cx.subscribe_in(

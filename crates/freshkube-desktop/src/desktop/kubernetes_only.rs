@@ -550,16 +550,17 @@ impl Pilot {
 
     /// Switches to Talos before a talosconfig loads. A kubeconfig named at
     /// launch or in Settings becomes the cluster's Kubernetes credentials,
-    /// checked against it as usual.
+    /// checked against it as usual. The context picked here goes with it;
+    /// with none picked, the file's own current context applies as before.
     pub(super) fn leave_kubernetes_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kube) = self.kubernetes_only.take() else {
             return;
         };
+        let picked = self.applied.context.take();
         self.contexts.clear();
-        self.applied.context = None;
         self.sync_nodes_source_mode();
         if let Some(path) = kube.explicit {
-            self.inspect_kubeconfig_file(path, window, cx);
+            self.inspect_kubeconfig_file(path, picked, window, cx);
         }
     }
 
