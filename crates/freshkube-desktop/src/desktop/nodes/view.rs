@@ -241,6 +241,9 @@ impl Pilot {
         div()
             .id("node-pane")
             .test_support()
+            // Its own mouse-down below runs first and moves the keyboard to
+            // the tab strip, so the pane itself never takes it.
+            .track_focus(&self.node_workspace.pane_focus)
             .size_full()
             .min_h_0()
             // A click in the pane that no field, list or log inside it

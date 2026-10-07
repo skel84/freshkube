@@ -117,6 +117,9 @@ pub(super) struct Nodes {
     more: bool,
     pub(super) view: NodeView,
     tab_focus: FocusHandle,
+    /// Tracked by the whole pane, never focused itself: whether the
+    /// keyboard is already somewhere in it.
+    pane_focus: FocusHandle,
     /// The tab strip's scroll; the strip brings the active tab into view.
     pub(super) tab_strip: freshkube_ui::inspector::TabStrip,
     scroll: UniformListScrollHandle,
@@ -213,6 +216,7 @@ impl Nodes {
             more: false,
             view: NodeView::Table,
             tab_focus: cx.focus_handle(),
+            pane_focus: cx.focus_handle(),
             tab_strip: Default::default(),
             scroll: UniformListScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
@@ -549,15 +553,16 @@ impl Pilot {
                 .document
                 .update(cx, |pane, cx| pane.focus(window, cx)),
             _ => {
+                // Most screens keep no keyboard of their own, so the tab
+                // strip takes it unless it is already in the pane; a screen
+                // with its own then takes it from there. A screen shown for
+                // the first time isn't in the dispatch tree yet, so it must
+                // come last, not be asked whether it has it.
+                if !self.node_workspace.pane_focus.contains_focused(window, cx) {
+                    window.focus(&self.node_workspace.tab_focus, cx);
+                }
                 if let Some(screen) = self.active_screen() {
                     screen.focus(window, cx);
-                }
-                // Most screens keep no keyboard of their own. A screen
-                // shown for the first time isn't in the dispatch tree yet,
-                // so ask whether the table still has it, not whether the
-                // workspace does.
-                if self.node_focus.is_focused(window) || window.focused(cx).is_none() {
-                    window.focus(&self.node_workspace.tab_focus, cx);
                 }
             }
         }

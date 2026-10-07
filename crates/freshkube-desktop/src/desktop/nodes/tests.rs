@@ -735,8 +735,11 @@ fn enter_and_pane_clicks_move_the_keyboard_into_the_node_pane(cx: &mut TestAppCo
     let in_pane = |pilot: &gpui_kit::Entity<crate::desktop::Pilot>,
                    window: &gpui_kit::Window,
                    cx: &gpui_kit::App| {
-        let table = &pilot.read(cx).node_focus;
-        !table.is_focused(window) && table.contains_focused(window, cx)
+        pilot
+            .read(cx)
+            .node_workspace
+            .pane_focus
+            .contains_focused(window, cx)
     };
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -785,6 +788,88 @@ fn enter_and_pane_clicks_move_the_keyboard_into_the_node_pane(cx: &mut TestAppCo
         window.click("node-pane", cx);
         window.render_frame(cx);
         assert!(in_pane(&pilot, window, cx));
+
+        // From the filter, a click on a tab whose screen takes no keys
+        // moves the keyboard to the tab strip, not leaving it in the filter.
+        let query = pilot.read(cx).node_workspace.query.clone();
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        window.render_frame(cx);
+        window.click("node-tab-overview", cx);
+        window.render_frame(cx);
+        assert!(in_pane(&pilot, window, cx));
+        assert!(!query.read(cx).focus_handle(cx).is_focused(window));
+        // The strip's mouse-down took it there; asked straight from the
+        // filter, the pane takes it too, rather than leaving it in the
+        // filter.
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| pilot.focus_node_pane(window, cx));
+        window.render_frame(cx);
+        assert!(in_pane(&pilot, window, cx));
+    })
+    .unwrap();
+}
+
+/// With the open node hidden by the filter, Down and Up move the pane to the
+/// first and last rows the table shows (#339's selection rule).
+#[gpui_kit::test]
+fn arrows_from_a_hidden_open_node_move_to_the_visible_rows(cx: &mut TestAppContext) {
+    use freshkube_ui::table::{Line, TableSource};
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    let hidden = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            window.render_frame(cx);
+            crate::desktop::tests::expand_healthy_nodes(window, cx);
+            window.click("node-talos-cp-fra1-01", cx);
+            window.render_frame(cx);
+            pilot.read(cx).node_workspace.selected.clone().unwrap()
+        })
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        let query = pilot.read(cx).node_workspace.query.clone();
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        window.input("wk", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let visible: Vec<_> = {
+            let pilot = pilot.read(cx);
+            (0..pilot.line_count())
+                .filter_map(|line| match pilot.line(line, cx)? {
+                    Line::Row(row) => Some(row.key),
+                    Line::Group(_) => None,
+                })
+                .collect()
+        };
+        assert!(
+            visible.len() > 1 && !visible.contains(&hidden),
+            "{visible:?}"
+        );
+        for (key, first) in [("down", true), ("up", false)] {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_node(hidden.clone(), window, cx);
+                window.focus(&pilot.node_focus, cx);
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                pilot.read(cx).node_workspace.selected.as_ref(),
+                Some(&hidden)
+            );
+            window.press(key, cx);
+            window.render_frame(cx);
+            let expected = if first {
+                visible.first()
+            } else {
+                visible.last()
+            };
+            let nodes = &pilot.read(cx).node_workspace;
+            assert!(nodes.open, "{key}");
+            assert_eq!(nodes.selected.as_ref(), expected, "{key}");
+        }
     })
     .unwrap();
 }
