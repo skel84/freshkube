@@ -1,7 +1,9 @@
 //! Metadata-only reads for object links and search.
+use super::forward::api_resource;
 use super::{Failure, ResourceKind};
 use http::{Request, header};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+use kube::{Api, api::DynamicObject};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -16,15 +18,12 @@ pub async fn get_metadata(
     namespace: Option<&str>,
     name: &str,
 ) -> Result<ObjectMeta, Failure> {
-    let request = Request::get(kind.object_path(namespace, name))
-        .header(
-            header::ACCEPT,
-            "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1",
-        )
-        .body(Vec::new())
-        .map_err(|error| Failure::new(super::FailureKind::Other, error.to_string()))?;
-    client
-        .request::<Metadata>(request)
+    let resource = api_resource(kind);
+    let api: Api<DynamicObject> = match namespace {
+        Some(namespace) => Api::namespaced_with(client.clone(), namespace, &resource),
+        None => Api::all_with(client.clone(), &resource),
+    };
+    api.get_metadata(name)
         .await
         .map(|object| object.metadata)
         .map_err(Failure::from_kube)
