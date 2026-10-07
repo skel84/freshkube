@@ -28,7 +28,7 @@ serde_json.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
 # Where preferences live on each platform.
-dirs = "6"
+dirs.workspace = true
 # Keys the user asks to remember: Keychain, Credential Manager or Secret Service.
 keyring = "4"
 bytes = { version = "1", optional = true }
