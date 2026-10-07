@@ -84,6 +84,11 @@ fn read_config_file(path: &Path) -> Result<TalosConfig, String> {
 /// Also fingerprints the exact bytes parsed, so a connection can be reused only
 /// while the talosconfig is unchanged.
 fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIdentity), String> {
+    // Windows refuses to open a directory at all, so ask first; the opened
+    // file's own metadata is what decides.
+    if std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_file()) {
+        return Err("Talos configuration must be a regular file".into());
+    }
     // Core's reader opens nonblocking and caps the read on the descriptor.
     let bytes =
         freshkube_core::read_bounded_regular_file(path, MAX_CONFIG_BYTES).map_err(|reason| {

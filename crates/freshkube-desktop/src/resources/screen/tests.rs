@@ -503,11 +503,19 @@ fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
         });
         window.render_frame(cx);
         assert!(screen.read(cx).store.is_empty());
-        assert!(window.find("resource-loading").visible());
+        // The table's loading rows, under the header the kind will keep.
+        assert!(
+            window
+                .within("resource-list")
+                .find("resource-loading")
+                .visible()
+        );
+        window.find(("resource-sort", 1usize));
 
         screen.update(cx, |screen, cx| screen.set_visible(true, window, cx));
         window.render_frame(cx);
         assert_eq!(screen.read(cx).store.len(), 22);
+        assert!(window.try_find("resource-loading").is_none());
         let first = identity_at(&screen, 0, cx);
         window.within(row_id(&first)).click("name", cx);
 
@@ -519,6 +527,84 @@ fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
         assert_eq!(screen.read(cx).store.len(), 48);
         assert_eq!(selected(&screen, cx), None);
         assert!(window.try_find(row_id(&first)).is_none());
+    })
+    .unwrap();
+}
+
+/// How many sortable header cells the list draws.
+fn header_cells(window: &gpui_kit::Window) -> usize {
+    (0usize..40)
+        .filter(|ix| window.try_find(("resource-sort", *ix)).is_some())
+        .count()
+}
+
+#[gpui_kit::test]
+fn the_loading_rows_give_way_to_a_refusal_or_a_failure(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, None);
+    cx.update_window(handle, |_, window, cx| {
+        for (connection, state, shown) in [
+            (
+                "homelab",
+                ReadState::Refused("pods is forbidden".into()),
+                "resource-refused",
+            ),
+            (
+                "staging-eu",
+                ReadState::Failed("Timeout".into()),
+                "resource-failed",
+            ),
+        ] {
+            // Hidden, the page waits for its first list.
+            screen.update(cx, |screen, cx| {
+                screen.set_visible(false, window, cx);
+                screen.set_source(Some(source(connection)), window, cx);
+            });
+            window.render_frame(cx);
+            assert!(window.find("resource-loading").visible());
+
+            deliver(&screen, vec![ResourceEvent::Read(state)], cx);
+            window.render_frame(cx);
+            assert!(window.find(shown).visible(), "{shown}");
+            assert!(window.try_find("resource-loading").is_none(), "{shown}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_relist_of_the_same_kind_keeps_its_header_over_the_loading_rows(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("deployments.apps"), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).kind, kind("deployments.apps"));
+        assert!(!screen.read(cx).store.is_empty());
+        let listed = header_cells(window);
+        assert!(listed > 2, "{listed}");
+
+        // Refresh and a namespace change start again from no rows; the
+        // header stays the kind's while they wait.
+        screen.update(cx, |screen, cx| {
+            screen.set_visible(false, window, cx);
+            screen.restart(window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-loading").visible());
+        assert_eq!(header_cells(window), listed);
+
+        // Another kind waits under Name and Age.
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("statefulsets.apps"), window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-loading").visible());
+        assert!(header_cells(window) < listed);
     })
     .unwrap();
 }
@@ -769,9 +855,12 @@ fn open_first(
 fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
     let directory = std::env::temp_dir().join(format!(
-        "freshkube-resources-width-{}-{:?}",
+        "freshkube-resources-width-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
     cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
@@ -1197,7 +1286,7 @@ fn n_does_nothing_for_a_kind_without_namespaces(cx: &mut TestAppContext) {
 
 /// The index of the first row whose pod runs.
 fn running_row(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> usize {
-    (0..)
+    (0usize..)
         .find(|&ix| {
             let identity = identity_at(screen, ix, cx);
             screen.read(cx).store.get(&identity).unwrap().cells[2] == "Running"

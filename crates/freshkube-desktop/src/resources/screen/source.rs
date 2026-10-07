@@ -255,6 +255,11 @@ impl TableSource for ResourcesScreen {
         self.menu_actions(cx)
     }
 
+    fn loading(&self) -> Option<&table::LoadingRows> {
+        (self.source.is_some() && *self.store.read_state() == ReadState::Loading)
+            .then_some(&self.loading)
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if self.projection.items_len() != 0 {
             return None;

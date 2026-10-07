@@ -651,7 +651,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.nodes.clear();
-            pilot.rebuild_joined_nodes();
+            pilot.rebuild_joined_nodes(cx);
             pilot.navigate(Page::Nodes, window, cx);
         });
         window.render_frame(cx);
@@ -1533,8 +1533,9 @@ fn nodes_empty_states_keep_the_shared_header_and_keyboard_context(cx: &mut TestA
         });
         window.render_frame(cx);
         assert!(window.find("nodes-title").visible());
-        assert!(window.find("nodes-loading").visible());
-        assert!(window.try_find("nodes-table-scroll").is_none());
+        // The table's loading rows, under its header.
+        assert!(window.within("nodes-list").find("nodes-loading").visible());
+        window.find(("nodes-sort", 1usize));
         window.press("down", cx);
         window.press("enter", cx);
         window.render_frame(cx);
@@ -1563,6 +1564,14 @@ fn nodes_empty_states_keep_the_shared_header_and_keyboard_context(cx: &mut TestA
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
         assert!(window.find("nodes-title").visible());
+        // The cards, not a table, wait in a card.
+        pilot.update(cx, |pilot, cx| {
+            pilot.node_workspace.empty = Some(super::Empty::Loading);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("nodes-loading").visible());
+        assert!(window.try_find("nodes-list").is_none());
     })
     .unwrap();
 }
@@ -1911,7 +1920,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
     use freshkube_ui::table::TableColumn;
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, _, cx| {
-        pilot.update(cx, |pilot, _| {
+        pilot.update(cx, |pilot, cx| {
             let widths = |pilot: &super::Pilot| {
                 pilot
                     .node_workspace
@@ -1930,7 +1939,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
                     memory.used = memory.total;
                 }
             }
-            pilot.rebuild_joined_nodes();
+            pilot.rebuild_joined_nodes(cx);
             assert_eq!(widths(pilot), before);
             assert!(
                 pilot
@@ -1965,7 +1974,7 @@ fn leaving_kubernetes_only_restores_talos_columns_without_waiting_for_a_summary(
             pilot.kubernetes_only = Some(crate::desktop::kubernetes_only::KubernetesOnly::new(
                 None, None,
             ));
-            pilot.rebuild_joined_nodes();
+            pilot.rebuild_joined_nodes(cx);
             let labels = |pilot: &super::Pilot| {
                 pilot
                     .node_workspace
@@ -2745,9 +2754,12 @@ fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
     use gpui_kit::px;
     let directory = std::env::temp_dir().join(format!(
-        "freshkube-nodes-width-{}-{:?}",
+        "freshkube-nodes-width-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
     let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));

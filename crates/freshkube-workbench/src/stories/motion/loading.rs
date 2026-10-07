@@ -1,5 +1,6 @@
-//! Loading: today's skeleton bars, as each page draws its own, beside the
-//! one loading state every table would share, skeleton rows at the real
+//! Loading: a card's skeleton bars, as the cards and lists that aren't
+//! tables draw them, beside the loading state every table shares, the
+//! one Resources, Nodes and System services show: skeleton rows at the real
 //! row height under the real header, pulsing or shimmering. The table draws
 //! the bars still and its `LoadingMotion` moves them from beside it, so the
 //! table isn't drawn again for each frame.
@@ -25,7 +26,7 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(LoadingStory::new).into()
 }
 
-/// The story's frame: the header and the two loading states. Today's bars
+/// The story's frame: the header and the two loading states. A card's bars
 /// are their own view; the shared rows are a cached table and the motion
 /// over it, so a frame draws the motion and the views above it only.
 pub struct LoadingStory {
@@ -96,9 +97,7 @@ impl Render for LoadingStory {
                 v_flex()
                     .flex_none()
                     .gap(dp(8.))
-                    .child(
-                        page::inset().child(ui::caption("Today: each page draws its own bars", cx)),
-                    )
+                    .child(page::inset().child(ui::caption("A card: its own bars", cx)))
                     .child(self.today.clone()),
             )
             .child(page::inset().child(ui::caption(
@@ -119,8 +118,8 @@ impl Render for LoadingStory {
     }
 }
 
-/// Today's loading card: Kit's skeleton through `ui::skeleton`, as the
-/// Resources list draws it.
+/// A card's loading bars: Kit's skeleton through `ui::skeleton`, as a
+/// card or a list that isn't a table draws them.
 pub struct TodayBars;
 
 impl Render for TodayBars {

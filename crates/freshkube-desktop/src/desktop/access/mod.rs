@@ -48,7 +48,7 @@ impl Pilot {
                     // ordinary data stale, and ask once per replacement; manual
                     // Refresh allows another confirmation after a cancellation.
                     self.overview.apply(&request, Err("Access changed; refresh to reconnect after confirming the running shell can end".into()));
-                    self.rebuild_joined_nodes();
+                    self.rebuild_joined_nodes(cx);
                     let replacement = (collected.configuration, collected.access);
                     if self.prompted_access != Some(replacement) {
                         self.prompted_access = Some(replacement);
@@ -64,7 +64,7 @@ impl Pilot {
             }
             Err(error) => {
                 if self.overview.apply(&request, Err(error)) {
-                    self.rebuild_joined_nodes();
+                    self.rebuild_joined_nodes(cx);
                 }
             }
         }

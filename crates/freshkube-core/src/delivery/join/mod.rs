@@ -12,6 +12,7 @@
 mod argo;
 mod build;
 mod kargo;
+mod observe;
 mod render;
 mod workload;
 
@@ -22,10 +23,13 @@ pub use render::render;
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
+
 use super::argocd::{Application, DestinationMatch, StageNaming};
 use super::digest::Digest;
 use super::github::PullRequest;
 use super::kargo::{Freight, KargoRead};
+use super::observation::Observation;
 use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
@@ -113,6 +117,9 @@ pub struct Link {
     pub key: Key,
     pub confidence: Confidence,
     pub reason: String,
+    /// What was read to say so, from which objects. Empty when nothing was
+    /// read: a source that couldn't be read leaves its links with none.
+    pub evidence: Vec<Observation>,
 }
 
 impl Link {
@@ -131,13 +138,22 @@ impl Link {
             key,
             confidence,
             reason: reason.into(),
+            evidence: Vec::new(),
         }
+    }
+
+    /// The link with what it was read from.
+    fn observed(mut self, evidence: Vec<Observation>) -> Self {
+        self.evidence = evidence;
+        self
     }
 }
 
 /// Everything read for one change, each part with its own outcome.
 pub struct Evidence {
     pub sha: String,
+    /// When the caller read it all. The caller's clock, never read here.
+    pub observed_at: DateTime<Utc>,
     /// Where the pipeline's own evidence record is; `None` when the caller
     /// configured none.
     pub evidence_result: Option<EvidenceResult>,
@@ -235,7 +251,9 @@ fn owned_replica_sets<'a>(
     replica_sets: Option<&'a [ReplicaSet]>,
 ) -> impl Iterator<Item = &'a ReplicaSet> {
     replica_sets.into_iter().flatten().filter(|set| {
-        set.namespace == rollout.namespace && rollout.uid.is_some() && set.owner_uid == rollout.uid
+        set.namespace == rollout.namespace
+            && rollout.meta.uid.is_some()
+            && set.owner_uid == rollout.meta.uid
     })
 }
 
@@ -252,6 +270,8 @@ pub struct WantedRollout {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trail {
     pub sha: String,
+    /// When the evidence was read, as [`Evidence::observed_at`].
+    pub observed_at: DateTime<Utc>,
     pub links: Vec<Link>,
 }
 
@@ -499,6 +519,7 @@ pub fn join(evidence: &Evidence) -> Trail {
             ));
             return Trail {
                 sha: sha.clone(),
+                observed_at: evidence.observed_at,
                 links,
             };
         }
@@ -519,18 +540,24 @@ pub fn join(evidence: &Evidence) -> Trail {
         ));
     }
     for (freight, key) in &matched {
-        links.push(Link::new(
-            Hop::PipelineRun,
-            Hop::Freight,
-            id(&freight.project, &freight.name),
-            key.clone(),
-            Confidence::Confirmed,
-            freight_summary(freight, sha),
-        ));
+        let mut seen = observe::builds_side(builds, names, key);
+        seen.extend(observe::freight_side(freight, key));
+        links.push(
+            Link::new(
+                Hop::PipelineRun,
+                Hop::Freight,
+                id(&freight.project, &freight.name),
+                key.clone(),
+                Confidence::Confirmed,
+                freight_summary(freight, sha),
+            )
+            .observed(seen),
+        );
         links.extend(stage_links(evidence, freight));
     }
     Trail {
         sha: sha.clone(),
+        observed_at: evidence.observed_at,
         links,
     }
 }

@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
+
 use super::argocd::{
     DestinationMatch, Destinations, StageNaming, match_destination, read_applications,
 };
@@ -89,6 +91,7 @@ fn merge<T>(parts: Vec<Source<Vec<T>>>) -> Source<Vec<T>> {
 pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
     clusters: &Clusters<'_, K, A, T, E, G>,
     plan: &Plan,
+    observed_at: DateTime<Utc>,
 ) -> Evidence {
     let builds = read_builds(clusters.tekton, &plan.build_namespace, &plan.sha).await;
     let kargo = read_project(clusters.kargo, &plan.kargo_project).await;
@@ -115,6 +118,7 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         .unwrap_or_default();
     let mut evidence = Evidence {
         sha: plan.sha.clone(),
+        observed_at,
         evidence_result: plan.evidence_result.clone(),
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
