@@ -107,15 +107,6 @@ pub struct DiskInfo {
     pub bus_path: Option<String>,
 }
 
-/// Machine config info from MachineConfig resource
-#[derive(Debug, Clone)]
-pub struct MachineConfigInfo {
-    /// Config version (resource version, acts as hash)
-    pub version: String,
-    /// Machine type
-    pub machine_type: Option<String>,
-}
-
 /// KubeSpan peer status from KubeSpanPeerStatus resource
 #[derive(Debug, Clone)]
 pub struct KubeSpanPeerStatus {
@@ -152,31 +143,6 @@ pub struct DiscoveryMember {
     pub operating_system: String,
 }
 
-/// Address status from AddressStatus resource (for VIP detection)
-#[derive(Debug, Clone)]
-pub struct AddressStatus {
-    /// Address ID (interface name)
-    pub id: String,
-    /// Link name
-    pub link_name: String,
-    /// Address with CIDR
-    pub address: String,
-    /// Address family (inet, inet6)
-    pub family: String,
-    /// Address scope
-    pub scope: String,
-    /// Flags (e.g., contains "vip" for shared VIPs)
-    pub flags: Vec<String>,
-}
-
-/// Get volume status for a node
-///
-/// Executes: talosctl get volumestatus --nodes <node> -o yaml
-pub fn get_volume_status(node: &str) -> Result<Vec<VolumeStatus>, TalosError> {
-    let output = exec_talosctl(&["get", "volumestatus", "--nodes", node, "-o", "yaml"])?;
-    parse_volume_status_yaml(&output)
-}
-
 /// Get volume status for a specific node using context authentication (async, non-blocking)
 ///
 /// Executes: talosctl --context <context> [--talosconfig <path>] -n <node> get volumestatus -o yaml
@@ -199,14 +165,6 @@ pub async fn get_volume_status_for_node(
 
     let output = exec_talosctl_async(&args).await?;
     parse_volume_status_yaml(&output)
-}
-
-/// Get disk information for a node
-///
-/// Executes: talosctl get disks --nodes <node> -o yaml
-pub fn get_disks(node: &str) -> Result<Vec<DiskInfo>, TalosError> {
-    let output = exec_talosctl(&["get", "disks", "--nodes", node, "-o", "yaml"])?;
-    parse_disks_yaml(&output)
 }
 
 /// Get disk information for a specific node using context authentication (async, non-blocking)
@@ -316,14 +274,6 @@ pub async fn get_version_insecure(endpoint: &str) -> Result<InsecureVersionInfo,
     }
 }
 
-/// Check if a node is reachable in insecure mode
-///
-/// Returns true if we can connect to the maintenance API
-pub async fn check_insecure_connection(endpoint: &str) -> bool {
-    // Try to get disks - this works in maintenance mode
-    get_disks_insecure(endpoint).await.is_ok()
-}
-
 /// Result of generating Talos configuration
 #[derive(Debug, Clone)]
 pub struct GenConfigResult {
@@ -335,29 +285,6 @@ pub struct GenConfigResult {
     pub talosconfig_path: String,
     /// Output directory
     pub output_dir: String,
-}
-
-/// Generate Talos machine configuration without an explicit install target.
-///
-/// This compatibility wrapper preserves the existing callers. New maintenance
-/// flows must use [`gen_config_with_install_disk`] so the selected disk is
-/// reflected in the generated machine configuration.
-pub async fn gen_config(
-    cluster_name: &str,
-    kubernetes_endpoint: &str,
-    output_dir: &str,
-    additional_sans: Option<&[&str]>,
-    force: bool,
-) -> Result<GenConfigResult, TalosError> {
-    gen_config_with_install_disk(
-        cluster_name,
-        kubernetes_endpoint,
-        output_dir,
-        additional_sans,
-        force,
-        None,
-    )
-    .await
 }
 
 /// Generate Talos machine configuration with an explicit install disk.
@@ -451,42 +378,12 @@ pub async fn apply_config_insecure(
     }
 }
 
-/// Reboot a node in insecure mode
-///
-/// Executes: talosctl reboot --insecure -n <endpoint>
-pub async fn reboot_insecure(endpoint: &str) -> Result<String, TalosError> {
-    exec_talosctl_mutation_async(&["reboot", "--insecure", "-n", endpoint]).await
-}
-
-/// Shutdown a node in insecure mode
-///
-/// Executes: talosctl shutdown --insecure -n <endpoint>
-pub async fn shutdown_insecure(endpoint: &str) -> Result<String, TalosError> {
-    exec_talosctl_mutation_async(&["shutdown", "--insecure", "-n", endpoint]).await
-}
-
-/// Get machine config info for a node
-///
-/// Executes: talosctl get machineconfig --nodes <node> -o yaml
-pub fn get_machine_config(node: &str) -> Result<MachineConfigInfo, TalosError> {
-    let output = exec_talosctl(&["get", "machineconfig", "--nodes", node, "-o", "yaml"])?;
-    parse_machine_config_yaml(&output)
-}
-
 /// Get KubeSpan peer status for a node
 ///
 /// Executes: talosctl get kubespanpeerstatus --nodes <node> -o yaml
 pub fn get_kubespan_peers(node: &str) -> Result<Vec<KubeSpanPeerStatus>, TalosError> {
     let output = exec_talosctl(&["get", "kubespanpeerstatus", "--nodes", node, "-o", "yaml"])?;
     parse_kubespan_peers_yaml(&output)
-}
-
-/// Get discovery members for a node
-///
-/// Executes: talosctl get members --nodes <node> -o yaml
-pub fn get_discovery_members(node: &str) -> Result<Vec<DiscoveryMember>, TalosError> {
-    let output = exec_talosctl(&["get", "members", "--nodes", node, "-o", "yaml"])?;
-    parse_discovery_members_yaml(&output)
 }
 
 /// Get discovery members for a context (async, non-blocking)
@@ -633,14 +530,6 @@ pub async fn get_discovery_members_with_retry(
     }
 
     Err(last_error.unwrap_or_else(|| TalosError::NoEndpoints(context.to_string())))
-}
-
-/// Get address status for a node (for VIP detection)
-///
-/// Executes: talosctl get addressstatus --nodes <node> -o yaml
-pub fn get_address_status(node: &str) -> Result<Vec<AddressStatus>, TalosError> {
-    let output = exec_talosctl(&["get", "addressstatus", "--nodes", node, "-o", "yaml"])?;
-    parse_address_status_yaml(&output)
 }
 
 /// Check if KubeSpan is enabled for a node
@@ -935,85 +824,6 @@ fn parse_disks_yaml(yaml_str: &str) -> Result<Vec<DiskInfo>, TalosError> {
     Ok(disks)
 }
 
-/// Parse machine config YAML output from talosctl.
-///
-/// `talosctl get machineconfig -o yaml` emits MULTIPLE documents (typically the
-/// `persistent` on-disk config and the active `v1alpha1` config), so we must
-/// parse each document separately — a single `from_str` over the whole blob
-/// fails with "deserializing from YAML containing more than one document is not
-/// supported", leaving the config-drift column blank. We prefer the canonical
-/// `v1alpha1` document and fall back to the first document that carries a
-/// version.
-fn parse_machine_config_yaml(yaml_str: &str) -> Result<MachineConfigInfo, TalosError> {
-    let mut fallback: Option<MachineConfigInfo> = None;
-
-    for doc_str in yaml_str.split("\n---") {
-        let doc_str = doc_str.trim();
-        if doc_str.is_empty() {
-            continue;
-        }
-
-        let doc: serde_yaml::Value = match serde_yaml::from_str(doc_str) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let metadata = doc.get("metadata");
-
-        // `version` is a resource revision — usually a number, occasionally a
-        // string — so accept either scalar form.
-        let version = metadata
-            .and_then(|m| m.get("version"))
-            .and_then(scalar_to_string)
-            .filter(|s| !s.is_empty());
-        let Some(version) = version else {
-            continue;
-        };
-
-        let id = metadata
-            .and_then(|m| m.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        // The real config puts `spec` as a serialized string, so `machine.type`
-        // is only reachable when `spec` is a mapping (as in tests); otherwise it
-        // stays `None`, which is fine — callers only rely on `version` here.
-        let machine_type = doc
-            .get("spec")
-            .and_then(|s| s.get("machine"))
-            .and_then(|m| m.get("type"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let info = MachineConfigInfo {
-            version,
-            machine_type,
-        };
-
-        if id == "v1alpha1" {
-            return Ok(info);
-        }
-        fallback.get_or_insert(info);
-    }
-
-    fallback.ok_or_else(|| {
-        TalosError::Connection("no machineconfig document with a version found".to_string())
-    })
-}
-
-/// Render a YAML scalar (`version` may be a number or a string) as a String.
-fn scalar_to_string(v: &serde_yaml::Value) -> Option<String> {
-    if let Some(s) = v.as_str() {
-        Some(s.to_string())
-    } else if let Some(n) = v.as_u64() {
-        Some(n.to_string())
-    } else if let Some(n) = v.as_i64() {
-        Some(n.to_string())
-    } else {
-        v.as_f64().map(|n| n.to_string())
-    }
-}
-
 /// Parse KubeSpan peer status YAML output from talosctl
 fn parse_kubespan_peers_yaml(yaml_str: &str) -> Result<Vec<KubeSpanPeerStatus>, TalosError> {
     let mut peers = Vec::new();
@@ -1172,81 +982,6 @@ fn parse_discovery_members_yaml(yaml_str: &str) -> Result<Vec<DiscoveryMember>, 
     Ok(members)
 }
 
-/// Parse address status YAML output from talosctl
-fn parse_address_status_yaml(yaml_str: &str) -> Result<Vec<AddressStatus>, TalosError> {
-    let mut addresses = Vec::new();
-
-    for doc_str in yaml_str.split("\n---") {
-        let doc_str = doc_str.trim();
-        if doc_str.is_empty() {
-            continue;
-        }
-
-        let doc: serde_yaml::Value = match serde_yaml::from_str(doc_str) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let id = doc
-            .get("metadata")
-            .and_then(|m| m.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if id.is_empty() {
-            continue;
-        }
-
-        let spec = doc.get("spec");
-
-        let link_name = spec
-            .and_then(|s| s.get("linkName"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let address = spec
-            .and_then(|s| s.get("address"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let family = spec
-            .and_then(|s| s.get("family"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("inet")
-            .to_string();
-
-        let scope = spec
-            .and_then(|s| s.get("scope"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("global")
-            .to_string();
-
-        let flags = spec
-            .and_then(|s| s.get("flags"))
-            .and_then(|v| v.as_sequence())
-            .map(|seq| {
-                seq.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        addresses.push(AddressStatus {
-            id,
-            link_name,
-            address,
-            family,
-            scope,
-            flags,
-        });
-    }
-
-    Ok(addresses)
-}
-
 /// Parse a duration string like "2.5ms" or "1s" to milliseconds
 fn parse_duration_to_ms(s: &str) -> Option<f64> {
     let s = s.trim();
@@ -1377,58 +1112,6 @@ spec:
         assert_eq!(volumes[0].encryption_provider, Some("luks2".to_string()));
         assert_eq!(volumes[1].id, "EPHEMERAL");
         assert_eq!(volumes[1].encryption_provider, None);
-    }
-
-    #[test]
-    fn test_parse_machine_config() {
-        let yaml = r#"
-node: 10.5.0.2
-metadata:
-    namespace: config
-    type: MachineConfigs.config.talos.dev
-    id: v1alpha1
-    version: "5"
-spec:
-    machine:
-        type: controlplane
-"#;
-
-        let config = parse_machine_config_yaml(yaml).unwrap();
-        assert_eq!(config.version, "5");
-        assert_eq!(config.machine_type, Some("controlplane".to_string()));
-    }
-
-    /// Regression: real `talosctl get machineconfig -o yaml` returns MULTIPLE
-    /// documents (persistent + v1alpha1) with a numeric `version` and a
-    /// serialized-string `spec`. The old single-document parse failed outright
-    /// ("more than one document is not supported"), blanking the config column.
-    /// We must parse each document, handle a numeric version, and prefer the
-    /// canonical v1alpha1 config over persistent.
-    #[test]
-    fn test_parse_machine_config_multi_document() {
-        let yaml = r#"node: 10.6.0.2
-metadata:
-    namespace: config
-    type: MachineConfigs.config.talos.dev
-    id: persistent
-    version: 7
-spec: "version: v1alpha1\nmachine:\n    type: controlplane\n"
----
-node: 10.6.0.2
-metadata:
-    namespace: config
-    type: MachineConfigs.config.talos.dev
-    id: v1alpha1
-    version: 3
-spec: "version: v1alpha1\nmachine:\n    type: controlplane\n"
-"#;
-
-        let config = parse_machine_config_yaml(yaml).unwrap();
-        // Numeric version rendered as a string, taken from the canonical
-        // v1alpha1 document (not persistent's 7).
-        assert_eq!(config.version, "3");
-        // spec is a serialized string here, so machine.type is not a mapping.
-        assert_eq!(config.machine_type, None);
     }
 
     #[test]
