@@ -54,6 +54,7 @@ The `stress` feature turns on spans around the work that matters (`freshkube_pro
 | `terminal.feed`, `terminal.bytes` | parsing a chunk of bytes into the terminal grid, and its size |
 | `terminal.snapshot` | copying the visible rows into style runs, at most once per batch of chunks |
 | `terminal.paint` | painting the grid; its count a second is the frame rate |
+| `frame.cpu`, `frame.gap`, `frame.meter` | a frame's own time, from the shell's render to the FPS indicator's paint; the time since the last frame painted; and the indicator's reading each second, idle as 0 |
 | `monitoring.page_render`, `monitoring.panel_render`, `monitoring.plot_paint`, `monitoring.cursor` | building the Monitoring page's tree, building a dashboard panel's tree, painting a timeseries' paths, and placing the crosshairs one chart's cursor puts on the others |
 | `summary.tokio`, `summary.apply` | deriving compact reflector evidence on Tokio, then applying prepared display data on GPUI; before the watch migration, `summary.tokio` also included API collection |
 | `summary.lag` | first dirty-store notification to GPUI apply, including the 500 ms debounce; excludes network and producer backlog |
@@ -77,11 +78,16 @@ permission with `chmod +x`, and select it with `FRESHKUBE_STRESS_BINARY`. CI bui
 but does not run the GUI benchmark; it still needs the local visible window.
 Record the compiler and commit when comparing saved binaries.
 
-The bottom bar's FPS indicator passively samples painted frames during activity;
-it never requests a continuous animation. It refreshes its own label at most
-once a second: green at 55+, amber at 30–54, red below 30. Gaps of 250 ms or more
-and samples with fewer than three frame intervals are neutral idle readings.
-This is redraw cadence during bursts, not a GPU throughput benchmark.
+The bottom bar's FPS indicator passively samples painted frames; it never
+requests a continuous animation. The shell's render marks when each frame
+starts and the indicator's paint when it ends. A frame that starts within 20 ms
+of the last paint counts the gap between the two paints; a frame whose own time
+passes 33 ms counts that time, however long the app waited before it. A second
+with less than 150 ms counted and no slow frame reads idle, so sparse, quick
+frames, such as a followed log's, never read as a frame rate (#312), while one
+120 ms frame in a quiet second reads 8. The label refreshes at most
+once a second: green at 55+, amber at 30–54, red below 30. This is the frame
+rate while the app draws continuously or slowly, not a GPU throughput benchmark.
 
 When a number looks wrong, profile the run with macOS `sample`:
 
@@ -216,6 +222,24 @@ Copy used to build its text on every frame to decide whether it was enabled: wit
 | 4,879 lines filling 8 MiB | 4.2–4.7 ms | 4.6–4.7 ms |
 
 Times and `pod/container` tags add under 0.5 ms; the slowest single run was 4.96 ms, under the 8 ms frame budget, so the text stays built at click time. The spans `logs.copy_text`, `logs.download_text.visible` and `logs.download_text.retained` record each build in stress runs. The 10,000-line pod-log flood (30 s) didn't change: render median 2.7 ms against 2.9 ms on main, append 1.4 ms, lag median 6.6 ms against 5.9 ms, CPU 56% for both. Its workload selects nothing, and `logs.copy_text` ran 0 times in 667 renders.
+
+### The FPS meter reads idle while a log only follows (#312)
+
+At 760×560 and text size 20 the meter read 11–22 FPS, red, while the dock's log followed or scrolled. It averaged every paint gap under 250 ms, and a followed log paints once for each new line: the example workload's 13 pods write about 10 lines a second, a frame every 90–100 ms. The frames themselves were fast. Release stress runs of `workload-logs 10` (payments/api in the dock), 30 s each, with the stress-only `frame.cpu` and `frame.gap`; text size 20 comes from four Command-= presses, since release builds ignore `FRESHKUBE_TEXT_SIZE`, and scrolling sends 40 points of wheel every 16 ms over the log:
+
+| Run | Frame time median / 99th | Gap median | Meter before, from the gaps | Meter after | CPU |
+| --- | --- | --- | --- | --- | --- |
+| Following, 1280×880, 13 | 8.3 / 14.6 ms | 97 ms | about 10, red | idle every second | 21% |
+| Following, 760×560, 20 | 6.2 / 6.8 ms | 88 ms | about 11, red | idle every second | 17% |
+| Scrolling, 760×560, 20 | 5.9 / 6.5 ms | 17 ms | 60 | 59–60 | 49% |
+| Scrolling, 760×560, 13 | 7.5 / 8.0 ms | 17 ms | 60 | 60 | 59% |
+| Scrolling, 1280×700, 13 | 13.3 / 17.5 ms | 17 ms | 60 | 51–58 | 91% |
+| Scrolling, 1280×880, 13 | 9.3 / 12.9 ms | 51 ms | about 20, red | idle every second | 27% |
+| Flood, 1,000 lines a second, 760×560, 20 | 6.7 / 7.0 ms | 17 ms | 60 | 60 | 53% |
+
+Row measurement at text size 20 is cheap: `logs.measure` 0.3 ms median while following and 0.01 ms while scrolling, and `logs.measure_row` 0.29 ms median. Before the 150 ms floor, the first version of the rule read 43–59 in about half of the following seconds at 1280×880: a few frames a second still come in back-to-back pairs.
+
+Scrolling at 1280×880 and text size 13 ran at about 20 frames a second in three runs: frame time 9.4 / 12.9 ms, gap 51 ms median, the main thread's 4 ms timer 45 ms late, at only 28% CPU. Waiting rather than working points outside the app's drawing. Unconfirmed: a macOS notification banner left on screen overlapped that window's top right corner, and 1280×700 and 760×560, which it doesn't reach, scroll at 60. A rerun with the banner dismissed would settle it. Those frames are quick and 50 ms apart, so the new meter reads idle there: it shows frame rates the app's own drawing holds down, not ones held down outside it.
 
 ### A first list no longer stops the window
 
