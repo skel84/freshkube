@@ -373,7 +373,12 @@ pub(super) fn supply_chain_links(
         .into_iter()
         .map(|image| {
             let (confidence, chains) = match build.chains_state().as_deref() {
-                Some("true") => (Confidence::Confirmed, "signed by Chains".to_owned()),
+                // Nothing read in the cluster verifies a signature: Chains'
+                // annotation says so, and only a claim can stand on it.
+                Some("true") => (
+                    Confidence::Claimed,
+                    "Chains' annotation says signed; the signature was not verified".to_owned(),
+                ),
                 Some(state) => (
                     Confidence::Unknown,
                     format!("Chains reports signed={state}"),

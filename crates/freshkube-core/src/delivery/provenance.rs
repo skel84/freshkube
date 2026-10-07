@@ -61,8 +61,6 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
 /// declared only, or absent. Provenance shows them as they are; whether they
 /// stay confirmed is for the confidence slice (#387).
 const KNOWN_GAPS: &[(&str, &str, &str)] = &[
-    // #387: Chains' `signed` annotation is all that says it, and it is declared.
-    ("PipelineRun", "supply chain", "supply chain"),
     // #387: the Rollout's spec pin is declared, and Argo CD's resource list names
     // the Rollout, not the digest.
     ("Application", "Rollout", "Application"),
@@ -147,7 +145,6 @@ async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
         (Hop::PullRequest, Hop::PipelineRun),
         (Hop::PullRequest, Hop::Freight),
         (Hop::Commit, Hop::PipelineRun),
-        (Hop::PipelineRun, Hop::SupplyChain),
         (Hop::PipelineRun, Hop::Freight),
         (Hop::Commit, Hop::Freight),
         (Hop::Freight, Hop::Promotion),
@@ -347,6 +344,50 @@ async fn a_sha_joined_freight_whose_build_reports_the_commit_stays_confirmed() {
 }
 
 #[tokio::test]
+async fn chains_signed_annotation_is_a_claim_never_a_confirmation() {
+    let signed = |annotation: Option<&str>| {
+        let mut world = healthy().with_meta();
+        let mut run_value = pipeline_run(SHA, true, Some(NEW));
+        match annotation {
+            Some(state) => {
+                run_value["metadata"]["annotations"]["chains.tekton.dev/signed"] =
+                    serde_json::json!(state)
+            }
+            None => {
+                run_value["metadata"]["annotations"] = serde_json::json!({});
+            }
+        }
+        world.tekton = world.tekton.with("pipelineruns", vec![run_value]);
+        world
+    };
+    let trail = run(&signed(Some("true")), &ENV).await;
+    let chain = one(&trail, Hop::PipelineRun, Hop::SupplyChain);
+    assert_eq!(chain.confidence, Confidence::Claimed);
+    assert!(
+        chain
+            .reason
+            .contains("Chains' annotation says signed; the signature was not verified"),
+        "{}",
+        chain.reason
+    );
+    // The Conforma verdict stays in the reason.
+    assert!(
+        chain.reason.contains("Conforma SUCCESS"),
+        "{}",
+        chain.reason
+    );
+    for (annotation, words) in [
+        (Some("failed"), "signed=failed"),
+        (None, "no Chains annotation"),
+    ] {
+        let trail = run(&signed(annotation), &ENV).await;
+        let chain = one(&trail, Hop::PipelineRun, Hop::SupplyChain);
+        assert_eq!(chain.confidence, Confidence::Unknown, "{annotation:?}");
+        assert!(chain.reason.contains(words), "{}", chain.reason);
+    }
+}
+
+#[tokio::test]
 async fn a_conclusion_is_the_joins_and_never_an_objects() {
     let trail = confirmed().await;
     let concluded: Vec<&Observation> = trail
@@ -490,12 +531,27 @@ async fn an_observation_never_holds_a_server_an_identity_or_a_secret() {
     leaky["spec"] = serde_json::json!({"containers": [
         {"name": "app", "env": [{"name": "TOKEN", "value": "s3cr3t-value"}]}]});
     world.environment = world.environment.with("pods", vec![leaky]);
+    world.tekton = world.tekton.with(
+        "taskruns",
+        vec![task_run(), clone_task_run("storefront-push-x", SHA)],
+    );
     let trail = run_with(&world, &ENV, &github(), Some(GH_REPO)).await;
+    // A Freight joined on the commit with no build, and one with a label-only build.
+    let mut alone = healthy().with_meta();
+    alone.tekton = alone.tekton.with("pipelineruns", vec![]);
+    let alone = run(&alone, &ENV).await;
+    let label_only = run(&sha_joined(None), &ENV).await;
 
-    let observations: Vec<&Observation> =
-        trail.links.iter().flat_map(|link| &link.evidence).collect();
+    let observations: Vec<&Observation> = [&trail, &alone, &label_only]
+        .into_iter()
+        .flat_map(|trail| &trail.links)
+        .flat_map(|link| &link.evidence)
+        .collect();
     assert!(observations.len() > 10, "{}", observations.len());
-    let rendered = render(&trail);
+    let rendered = [&trail, &alone, &label_only]
+        .into_iter()
+        .map(render)
+        .collect::<String>();
     let forbidden = [
         "env-a.example",
         "://",
@@ -600,12 +656,13 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
 }
 
 /// `[confirmed, claimed, unknown]` of each fixture.
-const COUNTS: [[usize; 3]; 4] = [[3, 5, 0], [6, 2, 0], [12, 0, 0], [5, 7, 0]];
-// healthy: Commit -> PipelineRun is Claimed (label and revision parameter, both declared).
-// promoted: the same link, Commit -> PipelineRun, is Claimed.
-// confirmed: unchanged; a clone TaskRun's `commit` result reports both commits.
-// squash: Commit -> PipelineRun and both PullRequest -> PipelineRun links (the merge
-// commit's run and the head's run) are Claimed: their runs have a parameter, no result.
+const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [4, 8, 0]];
+// healthy: Commit -> PipelineRun (declared label and parameter) and PipelineRun -> supply chain.
+// promoted: the same two links.
+// confirmed: only PipelineRun -> supply chain; the clone TaskRun's `commit` result keeps
+// Commit -> PipelineRun and PullRequest -> PipelineRun Confirmed.
+// squash: Commit -> PipelineRun, both PullRequest -> PipelineRun links, and
+// PipelineRun -> supply chain.
 
 #[test]
 fn the_rule_fails_on_a_side_with_nothing_read() {

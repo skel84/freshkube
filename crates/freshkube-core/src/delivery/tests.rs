@@ -99,7 +99,7 @@ async fn a_healthy_change_joins_from_the_commit_to_the_pods() {
     assert!(commit.reason.contains("both declared"), "{}", commit.reason);
     assert_eq!(commit.key, Key::Sha(SHA.into()));
     let chain = one(&trail, Hop::PipelineRun, Hop::SupplyChain);
-    assert_eq!(chain.confidence, Confidence::Confirmed);
+    assert_eq!(chain.confidence, Confidence::Claimed);
     assert!(
         chain
             .reason
