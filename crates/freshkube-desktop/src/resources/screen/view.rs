@@ -128,7 +128,10 @@ impl ResourcesScreen {
                     .ghost()
                     .xsmall()
                     .label("Open node")
-                    .on_click(cx.listener(move |view, _, _, cx| view.open_node(node.clone(), cx))),
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.open_node(node.clone(), cx)
+                    })),
             );
         }
         if group.cause != Cause::Healthy {
@@ -138,7 +141,10 @@ impl ResourcesScreen {
                     .ghost()
                     .xsmall()
                     .label(format!("Select all {}", group.total))
-                    .on_click(cx.listener(move |view, _, _, cx| view.mark_group(&target, cx))),
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.mark_group(&target, cx)
+                    })),
             );
         }
         if group.cause == Cause::Healthy && problems {
@@ -147,7 +153,10 @@ impl ResourcesScreen {
                     .ghost()
                     .xsmall()
                     .label(if collapsed { "Expand" } else { "Collapse" })
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_healthy(cx))),
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.toggle_healthy(cx)
+                    })),
             );
         }
         Some(row.render(cx).into_any_element())
@@ -164,13 +173,19 @@ impl ResourcesScreen {
                     .xsmall()
                     .icon(IconName::Copy)
                     .label("Copy names")
-                    .on_click(cx.listener(|view, _, _, cx| view.copy_marks(cx)))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.copy_marks(cx)
+                    }))
                     .into_any_element(),
                 Button::new("resource-marks-clear")
                     .ghost()
                     .xsmall()
                     .label("Clear")
-                    .on_click(cx.listener(|view, _, _, cx| view.clear_marks(cx)))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.clear_marks(cx)
+                    }))
                     .into_any_element(),
             ];
             counts.push(
@@ -189,7 +204,10 @@ impl ResourcesScreen {
                 .ghost()
                 .xsmall()
                 .label(format!("Show all {}", tally.total()))
-                .on_click(cx.listener(|view, _, _, cx| view.set_list_view(ListView::All, cx)));
+                .on_click(cx.listener(|view, _, _, cx| {
+                    cx.stop_propagation();
+                    view.set_list_view(ListView::All, cx)
+                }));
             counts.push(
                 table::showing(
                     "resource-collapsed",
@@ -267,7 +285,10 @@ impl ResourcesScreen {
         Button::new(id)
             .icon(IconName::RefreshCw)
             .label("Retry")
-            .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
+            .on_click(cx.listener(|view, _, window, cx| {
+                cx.stop_propagation();
+                view.refresh(window, cx)
+            }))
     }
 
     /// What replaces the table: no connection, the first list, a refusal,
@@ -490,6 +511,9 @@ impl ResourcesScreen {
                     .min_h_0()
                     .min_w_0()
                     .when(open, |this| {
+                        // A click beside the rows closes the drawer. Rows,
+                        // column headers and the list's own buttons stop
+                        // their clicks, so they never reach here.
                         this.on_click(cx.listener(|view, _, window, cx| {
                             view.hide_detail(cx);
                             window.focus(&view.focus, cx);

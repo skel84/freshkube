@@ -519,21 +519,22 @@ impl ResourcesScreen {
         }
         self.select_identity(&identity, window, cx);
         self.restore = Some(identity.clone());
-        self.open_now(
-            identity,
-            window,
-            move |this, window, cx| {
-                this.detail.update(cx, |detail, cx| {
-                    detail.set_tab(tab, cx);
-                    // Logs open in the dock, which takes the keyboard and
-                    // hands it back to the list.
-                    if tab != crate::resources::Tab::Logs {
-                        detail.focus(window, cx);
-                    }
-                })
-            },
-            cx,
-        );
+        // Logs open in the dock and close the drawer at once: its read
+        // waits as for a keyboard pause, which the close cancels.
+        let delay = if tab == crate::resources::Tab::Logs {
+            KEYBOARD_PAUSE
+        } else {
+            Duration::ZERO
+        };
+        self.open_detail(identity, delay, cx);
+        self.detail.update(cx, |detail, cx| {
+            detail.set_tab(tab, cx);
+            // Logs open in the dock, which takes the keyboard and hands it
+            // back to the list.
+            if tab != crate::resources::Tab::Logs {
+                detail.focus(window, cx);
+            }
+        });
     }
 
     /// A source with the same `id` only refreshes the handles; another one
@@ -1178,7 +1179,11 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll_to_selection(ScrollStrategy::Nearest);
-        if let Some(identity) = self.projection.selected().cloned() {
+        // An open drawer follows the selection; a closed one stays closed
+        // until Enter or a click.
+        if self.detail.read(cx).target_identity().is_some()
+            && let Some(identity) = self.projection.selected().cloned()
+        {
             self.open_detail(identity, KEYBOARD_PAUSE, cx);
         }
         cx.notify();
@@ -1199,13 +1204,17 @@ impl ResourcesScreen {
         cx.notify();
     }
 
-    /// Escape clears the filter, or with none, closes the pane.
+    /// Escape clears the filter, or with none, closes the drawer and
+    /// clears the selection; with the drawer already closed, it clears
+    /// the selection it kept.
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.query.read(cx).value().is_empty() {
             self.clear_filter(window, cx);
         } else if self.embedded {
             cx.emit(NodePodsEvent::Back);
-        } else if self.detail.read(cx).target_identity().is_some() {
+        } else if self.detail.read(cx).target_identity().is_some()
+            || self.projection.selected().is_some()
+        {
             self.close_pane(window, cx);
         }
     }

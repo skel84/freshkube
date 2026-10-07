@@ -570,7 +570,11 @@ fn header_cell<S: TableSource>(
         .cursor_pointer()
         .child(ui::column_label(label, cx))
         .children(order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)))
-        .on_click(cx.listener(move |view, _, _, cx| view.sort(sort.clone(), cx)))
+        .on_click(cx.listener(move |view, _, _, cx| {
+            // A sort is no click beside the rows for a page around it.
+            cx.stop_propagation();
+            view.sort(sort.clone(), cx)
+        }))
         .into_any_element()
 }
 

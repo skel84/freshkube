@@ -559,26 +559,6 @@ fn a_clicked_row_shows_its_details_in_the_drawer_over_the_list(cx: &mut TestAppC
     }
 }
 
-/// At 1280×880 with the column open the page is about 1008 dp wide: the
-/// default drawer leaves the list at least 280.
-#[gpui_kit::test]
-fn the_default_drawer_leaves_the_list_its_room(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
-    cx.update_window(handle, |_, window, cx| {
-        open_first(&screen, window, cx);
-        let body = window.find("resource-split").bounds();
-        let drawer = window.find("resource-drawer").bounds();
-        let left = (drawer.left() - body.left()) / crate::ui::dp_px(1., window);
-        assert!(left >= freshkube_ui::drawer::LIST_KEEPS - 1., "{left}");
-        // A row it leaves in sight still takes a click.
-        let second = identity_at(&screen, 1, cx);
-        window.within(row_id(&second)).click("name", cx);
-        window.render_frame(cx);
-        assert_eq!(shown(&screen, cx), Some(second));
-    })
-    .unwrap();
-}
-
 /// A click on the list that isn't on a row closes the drawer; one on
 /// another row swaps its object in the same drawer, without closing it.
 #[gpui_kit::test]
@@ -623,6 +603,120 @@ fn a_click_beside_the_rows_closes_the_drawer_and_a_row_swaps_it(cx: &mut TestApp
         window.press("enter", cx);
         window.render_frame(cx);
         assert_eq!(shown(&screen, cx), Some(second));
+    })
+    .unwrap();
+}
+
+/// A control in the list, such as a group's Expand or the footer's Show
+/// all, is no click beside the rows: the drawer stays open on its object.
+#[gpui_kit::test]
+fn the_lists_own_buttons_leave_the_drawer_open(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        open_first(&screen, window, cx);
+        let first = shown(&screen, cx).expect("a row opened");
+        let drawer = window.find("resource-drawer").bounds();
+        for button in [
+            "resource-group-healthy-toggle",
+            "resource-group-healthy-toggle",
+            "resource-show-all",
+        ] {
+            assert!(
+                window.find(button).bounds().right() < drawer.left(),
+                "{button}"
+            );
+            window.click(button, cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), Some(first.clone()), "{button}");
+        }
+        // Show all did what it does.
+        assert_eq!(screen.read(cx).list_view, ListView::All);
+        // A column header sorts, and leaves the drawer open too.
+        window.click(("resource-sort", 1usize), cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(first));
+    })
+    .unwrap();
+}
+
+/// Closed, the drawer keeps its row selected: the arrows move the
+/// selection without opening it, Escape clears it, and only Enter or a
+/// click opens it again.
+#[gpui_kit::test]
+fn a_closed_drawer_stays_closed_while_the_selection_moves(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        // A click under the rows closes the drawer and keeps the row.
+        let list = window.find("resource-list-area").bounds();
+        window.click_at(
+            "resource-list-area",
+            gpui_kit::point(px(40.), list.size.height - px(10.)),
+            cx,
+        );
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), None);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 0, cx)));
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 1, cx)));
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), Some(identity_at(&screen, 2, cx)));
+    })
+    .unwrap();
+    // The keyboard pause passes; nothing opens.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), None);
+        assert!(window.try_find("resource-drawer").is_none());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert_eq!(selected(&screen, cx), None);
+        window.press("down", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(identity_at(&screen, 0, cx)));
+    })
+    .unwrap();
+}
+
+/// The drawer's bounds come from the list's width as last drawn. When the
+/// window narrows, the list measures itself while drawing and asks for one
+/// more frame, which fits the drawer to it without any input, and then
+/// asks for no more.
+#[gpui_kit::test]
+fn the_measured_width_settles_without_input(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 1280., 880.);
+    let left = |window: &mut gpui_kit::Window| {
+        let body = window.find("resource-split").bounds();
+        let drawer = window.find("resource-drawer").bounds();
+        (drawer.left() - body.left()) / crate::ui::dp_px(1., window)
+    };
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        while window.simulate_next_frame(cx) > 0 {
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(800.), px(880.)));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The list measured its new width and asked for a frame.
+        assert_eq!(window.simulate_next_frame(cx), 1, "no frame asked for");
+        window.render_frame(cx);
+        assert!(
+            left(window) >= freshkube_ui::drawer::LIST_KEEPS - 1.,
+            "{}",
+            left(window)
+        );
+        // Settled: the next draw asks for nothing.
+        assert_eq!(window.simulate_next_frame(cx), 0);
     })
     .unwrap();
 }

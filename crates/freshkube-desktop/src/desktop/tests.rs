@@ -950,11 +950,15 @@ fn another_context_hands_the_keyboard_back_to_the_list(cx: &mut TestAppContext) 
         window.press("down", cx);
     })
     .unwrap();
-    // The arrow selected a row, whose details open once the keys pause.
+    // The arrow selected a row; with the drawer closed, only Enter opens
+    // its details.
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(300));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("detail-close").is_none());
+        window.press("enter", cx);
         window.render_frame(cx);
         assert!(window.find("detail-close").visible());
         // Clicking a context in the sidebar hands the keyboard back too.

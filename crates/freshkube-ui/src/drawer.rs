@@ -13,10 +13,9 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Axis, BoxShadow, Context, Div, DragMoveEvent, IntoElement, Render, Role,
-    SharedString, Stateful, TestSupportExt, Window, div, hsla, px,
+    SharedString, Stateful, TestSupportExt, Window, div, point, px,
 };
 
-use crate::palette::palette;
 use crate::ui::{dp, dp_px};
 
 /// The width a drawer opens at, in dp: about 725 px at the default text
@@ -97,7 +96,6 @@ pub struct Frame {
 /// The drawer over its parent's right edge, top to bottom. It takes the
 /// pointer from what it covers, so rows under it neither hover nor click.
 pub fn frame(frame: Frame, cx: &App) -> Observed<Stateful<Div>> {
-    let p = palette(cx);
     let part = |part: &str| SharedString::from(format!("{}-{part}", frame.id));
     let Fit { width, full } = frame.fit;
     let on_resize = frame.on_resize.clone();
@@ -115,9 +113,8 @@ pub fn frame(frame: Frame, cx: &App) -> Observed<Stateful<Div>> {
         .occlude()
         .bg(cx.theme().background)
         .when(!full, |this| {
-            this.border_l_1()
-                .border_color(p.line)
-                .shadow(edge_shadow())
+            // The resize handle draws the edge's hairline.
+            this.shadow(edge_shadow(cx))
                 // Kit's handle drags its value in an `Rc`.
                 .on_drag_move::<Rc<DrawerDrag>>(
                     move |event: &DragMoveEvent<Rc<DrawerDrag>>, window, cx| {
@@ -151,13 +148,14 @@ pub fn frame(frame: Frame, cx: &App) -> Observed<Stateful<Div>> {
         })
 }
 
-/// A soft shadow cast to the left, over the list the drawer covers.
-fn edge_shadow() -> Vec<BoxShadow> {
-    vec![
-        BoxShadow::new(px(-6.), px(0.), hsla(0., 0., 0., 0.12))
-            .blur_radius(px(8.))
-            .spread_radius(px(-2.)),
-    ]
+/// Kit's middle elevation, cast to the left over the list the drawer
+/// covers. None when the theme turns shadows off.
+fn edge_shadow(cx: &App) -> Vec<BoxShadow> {
+    let mut shadow = cx.theme().shadow_tokens().md;
+    for layer in &mut shadow {
+        layer.offset = point(-layer.offset.y, px(0.));
+    }
+    shadow
 }
 
 #[cfg(test)]
