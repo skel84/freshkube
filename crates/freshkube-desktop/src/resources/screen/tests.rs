@@ -1692,6 +1692,55 @@ fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
     assert_eq!(*asked.borrow(), [first]);
 }
 
+/// Each pod row ends with a Logs button, named for its pod, that opens
+/// that pod's logs without selecting the row or opening the drawer
+/// (#291). The drawer, when open, covers the row's end.
+#[gpui_kit::test]
+fn a_rows_logs_button_asks_for_its_pods_logs(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let sink = asked.clone();
+    cx.update(|cx| {
+        cx.subscribe(
+            &screen,
+            move |_, event: &crate::resources::ResourceLink, _| {
+                if let crate::resources::ResourceLink::Logs(request) = event {
+                    sink.borrow_mut().push(request.target.identity.clone());
+                }
+            },
+        )
+        .detach()
+    });
+    let second = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let button = |identity: &ResourceIdentity| {
+                gpui_kit::SharedString::from(format!("pod-row-logs-{}", identity.uid))
+            };
+            // Every pod row has one, inside the row and named for its pod.
+            for line in 0..3 {
+                let identity = identity_at(&screen, line, cx);
+                let row = window.find(row_id(&identity)).bounds();
+                let found = window.find(button(&identity));
+                assert!(row.contains(&found.bounds().center()), "{row:?}");
+                assert_eq!(
+                    found.label(),
+                    Some(format!("Logs for {}", identity.name).as_str())
+                );
+            }
+            let second = identity_at(&screen, 1, cx);
+            window.click(button(&second), cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), None);
+            assert!(window.try_find("resource-drawer").is_none());
+            assert_eq!(screen.read(cx).selected_row(), None);
+            second
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(*asked.borrow(), [second]);
+}
+
 #[gpui_kit::test]
 fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 640.);

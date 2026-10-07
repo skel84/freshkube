@@ -226,7 +226,10 @@ impl ResourcesScreen {
             for column in &columns {
                 if matches!(
                     column.source,
-                    ColumnSource::Glyph | ColumnSource::Name(_) | ColumnSource::Namespace
+                    ColumnSource::Glyph
+                        | ColumnSource::Name(_)
+                        | ColumnSource::Namespace
+                        | ColumnSource::Logs
                 ) {
                     continue;
                 }

@@ -125,6 +125,8 @@ The status is a glyph, replaced by a checkbox on a marked row. Pods order their 
 
 Containers draws a square per container (`freshkube_ui::squares`), 8 dp with 3 dp between and a 3 px data-mark radius, in the order the pod runs them: init containers first, at half opacity, except native sidecars (`restartPolicy: Always`), which run beside the app and draw full. At most eight show, then a muted `+N`, derived with the row; the column (130 dp) fits eight and the count inside its padding. Squares take the status glyphs' colours. The tooltip and the accessible label name each container, its state and reason, and its restarts, so colour never carries the state alone. The column sorts the worst square first.
 
+Every pod row ends with a Logs button, an icon in a 36 dp column with no header, muted until the row is hovered or selected (`pod-row-logs-<uid>`, labelled "Logs for ⟨pod⟩"). It opens that pod's logs in the dock, as L does for the selected row, without selecting the row or opening the drawer; an open drawer covers it.
+
 | Container | Square |
 | --- | --- |
 | Running and ready | `good`, filled |

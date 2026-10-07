@@ -150,6 +150,10 @@ impl TableSource for ResourcesScreen {
                 style.selected,
                 cx,
             ),
+            ColumnSource::Logs => match pod {
+                Some(pod) => cells::logs(column, &row.identity, pod, style.selected, cx),
+                None => cells::cell(column).into_any_element(),
+            },
             ColumnSource::Containers => match pod {
                 Some(pod) => cells::containers(column, pod, &p),
                 None => cells::cell(column).into_any_element(),

@@ -23,6 +23,8 @@ const CONTAINERS_WIDTH: f32 = freshkube_ui::squares::width(freshkube_ui::squares
 const READY_WIDTH: f32 = 72.;
 /// A pod's restart count, under its label and sort arrow.
 const RESTARTS_WIDTH: f32 = 88.;
+/// A pod's Logs button at the row's end.
+const LOGS_WIDTH: f32 = 36.;
 /// A use figure and its 44-wide bullet.
 const USAGE_WIDTH: f32 = 116.;
 const MAX_OWNER: f32 = 132.;
@@ -51,6 +53,8 @@ pub(super) enum ColumnSource {
     Cpu,
     Memory,
     Node,
+    /// A pod's Logs button, last.
+    Logs,
 }
 
 #[derive(Clone, Debug)]
@@ -73,7 +77,7 @@ impl DisplayColumn {
             ColumnSource::Name(_) if namespaced => SortKey::Namespace,
             ColumnSource::Cell(ix) | ColumnSource::Name(ix) => SortKey::Column(ix),
             ColumnSource::Namespace => SortKey::Namespace,
-            ColumnSource::Glyph => return None,
+            ColumnSource::Glyph | ColumnSource::Logs => return None,
             ColumnSource::Owner => SortKey::Owner,
             ColumnSource::Containers => SortKey::Containers,
             ColumnSource::Ready => SortKey::Ready,
@@ -235,6 +239,9 @@ impl TableLayout {
                     fit(widest.namespace.max(11), MAX_COLUMN),
                 ));
             }
+        }
+        if pods {
+            columns.push(DisplayColumn::new("", ColumnSource::Logs, LOGS_WIDTH));
         }
         let width = columns.iter().map(|column| column.width).sum();
         Self {

@@ -134,6 +134,10 @@ pub(crate) struct PodRow {
     /// label, the same lines joined.
     pub(crate) containers_tip: SharedString,
     pub(crate) containers_label: SharedString,
+    /// The row's Logs button: its id, `pod-row-logs-<uid>`, and its
+    /// accessible label, `Logs for <pod>`, set with the row's identity.
+    pub(crate) logs_id: SharedString,
+    pub(crate) logs_label: SharedString,
 }
 
 /// Waiting reasons that won't clear without a change to the pod or its
@@ -354,6 +358,8 @@ pub(crate) fn pod_row(
         squares,
         containers_tip: lines.join("\n").into(),
         containers_label: lines.join("; ").into(),
+        logs_id: SharedString::default(),
+        logs_label: SharedString::default(),
         containers: facts.containers,
         init_containers: facts.init_containers,
     }
@@ -388,12 +394,10 @@ pub(crate) fn derive(
     row.owner = owner(controller, labels);
     row.generated = generated_suffix(&row.identity.name, row.owner.as_ref());
     if row.identity.resource == "pods" {
-        row.pod = Some(Arc::new(pod_row(
-            columns,
-            &row.cells,
-            facts,
-            row.terminating,
-        )));
+        let mut pod = pod_row(columns, &row.cells, facts, row.terminating);
+        pod.logs_id = format!("pod-row-logs-{}", row.identity.uid).into();
+        pod.logs_label = format!("Logs for {}", row.identity.name).into();
+        row.pod = Some(Arc::new(pod));
     }
 }
 
