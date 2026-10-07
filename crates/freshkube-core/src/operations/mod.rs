@@ -1121,14 +1121,12 @@ async fn destructive_operation(
     let talos_target = talos.with_node(&request.target.address);
     let request_accepted = if shutdown {
         match talos_target.shutdown(false).await {
-            Ok(result) if result.success => Ok(()),
-            Ok(_) => Err("Talos did not acknowledge the shutdown request".to_string()),
+            Ok(_) => Ok(()),
             Err(error) => Err(format!("Talos shutdown request failed: {error}")),
         }
     } else {
         match talos_target.reboot(RebootMode::Default).await {
-            Ok(result) if result.success => Ok(()),
-            Ok(_) => Err("Talos did not acknowledge the reboot request".to_string()),
+            Ok(_) => Ok(()),
             Err(error) => Err(format!("Talos reboot request failed: {error}")),
         }
     };

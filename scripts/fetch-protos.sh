@@ -13,7 +13,7 @@ BASE_URL="https://raw.githubusercontent.com/siderolabs/talos/${VERSION}/api"
 echo "Fetching Talos proto files (${VERSION})..."
 
 # Create directories
-mkdir -p "${PROTO_DIR}"/{common,machine,storage,time,inspect,google/rpc}
+mkdir -p "${PROTO_DIR}"/{common,machine,time,google/rpc}
 
 # Fetch proto files
 fetch_proto() {
@@ -32,9 +32,7 @@ fetch_proto() {
 
 fetch_proto "common/common.proto"
 fetch_proto "machine/machine.proto"
-fetch_proto "storage/storage.proto"
 fetch_proto "time/time.proto"
-fetch_proto "inspect/inspect.proto"
 
 # Fetch Google RPC protos (required dependency)
 echo "  Downloading google/rpc/status.proto..."

@@ -4,8 +4,6 @@
 
 use crate::config::Context;
 use crate::error::TalosError;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
@@ -117,74 +115,5 @@ pub async fn create_channel(ctx: &Context) -> Result<Channel, TalosError> {
             Ok(channel)
         }
         Err(e) => Err(e.into()),
-    }
-}
-
-/// Parse PEM-encoded certificates into rustls types
-pub fn parse_certificates(pem_data: &[u8]) -> Result<Vec<CertificateDer<'static>>, TalosError> {
-    let mut reader = std::io::BufReader::new(pem_data);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
-        .filter_map(|r| r.ok())
-        .collect();
-
-    if certs.is_empty() {
-        return Err(TalosError::Tls(
-            "No certificates found in PEM data".to_string(),
-        ));
-    }
-
-    Ok(certs)
-}
-
-/// Parse PEM-encoded private key into rustls type
-pub fn parse_private_key(pem_data: &[u8]) -> Result<PrivateKeyDer<'static>, TalosError> {
-    let mut reader = std::io::BufReader::new(pem_data);
-
-    // Try to read private key (handles PKCS8, EC, and RSA formats)
-    let key = rustls_pemfile::private_key(&mut reader)
-        .map_err(|e| TalosError::Tls(format!("Failed to parse private key: {}", e)))?
-        .ok_or_else(|| TalosError::Tls("No private key found in PEM data".to_string()))?;
-
-    Ok(key)
-}
-
-/// Build a rustls ClientConfig for mTLS
-pub fn build_rustls_config(
-    ca_pem: &[u8],
-    client_cert_pem: &[u8],
-    client_key_pem: &[u8],
-) -> Result<Arc<rustls::ClientConfig>, TalosError> {
-    // Parse CA certificates
-    let ca_certs = parse_certificates(ca_pem)?;
-
-    // Build root cert store
-    let mut root_store = rustls::RootCertStore::empty();
-    for cert in ca_certs {
-        root_store
-            .add(cert)
-            .map_err(|e| TalosError::Tls(format!("Failed to add CA cert: {}", e)))?;
-    }
-
-    // Parse client certificate and key
-    let client_certs = parse_certificates(client_cert_pem)?;
-    let client_key = parse_private_key(client_key_pem)?;
-
-    // Build client config
-    let config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_client_auth_cert(client_certs, client_key)
-        .map_err(|e| TalosError::Tls(format!("Failed to configure client auth: {}", e)))?;
-
-    Ok(Arc::new(config))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_empty_pem() {
-        let result = parse_certificates(b"");
-        assert!(result.is_err());
     }
 }
