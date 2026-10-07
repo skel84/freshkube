@@ -148,7 +148,7 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         // namespace when listing every one, the owner, readiness with
         // restarts, use, the node and age. IP stays left out.
         assert!(window.try_find(("resource-sort", 0usize)).is_none());
-        let labels: Vec<String> = (1..8usize)
+        let labels: Vec<String> = (1..9usize)
             .map(|ix| {
                 window
                     .find(("resource-sort", ix))
@@ -159,9 +159,11 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
             .collect();
         assert_eq!(
             labels,
-            ["Name", "Owner", "Ready", "CPU", "Memory", "Node", "Age"]
+            [
+                "Name", "Ready", "CPU", "Memory", "Restarts", "Owner", "Node", "Age"
+            ]
         );
-        assert!(window.try_find(("resource-sort", 8usize)).is_none());
+        assert!(window.try_find(("resource-sort", 9usize)).is_none());
 
         let third = identity_at(&screen, 2, cx);
         window.within(row_id(&third)).click("name", cx);
@@ -235,7 +237,7 @@ fn a_namespace_narrows_namespaced_kinds_and_persists_across_kinds(cx: &mut TestA
         assert!(!view.layout.namespaced);
         assert_eq!(
             window.find(("resource-sort", 2usize)).label(),
-            Some("Owner")
+            Some("Ready")
         );
 
         // Cluster-scoped kinds have no namespace picker and list all.
@@ -1352,6 +1354,48 @@ fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
     .unwrap();
 }
 
+/// A group row's buttons follow its count, within the 280 dp a drawer
+/// leaves the list, and the Healthy row offers no fold while a filter keeps
+/// every healthy pod in sight (#321).
+#[gpui_kit::test]
+fn a_group_rows_buttons_follow_its_count_and_a_filter_offers_no_fold(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        window.render_frame(cx);
+        let row = window.find("resource-group-healthy").bounds();
+        let toggle = window.find("resource-group-healthy-toggle").bounds();
+        assert!(
+            toggle.right() - row.left() <= gpui_kit::px(280.),
+            "{row:?} {toggle:?}"
+        );
+
+        // The healthy chip shows every healthy pod: nothing to fold.
+        window.click("resource-tally-healthy", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).projection.len(), 20);
+        assert!(window.try_find("resource-group-healthy-toggle").is_none());
+        window.click("resource-tally-healthy", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("resource-group-healthy-toggle").is_some());
+
+        // Neither does a typed filter, which reaches the screen through
+        // the input's change event once the update ends.
+        window.click("resource-filter", cx);
+        window.render_frame(cx);
+        window.input("coredns", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).projection.len(), 2);
+        assert!(window.find("resource-group-healthy").visible());
+        assert!(window.try_find("resource-group-healthy-toggle").is_none());
+    })
+    .unwrap();
+}
+
 /// The pods page as it opens: problems first.
 fn problems(screen: &Entity<ResourcesScreen>, cx: &mut gpui_kit::App) {
     screen.update(cx, |screen, cx| {
@@ -1377,7 +1421,7 @@ fn pods_show_problems_first_and_fold_healthy_ones(cx: &mut TestAppContext) {
             .label()
             .unwrap()
             .to_owned();
-        assert!(healthy.starts_with("Healthy · 20 pods in "), "{healthy}");
+        assert!(healthy.starts_with("Healthy · 20 pods · "), "{healthy}");
         assert!(healthy.ends_with("· collapsed"), "{healthy}");
         // The count sits in the table's footer, under the rows.
         let collapsed = window.within("resource-footer").find("resource-collapsed");
@@ -1654,23 +1698,75 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
         let names: Vec<_> = rows.iter().map(|row| left(window, row)).collect();
         let header = window.find(("resource-sort", 1usize)).bounds().left();
         // Column 2 starts at the pinned run's edge, where its label stays
-        // once scrolled; column 3 starts clear of the scroll's 120.
+        // once scrolled; column 4 starts clear of the scroll's 120.
         let edge = window.find(("resource-sort", 2usize)).bounds().left();
-        let owner = window.find(("resource-sort", 3usize)).bounds().left();
-        assert!(owner - edge > px(120.), "{:?}", owner - edge);
+        let later = window.find(("resource-sort", 4usize)).bounds().left();
+        assert!(later - edge > px(120.), "{:?}", later - edge);
         window.scroll(
             "resource-table-scroll",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-120.), px(0.))),
             cx,
         );
         window.render_frame(cx);
-        let moved = owner - window.find(("resource-sort", 3usize)).bounds().left();
+        let moved = later - window.find(("resource-sort", 4usize)).bounds().left();
         assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
         // `find` fails on an id that resolves twice.
         assert!((window.find(("resource-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
         for (row, name) in rows.iter().zip(names) {
             assert!((left(window, row) - name).abs() <= px(1.5));
         }
+    })
+    .unwrap();
+}
+
+/// Ready sorts the least ready pods first and Restarts the most restarted
+/// last; each pod's restarts have a cell of their own (#291).
+#[gpui_kit::test]
+fn ready_and_restarts_sort_on_their_own(cx: &mut TestAppContext) {
+    use crate::resources::{model::SortKey, rows::PodRow};
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.set_list_view(ListView::All, cx));
+        window.render_frame(cx);
+        let column =
+            |screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App, pick: fn(&PodRow) -> f64| {
+                let view = screen.read(cx);
+                (0..view.projection.len())
+                    .map(|ix| {
+                        pick(
+                            view.projection
+                                .row(&view.store, ix)
+                                .unwrap()
+                                .pod
+                                .as_ref()
+                                .unwrap(),
+                        )
+                    })
+                    .collect::<Vec<f64>>()
+            };
+        let share = |pod: &PodRow| {
+            let (up, all) = pod.ready.split_once('/').unwrap();
+            up.parse::<f64>().unwrap() / all.parse::<f64>().unwrap()
+        };
+        screen.update(cx, |screen, cx| screen.sort_by(SortKey::Ready, cx));
+        let ready = column(&screen, cx, share);
+        assert!(ready.is_sorted(), "{ready:?}");
+        assert!(ready[0] < 1., "{ready:?}");
+
+        screen.update(cx, |screen, cx| screen.sort_by(SortKey::Restarts, cx));
+        let restarts = column(&screen, cx, |pod| pod.restarts as f64);
+        assert!(restarts.is_sorted(), "{restarts:?}");
+        assert!(*restarts.last().unwrap() > 0., "{restarts:?}");
+
+        // Descending, the most restarted pod leads, its count in its cell.
+        screen.update(cx, |screen, cx| screen.sort_by(SortKey::Restarts, cx));
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        let first = view.projection.row(&view.store, 0).unwrap();
+        let (restarted, count) = (first.identity.clone(), first.pod.as_ref().unwrap().restarts);
+        assert_eq!(count as f64, *restarts.last().unwrap());
+        let cell = window.within(row_id(&restarted)).find("restarts");
+        assert_eq!(cell.label(), Some(format!("{count} restarts").as_str()));
     })
     .unwrap();
 }
@@ -1778,13 +1874,13 @@ fn fog_glyph_filters_and_column_choices_change_the_table(cx: &mut TestAppContext
             let before = screen.read(cx).layout.width;
             window.click("resource-columns", cx);
             window.render_frame(cx);
-            // The first optional column is Owner; the Name and glyph stay fixed.
+            // The first optional column is Ready; the Name and glyph stay fixed.
             window.within("popup-menu").click(0usize, cx);
             assert!(
                 screen
                     .read(cx)
                     .hidden_columns
-                    .contains(&super::layout::ColumnSource::Owner)
+                    .contains(&super::layout::ColumnSource::Ready)
             );
             assert!(screen.read(cx).layout.width < before);
             before

@@ -93,11 +93,13 @@ impl ResourcesScreen {
         };
         let key = group_key(&group.cause);
         let pods = if group.total == 1 { "pod" } else { "pods" };
-        let mut detail = vec![if group.namespaces > 1 && group.cause == Cause::Healthy {
-            format!("{} {pods} in {} namespaces", group.total, group.namespaces)
-        } else {
-            format!("{} {pods}", group.total)
-        }];
+        // The count leads, then the buttons, then the rest, so the
+        // buttons stay in the room a drawer leaves the list (#321).
+        let count = format!("{} {pods}", group.total);
+        let mut detail = Vec::new();
+        if group.namespaces > 1 && group.cause == Cause::Healthy {
+            detail.push(format!("{} namespaces", group.namespaces));
+        }
         if let Cause::NodeNotReady(node) = &group.cause {
             if let Some(Some(since)) = self.not_ready.get(node) {
                 let seconds = self.now.saturating_sub(*since).max(0) as u64;
@@ -109,7 +111,6 @@ impl ResourcesScreen {
         if collapsed {
             detail.push("collapsed".into());
         }
-        let problems = self.projection.tally().problems() > 0;
         let node = match &group.cause {
             Cause::NodeNotReady(node) => Some(node.clone()),
             _ => None,
@@ -121,7 +122,9 @@ impl ResourcesScreen {
             table::ROW_HEIGHT,
         )
         .subject(node.clone())
-        .detail(detail);
+        .detail(vec![count])
+        .after(detail)
+        .room(self.room_beside_drawer(cx));
         if let Some(node) = node {
             row = row.action(
                 Button::new(SharedString::from(format!("{key}-open-node")))
@@ -147,7 +150,8 @@ impl ResourcesScreen {
                     })),
             );
         }
-        if group.cause == Cause::Healthy && problems {
+        // A filter keeps every healthy pod in sight, so it offers no fold.
+        if group.cause == Cause::Healthy && self.projection.folds_healthy() {
             row = row.action(
                 Button::new(SharedString::from(format!("{key}-toggle")))
                     .ghost()
@@ -524,6 +528,15 @@ impl ResourcesScreen {
             .child(self.measure_body(cx))
             .children(open.then(|| self.drawer(window, cx)))
             .into_any_element()
+    }
+
+    /// The width in dp the drawer leaves the list in sight, while it is
+    /// open beside it.
+    fn room_beside_drawer(&self, cx: &App) -> Option<f32> {
+        self.detail.read(cx).target_identity()?;
+        let body = self.body_width.get()?;
+        let fit = drawer::fit(self.drawer_width, body);
+        (!fit.full).then_some(body - fit.width)
     }
 
     /// Learns the list's width as it lays out, for the drawer's bounds,

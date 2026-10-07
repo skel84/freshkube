@@ -154,6 +154,10 @@ impl TableSource for ResourcesScreen {
                 Some(pod) => cells::ready(column, pod, &p),
                 None => cells::cell(column).into_any_element(),
             },
+            ColumnSource::Restarts => match pod {
+                Some(pod) => cells::restarts(column, pod, &p),
+                None => cells::cell(column).into_any_element(),
+            },
             ColumnSource::Cpu | ColumnSource::Memory => match pod {
                 Some(pod) => {
                     let (id, resource) = if column.source == ColumnSource::Cpu {

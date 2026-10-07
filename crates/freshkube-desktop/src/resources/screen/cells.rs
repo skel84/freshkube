@@ -243,35 +243,36 @@ pub(super) fn ready(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -> A
     tooltip(
         cell(column)
             .id("ready")
-            .flex()
-            .gap(dp(8.))
-            .child(
-                div()
-                    .when(!all_ready && pod.state != PodState::Completed, |this| {
-                        this.text_color(p.warn_ink)
-                    })
-                    .child(pod.ready.clone()),
-            )
-            .when(pod.restarts > 0, |this| {
-                let color = if pod.restarts >= 5 {
-                    p.warn_ink
-                } else {
-                    p.muted
-                };
-                this.child(
-                    h_flex()
-                        .gap(dp(2.))
-                        .text_color(color)
-                        .child(
-                            Icon::new(IconName::RotateCcw)
-                                .size(dp(11.))
-                                .text_color(color),
-                        )
-                        .child(pod.restarts.to_string()),
-                )
-            }),
+            .when(!all_ready && pod.state != PodState::Completed, |this| {
+                this.text_color(p.warn_ink)
+            })
+            .child(pod.ready.clone()),
         move || readiness(&pod_for_tip),
     )
+    .into_any_element()
+}
+
+/// A pod's restarts: none muted, five or more in amber (#291).
+pub(super) fn restarts(column: &DisplayColumn, pod: &Arc<PodRow>, p: &Palette) -> AnyElement {
+    let color = match pod.restarts {
+        0 => p.muted,
+        1..5 => p.ink,
+        _ => p.warn_ink,
+    };
+    let pod_for_tip = pod.clone();
+    let restarts = pod.restarts;
+    tooltip(
+        cell(column)
+            .id("restarts")
+            .text_color(color)
+            .child(restarts.to_string()),
+        move || readiness(&pod_for_tip),
+    )
+    .aria_label(format!(
+        "{restarts} restart{}",
+        if restarts == 1 { "" } else { "s" }
+    ))
+    .test_support()
     .into_any_element()
 }
 

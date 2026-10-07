@@ -112,6 +112,8 @@ pub struct GroupRow {
     subject: Option<SharedString>,
     detail: Vec<String>,
     actions: Vec<AnyElement>,
+    after: Vec<String>,
+    room: Option<f32>,
     height: f32,
 }
 
@@ -129,6 +131,8 @@ impl GroupRow {
             subject: None,
             detail: Vec::new(),
             actions: Vec::new(),
+            after: Vec::new(),
+            room: None,
             height,
         }
     }
@@ -149,6 +153,22 @@ impl GroupRow {
         self
     }
 
+    /// Details drawn after the actions, joined with `·`, so the actions
+    /// stay near the start where a drawer may cover the row's end.
+    pub fn after(mut self, after: Vec<String>) -> Self {
+        self.after = after;
+        self
+    }
+
+    /// The width in dp left in sight, when something covers the row's
+    /// end, such as a drawer over the list: the row lays its text and
+    /// actions out within it, the text truncating so that the glyph and
+    /// the actions keep their width.
+    pub fn room(mut self, room: Option<f32>) -> Self {
+        self.room = room;
+        self
+    }
+
     pub fn render(self, cx: &App) -> Observed<Stateful<Div>> {
         let p = palette(cx);
         let color = match self.tone {
@@ -158,46 +178,109 @@ impl GroupRow {
             _ => p.muted,
         };
         let detail = self.detail.join(" · ");
+        let after = self.after.join(" · ");
         let glyph = glyph_slot(self.tone, cx)
             .id((self.id.clone(), "glyph"))
-            .test_support();
-        let label = (self.id.clone(), "label");
+            .test_support()
+            .into_any_element();
+        let id = self.id.clone();
+        let aria = if after.is_empty() {
+            format!("{} · {detail}", self.label)
+        } else {
+            format!("{} · {detail} · {after}", self.label)
+        };
+        let (height, room) = (self.height, self.room);
+        let contents = self.contents(glyph, color, detail, after, p.muted);
         h_flex()
-            .id(self.id)
+            .id(id)
             .test_support()
             .role(Role::Heading)
-            .aria_label(format!("{} · {detail}", self.label))
+            .aria_label(aria)
             .w_full()
-            .h(dp(self.height))
-            .pr_3()
-            .gap(dp(CELL_PAD))
+            .h(dp(height))
             .bg(p.track.opacity(0.45))
             .border_b_1()
             .border_color(p.line)
             .text_size(dp(12.))
-            .child(glyph)
             .child(
-                div()
-                    .id(label)
-                    .test_support()
-                    .flex_none()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(color)
-                    .child(self.label),
+                h_flex()
+                    .h_full()
+                    .flex_1()
+                    .min_w_0()
+                    .when_some(room, |this, room| this.flex_none().w(dp(room)))
+                    .pr_3()
+                    .gap(dp(CELL_PAD))
+                    .overflow_hidden()
+                    .children(contents),
             )
-            .when_some(self.subject, |this, subject| {
-                this.child(div().flex_none().font_family(MONO_FONT).child(subject))
-            })
-            // The actions follow the text, so a table wider than its view
-            // still shows them.
-            .child(
+    }
+
+    fn contents(
+        self,
+        glyph: AnyElement,
+        color: gpui_kit::Hsla,
+        detail: String,
+        after: String,
+        muted: gpui_kit::Hsla,
+    ) -> Vec<AnyElement> {
+        let mut parts = vec![glyph];
+        parts.push(
+            div()
+                .id((self.id.clone(), "label"))
+                .test_support()
+                .min_w_0()
+                // What gives way when the room is short, by weight: the
+                // details after the actions, then the subject, the count,
+                // the label last. Flexbox absorbs only that share of the
+                // overflow when the weights sum below 1, so the least is 1.
+                .flex_shrink(1.)
+                .truncate()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(self.label)
+                .into_any_element(),
+        );
+        if let Some(subject) = self.subject {
+            parts.push(
                 div()
                     .min_w_0()
+                    .flex_shrink(50.)
                     .truncate()
-                    .text_color(p.muted)
-                    .child(format!("· {detail}")),
-            )
-            .child(h_flex().flex_none().gap_1().children(self.actions))
+                    .font_family(MONO_FONT)
+                    .child(subject)
+                    .into_any_element(),
+            );
+        }
+        // The actions follow the count, so a table wider than its view, or
+        // a drawer over the list, still shows them.
+        parts.push(
+            div()
+                .min_w_0()
+                .flex_shrink(5.)
+                .truncate()
+                .text_color(muted)
+                .child(format!("· {detail}"))
+                .into_any_element(),
+        );
+        parts.push(
+            h_flex()
+                .flex_none()
+                .gap_1()
+                .children(self.actions)
+                .into_any_element(),
+        );
+        if !after.is_empty() {
+            parts.push(
+                div()
+                    .min_w_0()
+                    .flex_shrink(10_000.)
+                    .truncate()
+                    .text_color(muted)
+                    .child(format!("· {after}"))
+                    .into_any_element(),
+            );
+        }
+        parts
     }
 }
 

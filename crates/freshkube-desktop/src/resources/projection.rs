@@ -183,6 +183,12 @@ impl ResourceProjection {
     }
 
     /// Rows after the filter by cause; zero without a grouping.
+    /// Whether healthy pods may fold: no glyph filter or text filter is
+    /// typed, and something is wrong (#321).
+    pub(crate) fn folds_healthy(&self) -> bool {
+        self.pod_filter.is_none() && self.query.is_empty() && self.tally.problems() > 0
+    }
+
     pub(crate) fn tally(&self) -> Tally {
         self.tally
     }
@@ -424,10 +430,7 @@ impl ResourceProjection {
         if let Some(filter) = self.pod_filter {
             caused.retain(|(cause, _)| filter.matches(cause));
         }
-        let collapse = self.pod_filter.is_none()
-            && !grouping.healthy_open
-            && self.tally.problems() > 0
-            && self.query.is_empty();
+        let collapse = !grouping.healthy_open && self.folds_healthy();
         let mut rest = caused.as_slice();
         while let Some((cause, _)) = rest.first() {
             let total = rest.iter().take_while(|(other, _)| other == cause).count();
@@ -490,6 +493,22 @@ fn compare(
                     .map(|owner| (owner.short.as_str(), owner.name.as_str()))
             }
             label(left).cmp(&label(right))
+        }
+        (SortKey::Ready, _) => {
+            // `up/all` as a pair to compare by cross-multiplying, so 0/1
+            // and 0/3 tie and 1/2 comes before 2/3.
+            let ready = |row: &ResourceRow| {
+                let pod = row.pod.as_ref()?;
+                let (up, all) = pod.ready.split_once('/')?;
+                Some((
+                    up.trim().parse::<u64>().ok()?,
+                    all.trim().parse::<u64>().ok()?,
+                ))
+            };
+            match (ready(left), ready(right)) {
+                (Some((lu, la)), Some((ru, ra))) => (lu * ra).cmp(&(ru * la)).then(la.cmp(&ra)),
+                (a, b) => a.is_some().cmp(&b.is_some()),
+            }
         }
         (SortKey::Restarts, _) => {
             let restarts = |row: &ResourceRow| row.pod.as_ref().map(|pod| pod.restarts);
