@@ -1,4 +1,5 @@
 use super::*;
+use crate::indicators::QuorumState;
 
 #[test]
 fn audit_path_is_context_local_and_cannot_escape_directory() {
