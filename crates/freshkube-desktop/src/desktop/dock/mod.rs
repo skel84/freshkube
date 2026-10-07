@@ -37,10 +37,10 @@ pub(crate) const CONTEXT: &str = "Dock";
 pub(crate) const MAX_LOG_TABS: usize = 8;
 /// The header and the status bar, in dp, which the dock never covers.
 const FRAME_CHROME: f32 = 52. + 28.;
-/// How long after the last change the dock is saved, so a drag writes once.
 /// The page's least height under an open dock, in dp, unless the dock is
 /// fitted to the window.
 const PAGE_LEAST: f32 = 100.;
+/// How long after the last change the dock is saved, so a drag writes once.
 const SAVE_DELAY: Duration = Duration::from_millis(300);
 
 actions!(
@@ -414,7 +414,6 @@ impl Dock {
         }
     }
 
-    /// Gives a tab its object and starts reading it, once.
     /// Turns pod tab `id` to a chosen container and instance: at once when
     /// its containers are known, otherwise once the feed learns them.
     fn aim(&mut self, id: u64, at: LogsAt, cx: &mut Context<Self>) {
@@ -433,6 +432,7 @@ impl Dock {
         }
     }
 
+    /// Gives a tab its object and starts reading it, once.
     fn start_tab(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(access) = self.source.as_ref().map(|source| source.access.clone()) else {
             return;

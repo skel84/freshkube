@@ -440,10 +440,7 @@ fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Respo
             summary::pods(world, Some(namespace), &param, table)
         }
         ["api", "v1", "namespaces", namespace, "pods", name] => pod_object(world, namespace, name),
-        ["api", "v1", "namespaces", _, "pods", name, "log"] => {
-            eprintln!("stress server: log stream for {name}");
-            log_stream(world)
-        }
+        ["api", "v1", "namespaces", _, "pods", _, "log"] => log_stream(world),
         [.., "events"] if watching => idle_stream(),
         [.., "events"] => json_response(json!({
             "kind": "EventList", "apiVersion": "v1",
