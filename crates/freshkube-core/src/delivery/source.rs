@@ -147,9 +147,19 @@ pub fn printable(failure: &Failure) -> String {
 }
 
 /// Text a cluster object carries, such as a status message, as it may be
-/// printed: without identities, URLs, addresses or absolute paths.
+/// printed: without identities, URLs, addresses (IPv6 ones wherever they
+/// stand), absolute paths or whatever stands before an `@` (credentials, an
+/// email's local part), and cut as [`redact_body`] cuts. API group names
+/// (`pipelineruns.tekton.dev`) stay: only a body loses bare host names.
 pub fn redact_message(message: &str) -> String {
-    redact_location(&redact_identity(message))
+    redact_capped(message, redact_places)
+}
+
+/// What [`redact_message`] takes out, on text already short enough. Each
+/// pass is linear; IPv6 goes before IPv4, so `::ffff:192.0.2.1` goes whole.
+fn redact_places(message: &str) -> String {
+    let located = redact_location(&redact_identity(message));
+    redact_ipv4(&redact_ipv6(&redact_credentials(&located)))
 }
 
 /// A failure as it is printed: its kind and [`printable`] message.
@@ -190,60 +200,104 @@ fn redact_word(word: &str) -> String {
     format!("{}{replacement}{}", &word[..start], &word[end..])
 }
 
-/// The longest message [`redact_body`] keeps, before its ellipsis.
+/// The longest message [`redact_body`] and [`redact_message`] keep, their
+/// ellipsis included.
 pub const MAX_BODY_MESSAGE_BYTES: usize = 4 * 1024;
 /// How much of a body [`redact_body`] reads. Redaction can shorten a body a
 /// lot (a long URL becomes `<url>`), so it reads more than it keeps, but never
 /// the whole of a body that may be 32 MiB.
 const MAX_BODY_SCANNED_BYTES: usize = 4 * MAX_BODY_MESSAGE_BYTES;
+/// How far back from its limit a cut looks for a space, or for the character
+/// its caller accepts instead, before it cuts inside a word: a long word
+/// never takes most of the text with it.
+const MAX_CUT_STEP_BYTES: usize = 256;
+/// What ends a message that was cut short.
+const ELLIPSIS: char = '…';
 
 /// An error body that isn't the API server's JSON, as it may be kept: a
 /// proxy's or a load balancer's page names hosts without a port, so besides
-/// what [`redact_message`] takes out, every bare host name goes too, with
-/// IPv6 addresses wherever they stand and whatever stands before an `@`
-/// (credentials, an email's local part). API groups look like host names and
-/// go with them, which only an API server's own message, never such a body,
-/// needs to keep.
+/// what [`redact_message`] takes out (IPv6 addresses wherever they stand,
+/// whatever stands before an `@`), every bare host name goes too. API
+/// groups look like host names and go with them, which only an API server's
+/// own message, never such a body, needs to keep.
 ///
 /// Only the body's first 16 KiB are read, cut where no word that names a
 /// place can be cut in two, and what is kept after redaction is at most
 /// [`MAX_BODY_MESSAGE_BYTES`], cut at a space, with `…` when anything was
 /// left out. Every pass is linear.
+///
+/// A cut steps back at most [`MAX_CUT_STEP_BYTES`] to find its space or
+/// markup delimiter. A longer word that stands across the end of what is read
+/// is cut inside and redacted as what is left of it. A URL or a path still
+/// reads as one, but any other token at the cut can be split from what
+/// marks it: `user:secret` without its `@host`, `gitlab.i`, `jane%4`.
 pub fn redact_body(body: &str) -> String {
-    let read = cut_at(body, MAX_BODY_SCANNED_BYTES, is_markup_delimiter);
-    let scanned = read.map_or(body, |end| &body[..end]);
-    let redacted = redact_hosts(&redact_ipv6(&redact_credentials(&redact_message(scanned))));
-    let kept = cut_at(&redacted, MAX_BODY_MESSAGE_BYTES, |_| true);
-    if read.is_none() && kept.is_none() {
+    redact_capped(body, |text| redact_hosts(&redact_places(text)))
+}
+
+/// `text` redacted by `redact` after it is read as [`redact_body`] reads a
+/// body, and kept as it keeps one.
+fn redact_capped(text: &str, redact: impl Fn(&str) -> String) -> String {
+    let read = cut_at(text, MAX_BODY_SCANNED_BYTES, is_markup_delimiter);
+    let redacted = redact(read.map_or(text, |end| &text[..end]));
+    if read.is_none() && redacted.len() <= MAX_BODY_MESSAGE_BYTES {
         return redacted;
     }
-    let end = kept.unwrap_or(redacted.len());
-    format!("{}…", redacted[..end].trim_end())
+    with_ellipsis(&redacted)
+}
+
+/// A failure's final message, after it was quoted and parsed again, at most
+/// [`MAX_BODY_MESSAGE_BYTES`]: `{:?}` writes a control character as
+/// `\u{1}`, which no JSON parser reads back, so the quoted, longer text stays.
+pub(super) fn cap_message(message: String) -> String {
+    if message.len() <= MAX_BODY_MESSAGE_BYTES {
+        message
+    } else {
+        with_ellipsis(&message)
+    }
+}
+
+/// `text` cut to leave room for [`ELLIPSIS`] within
+/// [`MAX_BODY_MESSAGE_BYTES`], at a space, and that ellipsis.
+fn with_ellipsis(text: &str) -> String {
+    let limit = MAX_BODY_MESSAGE_BYTES - ELLIPSIS.len_utf8();
+    let end = cut_at(text, limit, |_| true).unwrap_or(text.len());
+    let mut kept = text[..end].trim_end().to_owned();
+    kept.push(ELLIPSIS);
+    kept
 }
 
 /// Where to cut `text` to keep at most `limit` bytes: before the last
 /// whitespace that fits, else before the last character `fallback` accepts,
-/// else at the start. `None` when it fits.
+/// each looked for at most [`MAX_CUT_STEP_BYTES`] back, else at the last
+/// character boundary that fits. `None` when it fits.
 fn cut_at(text: &str, limit: usize, fallback: fn(char) -> bool) -> Option<usize> {
     if text.len() <= limit {
         return None;
     }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = char_boundary_before(text, limit);
+    let from = char_boundary_before(text, end.saturating_sub(MAX_CUT_STEP_BYTES));
     let before = |boundary: fn(char) -> bool| {
         if text[end..].starts_with(boundary) {
             Some(end)
         } else {
-            text[..end].rfind(boundary)
+            text[from..end].rfind(boundary).map(|at| from + at)
         }
     };
     Some(
         before(char::is_whitespace)
             .or_else(|| before(fallback))
-            .unwrap_or(0),
+            .unwrap_or(end),
     )
+}
+
+/// The last character boundary of `text` at or before `at`.
+fn char_boundary_before(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
 }
 
 /// A character that ends every run a redaction pass looks at: a host name,
@@ -252,64 +306,103 @@ fn is_markup_delimiter(c: char) -> bool {
     matches!(c, '<' | '>' | '"' | '\'')
 }
 
-/// Replaces whatever stands before an `@`, and the host after it, with
-/// `<address>`: `user:pass@db.example.com:5432`, `jane@example.com`. The
-/// whole of the userinfo goes, never only its password. An image digest
-/// (`app@sha256:…`) stays.
+/// Replaces whatever stands before an `@` or its percent-encoding (`%40`, or
+/// `%2540` when encoded twice), and the host after it, with `<address>`:
+/// `user:pass@db.example.com:5432`, `user:p=ss@db.example.com`,
+/// `dG9rZW4=@db.example.com`, `jane@example.com`, `jane%40example.com`. The
+/// whole of the userinfo goes, never only its password; a field's `key=`
+/// before it stays (`owner=jane@example.com`). An scp-style repository loses
+/// its owner too (`git@git.example.com:acme/app.git` keeps `/app.git`). An
+/// image digest (`app@sha256:…`) stays.
 fn redact_credentials(text: &str) -> String {
     let in_userinfo = |c: char| {
         !c.is_whitespace()
             && !matches!(
                 c,
-                '@' | '"'
-                    | '\''
-                    | '`'
-                    | '<'
-                    | '>'
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | ','
-                    | ';'
-                    | '='
+                '@' | '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
             )
     };
     let is_host_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-');
     let mut out = String::with_capacity(text.len());
-    // Everything before `kept` is in `out`; an `@` is looked for from `from`.
+    // Everything before `kept` is in `out`; userinfo is looked for back to
+    // `floor`, the end of the last `@` or `%40`, so every character is
+    // scanned back over once; the next `@` or `%` is looked for from `from`.
     let mut kept = 0;
+    let mut floor = 0;
     let mut from = 0;
-    while let Some(found) = text[from..].find('@') {
+    while let Some(found) = text[from..].find(['@', '%']) {
         let at = from + found;
-        from = at + 1;
-        // `@` is not a userinfo character, so this never scans past the
-        // previous `@`, and every character is scanned once.
-        let start = kept + text[kept..at].trim_end_matches(in_userinfo).len();
-        let host = &text[at + 1..];
-        if start == at || host.starts_with("sha256:") || host.starts_with("sha512:") {
+        let marker = if text[at..].starts_with('@') {
+            1
+        } else if text[at..].starts_with("%40") {
+            3
+        } else if text[at..].starts_with("%2540") {
+            // Encoded twice: `%25` is the `%`.
+            5
+        } else {
+            from = at + 1;
+            continue;
+        };
+        let run = floor + text[floor..at].trim_end_matches(in_userinfo).len();
+        let start = run + userinfo_start(&text[run..at]);
+        let host_at = at + marker;
+        let host = &text[host_at..];
+        from = host_at;
+        floor = host_at;
+        let digest = marker == 1 && (host.starts_with("sha256:") || host.starts_with("sha512:"));
+        // An encoded `@` counts only before a host (`50%40` is no address).
+        let encoded_alone = marker > 1 && !host.starts_with(|c: char| c.is_ascii_alphanumeric());
+        if start == at || digest || encoded_alone {
             continue;
         }
         let len = host.find(|c: char| !is_host_char(c)).unwrap_or(host.len());
         let name = host[..len].trim_end_matches('.');
-        let mut end = at + 1 + name.len();
+        let mut end = host_at + name.len();
         if name.len() == len {
             end = text.len() - after_port(&text[end..]).len();
+            if end == host_at + len {
+                end += scp_owner(&text[end..]);
+            }
         }
         out.push_str(&text[kept..start]);
         out.push_str("<address>");
         kept = end;
+        floor = end;
         from = end;
     }
     out.push_str(&text[kept..]);
     out
 }
 
+/// Where the userinfo starts in `run`, the characters before an `@`: after
+/// the last `=` of a field's `key=` (`owner=jane`). An `=` past the first `:`
+/// is the password's (`user:p=ss`), and one that ends the user is base64's
+/// padding (`dG9rZW4=`), so the whole of it goes.
+fn userinfo_start(run: &str) -> usize {
+    let user = run.find(':').map_or(run, |colon| &run[..colon]);
+    user.trim_end_matches('=')
+        .rfind('=')
+        .map_or(0, |equals| equals + 1)
+}
+
+/// How much of `text`, right after an scp-style `user@host`, names the
+/// repository's owner: its `:` and every directory before the last `/`
+/// (`:acme/` of `:acme/app.git`, `:group/sub/` of `:group/sub/app.git`), or
+/// nothing when it has no `/`.
+fn scp_owner(text: &str) -> usize {
+    let Some(path) = text.strip_prefix(':') else {
+        return 0;
+    };
+    let len = path
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/' | '~')))
+        .unwrap_or(path.len());
+    path[..len].rfind('/').map_or(0, |slash| 1 + slash)
+}
+
 /// Replaces each IPv6 address, with its zone, wherever it stands
-/// (`<b>2001:db8::1</b>`, `peer=fe80::1%eth0`). A run that only looks like
-/// one inside a word (`Error::new`, `std::fmt`) stays.
+/// (`<b>2001:db8::1</b>`, `peer=fe80::1%eth0`), right after a field's `key:`
+/// too (`peer:fd00::1`, `node:fd00::2`). A run that only looks like one inside
+/// a word (`Error::new`, `std::fmt`) stays.
 fn redact_ipv6(text: &str) -> String {
     let is_ip_char = |c: char| c.is_ascii_hexdigit() || matches!(c, ':' | '.');
     let is_word_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
@@ -321,20 +414,24 @@ fn redact_ipv6(text: &str) -> String {
         let len = tail.find(|c: char| !is_ip_char(c)).unwrap_or(tail.len());
         let run = &tail[..len];
         let in_word = out.chars().next_back().is_some_and(is_word_char);
-        let address = [run, run.trim_end_matches(['.', ':'])]
-            .into_iter()
-            .find(|candidate| {
-                candidate.contains(':')
-                    && candidate.contains(|c: char| c.is_ascii_hexdigit())
-                    && candidate.parse::<std::net::Ipv6Addr>().is_ok()
-            })
-            .filter(|_| !in_word);
-        let Some(address) = address else {
+        // The run, unless it stands inside a word; else what follows its
+        // first colon, a field's `key:`, whose hex letters (`node:`) and
+        // colon start the run.
+        let whole = if in_word {
+            None
+        } else {
+            ipv6_in(run).map(|address| (0, address))
+        };
+        let found = whole.or_else(|| {
+            let key = run.find(':')? + 1;
+            ipv6_in(&run[key..]).map(|address| (key, address))
+        });
+        let Some((key, address)) = found else {
             out.push_str(run);
             rest = &tail[len..];
             continue;
         };
-        let mut after = &tail[address.len()..];
+        let mut after = &tail[key + address.len()..];
         if let Some(zone) = after.strip_prefix('%') {
             let zone_len = zone
                 .find(|c: char| !(is_word_char(c) || matches!(c, '.' | '-')))
@@ -348,6 +445,7 @@ fn redact_ipv6(text: &str) -> String {
             rest = &tail[len..];
             continue;
         }
+        out.push_str(&run[..key]);
         out.push_str("<address>");
         rest = after;
     }
@@ -355,10 +453,74 @@ fn redact_ipv6(text: &str) -> String {
     out
 }
 
+/// The IPv6 address a run of address characters is, without a sentence's
+/// full stop or a trailing colon.
+fn ipv6_in(run: &str) -> Option<&str> {
+    [run, run.trim_end_matches(['.', ':'])]
+        .into_iter()
+        .find(|candidate| {
+            candidate.contains(':')
+                && candidate.contains(|c: char| c.is_ascii_hexdigit())
+                && candidate.parse::<std::net::Ipv6Addr>().is_ok()
+        })
+}
+
+/// Replaces each IPv4 address that stands on its own, with its `:port` or
+/// its network's `/prefix`, wherever it stands (`ip=192.0.2.1`,
+/// `endpoint=10.0.0.5:443`, `10.0.0.0/24`). A run of digits and dots inside
+/// a word (`v1.2.3.4`) and one that isn't four octets (`1.2.3`) stay.
+fn redact_ipv4(text: &str) -> String {
+    let is_run_char = |c: char| c.is_ascii_digit() || c == '.';
+    let is_word_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let len = tail.find(|c: char| !is_run_char(c)).unwrap_or(tail.len());
+        let run = &tail[..len];
+        // A sentence's full stop after it, unless a word goes on after the
+        // dot (`10.0.0.1.example` is a host name).
+        let address = run.trim_end_matches('.');
+        let after = &tail[address.len()..];
+        let in_word = out.chars().next_back().is_some_and(is_word_char)
+            || after.trim_start_matches('.').starts_with(is_word_char);
+        if in_word || address.parse::<std::net::Ipv4Addr>().is_err() {
+            out.push_str(run);
+            rest = &tail[len..];
+            continue;
+        }
+        out.push_str("<address>");
+        let after = after_port(after);
+        rest = after_prefix(after);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` after a leading `/prefix` of 0 to 32 bits, or all of it.
+fn after_prefix(text: &str) -> &str {
+    let Some(digits) = text.strip_prefix('/') else {
+        return text;
+    };
+    let len = digits.len()
+        - digits
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .len();
+    let next = digits[len..].chars().next();
+    let bits = digits[..len].parse::<u8>().is_ok_and(|bits| bits <= 32);
+    if (1..=2).contains(&len) && bits && !next.is_some_and(|c| c.is_ascii_alphanumeric()) {
+        &digits[len..]
+    } else {
+        text
+    }
+}
+
 /// Replaces each run of host-name characters that is a dotted host name or
 /// an IPv4 address, wherever it stands (`host=api.example.com`,
 /// `<b>192.0.2.10</b>`), with a domain's leading dot and a wildcard's `*.`
-/// (`.svc.cluster.local`, `*.apps.cluster.example`).
+/// (`.svc.cluster.local`, `*.apps.cluster.example`). Dashes before or after
+/// it stay outside it (`--api.example.com`, `api.example.com-`).
 fn redact_hosts(text: &str) -> String {
     let is_host_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-');
     let mut out = String::with_capacity(text.len());
@@ -368,15 +530,19 @@ fn redact_hosts(text: &str) -> String {
         let run = &rest[start..];
         let len = run.find(|c: char| !is_host_char(c)).unwrap_or(run.len());
         let (run, mut after) = run.split_at(len);
-        // A domain's or a wildcard's leading dot before the name; a fully
-        // qualified name's root dot, or a sentence's full stop, after it.
-        let name = run.trim_start_matches('.');
+        // A flag's dashes, or a domain's or a wildcard's leading dot, before
+        // the name; a dash, a fully qualified name's root dot, or a
+        // sentence's full stop, after it.
+        let name = run.trim_start_matches(['.', '-']);
         let lead = run.len() - name.len();
-        let name = name.trim_end_matches('.');
+        let name = name.trim_end_matches(['.', '-']);
         if is_host_name(name) || name.parse::<std::net::Ipv4Addr>().is_ok() {
-            if lead > 0 && out.ends_with('*') {
+            // The dot goes with the name; the dashes before it stay.
+            let dashes = run[..lead].trim_end_matches('.');
+            if dashes.is_empty() && lead > 0 && out.ends_with('*') {
                 out.pop();
             }
+            out.push_str(dashes);
             out.push_str("<address>");
             out.push_str(&run[lead + name.len()..]);
             // Its port goes with it, when the name runs straight into one.
@@ -713,5 +879,218 @@ mod tests {
         );
         assert!(redacted.ends_with('…'));
         assert!(!redacted.contains("example"), "{redacted}");
+    }
+
+    #[test]
+    fn a_message_keeps_its_api_group_and_loses_credentials() {
+        assert_eq!(
+            redact_message(
+                r#"pipelineruns.tekton.dev is forbidden: User "system:serviceaccount:ci:runner" cannot list resource "pipelineruns" in API group "tekton.dev" at the cluster scope"#
+            ),
+            r#"pipelineruns.tekton.dev is forbidden: User "<redacted>" cannot list resource "pipelineruns" in API group "tekton.dev" at the cluster scope"#
+        );
+        assert_eq!(
+            redact_message("repository not accessible: deploy:t0ken@git.example.com:8443 refused"),
+            "repository not accessible: <address> refused"
+        );
+        assert_eq!(
+            redact_message("rpc error: git@git.example.com:acme/payments.git: not found"),
+            "rpc error: <address>/payments.git: not found"
+        );
+        assert_eq!(
+            redact_message("synced by jane@example.com"),
+            "synced by <address>"
+        );
+        let signed = "image registry.example/app@sha256:0123abcd is not signed";
+        assert_eq!(redact_message(signed), signed);
+    }
+
+    #[test]
+    fn a_long_message_is_cut_at_a_space() {
+        let cut = redact_message(&"pipelineruns.tekton.dev ".repeat(1_000));
+        assert!(cut.len() <= MAX_BODY_MESSAGE_BYTES, "{}", cut.len());
+        assert!(cut.ends_with("pipelineruns.tekton.dev…"), "{cut}");
+        let cut = redact_message(&"word ".repeat(1_000_000));
+        assert!(cut.len() <= MAX_BODY_MESSAGE_BYTES, "{}", cut.len());
+        assert!(cut.ends_with("word…"), "{cut}");
+        assert_eq!(redact_message("pods is forbidden"), "pods is forbidden");
+    }
+
+    #[test]
+    fn a_cut_steps_back_at_most_256_bytes() {
+        // A space further back is not looked for: the cut falls in the word.
+        let text = format!("a {}", "x".repeat(1_000));
+        assert_eq!(cut_at(&text, 600, |_| false), Some(600));
+        // A space, or the character accepted instead, near enough is.
+        let text = format!("{} {}", "x".repeat(500), "x".repeat(500));
+        assert_eq!(cut_at(&text, 600, |_| false), Some(500));
+        let text = format!("{}<{}", "x".repeat(500), "x".repeat(500));
+        assert_eq!(cut_at(&text, 600, is_markup_delimiter), Some(500));
+        // Never inside a character.
+        assert_eq!(cut_at(&"é".repeat(400), 601, |_| false), Some(600));
+        // A body whose only space is far back keeps all that fits.
+        let cut = redact_body(&format!("a {}", "x".repeat(20_000)));
+        assert_eq!(cut.len(), MAX_BODY_MESSAGE_BYTES);
+        assert!(cut.starts_with("a xxx") && cut.ends_with("x…"), "{cut}");
+    }
+
+    #[test]
+    fn a_body_loses_ipv6_right_after_a_fields_key() {
+        assert_eq!(
+            redact_body("peer:fd00::1 node:fd00::2%eth0 dns:::1, in std::fmt"),
+            "peer:<address> node:<address> dns:<address>, in std::fmt"
+        );
+    }
+
+    #[test]
+    fn a_message_loses_ipv6_and_keeps_its_api_group() {
+        assert_eq!(
+            redact_message(
+                r#"pipelineruns.tekton.dev "build" failed: dial peer:fd00::1 and [2001:db8::2] refused in API group "tekton.dev" (std::fmt)"#
+            ),
+            r#"pipelineruns.tekton.dev "build" failed: dial peer:<address> and [<address>] refused in API group "tekton.dev" (std::fmt)"#
+        );
+    }
+
+    /// An accepted false positive: a word that is a valid IPv6 address after
+    /// a field's `key:` goes as one. Pinned, so a change is a decision.
+    #[test]
+    fn a_message_loses_what_reads_as_ipv6_after_a_key() {
+        assert_eq!(
+            redact_message("status:dead:: seen"),
+            "status:<address> seen"
+        );
+    }
+
+    #[test]
+    fn a_body_loses_partial_userinfo_whole() {
+        assert_eq!(
+            redact_body("auth user:p=ss@db.example.com failed"),
+            "auth <address> failed"
+        );
+        assert_eq!(
+            redact_body("auth key=user:p=ss@db.example.com failed"),
+            "auth key=<address> failed"
+        );
+        assert_eq!(
+            redact_body("clone git@git.example.com:acme/app failed"),
+            "clone <address>/app failed"
+        );
+        assert_eq!(
+            redact_body("owner jane%40example.com and callback?email=jane%40example.com"),
+            "owner <address> and callback?email=<address>"
+        );
+        assert_eq!(redact_body("cut 50%40 off"), "cut 50%40 off");
+    }
+
+    #[test]
+    fn base64_and_twice_encoded_userinfo_goes_whole() {
+        assert_eq!(
+            redact_message("auth dG9rZW4=@db.example.com and key=dG9rZW4=@db.example.com"),
+            "auth <address> and key=<address>"
+        );
+        assert_eq!(
+            redact_message("owner jane%2540example.com"),
+            "owner <address>"
+        );
+        assert_eq!(redact_body("owner jane%2540example.com"), "owner <address>");
+    }
+
+    #[test]
+    fn an_ipv4_address_goes_from_a_field_with_its_port_or_prefix() {
+        assert_eq!(
+            redact_message(
+                "pod ip=192.0.2.1, endpoint=10.0.0.5:443, pool 10.0.0.0/24; kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, image v1.2.3.4, host 10.0.0.1.example"
+            ),
+            "pod ip=<address>, endpoint=<address>, pool <address>; kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, image v1.2.3.4, host 10.0.0.1.example"
+        );
+        // A body keeps versions too, and loses the prefix with its network.
+        assert_eq!(
+            redact_body("kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, pool 10.0.0.0/24."),
+            "kubelet v1.25.3, chart 1.2.3, nginx/1.25.3, pool <address>."
+        );
+    }
+
+    #[test]
+    fn a_body_loses_a_host_between_dashes() {
+        assert_eq!(
+            redact_body("flag --api.example.com and api.example.com- end"),
+            "flag --<address> and <address>- end"
+        );
+    }
+
+    /// The identity scan the linear one replaced in #309, which looked for
+    /// every marker again after each match.
+    fn redact_identity_rescanning(message: &str) -> String {
+        let mut out = String::with_capacity(message.len());
+        let mut rest = message;
+        loop {
+            let found = ["User \"", "users \"", "Group \"", "groups \""]
+                .iter()
+                .filter_map(|marker| rest.find(marker).map(|at| (at, marker.len())))
+                .min();
+            let Some((at, len)) = found else {
+                out.push_str(rest);
+                return out;
+            };
+            let open = at + len;
+            out.push_str(&rest[..open]);
+            out.push_str("<redacted>");
+            rest = match rest[open..].find('"') {
+                Some(close) => &rest[open + close..],
+                None => "\"",
+            };
+        }
+    }
+
+    #[test]
+    fn the_linear_identity_scan_matches_the_rescanning_one() {
+        for (message, expected) in [
+            (
+                r#"User "jane" cannot list"#,
+                r#"User "<redacted>" cannot list"#,
+            ),
+            (r#"in Group "ops""#, r#"in Group "<redacted>""#),
+            (
+                r#"users "jane" is forbidden: User "sa" cannot impersonate resource "users" in API group """#,
+                r#"users "<redacted>" is forbidden: User "<redacted>" cannot impersonate resource "users" in API group """#,
+            ),
+            (
+                r#"groups "ops" is forbidden"#,
+                r#"groups "<redacted>" is forbidden"#,
+            ),
+            // The API server's refusal whole: `API group ""` and the
+            // namespace stay.
+            (
+                r#"pods is forbidden: User "system:serviceaccount:shop:reader" cannot list resource "pods" in API group "" in the namespace "shop""#,
+                r#"pods is forbidden: User "<redacted>" cannot list resource "pods" in API group "" in the namespace "shop""#,
+            ),
+            // An impersonation refusal: a resource named "groups" stays, the
+            // group asked for goes.
+            (
+                r#"users "jane@example.com" is forbidden: User "system:serviceaccount:ci:deployer" cannot impersonate resource "groups" in API group "": groups "system:masters" not allowed"#,
+                r#"users "<redacted>" is forbidden: User "<redacted>" cannot impersonate resource "groups" in API group "": groups "<redacted>" not allowed"#,
+            ),
+            // Empty, adjacent, a nested quote, unterminated.
+            (r#"User "" cannot"#, r#"User "<redacted>" cannot"#),
+            (
+                r#"User "a" Group "b""#,
+                r#"User "<redacted>" Group "<redacted>""#,
+            ),
+            (
+                r#"User ""User "x""#,
+                r#"User "<redacted>"User "<redacted>""#,
+            ),
+            (r#"User "a"b" cannot"#, r#"User "<redacted>"b" cannot"#),
+            (
+                r#"forbidden: User "jane cannot list"#,
+                r#"forbidden: User "<redacted>""#,
+            ),
+            ("no identity here", "no identity here"),
+            ("", ""),
+        ] {
+            assert_eq!(redact_identity(message), expected, "{message}");
+            assert_eq!(redact_identity_rescanning(message), expected, "{message}");
+        }
     }
 }

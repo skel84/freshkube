@@ -24,7 +24,7 @@ use serde_json::Value;
 
 use crate::resources::{Failure, FailureKind};
 
-use super::source::{Truncation, redact_body};
+use super::source::{Truncation, cap_message, redact_body};
 
 /// Items asked for per page.
 pub const PAGE_LIMIT: u32 = 200;
@@ -184,17 +184,26 @@ async fn read_body(body: kube::client::Body, limit: usize) -> Result<Vec<u8>, Fa
 /// The JSON of a successful answer, or the failure an error status reports,
 /// classified as kube classifies it. A body that isn't the API server's
 /// `Status`, such as a proxy's page or its own JSON, loses every place it
-/// names, bare host names included, and is cut short ([`redact_body`]).
+/// names, bare host names included, and is cut short ([`redact_body`]); its
+/// final message, which quoting can lengthen, is cut short again
+/// ([`cap_message`]). The server's own message is kept whole here: it is
+/// redacted and cut only when it is printed ([`super::source::printable`]),
+/// since a cut before redaction could split a credential from its `@`.
 fn decode(status: http::StatusCode, body: &[u8]) -> Result<Value, Failure> {
     if status.is_client_error() || status.is_server_error() {
         let text = String::from_utf8_lossy(body);
-        let response = api_status(&text).unwrap_or_else(|| kube::core::ErrorResponse {
+        if let Some(response) = api_status(&text) {
+            return Err(Failure::from_kube(kube::Error::Api(response)));
+        }
+        let response = kube::core::ErrorResponse {
             status: status.to_string(),
             code: status.as_u16(),
             message: format!("{:?}", redact_body(&text)),
             reason: "Failed to parse error data".into(),
-        });
-        return Err(Failure::from_kube(kube::Error::Api(response)));
+        };
+        let mut failure = Failure::from_kube(kube::Error::Api(response));
+        failure.message = cap_message(failure.message);
+        return Err(failure);
     }
     serde_json::from_slice(body).map_err(|error| {
         Failure::new(
@@ -533,6 +542,41 @@ mod tests {
         assert!(failure.message.len() <= most, "{}", failure.message.len());
         assert!(failure.message.ends_with('…'), "{}", failure.message);
         assert!(!failure.message.contains("gw.example"));
+    }
+
+    #[test]
+    fn the_cap_holds_on_the_final_message_after_quoting() {
+        // `{:?}` writes each control character as `\u{1}`, five bytes, which
+        // no JSON parser reads back, so the quoted text stays and is longer
+        // than what redact_body kept.
+        let page = "\u{1}\u{1} gw.example.net\n".repeat(10_000);
+        let failure = decode(http::StatusCode::BAD_GATEWAY, page.as_bytes()).unwrap_err();
+        let most = super::super::source::MAX_BODY_MESSAGE_BYTES;
+        assert!(failure.message.len() <= most, "{}", failure.message.len());
+        assert!(failure.message.ends_with('…'), "{}", failure.message);
+        assert!(failure.message.contains(r"\u{1}"), "{}", failure.message);
+        assert!(!failure.message.contains("gw.example"));
+    }
+
+    #[test]
+    fn a_servers_long_message_is_redacted_before_it_is_cut() {
+        // No space within 256 bytes of the cut: a cut before redaction would
+        // keep `user:sec` and drop the `@` that marks it as a credential.
+        let message = format!("denied: {},user:secret@db.example.com", "a".repeat(4_076));
+        let status = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "status": "Failure",
+            "message": message,
+            "reason": "Forbidden",
+            "code": 403,
+        });
+        let body = serde_json::to_vec(&status).unwrap();
+        let failure = decode(http::StatusCode::FORBIDDEN, &body).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Forbidden);
+        assert_eq!(failure.message, message);
+        let printed = super::super::source::printable(&failure);
+        assert_eq!(printed, format!("denied: {},<address>", "a".repeat(4_076)));
     }
 
     #[test]
