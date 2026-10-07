@@ -1483,6 +1483,17 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
 fn a_short_window_scrolls_the_frame_to_the_node_log_catalog_and_multiline_errors(
     cx: &mut TestAppContext,
 ) {
+    short_window_node_log(cx, None);
+}
+
+#[gpui_kit::test]
+fn a_short_window_at_the_largest_text_keeps_the_node_log_in_its_body(cx: &mut TestAppContext) {
+    short_window_node_log(cx, Some(20.));
+}
+
+/// The node log's notices, viewport and status in a 760 × 560 window, at
+/// the default text size or `text_size`.
+fn short_window_node_log(cx: &mut TestAppContext, text_size: Option<f32>) {
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         let events = (0..30)
@@ -1514,9 +1525,18 @@ fn a_short_window_scrolls_the_frame_to_the_node_log_catalog_and_multiline_errors
         window.render_frame(cx);
         // Reach the same retained log view through the node pane.
         open_node_tab(window, cx, super::nodes::NodeTab::Logs);
-        for _ in 0..3 {
+        if let Some(text_size) = text_size {
+            crate::text_size::set(text_size, cx);
+        }
+        // The log's width, then its toolbar and the body around it, settle.
+        for _ in 0..6 {
             window.render_frame(cx);
         }
+        // The frame scrolled to the pane when it opened, at the text size
+        // of the time.
+        let frame = view.read(cx).node_workspace.page_scroll.clone();
+        frame.scroll_to_bottom();
+        window.render_frame(cx);
         // 560 px is short at the default text size, so the Logs body
         // scrolls inside the node's inspector. The log keeps its notices
         // above a usable viewport inside its panel, and the status bar's log
@@ -1532,11 +1552,15 @@ fn a_short_window_scrolls_the_frame_to_the_node_log_catalog_and_multiline_errors
         assert!(viewport.right() <= px(760.));
         assert!(notices.size.height >= window.rem_size());
         assert!(notices.bottom() <= viewport.top());
-        assert!(window.find("logs-collection").visible());
+        // At the largest text the toolbar alone outgrows the body's room,
+        // and the body scrolls to the rest of it.
+        if text_size.is_none() {
+            assert!(window.find("logs-collection").visible());
+        }
         // Scrolling the body brings the notices into view, then the whole
         // viewport, above the status bar's log status.
         let body = view.read(cx).node_workspace.logs_scroll.clone();
-        let content = window.find("node-inspector-content").bounds();
+        let content = window.find("node-logs-scroll").bounds();
         let by = (content.bottom() - notices.bottom()).min(px(0.));
         body.set_offset(point(px(0.), body.offset().y + by));
         window.render_frame(cx);
@@ -1544,16 +1568,13 @@ fn a_short_window_scrolls_the_frame_to_the_node_log_catalog_and_multiline_errors
         body.set_offset(point(px(0.), -body.max_offset().y));
         window.render_frame(cx);
         let viewport = window.find("logs-viewport").bounds();
-        let shown = window.find("node-pane").bounds();
+        let shown = window.find("node-logs-scroll").bounds();
         let status = window.find("logs-status");
         assert!(status.visible());
         assert!(status.bounds().top() >= viewport.bottom());
         assert!(status.bounds().bottom() <= px(560.));
-        // The viewport's end shows, with at least the list's least height
-        // of it in the pane; a viewport taller than the pane fills it.
-        assert!(viewport.bottom() <= shown.bottom() + px(0.5));
-        let seen = viewport.bottom().min(shown.bottom()) - viewport.top().max(shown.top());
-        assert!(seen >= window.rem_size() * 6., "{viewport:?} {shown:?}");
+        assert!(viewport.top() >= shown.top(), "{viewport:?} {shown:?}");
+        assert!(viewport.bottom() <= shown.bottom(), "{viewport:?} {shown:?}");
     })
     .unwrap();
 }

@@ -9,8 +9,8 @@ use freshkube_ui::{
     inspector::{self, Inspector},
     page::PANE_PADDING,
 };
-use gpui_kit::component::Sizable;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::{ElementExt, Sizable};
 use gpui_kit::{
     assets::IconName,
     component::{
@@ -19,18 +19,6 @@ use gpui_kit::{
     },
     prelude::*,
 };
-
-/// The node log's height in a short window: what a page's log takes in the
-/// shortest window that isn't short, inside the frame's header and status
-/// bar. The tab names this one, so it leaves out the title row a page has,
-/// and its lines still fit the pane once the body has scrolled.
-const SHORT_LOG_HEIGHT: f32 = freshkube_ui::page::SHORT_HEIGHT - FRAME - TITLE_ROW;
-
-/// The frame's header and status bar, above and below every page.
-const FRAME: f32 = super::super::shell::HEADER_HEIGHT + super::super::shell::STATUS_BAR_HEIGHT;
-
-/// The title row the tab stands in for, as tall as a toolbar row.
-const TITLE_ROW: f32 = freshkube_ui::page::TOOLBAR_HEIGHT;
 
 impl Pilot {
     pub(in crate::desktop) fn render_nodes(
@@ -314,9 +302,12 @@ impl Pilot {
             NodeTab::Pods => inset(self.node_pods.clone().into_any_element()),
             NodeTab::Services => inset(self.render_services(window, cx)),
             NodeTab::Logs => {
-                // In a short window the log keeps the height it lays out
-                // in, and its body scrolls inside the inspector.
+                // In a short window the body scrolls inside the inspector:
+                // it's as tall as its room and the log's toolbar and
+                // notices, so the lines fill the room once it has scrolled
+                // past them.
                 let short = freshkube_ui::page::is_short(window);
+                let height = self.node_workspace.logs_height.filter(|_| short);
                 div()
                     .id("node-logs-scroll")
                     .test_support()
@@ -324,12 +315,18 @@ impl Pilot {
                     .min_h_0()
                     .track_scroll(&self.node_workspace.logs_scroll)
                     .when(short, |this| {
-                        this.overflow_y_scroll().restrict_scroll_to_axis()
+                        let logs = self.logs.downgrade();
+                        let pilot = cx.entity().downgrade();
+                        this.overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                            .on_prepaint(move |bounds, window, cx| {
+                                measure_log_body(&pilot, &logs, bounds.size.height, window, cx)
+                            })
                     })
                     .child(
                         v_flex()
                             .size_full()
-                            .when(short, |this| this.min_h(dp(SHORT_LOG_HEIGHT)))
+                            .when_some(height, |this, height| this.min_h(height))
                             .px(dp(PANE_PADDING))
                             .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
@@ -468,5 +465,41 @@ impl Pilot {
                     ),
                 )
             })
+    }
+}
+
+/// Keeps the Logs tab's body as tall as its room and the log's toolbar and
+/// notices, and draws again when that changes: the room is known only once
+/// the body is laid out.
+fn measure_log_body(
+    pilot: &WeakEntity<Pilot>,
+    logs: &WeakEntity<crate::logs::LogPanel>,
+    room: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    // The body's padding around the log.
+    let padding = ui::dp_px(freshkube_ui::page::PANE_PADDING_Y + PANE_PADDING, window);
+    let Some(height) = logs
+        .read_with(cx, |logs, _| padding + logs.height_for_list(room - padding))
+        .ok()
+    else {
+        return;
+    };
+    let changed = pilot
+        .update(cx, |pilot, _| {
+            let last = pilot.node_workspace.logs_height;
+            let changed = last.is_none_or(|last| (last - height).abs() > px(0.5));
+            if changed {
+                pilot.node_workspace.logs_height = Some(height);
+            }
+            changed
+        })
+        .unwrap_or(false);
+    if changed {
+        let pilot = pilot.clone();
+        window.on_next_frame(move |_, cx| {
+            _ = pilot.update(cx, |_, cx| cx.notify());
+        });
     }
 }

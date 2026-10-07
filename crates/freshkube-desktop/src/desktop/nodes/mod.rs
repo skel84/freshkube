@@ -126,6 +126,9 @@ pub(super) struct Nodes {
     /// The Logs tab's body, which scrolls inside the inspector while the
     /// window is short: Talos' toolbar can take most of its height.
     pub(super) logs_scroll: ScrollHandle,
+    /// The Logs tab's body while it scrolls, as last measured: its room and
+    /// the log's toolbar and notices.
+    pub(super) logs_height: Option<Pixels>,
     pub(super) document: Entity<DetailPane>,
 }
 
@@ -204,6 +207,7 @@ impl Nodes {
             scroll: UniformListScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
             logs_scroll: ScrollHandle::new(),
+            logs_height: None,
             split: {
                 let file = crate::navigation_file::NavigationFile::global(cx);
                 freshkube_ui::inspector::InspectorSplit::new(

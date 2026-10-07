@@ -6,14 +6,16 @@
 //! services" and joins the collection row, so the picker takes no row of
 //! its own.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    Anchor, AnyElement, App, AvailableSpace, Context, Pixels, Role, SharedString, TestSupportExt,
-    Toggled, WeakEntity, Window,
+    Anchor, AnyElement, App, AvailableSpace, Context, FocusHandle, KeyBinding, Pixels, Role,
+    SharedString, TestSupportExt, Toggled, WeakEntity, Window,
     component::{Icon, Sizable, button::Button, h_flex, popover::Popover, v_flex},
     div,
     prelude::*,
-    size,
+    px, size,
 };
 
 use freshkube_core::logs::ServiceId;
@@ -48,6 +50,19 @@ impl ServiceChip {
     }
 }
 
+/// A pill's own context, deeper than the list's popover: Enter and Space
+/// toggle the pill there instead of closing the list.
+const PILL_CONTEXT: &str = "LogServicePill";
+
+gpui_kit::actions!(talos_logs, [TogglePill]);
+
+pub(super) fn key_bindings() -> [KeyBinding; 2] {
+    [
+        KeyBinding::new("enter", TogglePill, Some(PILL_CONTEXT)),
+        KeyBinding::new("space", TogglePill, Some(PILL_CONTEXT)),
+    ]
+}
+
 /// What the panel's controls draw of the catalog: the chips that fit, and
 /// whether "+N" stands for the rest or for every service.
 #[derive(Default)]
@@ -58,6 +73,13 @@ pub(super) struct Picker {
     pub(super) rows: usize,
     /// Whether "+N"'s list is open.
     pub(super) open: bool,
+    /// Each pill's width, then "+N"'s, as last measured.
+    widths: Vec<Pixels>,
+    more_width: Pixels,
+    /// What the widths were measured for: see [`measure_key`].
+    measured: Option<u64>,
+    /// The open list's, which holds the keyboard when nothing had it before.
+    focus: Option<FocusHandle>,
 }
 
 /// The "Services" caption before the rows, and the gap after it.
@@ -77,14 +99,18 @@ fn more_label(hidden: usize, total: usize, collecting: usize) -> SharedString {
     }
 }
 
-/// How many pills fit the room, measured each frame: a pill's count grows
-/// as its lines arrive.
+/// How many pills fit the room. The pills are measured again only when
+/// something that sizes them changes: a pill's count grows as its lines
+/// arrive, but its width only with another digit.
 pub(super) fn fit(
     view: &mut LogPanel,
     width: Pixels,
     window: &mut Window,
     cx: &mut Context<LogPanel>,
 ) {
+    if view.source().picker.focus.is_none() {
+        view.source_mut().picker.focus = Some(cx.focus_handle());
+    }
     // A short window scrolls the log's body, and the panel lays out taller
     // than the room it shows in: the pills take no row there.
     let rows = if freshkube_ui::page::is_short(window) {
@@ -92,46 +118,88 @@ pub(super) fn fit(
     } else {
         chip_rows(view.panel_height(), window)
     };
-    let handle = cx.entity().downgrade();
-    let chips: Vec<ServiceChip> = view
-        .source()
-        .services
-        .iter()
-        .map(|service| ServiceChip::of(view, service))
-        .collect();
-    let fits = if rows == 0 || chips.is_empty() {
+    let services = view.source().services.len();
+    let fits = if rows == 0 || services == 0 {
         0
     } else {
-        let mut elements: Vec<AnyElement> = chips
-            .iter()
-            .map(|chip| service_chip(chip, "", handle.clone(), cx).into_any_element())
-            .collect();
-        elements.push(more_button(more_label(chips.len(), chips.len() + 1, 0)).into_any_element());
-        let mut widths: Vec<Pixels> = elements
-            .iter_mut()
-            .map(|element| {
-                element
-                    .layout_as_root(
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-                        window,
-                        cx,
-                    )
-                    .width
-            })
-            .collect();
-        let more = widths.pop().unwrap_or_default();
+        let key = measure_key(view, window.rem_size());
+        if view.source().picker.measured != Some(key) {
+            let (widths, more) = measure(view, window, cx);
+            let picker = &mut view.source_mut().picker;
+            picker.widths = widths;
+            picker.more_width = more;
+            picker.measured = Some(key);
+        }
+        let picker = &view.source().picker;
         // The caption before the rows, the panel's border, and a little
         // slack for rounding.
         let room = width - ui::dp_px(LABEL_WIDTH + 8., window);
-        chips_that_fit(&widths, more, ui::dp_px(6., window), room, rows)
+        chips_that_fit(
+            &picker.widths,
+            picker.more_width,
+            ui::dp_px(6., window),
+            room,
+            rows,
+        )
     };
     let picker = &mut view.source_mut().picker;
     picker.rows = rows;
     picker.fits = fits;
     // With every pill in its row there's no "+N" to hold the list open.
-    if fits >= chips.len() {
+    if fits >= services {
         picker.open = false;
     }
+}
+
+/// What sizes the pills: each service's name, whether it collects (its
+/// check and eye), the digits of its count, and the text size.
+fn measure_key(view: &LogPanel, rem: Pixels) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    f32::from(rem).to_bits().hash(&mut hasher);
+    for service in &view.source().services {
+        let count = view.service_count(service);
+        service.as_str().hash(&mut hasher);
+        view.source().collecting.contains(service).hash(&mut hasher);
+        (count > 0).then(|| count.ilog10()).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Each pill's width, then "+N"'s at its widest.
+fn measure(
+    view: &LogPanel,
+    window: &mut Window,
+    cx: &mut Context<LogPanel>,
+) -> (Vec<Pixels>, Pixels) {
+    let handle = cx.entity().downgrade();
+    let services = &view.source().services;
+    let mut elements: Vec<AnyElement> = services
+        .iter()
+        .map(|service| {
+            service_chip(&ServiceChip::of(view, service), "", handle.clone(), cx).into_any_element()
+        })
+        .collect();
+    elements.push(
+        more_button(
+            "logs-services-more-measure",
+            more_label(services.len(), services.len() + 1, 0),
+        )
+        .into_any_element(),
+    );
+    let mut widths: Vec<Pixels> = elements
+        .iter_mut()
+        .map(|element| {
+            element
+                .layout_as_root(
+                    size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                    window,
+                    cx,
+                )
+                .width
+        })
+        .collect();
+    let more = widths.pop().unwrap_or_default();
+    (widths, more)
 }
 
 /// The pills that fit, then "+N"; `None` when no row shows them.
@@ -166,8 +234,8 @@ pub(super) fn compact(view: &LogPanel, cx: &mut Context<LogPanel>) -> Option<Any
     (view.source().picker.rows == 0 && services > 0).then(|| picker_button(view, services, cx))
 }
 
-fn more_button(label: SharedString) -> Button {
-    Button::new("logs-services-more")
+fn more_button(id: &'static str, label: SharedString) -> Button {
+    Button::new(id)
         .outline()
         .small()
         .accessibility_label(label.clone())
@@ -176,56 +244,103 @@ fn more_button(label: SharedString) -> Button {
 
 /// "+N", or "3 of 12 services", which lists every service.
 fn picker_button(view: &LogPanel, hidden: usize, cx: &mut Context<LogPanel>) -> AnyElement {
-    let chips: Vec<ServiceChip> = view
-        .source()
-        .services
-        .iter()
-        .map(|service| ServiceChip::of(view, service))
-        .collect();
-    let label = more_label(hidden, chips.len(), view.source().collecting.len());
+    let services = view.source().services.len();
+    let label = more_label(hidden, services, view.source().collecting.len());
     let handle = cx.entity().downgrade();
     let open_handle = handle.clone();
+    let focus = view
+        .source()
+        .picker
+        .focus
+        .clone()
+        .unwrap_or_else(|| cx.focus_handle());
+    let list_focus = focus.clone();
+    // The list's pills are made only while it's open.
+    let chips: Vec<ServiceChip> = if view.source().picker.open {
+        view.source()
+            .services
+            .iter()
+            .map(|service| ServiceChip::of(view, service))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Popover::new("logs-services-popover")
         .anchor(Anchor::TopLeft)
         .open(view.source().picker.open)
-        .on_open_change(move |open, _, cx| {
+        .track_focus(&focus)
+        .on_open_change(move |open, window, cx| {
             let open = *open;
             _ = open_handle.update(cx, |view, cx| {
                 view.source_mut().picker.open = open;
+                // The list gives the keyboard back to what had it; a mouse
+                // open leaves nothing to give it to, so the lines take it.
+                if !open && list_focus.contains_focused(window, cx) {
+                    view.focus_lines(window, cx);
+                }
                 cx.notify();
             });
         })
         .trigger(
-            more_button(label)
-                .when(hidden == chips.len(), |button| {
+            more_button("logs-services-more", label)
+                .when(hidden == services, |button| {
                     button.icon(IconName::ChevronDown)
                 })
                 .tooltip("Every service: what to collect, and what to show"),
         )
-        .content(move |_, _, cx| {
-            v_flex()
-                .id("logs-services-list")
-                .test_support()
-                .role(Role::Group)
-                .aria_label("Services to collect and show")
-                .w(ui::dp(340.))
-                .gap(ui::dp(8.))
+        .content(move |_, window, cx| list(&chips, &handle, &focus, window, cx))
+        .into_any_element()
+}
+
+/// Kit's margin between a popover and the window's edges.
+const LIST_MARGIN: Pixels = px(8.);
+
+/// The open list: a note, then every service's pill, scrolling when the
+/// window is too short for them.
+fn list(
+    chips: &[ServiceChip],
+    view: &WeakEntity<LogPanel>,
+    focus: &FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    // Inside the margins, the popover's border and its padding.
+    let max_height =
+        window.viewport_size().height - LIST_MARGIN * 2. - px(2.) - window.rem_size() * 1.5;
+    v_flex()
+        .id("logs-services-list")
+        .test_support()
+        .role(Role::Group)
+        .aria_label("Services to collect and show")
+        .track_focus(focus)
+        .w(ui::dp(340.))
+        .max_h(max_height)
+        .gap(ui::dp(8.))
+        .child(
+            div()
+                .flex_none()
+                .text_size(ui::dp(12.))
+                .text_color(palette(cx).muted)
                 .child(
-                    div()
-                        .text_size(ui::dp(12.))
-                        .text_color(palette(cx).muted)
-                        .child(
-                            "Collect up to 16 services. The eye hides a service's lines without stopping collection.",
-                        ),
-                )
+                    "Collect up to 16 services. The eye hides a service's lines without stopping collection.",
+                ),
+        )
+        .child(
+            div()
+                .id("logs-services-list-scroll")
+                .test_support()
+                .flex_shrink(1.)
+                .min_h_0()
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .child(
                     h_flex().flex_wrap().gap(ui::dp(6.)).children(
                         chips
                             .iter()
-                            .map(|chip| service_chip(chip, "list-", handle.clone(), cx)),
+                            .map(|chip| service_chip(chip, "list-", view.clone(), cx)),
                     ),
-                )
-        })
+                ),
+        )
         .into_any_element()
 }
 
@@ -315,12 +430,16 @@ fn collect_toggle(
             )
         })
         .when(!full, |this| {
-            this.on_click(move |_, _, cx| {
+            let toggle = move |cx: &mut App| {
                 _ = view.update(cx, |this, cx| {
                     let checked = !this.source().collecting.contains(&service);
                     this.toggle_collection(service.clone(), checked, cx)
                 });
-            })
+            };
+            let key = toggle.clone();
+            this.key_context(PILL_CONTEXT)
+                .on_action(move |_: &TogglePill, _, cx| key(cx))
+                .on_click(move |_, _, cx| toggle(cx))
         })
 }
 
@@ -365,6 +484,14 @@ fn show_toggle(
             .size(ui::dp(13.))
             .text_color(p.muted),
         )
+        .key_context(PILL_CONTEXT)
+        .on_action({
+            let view = view.clone();
+            let service = service.clone();
+            move |_: &TogglePill, _, cx| {
+                _ = view.update(cx, |this, cx| this.toggle_shown(&service, cx));
+            }
+        })
         .on_click(move |_, _, cx| {
             _ = view.update(cx, |this, cx| this.toggle_shown(&service, cx));
         })

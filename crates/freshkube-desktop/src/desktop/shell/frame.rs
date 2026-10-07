@@ -185,7 +185,7 @@ impl Pilot {
                 })
         };
         StatusBar::new()
-            .h(dp(super::STATUS_BAR_HEIGHT))
+            .h(dp(freshkube_ui::page::STATUS_BAR_HEIGHT))
             .px_3()
             .text_size(dp(11.5))
             // The bar's centre takes only the room the right side leaves, so

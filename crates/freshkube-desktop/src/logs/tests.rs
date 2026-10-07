@@ -274,6 +274,16 @@ fn mount_catalog(
     width: f32,
     height: f32,
 ) -> (Runtime, Entity<LogPanel>, WindowHandle<Root>) {
+    mount_services(cx, width, height, CATALOG.map(str::to_owned).to_vec())
+}
+
+/// These services, one line each, in a window of the given size.
+fn mount_services(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    services: Vec<String>,
+) -> (Runtime, Entity<LogPanel>, WindowHandle<Root>) {
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -283,9 +293,9 @@ fn mount_catalog(
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
     });
-    let events: Vec<LogEvent> = CATALOG
+    let events: Vec<LogEvent> = services
         .iter()
-        .map(|service| LogEvent::new(*service, format!("info {service} started")))
+        .map(|service| LogEvent::new(service.as_str(), format!("info {service} started")))
         .collect();
     let mut panel = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
@@ -398,10 +408,121 @@ fn a_narrow_panel_fits_two_rows_and_lists_every_service(cx: &mut TestAppContext)
                 .checked(),
             Some(true)
         );
-        // Its eye joins it, and hides its lines.
+        // Its eye joins it, and hides its lines without stopping it.
         window.click(SharedString::from(format!("list-show-{last}")), cx);
         window.render_frame(cx);
         assert!(!panel.read(cx).shown().contains(&ServiceId::from(last)));
+        assert!(
+            panel
+                .read(cx)
+                .source()
+                .collecting
+                .contains(&ServiceId::from(last))
+        );
+    })
+    .unwrap();
+}
+
+/// Presses Tab until `id`, whose focus is observed, has the keyboard.
+fn tab_to(window: &mut gpui_kit::Window, id: &str, cx: &mut gpui_kit::App) {
+    for _ in 0..64 {
+        if window.find(SharedString::from(id.to_owned())).focused() == Some(true) {
+            return;
+        }
+        window.press("tab", cx);
+        window.render_frame(cx);
+    }
+    panic!("{id} is not reachable with Tab");
+}
+
+#[gpui_kit::test]
+fn the_keyboard_toggles_pills_in_the_list_and_escape_hands_it_back(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        panel.update(cx, |view, cx| view.focus_lines(window, cx));
+        window.render_frame(cx);
+        tab_to(window, "logs-services-more", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+
+        // The list's first pill takes the next Tab. Space and Enter toggle
+        // it, and the list stays open.
+        let first = ServiceId::from(CATALOG[0]);
+        let collecting = |cx: &gpui_kit::App| panel.read(cx).source().collecting.contains(&first);
+        let before = collecting(cx);
+        window.press("tab", cx);
+        window.render_frame(cx);
+        window.press("space", cx);
+        window.render_frame(cx);
+        assert_eq!(collecting(cx), !before);
+        assert!(window.find("logs-services-list").visible());
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(collecting(cx), before);
+        assert!(window.find("logs-services-list").visible());
+        // Its eye hides its lines.
+        window.press("tab", cx);
+        window.render_frame(cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(!panel.read(cx).shown().contains(&first));
+        assert_eq!(collecting(cx), before);
+        assert!(window.find("logs-services-list").visible());
+
+        // Escape closes the list and gives the keyboard back to its button.
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("logs-services-list").is_none());
+        assert_eq!(window.find("logs-services-more").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn closing_a_list_the_mouse_opened_gives_the_keyboard_to_the_lines(cx: &mut TestAppContext) {
+    let (_runtime, _panel, handle) = mount_catalog(cx, 460., 820.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        assert!(window.find("logs-services-list").visible());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("logs-services-list").is_none());
+        assert_eq!(window.find("logs-viewport").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_long_list_scrolls_inside_a_short_window(cx: &mut TestAppContext) {
+    // Thirty services at 20 px text in the shortest window.
+    let services: Vec<String> = (0..30).map(|ix| format!("ext-example-{ix:02}")).collect();
+    let (_runtime, _panel, handle) = mount_services(cx, 760., 560., services.clone());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.set_rem_size(px(20.));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("logs-services-more", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let list = window.find("logs-services-list").bounds();
+        assert!(list.top() >= px(0.), "{list:?}");
+        assert!(list.bottom() <= px(560.), "{list:?}");
+        // The pills scroll inside it: the last starts below its room.
+        let scroll = window.find("logs-services-list-scroll").bounds();
+        assert!(scroll.bottom() <= list.bottom());
+        let last = window
+            .find(SharedString::from(format!(
+                "list-collect-{}",
+                services[services.len() - 1]
+            )))
+            .bounds();
+        assert!(last.top() > scroll.bottom(), "{last:?} {scroll:?}");
     })
     .unwrap();
 }

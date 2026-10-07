@@ -591,13 +591,15 @@ impl<S: LogSource> Render for LogView<S> {
             px(0.)
         };
         let least_height = toolbar_height + notices_height + notices_gap + viewport_min;
-        // A host that gives the panel this much keeps the list at its own
-        // least height, so the panel doesn't scroll.
-        self.note_least_height(
-            toolbar_height + notices_height + notices_gap + window.rem_size() * LIST_LEAST_REMS,
-            window,
-            cx,
+        // A host that gives the panel `least_height()` keeps the list at
+        // its own least height, so the panel doesn't scroll.
+        let measured = super::Chrome::new(
+            toolbar_height,
+            notices_natural,
+            notices_gap,
+            window.rem_size(),
         );
+        self.note_chrome(measured, window, cx);
         drop(chrome);
         let manual_scroll = ManualReviewScroll {
             base: self.scroll.clone(),

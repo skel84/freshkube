@@ -176,6 +176,7 @@ pub(crate) trait TalosPanel: Sized + 'static {
 
 impl TalosPanel for LogPanel {
     fn new(runtime: Handle, tail: i32, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.bind_keys(catalog::key_bindings());
         Self::with_source(TalosLogs::new(runtime, tail), window, cx)
     }
 
