@@ -67,22 +67,41 @@ pub(crate) enum DockEvent {
 impl EventEmitter<DockEvent> for Dock {}
 
 /// What makes two tabs the same: opening an object that has a tab selects it.
+/// A pod's UID is part of it, since a pod created again with the name, as a
+/// StatefulSet's is, is another pod with its own log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TabKey {
     connection: String,
     resource: String,
     namespace: String,
     name: String,
+    /// The pod's UID; empty for a workload, or a pod asked for by name.
+    uid: String,
 }
 
 impl TabKey {
-    fn of(identity: &ResourceIdentity) -> Self {
+    fn of(identity: &ResourceIdentity, pod: bool) -> Self {
         Self {
             connection: identity.connection.clone(),
             resource: identity.resource.clone(),
             namespace: identity.namespace.clone(),
             name: identity.name.clone(),
+            uid: if pod {
+                identity.uid.clone()
+            } else {
+                String::new()
+            },
         }
+    }
+
+    /// Whether a tab with this key shows `other`: the same object, and for
+    /// a pod the same UID, unless either was asked for by name alone.
+    fn shows(&self, other: &TabKey) -> bool {
+        self.connection == other.connection
+            && self.resource == other.resource
+            && self.namespace == other.namespace
+            && self.name == other.name
+            && (self.uid == other.uid || self.uid.is_empty() || other.uid.is_empty())
     }
 }
 
@@ -295,8 +314,9 @@ impl Dock {
         if request.target.identity.connection != source.id {
             return;
         }
-        let key = TabKey::of(&request.target.identity);
-        if let Some(tab) = self.tabs.iter().find(|tab| tab.key == key) {
+        let key = TabKey::of(&request.target.identity, request.target.kind.is_pod());
+        // A pod by name alone takes the newest tab for it.
+        if let Some(tab) = self.tabs.iter().rev().find(|tab| tab.key.shows(&key)) {
             let id = tab.id;
             if let Some(at) = request.at {
                 self.aim(id, at, cx);
@@ -368,7 +388,7 @@ impl Dock {
         };
         self.tabs.push(DockTab {
             id,
-            key: TabKey::of(&target.identity),
+            key: TabKey::of(&target.identity, target.kind.is_pod()),
             target,
             base,
             title: SharedString::default(),

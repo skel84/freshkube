@@ -692,3 +692,67 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
     assert_eq!(started(cx), [true, true]);
     assert_eq!(cx.update(|cx| dock.read(cx).height()), 260.);
 }
+
+#[gpui_kit::test]
+fn a_gone_pod_stops_reading_and_one_made_again_with_its_name_takes_a_new_tab(
+    cx: &mut TestAppContext,
+) {
+    use crate::logs::PodLogPanel as _;
+    use freshkube_core::resources::WorkloadPods;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pod = running_pods(&pilot, cx).remove(0);
+    open_logs(handle, &pilot, "pods", &pod, cx);
+    let view = pod_view(&dock, 0, cx);
+    assert!(cx.update(|cx| view.read(cx).streaming()));
+    // The watch's next list no longer has it.
+    cx.update(|cx| {
+        dock.update(cx, |dock, cx| {
+            let id = dock.tabs[0].id;
+            let pods = WorkloadPods {
+                listed: true,
+                ..WorkloadPods::default()
+            };
+            assert!(!dock.apply_pod(id, pods, cx), "the delivery ends");
+        })
+    });
+    cx.run_until_parked();
+    assert!(!cx.update(|cx| view.read(cx).streaming()));
+    // Showing it again reads nothing by its name.
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            dock.set_open(false, window, cx);
+            dock.set_open(true, window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!cx.update(|cx| view.read(cx).streaming()));
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.within("dock").find("dock-tab-notice").visible());
+    })
+    .unwrap();
+    // The same name with another UID is another pod.
+    let mut again = pod.clone();
+    again.uid = "00000000-0000-4000-8000-000000000099".into();
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| {
+            let target = crate::resources::detail::DetailTarget {
+                identity: again,
+                kind: builtin("pods").unwrap(),
+            };
+            dock.open_logs(
+                crate::resources::LogsRequest { target, at: None },
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        titles(&dock, cx),
+        [format!("Pod {}", pod.name), format!("Pod {} (2)", pod.name)]
+    );
+}

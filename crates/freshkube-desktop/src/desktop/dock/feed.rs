@@ -64,7 +64,10 @@ impl Dock {
                     view.update(cx, |view, cx| view.set_selector(selector, cx));
                     FeedState::Ready
                 }
-                (TabKind::Pod(_), None) => FeedState::Gone,
+                (TabKind::Pod(view), None) => {
+                    view.update(cx, |view, cx| view.end(cx));
+                    FeedState::Gone
+                }
                 (TabKind::Workload(_), None) => {
                     FeedState::Failed("Example data has no such object".into())
                 }
@@ -139,9 +142,14 @@ impl Dock {
         }));
     }
 
-    /// The pod's watch saw it again. Returns false when the tab is gone,
-    /// which ends the delivery.
-    fn apply_pod(&mut self, id: u64, mut pods: WorkloadPods, cx: &mut Context<Self>) -> bool {
+    /// The pod's watch saw it again. Returns false when the tab or the pod
+    /// is gone, which ends the delivery.
+    pub(super) fn apply_pod(
+        &mut self,
+        id: u64,
+        mut pods: WorkloadPods,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
             return false;
         };
@@ -163,11 +171,20 @@ impl Dock {
                 None => FeedState::Gone,
             }
         };
+        let gone = state == FeedState::Gone;
+        if gone {
+            // Nothing more of this pod is read: neither its log, which would
+            // retry by name, nor its watch.
+            if let TabKind::Pod(view) = &tab.kind {
+                view.update(cx, |view, cx| view.end(cx));
+            }
+            tab.feed.job = None;
+        }
         if tab.feed.state != state {
             tab.feed.state = state;
             cx.notify();
         }
-        true
+        !gone
     }
 
     fn apply_selector(

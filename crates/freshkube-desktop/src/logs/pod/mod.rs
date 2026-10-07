@@ -94,6 +94,8 @@ pub(crate) struct PodLogs {
     containers: PodContainers,
     /// Whether `containers` was read for this pod yet.
     known: bool,
+    /// The pod was deleted: nothing more is read, and its lines stay.
+    gone: bool,
     pub(super) choices: Rc<Vec<Choice>>,
     pub(super) container: Option<String>,
     pub(super) tail: Option<i64>,
@@ -130,6 +132,7 @@ impl PodLogs {
             pod: None,
             containers: PodContainers::default(),
             known: false,
+            gone: false,
             choices: Rc::default(),
             container: None,
             tail: DEFAULT_TAIL,
@@ -237,6 +240,12 @@ impl PodLogs {
     fn describe(&mut self) {
         let name = self.container.clone().unwrap_or_default();
         let (tone, tag, text, empty) = match &self.state {
+            _ if self.gone => (
+                Tone::Unknown,
+                "Gone",
+                String::new(),
+                "The pod went before it wrote a line.".to_owned(),
+            ),
             StreamState::Idle if self.pod.is_some() && !self.known => (
                 Tone::Unknown,
                 "Reading",
@@ -451,6 +460,10 @@ pub(crate) trait PodLogPanel: Sized + 'static {
     /// Whether the pod's containers are known, so one can be chosen.
     fn knows_containers(&self) -> bool;
 
+    /// The pod was deleted: the stream stops for good, keeping its lines;
+    /// nothing reads by its name again, since that would be another pod.
+    fn end(&mut self, cx: &mut Context<Self>);
+
     /// Whether the previous instance is read.
     fn reads_previous(&self) -> bool;
 
@@ -490,6 +503,7 @@ impl PodLogPanel for PodLogView {
         source.pod = pod;
         source.containers = PodContainers::default();
         source.known = false;
+        source.gone = false;
         source.container = None;
         source.previous = false;
         source.wanted = false;
@@ -566,6 +580,20 @@ impl PodLogPanel for PodLogView {
 
     fn reads_previous(&self) -> bool {
         self.source().previous
+    }
+
+    fn end(&mut self, cx: &mut Context<Self>) {
+        if self.source().gone {
+            return;
+        }
+        self.flush_backlog(cx);
+        let source = self.source_mut();
+        source.drop_stream();
+        source.gone = true;
+        source.suspended = false;
+        source.state = StreamState::Idle;
+        source.describe();
+        cx.notify();
     }
 
     fn knows_containers(&self) -> bool {
@@ -757,6 +785,9 @@ impl Stream for PodLogView {
     }
 
     fn start(&mut self, fresh: bool, cx: &mut Context<Self>) {
+        if self.source().gone {
+            return;
+        }
         self.flush_backlog(cx);
         let source = self.source_mut();
         source.drop_stream();
