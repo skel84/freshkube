@@ -1,7 +1,6 @@
 use std::{
     fmt::Display,
     future::Future,
-    io::Read,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -85,28 +84,19 @@ fn read_config_file(path: &Path) -> Result<TalosConfig, String> {
 /// Also fingerprints the exact bytes parsed, so a connection can be reused only
 /// while the talosconfig is unchanged.
 fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIdentity), String> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // Descriptor inspection follows a nonblocking open, so a FIFO swapped
-        // into the path cannot strand this worker or runtime shutdown.
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options
-        .open(path)
-        .map_err(|error| format!("Cannot open talosconfig: {error}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("Cannot inspect talosconfig: {error}"))?;
-    if !metadata.is_file() {
-        return Err("Talos configuration must be a regular file".into());
-    }
-    if metadata.len() > MAX_CONFIG_BYTES {
-        return Err("Talos configuration exceeds the 4 MiB limit".into());
-    }
-    let bytes = read_capped_config(file)?;
+    // Core's reader opens nonblocking and caps the read on the descriptor.
+    let bytes =
+        freshkube_core::read_bounded_regular_file(path, MAX_CONFIG_BYTES).map_err(|reason| {
+            match reason {
+                "path is not a regular file" => {
+                    "Talos configuration must be a regular file".to_owned()
+                }
+                "file exceeds the supported size limit" => {
+                    "Talos configuration exceeds the 4 MiB limit".to_owned()
+                }
+                reason => format!("Cannot read talosconfig: {reason}"),
+            }
+        })?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| "Talos configuration is not valid UTF-8".to_string())?;
     // serde_yaml diagnostics may echo credential values; never send them to UI.
@@ -114,18 +104,6 @@ fn read_config_file_with_identity(path: &Path) -> Result<(TalosConfig, ConfigIde
     TalosConfig::parse(text)
         .map(|config| (config, identity))
         .map_err(|_| "Talos configuration could not be parsed".into())
-}
-
-fn read_capped_config(reader: impl Read) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    reader
-        .take(MAX_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("Cannot read talosconfig: {error}"))?;
-    if bytes.len() as u64 > MAX_CONFIG_BYTES {
-        return Err("Talos configuration exceeds the 4 MiB limit".into());
-    }
-    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -662,18 +640,6 @@ mod tests {
             .set_len(MAX_CONFIG_BYTES + 1)
             .unwrap();
         assert!(read_config_file(&oversized).unwrap_err().contains("4 MiB"));
-        // The descriptor size check is not sufficient if a regular file grows.
-        assert!(
-            read_capped_config(std::io::repeat(b'x'))
-                .unwrap_err()
-                .contains("4 MiB")
-        );
-        assert_eq!(
-            read_capped_config(std::io::repeat(b'x').take(MAX_CONFIG_BYTES))
-                .unwrap()
-                .len() as u64,
-            MAX_CONFIG_BYTES
-        );
         let invalid = directory.0.join("invalid");
         std::fs::write(&invalid, [0xff]).unwrap();
         assert!(read_config_file(&invalid).unwrap_err().contains("UTF-8"));

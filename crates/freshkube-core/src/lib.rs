@@ -35,6 +35,7 @@ pub mod indicators;
 pub mod inspection;
 mod kube_client;
 mod kubeconfig_selection;
+pub use kubeconfig_selection::read_bounded_regular_file;
 pub mod lifecycle_versions;
 pub mod logs;
 pub mod maintenance;
