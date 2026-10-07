@@ -4,6 +4,7 @@ use crate::delivery::argocd::{
 use crate::delivery::kargo::{Freight, Promotion, Stage};
 use crate::delivery::source::cap_note;
 
+use super::observe::{application_claim, application_revision, pushed_and_synced};
 use super::workload::rollout_links;
 use super::*;
 
@@ -52,21 +53,30 @@ pub(super) fn application_links(
             .get(&app_id)
             .map(describe_destination)
             .unwrap_or_else(|| "destination not matched".to_owned());
-        let (confidence, key, proof) = stage_application_proof(evidence, freight, stage, app, apps);
-        links.push(Link::new(
-            Hop::Stage,
-            Hop::Application,
-            app_id.clone(),
-            key.unwrap_or_else(|| Key::Name(format!("{}:{}", stage.project, stage.name))),
-            confidence,
-            format!(
-                "{}; {proof}; sync {}, health {}; {destination}",
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .map_or("claimed", StageClaim::describe),
-                app.sync.as_deref().unwrap_or("?"),
-                app.health.as_deref().unwrap_or("?")
-            ),
+        let (confidence, key, proof, mut seen) =
+            stage_application_proof(evidence, freight, stage, app, apps);
+        let claim = app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref());
+        seen.push(application_claim(
+            app,
+            stage,
+            claim == Some(StageClaim::Annotation),
         ));
+        links.push(
+            Link::new(
+                Hop::Stage,
+                Hop::Application,
+                app_id.clone(),
+                key.unwrap_or_else(|| Key::Name(format!("{}:{}", stage.project, stage.name))),
+                confidence,
+                format!(
+                    "{}; {proof}; sync {}, health {}; {destination}",
+                    claim.map_or("claimed", StageClaim::describe),
+                    app.sync.as_deref().unwrap_or("?"),
+                    app.health.as_deref().unwrap_or("?")
+                ),
+            )
+            .observed(seen),
+        );
         links.extend(rollout_links(evidence, freight, app));
     }
     links
@@ -84,7 +94,7 @@ fn stage_application_proof(
     stage: &Stage,
     app: &Application,
     apps: &[Application],
-) -> (Confidence, Option<Key>, String) {
+) -> (Confidence, Option<Key>, String, Vec<Observation>) {
     let promotions: Vec<&Promotion> = evidence
         .kargo
         .promotions
@@ -112,6 +122,7 @@ fn stage_application_proof(
                 "no succeeded Promotion recorded a pushed commit{}",
                 cap_note(evidence.kargo.promotions.capped())
             ),
+            Vec::new(),
         );
     }
     let at = |application: &Application, commit: &str| {
@@ -131,8 +142,10 @@ fn stage_application_proof(
                     .first()
                     .map_or("unknown".to_owned(), |r| short_commit(r))
             ),
+            application_revision(app).into_iter().collect(),
         );
     };
+    let seen = pushed_and_synced(&promotions, app, commit);
     let shared = apps.iter().any(|other| {
         (other.namespace != app.namespace || other.name != app.name)
             && at(other, commit)
@@ -152,6 +165,7 @@ fn stage_application_proof(
                 short_commit(commit),
                 truncation.read
             ),
+            seen,
         );
     }
     if shared {
@@ -162,6 +176,7 @@ fn stage_application_proof(
                 "the Application synced the commit the Promotion pushed ({}), but another stage's Application is at it too",
                 short_commit(commit)
             ),
+            seen,
         );
     }
     (
@@ -171,6 +186,7 @@ fn stage_application_proof(
             "the Application synced the commit the Promotion pushed ({})",
             short_commit(commit)
         ),
+        seen,
     )
 }
 

@@ -1,11 +1,16 @@
 use crate::delivery::argocd::Application;
 use crate::delivery::digest::{Digest, repository};
 use crate::delivery::kargo::Freight;
+use crate::delivery::observation::Observation;
 use crate::delivery::pods::RunningImage;
-use crate::delivery::rollouts::{AnalysisRun, Rollout};
+use crate::delivery::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
+use super::observe::{
+    freight_side, hashes_agree, manages, pods_running, pods_running_other, rollout_pods,
+    rollout_state as rollout_seen, summary_images,
+};
 use super::*;
 
 pub(super) fn rollout_links(
@@ -81,6 +86,11 @@ pub(super) fn rollout_links(
                     .any(|image| image.digest.as_ref() == Some(digest))
             });
         let state = rollout_state(rollout, evidence.analysis_runs.read());
+        let mut seen = vec![manages(app, rollout)];
+        seen.extend(rollout_seen(rollout, pinned.as_ref()));
+        if let Some(digest) = &pinned {
+            seen.extend(freight_side(freight, &Key::Digest(digest.clone())));
+        }
         links.push(match pinned {
             Some(digest) => Link::new(
                 Hop::Application,
@@ -89,7 +99,8 @@ pub(super) fn rollout_links(
                 Key::Digest(digest),
                 Confidence::Confirmed,
                 format!("the Rollout's spec pins the Freight's digest; {state}"),
-            ),
+            )
+            .observed(seen),
             None => Link::new(
                 Hop::Application,
                 Hop::Rollout,
@@ -97,7 +108,8 @@ pub(super) fn rollout_links(
                 Key::Name(rollout.name.clone()),
                 Confidence::Claimed,
                 format!("managed by the Application; its spec does not pin the digest; {state}"),
-            ),
+            )
+            .observed(seen),
         });
         links.push(pod_link(evidence, freight, rollout, &rollout_id));
     }
@@ -161,15 +173,60 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
             );
         }
     };
+    let from = rollout_pods(rollout, &pinned_sets(evidence, rollout, freight, read));
     let mut link = judge_pods(
         Hop::Rollout,
         subject,
         pods,
         read.and_then(|read| read.pods.capped()),
         freight,
+        from,
     );
     link.reason = format!("{}; {which}", link.reason);
+    if link.confidence == Confidence::Confirmed
+        && matches!(read.map(|read| &read.set), Some(PodSet::Current(_)))
+    {
+        link.evidence.extend(hashes_agree(rollout, pods));
+    }
     link
+}
+
+/// The ReplicaSets of the pods read whose template pins one of the Freight's
+/// digests, with the digest.
+fn pinned_sets<'a>(
+    evidence: &'a Evidence,
+    rollout: &Rollout,
+    freight: &Freight,
+    read: Option<&RolloutPods>,
+) -> Vec<(&'a ReplicaSet, Digest)> {
+    let (
+        Some(RolloutPods {
+            set: PodSet::Pinned(sets),
+            ..
+        }),
+        Some(all),
+    ) = (read, evidence.replica_sets.read())
+    else {
+        return Vec::new();
+    };
+    sets.iter()
+        .filter_map(|(name, _)| {
+            let set = all
+                .iter()
+                .find(|set| set.namespace == rollout.namespace && &set.name == name)?;
+            let digest = set
+                .images
+                .iter()
+                .filter_map(|image| Digest::from_reference(image))
+                .find(|digest| {
+                    freight
+                        .images
+                        .iter()
+                        .any(|image| image.digest.as_ref() == Some(digest))
+                })?;
+            Some((set, digest))
+        })
+        .collect()
 }
 
 /// Which pods were judged, and which of the Rollout's other ReplicaSets with
@@ -255,12 +312,21 @@ fn workload_pod_link(
             } else {
                 "Argo CD's image summary does not list the Freight's digest"
             };
+            // What Argo CD's summary lists of the Freight's images: nothing
+            // when it doesn't list the digest.
+            let listed: Vec<Digest> = app
+                .digests()
+                .into_iter()
+                .filter(|d| freight.images.iter().any(|i| i.digest.as_ref() == Some(d)))
+                .collect();
+            let from = summary_images(app, &listed);
             let mut link = judge_pods(
                 Hop::Application,
                 app_id.to_owned(),
                 pods,
                 source.capped(),
                 freight,
+                from,
             );
             link.reason = format!("{summary}; {}", link.reason);
             link
@@ -279,6 +345,7 @@ fn judge_pods(
     pods: &[RunningImage],
     capped: Option<Truncation>,
     freight: &Freight,
+    from_side: Vec<Observation>,
 ) -> Link {
     let wanted: Vec<&Digest> = freight
         .images
@@ -291,7 +358,7 @@ fn judge_pods(
         .map(|image| repository(&image.repo_url))
         .collect();
     let mut matching = Vec::new();
-    let mut other: Vec<(String, Option<Digest>)> = Vec::new();
+    let mut other: Vec<(&RunningImage, Option<Digest>)> = Vec::new();
     for pod in pods {
         match &pod.digest {
             Some(digest) if wanted.contains(&digest) => matching.push((pod, digest)),
@@ -301,7 +368,7 @@ fn judge_pods(
                     .as_deref()
                     .is_some_and(|image| repos.contains(&repository(image)));
                 if same_repo {
-                    other.push((pod.pod.clone(), digest.clone()));
+                    other.push((pod, digest.clone()));
                 }
             }
         }
@@ -316,6 +383,8 @@ fn judge_pods(
                 other.len()
             )
         };
+        let mut seen = from_side;
+        seen.extend(pods_running(&matching));
         Link::new(
             from,
             Hop::Pod,
@@ -328,6 +397,7 @@ fn judge_pods(
                 pods.len()
             ),
         )
+        .observed(seen)
     } else if !other.is_empty() {
         let digests: Vec<String> = other
             .iter()
@@ -349,6 +419,7 @@ fn judge_pods(
                 cap_note(capped)
             ),
         )
+        .observed(pods_running_other(&other))
     } else {
         Link::new(
             from,

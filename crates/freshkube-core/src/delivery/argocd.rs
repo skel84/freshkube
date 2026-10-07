@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use super::digest::text;
+use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Scope};
 use super::source::{Source, Truncation, redact_message};
 use super::versions::resolve;
@@ -245,6 +246,8 @@ pub struct Reconciliation {
 pub struct Application {
     pub namespace: String,
     pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
     pub project: Option<String>,
     /// `spec.destination.server`, when the destination is given by URL.
     pub destination_server: Option<String>,
@@ -254,9 +257,14 @@ pub struct Application {
     pub destination_namespace: Option<String>,
     pub sync: Option<String>,
     /// `status.sync.revision` followed by `status.sync.revisions`, as the
-    /// join matches them; to compare revisions with the operation's or
-    /// history's, use `compared_revisions`, read as they are.
+    /// join matches them against a Promotion's pushed commit: a commit
+    /// listed in either field counts. It is not `compared_revisions`, which
+    /// reads one field or the other the way an operation's and a history
+    /// entry's revisions are read; to compare with those, use
+    /// `compared_revisions`.
     pub sync_revisions: Vec<String>,
+    /// The pointer each of `sync_revisions` was read from.
+    pub sync_revisions_at: Vec<&'static str>,
     pub health: Option<String>,
     /// `<project>:<stage>` from the Kargo annotation, a claim.
     pub authorized_stage: Option<(String, String)>,
@@ -282,20 +290,21 @@ pub struct Application {
 }
 
 pub fn parse_application(value: &Value) -> Option<Application> {
-    let mut revisions: Vec<String> = Vec::new();
+    let mut found: Vec<(String, &'static str)> = Vec::new();
     if let Some(revision) = text(value, "/status/sync/revision") {
-        revisions.push(revision);
+        found.push((revision, "/status/sync/revision"));
     }
-    revisions.extend(
+    found.extend(
         value
             .pointer("/status/sync/revisions")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-            .map(str::to_owned),
+            .map(|revision| (revision.to_owned(), "/status/sync/revisions")),
     );
-    revisions.dedup();
+    found.dedup_by(|a, b| a.0 == b.0);
+    let (revisions, revisions_at): (Vec<String>, Vec<&'static str>) = found.into_iter().unzip();
     let metadata_annotations = strings(value, "/metadata/annotations");
     let authorized_stage = metadata_annotations
         .get(AUTHORIZED_STAGE)
@@ -304,12 +313,14 @@ pub fn parse_application(value: &Value) -> Option<Application> {
     Some(Application {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
         project: text(value, "/spec/project"),
         destination_server: text(value, "/spec/destination/server"),
         destination_name: text(value, "/spec/destination/name"),
         destination_namespace: text(value, "/spec/destination/namespace"),
         sync: text(value, "/status/sync/status"),
         sync_revisions: revisions,
+        sync_revisions_at: revisions_at,
         health: text(value, "/status/health/status"),
         authorized_stage,
         metadata_annotations,
@@ -480,6 +491,17 @@ fn strings(value: &Value, pointer: &str) -> BTreeMap<String, String> {
 }
 
 impl Application {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "Application",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+
     /// The Kargo project under the setup's key: the annotation, else the
     /// label.
     fn named_project(&self, naming: &StageNaming) -> Option<&str> {
@@ -1207,6 +1229,26 @@ mod tests {
             }),
         );
         let reconciliation = unsynced.reconciliation();
+        assert_eq!(
+            reconciliation.operation_revisions,
+            vec![COMMIT_B.to_owned()]
+        );
+        assert!(reconciliation.superseded);
+        // A sync result that names no revision (it failed before any
+        // source synced) falls back to the revisions the operation asked for.
+        let empty_result = app(
+            json!({}),
+            json!({
+                "sync": {"status": "Synced", "revision": COMMIT_A},
+                "operationState": {
+                    "phase": "Failed",
+                    "finishedAt": "2026-09-01T10:20:00Z",
+                    "syncResult": {"resources": []},
+                    "operation": {"sync": {"revisions": [COMMIT_B]}},
+                },
+            }),
+        );
+        let reconciliation = empty_result.reconciliation();
         assert_eq!(
             reconciliation.operation_revisions,
             vec![COMMIT_B.to_owned()]
