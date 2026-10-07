@@ -183,20 +183,17 @@ async fn read_body(body: kube::client::Body, limit: usize) -> Result<Vec<u8>, Fa
 
 /// The JSON of a successful answer, or the failure an error status reports,
 /// classified as kube classifies it. A body that isn't the API server's
-/// JSON, such as a proxy's page, loses every place it names, bare host names
-/// included ([`redact_body`]).
+/// `Status`, such as a proxy's page or its own JSON, loses every place it
+/// names, bare host names included, and is cut short ([`redact_body`]).
 fn decode(status: http::StatusCode, body: &[u8]) -> Result<Value, Failure> {
     if status.is_client_error() || status.is_server_error() {
         let text = String::from_utf8_lossy(body);
-        let response =
-            serde_json::from_str::<kube::core::ErrorResponse>(&text).unwrap_or_else(|_| {
-                kube::core::ErrorResponse {
-                    status: status.to_string(),
-                    code: status.as_u16(),
-                    message: format!("{:?}", redact_body(&text)),
-                    reason: "Failed to parse error data".into(),
-                }
-            });
+        let response = api_status(&text).unwrap_or_else(|| kube::core::ErrorResponse {
+            status: status.to_string(),
+            code: status.as_u16(),
+            message: format!("{:?}", redact_body(&text)),
+            reason: "Failed to parse error data".into(),
+        });
         return Err(Failure::from_kube(kube::Error::Api(response)));
     }
     serde_json::from_slice(body).map_err(|error| {
@@ -205,6 +202,17 @@ fn decode(status: http::StatusCode, body: &[u8]) -> Result<Value, Failure> {
             format!("the answer is not the JSON expected: {error}"),
         )
     })
+}
+
+/// The API server's own error: a `Status` object. A proxy's JSON with
+/// `status`, `code` and `message` fields reads as an `ErrorResponse` too, so
+/// it counts only with `kind: Status`.
+fn api_status(text: &str) -> Option<kube::core::ErrorResponse> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    if value.get("kind").and_then(Value::as_str) != Some("Status") {
+        return None;
+    }
+    serde_json::from_value(value).ok()
 }
 
 /// A label value: at most 63 characters, alphanumeric at both ends, with
@@ -492,6 +500,39 @@ mod tests {
         let status = br#"{"kind":"Status","status":"Failure","message":"pipelineruns.tekton.dev is forbidden","reason":"Forbidden","code":403}"#;
         let refused = decode(http::StatusCode::FORBIDDEN, status).unwrap_err();
         assert_eq!(refused.message, "pipelineruns.tekton.dev is forbidden");
+    }
+
+    #[test]
+    fn json_without_kind_status_is_a_body_not_the_servers_error() {
+        // A proxy's JSON has the fields of a Status but not its kind.
+        let proxy = br#"{"status":"Failure","code":403,"message":"denied by gw.example.net for jane@example.com","reason":"Forbidden"}"#;
+        let failure = decode(http::StatusCode::BAD_GATEWAY, proxy).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Other);
+        for word in ["gw.example", "jane"] {
+            assert!(!failure.message.contains(word), "{}", failure.message);
+        }
+        assert!(
+            failure
+                .message
+                .contains("denied by <address> for <address>"),
+            "{}",
+            failure.message
+        );
+        // The API server's own Status is trusted as before.
+        let status = br#"{"kind":"Status","apiVersion":"v1","status":"Failure","message":"pods is forbidden","reason":"Forbidden","code":403}"#;
+        let refused = decode(http::StatusCode::FORBIDDEN, status).unwrap_err();
+        assert_eq!(refused.kind, FailureKind::Forbidden);
+        assert_eq!(refused.message, "pods is forbidden");
+    }
+
+    #[test]
+    fn a_huge_error_body_is_cut_short() {
+        let page = "<p>upstream gw.example.net refused</p> ".repeat(1_000_000);
+        let failure = decode(http::StatusCode::BAD_GATEWAY, page.as_bytes()).unwrap_err();
+        let most = super::super::source::MAX_BODY_MESSAGE_BYTES + '…'.len_utf8();
+        assert!(failure.message.len() <= most, "{}", failure.message.len());
+        assert!(failure.message.ends_with('…'), "{}", failure.message);
+        assert!(!failure.message.contains("gw.example"));
     }
 
     #[test]
