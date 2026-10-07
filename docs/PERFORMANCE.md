@@ -206,6 +206,17 @@ At 10,000 lines a second both logs keep up, a few milliseconds behind. At 50,000
 
 The main thread is still busy throughout a flood: frames come about 15 times a second, and a key press can wait up to about 130 ms. A profile of the Talos run put 35% of the main thread in `CAMetalLayer nextDrawable`, waiting for the GPU to hand back a drawable, 23% shaping the text of new rows on screen, about 27% in GPUI's layout and paint, and 5% appending lines. Shaping is the cost of drawing new text at all; the drawable wait is inside GPUI's Metal renderer.
 
+### Copy and Download build their text on click (#318)
+
+Copy used to build its text on every frame to decide whether it was enabled: with 200 lines selected, every redraw joined them, even a hover. Now any selection enables it, the text is built only on click, and a selection it can't copy says why there. Download builds its file's text on the UI thread when its menu item is clicked; `download_text_timing` in `freshkube-logs`'s `download.rs` times that over a full buffer, on a release build on the Intel Mac (median of 15 runs):
+
+| Retained buffer | Visible lines | Every retained line |
+| --- | --- | --- |
+| 5,000 lines of about 140 bytes (0.66 MiB) | 0.1–0.25 ms | 0.1 ms |
+| 4,879 lines filling 8 MiB | 4.2–4.7 ms | 4.6–4.7 ms |
+
+Times and `pod/container` tags add under 0.5 ms; the slowest single run was 4.96 ms, under the 8 ms frame budget, so the text stays built at click time. The spans `logs.copy_text`, `logs.download_text.visible` and `logs.download_text.retained` record each build in stress runs. The 10,000-line pod-log flood (30 s) didn't change: render median 2.7 ms against 2.9 ms on main, append 1.4 ms, lag median 6.6 ms against 5.9 ms, CPU 56% for both. Its workload selects nothing, and `logs.copy_text` ran 0 times in 667 renders.
+
 ### A first list no longer stops the window
 
 A reset now arrives ready to swap in. Where the list is read, on Tokio, core's rows are converted, their search keys built, duplicates merged, identities indexed and the widest printed text of each column counted. The main thread replaces the store's contents and sizes the columns from those counts instead of reading every row.

@@ -500,7 +500,9 @@ impl<S: LogSource> LogView<S> {
                             } else {
                                 "Copy selected lines".into()
                             })
-                            .disabled(self.review.copy_text(self.copy_as()).is_err())
+                            // The text is built on click, never per frame;
+                            // a selection it can't copy says why there.
+                            .disabled(selected == 0)
                             .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
                     )
                     .child(self.render_download(cx)),

@@ -720,7 +720,11 @@ impl<S: LogSource> LogView<S> {
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
-        match self.review.copy_text(self.copy_as()) {
+        let copied = {
+            let _span = freshkube_probe::perf::span("logs.copy_text");
+            self.review.copy_text(self.copy_as())
+        };
+        match copied {
             Ok(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 self.feedback = Some("Copied selected complete visible lines".into());

@@ -21,7 +21,7 @@ use gpui_kit::{
     div,
 };
 
-use super::review::copied;
+use super::review::{CopyAs, LogReview, copied};
 use super::{Feedback, LogSource, LogView};
 
 /// Which lines a download takes.
@@ -86,20 +86,7 @@ impl<S: LogSource> LogView<S> {
 
     /// The file's text: what Copy copies of the same lines, one line each.
     pub(super) fn download_text(&self, lines: DownloadLines) -> (String, usize) {
-        let entries = self.review.logs.buffer().entries();
-        let chosen: Box<dyn Iterator<Item = _>> = match lines {
-            DownloadLines::Visible => Box::new(self.review.visible.iter().map(|&ix| &entries[ix])),
-            DownloadLines::Retained => Box::new(entries.iter()),
-        };
-        let as_ = self.copy_as();
-        let mut text = String::new();
-        let mut count = 0;
-        for entry in chosen.filter(|entry| !entry.is_marker()) {
-            copied(entry, as_, &mut text);
-            text.push('\n');
-            count += 1;
-        }
-        (text, count)
+        download_text(&self.review, lines, self.copy_as())
     }
 
     /// Asks where to save the lines, then writes them there. While a save
@@ -162,6 +149,33 @@ impl<S: LogSource> LogView<S> {
     }
 }
 
+/// The lines' text as Copy writes it, one line each, and how many. Built
+/// on the UI thread when the menu item is clicked: at most about 8 MiB,
+/// which takes a few milliseconds (docs/PERFORMANCE.md).
+pub(super) fn download_text(
+    review: &LogReview,
+    lines: DownloadLines,
+    as_: CopyAs,
+) -> (String, usize) {
+    let _span = freshkube_probe::perf::span(match lines {
+        DownloadLines::Visible => "logs.download_text.visible",
+        DownloadLines::Retained => "logs.download_text.retained",
+    });
+    let entries = review.logs.buffer().entries();
+    let chosen: Box<dyn Iterator<Item = _>> = match lines {
+        DownloadLines::Visible => Box::new(review.visible.iter().map(|&ix| &entries[ix])),
+        DownloadLines::Retained => Box::new(entries.iter()),
+    };
+    let mut text = String::new();
+    let mut count = 0;
+    for entry in chosen.filter(|entry| !entry.is_marker()) {
+        copied(entry, as_, &mut text);
+        text.push('\n');
+        count += 1;
+    }
+    (text, count)
+}
+
 /// `<base>-<time>.log`, with characters a file name can't hold replaced.
 pub(super) fn file_name(base: &str, time: &str) -> String {
     let base: String = base
@@ -198,6 +212,16 @@ fn shown_path(path: &Path) -> String {
 /// Writes `bytes` to a temporary file beside `path` and renames it into
 /// place, so `path` holds either the whole text or what it held before.
 pub(super) fn write_whole(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_whole_with(path, |file| file.write_all(bytes))
+}
+
+/// `write_whole`, with what goes into the temporary file given by `write`.
+/// The temporary file, `.<name>.freshkube-<pid>.part`, is removed on every
+/// way out but a successful rename: a failed write or rename, or a panic.
+fn write_whole_with(
+    path: &Path,
+    write: impl FnOnce(&mut fs::File) -> io::Result<()>,
+) -> io::Result<()> {
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
@@ -205,21 +229,41 @@ pub(super) fn write_whole(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let temporary = folder.join(format!(
-        ".{}.{}.part",
+    let temporary = Temporary(Some(folder.join(format!(
+        ".{}.freshkube-{}.part",
         name.to_string_lossy(),
         std::process::id()
-    ));
-    let written = (|| {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)
-    })();
-    if written.is_err() {
-        _ = fs::remove_file(&temporary);
+    ))));
+    let at = temporary.path();
+    let mut file = fs::File::create(at)?;
+    write(&mut file)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(at, path)?;
+    temporary.renamed();
+    Ok(())
+}
+
+/// A temporary file that is removed when dropped, unless renamed first.
+struct Temporary(Option<PathBuf>);
+
+impl Temporary {
+    fn path(&self) -> &Path {
+        self.0.as_deref().expect("a temporary path until renamed")
     }
-    written
+
+    /// It is the saved file now: nothing to remove.
+    fn renamed(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            _ = fs::remove_file(path);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -255,5 +299,85 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, ["lines.log", "taken"]);
+    }
+
+    #[test]
+    fn an_error_mid_write_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lines.log");
+        let failed = write_whole_with(&path, |file| {
+            file.write_all(b"half of it")?;
+            // Its name says whose it is, while it lasts.
+            let names: Vec<_> = fs::read_dir(dir.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect();
+            assert_eq!(
+                names,
+                [format!(".lines.log.freshkube-{}.part", std::process::id())]
+            );
+            Err(io::Error::other("disk full"))
+        });
+        assert_eq!(failed.unwrap_err().to_string(), "disk full");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// How long a full buffer's text takes to build, for each kind of
+    /// download. A measurement, not a check: run it in release with
+    /// `cargo test --release -p freshkube-logs download_text_timing --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn download_text_timing() {
+        use freshkube_core::logs::LogEvent;
+        let services = ["apid", "kubelet", "etcd", "containerd", "machined"];
+        // Lines of about 140 bytes, as a busy node writes them, then lines
+        // long enough that the 5,000 the buffer keeps fill its 8 MiB.
+        for padding in [0, 1580] {
+            let mut review = LogReview::new("node");
+            for batch in 0..10 {
+                review.append((0..1000).map(|line| {
+                    let ix = batch * 1000 + line;
+                    LogEvent::new(
+                        services[ix % services.len()],
+                        format!(
+                            "2026-10-07T10:{:02}:{:02}.{:06}Z level=info msg=\"rpc request\" \\
+                             method=/machine.MachineService/ServiceList id={ix} {}",
+                            (ix / 60) % 60,
+                            ix % 60,
+                            ix % 1_000_000,
+                            "x".repeat(padding)
+                        ),
+                    )
+                }));
+            }
+            let entries = review.logs.buffer().entries();
+            let bytes: usize = entries.iter().map(|entry| entry.raw.len()).sum();
+            println!(
+                "{} lines, {:.2} MiB retained",
+                entries.len(),
+                bytes as f64 / (1024. * 1024.)
+            );
+            for lines in [DownloadLines::Visible, DownloadLines::Retained] {
+                for (time, tagged) in [(false, false), (true, false), (false, true), (true, true)] {
+                    let as_ = CopyAs { time, tagged };
+                    let mut runs: Vec<f64> = (0..15)
+                        .map(|_| {
+                            let started = std::time::Instant::now();
+                            let (text, _) = download_text(&review, lines, as_);
+                            let taken = started.elapsed().as_secs_f64() * 1000.;
+                            std::hint::black_box(text);
+                            taken
+                        })
+                        .collect();
+                    runs.sort_by(f64::total_cmp);
+                    println!(
+                        "  {lines:?} time={time} tagged={tagged}: median {:.2} ms, max {:.2} ms",
+                        runs[runs.len() / 2],
+                        runs[runs.len() - 1]
+                    );
+                }
+            }
+        }
     }
 }
