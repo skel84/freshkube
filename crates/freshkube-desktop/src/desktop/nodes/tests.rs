@@ -3122,6 +3122,24 @@ fn h_folds_the_healthy_nodes_from_the_list_and_the_filter_types_it(cx: &mut Test
 }
 
 #[gpui_kit::test]
+fn h_leaves_the_fold_alone_on_the_cards(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        window.click("nodes-view-cards", cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.view, super::NodeView::Cards);
+        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        window.press("h", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_right_click_selects_its_node_and_its_menu_folds_the_healthy_ones(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
     cx.update_window(handle, |_, window, cx| {

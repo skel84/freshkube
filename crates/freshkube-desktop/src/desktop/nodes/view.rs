@@ -120,8 +120,11 @@ impl Pilot {
                 view.step_node_tab(-1, window, cx)
             }))
             .on_action(cx.listener(|view, _: &ToggleHealthyNodes, window, cx| {
-                // H is the list's; the filter and the pane type it.
-                if !view.node_focus.is_focused(window) {
+                // H is the table's; the filter and the pane type it, and
+                // the cards show no fold to flip.
+                if !view.node_focus.is_focused(window)
+                    || view.node_workspace.view == NodeView::Cards
+                {
                     return cx.propagate();
                 }
                 view.node_workspace.toggle_healthy();

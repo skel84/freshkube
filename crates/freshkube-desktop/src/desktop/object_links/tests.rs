@@ -531,7 +531,7 @@ fn forward_lands_a_fresh_drawer_on_its_ports(cx: &mut TestAppContext) {
 }
 
 /// A group row beside the drawer lays out within the room the drawer
-/// leaves, its subject shrinking first, so its buttons stay in sight
+/// leaves, its subject shrinking first, so its labels stay in sight
 /// (#321).
 #[gpui_kit::test]
 fn group_labels_stay_clear_of_the_drawer(cx: &mut TestAppContext) {
