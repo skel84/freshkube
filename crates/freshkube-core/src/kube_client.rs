@@ -24,6 +24,9 @@ fn environment_proxy() -> Option<String> {
         .find(|value| !value.is_empty())
 }
 
+/// `Config` doesn't keep where its proxy came from, so a proxy equal to the
+/// environment's counts as the environment's, even when the kubeconfig names
+/// the same one; for a loopback server that only means a direct connection.
 fn skip_proxy_for_loopback(config: &mut Config, environment: Option<&str>) {
     let from_environment = match (&config.proxy_url, environment) {
         (Some(proxy), Some(environment)) => {
@@ -42,7 +45,9 @@ fn is_loopback(url: &http::Uri) -> bool {
     };
     let host = host.trim_start_matches('[').trim_end_matches(']');
     host.eq_ignore_ascii_case("localhost")
-        || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.to_canonical().is_loopback())
 }
 
 #[cfg(test)]
@@ -69,6 +74,7 @@ mod tests {
             "http://127.0.0.1:6443",
             "https://127.8.9.10:6443",
             "https://[::1]:6443",
+            "https://[::ffff:127.0.0.1]:6443",
             "https://localhost:6443",
             "https://LOCALHOST",
         ] {
