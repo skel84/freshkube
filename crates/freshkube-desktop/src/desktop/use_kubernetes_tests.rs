@@ -245,7 +245,7 @@ fn pod(context: &str) -> crate::resources::model::ResourceIdentity {
 }
 
 #[gpui_kit::test]
-fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
+async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
     let guard = tempfile::tempdir().unwrap();
     let file = kubeconfig(guard.path());
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
@@ -272,8 +272,12 @@ fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
 
     switch(cx);
     cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
-    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_some()));
+    // The switch waits for the session to end, which can finish off the
+    // GPUI executor.
+    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, cx| {
+        view.read(cx).kubernetes_only.is_some()
+    })
+    .await;
     assert!(cx.read(shell::running_anywhere).is_empty());
 }
 
