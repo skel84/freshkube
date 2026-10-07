@@ -89,7 +89,8 @@ fn keyboard_selection_moves_through_nodes_and_updates_details(cx: &mut TestAppCo
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(screen.read(cx).loader.data().is_some());
-        window.find("lifecycle-details");
+        // The details open with a selection.
+        assert!(window.try_find("lifecycle-details").is_none());
         window.click(node("talos-cp-fra1-01"), cx);
         window.press("down", cx);
         window.render_frame(cx);
@@ -112,6 +113,7 @@ fn keyboard_selection_moves_through_nodes_and_updates_details(cx: &mut TestAppCo
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(screen.read(cx).selected.is_none());
+        assert!(window.try_find("lifecycle-details").is_none());
     })
     .unwrap();
 }
@@ -121,6 +123,8 @@ fn details_sit_beside_the_roster_only_when_it_fits_whole(cx: &mut TestAppContext
     for (width, beside) in [(1700., true), (1300., false)] {
         let (_runtime, _screen, handle) = mount_sized(cx, "talos-cp-fra1-01", width);
         cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(node("talos-cp-fra1-01"), cx);
             window.render_frame(cx);
             let scroll = window.find("lifecycle-table-scroll").bounds();
             let row = window.find(node("talos-cp-fra1-01")).bounds();
@@ -137,7 +141,7 @@ fn details_sit_beside_the_roster_only_when_it_fits_whole(cx: &mut TestAppContext
 }
 
 /// DESIGN.md's table at both text sizes, and no clipped column: the roster
-/// scrolls sideways inside its card, its name stays at the left edge, and
+/// scrolls sideways across the page, its name stays at the left edge, and
 /// the last column can be brought fully into view, at the two sizes #138
 /// found it cut off.
 #[gpui_kit::test]
@@ -414,7 +418,7 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
                 &publication
             ));
             window.render_frame(cx);
-            window.find("lifecycle-details");
+            window.find("lifecycle-list");
         })
         .unwrap();
         if let Some((request, old)) = delayed {
@@ -623,17 +627,34 @@ fn roster_presence_glyphs_never_show_a_failure() {
     assert_eq!(presence(None), Tone::Unknown);
 }
 
-const LIFECYCLE_FRAME: layout_check::PageFrame = layout_check::PageFrame {
+const LIFECYCLE_PAGE: layout_check::TablePage = layout_check::TablePage {
     page: "lifecycle-page",
     title: "lifecycle-title",
     title_text: "Lifecycle",
-    content: "lifecycle-body",
+    table: "lifecycle-table-scroll",
+    list: "lifecycle-list",
 };
 
-/// Lifecycle is a page of cards under the toolbar header, and its versions,
-/// etcd verdict and alerts are the status bar's segment, not a row of stats.
+/// With a node selected, the split of roster and details runs edge to edge
+/// in the table's place.
+const LIFECYCLE_SPLIT: layout_check::PageFrame = layout_check::PageFrame {
+    page: "lifecycle-page",
+    title: "lifecycle-title",
+    title_text: "Lifecycle",
+    content: "lifecycle-split",
+};
+
+const LIFECYCLE_TABLE: layout_check::Table = layout_check::Table {
+    table: Some("lifecycle-table-scroll"),
+    list: "lifecycle-list",
+};
+
+/// Lifecycle is a table page, as Pods is: the toolbar header and the bare
+/// roster edge to edge, at both text sizes, with or without the details.
+/// Its versions, etcd verdict and alerts are the status bar's segment, not
+/// a row of stats.
 #[gpui_kit::test]
-fn lifecycle_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppContext) {
+fn lifecycle_is_a_table_page_with_its_status_in_the_bar(cx: &mut TestAppContext) {
     for text in [None, Some(20.)] {
         let (_runtime, handle, _view) = app(cx, 1280., 880.);
         cx.update_window(handle, |_, window, cx| {
@@ -647,7 +668,7 @@ fn lifecycle_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppConte
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            layout_check::assert_page_frame(window, cx, &LIFECYCLE_FRAME);
+            layout_check::assert_table_page(window, cx, &LIFECYCLE_PAGE);
             window.find("lifecycle-refresh");
             let scope = window.find("lifecycle-scope");
             assert!(
@@ -664,12 +685,113 @@ fn lifecycle_is_a_page_of_cards_with_its_status_in_the_bar(cx: &mut TestAppConte
             ] {
                 assert!(line.contains(part), "{part} in {line}");
             }
-            // No row of stats; the alerts keep their card, which
-            // `kubelet_skew_alert_is_shown` finds.
+            // No row of stats; the alerts are a section under the table,
+            // which `kubelet_skew_alert_is_shown` finds.
             assert!(window.try_find("lifecycle-summary").is_none());
+            let table = window.find("lifecycle-table-scroll").bounds();
+            let alerts = window.find("lifecycle-alerts").bounds();
+            assert!(alerts.top() >= table.bottom(), "{alerts:?} {table:?}");
+            window.click(node("talos-cp-fra1-01"), cx);
+            window.render_frame(cx);
+            window.find("lifecycle-details");
+            layout_check::assert_edge_frame(window, cx, &LIFECYCLE_SPLIT);
+            layout_check::assert_table(window, cx, &LIFECYCLE_TABLE);
+            layout_check::assert_bare(window, "lifecycle-table-scroll");
         })
         .unwrap();
     }
+}
+
+/// Until the first answer the roster shows the shared loading rows under
+/// its header, not a state in its place, and they give way to the rows.
+#[gpui_kit::test]
+fn the_loading_rows_give_way_to_the_roster_when_it_answers(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        let target = screen.update(cx, |screen, cx| {
+            let target = screen.source.as_ref().unwrap().target.clone();
+            screen.loader.reset();
+            screen.loader.state.begin(target.clone());
+            cx.notify();
+            target
+        });
+        window.render_frame(cx);
+        assert!(window.find("lifecycle-loading").visible());
+        window.find(("lifecycle-sort", 0usize));
+        assert!(window.try_find("lifecycle-state").is_none());
+        assert!(window.try_find("lifecycle-empty").is_none());
+        assert!(window.try_find("lifecycle-alerts").is_none());
+        screen.update(cx, |screen, cx| {
+            screen.resolve(target, Ok(example_view()));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("lifecycle-loading").is_none());
+        window.find(node("talos-cp-fra1-01"));
+        window.find("lifecycle-alerts");
+    })
+    .unwrap();
+}
+
+/// A roster with no nodes says so in the table, under its header, and the
+/// rest of the page still shows what was read.
+#[gpui_kit::test]
+fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let mut view = example_view();
+            view.snapshot.nodes.clear();
+            let target = screen.source.as_ref().unwrap().target.clone();
+            screen.resolve(target, Ok(view));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let empty = window.find("lifecycle-empty");
+        assert!(empty.visible());
+        let header = window.find(("lifecycle-sort", 0usize)).bounds();
+        assert!(empty.bounds().top() >= header.bottom());
+        assert!(window.try_find("lifecycle-loading").is_none());
+        window.find("lifecycle-etcd");
+        window.find("lifecycle-sources");
+    })
+    .unwrap();
+}
+
+/// A failed first read shows the failure in the table's place, with Retry;
+/// a failed refresh keeps the roster under a banner in the inset above it.
+#[gpui_kit::test]
+fn a_failure_replaces_the_table_until_data_and_then_sits_above_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        let target = screen.read(cx).source.as_ref().unwrap().target.clone();
+        screen.update(cx, |screen, cx| {
+            screen.loader.reset();
+            screen.resolve(target.clone(), Err("example failure".into()));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let state = window.find("lifecycle-state").bounds();
+        let retry = window.find("screen-retry").bounds();
+        assert!(state.contains(&retry.center()), "{retry:?} {state:?}");
+        assert!(window.try_find("lifecycle-list").is_none());
+        assert!(window.try_find("lifecycle-loading").is_none());
+
+        screen.update(cx, |screen, cx| {
+            screen.resolve(target.clone(), Ok(example_view()));
+            screen.resolve(target.clone(), Err("example failure".into()));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("lifecycle-state").is_none());
+        let retry = window.find("screen-retry").bounds();
+        let toolbar = window.find("lifecycle-toolbar").bounds();
+        let table = window.find("lifecycle-table-scroll").bounds();
+        assert!(retry.top() >= toolbar.bottom(), "{retry:?} {toolbar:?}");
+        assert!(retry.bottom() <= table.top(), "{retry:?} {table:?}");
+        window.find(node("talos-cp-fra1-01"));
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
