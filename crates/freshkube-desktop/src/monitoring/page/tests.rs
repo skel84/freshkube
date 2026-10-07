@@ -1,3 +1,4 @@
+use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, KubeClientSource};
 use freshkube_core::monitoring::{
     Candidate, Discovery, ErrorKind, PrometheusService, QueryError, Rank, Tried,
 };
@@ -13,18 +14,18 @@ use crate::desktop::probe;
 
 const NOW: i64 = 1_700_003_600;
 
-fn example_source() -> KubeSource {
-    KubeSource {
+fn example_source() -> ClusterSource {
+    ClusterSource {
         id: "example".into(),
         context: "prod-fra".into(),
-        access: KubeAccess::Example,
+        access: ClusterAccess::Example,
     }
 }
 
 /// The page alone in a window, its clock fixed and its source example data.
 fn mount(
     cx: &mut TestAppContext,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
 ) -> (
     tokio::runtime::Runtime,
     AnyWindowHandle,
@@ -38,7 +39,7 @@ fn mount(
 fn mount_with(
     cx: &mut TestAppContext,
     runtime: &tokio::runtime::Runtime,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     preferences: Option<&std::path::Path>,
     secrets: Option<crate::secrets::Secrets>,
 ) -> (AnyWindowHandle, Entity<MonitoringPage>) {
@@ -1091,15 +1092,7 @@ fn history_reads_where_the_page_found_or_remembers_prometheus(cx: &mut TestAppCo
     assert_eq!(kind(cx).as_deref(), Some("example"));
 
     // A live context with nothing remembered has none until the page finds one.
-    let live = KubeSource {
-        id: "live".into(),
-        context: "prod-ams".into(),
-        access: KubeAccess::Direct(crate::resources::direct::DirectAccess::new(
-            Vec::new(),
-            "prod-ams".into(),
-            freshkube_core::ConfigurationRevision::default(),
-        )),
-    };
+    let live = live_source();
     cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(live.clone()), cx)));
     assert_eq!(kind(cx), None);
 
@@ -1127,15 +1120,21 @@ fn history_reads_where_the_page_found_or_remembers_prometheus(cx: &mut TestAppCo
     assert_eq!(kind(cx), None);
 }
 
-fn live_source() -> KubeSource {
-    KubeSource {
+/// A live cluster whose client never builds, as a kubeconfig without
+/// files: nothing in these tests reaches the cluster.
+struct NoClient;
+
+impl KubeClientSource for NoClient {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+        Box::pin(async { Err("No kubeconfig".into()) })
+    }
+}
+
+fn live_source() -> ClusterSource {
+    ClusterSource {
         id: "live".into(),
         context: "prod-ams".into(),
-        access: KubeAccess::Direct(crate::resources::direct::DirectAccess::new(
-            Vec::new(),
-            "prod-ams".into(),
-            freshkube_core::ConfigurationRevision::default(),
-        )),
+        access: ClusterAccess::Live(std::sync::Arc::new(NoClient)),
     }
 }
 
@@ -1427,7 +1426,7 @@ fn another_dashboard_or_source_starts_each_table_again(cx: &mut TestAppContext) 
     assert_ne!(second.entity_id(), first.entity_id());
     assert!(!cx.read(|cx| second.read(cx).shows_all()));
     // Another source: a new table again.
-    let other = KubeSource {
+    let other = ClusterSource {
         id: "example-2".into(),
         ..example_source()
     };

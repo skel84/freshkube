@@ -1634,9 +1634,15 @@ fn pods_on_a_node_that_isnt_ready_group_under_it(cx: &mut TestAppContext) {
         let tally = screen.read(cx).projection.tally();
         assert_eq!(tally.failing, 1);
         assert!(tally.warning > 10, "{tally:?}");
-        window.click("resource-group-node:talos-home-open-node", cx);
     })
     .unwrap();
+    // The group's menu offers its node, as O does.
+    choose(
+        cx,
+        handle,
+        |window, cx| window.right_click("resource-group-node:talos-home-line", cx),
+        "Open node talos-home",
+    );
     assert_eq!(
         links.borrow().as_slice(),
         [(
@@ -1667,10 +1673,14 @@ fn x_marks_rows_and_a_group_selects_all_of_its_own(cx: &mut TestAppContext) {
         assert!(screen.read(cx).marked.is_empty());
         assert!(window.try_find("resource-marks").is_none());
 
+        // Shift-X marks the selected row's group: here each has one pod.
         problems(&screen, cx);
         window.render_frame(cx);
-        window.click("resource-group-failing-select", cx);
-        window.click("resource-group-pending-select", cx);
+        let first = identity_at(&screen, 0, cx);
+        window.within(row_id(&first)).click("name", cx);
+        window.press("shift-x", cx);
+        window.press("down", cx);
+        window.press("shift-x", cx);
         window.render_frame(cx);
         assert_eq!(screen.read(cx).marked.len(), 2);
         window.click("resource-marks-copy", cx);
@@ -2280,6 +2290,207 @@ fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
         assert_eq!(screen.read(cx).namespace, None);
         assert!(window.try_find("resource-more-dot").is_none());
         assert_eq!(window.find("resource-more").label(), Some("More"));
+    })
+    .unwrap();
+}
+
+/// Opens a context menu with `press` and picks the item labelled `label`.
+fn choose(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    press: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App),
+    label: &str,
+) {
+    let items = open_menu(cx, handle, press);
+    let ix = items
+        .iter()
+        .position(|item| item.as_deref() == Some(label))
+        .unwrap_or_else(|| panic!("no {label:?} in {items:?}"));
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").click(ix, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+/// Opens a context menu with `press`, a right-click, and reads its items'
+/// labels, a separator as `None`.
+fn open_menu(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    press: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App),
+) -> Vec<Option<String>> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        press(window, cx);
+    })
+    .unwrap();
+    // The menu builds on the next frame.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menu = window.within("popup-menu");
+        (0usize..)
+            .map_while(|ix| menu.try_find(ix))
+            .map(|item| item.label().map(str::to_owned))
+            .collect()
+    })
+    .unwrap()
+}
+
+/// A row's tooltip, such as its name's, doesn't draw over the menu the
+/// row opened, and shows again once the menu is gone.
+#[gpui_kit::test]
+fn no_row_tooltip_draws_while_its_menu_is_open(cx: &mut TestAppContext) {
+    use freshkube_ui::tooltip::drawn_total;
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let row = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let row = row_id(&identity_at(&screen, 0, cx));
+            window.within(row.clone()).hover("name", cx);
+            row
+        })
+        .unwrap();
+    let shown = |cx: &mut TestAppContext| {
+        // Past the tooltip's show delay.
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let before = drawn_total();
+            window.render_frame(cx);
+            drawn_total() > before
+        })
+        .unwrap()
+    };
+    assert!(shown(cx), "the name's tooltip never showed");
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row.clone()).right_click("name", cx)
+    });
+    assert!(!items.is_empty());
+    // The pointer rests on the name, left of the menu that opened at its
+    // middle.
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::{InputEvent, MouseMoveEvent, point, px};
+        let name = window.within(row.clone()).find("name").bounds();
+        let position = point(name.left() + px(4.), name.center().y);
+        window.dispatch_event(
+            MouseMoveEvent {
+                position,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(!shown(cx), "a tooltip drew over the open menu");
+    // A click outside closes the menu; the pointer comes back to the name.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-filter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("popup-menu").is_none(), "the menu stayed");
+        window.within(row).hover("name", cx);
+    })
+    .unwrap();
+    assert!(shown(cx), "the tooltip stayed hidden after the menu closed");
+}
+
+#[gpui_kit::test]
+fn a_right_click_selects_its_row_before_the_menu_acts(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let (first, third) = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let first = identity_at(&screen, 0, cx);
+            window.within(row_id(&first)).click("name", cx);
+            (first, identity_at(&screen, 2, cx))
+        })
+        .unwrap();
+    assert_eq!(cx.read(|cx| selected(&screen, cx)), Some(first.clone()));
+    // Its name, clear of the drawer the first click opened.
+    let row = row_id(&third);
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row).right_click("name", cx)
+    });
+    // The menu is the row's own: it is selected as the menu opens.
+    assert_eq!(cx.read(|cx| selected(&screen, cx)), Some(third.clone()));
+    assert_eq!(
+        items.first().cloned().flatten().as_deref(),
+        Some("Open"),
+        "{items:?}"
+    );
+    assert!(items.contains(&Some("Logs".into())), "{items:?}");
+    cx.update_window(handle, |_, window, cx| {
+        let ix = items
+            .iter()
+            .position(|item| item.as_deref() == Some("Mark"));
+        window.within("popup-menu").click(ix.unwrap(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let marked = &screen.read(cx).marked;
+        assert!(marked.contains(&third) && !marked.contains(&first));
+    });
+}
+
+#[gpui_kit::test]
+fn h_folds_the_healthy_pods_and_o_opens_the_selected_pods_node(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let links = Rc::new(RefCell::new(Vec::new()));
+    let sink = links.clone();
+    cx.update(|cx| {
+        cx.subscribe(
+            &screen,
+            move |_, link: &crate::resources::ResourceLink, _| {
+                if let crate::resources::ResourceLink::Node(node, _) = link {
+                    sink.borrow_mut().push(node.clone());
+                }
+            },
+        )
+        .detach()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        window.render_frame(cx);
+        let folded = screen.read(cx).projection.len();
+        let first = identity_at(&screen, 0, cx);
+        window.within(row_id(&first)).click("name", cx);
+        window.press("h", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).projection.len() > folded);
+        window.press("h", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).projection.len(), folded);
+        window.press("o", cx);
+    })
+    .unwrap();
+    let node = cx.read(|cx| screen.read(cx).selected_node());
+    assert!(node.is_some());
+    assert_eq!(links.borrow().as_slice(), [node.unwrap()]);
+}
+
+#[gpui_kit::test]
+fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        problems(&screen, cx);
+        window.render_frame(cx);
+        window.click("resource-filter", cx);
+        window.render_frame(cx);
+        for key in ["o", "h", "x", "shift-x"] {
+            window.press(key, cx);
+        }
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).query.read(cx).value(), "ohxX");
+        assert!(screen.read(cx).marked.is_empty());
     })
     .unwrap();
 }

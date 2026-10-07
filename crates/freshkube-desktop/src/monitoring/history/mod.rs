@@ -12,6 +12,7 @@ mod tests;
 use std::rc::Rc;
 use std::time::Duration;
 
+use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::{
     Endpoint, ErrorKind, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError,
     Source,
@@ -29,7 +30,6 @@ use tokio::runtime::Handle;
 
 use super::panel::{Linked, PanelEvent, PanelView};
 use super::request::{self, Request};
-use crate::resources::KubeAccess;
 use crate::ui::{self, dp};
 
 /// The window drawn, and how often it is read again while shown.
@@ -53,7 +53,7 @@ pub(crate) enum HistoryKind {
     Ready(Prometheus),
     /// Remembered for the context and not looked for again yet.
     Remembered {
-        access: KubeAccess,
+        access: ClusterAccess,
         service: PrometheusService,
     },
 }

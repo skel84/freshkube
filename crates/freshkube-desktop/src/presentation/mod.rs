@@ -3,6 +3,7 @@ pub(crate) mod overview;
 
 use freshkube_core::cluster_overview::{ClusterOverview, EtcdSummary};
 use freshkube_core::constants::{MEMORY_CRITICAL_PERCENT, MEMORY_WARNING_PERCENT};
+use freshkube_core::talos_nodes::observe_talos_nodes;
 use freshkube_core::{HasHealth, HealthIndicator, NodeRole};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use talos_rs::ServiceInfo;
@@ -159,69 +160,22 @@ impl NodeSummary {
 }
 
 pub(crate) fn node_summaries(cluster: &ClusterOverview) -> Vec<NodeSummary> {
-    let mut names: BTreeSet<String> = cluster.node_ips.keys().cloned().collect();
-    names.extend(cluster.versions.iter().map(|v| v.node.clone()));
-    names.extend(cluster.services.iter().map(|v| v.node.clone()));
-    if names.is_empty() {
-        names.extend(cluster.endpoints.iter().cloned());
-    }
-    let mut nodes: Vec<_> = names
+    let mut nodes: Vec<_> = observe_talos_nodes(cluster)
         .into_iter()
-        .map(|name| {
-            let address = cluster
-                .node_ips
-                .get(&name)
-                .cloned()
-                .unwrap_or_else(|| name.clone());
-            let etcd_member = cluster.etcd_members.iter().any(|member| {
-                member.ip_address().as_deref() == Some(address.as_str()) || member.hostname == name
-            });
-            let discovered = cluster
-                .discovery_members
-                .iter()
-                .find(|member| member.hostname == name || member.addresses.contains(&address));
-            let role = match discovered.map(|member| member.machine_type.to_lowercase()) {
-                Some(kind) if kind == "controlplane" => Role::ControlPlane,
-                Some(kind) if kind == "worker" => Role::Worker,
-                Some(_) => Role::Unknown,
-                None if etcd_member || cluster.node_is_controlplane(&name) => Role::ControlPlane,
-                None => Role::Unknown,
-            };
-            let version = cluster.versions.iter().find(|v| v.node == name);
-            let services = cluster.services.iter().find(|v| v.node == name);
-            let mut service_list = services
-                .map(|node| node.services.clone())
-                .unwrap_or_default();
-            service_list.sort_by(|a, b| a.id.cmp(&b.id));
-            NodeSummary {
-                responding: version.is_some() || services.is_some(),
-                version: version.map(|v| v.version.clone()),
-                cores: cluster
-                    .cpu_info
-                    .iter()
-                    .find(|v| v.node == name)
-                    .map(|v| v.cpu_count),
-                memory: cluster
-                    .memory
-                    .iter()
-                    .find(|v| v.node == name)
-                    .and_then(|v| v.meminfo.as_ref())
-                    .filter(|m| m.mem_total > 0)
-                    .map(|m| Memory {
-                        used: m.mem_total.saturating_sub(m.mem_available),
-                        total: m.mem_total,
-                    }),
-                load: cluster
-                    .load_avg
-                    .iter()
-                    .find(|v| v.node == name)
-                    .map(|v| [v.load1, v.load5, v.load15]),
-                services: service_list,
-                name,
-                address,
-                role,
-                etcd_member,
-            }
+        .map(|node| NodeSummary {
+            role: Role::from(&node.role),
+            memory: node.memory.map(|memory| Memory {
+                used: memory.used,
+                total: memory.total,
+            }),
+            name: node.name,
+            address: node.address,
+            etcd_member: node.etcd_member,
+            responding: node.responding,
+            version: node.version,
+            cores: node.cores,
+            load: node.load,
+            services: node.services,
         })
         .collect();
     nodes.sort_by(|a, b| a.role.cmp(&b.role).then_with(|| a.name.cmp(&b.name)));

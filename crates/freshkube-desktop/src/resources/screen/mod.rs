@@ -77,7 +77,10 @@ actions!(
         OpenSelected,
         ChooseNamespace,
         ToggleMark,
-        OpenLogs
+        OpenLogs,
+        SelectGroup,
+        OpenNode,
+        ToggleHealthy
     ]
 );
 
@@ -119,6 +122,30 @@ impl KubeAccess {
             KubeAccess::Example => {}
             KubeAccess::Talos(live) => live.forget(),
             KubeAccess::Direct(direct) => direct.forget(),
+        }
+    }
+}
+
+/// Pages outside Resources reach a live cluster through this, so a clone
+/// shares the client the Talos or kubeconfig access caches.
+impl freshkube_core::cluster_source::KubeClientSource for KubeAccess {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+        Box::pin(KubeAccess::client(self))
+    }
+}
+
+impl KubeSource {
+    /// This connection as Monitoring and Observability take it.
+    pub(crate) fn cluster(&self) -> freshkube_core::cluster_source::ClusterSource {
+        use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
+        let access = match &self.access {
+            KubeAccess::Example => ClusterAccess::Example,
+            live => ClusterAccess::Live(std::sync::Arc::new(live.clone())),
+        };
+        ClusterSource {
+            id: self.id.clone(),
+            context: self.context.clone(),
+            access,
         }
     }
 }
@@ -267,6 +294,9 @@ impl ResourcesScreen {
             KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
             KeyBinding::new("x", ToggleMark, Some(CONTEXT)),
             KeyBinding::new("l", OpenLogs, Some(CONTEXT)),
+            KeyBinding::new("shift-x", SelectGroup, Some(CONTEXT)),
+            KeyBinding::new("o", OpenNode, Some(CONTEXT)),
+            KeyBinding::new("h", ToggleHealthy, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
@@ -1299,6 +1329,7 @@ impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 mod cells;
 mod controls;
 mod layout;
+mod menu;
 mod pods;
 mod source;
 mod view;

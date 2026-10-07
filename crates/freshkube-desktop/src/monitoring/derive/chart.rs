@@ -13,11 +13,11 @@ use freshkube_core::monitoring::model::{
     time::TimeWindow,
     units,
 };
-use gpui_kit::{Hsla, SharedString};
+use gpui_kit::SharedString;
 
 use super::ticks::{self, Tick, TickSet};
 use super::{Body, Capped, PanelData, Shown, format};
-use crate::monitoring::colors::{self, Ink, Tier};
+use crate::monitoring::colors::{self, Ink, Swatch, Tier};
 
 /// Legend rows drawn at most; the rest are counted.
 pub(crate) const LEGEND_ROWS: usize = 30;
@@ -358,9 +358,9 @@ fn place_bars(series: &mut [ChartSeries], stackings: &[Stacking], right: &[bool]
 /// overlap only where they wind alike, and the non-zero fill draws their
 /// union.
 fn groups(series: &[ChartSeries]) -> Vec<Vec<usize>> {
-    fn look(s: &ChartSeries) -> (Hsla, f32, f32, bool, Option<&[f32]>) {
+    fn look(s: &ChartSeries) -> (Swatch, f32, f32, bool, Option<&[f32]>) {
         (
-            s.ink.color(false),
+            s.ink.swatch(false),
             s.fill,
             s.baseline,
             s.draw == DrawStyle::Line,

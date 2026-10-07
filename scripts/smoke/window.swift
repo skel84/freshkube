@@ -3,6 +3,7 @@
 //   window id <pid> [front]       the window number, for `screencapture -l`
 //   window bounds <pid> [front]   x y width height, in screen points
 //   window click <x> <y>          a left click at screen points, as the mouse sends it
+//   window right-click <x> <y>    the same with the right button, for a context menu
 //   window move <x> <y>           the pointer to screen points, with no click or wheel
 //   window scroll <x> <y> <dy> [dx]   a scroll wheel at screen points; dy > 0 scrolls
 //                                 down, dx > 0 right
@@ -28,7 +29,7 @@ func window(of pid: Int, front: Bool) -> [String: Any]? {
 
 let args = CommandLine.arguments
 guard args.count >= 3 else {
-    FileHandle.standardError.write("usage: window id|bounds <pid> [front] | click <x> <y> | move <x> <y> | scroll <x> <y> <dy> [dx]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: window id|bounds <pid> [front] | click|right-click <x> <y> | move <x> <y> | scroll <x> <y> <dy> [dx]\n".data(using: .utf8)!)
     exit(2)
 }
 switch args[1] {
@@ -40,12 +41,15 @@ case "id", "bounds":
         let b = w[kCGWindowBounds as String] as! [String: Double]
         print(Int(b["X"]!), Int(b["Y"]!), Int(b["Width"]!), Int(b["Height"]!))
     }
-case "click":
+case "click", "right-click":
     guard args.count == 4, let x = Double(args[2]), let y = Double(args[3]) else { exit(2) }
     let point = CGPoint(x: x, y: y)
     let source = CGEventSource(stateID: .hidSystemState)
-    for (type, pause) in [(CGEventType.mouseMoved, 80_000), (.leftMouseDown, 50_000), (.leftMouseUp, 0)] {
-        CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
+    let right = args[1] == "right-click"
+    let (down, up): (CGEventType, CGEventType) = right ? (.rightMouseDown, .rightMouseUp) : (.leftMouseDown, .leftMouseUp)
+    let button: CGMouseButton = right ? .right : .left
+    for (type, pause) in [(CGEventType.mouseMoved, 80_000), (down, 50_000), (up, 0)] {
+        CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button)!
             .post(tap: .cghidEventTap)
         usleep(useconds_t(pause))
     }
