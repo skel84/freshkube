@@ -2754,9 +2754,12 @@ fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
     use gpui_kit::px;
     let directory = std::env::temp_dir().join(format!(
-        "freshkube-nodes-width-{}-{:?}",
+        "freshkube-nodes-width-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
     let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
