@@ -30,10 +30,7 @@ impl Pilot {
         if self.area == Area::Observability {
             return self.render_observability_column(true, window, cx);
         }
-        let mut column = self
-            .compact_column(cx)
-            .test_support()
-            .child(self.column_toggle(true, cx));
+        let mut column = self.compact_column().child(self.column_toggle(true, cx));
         match self.area {
             Area::Group(slug) => {
                 if slug == "workloads" {
@@ -134,21 +131,31 @@ impl Pilot {
             }
             _ => {}
         }
-        column.into_any_element()
+        column::icon_strip(
+            column,
+            &self.compact_column_scroll,
+            "nav-column-scrollbar",
+            cx.theme().background,
+        )
+        .id("nav-column")
+        .test_support()
+        .w(dp(52.))
+        .h_full()
+        .flex_none()
+        .border_r_1()
+        .border_color(palette(cx).line)
+        .into_any_element()
     }
-    fn compact_column(&self, cx: &App) -> Stateful<Div> {
+    fn compact_column(&self) -> Stateful<Div> {
         v_flex()
-            .id("nav-column")
-            .w(dp(52.))
-            .h_full()
-            .flex_none()
+            .id("nav-column-list")
+            .size_full()
             .items_center()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
+            .track_scroll(&self.compact_column_scroll)
             .py(dp(14.))
             .gap(dp(6.))
-            .border_r_1()
-            .border_color(palette(cx).line)
     }
     fn column_toggle(&self, collapsed: bool, cx: &Context<Self>) -> Button {
         Button::new("nav-collapse")
@@ -186,10 +193,13 @@ impl Pilot {
             .collect();
         // A short window or large text scrolls the list; keep the
         // destination in view whenever it, or the column's width, changes.
-        let revealed = Some((destination, collapsed));
+        let key = (destination, collapsed, column::room(window));
+        let revealed = Some(key);
         if self.obs_column_revealed != revealed
             && column::reveal_item(
                 &self.obs_column_scroll,
+                &mut self.obs_column_reveal_pass,
+                key,
                 items.iter().position(|&item| active(item)),
                 window,
             )
@@ -325,9 +335,18 @@ impl Pilot {
                     .child(self.column_toggle(collapsed, cx)),
             )
             .child(
-                column::with_scrollbar(rows, &self.obs_column_scroll, "obs-navigation-scrollbar")
-                    .flex_1()
-                    .min_h_0(),
+                if collapsed {
+                    column::icon_strip
+                } else {
+                    column::with_scrollbar
+                }(
+                    rows,
+                    &self.obs_column_scroll,
+                    "obs-navigation-scrollbar",
+                    cx.theme().background,
+                )
+                .flex_1()
+                .min_h_0(),
             )
             .child(sources)
             .into_any_element()
