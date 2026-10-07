@@ -20,10 +20,12 @@
 //! a listening socket, and our connections then wait out TIME_WAIT
 //! without holding the port. Windows must never set it first, since
 //! there it lets a socket bind over a port another program listens on.
-//! Without it, Windows still lets 127.0.0.1:p bind over another program's
-//! *:p, so there the first bind asks for the address exclusively
-//! (`SO_EXCLUSIVEADDRUSE`), which also refuses our own TIME_WAIT until the
-//! retry.
+//! Without it, Windows passes our own TIME_WAIT, but it also lets
+//! 127.0.0.1:p bind while another program holds *:p, even when our socket
+//! asks for the address exclusively (`SO_EXCLUSIVEADDRUSE`). So on Windows
+//! a bind first tries the wildcard address itself, exclusively, and drops
+//! it at once: that is refused while anything holds the port. The
+//! listener still binds exclusively, so no one can bind over it.
 //!
 //! Windows refuses a port it reserves with `PermissionDenied`, not
 //! `AddrInUse`; there the automatic rule steps past it as past a taken one.
@@ -185,7 +187,7 @@ fn bind_both(port: u16) -> io::Result<Listeners> {
 /// Listens on `address`, reusing it only when what holds it is no
 /// listener: closed connections waiting out TIME_WAIT.
 fn bind(address: SocketAddr, ports: &HashSet<u16>) -> io::Result<TcpListener> {
-    match listen(address, false) {
+    match free_everywhere(address).and_then(|()| listen(address, false)) {
         Err(error)
             if is_taken(&error)
                 && address.port() != 0
@@ -218,6 +220,28 @@ fn listen(address: SocketAddr, reuse: bool) -> io::Result<TcpListener> {
     }
     socket.bind(address)?;
     socket.listen(BACKLOG)
+}
+
+/// Nothing holds `address`'s port on any address of its family. Windows
+/// alone needs asking: elsewhere the bind itself refuses a port another
+/// program holds on the wildcard address.
+#[cfg(windows)]
+fn free_everywhere(address: SocketAddr) -> io::Result<()> {
+    if address.port() == 0 {
+        return Ok(());
+    }
+    let (socket, wildcard) = match address {
+        SocketAddr::V4(_) => (TcpSocket::new_v4()?, Ipv4Addr::UNSPECIFIED.into()),
+        SocketAddr::V6(_) => (TcpSocket::new_v6()?, Ipv6Addr::UNSPECIFIED.into()),
+    };
+    exclusive(&socket)?;
+    // Bound, never listening, and closed again on return.
+    socket.bind(SocketAddr::new(wildcard, address.port()))
+}
+
+#[cfg(not(windows))]
+fn free_everywhere(_address: SocketAddr) -> io::Result<()> {
+    Ok(())
 }
 
 /// Asks Windows for the address alone, so the bind fails while another
@@ -320,12 +344,13 @@ mod tests {
         let _ = std::io::Read::read(&mut client, &mut [0; 1]);
         drop(client);
         drop(listeners);
-        // On macOS and Windows the first bind, without the flag, is refused,
-        // which is why the retry exists; on Linux it sets the flag, as the
-        // closed connections did, and passes at once.
+        // On macOS the first bind, without the flag, is refused, which is
+        // why the retry exists; on Linux it sets the flag, as the closed
+        // connections did, and on Windows an exclusive bind passes our
+        // TIME_WAIT, so both pass at once.
         assert_eq!(
             listen(SocketAddr::from((Ipv4Addr::LOCALHOST, port)), false).is_ok(),
-            REUSE_FIRST
+            cfg!(any(target_os = "linux", windows))
         );
         bind_loopback(port).expect("nothing listens, so the port is reused");
     }
