@@ -561,3 +561,40 @@ fn the_filter_keeps_pods_width_at_1280_and_text_size_14(cx: &mut TestAppContext)
     })
     .unwrap();
 }
+
+/// The list's letter keys don't reach its find field (#347): typing `etcd`
+/// key by key reads `etcd`, with no tree or state toggled. Escape then
+/// clears the field and next hands the keyboard back to the list, whose
+/// letters work again.
+#[gpui_kit::test]
+fn the_find_field_types_the_lists_letters(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row_id(&screen, 0, cx), cx);
+        window.press("/", cx);
+        window.render_frame(cx);
+        let field = gpui_kit::Focusable::focus_handle(screen.read(cx).query.read(cx), cx);
+        assert!(field.is_focused(window));
+        for key in ["e", "t", "c", "d"] {
+            window.press(key, cx);
+        }
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        assert_eq!(view.query.read(cx).value().as_ref(), "etcd");
+        assert_eq!(view.tree, ProcessTree::Flat);
+        assert_eq!(view.state_filter, StateFilter::All);
+        assert!(field.is_focused(window));
+
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).query.read(cx).value().as_ref(), "");
+        assert!(field.is_focused(window));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).focus.is_focused(window));
+        window.press("d", cx);
+        assert_eq!(screen.read(cx).state_filter, StateFilter::DiskWait);
+    })
+    .unwrap();
+}

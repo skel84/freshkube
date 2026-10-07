@@ -39,6 +39,12 @@ use freshkube_ui::table::{self, DataTable, TableState};
 use source::Derived;
 
 const CONTEXT: &str = "TalosProcesses";
+/// The key context around the find field, deeper than the list's.
+const FILTER_CONTEXT: &str = "TalosProcessesFilter";
+/// The list's keys that a text field types or uses itself, such as letters,
+/// digits, Home and Command-C, bound only while the field hasn't the
+/// keyboard (#347).
+const LIST_ONLY: &str = "TalosProcesses && !TalosProcessesFilter";
 /// The header's ids start with it: `processes-title`, `processes-refresh`.
 const PREFIX: &str = "processes";
 const PAGE_ROWS: isize = 20;
@@ -62,7 +68,8 @@ actions!(
         ToggleZombies,
         ToggleDiskWait,
         FocusFilter,
-        ClearFilter
+        ClearFilter,
+        LeaveFilter
     ]
 );
 
@@ -149,20 +156,21 @@ impl ScreenPanel for ProcessesScreen {
         cx.bind_keys([
             KeyBinding::new("down", NextProcess, Some(CONTEXT)),
             KeyBinding::new("up", PreviousProcess, Some(CONTEXT)),
-            KeyBinding::new("home", FirstProcess, Some(CONTEXT)),
-            KeyBinding::new("end", LastProcess, Some(CONTEXT)),
             KeyBinding::new("pagedown", NextPage, Some(CONTEXT)),
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
-            KeyBinding::new("secondary-c", CopyCommand, Some(CONTEXT)),
-            KeyBinding::new("y", CopyCommand, Some(CONTEXT)),
-            KeyBinding::new("t", ToggleSubtree, Some(CONTEXT)),
-            KeyBinding::new("shift-t", ToggleTree, Some(CONTEXT)),
-            KeyBinding::new("1", SortByCpu, Some(CONTEXT)),
-            KeyBinding::new("2", SortByMemory, Some(CONTEXT)),
-            KeyBinding::new("z", ToggleZombies, Some(CONTEXT)),
-            KeyBinding::new("d", ToggleDiskWait, Some(CONTEXT)),
-            KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
+            KeyBinding::new("home", FirstProcess, Some(LIST_ONLY)),
+            KeyBinding::new("end", LastProcess, Some(LIST_ONLY)),
+            KeyBinding::new("secondary-c", CopyCommand, Some(LIST_ONLY)),
+            KeyBinding::new("y", CopyCommand, Some(LIST_ONLY)),
+            KeyBinding::new("t", ToggleSubtree, Some(LIST_ONLY)),
+            KeyBinding::new("shift-t", ToggleTree, Some(LIST_ONLY)),
+            KeyBinding::new("1", SortByCpu, Some(LIST_ONLY)),
+            KeyBinding::new("2", SortByMemory, Some(LIST_ONLY)),
+            KeyBinding::new("z", ToggleZombies, Some(LIST_ONLY)),
+            KeyBinding::new("d", ToggleDiskWait, Some(LIST_ONLY)),
+            KeyBinding::new("/", FocusFilter, Some(LIST_ONLY)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
+            KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
         let subscription = cx.subscribe_in(&query, window, |this, _, event, window, cx| {
@@ -349,6 +357,18 @@ impl ProcessesScreen {
         ));
         self.copied = Some(pid);
         cx.notify();
+    }
+
+    /// Escape in the find field: clears its text, then hands the keyboard
+    /// to the list, as the other pages' finds do.
+    fn leave_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query.read(cx).value().is_empty() {
+            window.focus(&self.focus, cx);
+        } else {
+            self.query
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            cx.notify();
+        }
     }
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
