@@ -1,5 +1,8 @@
 use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::ops::Range;
+
+use gpui_kit::SharedString;
 
 #[cfg(test)]
 use freshkube_core::constants::MAX_LOG_ENTRIES;
@@ -44,20 +47,54 @@ pub(super) struct Hit {
     pub(super) line: Option<usize>,
 }
 
-/// The indexes of the lines of `message`, split after each newline, that
-/// hold `lowercase`.
-fn matching_lines(message: &str, lowercase: &str) -> Vec<usize> {
+/// The lines of `message`, split after each newline, that hold
+/// `lowercase`: each line's index and its text's byte range, without its
+/// newline.
+fn matching_lines(message: &str, lowercase: &str) -> Vec<(usize, Range<usize>)> {
     if !message.contains('\n') {
         return if message.to_lowercase().contains(lowercase) {
-            vec![0]
+            vec![(0, 0..message.len())]
         } else {
             Vec::new()
         };
     }
-    (message.split_inclusive('\n').enumerate())
-        .filter(|(_, line)| line.to_lowercase().contains(lowercase))
-        .map(|(ix, _)| ix)
-        .collect()
+    let mut start = 0;
+    let mut lines = Vec::new();
+    for (ix, line) in message.split_inclusive('\n').enumerate() {
+        if line.to_lowercase().contains(lowercase) {
+            lines.push((ix, start..start + line.trim_end_matches('\n').len()));
+        }
+        start += line.len();
+    }
+    lines
+}
+
+/// How a search marks a row or one line of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mark {
+    /// It matches.
+    Match,
+    /// It is the current match.
+    Current,
+}
+
+/// How a search marks one row: as a whole, or, for a message of several
+/// lines that names the search on some of them, line by line, so stepping
+/// within the row moves the current line's mark.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct RowMarks {
+    pub(super) row: Option<Mark>,
+    /// Byte ranges of the row's [`shown_message`] and their marks.
+    pub(super) lines: Vec<(Range<usize>, Mark)>,
+}
+
+/// The toolbar's search count for one current match, and its tooltip.
+#[derive(Clone)]
+pub(super) struct SearchCount {
+    current: Option<Hit>,
+    pub(super) position: Option<usize>,
+    pub(super) text: SharedString,
+    pub(super) tip: SharedString,
 }
 
 /// The matches for one query against one revision of the visible rows.
@@ -69,6 +106,12 @@ struct MatchCache {
     /// Whether each visible row matches, by row index, so drawing a row
     /// doesn't search its text again.
     rows: Vec<bool>,
+    /// The matching lines of each matching row whose message has several
+    /// lines, by row index: each line's index and byte range.
+    spans: BTreeMap<usize, Vec<(usize, Range<usize>)>>,
+    /// The count for the current match, derived when the match or these
+    /// hits change.
+    count: Option<SearchCount>,
 }
 
 fn level_slot(level: &LogLevel) -> usize {
@@ -247,8 +290,74 @@ impl LogReview {
 
     /// Where the current match stands among [`Self::hits`].
     pub(super) fn current_position(&self) -> Option<usize> {
-        let current = self.current_match?;
-        self.hits().iter().position(|&hit| hit == current)
+        self.search_count().position
+    }
+
+    /// The search count and its tooltip, derived again only when the
+    /// current match or the hits have changed, not every frame.
+    pub(super) fn search_count(&self) -> SearchCount {
+        drop(self.match_cache());
+        let mut cache = self.matches.borrow_mut();
+        let cache = cache.as_mut().expect("filled by match_cache");
+        if let Some(count) = &cache.count
+            && count.current == self.current_match
+        {
+            return count.clone();
+        }
+        let total = cache.hits.len();
+        let position = (self.current_match)
+            .and_then(|current| cache.hits.iter().position(|&hit| hit == current));
+        let text = match (total, position) {
+            (0, _) => "No matches".to_owned(),
+            (total, Some(ix)) => format!("{} of {total}", ix + 1),
+            (total, None) => format!("– of {total}"),
+        };
+        // The count is of lines: a stack trace that names the search on
+        // three lines counts three.
+        let tip = match total {
+            0 => "No matching lines".to_owned(),
+            1 => "1 matching line".to_owned(),
+            total => format!(
+                "{total} matching lines. Each matching line of a multi-line message \
+                 counts, and Next visits each."
+            ),
+        };
+        let count = SearchCount {
+            current: self.current_match,
+            position,
+            text: text.into(),
+            tip: tip.into(),
+        };
+        cache.count = Some(count.clone());
+        count
+    }
+
+    /// How the search marks the visible row at `row_ix`: line by line when
+    /// its message has several lines and some of them match, otherwise as
+    /// a whole.
+    pub(super) fn marks(&self, row_ix: usize) -> RowMarks {
+        if !self.is_match(row_ix) {
+            return RowMarks::default();
+        }
+        let id = self.id(row_ix);
+        let current = self.current_match.filter(|hit| hit.id == id);
+        let mark = |current: bool| if current { Mark::Current } else { Mark::Match };
+        let cache = self.match_cache();
+        match cache.spans.get(&row_ix) {
+            Some(spans) => RowMarks {
+                row: None,
+                lines: (spans.iter())
+                    .map(|(line, range)| {
+                        let here = current.is_some_and(|hit| hit.line == Some(*line));
+                        (range.clone(), mark(here))
+                    })
+                    .collect(),
+            },
+            None => RowMarks {
+                row: Some(mark(current.is_some())),
+                lines: Vec::new(),
+            },
+        }
     }
 
     /// Whether the visible row at `row_ix` matches the query, from the same
@@ -281,22 +390,29 @@ impl LogReview {
                         .collect()
                 };
                 let mut hits = Vec::new();
+                let mut spans = BTreeMap::new();
                 for (ix, _) in rows.iter().enumerate().filter(|(_, matched)| **matched) {
                     let id = self.id(ix);
-                    let lines = matching_lines(shown_message(self.entry(ix)), &lowercase);
+                    let message = shown_message(self.entry(ix));
+                    let lines = matching_lines(message, &lowercase);
                     if lines.is_empty() {
                         hits.push(Hit { id, line: None });
                     }
-                    hits.extend(lines.into_iter().map(|line| Hit {
+                    hits.extend(lines.iter().map(|(line, _)| Hit {
                         id,
-                        line: Some(line),
+                        line: Some(*line),
                     }));
+                    if message.contains('\n') && !lines.is_empty() {
+                        spans.insert(ix, lines);
+                    }
                 }
                 *cache = Some(MatchCache {
                     revision: self.revision,
                     query: self.query.clone(),
                     hits,
                     rows,
+                    spans,
+                    count: None,
                 });
             }
         }
@@ -585,6 +701,28 @@ mod model_tests {
         assert_eq!(review.search(false), hit(last, Some(0)));
         assert_eq!(review.search(false), hit(trace, Some(4)));
         assert_eq!(review.search(false), hit(trace, Some(2)));
+        assert_eq!(review.search_count().text, "2 of 4");
+        assert!(review.search_count().tip.starts_with("4 matching lines"));
+        // The trace marks its matching lines, the current one apart; the
+        // one-line row is marked whole.
+        let message = shown_message(review.entry(1)).to_owned();
+        let marks = review.marks(1);
+        assert_eq!(marks.row, None);
+        let lines: Vec<&str> = message.lines().collect();
+        let expected = [
+            (0, "queue closed", Mark::Match),
+            (2, "at flush(queue)", Mark::Current),
+            (4, "at queue_loop()", Mark::Match),
+        ];
+        assert_eq!(marks.lines.len(), expected.len());
+        for ((range, mark), (line, end, want)) in marks.lines.iter().zip(expected) {
+            // Each range is its whole line, without the newline.
+            assert_eq!(&message[range.clone()], lines[line]);
+            assert!(lines[line].ends_with(end), "{:?}", lines[line]);
+            assert_eq!(*mark, want, "line {line}");
+        }
+        assert_eq!(review.marks(2).row, Some(Mark::Match));
+        assert_eq!(review.marks(0), RowMarks::default());
         // The selection's cursor follows the match's row.
         assert_eq!(review.move_selection(1, false), Some(last));
         // A match outside the message's lines, here in the timestamp, is one

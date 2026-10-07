@@ -201,7 +201,7 @@ impl<S: LogSource> LogView<S> {
         self.review.next_id
     }
 
-    /// The review's part of a status line: counts, matches, selection,
+    /// The review's part of a status line: counts, matching lines, selection,
     /// follow, and what retention dropped. `streaming` says whether lines
     /// still arrive while paused.
     pub fn review_status(&self, streaming: bool) -> Vec<String> {
@@ -213,9 +213,9 @@ impl<S: LogSource> LogView<S> {
         if !self.review.query.is_empty() {
             let count = self.review.match_count();
             parts.push(if count == 1 {
-                "1 match".into()
+                "1 matching line".into()
             } else {
-                format!("{count} matches")
+                format!("{count} matching lines")
             });
         }
         parts.push(format!("{} selected", self.review.selected.len()));

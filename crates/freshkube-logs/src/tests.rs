@@ -11,7 +11,7 @@ use tokio::runtime::{Builder, Handle, Runtime};
 
 use freshkube_core::logs::{LogEvent, ServiceId};
 
-use super::{LogSource, LogView};
+use super::{LogSource, LogView, review::Mark};
 
 /// A source with no stream of its own, for testing the view: the tests
 /// hand it batches as a stream would deliver them, through `apply_batch`.
@@ -713,6 +713,45 @@ fn next_shows_every_matched_line_of_a_tall_row(cx: &mut TestAppContext) {
             view.navigate(1, false, cx);
             assert_eq!(view.reveal_matched_line, None);
         });
+    }
+}
+
+/// In a message of a few lines, short enough to show whole, Next moves the
+/// current mark from one matching line to the next within the row, and the
+/// row as a whole isn't marked, so the step shows though nothing scrolls
+/// (#281).
+#[gpui_kit::test]
+fn next_moves_the_current_line_within_a_short_row(cx: &mut TestAppContext) {
+    let (_runtime, panel, handle) = mount(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let trace = "error retry failed: ledger busy\n    at retryLedger(1)\n    \
+                     at main()\n    at retryLedger(2)";
+        deliver(&panel, vec![trace.to_owned()], cx);
+        window.render_frame(cx);
+        window.click("logs-search", cx);
+        window.input("retryledger", cx);
+    })
+    .unwrap();
+    settle(cx, &panel, handle);
+    for (step, line) in [(1, 1), (2, 3)] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("logs-search-next", cx);
+            window.render_frame(cx);
+            let view = panel.read(cx);
+            let hit = view.review.current_match.expect("a match");
+            assert_eq!((hit.id, hit.line), (120, Some(line)));
+            let ix = view.review.row_for_id(120).unwrap();
+            let marks = view.review.marks(ix);
+            assert_eq!(marks.row, None, "step {step}: the whole row is marked");
+            let current: Vec<bool> = (marks.lines.iter())
+                .map(|(_, mark)| *mark == Mark::Current)
+                .collect();
+            assert_eq!(current, [step == 1, step == 2], "step {step}");
+            assert_eq!(view.review.search_count().text, format!("{step} of 2"));
+            assert!(window.find(SharedString::from("log-line-1-120")).visible());
+        })
+        .unwrap();
     }
 }
 

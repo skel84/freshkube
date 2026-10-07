@@ -179,6 +179,15 @@ impl<S: LogSource> LogView<S> {
     /// long stack trace doesn't hide the line the search found, whichever
     /// of its lines that is.
     pub(super) fn reveal_row(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // A matched line is found within the row's measured height, never
+        // an estimate. `measure_viewport` settles the revealed row first,
+        // so this lays nothing out unless that changes.
+        if self.reveal_matched_line.is_some()
+            && self.row_exact.get(ix) == Some(&false)
+            && let Some(key) = self.measured.clone()
+        {
+            self.settle_row(ix, &key, window, cx);
+        }
         let list = self.scroll.bounds().size.height;
         let tall = self.sizes.get(ix).is_some_and(|row| row.height > list);
         if let Some(line) = self.reveal_matched_line

@@ -1,7 +1,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, AvailableSpace, Context, FontWeight, Hsla, ListSizingBehavior, Render, Role,
-    SharedString, TestSupportExt, Window,
+    AnyElement, AvailableSpace, Context, FontWeight, HighlightStyle, Hsla, ListSizingBehavior,
+    Render, Role, SharedString, StyledText, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants},
@@ -23,7 +23,8 @@ use super::{
     CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
     FirstLine, FocusSearch, LIST_LEAST_REMS, LastLine, LeaveSearch, LogSource, LogView,
     ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
-    SEARCH_CONTEXT, SelectAll, review::shown_message,
+    SEARCH_CONTEXT, SelectAll,
+    review::{Mark, shown_message},
 };
 use freshkube_ui::palette::{Palette, palette};
 use freshkube_ui::ui::{self, dp};
@@ -54,8 +55,14 @@ impl<S: LogSource> LogView<S> {
         }
         let columns = self.columns;
         let selected = self.review.selected.contains(&id);
-        let matched = self.review.is_match(row_ix);
-        let current = self.review.current_match.is_some_and(|hit| hit.id == id);
+        let marks = self.review.marks(row_ix);
+        let matched = marks.row == Some(Mark::Match);
+        let current = marks.row == Some(Mark::Current);
+        // A message of several lines marks its matching lines instead of
+        // the whole row, so Next moves the mark within the row. Only the
+        // background changes, so rows laid out to measure leave it out.
+        let line_marks =
+            (!measuring && message.is_none() && !marks.lines.is_empty()).then_some(marks.lines);
         let p = palette(cx);
         let (level, level_color, stripe) = level_style(&entry.level, &p);
         let time = entry
@@ -154,7 +161,24 @@ impl<S: LogSource> LogView<S> {
                     .min_w_0()
                     .when(!wrapped, |element| element.whitespace_nowrap())
                     .when(wrapped, |element| element.whitespace_normal())
-                    .child(message),
+                    .map(|element| match line_marks {
+                        Some(lines) => element.child(StyledText::new(message).with_highlights(
+                            lines.into_iter().map(|(range, mark)| {
+                                let background = match mark {
+                                    Mark::Current => p.mark,
+                                    Mark::Match => p.mark.opacity(0.35),
+                                };
+                                (
+                                    range,
+                                    HighlightStyle {
+                                        background_color: Some(background),
+                                        ..HighlightStyle::default()
+                                    },
+                                )
+                            }),
+                        )),
+                        None => element.child(message),
+                    }),
             )
             .on_click(
                 cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
@@ -317,8 +341,6 @@ impl<S: LogSource> LogView<S> {
 
     fn render_toolbar_content(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let p = palette(cx);
-        let match_count = self.review.match_count();
-        let current_position = self.review.current_position();
         let selected = self.review.selected.len();
         // One row: the source's tools, then the shared ones; a narrow
         // panel or a large text size wraps it once.
@@ -354,33 +376,21 @@ impl<S: LogSource> LogView<S> {
                             ),
                     )
                     .when(!self.review.query.is_empty(), |this| {
-                        // The count is of lines: a stack trace that names
-                        // the search on three lines counts three.
-                        let tip: SharedString = match match_count {
-                            0 => "No matching lines".into(),
-                            1 => "1 matching line".into(),
-                            count => format!(
-                                "{count} matching lines. Each matching line of a \
-                                 multi-line message counts, and Next visits each."
-                            )
-                            .into(),
-                        };
+                        // Derived with the count when the match changes.
+                        let count = self.review.search_count();
+                        let tip = count.tip.clone();
                         this.child(
                             div()
                                 .id("logs-search-count")
                                 .test_support()
-                                .aria_label(tip.clone())
+                                .aria_label(count.tip)
                                 .tooltip(move |window, cx| {
                                     Tooltip::new(tip.clone()).build(window, cx)
                                 })
                                 .flex_none()
                                 .text_size(dp(11.))
                                 .text_color(p.muted)
-                                .child(match (match_count, current_position) {
-                                    (0, _) => "No matches".to_owned(),
-                                    (count, Some(ix)) => format!("{} of {count}", ix + 1),
-                                    (count, None) => format!("– of {count}"),
-                                }),
+                                .child(count.text),
                         )
                     })
                     .child(
