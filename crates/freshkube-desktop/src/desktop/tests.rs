@@ -96,7 +96,7 @@ fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entity<Pilot> {
 pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     let pilot = root_pilot(window, cx);
     let nodes = &pilot.read(cx).node_workspace;
-    if nodes.healthy_collapsed() && nodes.view == NodeView::Table && !nodes.open {
+    if nodes.healthy_collapsed() && nodes.view == NodeView::Table {
         window.click("nodes-healthy-toggle", cx);
         window.render_frame(cx);
     }

@@ -27,11 +27,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let columns = if compact { 1 } else { card_columns(window) };
-        let count = if compact {
-            self.node_workspace.rows.len()
-        } else {
-            self.node_workspace.lines.len()
-        };
+        let count = self.node_workspace.lines.len();
         if count == 0 {
             return ui::empty_state(
                 IconName::Server,
@@ -47,8 +43,8 @@ impl Pilot {
             .aria_label("No matching nodes")
             .into_any_element();
         }
-        // The pane's list is the full roster, one to a row; the cards are
-        // the filtered lines.
+        // Beside a node's pane the filtered lines are a roster, one to a
+        // row; otherwise they are cards.
         let list = freshkube_ui::grid::cards(
             "nodes-cards-list",
             count,
@@ -56,11 +52,7 @@ impl Pilot {
             if compact { 0. } else { CARD_GAP },
             &self.node_workspace.scroll,
             move |view: &mut Self, item, _, cx| {
-                let row = if compact {
-                    item
-                } else {
-                    view.node_workspace.lines[item]
-                };
+                let row = view.node_workspace.lines[item];
                 view.joined_node_row(&view.node_workspace.rows[row], compact, cx)
             },
             cx,
