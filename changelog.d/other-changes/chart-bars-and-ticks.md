@@ -1,1 +1,0 @@
-- Stacked bar charts, such as an application's log histogram, now fill each column instead of a thin slice of it, and charts of whole counts label only whole numbers on their axis.

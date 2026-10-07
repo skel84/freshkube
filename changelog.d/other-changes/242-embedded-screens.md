@@ -1,1 +1,0 @@
-- A node's System services, Processes, Storage, Network, Diagnostics and Logs tabs no longer repeat the tab's name and the node above their own controls, so the list or log starts higher in the inspector.
