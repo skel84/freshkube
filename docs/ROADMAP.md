@@ -323,6 +323,7 @@ What remains:
 ### 2. Linux and Windows releases
 
 Landed (Done, "Linux and Windows releases" 1–3): `packages.yml` builds a Linux tarball and a Windows zip from every push to `main` and opens a window from each in CI, and a release draft attaches them, as preview, when both of a platform's jobs passed ([PACKAGING.md](PACKAGING.md)). 0.6.0 shipped macOS only, since it was tagged before `packages.yml` reached `main`.
+- CI: "Compile and lint (Linux)" is its own job and a required check (#393). Windows' compile and lint and its tests stay advisory; Tests (Windows) passes since #383.
 - Still open: a tester's [first-run report](FIRST_RUN.md) on each platform. The first release after one with no blocking problem calls that platform supported, and its build becomes required.
 - An installer later. ARM builds and Developer ID signing and notarization stay in step 8.
 
