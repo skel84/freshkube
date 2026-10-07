@@ -311,14 +311,14 @@ One ordered list. A step starts when the one above it is done or explicitly runs
 
 ### 1. Finish the visual system and #22
 
-[#46](https://github.com/skel84/freshkube/issues/46) makes every page look like Pods.
-- Its checklist is updated first: 6.7–6.9 have landed, and the style allowlist is empty.
-- 6.11 (System services without an actions column).
-- The polish issues found in the 6 October pass: [#225](https://github.com/skel84/freshkube/issues/225), [#226](https://github.com/skel84/freshkube/issues/226), [#229](https://github.com/skel84/freshkube/issues/229), [#231](https://github.com/skel84/freshkube/issues/231)–[#233](https://github.com/skel84/freshkube/issues/233), [#235](https://github.com/skel84/freshkube/issues/235), [#238](https://github.com/skel84/freshkube/issues/238), [#241](https://github.com/skel84/freshkube/issues/241) and [#242](https://github.com/skel84/freshkube/issues/242).
-- It closes with `smoke.sh pages` in light and dark, at 760 × 560 and at 20 px text.
+[#46](https://github.com/skel84/freshkube/issues/46) makes every page look like Pods. Its checklist was brought up to date on 7 October 2026:
+- Every page is on the shared components: Monitoring (4.5), every control-plane page through Maintenance (4.6), and the desktop-grade changes 6.0–6.10, 6.12 and 6.13.
+- The style allowlist is empty, and the check fails CI on any offence.
+- The 6 October polish issues are closed, and so is [#22](https://github.com/skel84/freshkube/issues/22).
 
-Alongside it, [#22](https://github.com/skel84/freshkube/issues/22) closes:
-- the Resources burst timing, paired baseline against instrumented on one machine.
+What remains:
+- 6.11 (System services without an actions column).
+- The closing `smoke.sh pages` pass, in light and dark, at 760 × 560 and at 20 px text. It becomes the new capture baseline.
 
 ### 2. Linux and Windows releases
 
