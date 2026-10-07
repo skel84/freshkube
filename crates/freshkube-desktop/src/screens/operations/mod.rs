@@ -19,7 +19,8 @@
 //! - page and notices: `ops-page`, `ops-notice`, `ops-busy`;
 //! - operation choice: `ops-kinds`, `ops-kind-{cordon,uncordon,drain,reboot,shutdown}`;
 //! - options: `ops-options`, `ops-opt-*` (toggles, and `-dec`/`-inc` steppers);
-//! - nodes: `ops-node-scroll`, `ops-nodes`, `ops-node` (row `ix`);
+//! - nodes: the shared table's `ops-list`, `ops-rows`, `ops-table-scroll`
+//!   and `ops-empty`, a row `ops-node-<name>`;
 //! - plan: `ops-plan`, `ops-plan-target` (row `k`), `ops-move-earlier`,
 //!   `ops-move-later` (button `k`), `ops-preview`, `ops-verdict` (row `k`),
 //!   `ops-blocked`, `ops-review`, `ops-clear`;
@@ -27,6 +28,7 @@
 //!   `ops-progress`, `ops-result` (row `i`);
 //! - audit: `ops-audit`, `ops-audit-note`, `ops-audit-entry` (row `i`).
 mod example;
+mod table;
 mod view;
 
 #[cfg(test)]
@@ -72,8 +74,8 @@ use talos_rs::{EtcdMemberInfo, EtcdMemberStatus};
 use tokio::{runtime::Handle, sync::mpsc};
 
 use super::{
-    Column, Loader, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, cell, content_width,
-    panel, refresh_control, retry_button, segment, table_head, table_width,
+    Loader, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, page_width, panel,
+    refresh_control, retry_button, segment, split_at,
 };
 use crate::backend::{self, OwnedJob};
 use crate::mutation::{self, Confirmation, Operations};
@@ -84,7 +86,6 @@ use freshkube_ui::status::Segment;
 
 const CONTEXT: &str = "TalosOperations";
 const PREFIX: &str = "ops";
-const ROW_HEIGHT: f32 = 30.;
 /// The plan pane, when it sits beside the roster.
 const PLAN_WIDTH: f32 = 400.;
 const GAP: f32 = 14.;
@@ -92,25 +93,6 @@ const PROGRESS_LIMIT: usize = 256;
 const AUDIT_ENTRIES: usize = 25;
 /// How long one simulated step takes.
 const SIMULATED_STEP: Duration = Duration::from_millis(650);
-
-const COLUMNS: [Column; 4] = [
-    Column {
-        label: "Order",
-        width: Some(72.),
-    },
-    Column {
-        label: "Node",
-        width: None,
-    },
-    Column {
-        label: "Address",
-        width: Some(132.),
-    },
-    Column {
-        label: "Role",
-        width: Some(116.),
-    },
-];
 
 actions!(
     talos_operations,
@@ -293,10 +275,14 @@ fn format_secs(secs: u64) -> String {
 
 /// A node of the roster, as selectable here.
 #[derive(Clone, Debug)]
-struct RosterNode {
+pub(crate) struct RosterNode {
     target: NodeTarget,
     role: NodeRole,
     responding: bool,
+    /// The row's id and the start of its accessibility label, derived with
+    /// the roster.
+    element_id: SharedString,
+    label: SharedString,
 }
 
 /// What a preview was taken for. Options aren't part of it: they don't change
@@ -796,6 +782,11 @@ pub(crate) struct OperationsScreen {
     /// Selected targets in run order.
     selected: Vec<NodeTarget>,
     cursor: usize,
+    /// The source's nodes that can be targeted, and the table's columns
+    /// for them, derived when the source changes.
+    roster: Vec<RosterNode>,
+    columns: (Vec<table::Column>, f32),
+    table: freshkube_ui::table::TableState,
     preview: PreviewState,
     preview_generation: u64,
     preview_job: Option<OwnedJob>,
@@ -845,6 +836,9 @@ impl ScreenPanel for OperationsScreen {
             options: Options::default(),
             selected: Vec::new(),
             cursor: 0,
+            roster: Vec::new(),
+            columns: table::columns(&[]),
+            table: freshkube_ui::table::TableState::new(PREFIX),
             preview: PreviewState::Idle,
             preview_generation: 0,
             preview_job: None,
@@ -872,6 +866,7 @@ impl ScreenPanel for OperationsScreen {
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);
         self.source = source;
+        self.derive_roster();
         if changed {
             // A different cluster or node: nothing selected or previewed for
             // the old one applies. A run in progress is not affected.
@@ -883,17 +878,17 @@ impl ScreenPanel for OperationsScreen {
                 .source
                 .as_ref()
                 .and_then(|source| {
-                    self.roster()
-                        .into_iter()
+                    self.roster
+                        .iter()
                         .find(|node| node.target.name == source.target.node)
                 })
-                .map(|node| vec![node.target])
+                .map(|node| vec![node.target.clone()])
                 .unwrap_or_default();
             self.cursor = 0;
         } else {
             // Same target, possibly a new roster: drop what is no longer there
             // or whose address changed.
-            let roster = self.roster();
+            let roster = &self.roster;
             let before = self.selected.len();
             self.selected
                 .retain(|target| roster.iter().any(|node| &node.target == target));
@@ -901,7 +896,7 @@ impl ScreenPanel for OperationsScreen {
                 self.drop_preview();
             }
         }
-        self.cursor = self.cursor.min(self.roster().len().saturating_sub(1));
+        self.cursor = self.cursor.min(self.roster.len().saturating_sub(1));
         if self.activated {
             self.ensure_preview(false, window, cx);
             self.load_audit(cx);
@@ -954,20 +949,22 @@ impl OperationsScreen {
         self.status = Some((key, line));
     }
 
-    fn roster(&self) -> Vec<RosterNode> {
-        let Some(source) = &self.source else {
-            return Vec::new();
-        };
-        source
-            .nodes
+    /// The source's nodes that can be targeted, and the table's columns.
+    fn derive_roster(&mut self) {
+        self.roster = self
+            .source
             .iter()
+            .flat_map(|source| source.nodes.iter())
             .filter(|node| !node.name.trim().is_empty() && !node.address.trim().is_empty())
-            .map(|node| RosterNode {
-                target: NodeTarget::new(node.name.clone(), node.address.clone()),
-                role: node.role,
-                responding: node.responding,
+            .map(|node| {
+                RosterNode::new(
+                    NodeTarget::new(node.name.clone(), node.address.clone()),
+                    node.role,
+                    node.responding,
+                )
             })
-            .collect()
+            .collect();
+        self.columns = table::columns(&self.roster);
     }
 
     /// What a preview would be for right now, or `None` with nothing selected.
@@ -1087,7 +1084,7 @@ impl OperationsScreen {
     }
 
     fn step_cursor(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let len = self.roster().len();
+        let len = self.roster.len();
         if len == 0 {
             return;
         }
@@ -1096,9 +1093,7 @@ impl OperationsScreen {
     }
 
     fn cursor_target(&self) -> Option<NodeTarget> {
-        self.roster()
-            .get(self.cursor)
-            .map(|node| node.target.clone())
+        self.roster.get(self.cursor).map(|node| node.target.clone())
     }
 
     /// Moves the node under the cursor within the run order.
