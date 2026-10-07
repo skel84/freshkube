@@ -1,1 +1,0 @@
-- Maintenance mode's form keeps its field captions short, with their notes under the fields, so none runs out of its card; in a narrow window or at a large text size the form fills the page's width above the workflow.

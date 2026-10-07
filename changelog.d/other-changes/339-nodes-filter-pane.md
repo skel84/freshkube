@@ -1,1 +1,0 @@
-- Nodes: with a node's pane open, the table now follows Filter nodes and the health groups, as it does without the pane, so its rows agree with the counts above it. A filter that hides the open node leaves its pane open.
