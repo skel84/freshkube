@@ -218,27 +218,41 @@ mod tests {
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 
+    /// The page content's background in a theme of `assets/theme.json`.
+    fn content(mode: &str) -> Hsla {
+        let themes: serde_json::Value =
+            serde_json::from_str(include_str!("../assets/theme.json")).unwrap();
+        let theme = (themes["themes"].as_array().unwrap().iter())
+            .find(|theme| theme["mode"] == mode)
+            .unwrap();
+        let value = theme["colors"]["background"].as_str().unwrap();
+        hex(u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap())
+    }
+
     /// The current search match reads at 4.5:1 and stands well apart from
-    /// the other matches in both themes (#316).
+    /// the other matches in both themes (#316). A log's rows lie on
+    /// `surface`; the YAML pane's lines show the page content through.
     #[test]
     fn the_current_match_stands_out_and_stays_readable() {
         for (theme, p) in [("light", light()), ("dark", dark())] {
-            let ink = over(p.ink, p.surface);
-            let current = over(p.mark, p.surface);
-            let other = over(p.mark_soft, p.surface);
-            let readable = contrast(ink, current);
-            assert!(
-                readable >= 4.5,
-                "{theme}: ink on the current match {readable}"
-            );
-            // Light tells them apart by hue as much as by lightness; dark
-            // has only lightness, which was 1.7:1 before #316.
-            let apart = contrast(current, other);
-            if theme == "dark" {
+            for (under, background) in [("surface", p.surface), ("content", content(theme))] {
+                let ink = over(p.ink, background);
+                let current = over(p.mark, background);
+                let other = over(p.mark_soft, background);
+                let readable = contrast(ink, current);
                 assert!(
-                    apart >= 2.,
-                    "{theme}: current against other matches {apart}"
+                    readable >= 4.5,
+                    "{theme} on {under}: ink on the current match {readable}"
                 );
+                // Light tells them apart by hue as much as by lightness;
+                // dark has only lightness, which was 1.7:1 before #316.
+                let apart = contrast(current, other);
+                if theme == "dark" {
+                    assert!(
+                        apart >= 2.,
+                        "{theme} on {under}: current against other matches {apart}"
+                    );
+                }
             }
         }
     }
