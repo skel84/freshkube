@@ -60,10 +60,6 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
 /// declared only, or absent. Provenance shows them as they are; whether they
 /// stay confirmed is for the confidence slice (#387).
 const KNOWN_GAPS: &[(&str, &str, &str)] = &[
-    // #387: the run's only witness is a declared revision parameter; a result
-    // would be reported (see the test on a task result).
-    ("commit", "PipelineRun", "PipelineRun"),
-    ("pull request", "PipelineRun", "PipelineRun"),
     // #387: the commit joined a Freight with no build read, or with a build that
     // reports no digest: only its declared labels name the commit.
     ("PipelineRun", "Freight", "PipelineRun"),
@@ -95,6 +91,14 @@ async fn confirmed() -> Trail {
         vec![
             pipeline_run(SHA, true, Some(NEW)),
             pr_pipeline_run(OTHER_SHA, 7, NEW),
+        ],
+    );
+    world.tekton = world.tekton.with(
+        "taskruns",
+        vec![
+            task_run(),
+            clone_task_run("storefront-push-x", SHA),
+            clone_task_run("storefront-pr-y", OTHER_SHA),
         ],
     );
     run_with(&world, &ENV, &github(), Some(GH_REPO)).await
@@ -190,6 +194,82 @@ async fn a_result_that_names_the_commit_is_reported_evidence_for_the_run() {
         .expect("the task run that wrote the result");
     assert_eq!(task_side.fact, Fact::Reported);
     assert_eq!(task_side.field, "/status/results");
+}
+
+/// A world whose one build is labelled with `SHA`, with a revision parameter
+/// naming `param` and a clone TaskRun reporting `reported`, when given.
+fn build_world(param: Option<&str>, reported: Option<&str>) -> World {
+    let mut world = healthy().with_meta();
+    let mut run_value = pipeline_run(SHA, false, Some(NEW));
+    if let Some(param) = param {
+        run_value["spec"]["params"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"name": "revision", "value": param}));
+    }
+    world.tekton = world.tekton.with("pipelineruns", vec![run_value]);
+    let tasks = reported.map_or_else(
+        || vec![task_run()],
+        |sha| vec![task_run(), clone_task_run("storefront-push-x", sha)],
+    );
+    world.tekton = world.tekton.with("taskruns", tasks);
+    world
+}
+
+#[tokio::test]
+async fn a_label_and_a_parameter_that_agree_are_a_claim_both_declared() {
+    let trail = run(&build_world(Some(SHA), None), &ENV).await;
+    let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(commit.confidence, Confidence::Claimed);
+    assert!(
+        commit.reason.contains("agree, both declared"),
+        "{}",
+        commit.reason
+    );
+    assert!(
+        commit.reason.contains("no result reports"),
+        "{}",
+        commit.reason
+    );
+    assert!(!stands_on(commit, Hop::PipelineRun));
+}
+
+#[tokio::test]
+async fn a_task_result_naming_the_commit_confirms_beside_a_parameter() {
+    let trail = run(&build_world(Some(SHA), Some(SHA)), &ENV).await;
+    let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(commit.confidence, Confidence::Confirmed);
+    assert!(stands_on(commit, Hop::PipelineRun), "{commit:#?}");
+    let rule = commit
+        .evidence
+        .iter()
+        .find(|seen| seen.object.kind == "Join")
+        .expect("the join's conclusion");
+    assert_eq!(rule.object.name, "a task result == the change");
+    assert!(
+        !commit
+            .evidence
+            .iter()
+            .any(|seen| seen.field == "/spec/params"),
+        "the reported witness wins: {commit:#?}"
+    );
+}
+
+#[tokio::test]
+async fn a_result_naming_another_commit_is_a_claim_whatever_the_declared_fields_say() {
+    let trail = run(&build_world(Some(SHA), Some(OTHER_SHA)), &ENV).await;
+    let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(commit.confidence, Confidence::Claimed);
+    assert!(
+        commit.reason.contains("reports another commit"),
+        "{}",
+        commit.reason
+    );
+    assert!(
+        commit.reason.contains(&OTHER_SHA[..12]),
+        "{}",
+        commit.reason
+    );
 }
 
 #[tokio::test]
@@ -445,9 +525,13 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
     assert!(link(&healthy, Hop::Freight, Hop::Stage).len() == 1);
 }
 
-/// `[confirmed, claimed, unknown]` of each fixture, as the join gave them
-/// before links carried observations.
-const COUNTS: [[usize; 3]; 4] = [[4, 4, 0], [7, 1, 0], [12, 0, 0], [8, 4, 0]];
+/// `[confirmed, claimed, unknown]` of each fixture.
+const COUNTS: [[usize; 3]; 4] = [[3, 5, 0], [6, 2, 0], [12, 0, 0], [5, 7, 0]];
+// healthy: Commit -> PipelineRun is Claimed (label and revision parameter, both declared).
+// promoted: the same link, Commit -> PipelineRun, is Claimed.
+// confirmed: unchanged; a clone TaskRun's `commit` result reports both commits.
+// squash: Commit -> PipelineRun and both PullRequest -> PipelineRun links (the merge
+// commit's run and the head's run) are Claimed: their runs have a parameter, no result.
 
 #[test]
 fn the_rule_fails_on_a_side_with_nothing_read() {

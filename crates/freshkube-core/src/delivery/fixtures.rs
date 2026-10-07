@@ -440,6 +440,16 @@ pub fn task_run() -> Value {
     })
 }
 
+/// A task run of `run` that writes the commit it cloned as a `commit` result,
+/// as the upstream git-clone task does.
+pub fn clone_task_run(run: &str, sha: &str) -> Value {
+    json!({
+        "metadata": {"name": format!("{run}-clone"), "namespace": "acme-builds",
+                      "labels": {"tekton.dev/pipelineRun": run}},
+        "status": {"results": [{"name": "commit", "value": sha}]}
+    })
+}
+
 /// One healthy change, with a reader for each role the join reads from:
 /// Kargo, Argo CD, the builds and the environment the pods run in.
 pub struct World {

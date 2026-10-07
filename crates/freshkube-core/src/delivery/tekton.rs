@@ -293,6 +293,13 @@ pub struct Witness {
     pub source: WitnessSource,
 }
 
+impl Witness {
+    /// Whether a result reported the commit, as against a parameter declaring it.
+    pub fn reported(&self) -> bool {
+        self.source != WitnessSource::Param
+    }
+}
+
 /// A PipelineRun with the TaskRuns that belong to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
@@ -354,26 +361,28 @@ impl Build {
         })
     }
 
-    /// The commit the build names besides the PaC label: a revision
-    /// parameter, else a commit result of the run or one of its tasks.
+    /// The commit the build names besides the PaC label: a commit result of
+    /// the run or one of its tasks, else a revision parameter.
     pub fn witnessed_commit(&self, names: &CommitNames) -> Option<String> {
         self.witness(names).map(|witness| witness.commit)
     }
 
-    /// [`Build::witnessed_commit`], with where the commit was read.
+    /// [`Build::witnessed_commit`], with where the commit was read. What was
+    /// reported (the run's results, then its TaskRuns') wins over what the
+    /// run declared (its parameters).
     pub fn witness(&self, names: &CommitNames) -> Option<Witness> {
         let named = |commit, source| Witness { commit, source };
-        named_commit(&self.run.params, UPSTREAM_REVISION_PARAMS, &names.params)
-            .map(|commit| named(commit, WitnessSource::Param))
-            .or_else(|| {
-                result_commit(&self.run.results, names)
-                    .map(|commit| named(commit, WitnessSource::RunResult))
-            })
+        result_commit(&self.run.results, names)
+            .map(|commit| named(commit, WitnessSource::RunResult))
             .or_else(|| {
                 self.tasks.iter().enumerate().find_map(|(index, task)| {
                     result_commit(&task.results, names)
                         .map(|commit| named(commit, WitnessSource::TaskResult(index)))
                 })
+            })
+            .or_else(|| {
+                named_commit(&self.run.params, UPSTREAM_REVISION_PARAMS, &names.params)
+                    .map(|commit| named(commit, WitnessSource::Param))
             })
     }
 }

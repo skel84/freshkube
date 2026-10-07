@@ -93,7 +93,10 @@ pub(super) fn one(trail: &Trail, from: Hop, to: Hop) -> &super::join::Link {
 async fn a_healthy_change_joins_from_the_commit_to_the_pods() {
     let trail = run(&healthy(), &[("env-a", "https://env-a.example:6443")]).await;
     let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
-    assert_eq!(commit.confidence, Confidence::Confirmed);
+    // The label and the revision parameter are both declared: no result
+    // reports the commit.
+    assert_eq!(commit.confidence, Confidence::Claimed);
+    assert!(commit.reason.contains("both declared"), "{}", commit.reason);
     assert_eq!(commit.key, Key::Sha(SHA.into()));
     let chain = one(&trail, Hop::PipelineRun, Hop::SupplyChain);
     assert_eq!(chain.confidence, Confidence::Confirmed);
@@ -449,7 +452,7 @@ async fn a_squash_merged_pull_request_joins_through_its_merge_commit() {
     let runs = link(&trail, Hop::PullRequest, Hop::PipelineRun);
     assert_eq!(runs.len(), 2, "{trail:#?}");
     let merged_run = runs.iter().find(|l| l.key == Key::Sha(SHA.into())).unwrap();
-    assert_eq!(merged_run.confidence, Confidence::Confirmed);
+    assert_eq!(merged_run.confidence, Confidence::Claimed);
     let head_run = runs
         .iter()
         .find(|l| l.key == Key::Sha(OTHER_SHA.into()))
@@ -614,7 +617,7 @@ async fn task_runs_that_cannot_be_read_leave_the_build_standing() {
     world.tekton = world.tekton.refusing("taskruns");
     let trail = run(&world, &ENV).await;
     let commit = one(&trail, Hop::Commit, Hop::PipelineRun);
-    assert_eq!(commit.confidence, Confidence::Confirmed);
+    assert_eq!(commit.confidence, Confidence::Claimed);
     assert!(
         commit.reason.contains("its TaskRuns were not read"),
         "{}",
@@ -692,13 +695,13 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
     let commits = link(&trail, Hop::Commit, Hop::PipelineRun);
     assert_eq!(commits.len(), 2, "{trail:#?}");
     let x = of(&commits, "storefront-push-x");
-    assert_eq!(x.confidence, Confidence::Confirmed);
+    assert_eq!(x.confidence, Confidence::Claimed);
     assert!(!x.reason.contains("not read"), "{}", x.reason);
     let y = of(&commits, "storefront-push-y");
     assert_eq!(
         y.confidence,
-        Confidence::Confirmed,
-        "the run's own revision still confirms it"
+        Confidence::Claimed,
+        "the run's own revision is declared, so it only claims"
     );
     assert!(
         y.reason
@@ -1247,9 +1250,13 @@ async fn only_upstream_commit_names_are_read_unless_more_are_configured() {
         plan.commit_names.params = vec!["made-up-param".into()]
     })
     .await;
-    assert_eq!(
-        one(&configured, Hop::Commit, Hop::PipelineRun).confidence,
-        Confidence::Confirmed
+    // The configured parameter is read, but it is declared: a claim.
+    let configured = one(&configured, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(configured.confidence, Confidence::Claimed);
+    assert!(
+        configured.reason.contains("both declared"),
+        "{}",
+        configured.reason
     );
 
     // Results: upstream's `commit` counts, an unknown name doesn't.
