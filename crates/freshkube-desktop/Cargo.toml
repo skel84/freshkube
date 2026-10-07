@@ -12,7 +12,6 @@ doctest = false
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
-freshkube-graph.workspace = true
 freshkube-logs.workspace = true
 freshkube-probe.workspace = true
 freshkube-terminal.workspace = true
@@ -72,3 +71,5 @@ freshkube-logs = { workspace = true, features = ["testing"] }
 freshkube-ui = { workspace = true, features = ["testing"] }
 # Operations' tests run the example on a paused Tokio clock (`start_paused`).
 tokio = { workspace = true, features = ["test-util"] }
+# The map's tests measure its boxes in the graph's units (`observability/map.rs`).
+freshkube-graph.workspace = true
