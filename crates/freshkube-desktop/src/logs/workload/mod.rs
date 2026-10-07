@@ -317,6 +317,9 @@ pub(crate) struct WorkloadLogs {
     /// technology.
     pub(super) pod_label: SharedString,
     pub(super) pod_aria: SharedString,
+    /// Why the list is empty when the picked pod is one the cap leaves
+    /// unread; it wins over every other empty text.
+    not_read: Option<SharedString>,
     /// Advances whenever the chips are derived again, so their measured
     /// widths are taken again.
     chips_revision: u64,
@@ -381,6 +384,7 @@ impl WorkloadLogs {
             pod_choices: Rc::default(),
             pod_label: SharedString::default(),
             pod_aria: SharedString::default(),
+            not_read: None,
             chips_revision: 0,
             chip_widths: Vec::new(),
             more_width: Pixels::ZERO,
@@ -417,6 +421,9 @@ impl WorkloadLogs {
         self.watch_job = None;
         self.watch_delivery = None;
         self.streams.clear();
+        // Nothing is read, so the cap leaves nothing out until the pods
+        // are listed again.
+        self.left_out = 0;
         self.feed = None;
         self.example_writer = None;
         #[cfg(feature = "stress")]
@@ -522,11 +529,25 @@ impl WorkloadLogs {
         });
         let pods = self.pods.len();
         let streams = self.streams.len();
-        let counts = format!(
-            "{} · {}",
-            plural(pods, "pod", "pods"),
-            plural(streams, "container", "containers")
-        );
+        // A pick narrows the counts; the tag and the banners stay the
+        // workload's, since every stream reads on whatever is picked.
+        let counts = match &self.pod {
+            None => format!(
+                "{} · {}",
+                plural(pods, "pod", "pods"),
+                plural(streams, "container", "containers")
+            ),
+            Some(pod) => {
+                let present = self.pods.iter().any(|seen| seen.name == *pod);
+                let read = self.streams.keys().filter(|key| key.pod == *pod).count();
+                format!(
+                    "{} of {} · {read} of {}",
+                    usize::from(present),
+                    plural(pods, "pod", "pods"),
+                    plural(streams, "container", "containers")
+                )
+            }
+        };
         self.describe_pods();
         let (tone, tag, text, empty) = match &self.pods_state {
             PodsState::Idle => (Tone::Unknown, "Idle", String::new(), String::new()),
@@ -576,11 +597,8 @@ impl WorkloadLogs {
             text: text.into(),
             label: label.into(),
         };
-        self.empty = match self.pod_not_read() {
-            Some(why) => why,
-            None => empty,
-        }
-        .into();
+        self.empty = empty.into();
+        self.not_read = self.pod_not_read().map(Into::into);
     }
 
     /// The Pod select's entries and its button's words. A pod none of
@@ -700,7 +718,10 @@ impl LogSource for WorkloadLogs {
     }
 
     fn empty_message(view: &WorkloadLogView) -> SharedString {
-        if !view.has_lines() {
+        // The other pods' lines are retained, so this comes first.
+        if let Some(not_read) = &view.source().not_read {
+            not_read.clone()
+        } else if !view.has_lines() {
             view.source().empty.clone()
         } else {
             "No retained lines pass the filters.".into()

@@ -11,7 +11,7 @@ use gpui_kit::{
     Anchor, AnyElement, App, AvailableSpace, ClickEvent, Context, Pixels, Role, SharedString,
     TestSupportExt, Toggled, WeakEntity, Window,
     component::{
-        Disableable, Icon, Selectable, Sizable,
+        Disableable, Icon, Sizable,
         button::Button,
         h_flex,
         menu::{DropdownMenu, PopupMenuItem},
@@ -23,7 +23,7 @@ use gpui_kit::{
 };
 
 use super::{Chip, MAX_STREAMS, PodsState, Streams, WorkloadLogView, plural};
-use crate::logs::{chip_rows, chips_that_fit};
+use crate::logs::{chip_rows, chips_that_fit, timestamps_button};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
@@ -154,14 +154,7 @@ impl Controls for WorkloadLogView {
                 menu
             });
         let time = self.columns().time;
-        let timestamps = Button::new("workload-logs-timestamps")
-            .outline()
-            .small()
-            .icon(IconName::Clock)
-            .toggled(time)
-            .selected(time)
-            .accessibility_label("Timestamps")
-            .tooltip("Show each line's time. Copy copies what shows.")
+        let timestamps = timestamps_button("workload-logs-timestamps", time)
             .on_click(cx.listener(move |view, _, _, cx| view.set_timestamps(!time, cx)));
         vec![pod.into_any_element(), timestamps.into_any_element()]
     }

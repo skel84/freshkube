@@ -1412,12 +1412,37 @@ fn a_pod_past_the_cap_says_it_is_not_read(cx: &mut TestAppContext) {
         );
         view.update(cx, |view, cx| view.pick_pod(Some(oldest.clone()), cx));
         window.render_frame(cx);
-        // The list says why it is empty, in the cap note's words.
+        // The list says why it is empty, in the cap note's words, though
+        // the other pods' lines are retained.
+        assert!(lines(&view, cx) > 0);
         assert_eq!(
-            view.read(cx).source().empty.as_ref(),
-            format!(
-                "{oldest} isn't read. Reading {MAX_STREAMS} of {containers} containers, the newest pods first."
+            window.find("logs-empty").label(),
+            Some(
+                format!(
+                    "{oldest} isn't read. Reading {MAX_STREAMS} of {containers} containers, the newest pods first."
+                )
+                .as_str()
             )
+        );
+
+        // Hidden, nothing is read, so no pod is marked as left out.
+        view.update(cx, |view, cx| view.set_active(false, cx));
+        window.render_frame(cx);
+        let source = view.read(cx).source();
+        assert_eq!(source.capped, None);
+        assert!(
+            source
+                .pod_choices
+                .iter()
+                .all(|choice| !choice.label.ends_with(" · not read")),
+            "{:?}",
+            source.pod_choices
+        );
+        assert_ne!(
+            window.find("logs-empty").label().map(str::to_owned),
+            Some(format!(
+                "{oldest} isn't read. Reading {MAX_STREAMS} of {containers} containers, the newest pods first."
+            ))
         );
     })
     .unwrap();
@@ -1446,6 +1471,155 @@ fn timestamps_hide_and_show_each_lines_time(cx: &mut TestAppContext) {
         window.click("workload-logs-timestamps", cx);
         window.render_frame(cx);
         assert!(view.read(cx).columns().time);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_gone_pod_that_comes_back_under_its_name_is_read_again(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    let member = all[0].name.clone();
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        view.update(cx, |view, cx| view.pick_pod(Some(member.clone()), cx));
+        feed(&view, all[1..].to_vec(), cx);
+        window.render_frame(cx);
+        assert!(view.read(cx).source().pod_label.ends_with(" (gone)"));
+
+        // A StatefulSet's member comes back with its name.
+        feed(&view, all.clone(), cx);
+        window.render_frame(cx);
+        let source = view.read(cx).source();
+        assert_eq!(source.pod.as_deref(), Some(member.as_str()));
+        assert!(
+            !source.pod_label.ends_with(" (gone)"),
+            "{}",
+            source.pod_label
+        );
+        assert!(source.streams.keys().any(|key| key.pod == member));
+        assert!(
+            source
+                .chips
+                .iter()
+                .all(|chip| chip.service.as_str().starts_with(&format!("{member}/")))
+        );
+        assert_eq!(source.chips.len(), 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_pick_outlives_hide_and_show_and_another_workload_drops_it(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    let picked = all[1].name.clone();
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        view.update(cx, |view, cx| view.pick_pod(Some(picked.clone()), cx));
+        window.render_frame(cx);
+        view.update(cx, |view, cx| view.set_active(false, cx));
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).source().pod.as_deref(), Some(picked.as_str()));
+        view.update(cx, |view, cx| view.set_active(true, cx));
+        feed(&view, all.clone(), cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).source().pod.as_deref(), Some(picked.as_str()));
+        let tags = shown_tags(&view, cx);
+        assert!(
+            tags.iter()
+                .all(|tag| tag.split('/').next() == Some(picked.as_str())),
+            "{tags:?}"
+        );
+
+        // Another workload starts on All pods.
+        view.update(cx, |view, cx| {
+            view.show_workload(Some(deployment("ledger")), None, cx)
+        });
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).source().pod, None);
+        assert_eq!(
+            window.find("workload-logs-pod").label(),
+            Some("Pod: All pods")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_count_line_counts_the_picked_pod_of_all(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    let count = all.len();
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        window.render_frame(cx);
+        assert_eq!(
+            status(window),
+            format!("Following: {count} pods · {count} containers")
+        );
+        view.update(cx, |view, cx| view.pick_pod(Some(all[0].name.clone()), cx));
+        window.render_frame(cx);
+        // The tag stays the workload's: every stream reads on.
+        assert_eq!(
+            status(window),
+            format!("Following: 1 of {count} pods · 1 of {count} containers")
+        );
+        feed(&view, all[1..].to_vec(), cx);
+        window.render_frame(cx);
+        assert_eq!(
+            status(window),
+            format!(
+                "Following: 0 of {} pods · 0 of {} containers",
+                count - 1,
+                count - 1
+            )
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn copy_under_a_pick_copies_only_that_pods_lines(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    let picked = all[2].name.clone();
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        view.update(cx, |view, cx| view.pick_pod(Some(picked.clone()), cx));
+        window.render_frame(cx);
+        let (row, expected) = {
+            let view = view.read(cx);
+            let rows = view.visible_rows();
+            let expected: Vec<String> = rows
+                .iter()
+                .map(|&ix| &view.retained()[ix])
+                .filter(|entry| !entry.is_marker())
+                .map(|entry| {
+                    assert!(entry.service.as_str().starts_with(&format!("{picked}/")));
+                    entry.selectable_text().to_owned()
+                })
+                .collect();
+            assert!(!expected.is_empty());
+            let id = view.row_id(rows.len() - 1);
+            (format!("log-line-{}-{id}", view.generation()), expected)
+        };
+        window.click(row, cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-c", cx);
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert_eq!(copied, expected.join("\n"));
     })
     .unwrap();
 }
