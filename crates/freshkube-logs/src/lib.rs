@@ -259,6 +259,9 @@ pub struct LogView<S: LogSource> {
     width: Option<Pixels>,
     /// The toolbar is narrow: buttons show their icons alone.
     compact: bool,
+    /// The levels menu's counts and the tooltip derived from them, kept
+    /// until the counts change.
+    levels_tip: ([usize; 5], SharedString),
     panel_height: Option<Pixels>,
     /// Scrolls the whole panel when it is shorter than its controls and
     /// notices over the list's least height, so none of them is cut.
@@ -352,6 +355,7 @@ impl<S: LogSource> LogView<S> {
             scroll: VirtualListScrollHandle::new(),
             width: None,
             compact: false,
+            levels_tip: ([usize::MAX; 5], SharedString::default()),
             panel_height: None,
             panel_scroll: ScrollHandle::new(),
             least_height: Pixels::ZERO,

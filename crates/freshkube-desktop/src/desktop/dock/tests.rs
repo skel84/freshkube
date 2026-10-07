@@ -1150,5 +1150,16 @@ fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) 
         settle(handle, cx);
         let rows = tool_rows(handle, cx);
         assert!(rows <= most, "{width}×{height} at {text_size}: {rows} rows");
+        // Previous keeps its label in a compact toolbar too, where the
+        // crash-loop note points to it: wider than an icon alone.
+        cx.update_window(handle, |_, window, _| {
+            let mut width = |id| window.within("dock").find(id).bounds().size.width;
+            let (previous, icon) = (width("pod-logs-previous"), width("pod-logs-timestamps"));
+            assert!(
+                previous > icon * 2.,
+                "{text_size}: Previous {previous:?} beside an icon {icon:?}"
+            );
+        })
+        .unwrap();
     }
 }

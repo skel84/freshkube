@@ -232,33 +232,50 @@ impl<S: LogSource> LogView<S> {
 
     /// One menu for the five levels, each with its count, so the levels
     /// take one control's width in the toolbar's row.
-    fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
+    /// Derives the levels menu's tooltip when the counts behind it change.
+    fn derive_levels_tip(&mut self) {
         let counts = self.review.level_counts();
+        if self.levels_tip.0 == counts {
+            return;
+        }
+        let summary = LEVELS
+            .iter()
+            .zip(counts)
+            .map(|((label, _), count)| format!("{label} {count}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        self.levels_tip = (counts, format!("Lines by level: {summary}").into());
+    }
+
+    fn render_levels(&self, cx: &mut Context<Self>) -> impl IntoElement + use<S> {
+        let counts = self.levels_tip.0;
         let levels = LEVELS.map(|(label, level)| {
             let active = self.review.logs.buffer().filters().levels.accepts(&level);
             (label, level, active)
         });
         let shown = levels.iter().filter(|(_, _, active)| *active).count();
-        let summary = levels
-            .iter()
-            .zip(counts)
-            .map(|((label, _, _), count)| format!("{label} {count}"))
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let all = shown == LEVELS.len();
+        let label = match (all, self.compact) {
+            (true, true) => None,
+            (true, false) => Some("Levels".to_owned()),
+            (false, true) => Some(format!("{shown}/{}", LEVELS.len())),
+            (false, false) => Some(format!("{shown} of {} levels", LEVELS.len())),
+        };
         let view = cx.entity().downgrade();
         Button::new("logs-levels")
             .outline()
             .small()
             .icon(IconName::ListFilter)
             .dropdown_caret(true)
-            .label(match (shown == LEVELS.len(), self.compact) {
-                (true, true) => String::new(),
-                (true, false) => "Levels".to_owned(),
-                (false, true) => format!("{shown}/{}", LEVELS.len()),
-                (false, false) => format!("{shown} of {} levels", LEVELS.len()),
+            .when_some(label, |this, label| this.label(label))
+            .accessibility_label(if all {
+                "Levels: all shown".to_owned()
+            } else {
+                format!("Levels: {shown} of {} shown", LEVELS.len())
             })
-            .accessibility_label("Levels")
-            .tooltip(format!("Lines by level: {summary}"))
+            .tooltip(self.levels_tip.1.clone())
+            // Kit's menu closes after any item runs (0.7.0's `confirm`
+            // always dismisses), so each level takes its own open.
             .dropdown_menu(move |mut menu, _, _| {
                 for ((label, level, active), count) in levels.clone().into_iter().zip(counts) {
                     let view = view.clone();
@@ -337,7 +354,9 @@ impl<S: LogSource> LogView<S> {
                 h_flex()
                     .gap_1()
                     .flex_1()
-                    .min_w(dp(180.))
+                    // Narrower when compact, so a labelled Previous still
+                    // leaves two rows.
+                    .min_w(dp(if self.compact { 120. } else { 180. }))
                     .child(
                         div()
                             .flex_1()
@@ -551,6 +570,7 @@ impl<S: LogSource> Render for LogView<S> {
         // A toolbar narrower than this shows its buttons' icons alone, so
         // it keeps to two rows.
         self.compact = panel_width < window.rem_size() * COMPACT_REMS;
+        self.derive_levels_tip();
         S::prepare_controls(self, panel_width, window, cx);
         let mut toolbar_content = self.render_toolbar_content(cx).into_any_element();
         let toolbar_size = toolbar_content.layout_as_root(
@@ -719,8 +739,8 @@ impl<S: LogSource> Render for LogView<S> {
     }
 }
 
-/// Below this width, in rems, the toolbar's labelled buttons show their
-/// icon alone: 760 points at text size 20 is 28 rem, at 13 about 48.
+/// Below this panel width, in rems, the toolbar's labelled buttons show
+/// their icon alone: 520 points at text size 13, 800 at 20.
 const COMPACT_REMS: f32 = 40.;
 
 /// The levels the toolbar's menu filters by, in its order.

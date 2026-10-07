@@ -120,7 +120,9 @@ impl Controls for PodLogView {
             .outline()
             .small()
             .icon(IconName::RotateCcw)
-            .when(!self.compact(), |this| this.label("Previous"))
+            // Labelled even in a compact toolbar: in a crash loop it is
+            // what the note points to.
+            .label("Previous")
             .toggled(source.previous)
             .selected(source.previous)
             .accessibility_label("Previous instance")

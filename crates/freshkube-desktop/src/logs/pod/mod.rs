@@ -253,7 +253,19 @@ impl PodLogs {
     /// the toolbar, or none when neither has anything to say. The hint
     /// is about the running instance, so the previous one's note leaves it.
     fn derive_note(&mut self) {
-        let hint = self.hint.as_ref().filter(|_| !self.previous);
+        // The hint ends by pointing at Previous, which shows how the last
+        // run ended.
+        let hint = self.hint.as_ref().filter(|_| !self.previous).map(|hint| {
+            if self.has_previous() {
+                format!(
+                    "{} · Previous shows the last run",
+                    hint.trim_end_matches('.')
+                )
+            } else {
+                hint.to_string()
+            }
+        });
+        let hint = hint.as_ref();
         let text = match (self.status.text.is_empty(), hint) {
             (true, None) => {
                 self.note = None;

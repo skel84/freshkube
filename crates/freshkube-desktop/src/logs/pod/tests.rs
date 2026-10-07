@@ -280,7 +280,7 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
             note.starts_with(&format!(
                 "{app} isn't running (CrashLoopBackOff); its log goes on once it starts. \
                  {app} restarted 14 times, last exited 1 (Error) at "
-            )),
+            )) && note.ends_with(" · Previous shows the last run"),
             "{note}"
         );
         // The marker row isn't a log line: copy and search pass over it.
@@ -310,6 +310,7 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         let note = window.find("pod-logs-note").label().unwrap().to_owned();
         assert!(note.starts_with("Previous instance · exited 1"), "{note}");
         assert!(!note.contains("restarted"), "{note}");
+        assert!(!note.contains("Previous shows"), "{note}");
 
         // A log read to its end has nothing to stop or resume.
         let stream = view.read(cx).source().stream;
