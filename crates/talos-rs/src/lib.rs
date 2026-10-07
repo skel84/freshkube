@@ -53,16 +53,8 @@ pub mod proto {
         tonic::include_proto!("machine");
     }
 
-    pub mod storage {
-        tonic::include_proto!("storage");
-    }
-
     pub mod time {
         tonic::include_proto!("time");
-    }
-
-    pub mod inspect {
-        tonic::include_proto!("inspect");
     }
 }
 
