@@ -681,8 +681,10 @@ fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
     assert!(names(&screen, cx).is_empty());
 }
 
-/// Choosing nodes in the table, by pointer and keys, runs nothing: Review
-/// still opens the confirmation, and no step runs while it waits.
+/// Choosing nodes in the table, by pointer and keys, runs nothing: clicks,
+/// a double-click, Space and Enter only add nodes to the run or take them
+/// out. Review still opens the confirmation, and no step runs while it
+/// waits.
 #[gpui_kit::test]
 fn the_table_chooses_nodes_and_review_still_asks_before_any_step(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
@@ -698,6 +700,21 @@ fn the_table_chooses_nodes_and_review_still_asks_before_any_step(cx: &mut TestAp
         names(&screen, cx),
         ["talos-cp-fra1-01", "talos-wk-fra1-02", "talos-wk-fra1-03"]
     );
+    // Enter on the cursor takes the node out again, as Space does.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("enter", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(names(&screen, cx), ["talos-cp-fra1-01", "talos-wk-fra1-02"]);
+    // A double-click is two clicks: the node goes in and out again.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.double_click(row(1), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("confirm-dialog").is_none());
+    })
+    .unwrap();
+    assert_eq!(names(&screen, cx), ["talos-cp-fra1-01", "talos-wk-fra1-02"]);
     assert!(cx.read(Operations::current).is_none());
     assert!(cx.read(|cx| screen.read(cx).run.is_none()));
     review(cx, handle);

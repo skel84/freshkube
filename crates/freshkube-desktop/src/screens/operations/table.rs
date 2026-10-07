@@ -34,23 +34,15 @@ impl TableColumn for Column {
         self.field == Field::Node
     }
 
-    /// The name stays in view when the table scrolls sideways.
+    /// The run order and the name stay in view when the table scrolls
+    /// sideways.
     fn pinned(&self) -> bool {
-        self.field == Field::Node
+        matches!(self.field, Field::Order | Field::Node)
     }
 }
 
 /// The Order column holds a check and a run position.
 const ORDER_WIDTH: f32 = 72.;
-
-/// DESIGN.md's widths: 7.5 a character plus 24, between 64 and 280.
-fn fit(label: &str, texts: impl Iterator<Item = usize>) -> f32 {
-    let chars = texts
-        .chain([label.chars().count()])
-        .max()
-        .unwrap_or_default();
-    (chars as f32 * 7.5 + 24.).clamp(64., 280.)
-}
 
 /// The columns for this roster, and their total width.
 pub(super) fn columns(roster: &[RosterNode]) -> (Vec<Column>, f32) {
@@ -59,24 +51,30 @@ pub(super) fn columns(roster: &[RosterNode]) -> (Vec<Column>, f32) {
         label: label.to_owned().into(),
         width,
     };
-    let widest =
-        |label: &str, text: &dyn Fn(&RosterNode) -> usize| fit(label, roster.iter().map(text));
+    let widest = |label: &str, text: &dyn Fn(&RosterNode) -> SharedString| {
+        let texts: Vec<SharedString> = roster.iter().map(text).collect();
+        table::fit(label, texts.iter(), table::WIDEST)
+    };
+    let widest_flexible = |label: &str, text: &dyn Fn(&RosterNode) -> SharedString| {
+        let texts: Vec<SharedString> = roster.iter().map(text).collect();
+        table::fit(label, texts.iter(), table::WIDEST_FLEXIBLE)
+    };
     let columns = vec![
         column(Field::Order, "Order", ORDER_WIDTH),
         column(
             Field::Node,
             "Node",
-            widest("Node", &|node| node.target.name.chars().count()),
+            widest_flexible("Node", &|node| node.target.name.clone().into()),
         ),
         column(
             Field::Address,
             "Address",
-            widest("Address", &|node| node.target.address.chars().count()),
+            widest("Address", &|node| node.target.address.clone().into()),
         ),
         column(
             Field::Role,
             "Role",
-            widest("Role", &|node| node.role.label().chars().count()),
+            widest("Role", &|node| node.role.label().into()),
         ),
     ];
     let width = columns.iter().map(|column| column.width).sum();
@@ -100,7 +98,15 @@ impl RosterNode {
 impl OperationsScreen {
     /// Where this node is in the run, if it is in it.
     fn order_of(&self, node: &RosterNode) -> Option<usize> {
-        self.selected.iter().position(|t| t == &node.target)
+        self.order.get(&node.target.name).copied()
+    }
+
+    /// Derives each selected node's place in the run; whatever changes the
+    /// selection calls it.
+    pub(super) fn derive_order(&mut self) {
+        self.order = (self.selected.iter().enumerate())
+            .map(|(k, target)| (target.name.clone(), k))
+            .collect();
     }
 }
 

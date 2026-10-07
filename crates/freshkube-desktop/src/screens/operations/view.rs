@@ -280,7 +280,8 @@ impl OperationsScreen {
 
     /// The roster as the shared table: bare and edge to edge, as tall as
     /// its rows, scrolling sideways when the page is narrower than its
-    /// columns, with the node's name kept at the left edge.
+    /// columns, with the run order and the node's name kept at the left
+    /// edge.
     fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         DataTable::new()
             .fit(self.roster.len().max(1))

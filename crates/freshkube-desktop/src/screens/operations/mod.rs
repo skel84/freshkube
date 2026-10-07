@@ -35,6 +35,7 @@ mod view;
 mod tests;
 
 use example::{example_preview, example_world, run_example};
+use std::collections::HashMap;
 
 use std::{
     collections::{VecDeque, hash_map::DefaultHasher},
@@ -781,6 +782,9 @@ pub(crate) struct OperationsScreen {
     options: Options,
     /// Selected targets in run order.
     selected: Vec<NodeTarget>,
+    /// Each selected node's place in the run, by name, derived when the
+    /// selection changes, for the table's Order column.
+    order: HashMap<String, usize>,
     cursor: usize,
     /// The source's nodes that can be targeted, and the table's columns
     /// for them, derived when the source changes.
@@ -835,6 +839,7 @@ impl ScreenPanel for OperationsScreen {
             operation: OperationKind::Drain,
             options: Options::default(),
             selected: Vec::new(),
+            order: HashMap::new(),
             cursor: 0,
             roster: Vec::new(),
             columns: table::columns(&[]),
@@ -896,6 +901,7 @@ impl ScreenPanel for OperationsScreen {
                 self.drop_preview();
             }
         }
+        self.derive_order();
         self.cursor = self.cursor.min(self.roster.len().saturating_sub(1));
         if self.activated {
             self.ensure_preview(false, window, cx);
@@ -1054,6 +1060,7 @@ impl OperationsScreen {
 
     /// The selection, operation or options changed.
     fn plan_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.derive_order();
         self.notice = None;
         self.confirm_when_ready = false;
         self.ensure_preview(false, window, cx);
