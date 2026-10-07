@@ -1146,9 +1146,6 @@ impl Pilot {
         })
     }
 
-    /// Where the Resources page reads: example objects, or the Kubernetes
-    /// API of the Talos cluster. Its id covers what picks the cluster and
-    /// its credentials, not the target node, so changing node keeps a watch.
     /// Whose Kubernetes access this is, as `kube_source`'s id, even while
     /// that source is missing for a while: none once another context,
     /// kubeconfig or talosconfig is chosen, until it has loaded.
@@ -1164,6 +1161,9 @@ impl Pilot {
         self.access.map(|access| access.key())
     }
 
+    /// Where the Resources page reads: example objects, or the Kubernetes
+    /// API of the Talos cluster. Its id covers what picks the cluster and
+    /// its credentials, not the target node, so changing node keeps a watch.
     fn kube_source(&self) -> Option<KubeSource> {
         if self.fixture {
             let context = self.applied.context.clone()?;

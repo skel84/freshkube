@@ -959,15 +959,14 @@ impl Dock {
         }
     }
 
-    /// The connection the tabs read with. The same one refreshes their
-    /// handles; another, or none while a new one is set up, closes every
-    /// tab, as the Resources page starts over: whoever changed it asked
-    /// about running shells first (`Pilot::unless_shell`). The first one restores the
+    /// The connection the tabs read with, and the access identity it is
+    /// for. The same one refreshes their handles. A source missing for a
+    /// while under the same identity, as Talos's without its overview or
+    /// Kubernetes client, keeps the tabs and their shells. Another identity,
+    /// or none while another context loads, closes every tab, as the
+    /// Resources page starts over: whoever changed it asked about running
+    /// shells first (`Pilot::unless_shell`). The first source restores the
     /// saved tabs when its context is theirs.
-    /// The Kubernetes source, and the access identity it is for. A source
-    /// missing for a while under the same identity, as Talos's without its
-    /// overview or Kubernetes client, keeps the tabs and their shells;
-    /// another identity, or none while another context loads, closes them.
     pub(crate) fn set_source(
         &mut self,
         source: Option<KubeSource>,
