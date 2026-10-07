@@ -350,7 +350,9 @@ impl DataTable {
     }
 
     /// As tall as the header and its lines, at most `max_lines` of them,
-    /// for a table in a scrolling page rather than one that fills it.
+    /// for a table in a scrolling page rather than one that fills it. While
+    /// it loads, its loading rows take `max_lines`, at most
+    /// [`LOADING_ROWS`](super::LOADING_ROWS).
     pub fn fit(mut self, max_lines: usize) -> Self {
         self.fit = Some(max_lines);
         self
@@ -375,11 +377,13 @@ impl DataTable {
             source.empty(cx)
         };
         let is_empty = empty.is_some();
-        // A fitted list is as tall as its lines; an empty one as its state.
-        let list_height = self
-            .fit
-            .filter(|_| empty.is_none() && loading.is_none())
-            .map(|max| source.line_count().min(max) as f32 * ROW_HEIGHT);
+        // A fitted list is as tall as its lines, or while loading as its
+        // most lines; an empty one as its state.
+        let list_height = self.fit.and_then(|max| match (&loading, &empty) {
+            (Some(_), _) => Some(max.min(super::LOADING_ROWS) as f32 * ROW_HEIGHT),
+            (None, None) => Some(source.line_count().min(max) as f32 * ROW_HEIGHT),
+            (None, Some(_)) => None,
+        });
         let list = div()
             .id(ids.list.clone())
             .test_support()
@@ -892,6 +896,8 @@ mod tests {
         legend: Option<SharedString>,
         /// The loading rows, until the first read answers.
         loading: Option<super::super::LoadingRows>,
+        /// `DataTable::fit`'s most lines, for a table in a scrolling page.
+        fit: Option<usize>,
     }
 
     impl Wide {
@@ -913,6 +919,7 @@ mod tests {
                 marked: None,
                 legend: None,
                 loading: None,
+                fit: None,
             }
         }
 
@@ -1106,6 +1113,10 @@ mod tests {
                 DataTable::new().carded()
             } else {
                 DataTable::new()
+            };
+            let table = match self.fit {
+                Some(max) => table.fit(max),
+                None => table,
             };
             v_flex()
                 .size_full()
@@ -1644,6 +1655,40 @@ mod tests {
         cx.update_window(handle, |_, window, _| {
             assert!(window.try_find("wide-loading").is_none());
             assert!(window.find("wide-row-0").visible());
+        })
+        .unwrap();
+    }
+
+    /// A fitted table's loading rows take its most lines, as its rows
+    /// would, rather than collapsing with no lines to fit; the rows that
+    /// arrive then take their own height.
+    #[gpui_kit::test]
+    fn a_fitted_table_loads_at_its_most_lines(cx: &mut TestAppContext) {
+        let wide = Wide {
+            loading: Some(super::super::LoadingRows::new("wide")),
+            fit: Some(3),
+            ..Wide::new(0, 2, false)
+        };
+        let (handle, wide) = open(cx, wide, 900.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let loading = window.find("wide-loading");
+            assert!(loading.visible());
+            let height = loading.bounds().size.height;
+            assert!(
+                (height - ui::dp_px(3. * ROW_HEIGHT, window)).abs() < px(0.5),
+                "{height:?}"
+            );
+            wide.update(cx, |wide, cx| {
+                wide.loading = None;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let list = window.find("wide-list").bounds().size.height;
+            assert!(
+                (list - ui::dp_px(2. * ROW_HEIGHT, window)).abs() < px(0.5),
+                "{list:?}"
+            );
         })
         .unwrap();
     }
