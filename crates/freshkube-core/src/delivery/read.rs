@@ -24,7 +24,7 @@ use serde_json::Value;
 
 use crate::resources::{Failure, FailureKind};
 
-use super::source::Truncation;
+use super::source::{Truncation, redact_body};
 
 /// Items asked for per page.
 pub const PAGE_LIMIT: u32 = 200;
@@ -182,7 +182,9 @@ async fn read_body(body: kube::client::Body, limit: usize) -> Result<Vec<u8>, Fa
 }
 
 /// The JSON of a successful answer, or the failure an error status reports,
-/// classified as kube classifies it.
+/// classified as kube classifies it. A body that isn't the API server's
+/// JSON, such as a proxy's page, loses every place it names, bare host names
+/// included ([`redact_body`]).
 fn decode(status: http::StatusCode, body: &[u8]) -> Result<Value, Failure> {
     if status.is_client_error() || status.is_server_error() {
         let text = String::from_utf8_lossy(body);
@@ -191,7 +193,7 @@ fn decode(status: http::StatusCode, body: &[u8]) -> Result<Value, Failure> {
                 kube::core::ErrorResponse {
                     status: status.to_string(),
                     code: status.as_u16(),
-                    message: format!("{text:?}"),
+                    message: format!("{:?}", redact_body(&text)),
                     reason: "Failed to parse error data".into(),
                 }
             });
@@ -475,6 +477,21 @@ mod tests {
             serde_json::json!({"items": []})
         );
         assert!(decode(http::StatusCode::OK, b"<html>").is_err());
+    }
+
+    #[test]
+    fn a_body_that_is_not_json_names_no_host() {
+        let page = b"<html><body>502: upstream gw.example.net (198.51.100.7) refused; try api.example.com:6443</body></html>\n";
+        let failure = decode(http::StatusCode::BAD_GATEWAY, page).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Other);
+        assert_eq!(
+            failure.message,
+            "<html><body>502: upstream <address> (<address>) refused; try <address></body></html>"
+        );
+        // The API server's own message keeps the API group it names.
+        let status = br#"{"kind":"Status","status":"Failure","message":"pipelineruns.tekton.dev is forbidden","reason":"Forbidden","code":403}"#;
+        let refused = decode(http::StatusCode::FORBIDDEN, status).unwrap_err();
+        assert_eq!(refused.message, "pipelineruns.tekton.dev is forbidden");
     }
 
     #[test]

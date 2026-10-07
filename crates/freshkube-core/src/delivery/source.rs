@@ -184,6 +184,82 @@ fn redact_word(word: &str) -> String {
     format!("{}{replacement}{}", &word[..start], &word[end..])
 }
 
+/// An error body that isn't the API server's JSON, as it may be kept: a
+/// proxy's or a load balancer's page names hosts without a port, so besides
+/// what [`redact_message`] takes out, every bare host name goes too. API
+/// groups look like host names and go with them, which only an API server's
+/// own message, never such a body, needs to keep.
+pub fn redact_body(body: &str) -> String {
+    redact_hosts(&redact_message(body))
+}
+
+/// Replaces each run of host-name characters that is a dotted host name or
+/// an IPv4 address, wherever it stands (`host=api.example.com`,
+/// `<b>192.0.2.10</b>`).
+fn redact_hosts(text: &str) -> String {
+    let is_host_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(is_host_char) {
+        out.push_str(&rest[..start]);
+        let run = &rest[start..];
+        let len = run.find(|c: char| !is_host_char(c)).unwrap_or(run.len());
+        let (run, mut after) = run.split_at(len);
+        // A fully qualified name's root dot, or a sentence's full stop.
+        let name = run.trim_end_matches('.');
+        if is_host_name(name) || name.parse::<std::net::Ipv4Addr>().is_ok() {
+            out.push_str("<address>");
+            out.push_str(&run[name.len()..]);
+            // Its port goes with it, when the name runs straight into one.
+            if name.len() == run.len() {
+                after = after_port(after);
+            }
+        } else {
+            out.push_str(run);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` after a leading `:port` of 1 to 5 digits, or all of it.
+fn after_port(text: &str) -> &str {
+    let Some(digits) = text.strip_prefix(':') else {
+        return text;
+    };
+    let len = digits.len()
+        - digits
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .len();
+    let next = digits[len..].chars().next();
+    if (1..=5).contains(&len) && !next.is_some_and(|c| c.is_ascii_alphanumeric()) {
+        &digits[len..]
+    } else {
+        text
+    }
+}
+
+/// Two or more DNS labels, each 1 to 63 letters, digits and inner hyphens,
+/// the last of them two letters or more: `proxy.internal`, `example.com`,
+/// not `1.2.3`, `e.g` or `v1.25`.
+fn is_host_name(name: &str) -> bool {
+    let labels: Vec<&str> = name.split('.').collect();
+    let label = |label: &&str| {
+        (1..=63).contains(&label.len())
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    };
+    labels.len() >= 2
+        && labels.iter().all(label)
+        && labels
+            .last()
+            .is_some_and(|tld| tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_alphabetic()))
+}
+
 /// An IP address, or a host and a port.
 fn is_address(word: &str) -> bool {
     if word.parse::<std::net::IpAddr>().is_ok() {
@@ -303,5 +379,53 @@ mod tests {
             redact_location("dial api-server.internal:6443"),
             "dial <address>"
         );
+    }
+
+    #[test]
+    fn a_body_loses_bare_host_names_as_it_loses_host_and_port() {
+        // A bare host name.
+        assert_eq!(
+            redact_body("upstream proxy.internal refused the connection"),
+            "upstream <address> refused the connection"
+        );
+        // A fully qualified one, its root dot kept, and one ending a sentence.
+        assert_eq!(
+            redact_body("no route to api.cluster.example.com. from gw-1.example.net."),
+            "no route to <address>. from <address>."
+        );
+        // An IP address, alone and inside markup or a field.
+        assert_eq!(
+            redact_body("<p>backend 192.0.2.10 down</p> peer=198.51.100.7"),
+            "<p>backend <address> down</p> peer=<address>"
+        );
+        assert_eq!(redact_body("dial 2001:db8::1"), "dial <address>");
+        // A host and a port, as before.
+        assert_eq!(
+            redact_body("dial tcp api.example.com:6443: i/o timeout"),
+            "dial tcp <address>: i/o timeout"
+        );
+        // Wherever it stands: in quotes, markup and a field.
+        assert_eq!(
+            redact_body(r#"<h1>502</h1> host="lb.example.org" via=edge-2.example.com"#),
+            r#"<h1>502</h1> host="<address>" via=<address>"#
+        );
+        assert_eq!(
+            redact_body("Get https://api.example.com/apis: from /etc/proxy.conf"),
+            "Get <url>: from <path>"
+        );
+    }
+
+    #[test]
+    fn a_body_keeps_what_names_no_place() {
+        for kept in [
+            "502 Bad Gateway",
+            "upstream connect error or disconnect/reset before headers. reset reason: overflow",
+            "nginx/1.25.3 on HTTP/1.1",
+            "retry in 3:14, ready 1/2, version v1.25 or 1.2.3",
+            "e.g. a timeout, i.e. no answer.",
+            "Service Unavailable: try-again-later",
+        ] {
+            assert_eq!(redact_body(kept), kept);
+        }
     }
 }
