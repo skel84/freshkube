@@ -248,9 +248,11 @@ impl ResourcesScreen {
         table::data_table(self, window, cx)
             .flex_1()
             .min_h(dp(LIST_MIN_HEIGHT))
-            // Over the table. Its frames still redraw this page and the
-            // shell above it, as the skeleton's did.
-            .child(self.loading_motion.clone())
+            // Embedded in the node pane, the motion goes over the table;
+            // the page's goes beside it in the shell (`loading_motion`).
+            .when(self.embedded, |this| {
+                this.child(self.loading_motion.clone())
+            })
             .into_any_element()
     }
 

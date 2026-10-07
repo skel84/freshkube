@@ -58,9 +58,6 @@ impl Pilot {
                 .size_full()
                 .min_h_0()
                 .child(table)
-                // Over the table. Its frames still redraw the shell above
-                // it, as the skeleton's did.
-                .child(self.node_workspace.loading_motion.clone())
                 .into_any_element();
             let detail = pane.then(|| self.render_node_pane(window, cx));
             inspector::split(

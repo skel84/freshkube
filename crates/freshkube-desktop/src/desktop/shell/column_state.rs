@@ -53,19 +53,18 @@ impl Pilot {
             self.column_state.collapsed
         }
     }
+    /// The column's width, when the area has one.
+    pub(in crate::desktop) fn column_width(&self, window: &Window) -> Option<f32> {
+        self.area.has_column().then(|| {
+            if self.column_collapsed(window) {
+                52.
+            } else {
+                COLUMN_WIDTH
+            }
+        })
+    }
     pub(in crate::desktop) fn layout_chrome(&self, window: &Window) {
-        crate::screens::set_chrome_width(
-            RAIL_WIDTH
-                + if self.area.has_column() {
-                    if self.column_collapsed(window) {
-                        52.
-                    } else {
-                        COLUMN_WIDTH
-                    }
-                } else {
-                    0.
-                },
-        );
+        crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
     }
     pub(in crate::desktop) fn toggle_column(&mut self, window: &Window, cx: &mut Context<Self>) {
         if !self.area.has_column() {

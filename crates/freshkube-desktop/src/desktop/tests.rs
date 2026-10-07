@@ -1,4 +1,4 @@
-use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot};
+use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot, probe};
 use crate::logs::TalosPanel;
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
@@ -1672,6 +1672,256 @@ fn a_cold_nodes_table_draws_its_header_over_the_loading_rows(cx: &mut TestAppCon
         );
     })
     .unwrap();
+}
+
+/// Lets the loading motion run, as the platform would: one 16 ms frame.
+/// Returns how many next-frame callbacks the frame delivered.
+fn motion_frame(cx: &mut TestAppContext, handle: AnyWindowHandle) -> usize {
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(16));
+    let asked = cx
+        .update_window(handle, |_, window, cx| window.simulate_next_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+    asked
+}
+
+/// The shell's cached parts, by their probes.
+const CHROME: [&str; 3] = ["chrome.header", "chrome.rail", "chrome.column"];
+
+fn chrome_counts() -> [usize; 3] {
+    CHROME.map(probe::count)
+}
+
+/// Runs 60 frames, about a second, and returns how many of them redrew
+/// a part of the chrome or `page`. The header's countdown ring and a
+/// page's ages tick once a second; nothing else should draw them.
+fn frames_redrawing(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &'static str) -> usize {
+    let counts = || (chrome_counts(), probe::count(page));
+    (0..60)
+        .filter(|_| {
+            let before = counts();
+            assert!(
+                motion_frame(cx, handle) > 0,
+                "the bars move while the page loads"
+            );
+            counts() != before
+        })
+        .count()
+}
+
+/// Opens Pods with example data that never answers, so it stays on its
+/// loading rows, and lets the motion start.
+fn loading_pods(
+    cx: &mut TestAppContext,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| {
+        let resources = view.read(cx).resources.clone();
+        resources.update(cx, |resources, _| resources.hold = true);
+        open_kind(window, cx, "pods");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for _ in 0..3 {
+        motion_frame(cx, handle);
+    }
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.find("resource-loading").visible());
+    })
+    .unwrap();
+    (runtime, handle, view)
+}
+
+/// The loading motion sits beside the page and the cached chrome: its
+/// frames redraw the shell's frame, but neither the header, the rail, the
+/// column, nor the page and its table.
+#[gpui_kit::test]
+fn the_loading_motion_redraws_neither_the_chrome_nor_the_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = loading_pods(cx);
+    let motion = probe::count("table.loading-motion");
+    assert!(frames_redrawing(cx, handle, "resources") <= 1);
+    assert!(probe::count("table.loading-motion") >= motion + 60);
+}
+
+/// The first answer replaces the loading rows, and the motion asks no
+/// more frames.
+#[gpui_kit::test]
+fn the_loading_motion_stops_on_the_first_answer(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = loading_pods(cx);
+    cx.update_window(handle, |_, window, cx| {
+        let resources = view.read(cx).resources.clone();
+        resources.update(cx, |resources, cx| {
+            resources.hold = false;
+            resources.refresh(window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // At most the frame already asked, which draws the rows.
+    motion_frame(cx, handle);
+    let motion = probe::count("table.loading-motion");
+    for _ in 0..3 {
+        assert_eq!(motion_frame(cx, handle), 0, "no frames once Pods answers");
+    }
+    assert_eq!(probe::count("table.loading-motion"), motion);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("resource-loading").is_none());
+    })
+    .unwrap();
+}
+
+/// A page that hides takes its motion with it: the shell no longer mounts
+/// it, so nothing asks frames, and a shell redraw doesn't draw it.
+#[gpui_kit::test]
+fn a_hidden_pages_loading_motion_is_never_mounted(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = loading_pods(cx);
+    cx.update_window(handle, |_, window, cx| window.press("secondary-1", cx))
+        .unwrap();
+    cx.run_until_parked();
+    motion_frame(cx, handle);
+    let motion = probe::count("table.loading-motion");
+    for _ in 0..3 {
+        assert_eq!(motion_frame(cx, handle), 0, "no frames from a hidden page");
+    }
+    let shell = probe::count("shell");
+    cx.update(|cx| view.update(cx, |_, cx| cx.notify()));
+    cx.run_until_parked();
+    assert!(probe::count("shell") > shell);
+    assert_eq!(probe::count("table.loading-motion"), motion);
+    cx.update(|cx| assert!(view.read(cx).page_loading_motion(cx).is_none()));
+}
+
+/// Applies `change` and returns which parts of the chrome drew again.
+fn chrome_redrawn(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    change: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App),
+) -> Vec<&'static str> {
+    let before = chrome_counts();
+    cx.update_window(handle, |_, window, cx| change(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let after = chrome_counts();
+    CHROME
+        .into_iter()
+        .zip(before.into_iter().zip(after))
+        .filter(|(_, (before, after))| after > before)
+        .map(|(part, _)| part)
+        .collect()
+}
+
+/// The cached chrome still draws for what it shows while the motion runs
+/// beside it: a notify of the shell, the theme and the text size.
+#[gpui_kit::test]
+fn the_cached_chrome_redraws_for_what_it_shows(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = loading_pods(cx);
+    let every = CHROME.to_vec();
+    let shell = view.clone();
+    assert_eq!(
+        chrome_redrawn(cx, handle, |_, cx| shell.update(cx, |_, cx| cx.notify())),
+        every
+    );
+    assert_eq!(
+        chrome_redrawn(cx, handle, |window, cx| Theme::change(
+            ThemeMode::Dark,
+            Some(window),
+            cx
+        )),
+        every
+    );
+    assert_eq!(
+        chrome_redrawn(cx, handle, |_, cx| crate::text_size::set(20., cx)),
+        every
+    );
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(window.rem_size(), px(20.));
+        assert!(window.find("refresh").visible());
+        assert!(window.find("nav-rail").visible());
+        assert!(window.find("nav-column").visible());
+    })
+    .unwrap();
+}
+
+/// The column draws again when what it reads from a page changes, and only
+/// while it shows that page's area: System services' badge on Control
+/// plane, and the namespace a Workloads column picks.
+#[gpui_kit::test]
+fn the_column_redraws_for_the_pages_it_reads(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let (services, resources) = cx.update(|cx| {
+        let pilot = view.read(cx);
+        (pilot.system_services.clone(), pilot.resources.clone())
+    });
+    let services_notify =
+        |_: &mut gpui_kit::Window, cx: &mut gpui_kit::App| services.update(cx, |_, cx| cx.notify());
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-control-plane", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        chrome_redrawn(cx, handle, services_notify),
+        ["chrome.column"]
+    );
+    cx.update_window(handle, |_, window, cx| open_kind(window, cx, "pods"))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(chrome_redrawn(cx, handle, services_notify).is_empty());
+    let resources_notify = resources.clone();
+    assert!(
+        chrome_redrawn(cx, handle, |_, cx| resources_notify
+            .update(cx, |_, cx| cx.notify()))
+        .is_empty(),
+        "a watch event leaves the column"
+    );
+    assert_eq!(
+        chrome_redrawn(cx, handle, |window, cx| resources
+            .update(cx, |resources, cx| {
+                resources.set_namespace(Some("payments".into()), window, cx)
+            })),
+        ["chrome.column"]
+    );
+}
+
+/// The parts draw with the shell's own controls: a rail button and a
+/// header control act on the shell through them.
+#[gpui_kit::test]
+fn the_cached_chrome_acts_on_the_shell(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-control-plane", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).area, Area::ControlPlane));
+    let dark = cx.update(|cx| cx.theme().mode.is_dark());
+    cx.update_window(handle, |_, window, cx| window.click("theme-toggle", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_ne!(cx.theme().mode.is_dark(), dark));
+}
+
+/// Talos holds: Nodes waits on its loading rows while the header's
+/// Refresh shows the read in flight, and nothing in the chrome repeats.
+#[gpui_kit::test]
+fn nothing_in_the_chrome_moves_while_talos_loads(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| window.press("secondary-2", cx))
+        .unwrap();
+    cx.run_until_parked();
+    for _ in 0..3 {
+        motion_frame(cx, handle);
+    }
+    cx.update(|cx| {
+        assert!(view.read(cx).loading());
+        assert!(view.read(cx).nodes_wait());
+    });
+    let motion = probe::count("table.loading-motion");
+    assert!(frames_redrawing(cx, handle, "nodes") <= 1);
+    assert!(probe::count("table.loading-motion") >= motion + 60);
 }
 
 #[gpui_kit::test]

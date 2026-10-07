@@ -735,6 +735,13 @@ impl ResourcesScreen {
         )
     }
 
+    /// The motion over the page's loading rows, which the shell mounts
+    /// beside the cached page while the page shows, so its frames redraw
+    /// neither the page nor its table. An embedded list keeps its own.
+    pub(crate) fn loading_motion(&self) -> Option<Entity<table::LoadingMotion>> {
+        (!self.embedded).then(|| self.loading_motion.clone())
+    }
+
     /// Starts a new read session: forgets the rows, and when visible lists
     /// and watches the kind for the current connection and namespace.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {

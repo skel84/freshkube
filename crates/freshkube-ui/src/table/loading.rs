@@ -9,7 +9,10 @@
 //! around it, so motion inside the table would redraw the table on every
 //! frame. The motion dims the bars (Pulse) or sweeps a light band across
 //! them (Shimmer) where the table's last frame put them, on the executor's
-//! clock, and under reduced motion draws nothing and asks no frames.
+//! clock, and under reduced motion draws nothing and asks no frames. It
+//! paints where the table recorded, in window coordinates, so it may sit
+//! anywhere after the table: the app's shell draws the shown page's motion
+//! beside the page, which stays cached.
 
 use std::cell::RefCell;
 use std::rc::Rc;

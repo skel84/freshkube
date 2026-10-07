@@ -33,6 +33,7 @@ scripts/stress.sh terminal-50k terminal 50000
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
 | `workload-logs <lines/s>` | an example Deployment's log tab in the dock: its pods' containers, through the shared channel live streams use, writing that many lines a second between them |
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
+| `loading [resources\|nodes\|system-services]` | opens that page in example mode with `FRESHKUBE_FIXTURE_HOLD` set, so it stays on its loading rows and their motion asks a frame every 16 ms |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
 | `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span after the warm-up, unless its keys only wait and it drew during the warm-up |
@@ -240,6 +241,25 @@ At 760×560 and text size 20 the meter read 11–22 FPS, red, while the dock's l
 Row measurement at text size 20 is cheap: `logs.measure` 0.3 ms median while following and 0.01 ms while scrolling, and `logs.measure_row` 0.29 ms median. Before the 150 ms floor, the first version of the rule read 43–59 in about half of the following seconds at 1280×880: a few frames a second still come in back-to-back pairs.
 
 Scrolling at 1280×880 and text size 13 ran at about 20 frames a second in three runs: frame time 9.4 / 12.9 ms, gap 51 ms median, the main thread's 4 ms timer 45 ms late, at only 28% CPU. Waiting rather than working points outside the app's drawing. Unconfirmed: a macOS notification banner left on screen overlapped that window's top right corner, and 1280×700 and 760×560, which it doesn't reach, scroll at 60. A rerun with the banner dismissed would settle it. Those frames are quick and 50 ms apart, so the new meter reads idle there: it shows frame rates the app's own drawing holds down, not ones held down outside it.
+
+### Loading rows move without redrawing the shell (#385)
+
+A table's loading motion is the table's sibling, so its frames never redraw the table, but it sat inside the page, and a frame redraws every view above the one that asked for it: the page, then the shell's header, rail and column, each frame. Now the page hands its `LoadingMotion` to the shell, which draws it after the page cell, and the header, rail and column are cached views of their own (`desktop/shell/chrome.rs`). They draw again when the shell notifies and, for the column, when what it reads from a page changes; the status bar stays with the shell, since it reads the pages. Caching the shell instead made matters worse: a cached view that draws again draws every cached view inside it again, so `pod-logs` rendered the page 849 times instead of 5. Refresh buttons dropped Kit's spinner for the same reason (`ui::refresh_icon`): under a Talos hold it alone kept the shell drawing every frame.
+
+Release stress runs, 20 s after 5 s of warm-up, on a MacBook Air: three runs of each build in turn, and the medians. `main` is main with the spans; the hoist moves the motion into the shell without caching anything; the hosts add the cached header, rail and column. Frame time is `frame.cpu`, median / 99th percentile, in ms, then process CPU.
+
+| Workload | main | Hoist | Hoist and hosts |
+| --- | --- | --- | --- |
+| `loading resources` (Pods) | 5.33 / 5.95, 39.6% | 4.16 / 5.16, 34.2% | 2.24 / 3.54, 28.6% |
+| `loading nodes` | 4.10 / 4.90, 32.2% | 4.30 / 4.96, 33.1% | 1.82 / 2.32, 26.1% |
+| `loading system-services` | 4.05 / 4.67, 30.3% | 4.02 / 4.73, 31.3% | 1.95 / 2.44, 25.3% |
+| `table` | 16.5 / 23.0, 8.5% | 16.5 / 24.0, 8.5% | 9.9 / 20.1, 7.5% |
+| `burst` | 12.7 / 16.7, 50.9% | 13.1 / 17.0, 51.9% | 11.1 / 14.4, 53.2% |
+| `pod-logs` | 5.07 / 6.22, 36.9% | 5.10 / 6.28, 37.2% | 4.83 / 5.75, 38.1% |
+
+The hoist alone did nothing for Nodes and System services: the Talos hold kept the header's spinner turning, so the page still rendered on about 905 of 905 frames. With the hosts the page renders once on Nodes and never on the other two. The cached parts draw again on none of `pod-logs`'s 896 frames, 28 of `burst`'s 166 (the shell's own notifies), 2 of `table`'s 44, and on loading Pods only the header, 16 times, with its once-a-second countdown; that tick and the FPS meter's cost about 0.5 ms a second. The FPS meter still counts every frame: the shell, which draws on every frame, starts its count.
+
+Unexplained: process CPU rose by about 1 point on `pod-logs` and 1.5 on `burst` while frame time fell. Code this change doesn't touch runs about 30% slower per operation only in the hosts binary (`logs.apply` 0.22 → 0.29 ms, `logs.render` 1.12 → 1.58 ms, `logs.measure_row` 0.04 → 0.06 ms; `table.rebuild` about 5% on `burst`), and two more `pod-logs` runs with the hosts binary first showed the same, so run order isn't the cause. Lower clocks or efficiency cores under a lighter main thread, or different code generation for the log view, would each explain it; a build with the parts present but uncached would tell them apart.
 
 ### A first list no longer stops the window
 
