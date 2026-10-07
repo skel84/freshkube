@@ -147,17 +147,19 @@ pub fn printable(failure: &Failure) -> String {
 }
 
 /// Text a cluster object carries, such as a status message, as it may be
-/// printed: without identities, URLs, addresses, absolute paths or whatever
-/// stands before an `@` (credentials, an email's local part), and cut as
-/// [`redact_body`] cuts. API group names (`pipelineruns.tekton.dev`) stay:
-/// only a body loses bare host names.
+/// printed: without identities, URLs, addresses (IPv6 ones wherever they
+/// stand), absolute paths or whatever stands before an `@` (credentials, an
+/// email's local part), and cut as [`redact_body`] cuts. API group names
+/// (`pipelineruns.tekton.dev`) stay: only a body loses bare host names.
 pub fn redact_message(message: &str) -> String {
     redact_capped(message, redact_places)
 }
 
 /// What [`redact_message`] takes out, on text already short enough.
 fn redact_places(message: &str) -> String {
-    redact_credentials(&redact_location(&redact_identity(message)))
+    redact_ipv6(&redact_credentials(&redact_location(&redact_identity(
+        message,
+    ))))
 }
 
 /// A failure as it is printed: its kind and [`printable`] message.
@@ -214,11 +216,10 @@ const ELLIPSIS: char = '…';
 
 /// An error body that isn't the API server's JSON, as it may be kept: a
 /// proxy's or a load balancer's page names hosts without a port, so besides
-/// what [`redact_message`] takes out, every bare host name goes too, with
-/// IPv6 addresses wherever they stand and whatever stands before an `@`
-/// (credentials, an email's local part). API groups look like host names and
-/// go with them, which only an API server's own message, never such a body,
-/// needs to keep.
+/// what [`redact_message`] takes out (IPv6 addresses wherever they stand,
+/// whatever stands before an `@`), every bare host name goes too. API
+/// groups look like host names and go with them, which only an API server's
+/// own message, never such a body, needs to keep.
 ///
 /// Only the body's first 16 KiB are read, cut where no word that names a
 /// place can be cut in two, and what is kept after redaction is at most
@@ -230,9 +231,7 @@ const ELLIPSIS: char = '…';
 /// is cut inside and redacted as what is left of it: a URL or a path still
 /// reads as one, and an `@` still takes the userinfo before it.
 pub fn redact_body(body: &str) -> String {
-    redact_capped(body, |text| {
-        redact_hosts(&redact_ipv6(&redact_places(text)))
-    })
+    redact_capped(body, |text| redact_hosts(&redact_places(text)))
 }
 
 /// `text` redacted by `redact` after it is read as [`redact_body`] reads a
@@ -881,6 +880,26 @@ mod tests {
         assert_eq!(
             redact_body("peer:fd00::1 node:fd00::2%eth0 dns:::1, in std::fmt"),
             "peer:<address> node:<address> dns:<address>, in std::fmt"
+        );
+    }
+
+    #[test]
+    fn a_message_loses_ipv6_and_keeps_its_api_group() {
+        assert_eq!(
+            redact_message(
+                r#"pipelineruns.tekton.dev "build" failed: dial peer:fd00::1 and [2001:db8::2] refused in API group "tekton.dev" (std::fmt)"#
+            ),
+            r#"pipelineruns.tekton.dev "build" failed: dial peer:<address> and [<address>] refused in API group "tekton.dev" (std::fmt)"#
+        );
+    }
+
+    /// An accepted false positive: a word that is a valid IPv6 address after
+    /// a field's `key:` goes as one. Pinned, so a change is a decision.
+    #[test]
+    fn a_message_loses_what_reads_as_ipv6_after_a_key() {
+        assert_eq!(
+            redact_message("status:dead:: seen"),
+            "status:<address> seen"
         );
     }
 
