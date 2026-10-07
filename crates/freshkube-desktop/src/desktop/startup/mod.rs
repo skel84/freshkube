@@ -23,6 +23,8 @@ impl Pilot {
         let sidebar = std::env::var("FRESHKUBE_SIDEBAR").ok();
         // A dashboard of the Monitoring folder, by its path.
         let dashboard = std::env::var_os("FRESHKUBE_DASHBOARD").map(std::path::PathBuf::from);
+        // Text typed into the startup page's log search.
+        let log_search = std::env::var("FRESHKUBE_LOG_SEARCH").ok();
         cx.defer_in(window, move |this, window, cx| {
             this.startup_selection(
                 page.as_deref(),
@@ -46,7 +48,67 @@ impl Pilot {
                     monitoring.open(crate::monitoring::page::EntryId::File(path), cx)
                 });
             }
+            if let Some(query) = log_search {
+                this.search_startup_log(page.as_deref(), query, window, cx);
+            }
         });
+    }
+
+    /// Types `query` into the log search of node-logs or
+    /// observability-application, then steps to the first match once the
+    /// example lines have had time to arrive.
+    fn search_startup_log(
+        &mut self,
+        page: Option<&str>,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(debug_assertions)]
+        {
+            #[derive(Clone)]
+            enum Log {
+                Node(Entity<LogPanel>),
+                Application(Entity<crate::logs::CorootLogView>),
+            }
+            let log = match page {
+                Some("node-logs") => Log::Node(self.logs.clone()),
+                Some("observability-application") => Log::Application(
+                    self.observability
+                        .update(cx, |observability, cx| observability.show_logs(cx)),
+                ),
+                _ => return,
+            };
+            let search = move |find: bool, window: &mut Window, cx: &mut App| match &log {
+                Log::Node(view) => view.update(cx, |view, cx| {
+                    view.search_for(&query, window, cx);
+                    if find {
+                        view.find_next(true, cx);
+                    }
+                }),
+                Log::Application(view) => view.update(cx, |view, cx| {
+                    view.search_for(&query, window, cx);
+                    if find {
+                        view.find_next(true, cx);
+                    }
+                }),
+            };
+            search(false, window, cx);
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(1500))
+                    .await;
+                _ = cx.update(|window, cx| search(true, window, cx));
+                // Bring the log into sight, below the application's charts.
+                _ = this.update(cx, |this, cx| {
+                    this.observability
+                        .update(cx, |observability, cx| observability.scroll_to_end(cx))
+                });
+            })
+            .detach();
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = (page, query, window, cx);
     }
     pub(super) fn startup_selection(
         &mut self,

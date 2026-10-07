@@ -78,6 +78,7 @@ actions!(
         FindNext,
         FindPrevious,
         LeaveSearch,
+        StayInSearch,
         FocusSearch,
         SelectAll
     ]
@@ -441,6 +442,11 @@ impl<S: LogSource> LogView<S> {
                 KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
                 KeyBinding::new("secondary-a", SelectAll, Some(CONTEXT)),
                 KeyBinding::new("escape", LeaveSearch, Some(SEARCH_CONTEXT)),
+                // The input searches on Enter, then lets the key go on; these
+                // stop it there, so a page's own Enter doesn't take the
+                // keyboard and the next Enter steps again (#316).
+                KeyBinding::new("enter", StayInSearch, Some(SEARCH_CONTEXT)),
+                KeyBinding::new("shift-enter", StayInSearch, Some(SEARCH_CONTEXT)),
                 KeyBinding::new("secondary-f", FocusSearch, Some(PANEL_CONTEXT)),
                 KeyBinding::new("secondary-g", FindNext, Some(PANEL_CONTEXT)),
                 KeyBinding::new("secondary-shift-g", FindPrevious, Some(PANEL_CONTEXT)),
@@ -632,6 +638,19 @@ impl<S: LogSource> LogView<S> {
     pub fn focus_search(&self, window: &mut Window, cx: &mut App) {
         let focus = gpui_kit::Focusable::focus_handle(self.query.read(cx), cx);
         window.focus(&focus, cx);
+    }
+
+    /// Types `query` into the search, as a person would, without
+    /// stepping to a match: debug captures start a page searched.
+    pub fn search_for(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // Setting the value from code emits no change event.
+        self.query.update(cx, |input, cx| {
+            input.set_value(query.to_owned(), window, cx)
+        });
+        self.review.query = query.to_owned();
+        self.review.current_match = None;
+        self.feedback = None;
+        cx.notify();
     }
 
     /// The next or previous retained line that matches the search.

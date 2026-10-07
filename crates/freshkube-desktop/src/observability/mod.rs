@@ -167,6 +167,26 @@ pub(crate) struct ObservabilityPage {
 }
 
 impl ObservabilityPage {
+    /// The application's log on its Logs report, for debug captures that
+    /// start it searched.
+    #[cfg(debug_assertions)]
+    pub(crate) fn show_logs(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::logs::CorootLogView> {
+        self.select_report("Logs".into(), cx);
+        self.live_logs.view.clone()
+    }
+
+    /// Scrolls the page to its end, for debug captures.
+    #[cfg(debug_assertions)]
+    pub(crate) fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
+        let end = self.scroll.max_offset();
+        self.scroll
+            .set_offset(gpui_kit::point(gpui_kit::px(0.), -end.y));
+        cx.notify();
+    }
+
     pub(crate) fn new(
         fixture: bool,
         runtime: tokio::runtime::Handle,

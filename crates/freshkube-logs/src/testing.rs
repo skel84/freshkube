@@ -31,6 +31,12 @@ impl<S: LogSource> LogView<S> {
         self.review.id(ix)
     }
 
+    /// The current search match: its line identity, and its line within
+    /// a message of several.
+    pub fn current_match(&self) -> Option<(u64, Option<usize>)> {
+        self.review.current_match.map(|hit| (hit.id, hit.line))
+    }
+
     /// The level chips' counts: Error, Warn, Info, Debug, Unknown.
     pub fn level_counts(&self) -> [usize; 5] {
         self.review.level_counts()

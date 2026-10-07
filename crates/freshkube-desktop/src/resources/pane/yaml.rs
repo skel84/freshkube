@@ -27,7 +27,8 @@ fn line_highlights(
     key: Option<Range<usize>>,
     matches: &[(Range<usize>, bool)],
     key_color: Hsla,
-    mark: Hsla,
+    // The current match, then the others.
+    [mark, mark_soft]: [Hsla; 2],
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let mut cuts: Vec<usize> = key
         .iter()
@@ -49,11 +50,7 @@ fn line_highlights(
             range,
             HighlightStyle {
                 color: keyed.then_some(key_color),
-                background_color: found.map(
-                    |(_, current)| {
-                        if *current { mark } else { mark.opacity(0.4) }
-                    },
-                ),
+                background_color: found.map(|(_, current)| if *current { mark } else { mark_soft }),
                 ..HighlightStyle::default()
             },
         ));
@@ -171,7 +168,12 @@ impl DetailPane {
                 (!range.is_empty()).then(|| (range, self.current == Some(start + offset)))
             })
             .collect();
-        let highlights = line_highlights(line.key.clone(), &matches, key_color(&p), p.mark);
+        let highlights = line_highlights(
+            line.key.clone(),
+            &matches,
+            key_color(&p),
+            [p.mark, p.mark_soft],
+        );
         Some(
             document::line()
                 .flex()
@@ -220,18 +222,19 @@ mod tests {
 
     #[test]
     fn highlights_split_where_a_key_and_matches_overlap() {
-        let (key, mark): (Hsla, Hsla) = (black(), white());
+        let (key, mark, soft): (Hsla, Hsla, Hsla) = (black(), white(), white().opacity(0.2));
+        let marks = [mark, soft];
         // "  name: web-name": the key is 2..6; matches "name" at 2..6 (current)
         // and 12..16, and "me: w" at 4..9 straddling the key's end.
-        let highlights = line_highlights(Some(2..6), &[(2..6, true), (12..16, false)], key, mark);
+        let highlights = line_highlights(Some(2..6), &[(2..6, true), (12..16, false)], key, marks);
         let ranges: Vec<_> = highlights.iter().map(|(range, _)| range.clone()).collect();
         assert_eq!(ranges, [2..6, 12..16]);
         assert_eq!(highlights[0].1.color, Some(key));
         assert_eq!(highlights[0].1.background_color, Some(mark));
         assert_eq!(highlights[1].1.color, None);
-        assert_eq!(highlights[1].1.background_color, Some(mark.opacity(0.4)));
+        assert_eq!(highlights[1].1.background_color, Some(soft));
 
-        let highlights = line_highlights(Some(2..6), &[(4..9, false)], key, mark);
+        let highlights = line_highlights(Some(2..6), &[(4..9, false)], key, marks);
         let ranges: Vec<_> = highlights.iter().map(|(range, _)| range.clone()).collect();
         assert_eq!(ranges, [2..4, 4..6, 6..9]);
         assert!(
@@ -242,6 +245,6 @@ mod tests {
         assert_eq!(highlights[1].1.color, Some(key));
         assert!(highlights[1].1.background_color.is_some());
         assert_eq!(highlights[2].1.color, None);
-        assert!(line_highlights(None, &[], key, mark).is_empty());
+        assert!(line_highlights(None, &[], key, marks).is_empty());
     }
 }
