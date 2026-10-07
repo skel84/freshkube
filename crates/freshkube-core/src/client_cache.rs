@@ -296,7 +296,7 @@ enum SelectionKey {
 fn ambient_files() -> Vec<(PathBuf, u64)> {
     let paths = match std::env::var_os("KUBECONFIG") {
         Some(value) if !value.is_empty() => std::env::split_paths(&value).collect(),
-        _ => dirs_next::home_dir()
+        _ => std::env::home_dir()
             .map(|home| vec![home.join(".kube").join("config")])
             .unwrap_or_default(),
     };
