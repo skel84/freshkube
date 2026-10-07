@@ -711,23 +711,6 @@ const SHELLS_DETAIL: &str = "Freshkube sends Control-C, then Control-D, to stop 
                              end each shell. A program that ignores them, such as an open \
                              editor, keeps running in its pod.";
 
-/// Asks to end the shells in `pods`; resolves to whether the user agreed.
-fn ask(
-    pods: &[SharedString],
-    window: &mut Window,
-    cx: &mut App,
-) -> impl Future<Output = bool> + use<> {
-    let (question, detail, answer) = ending_question(pods);
-    let answer = window.prompt(
-        PromptLevel::Warning,
-        &question,
-        Some(detail),
-        &[answer, "Cancel"],
-        cx,
-    );
-    async move { answer.await == Ok(0) }
-}
-
 /// Runs `then` at once when no shell runs (`pods` is empty), or once the
 /// user agrees to end the shells in `pods`. Cancel leaves everything as it
 /// was.
@@ -741,7 +724,7 @@ pub(crate) fn unless_shell<V: 'static>(
     if pods.is_empty() {
         return then(view, window, cx);
     }
-    let agreed = ask(&pods, window, cx);
+    let agreed = ask_closing(&pods, 0, window, cx);
     cx.spawn_in(window, async move |this, cx| {
         if agreed.await {
             _ = this.update_in(cx, then);
