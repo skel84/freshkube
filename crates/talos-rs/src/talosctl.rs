@@ -151,18 +151,7 @@ pub async fn get_volume_status_for_node(
     node_ip: &str,
     config_path: Option<&str>,
 ) -> Result<Vec<VolumeStatus>, TalosError> {
-    let mut args = vec!["--context", context];
-
-    // Add talosconfig path if provided
-    let config_path_string;
-    if let Some(path) = config_path {
-        config_path_string = path.to_string();
-        args.push("--talosconfig");
-        args.push(&config_path_string);
-    }
-
-    args.extend_from_slice(&["-n", node_ip, "get", "volumestatus", "-o", "yaml"]);
-
+    let args = context_get_args(context, node_ip, config_path, "volumestatus");
     let output = exec_talosctl_async(&args).await?;
     parse_volume_status_yaml(&output)
 }
@@ -175,17 +164,7 @@ pub async fn get_disks_for_node(
     node_ip: &str,
     config_path: Option<&str>,
 ) -> Result<Vec<DiskInfo>, TalosError> {
-    let mut args = vec!["--context", context];
-
-    // Add talosconfig path if provided
-    let config_path_string;
-    if let Some(path) = config_path {
-        config_path_string = path.to_string();
-        args.push("--talosconfig");
-        args.push(&config_path_string);
-    }
-
-    args.extend_from_slice(&["-n", node_ip, "get", "disks", "-o", "yaml"]);
+    let args = context_get_args(context, node_ip, config_path, "disks");
 
     let output = exec_talosctl_async(&args).await?;
     parse_disks_yaml(&output)
@@ -439,29 +418,9 @@ async fn get_discovery_members_for_node_async(
     node_ip: &str,
     config_path: Option<&str>,
 ) -> Result<Vec<DiscoveryMember>, TalosError> {
-    let args = members_command_args(context, node_ip, config_path);
+    let args = context_get_args(context, node_ip, config_path, "members");
     let output = exec_talosctl_async(&args).await?;
     parse_discovery_members_yaml(&output)
-}
-
-/// Build the `talosctl ... get members` argument list.
-///
-/// Extracted as a pure function so the `--talosconfig` handling can be
-/// unit-tested: omitting it made talosctl read the default `~/.talos/config`,
-/// which breaks `--config <path>` users (their context isn't there) and
-/// silently degraded the node list to control-plane-only (workers missing).
-fn members_command_args<'a>(
-    context: &'a str,
-    node_ip: &'a str,
-    config_path: Option<&'a str>,
-) -> Vec<&'a str> {
-    let mut args = vec!["--context", context];
-    if let Some(path) = config_path {
-        args.push("--talosconfig");
-        args.push(path);
-    }
-    args.extend_from_slice(&["-n", node_ip, "get", "members", "-o", "yaml"]);
-    args
 }
 
 /// Get discovery members with automatic retry and fallback to specific nodes.
@@ -542,13 +501,7 @@ pub async fn get_discovery_members_with_retry(
 /// while kubespanidentity may be empty on single-node clusters.
 pub fn is_kubespan_enabled(node: &str) -> bool {
     match exec_talosctl(&["get", "kubespanconfig", "--nodes", node, "-o", "yaml"]) {
-        Ok(output) => {
-            // Check if output contains KubeSpanConfig with enabled: true
-            let trimmed = output.trim();
-            !trimmed.is_empty()
-                && trimmed.contains("KubeSpanConfig")
-                && trimmed.contains("enabled: true")
-        }
+        Ok(output) => kubespan_config_enabled(&output),
         Err(_) => false,
     }
 }
@@ -557,20 +510,18 @@ pub fn is_kubespan_enabled(node: &str) -> bool {
 ///
 /// Never relies on the ambient talosconfig context; `--talosconfig` is added
 /// only when a path is given.
-fn context_get_args(
-    context: &str,
-    node_ip: &str,
-    config_path: Option<&str>,
-    resource: &str,
-) -> Vec<String> {
-    let mut args = vec!["--context".to_string(), context.to_string()];
+fn context_get_args<'a>(
+    context: &'a str,
+    node_ip: &'a str,
+    config_path: Option<&'a str>,
+    resource: &'a str,
+) -> Vec<&'a str> {
+    let mut args = vec!["--context", context];
     if let Some(path) = config_path {
-        args.push("--talosconfig".to_string());
-        args.push(path.to_string());
+        args.push("--talosconfig");
+        args.push(path);
     }
-    for arg in ["-n", node_ip, "get", resource, "-o", "yaml"] {
-        args.push(arg.to_string());
-    }
+    args.extend_from_slice(&["-n", node_ip, "get", resource, "-o", "yaml"]);
     args
 }
 
@@ -589,7 +540,6 @@ pub async fn get_kubespan_peers_for_node(
     config_path: Option<&str>,
 ) -> Result<Vec<KubeSpanPeerStatus>, TalosError> {
     let args = context_get_args(context, node_ip, config_path, "kubespanpeerstatus");
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = exec_talosctl_async(&args).await?;
     parse_kubespan_peers_yaml(&output)
 }
@@ -606,7 +556,6 @@ pub async fn is_kubespan_enabled_for_node(
     config_path: Option<&str>,
 ) -> Result<bool, TalosError> {
     let args = context_get_args(context, node_ip, config_path, "kubespanconfig");
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = exec_talosctl_async(&args).await?;
     Ok(kubespan_config_enabled(&output))
 }
@@ -1058,7 +1007,7 @@ mod tests {
             ]
         );
         let args = context_get_args("prod", "10.0.0.1", None, "kubespanpeerstatus");
-        assert!(!args.iter().any(|a| a == "--talosconfig"));
+        assert!(!args.contains(&"--talosconfig"));
         assert_eq!(&args[..2], ["--context", "prod"]);
     }
 
@@ -1252,7 +1201,12 @@ spec:
 
     #[test]
     fn members_args_include_talosconfig_when_config_path_set() {
-        let args = members_command_args("mycluster", "10.0.0.1", Some("/etc/talos/config"));
+        let args = context_get_args(
+            "mycluster",
+            "10.0.0.1",
+            Some("/etc/talos/config"),
+            "members",
+        );
         assert_eq!(
             args,
             vec![
@@ -1272,7 +1226,7 @@ spec:
 
     #[test]
     fn members_args_omit_talosconfig_when_none() {
-        let args = members_command_args("mycluster", "10.0.0.1", None);
+        let args = context_get_args("mycluster", "10.0.0.1", None, "members");
         assert!(!args.contains(&"--talosconfig"));
         assert_eq!(&args[..2], &["--context", "mycluster"]);
     }
