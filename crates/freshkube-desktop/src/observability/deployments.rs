@@ -288,13 +288,29 @@ impl ObservabilityPage {
             .child(timeline)
             .child(
                 div()
+                    .id("obs-release-columns")
+                    .test_support()
                     .flex()
-                    .items_start()
                     .gap(dp(12.))
-                    .when_else(stacked, |this| this.flex_col(), |this| this.flex_row())
-                    .child(div().flex_1().min_w_0().child(releases))
+                    // Stacked, each column spans the content width (#405);
+                    // side by side, they share it and keep their own height.
+                    .when_else(
+                        stacked,
+                        |this| this.flex_col(),
+                        |this| this.flex_row().items_start(),
+                    )
+                    .child(
+                        div()
+                            .id("obs-release-list")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .child(releases),
+                    )
                     .child(
                         v_flex()
+                            .id("obs-release-changes")
+                            .test_support()
                             .flex_1()
                             .min_w_0()
                             .gap(dp(12.))

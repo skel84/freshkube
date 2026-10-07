@@ -1547,3 +1547,35 @@ fn the_folded_applications_controls_do_what_the_controls_do(cx: &mut TestAppCont
     choose(cx, 1);
     says(cx, &format!("More · Namespace {first} · 1 column hidden"));
 }
+
+#[gpui_kit::test]
+fn stacked_release_columns_span_the_content_width(cx: &mut TestAppContext) {
+    for (width, height, stacked) in [(760., 560., true), (1260., 900., false)] {
+        let (_runtime, handle, page) = mount_size(cx, true, width, height);
+        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Deployments, cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let row = window.find("obs-release-columns").bounds();
+            let list = window.find("obs-release-list").bounds();
+            let changes = window.find("obs-release-changes").bounds();
+            if stacked {
+                for (name, column) in [("Releases", list), ("What changed", changes)] {
+                    assert_eq!(
+                        (column.left(), column.size.width),
+                        (row.left(), row.size.width),
+                        "stacked at {width}×{height}, {name} spans the row"
+                    );
+                }
+                assert!(changes.top() >= list.bottom(), "What changed sits below");
+            } else {
+                assert_eq!(
+                    list.top(),
+                    changes.top(),
+                    "side by side at {width}×{height}"
+                );
+                assert!((list.size.width - changes.size.width).abs() < px(1.));
+            }
+        })
+        .unwrap();
+    }
+}
