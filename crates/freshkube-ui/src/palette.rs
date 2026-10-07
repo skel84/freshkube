@@ -61,6 +61,11 @@ pub struct ChartInks {
     pub warning: u32,
     pub ok: u32,
     pub purple: u32,
+    /// A heatmap's latency buckets, from an empty cell, which stays near
+    /// the card, to the busiest, furthest from it.
+    pub heat: [u32; 6],
+    /// The same for its error row.
+    pub heat_errors: [u32; 6],
 }
 
 fn hex(value: u32) -> Hsla {
@@ -115,6 +120,8 @@ pub fn light() -> Palette {
             warning: 0x917300,
             ok: 0x1E8A3E,
             purple: 0x7560B9,
+            heat: [0xEEF1F6, 0xC9D8F2, 0x9AB7EA, 0x5F87D8, 0x3D6FD1, 0x1F4A9E],
+            heat_errors: [0xF6EFEF, 0xF4CDC9, 0xEBA19A, 0xDE6A61, 0xC33A35, 0x952B28],
         },
     }
 }
@@ -163,6 +170,8 @@ pub fn dark() -> Palette {
             warning: 0xF2C46D,
             ok: 0x82D4AB,
             purple: 0xB7AAF7,
+            heat: [0x323845, 0x33466A, 0x3D5C92, 0x5379BB, 0x7AA0E6, 0xB3CEFA],
+            heat_errors: [0x3A3036, 0x604044, 0x885553, 0xB36962, 0xD97B72, 0xF28B82],
         },
     }
 }
@@ -210,21 +219,31 @@ pub fn terminal_colors(cx: &App) -> &'static TerminalColors {
     }
 }
 
+/// A flame graph's diff inks, from much faster than before to much
+/// slower. The same in both themes: dark enough for white labels above 5:1,
+/// they reach 3:1 on the light card too.
+const FLAME: [u32; 5] = [0x3F65A0, 0x3F5A80, 0x454B56, 0x7E4A49, 0xA64B46];
+
 /// Semantic diff inks, with white labels above 5:1.
 pub fn flame_color(delta: i8) -> Hsla {
-    hex(match delta {
-        d if d < -10 => 0x3F65A0,
-        d if d < 0 => 0x3F5A80,
-        0 => 0x454B56,
-        d if d < 15 => 0x7E4A49,
-        _ => 0xA64B46,
-    })
+    hex(FLAME[match delta {
+        d if d < -10 => 0,
+        d if d < 0 => 1,
+        0 => 2,
+        d if d < 15 => 3,
+        _ => 4,
+    }])
 }
-/// Ordered latency buckets and their separate semantic error row.
-pub fn heat_color(level: usize, error: bool) -> Hsla {
-    const BLUE: [u32; 6] = [0x323845, 0x33466A, 0x3D5C92, 0x5379BB, 0x7AA0E6, 0xB3CEFA];
-    const ERROR: [u32; 6] = [0x3A3036, 0x604044, 0x885553, 0xB36962, 0xD97B72, 0xF28B82];
-    hex(if error { ERROR } else { BLUE }[level.min(5)])
+
+/// Ordered latency buckets and their separate semantic error row, in the
+/// theme's ramp.
+pub fn heat_color(p: &Palette, level: usize, error: bool) -> Hsla {
+    let ramp = if error {
+        p.chart.heat_errors
+    } else {
+        p.chart.heat
+    };
+    hex(ramp[level.min(5)])
 }
 
 #[cfg(test)]
@@ -294,6 +313,51 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// A heatmap's buckets move steadily away from the card as they fill,
+    /// and its three busiest reach 3:1 in both themes; light's ran the
+    /// other way, an empty cell darkest (#350).
+    #[test]
+    fn heat_ramps_climb_away_from_the_card() {
+        for (theme, p) in [("light", light()), ("dark", dark())] {
+            let card = over(p.surface, p.surface);
+            for errors in [false, true] {
+                let steps: Vec<f32> = (0..6)
+                    .map(|level| contrast(over(heat_color(&p, level, errors), p.surface), card))
+                    .collect();
+                for (level, pair) in steps.windows(2).enumerate() {
+                    assert!(
+                        pair[1] > pair[0],
+                        "{theme} errors={errors}: level {} at {} after {}",
+                        level + 1,
+                        pair[1],
+                        pair[0]
+                    );
+                }
+                for (level, step) in steps.iter().enumerate().skip(3) {
+                    assert!(
+                        *step >= 3.,
+                        "{theme} errors={errors}: level {level} at {step}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Flame frames carry white labels at 4.5:1 on every diff ink, and each
+    /// frame reaches 3:1 on the light card.
+    #[test]
+    fn flame_labels_read_and_frames_stand_on_the_light_card() {
+        let card = over(light().surface, light().surface);
+        let white = over(hex(0xFFFFFF), hex(0xFFFFFF));
+        for delta in [-20, -5, 0, 5, 20] {
+            let frame = over(flame_color(delta), light().surface);
+            let label = contrast(white, frame);
+            assert!(label >= 4.5, "delta {delta}: white label at {label}");
+            let ground = contrast(frame, card);
+            assert!(ground >= 3., "delta {delta}: on the light card at {ground}");
         }
     }
 }
