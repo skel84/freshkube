@@ -10,7 +10,7 @@
 //!
 //! # Modules
 //!
-//! - [`types`] - Core domain types (Cluster, Node, Service, etc.)
+//! - [`types`] - Core domain types (Service, LogLevel, etc.)
 //! - [`indicators`] - Health and status indicators for consistent UI representation
 //! - [`formatting`] - Utilities for formatting bytes, durations, percentages, etc.
 //! - [`errors`] - Error formatting utilities for user-friendly messages

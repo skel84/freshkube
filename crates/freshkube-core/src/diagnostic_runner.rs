@@ -331,13 +331,13 @@ impl DiagnosticFixRequest {
         }
     }
 
-    /// Marks an explicitly previewed request as confirmed for execution.
+    /// Marks the request as confirmed for execution.
     pub fn confirm(self) -> ConfirmedDiagnosticFix {
         ConfirmedDiagnosticFix { request: self }
     }
 }
 
-/// A request the caller has explicitly confirmed after presenting its preview.
+/// A request the caller has explicitly confirmed.
 #[derive(Debug, Clone)]
 pub struct ConfirmedDiagnosticFix {
     request: DiagnosticFixRequest,

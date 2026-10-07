@@ -422,7 +422,7 @@ impl LogBuffer {
     }
 
     /// Evicts the oldest prefix until complete raw lines fit the supplied byte
-    /// budget. Returns the number of removed entries so UI identity/selection
+    /// budget. Returns the removed entries so UI identity/selection
     /// sidecars can apply the same retention operation without copying records.
     fn evict_bytes(&mut self, max_bytes: usize) -> Vec<LogEntry> {
         let mut retained_bytes = self.retained_bytes;
@@ -453,6 +453,7 @@ impl LogBuffer {
         self.filters = filters;
     }
 
+    /// Appends an event and returns whether it contained a non-empty log line.
     pub fn append(&mut self, event: LogEvent) -> bool {
         let appended = self.append_unbounded(event);
         if appended {
@@ -489,12 +490,12 @@ impl LogBuffer {
         self.append_batch(events);
     }
 
-    /// Whether an entry passes service, level, and query filtering.
+    /// Whether an entry passes service and level filtering.
     pub fn accepts(&self, entry: &LogEntry) -> bool {
         self.filters.accepts(entry)
     }
 
-    /// Entry indices that pass service, level, and query filtering in entry order.
+    /// Entry indices that pass service and level filtering in entry order.
     pub fn visible_indices(&self) -> Vec<usize> {
         self.entries
             .iter()
@@ -504,7 +505,6 @@ impl LogBuffer {
             .collect()
     }
 
-    /// Ordered matching entry indices in the currently filtered view.
     fn append_unbounded(&mut self, event: LogEvent) -> bool {
         if event.line.trim().is_empty() {
             return false;
