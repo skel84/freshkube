@@ -583,7 +583,9 @@ impl Pilot {
             self.node_workspace.selected = Some(key);
             cx.notify();
         }
-        if self.node_workspace.open || self.node_workspace.view == NodeView::Cards {
+        // The cards, or their roster beside a node's pane, scroll their own
+        // grid; the table reveals its row.
+        if self.node_workspace.view == NodeView::Cards {
             if let Some(line) = self
                 .node_workspace
                 .selected

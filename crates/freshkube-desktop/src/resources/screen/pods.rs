@@ -8,6 +8,7 @@ use std::time::Duration;
 use freshkube_core::resources::{FailureKind, PodUsage, list_pod_usage};
 use gpui_kit::{ClipboardItem, Context, ScrollStrategy, Window};
 
+use super::super::model::ResourceIdentity;
 use super::super::projection::{Group, Grouping};
 use super::super::store::Usage;
 use super::super::{LogsRequest, ResourceLink, detail::DetailTarget, example};
@@ -156,6 +157,13 @@ impl ResourcesScreen {
         let Some(identity) = self.projection.selected().cloned() else {
             return;
         };
+        self.open_logs_of(identity, cx);
+    }
+
+    /// Opens a pod's logs in the dock, as L does for the selected one;
+    /// the row's Logs button asks it for its own row, which needn't be
+    /// selected (#291).
+    pub(super) fn open_logs_of(&mut self, identity: ResourceIdentity, cx: &mut Context<Self>) {
         self.hide_detail(cx);
         cx.emit(ResourceLink::Logs(LogsRequest {
             target: DetailTarget {

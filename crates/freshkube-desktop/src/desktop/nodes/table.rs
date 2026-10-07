@@ -217,21 +217,17 @@ impl TableSource for Pilot {
         None
     }
     fn sort(&mut self, _: (), _: &mut Context<Self>) {}
+    /// The filtered lines, whether or not a node's pane is open beside
+    /// them (#339).
     fn line_count(&self) -> usize {
-        if self.node_workspace.open {
-            // The compact pane switcher deliberately keeps the full roster. Main-list
-            // filters remain retained and resume when the pane closes.
-            self.node_workspace.rows.len()
-        } else if self.node_workspace.view == NodeView::Cards {
+        if self.node_workspace.view == NodeView::Cards {
             self.node_workspace.lines.len()
         } else {
             self.node_workspace.items.len()
         }
     }
     fn line(&self, line: usize, _: &App) -> Option<Line<NodeKey, &NodeRow>> {
-        let ix = if self.node_workspace.open {
-            line
-        } else if self.node_workspace.view == NodeView::Cards {
+        let ix = if self.node_workspace.view == NodeView::Cards {
             *self.node_workspace.lines.get(line)?
         } else {
             match self.node_workspace.items.get(line)? {
@@ -364,12 +360,7 @@ impl TableSource for Pilot {
         self.node_workspace.selected.as_ref()
     }
     fn line_of(&self, key: &NodeKey) -> Option<usize> {
-        if self.node_workspace.open {
-            self.node_workspace
-                .rows
-                .iter()
-                .position(|row| &row.key == key)
-        } else if self.node_workspace.view == NodeView::Cards {
+        if self.node_workspace.view == NodeView::Cards {
             self.node_workspace
                 .lines
                 .iter()

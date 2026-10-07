@@ -620,6 +620,9 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
         window.click("node-expand", cx);
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.selected, selected);
+        // Beside the pane, the table folds its healthy rows as it does
+        // without one (#339).
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
         window.click("node-talos-cp-fra1-01", cx);
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
@@ -1197,9 +1200,9 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
         window.press("enter", cx);
         window.render_frame(cx);
         assert!(pilot.read(cx).node_workspace.open);
-        // The retained pane switcher explicitly keeps the complete roster, while the
-        // main table's filter stays retained for returning to it.
-        assert_eq!(pilot.read(cx).line_count(), 6);
+        // The table beside the pane keeps its filter (#339): the failing
+        // group's heading and its two rows.
+        assert_eq!(pilot.read(cx).line_count(), 3);
         assert_eq!(pilot.read(cx).node_workspace.lines.len(), 2);
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
@@ -1224,6 +1227,70 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
         assert!(window.find("node-talos-wk-fra1-03").visible());
     })
     .unwrap();
+}
+
+/// With a node's pane open, the table follows the filter as it does
+/// without one, and its tallies count the rows it shows (#339). A filter
+/// that hides the open node keeps its pane and its selection.
+#[gpui_kit::test]
+fn the_filter_narrows_the_table_beside_an_open_pane(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    let type_filter = |cx: &mut TestAppContext, text: &str| {
+        cx.update_window(handle, |_, window, cx| {
+            let query = pilot.read(cx).node_workspace.query.clone();
+            query.update(cx, |input, cx| input.set_value("", window, cx));
+            window.focus(&query.read(cx).focus_handle(cx), cx);
+            window.input(text, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // The rows drawn, by name, and the tallies' total.
+    let shown = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let nodes = &pilot.read(cx).node_workspace;
+            let names: Vec<String> = nodes
+                .rows
+                .iter()
+                .filter(|row| window.try_find(row.id.clone()).is_some())
+                .map(|row| row.name.to_string())
+                .collect();
+            (names, nodes.counts.iter().sum::<usize>())
+        })
+        .unwrap()
+    };
+    let key = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            window.render_frame(cx);
+            window.click("node-talos-wk-fra1-01", cx);
+            window.render_frame(cx);
+            assert!(pilot.read(cx).node_workspace.open);
+            pilot.read(cx).node_workspace.selected.clone().unwrap()
+        })
+        .unwrap();
+
+    type_filter(cx, "wk");
+    let (names, total) = shown(cx);
+    assert!(names.iter().all(|name| name.contains("wk")), "{names:?}");
+    assert_eq!(names.len(), 3);
+    assert_eq!(total, 3);
+
+    // A filter that hides the open node keeps its pane and selection.
+    type_filter(cx, "cp");
+    let (names, total) = shown(cx);
+    assert!(names.iter().all(|name| name.contains("cp")), "{names:?}");
+    assert_eq!(names.len(), 3);
+    assert_eq!(total, 3);
+    let nodes = pilot.read_with(cx, |pilot, _| {
+        (
+            pilot.node_workspace.open,
+            pilot.node_workspace.selected.clone(),
+        )
+    });
+    assert_eq!(nodes, (true, Some(key)));
 }
 
 #[test]

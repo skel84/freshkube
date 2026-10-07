@@ -807,8 +807,12 @@ impl ResourcesScreen {
         self.prune_marks();
         if reset {
             let _span = crate::perf::span("table.layout");
-            self.layout =
-                TableLayout::new(&self.store, self.lists_all_namespaces(), self.lists_pods());
+            self.layout = TableLayout::new(
+                &self.store,
+                self.lists_all_namespaces(),
+                self.lists_pods(),
+                !self.embedded,
+            );
             self.layout.hide(&self.hidden_columns);
             drop(_span);
             // A restarted read selects the same object again if it still

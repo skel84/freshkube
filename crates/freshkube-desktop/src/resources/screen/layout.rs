@@ -23,6 +23,8 @@ const CONTAINERS_WIDTH: f32 = freshkube_ui::squares::width(freshkube_ui::squares
 const READY_WIDTH: f32 = 72.;
 /// A pod's restart count, under its label and sort arrow.
 const RESTARTS_WIDTH: f32 = 88.;
+/// A pod's Logs button, after its name.
+const LOGS_WIDTH: f32 = 36.;
 /// A use figure and its 44-wide bullet.
 const USAGE_WIDTH: f32 = 116.;
 const MAX_OWNER: f32 = 132.;
@@ -51,6 +53,8 @@ pub(super) enum ColumnSource {
     Cpu,
     Memory,
     Node,
+    /// A pod's Logs button, after its name.
+    Logs,
 }
 
 #[derive(Clone, Debug)]
@@ -73,7 +77,7 @@ impl DisplayColumn {
             ColumnSource::Name(_) if namespaced => SortKey::Namespace,
             ColumnSource::Cell(ix) | ColumnSource::Name(ix) => SortKey::Column(ix),
             ColumnSource::Namespace => SortKey::Namespace,
-            ColumnSource::Glyph => return None,
+            ColumnSource::Glyph | ColumnSource::Logs => return None,
             ColumnSource::Owner => SortKey::Owner,
             ColumnSource::Containers => SortKey::Containers,
             ColumnSource::Ready => SortKey::Ready,
@@ -109,9 +113,13 @@ impl freshkube_ui::table::TableColumn for DisplayColumn {
         self.flexible
     }
 
-    /// The glyph and the name stay in view when the table scrolls sideways.
+    /// The glyph, the name and a pod's Logs button stay in view when the
+    /// table scrolls sideways.
     fn pinned(&self) -> bool {
-        matches!(self.source, ColumnSource::Glyph | ColumnSource::Name(_))
+        matches!(
+            self.source,
+            ColumnSource::Glyph | ColumnSource::Name(_) | ColumnSource::Logs
+        )
     }
 }
 
@@ -142,8 +150,15 @@ impl TableLayout {
     /// Pods show a glyph, their name with its namespace, owner, readiness
     /// and restarts together, use, node and age. Other kinds show a glyph
     /// where they print a status, their name, an owner where any row has
-    /// one, and their printed columns.
-    pub(super) fn new(store: &ResourceStore, namespace_column: bool, pods: bool) -> Self {
+    /// one, and their printed columns. `row_logs` gives each pod a Logs
+    /// button, which a node's Pods list, where L does nothing, goes
+    /// without.
+    pub(super) fn new(
+        store: &ResourceStore,
+        namespace_column: bool,
+        pods: bool,
+        row_logs: bool,
+    ) -> Self {
         let widest = store.widest();
         let fit = |chars: usize, max: f32| {
             (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max)
@@ -220,6 +235,11 @@ impl TableLayout {
                 flexible: is_flexible,
                 status: status == Some(ix),
             });
+            // A pod's Logs button follows its name, pinned with it, so it
+            // stays in reach when the table scrolls sideways.
+            if is_name && pods && row_logs {
+                columns.push(DisplayColumn::new("", ColumnSource::Logs, LOGS_WIDTH));
+            }
             if is_name && !pods && widest.owner > 0 {
                 columns.push(DisplayColumn::new(
                     "Owner",
