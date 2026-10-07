@@ -1305,6 +1305,52 @@ fn node_pods_are_filtered_across_namespaces_and_do_not_open_a_nested_pane(cx: &m
     .unwrap();
 }
 
+/// A node's Pods list has no Logs buttons, since L does nothing there
+/// (#337), and each of its cells still starts under its column's label.
+#[gpui_kit::test]
+fn node_pods_have_no_logs_column_and_keep_their_header_aligned(cx: &mut TestAppContext) {
+    use super::layout::ColumnSource;
+    let (_runtime, screen, handle) = mount(cx, Some("prod-fra"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_node(Some("talos-wk-fra1-02"), window, cx)
+        });
+        window.render_frame(cx);
+        let columns = screen.read(cx).layout.columns.clone();
+        assert!(
+            columns
+                .iter()
+                .all(|column| column.source != ColumnSource::Logs)
+        );
+        let first = identity_at(&screen, 0, cx);
+        assert!(
+            window
+                .try_find(gpui_kit::SharedString::from(format!(
+                    "pod-row-logs-{}",
+                    first.uid
+                )))
+                .is_none()
+        );
+        let row = row_id(&first);
+        for (source, cell) in [
+            (ColumnSource::Containers, "containers"),
+            (ColumnSource::Restarts, "restarts"),
+        ] {
+            let ix = columns
+                .iter()
+                .position(|column| column.source == source)
+                .unwrap();
+            let header = window.find(("resource-sort", ix)).bounds().left();
+            let left = window.within(row.clone()).find(cell).bounds().left();
+            assert!(
+                (left - header).abs() <= px(1.5),
+                "{cell}: {left:?} under {header:?}"
+            );
+        }
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
     cx: &mut TestAppContext,
@@ -1695,9 +1741,9 @@ fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
     assert_eq!(*asked.borrow(), [first]);
 }
 
-/// Each pod row ends with a Logs button, named for its pod, that opens
-/// that pod's logs without selecting the row or opening the drawer
-/// (#291). The drawer, when open, covers the row's end.
+/// Each pod row has a Logs button after its name, named for its pod, that
+/// opens that pod's logs without selecting the row or opening the drawer
+/// (#291).
 #[gpui_kit::test]
 fn a_rows_logs_button_asks_for_its_pods_logs(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));

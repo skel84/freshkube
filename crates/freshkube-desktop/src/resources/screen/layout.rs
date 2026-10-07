@@ -150,8 +150,15 @@ impl TableLayout {
     /// Pods show a glyph, their name with its namespace, owner, readiness
     /// and restarts together, use, node and age. Other kinds show a glyph
     /// where they print a status, their name, an owner where any row has
-    /// one, and their printed columns.
-    pub(super) fn new(store: &ResourceStore, namespace_column: bool, pods: bool) -> Self {
+    /// one, and their printed columns. `row_logs` gives each pod a Logs
+    /// button, which a node's Pods list, where L does nothing, goes
+    /// without.
+    pub(super) fn new(
+        store: &ResourceStore,
+        namespace_column: bool,
+        pods: bool,
+        row_logs: bool,
+    ) -> Self {
         let widest = store.widest();
         let fit = |chars: usize, max: f32| {
             (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max)
@@ -230,7 +237,7 @@ impl TableLayout {
             });
             // A pod's Logs button follows its name, pinned with it, so it
             // stays in reach when the table scrolls sideways.
-            if is_name && pods {
+            if is_name && pods && row_logs {
                 columns.push(DisplayColumn::new("", ColumnSource::Logs, LOGS_WIDTH));
             }
             if is_name && !pods && widest.owner > 0 {

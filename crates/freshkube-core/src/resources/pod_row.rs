@@ -194,11 +194,9 @@ pub(crate) fn facts(spec: &PodSpec, status: Option<&PodStatus>) -> PodFacts {
 
 /// The spec's containers in its order, each with its status, or with an
 /// unknown state while it has none (a pod not yet scheduled), then any
-/// status the spec doesn't name.
-/// Each declared container's facts in spec order, then any status the
-/// spec doesn't name. Only an init container restarted Always is a
-/// sidecar: an app container's restart rules, newer and alpha, don't make
-/// it one.
+/// status the spec doesn't name. Only an init container restarted Always
+/// is a sidecar: an app container's restart rules, newer and alpha, don't
+/// make it one.
 fn containers(
     spec: &[SpecContainer],
     statuses: &[ContainerStatus],

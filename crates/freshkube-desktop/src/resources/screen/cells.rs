@@ -236,7 +236,7 @@ pub(super) fn owner(
     .into_any_element()
 }
 
-/// A pod's Logs button at the row's end (#291): muted until the row is
+/// A pod's Logs button after its name (#291): muted until the row is
 /// hovered or selected. It opens the pod's logs in the dock without
 /// selecting the row or opening the drawer, so its click stops before
 /// the row's.
@@ -267,6 +267,9 @@ pub(super) fn logs(
                         .xsmall()
                         .icon(IconName::ScrollText)
                         .tooltip("Logs (L)")
+                        // L reaches it from the keyboard; Tab skips a
+                        // button on every row.
+                        .tab_stop(false)
                         .on_click(cx.listener(move |screen, _, _, cx| {
                             cx.stop_propagation();
                             screen.open_logs_of(identity.clone(), cx);
