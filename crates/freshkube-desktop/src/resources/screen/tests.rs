@@ -145,10 +145,13 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         assert_eq!(screen.read(cx).store.len(), 22);
         assert!(window.find("resource-list").visible());
         // The glyph first, which doesn't sort; then the name, after its
-        // namespace when listing every one, the owner, readiness with
-        // restarts, use, the node and age. IP stays left out.
+        // namespace when listing every one, and its Logs button, which
+        // doesn't sort either; then the containers, readiness, use,
+        // restarts, owner, the node and age. IP stays left out.
         assert!(window.try_find(("resource-sort", 0usize)).is_none());
-        let labels: Vec<String> = (1..10usize)
+        assert!(window.try_find(("resource-sort", 2usize)).is_none());
+        let labels: Vec<String> = (1..11usize)
+            .filter(|ix| *ix != 2)
             .map(|ix| {
                 window
                     .find(("resource-sort", ix))
@@ -171,7 +174,7 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
                 "Age"
             ]
         );
-        assert!(window.try_find(("resource-sort", 10usize)).is_none());
+        assert!(window.try_find(("resource-sort", 11usize)).is_none());
 
         let third = identity_at(&screen, 2, cx);
         window.within(row_id(&third)).click("name", cx);
@@ -244,7 +247,7 @@ fn a_namespace_narrows_namespaced_kinds_and_persists_across_kinds(cx: &mut TestA
         // One namespace isn't repeated before every name.
         assert!(!view.layout.namespaced);
         assert_eq!(
-            window.find(("resource-sort", 2usize)).label(),
+            window.find(("resource-sort", 3usize)).label(),
             Some("Containers")
         );
 
@@ -1302,6 +1305,52 @@ fn node_pods_are_filtered_across_namespaces_and_do_not_open_a_nested_pane(cx: &m
     .unwrap();
 }
 
+/// A node's Pods list has no Logs buttons, since L does nothing there
+/// (#337), and each of its cells still starts under its column's label.
+#[gpui_kit::test]
+fn node_pods_have_no_logs_column_and_keep_their_header_aligned(cx: &mut TestAppContext) {
+    use super::layout::ColumnSource;
+    let (_runtime, screen, handle) = mount(cx, Some("prod-fra"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_node(Some("talos-wk-fra1-02"), window, cx)
+        });
+        window.render_frame(cx);
+        let columns = screen.read(cx).layout.columns.clone();
+        assert!(
+            columns
+                .iter()
+                .all(|column| column.source != ColumnSource::Logs)
+        );
+        let first = identity_at(&screen, 0, cx);
+        assert!(
+            window
+                .try_find(gpui_kit::SharedString::from(format!(
+                    "pod-row-logs-{}",
+                    first.uid
+                )))
+                .is_none()
+        );
+        let row = row_id(&first);
+        for (source, cell) in [
+            (ColumnSource::Containers, "containers"),
+            (ColumnSource::Restarts, "restarts"),
+        ] {
+            let ix = columns
+                .iter()
+                .position(|column| column.source == source)
+                .unwrap();
+            let header = window.find(("resource-sort", ix)).bounds().left();
+            let left = window.within(row.clone()).find(cell).bounds().left();
+            assert!(
+                (left - header).abs() <= px(1.5),
+                "{cell}: {left:?} under {header:?}"
+            );
+        }
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
     cx: &mut TestAppContext,
@@ -1692,6 +1741,55 @@ fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
     assert_eq!(*asked.borrow(), [first]);
 }
 
+/// Each pod row has a Logs button after its name, named for its pod, that
+/// opens that pod's logs without selecting the row or opening the drawer
+/// (#291).
+#[gpui_kit::test]
+fn a_rows_logs_button_asks_for_its_pods_logs(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let sink = asked.clone();
+    cx.update(|cx| {
+        cx.subscribe(
+            &screen,
+            move |_, event: &crate::resources::ResourceLink, _| {
+                if let crate::resources::ResourceLink::Logs(request) = event {
+                    sink.borrow_mut().push(request.target.identity.clone());
+                }
+            },
+        )
+        .detach()
+    });
+    let second = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let button = |identity: &ResourceIdentity| {
+                gpui_kit::SharedString::from(format!("pod-row-logs-{}", identity.uid))
+            };
+            // Every pod row has one, inside the row and named for its pod.
+            for line in 0..3 {
+                let identity = identity_at(&screen, line, cx);
+                let row = window.find(row_id(&identity)).bounds();
+                let found = window.find(button(&identity));
+                assert!(row.contains(&found.bounds().center()), "{row:?}");
+                assert_eq!(
+                    found.label(),
+                    Some(format!("Logs for {}", identity.name).as_str())
+                );
+            }
+            let second = identity_at(&screen, 1, cx);
+            window.click(button(&second), cx);
+            window.render_frame(cx);
+            assert_eq!(shown(&screen, cx), None);
+            assert!(window.try_find("resource-drawer").is_none());
+            assert_eq!(screen.read(cx).selected_row(), None);
+            second
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(*asked.borrow(), [second]);
+}
+
 #[gpui_kit::test]
 fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 640.);
@@ -1704,11 +1802,15 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
             window.within(row.clone()).find("name").bounds().left()
         };
         let names: Vec<_> = rows.iter().map(|row| left(window, row)).collect();
+        let first = identity_at(&screen, 0, cx);
+        let logs = gpui_kit::SharedString::from(format!("pod-row-logs-{}", first.uid));
+        let button = window.find(logs.clone()).bounds().left();
         let header = window.find(("resource-sort", 1usize)).bounds().left();
-        // Column 2 starts at the pinned run's edge, where its label stays
-        // once scrolled; column 4 starts clear of the scroll's 120.
-        let edge = window.find(("resource-sort", 2usize)).bounds().left();
-        let later = window.find(("resource-sort", 4usize)).bounds().left();
+        // Column 3 starts at the pinned run's edge (glyph, name, Logs),
+        // where its label stays once scrolled; column 5 starts clear of
+        // the scroll's 120.
+        let edge = window.find(("resource-sort", 3usize)).bounds().left();
+        let later = window.find(("resource-sort", 5usize)).bounds().left();
         assert!(later - edge > px(120.), "{:?}", later - edge);
         window.scroll(
             "resource-table-scroll",
@@ -1716,13 +1818,15 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
             cx,
         );
         window.render_frame(cx);
-        let moved = later - window.find(("resource-sort", 4usize)).bounds().left();
+        let moved = later - window.find(("resource-sort", 5usize)).bounds().left();
         assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
         // `find` fails on an id that resolves twice.
         assert!((window.find(("resource-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
         for (row, name) in rows.iter().zip(names) {
             assert!((left(window, row) - name).abs() <= px(1.5));
         }
+        // A pod's Logs button is pinned with its name (#291).
+        assert!((window.find(logs).bounds().left() - button).abs() <= px(1.5));
     })
     .unwrap();
 }
