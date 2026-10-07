@@ -153,13 +153,15 @@ impl TableSource for LifecycleScreen {
     }
 
     fn columns(&self) -> &[Column] {
-        self.loader
-            .data()
-            .map_or(&[], |view| view.display.columns.as_slice())
+        self.loader.data().map_or(&self.loading_columns.0, |view| {
+            view.display.columns.as_slice()
+        })
     }
 
     fn width(&self) -> f32 {
-        self.loader.data().map_or(0., |view| view.display.width)
+        self.loader
+            .data()
+            .map_or(self.loading_columns.1, |view| view.display.width)
     }
 
     fn list_label(&self) -> String {
@@ -259,6 +261,10 @@ impl TableSource for LifecycleScreen {
 
     fn click(&mut self, key: &String, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.select(Item::Node(key.clone()), window, cx);
+    }
+
+    fn loading(&self) -> Option<&table::LoadingRows> {
+        self.waiting().then_some(&self.loading)
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
