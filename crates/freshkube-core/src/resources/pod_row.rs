@@ -5,12 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use http::{Request, header};
 use kube::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 
-use super::failure::{Failure, FailureKind};
+use super::failure::Failure;
+use super::object::{JSON, json_get};
 use super::table::nullable;
 
 /// CPU in millicores and memory in bytes. `None` where a container leaves
@@ -344,10 +344,7 @@ pub async fn list_pod_usage(
         Some(namespace) => format!("/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods"),
         None => "/apis/metrics.k8s.io/v1beta1/pods".to_owned(),
     };
-    let request = Request::get(path)
-        .header(header::ACCEPT, "application/json")
-        .body(Vec::new())
-        .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
+    let request = json_get(path, JSON)?;
     let list: MetricsList = client.request(request).await.map_err(Failure::from_kube)?;
     Ok(list.items.into_iter().map(usage).collect())
 }

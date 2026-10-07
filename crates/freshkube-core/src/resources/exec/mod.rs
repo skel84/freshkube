@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 
 use super::failure::{Failure, FailureKind};
 use super::kinds::builtin;
-use super::object::{json_get, text};
+use super::object::{JSON, json_get, text};
 use super::pod_logs::{ContainerState, pod_containers};
 
 /// Runs the first shell the container has, so its exit ends the session.
@@ -556,7 +556,7 @@ enum Check {
 async fn check_container(client: &Client, request: &ExecRequest) -> Result<Check, ExecFailure> {
     let kind = builtin("pods").expect("pods are built in");
     let path = kind.object_path(Some(&request.namespace), &request.pod);
-    let get = json_get(path)?;
+    let get = json_get(path, JSON)?;
     let pod: Result<Value, kube::Error> =
         tokio::time::timeout(REQUEST_DEADLINE, client.request(get))
             .await

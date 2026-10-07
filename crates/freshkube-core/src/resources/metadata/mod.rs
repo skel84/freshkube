@@ -1,7 +1,7 @@
 //! Metadata-only reads for object links and search.
 use super::forward::api_resource;
+use super::object::json_get;
 use super::{Failure, ResourceKind};
-use http::{Request, header};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::{Api, api::DynamicObject};
 use serde::Deserialize;
@@ -48,16 +48,13 @@ pub async fn list_metadata(
         metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ListMeta,
         items: Vec<Metadata>,
     }
-    let request = Request::get(format!(
-        "{}?limit=2000&resourceVersion=0",
-        kind.collection_path(None)
-    ))
-    .header(
-        header::ACCEPT,
+    let request = json_get(
+        format!(
+            "{}?limit=2000&resourceVersion=0",
+            kind.collection_path(None)
+        ),
         "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1",
-    )
-    .body(Vec::new())
-    .map_err(|error| Failure::new(super::FailureKind::Other, error.to_string()))?;
+    )?;
     let list = client
         .request::<MetadataList>(request)
         .await

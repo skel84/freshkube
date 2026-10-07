@@ -2,11 +2,11 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use http::{Request, header};
 use kube::Client;
 use serde::Deserialize;
 
-use super::{Amounts, Failure, FailureKind, cpu_millis, quantity, table::nullable};
+use super::object::{JSON, json_get};
+use super::{Amounts, Failure, cpu_millis, quantity, table::nullable};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeUsage {
@@ -39,10 +39,7 @@ struct Metadata {
 /// A cluster without metrics-server returns NotFound; refused and failed reads
 /// remain failures, so a caller can retain and label its last known answer.
 pub async fn list_node_usage(client: &Client) -> Result<Vec<NodeUsage>, Failure> {
-    let request = Request::get("/apis/metrics.k8s.io/v1beta1/nodes")
-        .header(header::ACCEPT, "application/json")
-        .body(Vec::new())
-        .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
+    let request = json_get("/apis/metrics.k8s.io/v1beta1/nodes".into(), JSON)?;
     let list: MetricsList = client.request(request).await.map_err(Failure::from_kube)?;
     Ok(list.items.into_iter().map(usage).collect())
 }
@@ -69,6 +66,8 @@ fn usage(metrics: NodeMetrics) -> NodeUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::FailureKind;
+    use http::Request;
     use serde_json::json;
 
     #[tokio::test]

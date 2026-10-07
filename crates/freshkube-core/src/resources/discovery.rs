@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use super::failure::{Failure, FailureKind};
 use super::kinds::ResourceKind;
-use super::object::json_get;
+use super::object::{JSON, json_get};
 use super::table::nullable;
 
 /// Groups the API server serves itself; the sidebar's other groups show
@@ -107,7 +107,7 @@ struct ResourceEntry {
 /// The groups that aren't the API server's own, by name.
 pub async fn list_custom_groups(client: &Client) -> Result<Vec<ApiGroup>, Failure> {
     let list: GroupList = client
-        .request(json_get("/apis".into())?)
+        .request(json_get("/apis".into(), JSON)?)
         .await
         .map_err(Failure::from_kube)?;
     Ok(custom_groups(list))
@@ -118,7 +118,7 @@ pub async fn list_custom_groups(client: &Client) -> Result<Vec<ApiGroup>, Failur
 pub async fn list_group_kinds(client: &Client, group: &ApiGroup) -> Result<GroupKinds, Failure> {
     let reads = group.versions.iter().map(|version| async move {
         let path = format!("/apis/{}/{version}", group.name);
-        let list = match json_get(path) {
+        let list = match json_get(path, JSON) {
             Ok(request) => client
                 .request::<ResourceList>(request)
                 .await

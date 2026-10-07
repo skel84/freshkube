@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 
 use super::failure::{Failure, FailureKind};
 use super::kinds::builtin;
-use super::object::{json_get, sequence, text, time};
+use super::object::{JSON, json_get, sequence, text, time};
 
 /// The annotation `kubectl logs` reads for the container to show first.
 const DEFAULT_CONTAINER: &str = "kubectl.kubernetes.io/default-container";
@@ -519,7 +519,7 @@ impl Follower {
     async fn container(&self) -> Result<Container, Failure> {
         let kind = builtin("pods").expect("pods are built in");
         let path = kind.object_path(Some(&self.request.namespace), &self.request.pod);
-        let request = json_get(path)?;
+        let request = json_get(path, JSON)?;
         let pod: Value = tokio::time::timeout(REQUEST_DEADLINE, self.client.request(request))
             .await
             .map_err(|_| Failure::timeout("Reading the pod"))?
