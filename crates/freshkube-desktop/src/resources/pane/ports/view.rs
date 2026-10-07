@@ -1,5 +1,5 @@
-//! Drawing the Ports tab. Everything shown was derived when the ports or
-//! the forwards changed.
+//! Drawing Details' Ports section. Everything shown was derived when the
+//! ports or the forwards changed.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -160,11 +160,6 @@ impl Render for PortsView {
         v_flex()
             .id("ports")
             .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(freshkube_ui::page::PANE_PADDING))
-            .py_2()
             .text_size(dp(12.5))
             .child(ui::caption("Declared ports", cx))
             .when_some(empty, |this, empty| {

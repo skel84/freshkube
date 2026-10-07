@@ -1,8 +1,12 @@
-//! The Events tab: the events recorded about the object, newest first.
+//! Details' Events section: the events recorded about the object, newest first.
 
 use freshkube_core::resources::ObjectEvent;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{
+    Sizable,
+    button::{Button, ButtonVariants},
+    h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -10,6 +14,11 @@ use super::{DetailPane, local_time};
 use crate::palette::palette;
 use crate::resources::detail::{Detail, EventsRead, MAX_EVENTS};
 use crate::ui::{self, Tone, dp};
+
+/// The events Details lists before Show all. Every row lays out again on
+/// each frame Details draws, a wheel tick too, so the full list waits for
+/// the user to ask.
+pub(super) const EVENTS_SHOWN: usize = 25;
 
 /// One event as listed, derived when the events change.
 pub(super) struct EventLine {
@@ -62,7 +71,7 @@ impl DetailPane {
                 return state(
                     "detail-events-loading",
                     v_flex()
-                        .p_4()
+                        .py_2()
                         .gap_3()
                         .children((0..4).map(|_| ui::skeleton(relative(0.8), dp(12.)))),
                 );
@@ -110,6 +119,11 @@ impl DetailPane {
             ),
             _ => None,
         };
+        let shown = if self.show_all_events {
+            self.event_lines.len()
+        } else {
+            EVENTS_SHOWN.min(self.event_lines.len())
+        };
         let body = if self.event_lines.is_empty() {
             div()
                 .id("detail-events-empty")
@@ -121,59 +135,82 @@ impl DetailPane {
         } else {
             v_flex()
                 .gap_3()
-                .children(self.event_lines.iter().enumerate().map(|(ix, line)| {
-                    v_flex()
-                        .id(("detail-event", ix))
-                        .test_support()
-                        .aria_label(line.label.clone())
-                        .gap_0p5()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(if line.warning {
-                                    ui::tag(Tone::Warn, None, "Warning", cx)
-                                } else {
-                                    ui::tag(Tone::Outline, None, "Normal", cx)
-                                })
+                .children(
+                    self.event_lines[..shown]
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, line)| {
+                            v_flex()
+                                .id(("detail-event", ix))
+                                .test_support()
+                                .aria_label(line.label.clone())
+                                .gap_0p5()
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(if line.warning {
+                                            ui::tag(Tone::Warn, None, "Warning", cx)
+                                        } else {
+                                            ui::tag(Tone::Outline, None, "Normal", cx)
+                                        })
+                                        .child(
+                                            div()
+                                                .text_size(dp(12.5))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(line.reason.clone()),
+                                        ),
+                                )
+                                .child(div().text_size(dp(12.5)).child(line.message.clone()))
                                 .child(
                                     div()
-                                        .text_size(dp(12.5))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(line.reason.clone()),
-                                ),
-                        )
-                        .child(div().text_size(dp(12.5)).child(line.message.clone()))
-                        .child(
-                            div()
-                                .text_size(dp(11.5))
-                                .text_color(p.muted)
-                                .child(line.detail.clone()),
-                        )
-                }))
-                .when(events.len() > MAX_EVENTS, |this| {
+                                        .text_size(dp(11.5))
+                                        .text_color(p.muted)
+                                        .child(line.detail.clone()),
+                                )
+                        }),
+                )
+                .when(shown < self.event_lines.len(), |this| {
                     this.child(
-                        div()
-                            .id("detail-events-capped")
-                            .test_support()
-                            .text_size(dp(12.))
-                            .text_color(p.muted)
-                            .child(format!(
-                                "Showing the newest {MAX_EVENTS} of {} events.",
-                                events.len()
-                            )),
+                        div().child(
+                            Button::new("detail-events-all")
+                                .ghost()
+                                .xsmall()
+                                .label(if events.len() > MAX_EVENTS {
+                                    format!("Show the newest {MAX_EVENTS} events")
+                                } else {
+                                    format!("Show all {} events", self.event_lines.len())
+                                })
+                                .on_click(cx.listener(|pane, _, _, cx| {
+                                    pane.show_all_events = true;
+                                    cx.notify();
+                                })),
+                        ),
                     )
                 })
+                .when(
+                    shown == self.event_lines.len() && events.len() > MAX_EVENTS,
+                    |this| {
+                        this.child(
+                            div()
+                                .id("detail-events-capped")
+                                .test_support()
+                                .text_size(dp(12.))
+                                .text_color(p.muted)
+                                .child(format!(
+                                    "Showing the newest {MAX_EVENTS} of {} events.",
+                                    events.len()
+                                )),
+                        )
+                    },
+                )
                 .into_any_element()
         };
-        div()
+        v_flex()
             .id("detail-events")
             .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-            .px(dp(freshkube_ui::page::PANE_PADDING))
-            .py_3()
-            .child(v_flex().gap_3().children(stale).child(body))
+            .gap_3()
+            .children(stale)
+            .child(body)
             .into_any_element()
     }
 }

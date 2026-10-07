@@ -4,7 +4,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
-    Disableable, Sizable,
+    Disableable, Selectable, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     menu::{DropdownMenu, PopupMenuItem},
@@ -16,7 +16,7 @@ use gpui_kit::*;
 
 use super::{
     CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, FindNextMatch,
-    FindPreviousMatch, NextTab, PreviousTab, SelectAllLines, TABS_CONTEXT, Tab,
+    FindPreviousMatch, NextTab, PreviousTab, Section, SelectAllLines, TABS_CONTEXT, Tab,
 };
 use crate::logs::role_heading;
 use crate::palette::palette;
@@ -46,14 +46,30 @@ impl DetailPane {
                     .gap_0p5()
                     .child(ui::caption(&detail.target.kind.kind, cx))
                     .child(
-                        div()
-                            .id("detail-title")
-                            .test_support()
-                            .aria_label(self.title.clone())
-                            .font_family(MONO_FONT)
-                            .text_size(dp(13.5))
-                            .truncate()
-                            .child(self.title.clone()),
+                        h_flex()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id("detail-title")
+                                    .test_support()
+                                    .aria_label(self.title.clone())
+                                    .min_w_0()
+                                    .font_family(MONO_FONT)
+                                    .text_size(dp(13.5))
+                                    .truncate()
+                                    .child(self.title.clone()),
+                            )
+                            .child(
+                                Button::new("detail-copy-name")
+                                    .ghost()
+                                    .xsmall()
+                                    .flex_none()
+                                    .icon(IconName::Copy)
+                                    .tooltip("Copy the name")
+                                    .accessibility_label("Copy the name")
+                                    .on_click(cx.listener(|pane, _, _, cx| pane.copy_name(cx))),
+                            ),
                     ),
             )
             .children(state.map(|(tone, text)| {
@@ -216,16 +232,10 @@ impl DetailPane {
         )
     }
 
-    fn tabs(&self, detail: &Detail, cx: &mut Context<Self>) -> Observed<Stateful<Div>> {
-        let events = &detail.events;
-        let tab = |id: &'static str,
-                   tab: Tab,
-                   label: SharedString,
-                   extra: Option<AnyElement>,
-                   tip: Option<SharedString>| {
+    fn tabs(&self, cx: &mut Context<Self>) -> Observed<Stateful<Div>> {
+        let tab = |id: &'static str, tab: Tab, label: SharedString, tip: Option<SharedString>| {
             inspector::tab(id, label, self.tab == tab, cx)
                 .track_focus(&self.tab_focus[tab.index()])
-                .children(extra)
                 .tooltip(move |window, cx| {
                     let m = ui::modifier();
                     let keys = format!("{m}⇧[ and {m}⇧] switch tabs; ← and → move between them");
@@ -235,20 +245,11 @@ impl DetailPane {
                     })
                     .build(window, cx)
                 })
-                .on_click(cx.listener(move |pane, _, _, cx| pane.set_tab(tab, cx)))
+                .on_click(cx.listener(move |pane, _, _, cx| pane.show_page(tab, cx)))
                 .into_any_element()
         };
-        let count = match events.read() {
-            EventsRead::Loaded | EventsRead::Stale(_) => Some(events.len()),
-            _ => None,
-        };
-        let warnings = events.warnings();
-        let active = Tab::of(&detail.target.kind)
-            .iter()
-            .position(|tab| *tab == self.tab)
-            .unwrap_or(0);
         self.tab_strip
-            .row("detail-tabs", active)
+            .row("detail-tabs", self.tab.index())
             .key_context(TABS_CONTEXT)
             .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.move_tab(1, window, cx)))
             .on_action(
@@ -256,41 +257,238 @@ impl DetailPane {
             )
             .gap_1()
             .child(tab(
-                "detail-tab-overview",
+                "detail-tab-details",
                 Tab::Overview,
-                "Overview".into(),
-                None,
-                None,
+                "Details".into(),
+                Some("The overview, ports and events, on one page".into()),
             ))
-            .child(tab("detail-tab-yaml", Tab::Yaml, "YAML".into(), None, None))
-            .child(tab(
-                "detail-tab-events",
-                Tab::Events,
-                match count {
-                    Some(count) => format!("Events {count}").into(),
-                    None => "Events".into(),
-                },
-                (warnings > 0).then(|| {
-                    ui::tag(
-                        Tone::Warn,
-                        None,
-                        match warnings {
-                            1 => "1 warning".to_owned(),
-                            count => format!("{count} warnings"),
-                        },
-                        cx,
-                    )
+            .child(tab("detail-tab-yaml", Tab::Yaml, "YAML".into(), None))
+    }
+
+    /// Details: the overview, then the ports, then the events, on one
+    /// scrolling page under an index that stays at its top.
+    fn details(&self, detail: &Detail, cx: &mut Context<Self>) -> AnyElement {
+        let sections = Section::of(&detail.target.kind);
+        let line = palette(cx).line;
+        let pad = dp(freshkube_ui::page::PANE_PADDING);
+        let body = |section: Section, this: &Self, cx: &mut Context<Self>| match section {
+            Section::Overview => match (&detail.view, &this.summary) {
+                (Some(_), Some(summary)) => this.overview(detail, summary, cx),
+                _ => this.document_state(detail, cx),
+            },
+            Section::Ports => this.ports.clone().into_any_element(),
+            Section::Events => this.events(detail, cx),
+        };
+        let parts: Vec<AnyElement> = sections
+            .iter()
+            .enumerate()
+            .map(|(ix, section)| {
+                v_flex()
+                    .id(SharedString::from(format!(
+                        "detail-section-{}",
+                        section.slug()
+                    )))
+                    .test_support()
+                    .when(ix > 0, |this| {
+                        this.mt(dp(18.))
+                            .pt(dp(14.))
+                            .border_t_1()
+                            .border_color(line)
+                            .child(self.section_heading(*section, detail, cx))
+                    })
+                    .child(body(*section, self, cx))
                     .into_any_element()
-                }),
-                None,
-            ))
-            .when(Tab::of(&detail.target.kind).contains(&Tab::Ports), |this| {
-                this.child(tab(
-                    "detail-tab-ports",
-                    Tab::Ports,
-                    "Ports".into(),
+            })
+            .collect();
+        v_flex()
+            .size_full()
+            .child(self.section_index(sections, detail, cx))
+            .child(
+                v_flex()
+                    .id("detail-details")
+                    .test_support()
+                    .track_scroll(&self.details_scroll)
+                    .on_scroll_wheel({
+                        let pinned = self.section_pinned.clone();
+                        move |_, _, _| pinned.set(None)
+                    })
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .px(pad)
+                    .py_3()
+                    .children(parts),
+            )
+            .child(self.watch_sections(sections, cx))
+            .into_any_element()
+    }
+
+    /// Learns which section is at the top of Details as it draws, and draws
+    /// the index again when that changed.
+    fn watch_sections(
+        &self,
+        sections: &'static [Section],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let scroll = self.details_scroll.clone();
+        let shown = self.shown_section.clone();
+        let pinned = self.section_pinned.clone();
+        let this = cx.entity().downgrade();
+        canvas(
+            move |_, window, _| {
+                // Runs after Details laid out this frame, so the handle's
+                // bounds and its sections' are this frame's.
+                if let Some(ix) = pinned.get() {
+                    let Some(item) = scroll.bounds_for_item(ix) else {
+                        return;
+                    };
+                    // The first section keeps the page's padding above it.
+                    let top = if ix == 0 {
+                        px(0.)
+                    } else {
+                        (item.top() - scroll.bounds().top())
+                            .min(scroll.max_offset().y)
+                            .max(px(0.))
+                    };
+                    let offset = scroll.offset();
+                    if (offset.y + top).abs() > px(0.5) {
+                        scroll.set_offset(point(offset.x, -top));
+                        let this = this.clone();
+                        window.on_next_frame(move |_, cx| {
+                            _ = this.update(cx, |_, cx| cx.notify());
+                        });
+                    }
+                    return;
+                }
+                let at_end = scroll.max_offset().y > px(0.)
+                    && -scroll.offset().y >= scroll.max_offset().y - px(1.);
+                let ix = if at_end {
+                    sections.len() - 1
+                } else {
+                    scroll.top_item()
+                };
+                let Some(section) = sections.get(ix).copied() else {
+                    return;
+                };
+                if shown.get() == section {
+                    return;
+                }
+                shown.set(section);
+                let this = this.clone();
+                window.on_next_frame(move |_, cx| {
+                    _ = this.update(cx, |_, cx| cx.notify());
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0()
+    }
+
+    /// The index over Details: a button per section, the one at the top
+    /// marked.
+    fn section_index(
+        &self,
+        sections: &'static [Section],
+        detail: &Detail,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let shown = self.shown_section.get();
+        let warnings = detail.events.warnings();
+        h_flex()
+            .id("detail-index")
+            .test_support()
+            .role(Role::TabList)
+            .aria_label("Sections")
+            .flex_none()
+            .flex_wrap()
+            .gap_1()
+            .px(dp(freshkube_ui::page::PANE_PADDING - 6.))
+            .py_1()
+            .border_b_1()
+            .border_color(palette(cx).line)
+            .children(sections.iter().map(|section| {
+                let section = *section;
+                let label = self.section_label(section, detail);
+                // The wrapper tells tests and assistive tools which section
+                // is marked; a Kit button can't.
+                div()
+                    .id(SharedString::from(format!(
+                        "detail-jump-{}",
+                        section.slug()
+                    )))
+                    .test_support()
+                    .role(Role::Tab)
+                    .aria_selected(section == shown)
+                    .aria_label(label.clone())
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "detail-jump-{}-button",
+                            section.slug()
+                        )))
+                        .ghost()
+                        .xsmall()
+                        .selected(section == shown)
+                        .label(label)
+                        .when(section == Section::Events && warnings > 0, |this| {
+                            this.child(ui::tag(Tone::Warn, None, warnings.to_string(), cx))
+                        })
+                        .on_click(cx.listener(move |pane, _, _, cx| {
+                            pane.show_section(section);
+                            cx.notify();
+                        })),
+                    )
+            }))
+    }
+
+    fn section_label(&self, section: Section, detail: &Detail) -> SharedString {
+        match section {
+            Section::Overview => "Overview".into(),
+            Section::Ports => "Ports".into(),
+            Section::Events => match detail.events.read() {
+                EventsRead::Loaded | EventsRead::Stale(_) => {
+                    format!("Events {}", detail.events.len()).into()
+                }
+                _ => "Events".into(),
+            },
+        }
+    }
+
+    /// The heading over each section after the overview.
+    fn section_heading(
+        &self,
+        section: Section,
+        detail: &Detail,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let warnings = detail.events.warnings();
+        let label = self.section_label(section, detail);
+        h_flex()
+            .gap_2()
+            .pb_2()
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "detail-heading-{}",
+                        section.slug()
+                    )))
+                    .test_support()
+                    .role(Role::Heading)
+                    .aria_label(label.clone())
+                    .text_size(dp(13.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(label),
+            )
+            .when(section == Section::Events && warnings > 0, |this| {
+                this.child(ui::tag(
+                    Tone::Warn,
                     None,
-                    None,
+                    match warnings {
+                        1 => "1 warning".to_owned(),
+                        count => format!("{count} warnings"),
+                    },
+                    cx,
                 ))
             })
     }
@@ -363,12 +561,20 @@ impl Render for DetailPane {
         let Some(detail) = self.detail.as_ref() else {
             return div().into_any_element();
         };
-        let body = match (self.tab, &detail.view, &self.summary) {
-            (Tab::Overview, Some(_), Some(summary)) => self.overview(detail, summary, cx),
-            (Tab::Yaml, Some(view), _) => self.yaml(view, cx),
-            (Tab::Events, ..) => self.events(detail, cx),
-            (Tab::Ports, ..) => self.ports.clone().into_any_element(),
-            _ => self.document_state(detail, cx),
+        let body = match (self.tab, &detail.view) {
+            (Tab::Yaml, Some(view)) => self.yaml(view, cx),
+            (Tab::Yaml, None) => self.document_state(detail, cx),
+            // The node's inspector shows its events alone.
+            (Tab::Events, _) if self.embedded_node => div()
+                .id("detail-events-page")
+                .size_full()
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .px(dp(freshkube_ui::page::PANE_PADDING))
+                .py_3()
+                .child(self.events(detail, cx))
+                .into_any_element(),
+            _ => self.details(detail, cx),
         };
         let notice = self.notice(detail, cx);
         let feedback = self.feedback.clone().map(|feedback| {
@@ -397,7 +603,7 @@ impl Render for DetailPane {
                     Inspector::new("detail-inspector")
                         .heading(self.header(detail, cx))
                         .banner(notice)
-                        .tabs(&self.tab_strip, self.tabs(detail, cx))
+                        .tabs(&self.tab_strip, self.tabs(cx))
                         .content(body)
                         .footer(feedback)
                         .render(cx),

@@ -1,4 +1,4 @@
-//! The Overview tab: what every kind has in common, conditions, and a
+//! Details' Overview section: what every kind has in common, conditions, and a
 //! Secret's keys with their values hidden until revealed.
 
 use freshkube_core::resources::{Condition, SecretValue};

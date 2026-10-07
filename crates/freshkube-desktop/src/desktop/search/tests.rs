@@ -90,10 +90,7 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
                 assert_eq!(view.resources.read(cx).detail_tab(cx), Tab::Overview);
                 assert!(
                     window.find("resource-detail").focused().unwrap_or(false)
-                        || window
-                            .find("detail-tab-overview")
-                            .focused()
-                            .unwrap_or(false)
+                        || window.find("detail-tab-details").focused().unwrap_or(false)
                 );
             }
         })

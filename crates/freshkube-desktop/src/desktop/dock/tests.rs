@@ -322,7 +322,7 @@ fn command_f_searches_the_logs_in_the_dock_and_the_yaml_in_the_pane(cx: &mut Tes
             cx,
         );
         window.render_frame(cx);
-        window.click("detail-tab-overview", cx);
+        window.click("detail-tab-details", cx);
         window.render_frame(cx);
         window.press("secondary-f", cx);
         window.render_frame(cx);

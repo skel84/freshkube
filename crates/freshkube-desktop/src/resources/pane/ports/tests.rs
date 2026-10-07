@@ -154,7 +154,7 @@ fn a_pod_lists_its_declared_port_and_forward_starts_it(cx: &mut TestAppContext) 
     let pane = mount(cx);
     let pod = running_pod("grafana");
     pane.open(cx, &pod);
-    pane.click(cx, "detail-tab-ports");
+    pane.click(cx, "detail-jump-ports");
     assert_eq!(
         pane.label(cx, "ports-row-8080").as_deref(),
         Some("8080/TCP")
@@ -189,7 +189,7 @@ fn a_typed_local_port_is_used_exactly(cx: &mut TestAppContext) {
     let port = free.local_addr().unwrap().port();
     drop(free);
     pane.open(cx, &running_pod("grafana"));
-    pane.click(cx, "detail-tab-ports");
+    pane.click(cx, "detail-jump-ports");
     pane.type_into(cx, "ports-local-8080", &port.to_string());
     pane.click(cx, "ports-forward-8080");
     assert_eq!(pane.forwards(cx)[0].1, Some(port));
@@ -208,7 +208,7 @@ fn a_typed_local_port_is_used_exactly(cx: &mut TestAppContext) {
 async fn other_port_forwards_any_number_and_refuses_text(cx: &mut TestAppContext) {
     let pane = mount(cx);
     pane.open(cx, &running_pod("grafana"));
-    pane.click(cx, "detail-tab-ports");
+    pane.click(cx, "detail-jump-ports");
     pane.type_into(cx, "ports-other-port", "http");
     pane.click(cx, "ports-forward-other");
     assert!(pane.forwards(cx).is_empty());
@@ -243,7 +243,7 @@ fn a_forward_outlives_the_pane_and_shows_again_with_its_object(cx: &mut TestAppC
     let pane = mount(cx);
     let pod = running_pod("grafana");
     pane.open(cx, &pod);
-    pane.click(cx, "detail-tab-ports");
+    pane.click(cx, "detail-jump-ports");
     pane.click(cx, "ports-forward-8080");
     let (id, port, _) = pane.forwards(cx)[0];
     pane.step(cx, |_, cx| pane.pane.update(cx, |pane, cx| pane.close(cx)));
@@ -265,21 +265,22 @@ fn a_forward_outlives_the_pane_and_shows_again_with_its_object(cx: &mut TestAppC
 fn the_tabs_follow_the_kind(cx: &mut TestAppContext) {
     let pane = mount(cx);
     let tabs = |pane: &Mounted, cx: &mut TestAppContext| {
-        ["detail-open-logs", "detail-open-shell", "detail-tab-ports"].map(|id| pane.present(cx, id))
+        ["detail-open-logs", "detail-open-shell", "detail-jump-ports"]
+            .map(|id| pane.present(cx, id))
     };
     pane.open(cx, &running_pod("grafana"));
     assert_eq!(tabs(&pane, cx), [true, true, true]);
     let service = target("services", |cells| cells[0] == "gateway");
-    pane.click(cx, "detail-tab-ports");
+    pane.click(cx, "detail-jump-ports");
     pane.open(cx, &service);
     assert_eq!(tabs(&pane, cx), [false, false, true]);
     assert_eq!(
         pane.label(cx, "ports-row-443").as_deref(),
         Some("https · 443/TCP"),
-        "a Service keeps the Ports tab and lists its own ports"
+        "a Service keeps the Ports section and lists its own ports"
     );
     assert!(pane.present(cx, "ports-row-80"));
-    // Ports is last: the next tab wraps to Overview.
+    // Ports is a section of Details; YAML shows none of it.
     pane.step(cx, |_, cx| {
         pane.pane.update(cx, |pane, cx| pane.turn_tab(1, cx))
     });
@@ -293,7 +294,7 @@ fn the_tabs_follow_the_kind(cx: &mut TestAppContext) {
     assert_eq!(tabs(&pane, cx), [false, false, false]);
     assert!(
         !pane.present(cx, "ports"),
-        "a kind without ports goes back to Overview"
+        "a kind without ports has no Ports section"
     );
     let deployment = target("deployments.apps", |cells| cells[0] == "grafana");
     pane.open(cx, &deployment);
