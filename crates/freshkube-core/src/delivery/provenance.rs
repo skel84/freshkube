@@ -60,20 +60,20 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
 /// declared only, or absent. Provenance shows them as they are; whether they
 /// stay confirmed is for the confidence slice (#387).
 const KNOWN_GAPS: &[(&str, &str, &str)] = &[
-    // The run's only witness is a declared revision parameter; a result
+    // #387: the run's only witness is a declared revision parameter; a result
     // would be reported (see the test on a task result).
     ("commit", "PipelineRun", "PipelineRun"),
     ("pull request", "PipelineRun", "PipelineRun"),
-    // The commit joined a Freight with no build read, or with a build that
+    // #387: the commit joined a Freight with no build read, or with a build that
     // reports no digest: only its declared labels name the commit.
     ("PipelineRun", "Freight", "PipelineRun"),
-    // Chains' `signed` annotation is all that says it, and it is declared.
+    // #387: Chains' `signed` annotation is all that says it, and it is declared.
     ("PipelineRun", "supply chain", "supply chain"),
-    // The Rollout's spec pin is declared, and Argo CD's resource list names
+    // #387: the Rollout's spec pin is declared, and Argo CD's resource list names
     // the Rollout, not the digest.
     ("Application", "Rollout", "Application"),
     ("Application", "Rollout", "Rollout"),
-    // The Rollout reports its pod-template hash, which the pods' label
+    // #387: the Rollout reports its pod-template hash, which the pods' label
     // matches; neither carries the digest.
     ("Rollout", "pods", "Rollout"),
 ];
