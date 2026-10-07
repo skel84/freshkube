@@ -10,7 +10,7 @@ use crate::{
     diagnostics::{
         CheckCategory, CheckStatus, CniInfo, CniPodInfo, CniType, PodHealthInfo, UnhealthyPodInfo,
     },
-    errors::{ErrorCategory, categorize_error, format_talos_error},
+    errors::format_talos_error,
     formatting::{format_bytes, format_bytes_signed},
 };
 use k8s_openapi::{
@@ -298,11 +298,6 @@ pub enum DiagnosticFixAction {
 }
 
 impl DiagnosticFixAction {
-    /// Whether this action mutates a Talos node.
-    pub fn is_executable(&self) -> bool {
-        !matches!(self, Self::CopyGuidance { .. })
-    }
-
     /// Whether the action asks Talos to reboot the selected node.
     pub fn requires_reboot(&self) -> bool {
         matches!(
@@ -336,83 +331,16 @@ impl DiagnosticFixRequest {
         }
     }
 
-    /// Builds the information a UI must show before asking for confirmation.
-    pub fn preview(&self) -> DiagnosticFixPreview {
-        let (content, confirmation_required) = match &self.fix.action {
-            DiagnosticFixAction::RestartService { service_id } => (
-                Some(format!(
-                    "Restart Talos service `{service_id}` on {} ({})",
-                    self.target.node_name, self.target.node_address
-                )),
-                true,
-            ),
-            DiagnosticFixAction::ApplyConfigPatch { yaml, .. } => (Some(yaml.clone()), true),
-            DiagnosticFixAction::CopyGuidance { text, .. } => (Some(text.clone()), false),
-        };
-
-        DiagnosticFixPreview {
-            check_id: self.check_id.clone(),
-            target: self.target.clone(),
-            description: self.fix.description.clone(),
-            action: self.fix.action.clone(),
-            content,
-            requires_reboot: self.fix.action.requires_reboot(),
-            confirmation_required,
-        }
-    }
-
-    /// Marks an explicitly previewed request as confirmed for execution.
+    /// Marks the request as confirmed for execution.
     pub fn confirm(self) -> ConfirmedDiagnosticFix {
         ConfirmedDiagnosticFix { request: self }
     }
 }
 
-/// Presentation data for a confirmation surface.
-#[derive(Debug, Clone)]
-pub struct DiagnosticFixPreview {
-    /// Check that supplied the remediation.
-    pub check_id: String,
-    /// Explicit target affected by the remediation.
-    pub target: DiagnosticTarget,
-    /// User-facing remediation description.
-    pub description: String,
-    /// Action kind for UI labels and affordances.
-    pub action: DiagnosticFixAction,
-    /// Config YAML, restart scope, or copy-only guidance text.
-    pub content: Option<String>,
-    /// Whether confirmation should say that a reboot is requested.
-    pub requires_reboot: bool,
-    /// False for copy-only guidance, which has no executable side effect.
-    pub confirmation_required: bool,
-}
-
-/// A request the caller has explicitly confirmed after presenting its preview.
+/// A request the caller has explicitly confirmed.
 #[derive(Debug, Clone)]
 pub struct ConfirmedDiagnosticFix {
     request: DiagnosticFixRequest,
-}
-
-impl ConfirmedDiagnosticFix {
-    /// Returns the original target for progress or audit presentation.
-    pub fn target(&self) -> &DiagnosticTarget {
-        &self.request.target
-    }
-
-    /// Returns the check identifier for progress or audit presentation.
-    pub fn check_id(&self) -> &str {
-        &self.request.check_id
-    }
-}
-
-/// Where cooperative cancellation occurred.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FixExecutionPhase {
-    /// Before a service restart RPC.
-    BeforeServiceRestart,
-    /// Before config-patch dry-run validation.
-    BeforeConfigValidation,
-    /// After successful validation and before applying the patch.
-    BeforeConfigApply,
 }
 
 /// Result of a completed, cancelled, or copy-only fix request.
@@ -427,8 +355,6 @@ pub enum FixExecution {
     },
     /// Caller cancelled before the next network step, so no further request ran.
     Cancelled {
-        /// Boundary at which cancellation was observed.
-        phase: FixExecutionPhase,
         /// Whether the original request would have rebooted the node.
         requires_reboot: bool,
     },
@@ -442,12 +368,8 @@ pub enum FixExecution {
 /// A frontend-friendly result from a Talos mutation RPC.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixTargetResult {
-    /// Node that acknowledged the request.
-    pub node: String,
     /// Service response or configuration apply-mode detail.
     pub message: String,
-    /// Warnings reported by Talos for configuration patches.
-    pub warnings: Vec<String>,
 }
 
 /// Failure to execute a confirmed fix.
@@ -483,10 +405,7 @@ where
         DiagnosticFixAction::CopyGuidance { text, .. } => Ok(FixExecution::CopyOnly { text }),
         DiagnosticFixAction::RestartService { service_id } => {
             if is_cancelled() {
-                return Ok(FixExecution::Cancelled {
-                    phase: FixExecutionPhase::BeforeServiceRestart,
-                    requires_reboot,
-                });
+                return Ok(FixExecution::Cancelled { requires_reboot });
             }
 
             let results = targeted_client
@@ -495,9 +414,7 @@ where
                 .map_err(|error| DiagnosticFixError::Execution(format_talos_error(&error)))?
                 .into_iter()
                 .map(|result| FixTargetResult {
-                    node: result.node,
                     message: result.response,
-                    warnings: Vec::new(),
                 })
                 .collect();
 
@@ -539,10 +456,7 @@ where
     Cancel: FnMut() -> bool,
 {
     if is_cancelled() {
-        return Ok(FixExecution::Cancelled {
-            phase: FixExecutionPhase::BeforeConfigValidation,
-            requires_reboot,
-        });
+        return Ok(FixExecution::Cancelled { requires_reboot });
     }
 
     apply(true)
@@ -550,10 +464,7 @@ where
         .map_err(|error| DiagnosticFixError::Validation(format_talos_error(&error)))?;
 
     if is_cancelled() {
-        return Ok(FixExecution::Cancelled {
-            phase: FixExecutionPhase::BeforeConfigApply,
-            requires_reboot,
-        });
+        return Ok(FixExecution::Cancelled { requires_reboot });
     }
 
     let results = apply(false)
@@ -561,9 +472,7 @@ where
         .map_err(|error| DiagnosticFixError::Execution(format_talos_error(&error)))?
         .into_iter()
         .map(|result| FixTargetResult {
-            node: result.node,
             message: result.mode_result,
-            warnings: result.warnings,
         })
         .collect();
 
@@ -1378,10 +1287,6 @@ async fn probe_file(client: &TalosClient, path: &str) -> (FileProbe, Option<Stri
 }
 
 fn is_missing_file_error(error: &talos_rs::TalosError) -> bool {
-    if categorize_error(error) == ErrorCategory::NotFound {
-        return true;
-    }
-
     let message = error.to_string().to_ascii_lowercase();
     message.contains("not found") || message.contains("no such file")
 }
@@ -2586,9 +2491,7 @@ mod tests {
             panic!("expected applied result");
         };
         assert!(requires_reboot);
-        assert_eq!(results[0].node, "cp-1");
         assert_eq!(results[0].message, "applied");
-        assert_eq!(results[0].warnings, vec!["warning"]);
     }
 
     #[tokio::test]
@@ -2644,7 +2547,6 @@ mod tests {
         assert!(matches!(
             result,
             FixExecution::Cancelled {
-                phase: FixExecutionPhase::BeforeConfigApply,
                 requires_reboot: false,
             }
         ));
@@ -2696,46 +2598,6 @@ mod tests {
                 .unwrap()
                 .contains(&reason.reason)
         );
-    }
-
-    #[test]
-    fn patch_preview_retains_target_yaml_and_reboot_requirement() {
-        let request = DiagnosticFixRequest::new(
-            "br_netfilter",
-            target(),
-            DiagnosticFix::kernel_module("br_netfilter"),
-        );
-
-        let preview = request.preview();
-
-        assert!(preview.confirmation_required);
-        assert!(preview.requires_reboot);
-        assert_eq!(preview.target.node_address, "10.0.0.10");
-        assert_eq!(
-            preview.content.as_deref(),
-            Some("machine:\n  kernel:\n    modules:\n      - name: br_netfilter")
-        );
-    }
-
-    #[test]
-    fn copy_guidance_has_no_confirmation_or_reboot_side_effect() {
-        let request = DiagnosticFixRequest::new(
-            "host-module",
-            target(),
-            DiagnosticFix {
-                description: "Load a host module".to_string(),
-                action: DiagnosticFixAction::CopyGuidance {
-                    title: "Load module".to_string(),
-                    text: "sudo modprobe br_netfilter".to_string(),
-                },
-            },
-        );
-
-        let preview = request.preview();
-
-        assert!(!preview.confirmation_required);
-        assert!(!preview.requires_reboot);
-        assert!(!preview.action.is_executable());
     }
 
     #[test]
@@ -2874,5 +2736,29 @@ mod tests {
             checks[0].fix.as_ref().map(|fix| &fix.action),
             Some(DiagnosticFixAction::RestartService { service_id }) if service_id == "kubelet"
         ));
+    }
+
+    #[test]
+    fn missing_file_is_recognized_from_the_error_text_alone() {
+        use talos_rs::TalosError;
+        use tonic::Status;
+        // Every gRPC shape the old category check called not-found carries
+        // "not found" in the status message, which the error's Display prints.
+        for error in [
+            TalosError::Grpc(Status::not_found("file not found")),
+            TalosError::Grpc(Status::unknown("open /run/x: No Such File or directory")),
+            TalosError::Grpc(Status::permission_denied("denied: path NOT FOUND")),
+            TalosError::Grpc(Status::unavailable("peer unavailable, not found in cache")),
+        ] {
+            assert!(is_missing_file_error(&error), "{error}");
+        }
+        for error in [
+            TalosError::Grpc(Status::unavailable("connection refused")),
+            TalosError::Grpc(Status::permission_denied("denied")),
+            TalosError::Connection("timeout".into()),
+            TalosError::ConfigInvalid("bad".into()),
+        ] {
+            assert!(!is_missing_file_error(&error), "{error}");
+        }
     }
 }

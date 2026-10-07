@@ -27,20 +27,6 @@ pub enum HealthIndicator {
 }
 
 impl HealthIndicator {
-    /// Unicode symbol for this status
-    ///
-    /// Returns a single character that visually represents the state.
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            HealthIndicator::Healthy => "●",
-            HealthIndicator::Warning => "◐",
-            HealthIndicator::Error => "✗",
-            HealthIndicator::Pending => "○",
-            HealthIndicator::Info => "○",
-            HealthIndicator::Unknown => "?",
-        }
-    }
-
     /// Human-readable label for this status
     pub fn label(&self) -> &'static str {
         match self {
@@ -51,24 +37,6 @@ impl HealthIndicator {
             HealthIndicator::Info => "Info",
             HealthIndicator::Unknown => "Unknown",
         }
-    }
-
-    /// Check if this represents a healthy state
-    pub fn is_healthy(&self) -> bool {
-        matches!(self, HealthIndicator::Healthy)
-    }
-
-    /// Check if this represents an error state
-    pub fn is_error(&self) -> bool {
-        matches!(self, HealthIndicator::Error)
-    }
-
-    /// Check if this represents a warning or worse
-    pub fn needs_attention(&self) -> bool {
-        matches!(
-            self,
-            HealthIndicator::Warning | HealthIndicator::Error | HealthIndicator::Unknown
-        )
     }
 
     /// Get severity level (for sorting/prioritization)
@@ -83,11 +51,6 @@ impl HealthIndicator {
             HealthIndicator::Warning => 4,
             HealthIndicator::Error => 5,
         }
-    }
-
-    /// Compare severity with another indicator
-    pub fn more_severe_than(&self, other: &HealthIndicator) -> bool {
-        self.severity() > other.severity()
     }
 
     /// Return the more severe of two indicators
@@ -113,16 +76,6 @@ impl std::fmt::Display for HealthIndicator {
 pub trait HasHealth {
     /// Return the current health indicator
     fn health(&self) -> HealthIndicator;
-
-    /// Check if the entity is in a healthy state
-    fn is_healthy(&self) -> bool {
-        self.health().is_healthy()
-    }
-
-    /// Check if the entity needs attention
-    fn needs_attention(&self) -> bool {
-        self.health().needs_attention()
-    }
 }
 
 impl HasHealth for talos_rs::ServiceInfo {
@@ -131,60 +84,6 @@ impl HasHealth for talos_rs::ServiceInfo {
             Some(health) if !health.unknown && health.healthy => HealthIndicator::Healthy,
             Some(health) if !health.unknown => HealthIndicator::Error,
             _ => HealthIndicator::Unknown,
-        }
-    }
-}
-
-/// Connection state indicator
-///
-/// Represents the connection state of a node or service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-pub enum ConnectionState {
-    /// Fully connected and responsive
-    Connected,
-    /// Partially connected or some issues
-    Partial,
-    /// Disconnected or unreachable
-    Disconnected,
-    /// Connection state unknown
-    #[default]
-    Unknown,
-}
-
-impl ConnectionState {
-    /// Unicode symbol for this state
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            ConnectionState::Connected => "●",
-            ConnectionState::Partial => "◐",
-            ConnectionState::Disconnected => "○",
-            ConnectionState::Unknown => "?",
-        }
-    }
-
-    /// Human-readable label
-    pub fn label(&self) -> &'static str {
-        match self {
-            ConnectionState::Connected => "Connected",
-            ConnectionState::Partial => "Partial",
-            ConnectionState::Disconnected => "Disconnected",
-            ConnectionState::Unknown => "Unknown",
-        }
-    }
-
-    /// Check if connected
-    pub fn is_connected(&self) -> bool {
-        matches!(self, ConnectionState::Connected)
-    }
-}
-
-impl From<ConnectionState> for HealthIndicator {
-    fn from(state: ConnectionState) -> Self {
-        match state {
-            ConnectionState::Connected => HealthIndicator::Healthy,
-            ConnectionState::Partial => HealthIndicator::Warning,
-            ConnectionState::Disconnected => HealthIndicator::Error,
-            ConnectionState::Unknown => HealthIndicator::Unknown,
         }
     }
 }
@@ -251,26 +150,6 @@ impl QuorumState {
     pub fn has_quorum(&self) -> bool {
         matches!(self, QuorumState::Healthy | QuorumState::Degraded { .. })
     }
-
-    /// Get display text and color hint for the quorum state
-    pub fn display(&self) -> (&'static str, &'static str) {
-        match self {
-            QuorumState::Healthy => ("HEALTHY", "green"),
-            QuorumState::Degraded { .. } => ("DEGRADED", "yellow"),
-            QuorumState::NoQuorum { .. } => ("NO QUORUM", "red"),
-            QuorumState::Unknown => ("UNKNOWN", "gray"),
-        }
-    }
-
-    /// Get member count as "healthy/total" string
-    pub fn member_count_display(&self) -> String {
-        match self {
-            QuorumState::Healthy => "?/?".to_string(), // Caller should use actual counts
-            QuorumState::Degraded { healthy, total } => format!("{}/{}", healthy, total),
-            QuorumState::NoQuorum { healthy, total } => format!("{}/{}", healthy, total),
-            QuorumState::Unknown => "?/?".to_string(),
-        }
-    }
 }
 
 impl HasHealth for QuorumState {
@@ -299,16 +178,6 @@ pub enum SafetyStatus {
 }
 
 impl SafetyStatus {
-    /// Check if safe to proceed
-    pub fn is_safe(&self) -> bool {
-        matches!(self, SafetyStatus::Safe)
-    }
-
-    /// Check if unknown (still loading)
-    pub fn is_unknown(&self) -> bool {
-        matches!(self, SafetyStatus::Unknown)
-    }
-
     /// Get the reason if unsafe or warning
     pub fn reason(&self) -> Option<&str> {
         match self {
@@ -360,9 +229,8 @@ mod tests {
 
     #[test]
     fn test_health_indicator_severity() {
-        assert!(HealthIndicator::Error.more_severe_than(&HealthIndicator::Warning));
-        assert!(HealthIndicator::Warning.more_severe_than(&HealthIndicator::Healthy));
-        assert!(!HealthIndicator::Healthy.more_severe_than(&HealthIndicator::Warning));
+        assert!(HealthIndicator::Error.severity() > HealthIndicator::Warning.severity());
+        assert!(HealthIndicator::Warning.severity() > HealthIndicator::Healthy.severity());
     }
 
     #[test]
@@ -444,27 +312,11 @@ mod tests {
     }
 
     #[test]
-    fn test_has_health_trait() {
-        let quorum = QuorumState::Healthy;
-        assert!(quorum.is_healthy());
-        assert!(!quorum.needs_attention());
-
-        let degraded = QuorumState::Degraded {
-            healthy: 2,
-            total: 3,
-        };
-        assert!(!degraded.is_healthy());
-        assert!(degraded.needs_attention());
-    }
-
-    #[test]
     fn test_safety_status() {
         let safe = SafetyStatus::Safe;
-        assert!(safe.is_safe());
         assert!(safe.reason().is_none());
 
         let unsafe_op = SafetyStatus::Unsafe("Would lose quorum".to_string());
-        assert!(!unsafe_op.is_safe());
         assert_eq!(unsafe_op.reason(), Some("Would lose quorum"));
     }
 }
