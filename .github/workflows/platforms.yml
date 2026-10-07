@@ -2,6 +2,9 @@ name: Platform checks
 
 # Advisory: a red native run blocks review approval, not the merge button.
 # Keep failures separate from CI: releases promote that workflow's macOS bundles.
+# Linux and Windows check and lint every target; Linux runs the whole test
+# suite in that job, and Windows runs it in its own job, Tests (Windows),
+# which continues on error until the suite passes there.
 on:
   pull_request:
     branches: [main]
@@ -114,3 +117,28 @@ jobs:
       - name: Terminal keyboard UI tests
         if: runner.os == 'Windows'
         run: cargo test -p freshkube-terminal --lib keyboard --locked
+
+  windows-tests:
+    name: Tests (Windows)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # Advisory twice over: a failure here shows on the run but leaves the
+    # workflow green until the Windows suite has been made to pass.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      # No rust-cache: Windows stays uncached until the shared cache budget is
+      # audited (docs/MACOS_PACKAGING.md#ci).
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '36.2'
+          repo-token: ${{ github.token }}
+      - name: Tests (including headless UI tests)
+        # GPUI's test platform needs no display, as on Linux.
+        run: cargo test --workspace --locked --no-fail-fast
