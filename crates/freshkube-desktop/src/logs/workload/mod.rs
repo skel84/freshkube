@@ -14,7 +14,8 @@
 //! Every stream feeds one channel, which one delivery task drains a frame
 //! at a time into a single `ingest`, as Talos services do, however many
 //! containers write. A stream that fails is read again with the watcher's
-//! backoff while its pod is listed.
+//! backoff, jittered, while its pod is listed. One refused for good (403,
+//! or 404) waits instead until the pod list changes or the user asks.
 //!
 //! Nothing is read until the dock's tab for the workload first shows
 //! (`desktop/dock/`). Then the watch and the streams live while the tab
@@ -68,6 +69,42 @@ const DELIVERY_INTERVAL: Duration = Duration::from_millis(16);
 /// watch backs off.
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(30);
+/// How far a retry's wait strays either way, as a share of it, so streams
+/// that fail together don't all read again at once.
+const RETRY_JITTER: f64 = 0.2;
+
+/// Spreads retry waits by up to [`RETRY_JITTER`] either way: a splitmix64
+/// sequence from a seed, random in the app and fixed in tests, so a test
+/// draws the same waits from a clone.
+#[derive(Clone, Debug)]
+pub(super) struct Jitter {
+    state: u64,
+}
+
+impl Jitter {
+    fn new() -> Self {
+        #[cfg(test)]
+        let seed = 0x5EED;
+        #[cfg(not(test))]
+        let seed = {
+            use std::hash::BuildHasher as _;
+            std::collections::hash_map::RandomState::new().hash_one(0u64)
+        };
+        Self { state: seed }
+    }
+
+    /// `wait`, scaled by the next factor in `1 ± RETRY_JITTER`.
+    pub(super) fn spread(&mut self, wait: Duration) -> Duration {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        // The top 53 bits, as a share of one in [0, 1).
+        let unit = (z >> 11) as f64 / (1u64 << 53) as f64;
+        wait.mul_f64(1. - RETRY_JITTER + 2. * RETRY_JITTER * unit)
+    }
+}
 
 /// One container's log: which pod incarnation and container.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -105,6 +142,12 @@ impl StreamState {
             StreamState::Failed(_) => Tone::Crit,
             StreamState::Connecting | StreamState::Ended => Tone::Unknown,
         }
+    }
+
+    /// Refused for good (403, or 404): read again only when the pod list
+    /// changes or the user presses Retry, never on a timer.
+    pub(super) fn refused(&self) -> bool {
+        matches!(self, StreamState::Failed(failure) if failure.kind.is_permanent())
     }
 
     pub(super) fn label(&self) -> String {
@@ -241,6 +284,8 @@ pub(crate) struct WorkloadLogs {
     stress: Option<OwnedJob>,
     /// Failures in a row of each container, for its retry's backoff.
     failures: BTreeMap<StreamKey, u32>,
+    /// Spreads the retries' waits.
+    pub(super) jitter: Jitter,
     /// How far each container was read, kept while the page hides so its
     /// log reads on without repeating a line.
     positions: BTreeMap<StreamKey, LogPosition>,
@@ -263,6 +308,15 @@ pub(crate) struct WorkloadLogs {
     pub(super) fits: usize,
     /// Whether the list of every container is open.
     pub(super) more_open: bool,
+    /// What "+N" reads, and the hidden and total counts it was derived for.
+    pub(super) more_label: SharedString,
+    pub(super) more_for: Option<(usize, usize)>,
+    /// The streams row's accessible name: how many containers it holds.
+    pub(super) streams_label: SharedString,
+    /// The cap's notice, while containers are left out.
+    pub(super) capped: Option<SharedString>,
+    /// The refused streams' notice, while any is refused.
+    pub(super) refused_note: Option<SharedString>,
     /// What the source column and the chips show for each tag: the pod
     /// name without the prefix every pod shares, derived with the chips.
     labels: BTreeMap<ServiceId, SharedString>,
@@ -294,6 +348,7 @@ impl WorkloadLogs {
             #[cfg(feature = "stress")]
             stress: None,
             failures: BTreeMap::new(),
+            jitter: Jitter::new(),
             positions: BTreeMap::new(),
             next_generation: 0,
             left_out: 0,
@@ -306,6 +361,11 @@ impl WorkloadLogs {
             measured: None,
             fits: usize::MAX,
             more_open: false,
+            more_label: SharedString::default(),
+            more_for: None,
+            streams_label: SharedString::default(),
+            capped: None,
+            refused_note: None,
             labels: BTreeMap::new(),
             status: Status {
                 tone: Tone::Unknown,
@@ -383,6 +443,8 @@ impl WorkloadLogs {
                 let shown = !self.hidden.contains(&service);
                 let retrying = if stream.retry.is_some() {
                     ", reading again soon"
+                } else if stream.state.refused() {
+                    ", read again when the pods change"
                 } else {
                     ""
                 };
@@ -417,6 +479,26 @@ impl WorkloadLogs {
         }
         self.chips = Rc::new(chips);
         self.chips_revision += 1;
+        self.streams_label = plural(self.chips.len(), "container", "containers").into();
+        self.capped = (self.left_out > 0).then(|| {
+            format!(
+                "Reading {MAX_STREAMS} of {} containers, the newest pods first.",
+                MAX_STREAMS + self.left_out
+            )
+            .into()
+        });
+        let refused = self
+            .streams
+            .values()
+            .filter(|stream| stream.state.refused())
+            .count();
+        self.refused_note = (refused > 0).then(|| {
+            format!(
+                "Logs refused for {}: read again when the pods change.",
+                plural(refused, "container", "containers")
+            )
+            .into()
+        });
         let pods = self.pods.len();
         let streams = self.streams.len();
         let counts = format!(
@@ -480,6 +562,15 @@ impl WorkloadLogs {
         let service = ServiceId::new(pod);
         self.seen.insert(service.clone());
         LogEvent::marker(service, at.fixed_offset(), text)
+    }
+
+    /// Streams refused for good, with their pods, to read again.
+    fn refused_streams(&self) -> Vec<(StreamKey, ResourceIdentity)> {
+        self.streams
+            .iter()
+            .filter(|(_, stream)| stream.state.refused())
+            .map(|(key, stream)| (key.clone(), stream.pod.clone()))
+            .collect()
     }
 
     /// The tags shown: every tag seen but those the user hid.
@@ -769,6 +860,9 @@ trait Streams: Sized + 'static {
     /// Watches the pods again after a failure.
     fn retry(&mut self, cx: &mut Context<Self>);
 
+    /// Reads every refused stream again, as Retry asks.
+    fn retry_refused(&mut self, cx: &mut Context<Self>);
+
     /// Takes the pods as last seen by the watch of `epoch`. Returns false
     /// when that watch is gone, which ends its delivery.
     fn apply_pods(&mut self, epoch: u64, pods: WorkloadPods, cx: &mut Context<Self>) -> bool;
@@ -914,6 +1008,18 @@ impl Streams for WorkloadLogView {
         }
     }
 
+    fn retry_refused(&mut self, cx: &mut Context<Self>) {
+        let refused = self.source().refused_streams();
+        if refused.is_empty() {
+            return;
+        }
+        for (key, pod) in refused {
+            self.start_stream(key, pod, cx);
+        }
+        self.source_mut().describe();
+        cx.notify();
+    }
+
     fn apply_pods(
         &mut self,
         epoch: u64,
@@ -952,6 +1058,8 @@ impl Streams for WorkloadLogView {
             .map(|pod| (pod.name.clone(), pod.uid.clone()))
             .collect();
         let mut markers = Vec::new();
+        // A pod added, removed or replaced: what was refused may be read now.
+        let changed = source.known.as_ref().is_some_and(|known| *known != now);
         if let Some(known) = source.known.take() {
             for (pod, _) in known.difference(&now) {
                 markers.push((pod.clone(), format!("Pod {pod} left")));
@@ -1015,11 +1123,18 @@ impl Streams for WorkloadLogView {
             .into_iter()
             .filter(|(key, _)| !source.streams.contains_key(key))
             .collect();
+        // Taken before the new streams start, so one refused at once isn't
+        // read twice.
+        let refused = if changed {
+            source.refused_streams()
+        } else {
+            Vec::new()
+        };
         if !markers.is_empty() {
             self.clear_shown();
             self.ingest(markers, cx);
         }
-        for (key, pod) in new {
+        for (key, pod) in new.into_iter().chain(refused) {
             self.start_stream(key, pod, cx);
         }
         self.clear_shown();
@@ -1227,7 +1342,10 @@ impl Streams for WorkloadLogView {
                     stream.job = None;
                     source.errors.insert(service, failure.to_string());
                     stream.state = StreamState::Failed(failure);
-                    failed.push((key, generation));
+                    // A refusal waits for the pod list to change, or Retry.
+                    if !stream.state.refused() {
+                        failed.push((key, generation));
+                    }
                     changed = true;
                 }
             }
@@ -1248,9 +1366,10 @@ impl Streams for WorkloadLogView {
         let source = self.source_mut();
         let failures = source.failures.entry(key.clone()).or_default();
         *failures += 1;
-        let delay = RETRY_FIRST
+        let wait = RETRY_FIRST
             .saturating_mul(1 << (*failures - 1).min(5))
             .min(RETRY_MAX);
+        let delay = source.jitter.spread(wait);
         let retry_key = key.clone();
         let task = cx.spawn(async move |weak, cx| {
             cx.background_executor().timer(delay).await;

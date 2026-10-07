@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, App, AppContext, Entity, TestAppContext, px, size};
@@ -9,8 +11,8 @@ use freshkube_core::resources::{
 };
 
 use super::{
-    EXAMPLE_INTERVAL, Fed, MAX_STREAMS, PodsState, RETRY_FIRST, StreamKey, StreamState, Streams,
-    WorkloadLogPanel, WorkloadLogView,
+    EXAMPLE_INTERVAL, Fed, Jitter, MAX_STREAMS, PodsState, RETRY_FIRST, RETRY_JITTER, RETRY_MAX,
+    StreamKey, StreamState, Streams, WorkloadLogPanel, WorkloadLogView,
 };
 use crate::desktop::probe;
 use crate::resources::model::ResourceIdentity;
@@ -651,16 +653,22 @@ fn busy_streams_are_applied_once_a_delivery(cx: &mut TestAppContext) {
     }
 }
 
-/// A refused stream reads again with a backoff while its pod is listed,
-/// and stops once the pod goes.
+/// A refused stream isn't read again on a timer: only when the pod list
+/// changes (a pod added or removed), or on Retry.
 #[gpui_kit::test]
-fn a_failed_stream_reads_again_with_a_backoff(cx: &mut TestAppContext) {
+fn a_refused_stream_waits_for_the_pods_to_change_or_retry(cx: &mut TestAppContext) {
     let (_runtime, view, handle) = mount(cx);
     let metrics = deployment("metrics-server");
     let refused = pods(&metrics, "app=metrics-server");
     let refused_key = key(&refused[0]);
     let generation = |cx: &mut TestAppContext| {
         cx.update(|cx| view.read(cx).source().streams[&refused_key].generation)
+    };
+    let still_refused = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let stream = &view.read(cx).source().streams[&refused_key];
+            stream.state.refused() && stream.retry.is_none()
+        })
     };
     cx.update_window(handle, |_, window, cx| {
         show_fed(&view, &metrics, cx);
@@ -673,31 +681,133 @@ fn a_failed_stream_reads_again_with_a_backoff(cx: &mut TestAppContext) {
             .unwrap()
             .to_owned();
         assert!(label.contains("Failed"), "{label}");
-        assert!(label.contains("reading again soon"), "{label}");
+        assert!(label.contains("read again when the pods change"), "{label}");
+        assert_eq!(
+            window.find("workload-logs-refused").label(),
+            Some("Logs refused for 1 container: read again when the pods change.")
+        );
     })
     .unwrap();
+    assert!(still_refused(cx));
     let first = generation(cx);
-    cx.executor().advance_clock(RETRY_FIRST / 2);
+    cx.executor().advance_clock(RETRY_MAX * 4);
     cx.run_until_parked();
     assert_eq!(generation(cx), first);
-    cx.executor().advance_clock(RETRY_FIRST);
-    cx.run_until_parked();
+
+    // The same pods listed again change nothing.
+    cx.update(|cx| feed(&view, refused.clone(), cx));
+    assert_eq!(generation(cx), first);
+
+    // A pod joins: the refused stream is read again, and refused again.
+    let mut joined = refused.clone();
+    joined.push(pods(&deployment("coredns"), "app=coredns").remove(0));
+    cx.update(|cx| feed(&view, joined, cx));
     let second = generation(cx);
     assert!(second > first);
-    // The next wait doubles: the retry at one second fails again at once
-    // and waits two.
-    cx.executor().advance_clock(RETRY_FIRST);
+    assert!(still_refused(cx));
+
+    // It leaves: read again.
+    cx.update(|cx| feed(&view, refused.clone(), cx));
+    let third = generation(cx);
+    assert!(third > second);
+    cx.executor().advance_clock(RETRY_MAX * 4);
     cx.run_until_parked();
-    assert_eq!(generation(cx), second);
-    cx.executor().advance_clock(RETRY_FIRST);
-    cx.run_until_parked();
-    assert!(generation(cx) > second);
+    assert_eq!(generation(cx), third);
+
+    // Retry reads it again at once.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("workload-logs-retry-refused", cx);
+    })
+    .unwrap();
+    assert!(generation(cx) > third);
+    assert!(still_refused(cx));
+}
+
+/// A stream that fails for a while reads again with the watcher's backoff,
+/// each wait spread by the jitter, and stops once its pod goes.
+#[gpui_kit::test]
+fn a_failed_stream_reads_again_with_a_jittered_backoff(cx: &mut TestAppContext) {
+    use freshkube_core::resources::{Failure, FailureKind};
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // The container still being created: read again, it waits again, so
+    // its failures add up.
+    let waiting = cx.update(|cx| {
+        view.read(cx)
+            .source()
+            .streams
+            .iter()
+            .find(|(_, stream)| matches!(stream.state, StreamState::Waiting(_)))
+            .map(|(key, _)| key.clone())
+            .unwrap()
+    });
+    let generation = |cx: &mut TestAppContext| {
+        cx.update(|cx| view.read(cx).source().streams[&waiting].generation)
+    };
+    let fail = |cx: &mut TestAppContext| {
+        let generation = generation(cx);
+        let unreachable = Failure::new(FailureKind::Unreachable, "connection refused".to_owned());
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.apply_updates(
+                    &waiting,
+                    generation,
+                    vec![PodLogUpdate::Failed(unreachable)],
+                    cx,
+                ));
+            })
+        });
+    };
+    // The waits the view will draw, from the same sequence.
+    let mut jitter = cx.update(|cx| view.read(cx).source().jitter.clone());
+    let tick = Duration::from_millis(1);
+    for wait in [RETRY_FIRST, RETRY_FIRST * 2] {
+        let delay = jitter.spread(wait);
+        assert_ne!(delay, wait);
+        let before = generation(cx);
+        fail(cx);
+        cx.executor().advance_clock(delay - tick);
+        cx.run_until_parked();
+        assert_eq!(generation(cx), before, "{wait:?} spread to {delay:?}");
+        cx.executor().advance_clock(tick);
+        cx.run_until_parked();
+        assert!(generation(cx) > before, "{wait:?} spread to {delay:?}");
+    }
 
     // Once the pod goes, nothing reads it again.
-    cx.update(|cx| feed(&view, Vec::new(), cx));
-    cx.executor().advance_clock(RETRY_FIRST * 64);
+    fail(cx);
+    let rest: Vec<_> = all
+        .iter()
+        .filter(|pod| pod.name != waiting.pod)
+        .cloned()
+        .collect();
+    cx.update(|cx| feed(&view, rest, cx));
+    cx.executor().advance_clock(RETRY_MAX * 4);
     cx.run_until_parked();
-    assert!(cx.update(|cx| view.read(cx).source().streams.is_empty()));
+    assert!(cx.update(|cx| !view.read(cx).source().streams.contains_key(&waiting)));
+}
+
+#[test]
+fn retry_waits_spread_across_the_jitter() {
+    let mut jitter = Jitter::new();
+    let wait = Duration::from_secs(10);
+    let (least, most) = (
+        wait.mul_f64(1. - RETRY_JITTER),
+        wait.mul_f64(1. + RETRY_JITTER),
+    );
+    let draws: Vec<Duration> = (0..1_000).map(|_| jitter.spread(wait)).collect();
+    assert!(draws.iter().all(|&delay| delay >= least && delay <= most));
+    // Spread over the whole range, not bunched at the plain wait.
+    assert!(draws.iter().any(|&delay| delay < wait.mul_f64(0.85)));
+    assert!(draws.iter().any(|&delay| delay > wait.mul_f64(1.15)));
 }
 
 #[gpui_kit::test]
