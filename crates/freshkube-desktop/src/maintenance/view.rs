@@ -1,6 +1,11 @@
 //! The view's presentation: the title bar, the form, the workflow and its
 //! panels, the progress log and the status bar.
 use super::*;
+use freshkube_core::maintenance::GeneratedConfiguration;
+use freshkube_ui::page::{self, PageHeader};
+
+/// The prefix of the page header's ids.
+const PREFIX: &str = "maint";
 
 fn phase_label(phase: &BootstrapPhase) -> (&'static str, Tone) {
     match phase {
@@ -135,7 +140,7 @@ impl MaintenanceView {
             .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
             .child(
                 h_flex()
-                    .id("maint-title")
+                    .id("maint-location")
                     .test_support()
                     .role(Role::Status)
                     .aria_label("Maintenance mode: insecure Talos access")
@@ -423,44 +428,10 @@ impl MaintenanceView {
             );
         };
         let phase = &session.phase;
-        let (label, tone) = phase_label(phase);
-        let mut column = v_flex().gap_4().min_w_0();
-        column = column.child(
-            panel(cx)
-                .p_4()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .gap_3()
-                        .items_center()
-                        .flex_wrap()
-                        .child(
-                            div()
-                                .id("maint-phase")
-                                .test_support()
-                                .role(Role::Status)
-                                .aria_label(format!("Phase: {label}"))
-                                .child(ui::tag(tone, None, label, cx)),
-                        )
-                        .child(mono(format!(
-                            "{} · context {} · poll attempts {}",
-                            session.plan.endpoint,
-                            session.plan.authenticated_target.talos_context,
-                            session.poll_attempts
-                        ))),
-                )
-                .when_some(session.last_message.clone(), |this, message| {
-                    this.child(
-                        div()
-                            .id("maint-message")
-                            .test_support()
-                            .role(Role::Status)
-                            .aria_label(message.clone())
-                            .text_size(dp(13.))
-                            .child(message),
-                    )
-                }),
-        );
+        let mut column = v_flex()
+            .gap_4()
+            .min_w_0()
+            .child(self.phase_panel(session, cx));
         if let Some(snapshot) = &session.insecure_snapshot {
             column = column
                 .child(self.snapshot_panel(snapshot, cx))
@@ -489,6 +460,79 @@ impl MaintenanceView {
                     )),
             );
         }
+        if let Some(configuration) = &session.generated_configuration {
+            column = column.child(self.generated_files(configuration, cx));
+        }
+        if let Some(review) = self.review_panel(cx) {
+            column = column.child(review);
+        }
+        let configuring = [
+            BootstrapPhase::Configuring,
+            BootstrapPhase::ConfigurationReady,
+            BootstrapPhase::AwaitingApplyConfirmation,
+        ]
+        .contains(phase)
+            || session.generated_configuration.is_some();
+        if configuring {
+            column = column.child(self.workflow_actions(session, busy, cx));
+        }
+        if *phase == BootstrapPhase::ReadyToBootstrap {
+            column = column.child(self.bootstrap_confirmation(session, busy, cx));
+        }
+        if let Some(evidence) = &session.latest_readiness {
+            column = column.child(self.readiness_panel(evidence, cx));
+        }
+        column.child(self.workflow_controls(session, busy, cx))
+    }
+
+    /// The phase, the node and the last message.
+    fn phase_panel(&self, session: &BootstrapSession, cx: &App) -> Div {
+        let phase = &session.phase;
+        let (label, tone) = phase_label(phase);
+        panel(cx)
+            .p_4()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .flex_wrap()
+                    .child(
+                        div()
+                            .id("maint-phase")
+                            .test_support()
+                            .role(Role::Status)
+                            .aria_label(format!("Phase: {label}"))
+                            .child(ui::tag(tone, None, label, cx)),
+                    )
+                    .child(mono(format!(
+                        "{} · context {} · poll attempts {}",
+                        session.plan.endpoint,
+                        session.plan.authenticated_target.talos_context,
+                        session.poll_attempts
+                    ))),
+            )
+            .when_some(session.last_message.clone(), |this, message| {
+                this.child(
+                    div()
+                        .id("maint-message")
+                        .test_support()
+                        .role(Role::Status)
+                        .aria_label(message.clone())
+                        .text_size(dp(13.))
+                        .child(message),
+                )
+            })
+    }
+
+    /// The steps from generating the configuration to applying it.
+    fn workflow_actions(
+        &self,
+        session: &BootstrapSession,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let phase = &session.phase;
         let mut actions = h_flex().gap_2().flex_wrap();
         if *phase == BootstrapPhase::Configuring {
             actions = actions.child(
@@ -526,109 +570,108 @@ impl MaintenanceView {
                     .on_click(cx.listener(|view, _, window, cx| view.confirm_apply(window, cx))),
             );
         }
-        if let Some(configuration) = &session.generated_configuration {
-            column = column.child(
-                panel(cx)
-                    .p_4()
-                    .gap_2()
-                    .child(heading("Generated files"))
-                    .child(field(
-                        "Machine config",
-                        mono(configuration.machine_config_path.display().to_string()),
-                        cx,
-                    ))
-                    .child(field(
-                        "Talosconfig",
-                        mono(configuration.talosconfig_path.display().to_string()),
-                        cx,
-                    )),
-            );
-        }
-        if let Some(review) = self.review_panel(cx) {
-            column = column.child(review);
-        }
-        let configuring = [
-            BootstrapPhase::Configuring,
-            BootstrapPhase::ConfigurationReady,
-            BootstrapPhase::AwaitingApplyConfirmation,
-        ]
-        .contains(phase)
-            || session.generated_configuration.is_some();
-        if configuring {
-            column = column.child(actions);
-        }
-        if *phase == BootstrapPhase::ReadyToBootstrap {
-            column = match session.plan.role {
-                MachineRole::ControlPlane => column.child(
-                    panel(cx)
-                        .p_4()
-                        .gap_2()
-                        .child(heading("Separate cluster bootstrap confirmation"))
-                        .child(div().text_size(dp(13.)).child("The secure Talos API answered from the explicit node. Bootstrap initializes etcd and must run on the intended first control plane only."))
-                        .child(
-                            div().child(
-                                Button::new("maint-bootstrap")
-                                    .danger()
-                                    .label("Bootstrap this node…")
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.confirm_bootstrap(window, cx)
-                                    })),
-                            ),
-                        ),
-                ),
-                MachineRole::Worker => column.child(
-                    div()
-                        .id("maint-worker-note")
-                        .test_support()
-                        .role(Role::Status)
-                        .aria_label("Worker installation reached its secure Talos API; do not bootstrap etcd on a worker")
-                        .child(ui::warning_banner(
-                            None,
-                            "Worker installation reached its secure Talos API. Do not bootstrap etcd on a worker; cluster bootstrap is performed separately on the first control plane.",
-                            None,
-                            cx,
-                        )),
-                ),
-            };
-        }
-        if let Some(evidence) = &session.latest_readiness {
-            column = column.child(self.readiness_panel(evidence, cx));
-        }
+        actions
+    }
+
+    /// Where the generated machine config and talosconfig were written.
+    fn generated_files(&self, configuration: &GeneratedConfiguration, cx: &App) -> Div {
+        panel(cx)
+            .p_4()
+            .gap_2()
+            .child(heading("Generated files"))
+            .child(field(
+                "Machine config",
+                mono(configuration.machine_config_path.display().to_string()),
+                cx,
+            ))
+            .child(field(
+                "Talosconfig",
+                mono(configuration.talosconfig_path.display().to_string()),
+                cx,
+            ))
+    }
+
+    /// Ready to bootstrap: a control plane's separate confirmation, or a
+    /// worker's note that it never bootstraps.
+    fn bootstrap_confirmation(
+        &self,
+        session: &BootstrapSession,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match session.plan.role {
+        MachineRole::ControlPlane =>             panel(cx)
+                .p_4()
+                .gap_2()
+                .child(heading("Separate cluster bootstrap confirmation"))
+                .child(div().text_size(dp(13.)).child("The secure Talos API answered from the explicit node. Bootstrap initializes etcd and must run on the intended first control plane only."))
+                .child(
+                    div().child(
+                        Button::new("maint-bootstrap")
+                            .danger()
+                            .label("Bootstrap this node…")
+                            .disabled(busy)
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.confirm_bootstrap(window, cx)
+                            })),
+                    ),
+                )
+                .into_any_element(),
+        MachineRole::Worker =>             div()
+                .id("maint-worker-note")
+                .test_support()
+                .role(Role::Status)
+                .aria_label("Worker installation reached its secure Talos API; do not bootstrap etcd on a worker")
+                .child(ui::warning_banner(
+                    None,
+                    "Worker installation reached its secure Talos API. Do not bootstrap etcd on a worker; cluster bootstrap is performed separately on the first control plane.",
+                    None,
+                    cx,
+                ))
+                .into_any_element(),
+    }
+    }
+
+    /// Poll now, cancel and reset, under every phase.
+    fn workflow_controls(
+        &self,
+        session: &BootstrapSession,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let phase = &session.phase;
         let finished = matches!(
             phase,
             BootstrapPhase::Complete | BootstrapPhase::Cancelled | BootstrapPhase::Failed(_)
         );
-        column.child(
-            h_flex()
-                .gap_2()
-                .flex_wrap()
-                .child(
-                    Button::new("maint-poll")
-                        .outline()
-                        .small()
-                        .label("Poll secure Talos / etcd / Kubernetes now")
-                        .disabled(busy || session.polling_action().is_none())
-                        .on_click(cx.listener(|view, _, window, cx| view.poll_now(window, cx))),
-                )
-                .child(
-                    Button::new("maint-cancel")
-                        .outline()
-                        .small()
-                        .label("Cancel / stop polling")
-                        .disabled(finished)
-                        .tooltip("Stops before the next step; a request already sent to the node still completes")
-                        .on_click(cx.listener(|view, _, _, cx| view.cancel(cx))),
-                )
-                .child(
-                    Button::new("maint-reset")
-                        .outline()
-                        .small()
-                        .label("Reset workflow (keeps generated files)")
-                        .disabled(busy)
-                        .on_click(cx.listener(|view, _, _, cx| view.reset(cx))),
-                ),
-        )
+        h_flex()
+            .gap_2()
+            .flex_wrap()
+            .child(
+                Button::new("maint-poll")
+                    .outline()
+                    .small()
+                    .label("Poll secure Talos / etcd / Kubernetes now")
+                    .disabled(busy || session.polling_action().is_none())
+                    .on_click(cx.listener(|view, _, window, cx| view.poll_now(window, cx))),
+            )
+            .child(
+                Button::new("maint-cancel")
+                    .outline()
+                    .small()
+                    .label("Cancel / stop polling")
+                    .disabled(finished)
+                    .tooltip("Stops before the next step; a request already sent to the node still completes")
+                    .on_click(cx.listener(|view, _, _, cx| view.cancel(cx))),
+            )
+            .child(
+                Button::new("maint-reset")
+                    .outline()
+                    .small()
+                    .label("Reset workflow (keeps generated files)")
+                    .disabled(busy)
+                    .on_click(cx.listener(|view, _, _, cx| view.reset(cx))),
+            )
     }
 
     fn progress_panel(&self, cx: &App) -> impl IntoElement {
@@ -698,11 +741,9 @@ impl MaintenanceView {
 
 impl Render for MaintenanceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
-        let error = self.error.clone();
-        let form = self.form(cx);
-        let workflow = self.workflow(window, cx);
-        let progress = self.progress_panel(cx);
+        let header = PageHeader::new(PREFIX, "Maintenance").render(window, cx);
+        let banners = self.render_banners(cx);
+        let columns = self.render_columns(window, cx);
         v_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -711,56 +752,78 @@ impl Render for MaintenanceView {
             .child(self.title_bar(cx))
             .child(
                 div().flex_1().min_h_0().child(
-                    page_scroll("maint-page").child(
-                        page_body()
-                            .child(
-                                div()
-                                    .id("maint-warning")
-                                    .test_support()
-                                    .role(Role::Status)
-                                    .aria_label("Insecure Talos access: verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.")
-                                    .child(ui::warning_banner(
-                                        Some("Insecure Talos access".into()),
-                                        "Verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.",
-                                        None,
-                                        cx,
-                                    )),
-                            )
-                            .when_some(error, |this, error| {
-                                this.child(
-                                    div()
-                                        .id("maint-error")
-                                        .test_support()
-                                        .role(Role::Alert)
-                                        .aria_label(error.clone())
-                                        .px_3()
-                                        .py_2p5()
-                                        .rounded(px(8.))
-                                        .bg(p.crit_soft)
-                                        .text_color(p.crit_ink)
-                                        .text_size(dp(13.))
-                                        .child(error),
-                                )
-                            })
-                            .child(
-                                h_flex()
-                                    .items_start()
-                                    .gap_5()
-                                    .flex_wrap()
-                                    .child(div().w(dp(440.)).flex_none().child(form))
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .min_w(dp(420.))
-                                            .gap_4()
-                                            .child(workflow)
-                                            .child(progress),
-                                    ),
-                            ),
-                    ),
+                    page::padded("maint-page")
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .child(header)
+                        .child(banners)
+                        .child(columns),
                 ),
             )
             .child(self.status_bar(cx))
+    }
+}
+
+impl MaintenanceView {
+    /// The insecure-access warning, and the last error under it.
+    fn render_banners(&self, cx: &App) -> Div {
+        let p = palette(cx);
+        let error = self.error.clone();
+        v_flex()
+            .flex_none()
+            .gap(dp(page::PAGE_GAP))
+            .child(
+                div()
+                    .id("maint-warning")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label("Insecure Talos access: verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.")
+                    .child(ui::warning_banner(
+                        Some("Insecure Talos access".into()),
+                        "Verify the exact physical node. Applying configuration can erase the selected disk. No ambient Talos or Kubernetes cluster is used.",
+                        None,
+                        cx,
+                    )),
+            )
+            .when_some(error, |this, error| {
+                this.child(
+                    div()
+                        .id("maint-error")
+                        .test_support()
+                        .role(Role::Alert)
+                        .aria_label(error.clone())
+                        .px_3()
+                        .py_2p5()
+                        .rounded(px(8.))
+                        .bg(p.crit_soft)
+                        .text_color(p.crit_ink)
+                        .text_size(dp(13.))
+                        .child(error),
+                )
+            })
+    }
+
+    /// The form at the left, the workflow and its progress at the right.
+    fn render_columns(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let form = self.form(cx);
+        let workflow = self.workflow(window, cx);
+        let progress = self.progress_panel(cx);
+        h_flex()
+            .id("maint-columns")
+            .test_support()
+            .flex_none()
+            .items_start()
+            .gap_5()
+            .flex_wrap()
+            .child(div().w(dp(440.)).flex_none().child(form))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(dp(420.))
+                    .gap_4()
+                    .child(workflow)
+                    .child(progress),
+            )
     }
 }
 

@@ -46,7 +46,7 @@ use crate::{
     actions,
     mutation::{self, Confirmation, Operations},
     palette::palette,
-    screens::{field, mono, page_body, page_scroll, panel},
+    screens::{field, mono, panel},
     ui::{self, MONO_FONT, Tone, dp},
 };
 
@@ -725,32 +725,13 @@ impl MaintenanceView {
             return false;
         }
         let mutation = is_mutation(&action);
-        let read_label = match &action {
-            MaintenanceAction::CollectInsecure { .. } => {
-                "Reading the node over the insecure Talos API…"
-            }
-            _ => "Polling the secure Talos, etcd and Kubernetes APIs…",
-        };
+        let label = action_label(&action);
         let operations = Operations::global(cx);
         let ticket = if mutation {
-            let label = match &action {
-                MaintenanceAction::GenerateConfiguration(_) => {
-                    "Maintenance: generating configuration"
-                }
-                MaintenanceAction::ApplyConfiguration(_) => "Maintenance: applying configuration",
-                _ => "Maintenance: bootstrapping etcd",
+            let Some(ticket) = self.begin_mutation(label, cx) else {
+                return false;
             };
-            match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
-                Ok(ticket) => Some(ticket),
-                Err(running) => {
-                    self.error = Some(format!(
-                        "{} is still running; try again when it has finished.",
-                        running.label
-                    ));
-                    cx.notify();
-                    return false;
-                }
-            }
+            Some(ticket)
         } else {
             None
         };
@@ -775,7 +756,7 @@ impl MaintenanceView {
             label: if mutation {
                 "Changing the node".into()
             } else {
-                read_label.into()
+                label.into()
             },
             cancel,
             // A submitted mutation is never abandoned.
@@ -794,6 +775,27 @@ impl MaintenanceView {
         .detach();
         cx.notify();
         true
+    }
+
+    /// Takes the shared operation slot for a mutation labelled `label`. When
+    /// something else holds it, says so and returns `None`.
+    fn begin_mutation(
+        &mut self,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Option<mutation::OperationTicket> {
+        let operations = Operations::global(cx);
+        match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
+            Ok(ticket) => Some(ticket),
+            Err(running) => {
+                self.error = Some(format!(
+                    "{} is still running; try again when it has finished.",
+                    running.label
+                ));
+                cx.notify();
+                None
+            }
+        }
     }
 
     /// Applies a finished run's result. `None` means the worker ended without
@@ -824,5 +826,24 @@ impl MaintenanceView {
             }
         }
         cx.notify();
+    }
+}
+
+/// What runs while `action` does: the operation slot's label for a
+/// mutation, else what the read is doing.
+fn action_label(action: &MaintenanceAction) -> &'static str {
+    if is_mutation(action) {
+        match action {
+            MaintenanceAction::GenerateConfiguration(_) => "Maintenance: generating configuration",
+            MaintenanceAction::ApplyConfiguration(_) => "Maintenance: applying configuration",
+            _ => "Maintenance: bootstrapping etcd",
+        }
+    } else {
+        match action {
+            MaintenanceAction::CollectInsecure { .. } => {
+                "Reading the node over the insecure Talos API…"
+            }
+            _ => "Polling the secure Talos, etcd and Kubernetes APIs…",
+        }
     }
 }
