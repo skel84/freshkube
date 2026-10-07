@@ -808,6 +808,109 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Escape steps back from each kind of tab as on Resources (#334): the
+/// tab's own levels first, then the keyboard to the table with the pane
+/// left open, then the pane closes, keeping its node selected.
+#[gpui_kit::test]
+fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    let press = |cx: &mut TestAppContext, key: &str| {
+        cx.update_window(handle, |_, window, cx| window.press(key, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let pilot = pilot.read(cx);
+            (
+                pilot.node_workspace.open,
+                pilot.node_focus.is_focused(window),
+            )
+        })
+        .unwrap()
+    };
+    let show = |cx: &mut TestAppContext, tab: NodeTab| {
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| pilot.show_node_tab(tab, window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let key = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            window.render_frame(cx);
+            crate::desktop::tests::expand_healthy_nodes(window, cx);
+            window.click("node-talos-cp-fra1-01", cx);
+            window.render_frame(cx);
+            pilot.read(cx).node_workspace.selected.clone().unwrap()
+        })
+        .unwrap();
+
+    // Pods: the filter clears, then leaves; the list hands the keyboard
+    // to the table.
+    show(cx, NodeTab::Pods);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot
+                .node_pods
+                .update(cx, |pods, cx| pods.focus(window, cx))
+        });
+        window.press("/", cx);
+        window.input("zz", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(press(cx, "escape"), (true, false), "the filter clears");
+    assert_eq!(press(cx, "escape"), (true, false), "the filter leaves");
+    assert_eq!(press(cx, "escape"), (true, true), "the list steps back");
+    assert_eq!(
+        pilot.read_with(cx, |p, _| p.node_workspace.tab),
+        NodeTab::Pods
+    );
+
+    // YAML: find clears, then leaves; the document hands the keyboard to
+    // the table.
+    show(cx, NodeTab::Yaml);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot
+                .node_workspace
+                .document
+                .update(cx, |pane, cx| pane.focus(window, cx))
+        });
+        window.press("secondary-f", cx);
+        window.input("kind", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(press(cx, "escape"), (true, false), "find clears");
+    assert_eq!(press(cx, "escape"), (true, false), "find leaves");
+    assert_eq!(press(cx, "escape"), (true, true), "the document steps back");
+    assert_eq!(
+        pilot.read_with(cx, |p, _| p.node_workspace.tab),
+        NodeTab::Yaml
+    );
+
+    // Logs: the log hands the keyboard to the table.
+    show(cx, NodeTab::Logs);
+    assert!(
+        !cx.update_window(handle, |_, window, cx| {
+            pilot.read(cx).node_focus.is_focused(window)
+        })
+        .unwrap()
+    );
+    assert_eq!(press(cx, "escape"), (true, true), "the log steps back");
+
+    // The table closes the pane and keeps the node selected.
+    assert_eq!(press(cx, "escape"), (false, true));
+    pilot.read_with(cx, |pilot, _| {
+        assert_eq!(pilot.node_workspace.selected.as_ref(), Some(&key));
+        assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
+    });
+}
+
 #[gpui_kit::test]
 fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);

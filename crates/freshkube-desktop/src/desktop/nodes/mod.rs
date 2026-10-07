@@ -12,7 +12,7 @@ mod view;
 
 use super::{NodeView, Page, Pilot};
 use crate::{
-    resources::{DetailPane, Tab, detail::DetailTarget, model::ResourceIdentity},
+    resources::{DetailEvent, DetailPane, Tab, detail::DetailTarget, model::ResourceIdentity},
     ui,
 };
 use freshkube_core::monitoring::history::Subject;
@@ -97,6 +97,8 @@ pub(super) struct Nodes {
     /// The status bar's segment while Nodes shows.
     pub(super) status: freshkube_ui::status::Segment,
     _query_subscription: Subscription,
+    /// The node document's Escape, stepping back from its last level.
+    _document_subscription: Subscription,
     table: freshkube_ui::table::TableState,
     all_columns: Vec<table::Column>,
     menu_columns: Arc<Vec<(table::Field, SharedString)>>,
@@ -170,6 +172,13 @@ impl Nodes {
                     _ => {}
                 },
             );
+        let document = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
+        let document_subscription =
+            cx.subscribe_in(&document, window, |pilot, _, event, window, cx| {
+                if matches!(event, DetailEvent::Leave) {
+                    pilot.node_back(window, cx);
+                }
+            });
         Self {
             rows: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
@@ -185,6 +194,7 @@ impl Nodes {
             search_keys: Vec::new(),
             status: freshkube_ui::status::Segment::new(None::<SharedString>, ["Not connected"]),
             _query_subscription: subscription,
+            _document_subscription: document_subscription,
             table: freshkube_ui::table::TableState::new("nodes"),
             all_columns: Vec::new(),
             menu_columns: Arc::new(Vec::new()),
@@ -216,7 +226,7 @@ impl Nodes {
                     cx,
                 )
             },
-            document: cx.new(|cx| DetailPane::new(runtime, window, cx)),
+            document,
         }
     }
     pub(super) fn row(&self) -> Option<&NodeRow> {

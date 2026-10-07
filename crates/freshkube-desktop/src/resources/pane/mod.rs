@@ -271,6 +271,9 @@ impl DetailPane {
             KeyBinding::new("secondary-c", CopyLines, Some("NodeDocument")),
             KeyBinding::new("secondary-g", FindNextMatch, Some("NodeDocument")),
             KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some("NodeDocument")),
+            // As in the drawer: clear find, leave it, clear a selection,
+            // then hand the keyboard back to the node table (`Leave`).
+            KeyBinding::new("escape", Dismiss, Some("NodeDocument")),
         ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
         let ports = cx.new(|cx| PortsView::new(runtime.clone(), window, cx));
