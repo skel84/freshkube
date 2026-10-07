@@ -2338,6 +2338,70 @@ fn open_menu(
     .unwrap()
 }
 
+/// A row's tooltip, such as its name's, doesn't draw over the menu the
+/// row opened, and shows again once the menu is gone.
+#[gpui_kit::test]
+fn no_row_tooltip_draws_while_its_menu_is_open(cx: &mut TestAppContext) {
+    use freshkube_ui::tooltip::drawn_total;
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let row = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let row = row_id(&identity_at(&screen, 0, cx));
+            window.within(row.clone()).hover("name", cx);
+            row
+        })
+        .unwrap();
+    let shown = |cx: &mut TestAppContext| {
+        // Past the tooltip's show delay.
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let before = drawn_total();
+            window.render_frame(cx);
+            drawn_total() > before
+        })
+        .unwrap()
+    };
+    assert!(shown(cx), "the name's tooltip never showed");
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row.clone()).right_click("name", cx)
+    });
+    assert!(!items.is_empty());
+    // The pointer rests on the name, left of the menu that opened at its
+    // middle.
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::{InputEvent, MouseMoveEvent, point, px};
+        let name = window.within(row.clone()).find("name").bounds();
+        let position = point(name.left() + px(4.), name.center().y);
+        window.dispatch_event(
+            MouseMoveEvent {
+                position,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(!shown(cx), "a tooltip drew over the open menu");
+    // A click outside closes the menu; the pointer comes back to the name.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("resource-filter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("popup-menu").is_none(), "the menu stayed");
+        window.within(row).hover("name", cx);
+    })
+    .unwrap();
+    assert!(shown(cx), "the tooltip stayed hidden after the menu closed");
+}
+
 #[gpui_kit::test]
 fn a_right_click_selects_its_row_before_the_menu_acts(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));

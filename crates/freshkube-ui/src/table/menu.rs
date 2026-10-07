@@ -6,7 +6,7 @@
 //! (`⇧X` on macOS, `Shift+X` elsewhere).
 
 use gpui_kit::component::menu::PopupMenu;
-use gpui_kit::{Action, FocusHandle, SharedString};
+use gpui_kit::{Action, Context, FocusHandle, SharedString};
 
 /// One line of a row's menu.
 pub enum RowAction {
@@ -43,8 +43,15 @@ impl RowAction {
 
 /// Adds `actions` to `menu`, dispatched to `focus`: the page's list, where
 /// their keys are bound, so each item shows its key and runs its handler.
-/// A separator at either end or next to another is dropped.
-pub fn row_menu(menu: PopupMenu, actions: Vec<RowAction>, focus: &FocusHandle) -> PopupMenu {
+/// A separator at either end or next to another is dropped. While the
+/// menu is open, no row tooltip draws over it.
+pub fn row_menu(
+    menu: PopupMenu,
+    actions: Vec<RowAction>,
+    focus: &FocusHandle,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    crate::tooltip::hide_while_open(cx);
     let mut menu = menu.action_context(focus.clone());
     let mut separate = false;
     let mut any = false;

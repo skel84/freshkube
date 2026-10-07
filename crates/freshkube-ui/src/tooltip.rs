@@ -5,15 +5,19 @@
 //! tooltip still waiting to show. In a scrolling list, a still pointer can
 //! then see one row's tooltip over another row (#192). [`FollowTooltip`]
 //! draws the tooltip only while the pointer is over its element as this
-//! frame placed it.
+//! frame placed it, and not while a row's context menu is open over it
+//! ([`hide_while_open`]).
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
-use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{menu::PopupMenu, tooltip::Tooltip};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyView, Bounds, Context, ElementId, Pixels, SharedString, Window, canvas, div};
+use gpui_kit::{
+    AnyView, Bounds, Context, DismissEvent, ElementId, Pixels, SharedString, WeakEntity, Window,
+    canvas, div,
+};
 
 /// Where an element was drawn this frame, clipped to what shows of it.
 type Placed = Rc<Cell<Option<Bounds<Pixels>>>>;
@@ -69,8 +73,54 @@ struct Follow {
     text: SharedString,
 }
 
+thread_local! {
+    /// The row menu open now, if any; dismissed or dropped, it no longer
+    /// counts.
+    static MENU: RefCell<Option<WeakEntity<PopupMenu>>> = RefCell::default();
+}
+
+/// Hides every follow tooltip while this menu is open. A row's tooltip,
+/// such as a pod name's, would otherwise draw over the menu the row just
+/// opened and hide its first items until the pointer moved.
+pub fn hide_while_open(cx: &mut Context<PopupMenu>) {
+    let menu = cx.entity().downgrade();
+    MENU.with(|open| *open.borrow_mut() = Some(menu.clone()));
+    cx.subscribe_self(move |_, _: &DismissEvent, _| {
+        MENU.with(|open| {
+            let mut open = open.borrow_mut();
+            if open.as_ref() == Some(&menu) {
+                *open = None;
+            }
+        })
+    })
+    .detach();
+}
+
+/// A tooltip that, like a follow tooltip, stays hidden while a row menu
+/// is open, for an element whose own tooltip doesn't follow it.
+pub fn unless_menu(tip: AnyView, text: impl Into<SharedString>, cx: &mut gpui_kit::App) -> AnyView {
+    let text = text.into();
+    cx.new(|_| Follow {
+        tip,
+        placed: None,
+        text,
+    })
+    .into()
+}
+
+fn menu_open() -> bool {
+    MENU.with(|open| {
+        open.borrow()
+            .as_ref()
+            .is_some_and(|menu| menu.upgrade().is_some())
+    })
+}
+
 impl Render for Follow {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if menu_open() {
+            return div().into_any_element();
+        }
         let over = self.placed.as_ref().is_none_or(|placed| {
             placed
                 .get()
@@ -94,4 +144,10 @@ thread_local! {
 #[cfg(any(test, feature = "testing"))]
 pub fn drawn(text: &str) -> usize {
     DRAWN.with(|drawn| drawn.borrow().get(text).copied().unwrap_or(0))
+}
+
+/// How many frames have drawn any tooltip so far, for UI tests.
+#[cfg(any(test, feature = "testing"))]
+pub fn drawn_total() -> usize {
+    DRAWN.with(|drawn| drawn.borrow().values().sum())
 }

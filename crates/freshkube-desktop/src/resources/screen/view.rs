@@ -157,7 +157,7 @@ impl ResourcesScreen {
                 let actions = view
                     .update(cx, |view, cx| view.group_menu(&target, window, cx))
                     .unwrap_or_default();
-                table::row_menu(menu, actions, &focus)
+                table::row_menu(menu, actions, &focus, cx)
             });
         Some(line.into_any_element())
     }
