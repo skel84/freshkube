@@ -25,7 +25,7 @@ use tokio::runtime::Handle;
 
 use super::{Loader, ScreenEvent, ScreenPanel, ScreenSource};
 use crate::presentation;
-use crate::ui::{self, Tone, clock};
+use crate::ui::{self, Tone};
 
 const CONTEXT: &str = "TalosEtcd";
 /// The page's id prefix: `etcd-title`, `etcd-list`, `etcd-tally-…`.
@@ -635,17 +635,10 @@ impl EtcdScreen {
         } else {
             toned(pluralize(alarms.len(), "alarm", "alarms"), alarm_tone)
         });
-        if let Some(time) = self.loader.last_successful() {
-            parts.push(Part::new(format!("updated {}", clock(time))).minor());
-        }
-        if self.source.as_ref().is_some_and(ScreenSource::is_example) {
-            parts.push(Part::new("example data").minor());
-        }
-        let context = self
-            .source
-            .as_ref()
-            .map(|source| source.target.context.clone());
-        self.derived.status = Some(Segment::new(context, parts).note(quorum.detail.clone()));
+        self.derived.status = Some(
+            crate::screens::segment(self.source.as_ref(), &self.loader, parts)
+                .note(quorum.detail.clone()),
+        );
         (self.derived.columns, self.derived.width) = source::columns(&rows);
         self.derived.quorum = Some(quorum);
         self.derived.banner = quorum_banner(snapshot);
