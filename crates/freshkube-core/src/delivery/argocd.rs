@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::digest::text;
 use super::read::{ListRequest, Reader, Scope};
-use super::source::{Source, Truncation};
+use super::source::{Source, Truncation, redact_message};
 use super::versions::resolve;
 use crate::resources::Failure;
 
@@ -54,12 +54,177 @@ impl StageNaming {
     }
 }
 
+/// One entry of `status.resources`, the objects Argo CD manages for an
+/// Application, with what it last compared about each.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManagedObject {
     pub group: String,
     pub kind: String,
     pub namespace: Option<String>,
     pub name: String,
+    pub version: Option<String>,
+    /// `Synced`, `OutOfSync` or `Unknown`, as Argo CD writes it.
+    pub sync: Option<String>,
+    pub health: Option<String>,
+    /// The health message, redacted.
+    pub health_message: Option<String>,
+}
+
+/// `spec.syncPolicy`: what the Application asks of Argo CD. Configuration
+/// alone says nothing about what Argo CD is doing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SyncPolicy {
+    /// `syncPolicy.automated`, when the block is present.
+    pub automated: Option<Automated>,
+    /// `syncPolicy.retry`, when the block is present.
+    pub retry: Option<RetryPolicy>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Automated {
+    /// `enabled`, which newer Argo CD versions read; absent means enabled.
+    pub enabled: Option<bool>,
+    pub prune: Option<bool>,
+    pub self_heal: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// `limit` as written. What a zero or negative limit means is Argo CD's
+    /// business; it is reported, never interpreted as "unlimited".
+    pub limit: Option<i64>,
+    pub backoff: Option<Backoff>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Backoff {
+    pub duration: Option<String>,
+    pub factor: Option<i64>,
+    pub max_duration: Option<String>,
+}
+
+/// `status.operationState`: the last or running sync operation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Operation {
+    /// `Running`, `Terminating`, `Failed`, `Error` or `Succeeded`.
+    pub phase: Option<String>,
+    /// The operation's message, redacted.
+    pub message: Option<String>,
+    pub retry_count: Option<i64>,
+    /// `syncResult.revisions`, else `syncResult.revision`.
+    pub revisions: Vec<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+}
+
+/// One source of an Application. Its `repoURL` is not kept: it may hold a
+/// host or credentials, and nothing here prints it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApplicationSource {
+    pub target_revision: Option<String>,
+    pub path: Option<String>,
+    pub chart: Option<String>,
+    /// `ref`, the name other sources use for a values-only source.
+    pub reference: Option<String>,
+}
+
+/// `spec.source`, or `spec.sources` when that is set, as Argo CD reads them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Sources {
+    Single(ApplicationSource),
+    Multiple(Vec<ApplicationSource>),
+}
+
+impl Sources {
+    pub fn as_slice(&self) -> &[ApplicationSource] {
+        match self {
+            Self::Single(source) => std::slice::from_ref(source),
+            Self::Multiple(sources) => sources,
+        }
+    }
+}
+
+/// The last entry of `status.history`: what Argo CD last deployed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Deployment {
+    /// `revisions`, else `revision`.
+    pub revisions: Vec<String>,
+    pub deployed_at: Option<String>,
+}
+
+/// One of `status.conditions`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Condition {
+    pub kind: String,
+    /// The condition's message, redacted.
+    pub message: Option<String>,
+}
+
+/// The three revisions an Application names: what its spec asks for, what
+/// Argo CD last compared the cluster against, and what it last deployed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Revisions {
+    /// Each source's `targetRevision`, in the sources' order; `None` where a
+    /// source names none. Empty when the spec has no source.
+    pub requested: Vec<Option<String>>,
+    /// `status.sync.revision` and `status.sync.revisions`.
+    pub compared: Vec<String>,
+    /// The last history entry's revisions.
+    pub deployed: Vec<String>,
+}
+
+/// Whether the Application asks Argo CD to sync it on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoSync {
+    /// No `automated` block: syncs only when someone asks.
+    Manual,
+    /// An `automated` block with `enabled: false`.
+    Disabled,
+    /// An `automated` block, enabled. Each flag is true only when the spec
+    /// says so.
+    Enabled { prune: bool, self_heal: bool },
+}
+
+/// What the operation state shows of retries. Only an operation's own
+/// `retryCount` and phase say a retry happened; a retry policy alone says
+/// none did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Retries {
+    /// No operation reports a retry.
+    NoneReported,
+    /// The running operation has retried `count` times.
+    Retrying { count: i64 },
+    /// The operation ended `Failed` or `Error` after `count` retries, as
+    /// many as the configured positive limit.
+    Exhausted { count: i64 },
+    /// The operation ended in `phase` after `count` retries, short of a
+    /// positive limit or without one known.
+    Ended { count: i64, phase: Option<String> },
+}
+
+/// Counts over `status.resources`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InventoryCounts {
+    pub objects: usize,
+    pub out_of_sync: usize,
+    pub degraded: usize,
+    pub missing: usize,
+}
+
+/// What an Application reports about reconciling itself, ready to be put
+/// into words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reconciliation {
+    pub auto_sync: AutoSync,
+    /// The configured retry limit, as written; `None` without a retry block
+    /// or a limit in it.
+    pub retry_limit: Option<i64>,
+    pub retries: Retries,
+    pub phase: Option<String>,
+    pub multiple_sources: bool,
+    pub revisions: Revisions,
+    /// `None` when Argo CD reported no inventory: unknown, not empty.
+    pub inventory: Option<InventoryCounts>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,9 +247,18 @@ pub struct Application {
     /// where a setup may name the Kargo project.
     pub metadata_annotations: BTreeMap<String, String>,
     pub metadata_labels: BTreeMap<String, String>,
+    /// `status.resources`; empty both when Argo CD lists none and when it
+    /// reported no inventory, which [`Application::inventory`] tells apart.
     pub managed: Vec<ManagedObject>,
+    /// Whether `status.resources` was there at all.
+    pub inventory_reported: bool,
     /// Images Argo CD summarises, shown only.
     pub images: Vec<String>,
+    pub sync_policy: Option<SyncPolicy>,
+    pub operation: Option<Operation>,
+    pub sources: Option<Sources>,
+    pub last_deployed: Option<Deployment>,
+    pub conditions: Vec<Condition>,
 }
 
 pub fn parse_application(value: &Value) -> Option<Application> {
@@ -125,15 +299,11 @@ pub fn parse_application(value: &Value) -> Option<Application> {
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(|resource| {
-                Some(ManagedObject {
-                    group: text(resource, "/group").unwrap_or_default(),
-                    kind: text(resource, "/kind")?,
-                    namespace: text(resource, "/namespace"),
-                    name: text(resource, "/name")?,
-                })
-            })
+            .filter_map(parse_managed)
             .collect(),
+        inventory_reported: value
+            .pointer("/status/resources")
+            .is_some_and(Value::is_array),
         images: value
             .pointer("/status/summary/images")
             .and_then(Value::as_array)
@@ -142,7 +312,126 @@ pub fn parse_application(value: &Value) -> Option<Application> {
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect(),
+        sync_policy: value.pointer("/spec/syncPolicy").map(parse_sync_policy),
+        operation: value.pointer("/status/operationState").map(parse_operation),
+        sources: parse_sources(value),
+        last_deployed: value
+            .pointer("/status/history")
+            .and_then(Value::as_array)
+            .and_then(|history| history.last())
+            .map(|entry| Deployment {
+                revisions: revisions_of(entry),
+                deployed_at: text(entry, "/deployedAt"),
+            }),
+        conditions: value
+            .pointer("/status/conditions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|condition| {
+                Some(Condition {
+                    kind: text(condition, "/type")?,
+                    message: redacted(condition, "/message"),
+                })
+            })
+            .collect(),
     })
+}
+
+fn parse_managed(resource: &Value) -> Option<ManagedObject> {
+    Some(ManagedObject {
+        group: text(resource, "/group").unwrap_or_default(),
+        kind: text(resource, "/kind")?,
+        namespace: text(resource, "/namespace"),
+        name: text(resource, "/name")?,
+        version: text(resource, "/version"),
+        sync: text(resource, "/status"),
+        health: text(resource, "/health/status"),
+        health_message: redacted(resource, "/health/message"),
+    })
+}
+
+fn parse_sync_policy(policy: &Value) -> SyncPolicy {
+    SyncPolicy {
+        automated: policy.get("automated").map(|automated| Automated {
+            enabled: flag(automated, "/enabled"),
+            prune: flag(automated, "/prune"),
+            self_heal: flag(automated, "/selfHeal"),
+        }),
+        retry: policy.get("retry").map(|retry| RetryPolicy {
+            limit: number(retry, "/limit"),
+            backoff: retry.get("backoff").map(|backoff| Backoff {
+                duration: text(backoff, "/duration"),
+                factor: number(backoff, "/factor"),
+                max_duration: text(backoff, "/maxDuration"),
+            }),
+        }),
+    }
+}
+
+fn parse_operation(state: &Value) -> Operation {
+    Operation {
+        phase: text(state, "/phase"),
+        message: redacted(state, "/message"),
+        retry_count: number(state, "/retryCount"),
+        revisions: state
+            .get("syncResult")
+            .map(revisions_of)
+            .unwrap_or_default(),
+        started_at: text(state, "/startedAt"),
+        finished_at: text(state, "/finishedAt"),
+    }
+}
+
+/// `spec.sources` when it lists any, as Argo CD prefers it, else
+/// `spec.source`.
+fn parse_sources(value: &Value) -> Option<Sources> {
+    let source = |source: &Value| ApplicationSource {
+        target_revision: text(source, "/targetRevision"),
+        path: text(source, "/path"),
+        chart: text(source, "/chart"),
+        reference: text(source, "/ref"),
+    };
+    match value.pointer("/spec/sources").and_then(Value::as_array) {
+        Some(sources) if !sources.is_empty() => {
+            Some(Sources::Multiple(sources.iter().map(source).collect()))
+        }
+        _ => value
+            .pointer("/spec/source")
+            .filter(|source| source.is_object())
+            .map(|found| Sources::Single(source(found))),
+    }
+}
+
+/// `revisions` where it lists any, else `revision`, of a sync status, sync
+/// result or history entry.
+fn revisions_of(value: &Value) -> Vec<String> {
+    let many: Vec<String> = value
+        .get("revisions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|revision| !revision.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if many.is_empty() {
+        text(value, "/revision").into_iter().collect()
+    } else {
+        many
+    }
+}
+
+fn redacted(value: &Value, pointer: &str) -> Option<String> {
+    text(value, pointer).map(|message| redact_message(&message))
+}
+
+fn flag(value: &Value, pointer: &str) -> Option<bool> {
+    value.pointer(pointer).and_then(Value::as_bool)
+}
+
+fn number(value: &Value, pointer: &str) -> Option<i64> {
+    value.pointer(pointer).and_then(Value::as_i64)
 }
 
 /// The string values of the object at `pointer`.
@@ -204,6 +493,103 @@ impl Application {
             .iter()
             .filter_map(|image| super::digest::Digest::from_reference(image))
             .collect()
+    }
+
+    /// The managed objects, or `None` when Argo CD reported no inventory.
+    pub fn inventory(&self) -> Option<&[ManagedObject]> {
+        self.inventory_reported.then_some(self.managed.as_slice())
+    }
+
+    /// The managed object of exactly this group, kind, namespace and name;
+    /// a namesake in another group is another object.
+    pub fn managed_object(
+        &self,
+        group: &str,
+        kind: &str,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Option<&ManagedObject> {
+        self.managed.iter().find(|object| {
+            object.group == group
+                && object.kind == kind
+                && object.namespace.as_deref() == namespace
+                && object.name == name
+        })
+    }
+
+    pub fn revisions(&self) -> Revisions {
+        Revisions {
+            requested: self
+                .sources
+                .iter()
+                .flat_map(Sources::as_slice)
+                .map(|source| source.target_revision.clone())
+                .collect(),
+            compared: self.sync_revisions.clone(),
+            deployed: self
+                .last_deployed
+                .as_ref()
+                .map(|deployment| deployment.revisions.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn reconciliation(&self) -> Reconciliation {
+        let automated = self.sync_policy.as_ref().and_then(|p| p.automated.as_ref());
+        let auto_sync = match automated {
+            None => AutoSync::Manual,
+            Some(automated) if automated.enabled == Some(false) => AutoSync::Disabled,
+            Some(automated) => AutoSync::Enabled {
+                prune: automated.prune == Some(true),
+                self_heal: automated.self_heal == Some(true),
+            },
+        };
+        let retry_limit = self
+            .sync_policy
+            .as_ref()
+            .and_then(|policy| policy.retry.as_ref())
+            .and_then(|retry| retry.limit);
+        let phase = self.operation.as_ref().and_then(|op| op.phase.clone());
+        Reconciliation {
+            auto_sync,
+            retry_limit,
+            retries: retries(self.operation.as_ref(), retry_limit),
+            phase,
+            multiple_sources: matches!(self.sources, Some(Sources::Multiple(_))),
+            revisions: self.revisions(),
+            inventory: self.inventory().map(|objects| InventoryCounts {
+                objects: objects.len(),
+                out_of_sync: count(objects, |o| o.sync.as_deref() == Some("OutOfSync")),
+                degraded: count(objects, |o| o.health.as_deref() == Some("Degraded")),
+                missing: count(objects, |o| o.health.as_deref() == Some("Missing")),
+            }),
+        }
+    }
+}
+
+fn count(objects: &[ManagedObject], test: impl Fn(&ManagedObject) -> bool) -> usize {
+    objects.iter().filter(|object| test(object)).count()
+}
+
+/// What the operation shows of retries: its own count and phase, read
+/// against the configured limit only to say a failure used them all.
+fn retries(operation: Option<&Operation>, limit: Option<i64>) -> Retries {
+    let Some(operation) = operation else {
+        return Retries::NoneReported;
+    };
+    let count = operation.retry_count.unwrap_or(0);
+    if count <= 0 {
+        return Retries::NoneReported;
+    }
+    match operation.phase.as_deref() {
+        Some("Running") => Retries::Retrying { count },
+        Some("Failed" | "Error") if limit.is_some_and(|limit| limit > 0 && count >= limit) => {
+            Retries::Exhausted { count }
+        }
+        _ => Retries::Ended {
+            count,
+            phase: operation.phase.clone(),
+        },
     }
 }
 
@@ -331,5 +717,340 @@ pub fn match_destination(application: &Application, to: Destinations<'_>) -> Des
             context: found.remove(0),
         },
         _ => DestinationMatch::Ambiguous(found),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    const COMMIT_A: &str = "1111111111111111111111111111111111111111";
+    const COMMIT_B: &str = "2222222222222222222222222222222222222222";
+    const COMMIT_C: &str = "3333333333333333333333333333333333333333";
+
+    fn app(spec: Value, status: Value) -> Application {
+        parse_application(&json!({
+            "metadata": {"namespace": "argocd", "name": "storefront"},
+            "spec": spec,
+            "status": status,
+        }))
+        .expect("an Application")
+    }
+
+    #[test]
+    fn automated_sync_disabled_is_not_automated() {
+        let disabled = app(
+            json!({"syncPolicy": {"automated": {"enabled": false, "prune": true, "selfHeal": true}}}),
+            json!({}),
+        );
+        let policy = disabled.sync_policy.as_ref().unwrap();
+        assert_eq!(
+            policy.automated,
+            Some(Automated {
+                enabled: Some(false),
+                prune: Some(true),
+                self_heal: Some(true),
+            })
+        );
+        assert_eq!(disabled.reconciliation().auto_sync, AutoSync::Disabled);
+
+        let manual = app(json!({"syncPolicy": {}}), json!({}));
+        assert_eq!(manual.reconciliation().auto_sync, AutoSync::Manual);
+        let no_policy = app(json!({}), json!({}));
+        assert_eq!(no_policy.sync_policy, None);
+        assert_eq!(no_policy.reconciliation().auto_sync, AutoSync::Manual);
+
+        let on = app(
+            json!({"syncPolicy": {"automated": {"selfHeal": true}}}),
+            json!({}),
+        );
+        assert_eq!(
+            on.reconciliation().auto_sync,
+            AutoSync::Enabled {
+                prune: false,
+                self_heal: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_bounded_retry_reports_its_count_and_limit() {
+        let application = app(
+            json!({"syncPolicy": {
+                "automated": {"prune": true},
+                "retry": {"limit": 5, "backoff": {"duration": "5s", "factor": 2, "maxDuration": "3m"}},
+            }}),
+            json!({"operationState": {
+                "phase": "Running",
+                "message": "Retrying attempt #2 at 10:00AM: failed to reach https://git.example.test/acme/storefront.git",
+                "retryCount": 2,
+                "startedAt": "2026-10-01T10:00:00Z",
+                "syncResult": {"revision": COMMIT_A},
+            }}),
+        );
+        let retry = application
+            .sync_policy
+            .as_ref()
+            .and_then(|policy| policy.retry.clone())
+            .unwrap();
+        assert_eq!(retry.limit, Some(5));
+        assert_eq!(
+            retry.backoff,
+            Some(Backoff {
+                duration: Some("5s".into()),
+                factor: Some(2),
+                max_duration: Some("3m".into()),
+            })
+        );
+        let operation = application.operation.as_ref().unwrap();
+        assert_eq!(operation.phase.as_deref(), Some("Running"));
+        assert_eq!(operation.retry_count, Some(2));
+        assert_eq!(operation.revisions, vec![COMMIT_A.to_owned()]);
+        assert_eq!(
+            operation.started_at.as_deref(),
+            Some("2026-10-01T10:00:00Z")
+        );
+        assert_eq!(operation.finished_at, None);
+        let message = operation.message.as_deref().unwrap();
+        assert!(message.starts_with("Retrying attempt #2"), "{message}");
+        assert!(!message.contains("git.example.test"), "{message}");
+
+        let reconciliation = application.reconciliation();
+        assert_eq!(reconciliation.retry_limit, Some(5));
+        assert_eq!(reconciliation.retries, Retries::Retrying { count: 2 });
+        assert_eq!(reconciliation.phase.as_deref(), Some("Running"));
+    }
+
+    #[test]
+    fn a_failed_operation_at_its_limit_has_exhausted_its_retries() {
+        let application = app(
+            json!({"syncPolicy": {"retry": {"limit": 5}}}),
+            json!({"operationState": {
+                "phase": "Failed",
+                "message": "one or more objects failed to apply",
+                "retryCount": 5,
+                "finishedAt": "2026-10-01T10:20:00Z",
+            }}),
+        );
+        let reconciliation = application.reconciliation();
+        assert_eq!(reconciliation.retries, Retries::Exhausted { count: 5 });
+        assert_eq!(reconciliation.retry_limit, Some(5));
+
+        let short = app(
+            json!({"syncPolicy": {"retry": {"limit": 5}}}),
+            json!({"operationState": {"phase": "Failed", "retryCount": 3}}),
+        );
+        assert_eq!(
+            short.reconciliation().retries,
+            Retries::Ended {
+                count: 3,
+                phase: Some("Failed".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn configuration_alone_claims_no_retries() {
+        for limit in [json!(5), json!(-1), json!(0)] {
+            let application = app(
+                json!({"syncPolicy": {"automated": {}, "retry": {"limit": limit}}}),
+                json!({}),
+            );
+            let reconciliation = application.reconciliation();
+            assert_eq!(reconciliation.retries, Retries::NoneReported);
+            assert_eq!(reconciliation.retry_limit, limit.as_i64());
+            assert_eq!(reconciliation.phase, None);
+        }
+        let without_limit = app(json!({"syncPolicy": {"retry": {}}}), json!({}));
+        assert_eq!(without_limit.reconciliation().retry_limit, None);
+        // A failure without a known positive limit is not "exhausted".
+        let unbounded = app(
+            json!({"syncPolicy": {"retry": {"limit": -1}}}),
+            json!({"operationState": {"phase": "Failed", "retryCount": 9}}),
+        );
+        assert!(matches!(
+            unbounded.reconciliation().retries,
+            Retries::Ended { count: 9, .. }
+        ));
+    }
+
+    #[test]
+    fn multiple_sources_name_each_revision_and_never_a_repository_host() {
+        let application = app(
+            json!({
+                "source": {"repoURL": "https://git.example.test/acme/ignored.git", "targetRevision": "ignored"},
+                "sources": [
+                    {"repoURL": "https://deploy:s3cret@git.example.test/acme/storefront.git",
+                     "targetRevision": "main", "path": "deploy/env-a"},
+                    {"repoURL": "https://registry.example/charts", "chart": "storefront",
+                     "targetRevision": "1.4.2"},
+                    {"repoURL": "git@git.example.test:acme/values.git", "ref": "values"},
+                ],
+            }),
+            json!({
+                "sync": {"status": "Synced", "revisions": [COMMIT_A, "1.4.2", COMMIT_B]},
+                "history": [
+                    {"id": 1, "revisions": [COMMIT_C, "1.4.1", COMMIT_B], "deployedAt": "2026-09-30T08:00:00Z"},
+                    {"id": 2, "revisions": [COMMIT_A, "1.4.2", COMMIT_B], "deployedAt": "2026-10-01T09:00:00Z"},
+                ],
+                "operationState": {"phase": "Succeeded", "syncResult": {
+                    "revision": "",
+                    "revisions": [COMMIT_A, "1.4.2", COMMIT_B],
+                }},
+            }),
+        );
+        let Some(Sources::Multiple(sources)) = &application.sources else {
+            panic!("multiple sources: {:?}", application.sources);
+        };
+        assert_eq!(sources.len(), 3);
+        assert_eq!(sources[0].path.as_deref(), Some("deploy/env-a"));
+        assert_eq!(sources[1].chart.as_deref(), Some("storefront"));
+        assert_eq!(sources[2].reference.as_deref(), Some("values"));
+        assert_eq!(
+            application.revisions(),
+            Revisions {
+                requested: vec![Some("main".into()), Some("1.4.2".into()), None],
+                compared: vec![COMMIT_A.into(), "1.4.2".into(), COMMIT_B.into()],
+                deployed: vec![COMMIT_A.into(), "1.4.2".into(), COMMIT_B.into()],
+            }
+        );
+        assert_eq!(
+            application
+                .last_deployed
+                .as_ref()
+                .unwrap()
+                .deployed_at
+                .as_deref(),
+            Some("2026-10-01T09:00:00Z")
+        );
+        assert_eq!(
+            application.operation.as_ref().unwrap().revisions,
+            vec![COMMIT_A.to_owned(), "1.4.2".into(), COMMIT_B.into()]
+        );
+        assert!(application.reconciliation().multiple_sources);
+        let everything = format!("{application:?}");
+        for secret in ["git.example.test", "registry.example", "deploy:", "s3cret"] {
+            assert!(!everything.contains(secret), "{secret} in {everything}");
+        }
+
+        let single = app(
+            json!({"source": {"repoURL": "https://git.example.test/acme/storefront.git",
+                              "targetRevision": "main", "path": "deploy/env-b"}}),
+            json!({"sync": {"revision": COMMIT_A}, "history": [{"revision": COMMIT_C}]}),
+        );
+        assert!(matches!(single.sources, Some(Sources::Single(_))));
+        let reconciliation = single.reconciliation();
+        assert!(!reconciliation.multiple_sources);
+        assert_eq!(
+            reconciliation.revisions,
+            Revisions {
+                requested: vec![Some("main".into())],
+                compared: vec![COMMIT_A.into()],
+                deployed: vec![COMMIT_C.into()],
+            }
+        );
+        assert_eq!(single.last_deployed.unwrap().deployed_at, None);
+    }
+
+    #[test]
+    fn a_missing_inventory_is_unknown_not_empty() {
+        let unknown = app(json!({}), json!({"sync": {"status": "Unknown"}}));
+        assert!(!unknown.inventory_reported);
+        assert_eq!(unknown.inventory(), None);
+        assert_eq!(unknown.reconciliation().inventory, None);
+        assert_eq!(unknown.revisions(), Revisions::default());
+        assert_eq!(unknown.sources, None);
+        assert_eq!(unknown.operation, None);
+        assert_eq!(unknown.last_deployed, None);
+
+        let empty = app(json!({}), json!({"resources": []}));
+        assert_eq!(empty.inventory(), Some(&[][..]));
+        assert_eq!(
+            empty.reconciliation().inventory,
+            Some(InventoryCounts::default())
+        );
+    }
+
+    #[test]
+    fn applications_of_the_same_name_in_two_namespaces_stay_apart() {
+        let parse = |namespace: &str, phase: &str| {
+            parse_application(&json!({
+                "metadata": {"namespace": namespace, "name": "storefront"},
+                "spec": {"syncPolicy": {"automated": {}}},
+                "status": {"operationState": {"phase": phase}},
+            }))
+            .unwrap()
+        };
+        let first = parse("argocd", "Succeeded");
+        let second = parse("argocd-acme", "Failed");
+        assert_eq!(first.name, second.name);
+        assert_ne!(first.namespace, second.namespace);
+        assert_eq!(first.reconciliation().phase.as_deref(), Some("Succeeded"));
+        assert_eq!(second.reconciliation().phase.as_deref(), Some("Failed"));
+    }
+
+    #[test]
+    fn a_namesake_in_another_group_is_another_object() {
+        let application = app(
+            json!({}),
+            json!({
+                "resources": [
+                    {"group": "apps", "version": "v1", "kind": "Deployment", "namespace": "shop",
+                     "name": "storefront", "status": "Synced", "health": {"status": "Healthy"}},
+                    {"group": "acme.example.test", "version": "v1beta1", "kind": "Deployment",
+                     "namespace": "shop", "name": "storefront", "status": "OutOfSync",
+                     "health": {"status": "Degraded",
+                                "message": "probe to 192.0.2.10:8080 failed for User \"jane\""}},
+                    {"version": "v1", "kind": "Service", "namespace": "shop", "name": "storefront",
+                     "status": "Synced", "health": {"status": "Missing"}},
+                ],
+                "conditions": [
+                    {"type": "ComparisonError",
+                     "message": "failed to load https://git.example.test/acme/storefront.git"},
+                    {"message": "a condition without a type is dropped"},
+                ],
+            }),
+        );
+        let apps = application
+            .managed_object("apps", "Deployment", Some("shop"), "storefront")
+            .unwrap();
+        assert_eq!(apps.version.as_deref(), Some("v1"));
+        assert_eq!(apps.sync.as_deref(), Some("Synced"));
+        assert_eq!(apps.health.as_deref(), Some("Healthy"));
+        assert_eq!(apps.health_message, None);
+        let custom = application
+            .managed_object(
+                "acme.example.test",
+                "Deployment",
+                Some("shop"),
+                "storefront",
+            )
+            .unwrap();
+        assert_eq!(custom.version.as_deref(), Some("v1beta1"));
+        assert_eq!(custom.sync.as_deref(), Some("OutOfSync"));
+        assert_eq!(custom.health.as_deref(), Some("Degraded"));
+        let message = custom.health_message.as_deref().unwrap();
+        assert!(!message.contains("192.0.2.10"), "{message}");
+        assert!(!message.contains("jane"), "{message}");
+        assert!(
+            application
+                .managed_object("", "Deployment", Some("shop"), "storefront")
+                .is_none()
+        );
+        assert_eq!(
+            application.reconciliation().inventory,
+            Some(InventoryCounts {
+                objects: 3,
+                out_of_sync: 1,
+                degraded: 1,
+                missing: 1,
+            })
+        );
+        assert_eq!(application.conditions.len(), 1);
+        assert_eq!(application.conditions[0].kind, "ComparisonError");
+        let message = application.conditions[0].message.as_deref().unwrap();
+        assert!(!message.contains("git.example.test"), "{message}");
     }
 }
