@@ -26,10 +26,11 @@ use tokio::runtime::Handle;
 
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    panel, partial_notice, refresh_control, retry_button, segment,
+    partial_notice, refresh_control, retry_button, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_ui::inspector::{self, InspectorSplit};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::status::Segment;
 use freshkube_ui::table::{self, DataTable, TableState};
@@ -39,8 +40,6 @@ const CONTEXT: &str = "TalosWorkloads";
 const PAGE_ROWS: isize = 20;
 /// The page header's id prefix.
 const PREFIX: &str = "workloads";
-/// The details' height under the list on a narrow page.
-const DETAILS_HEIGHT: f32 = 240.;
 
 actions!(
     talos_workloads,
@@ -209,6 +208,11 @@ pub(crate) struct WorkloadsScreen {
     table: TableState,
     /// The rows and columns, derived by [`Self::sync`].
     derived: Option<Derived>,
+    /// The selection's details, derived by [`Self::sync`]; `None` without
+    /// a selection, so no Inspector shows.
+    detail: Option<detail::Detail>,
+    /// The table and the Inspector, whose width is saved under `health`.
+    split: InspectorSplit,
     /// The most the Name column takes in the list's width, so its glyph
     /// and name can pin when the table scrolls sideways.
     name_most: f32,
@@ -287,6 +291,15 @@ impl ScreenPanel for WorkloadsScreen {
             focus: cx.focus_handle(),
             table: TableState::new("workload"),
             derived: None,
+            detail: None,
+            split: {
+                let file = crate::navigation_file::NavigationFile::global(cx);
+                InspectorSplit::new(
+                    file.inspector_width("health"),
+                    move |width, cx| file.set_inspector_width("health", width, cx),
+                    cx,
+                )
+            },
             name_most: f32::INFINITY,
             status: None,
             _subscription: subscription,
@@ -304,6 +317,10 @@ impl ScreenPanel for WorkloadsScreen {
             self.collapsed.clear();
         }
         self.source = source;
+        // Inspect node follows the target's nodes, so the details are
+        // derived again.
+        self.detail = None;
+        self.sync(cx);
         cx.notify();
     }
 
@@ -468,17 +485,33 @@ impl WorkloadsScreen {
         }
     }
 
-    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+    fn step(&mut self, delta: isize, window: &Window, cx: &mut Context<Self>) {
         self.sync(cx);
         if let Some(key) = table::step(self, delta, cx) {
+            let was_open = self.selected.is_some();
             self.selected = Some(key);
+            self.sync(cx);
             table::reveal(self, ScrollStrategy::Nearest);
+            self.reveal_if_opened(was_open, window, cx);
             cx.notify();
+        }
+    }
+
+    /// Stacked, the Inspector that a selection opens shrinks the table
+    /// over the selected row; bring the row back into view once the
+    /// table's height settles, as Nodes does.
+    fn reveal_if_opened(&self, was_open: bool, window: &Window, cx: &mut Context<Self>) {
+        if !was_open
+            && self.selected.is_some()
+            && crate::screens::page_width(window) < inspector::SPLIT_WIDTH
+        {
+            reveal_when_settled(cx.entity().downgrade(), None, false, 6, window);
         }
     }
 
     fn select(&mut self, key: ItemKey, cx: &mut Context<Self>) {
         self.selected = Some(key);
+        self.sync(cx);
         cx.notify();
     }
 
@@ -500,6 +533,17 @@ impl WorkloadsScreen {
         self.sync(cx);
         self.table.reveal(0, ScrollStrategy::Top);
         cx.notify();
+    }
+
+    /// Escape steps back: it clears the filters, then closes the
+    /// Inspector by clearing the selection.
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.query.read(cx).value().is_empty() || self.only_unhealthy {
+            self.clear_filter(window, cx);
+        } else if self.selected.take().is_some() {
+            self.sync(cx);
+            cx.notify();
+        }
     }
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -527,6 +571,37 @@ impl WorkloadsScreen {
     }
 }
 
+/// Reveals the selected row on each of the next `frames` frames until the
+/// table's height, which the opening Inspector changes, stops changing.
+fn reveal_when_settled(
+    view: WeakEntity<WorkloadsScreen>,
+    last: Option<Pixels>,
+    changed: bool,
+    frames: usize,
+    window: &Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        // Closed again: there is nothing to reveal.
+        let Some(height) = view
+            .update(cx, |screen, cx| {
+                screen.selected.as_ref()?;
+                table::reveal(screen, ScrollStrategy::Nearest);
+                cx.notify();
+                Some((screen.table.scroll.0.borrow().last_item_size).map(|size| size.item.height))
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        let settled = changed && height == last;
+        if frames > 1 && !settled {
+            let changed = changed || (last.is_some() && height != last);
+            reveal_when_settled(view, height, changed, frames - 1, window);
+        }
+    });
+}
+
 fn workload_matches(workload: &WorkloadInfo, query: &str) -> bool {
     query.is_empty()
         || format!(
@@ -552,6 +627,7 @@ fn pod_matches(pod: &PodInfo, query: &str) -> bool {
         .contains(query)
 }
 
+mod detail;
 mod example;
 mod source;
 #[cfg(test)]
