@@ -1559,24 +1559,6 @@ impl EtcdMemberStatus {
     pub fn is_leader(&self) -> bool {
         self.member_id == self.leader_id && self.leader_id != 0
     }
-
-    /// Get DB size in human-readable format
-    pub fn db_size_human(&self) -> String {
-        format_bytes(self.db_size as u64)
-    }
-
-    /// Get DB size in use in human-readable format
-    pub fn db_size_in_use_human(&self) -> String {
-        format_bytes(self.db_size_in_use as u64)
-    }
-
-    /// Get DB usage percentage
-    pub fn db_usage_percent(&self) -> f32 {
-        if self.db_size == 0 {
-            return 0.0;
-        }
-        (self.db_size_in_use as f32 / self.db_size as f32) * 100.0
-    }
 }
 
 /// Etcd alarm
@@ -1623,23 +1605,6 @@ impl EtcdAlarmType {
     }
 }
 
-/// Format bytes into human-readable string (KB, MB, GB)
-fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
-}
-
 // ==================== Process Types ====================
 
 /// Processes running on a node
@@ -1677,16 +1642,6 @@ pub struct ProcessInfo {
 }
 
 impl ProcessInfo {
-    /// Get resident memory in human-readable format
-    pub fn resident_memory_human(&self) -> String {
-        format_bytes(self.resident_memory)
-    }
-
-    /// Get virtual memory in human-readable format
-    pub fn virtual_memory_human(&self) -> String {
-        format_bytes(self.virtual_memory)
-    }
-
     /// Get CPU time in human-readable format (e.g., "847.2s" or "2h 14m")
     pub fn cpu_time_human(&self) -> String {
         if self.cpu_time < 60.0 {
@@ -1777,11 +1732,6 @@ impl ProcessState {
             ProcessState::Unknown(_) => "Unknown",
         }
     }
-
-    /// Check if this is a problematic state (zombie, disk wait)
-    pub fn is_problematic(&self) -> bool {
-        matches!(self, ProcessState::Zombie | ProcessState::DiskSleep)
-    }
 }
 
 // ==================== Network Types ====================
@@ -1855,43 +1805,6 @@ impl NetDevStats {
     pub fn total_traffic(&self) -> u64 {
         self.rx_bytes + self.tx_bytes
     }
-
-    /// Format bytes as human-readable (KB, MB, GB, TB)
-    pub fn format_bytes(bytes: u64) -> String {
-        const KB: u64 = 1024;
-        const MB: u64 = KB * 1024;
-        const GB: u64 = MB * 1024;
-        const TB: u64 = GB * 1024;
-
-        if bytes >= TB {
-            format!("{:.1} TB", bytes as f64 / TB as f64)
-        } else if bytes >= GB {
-            format!("{:.1} GB", bytes as f64 / GB as f64)
-        } else if bytes >= MB {
-            format!("{:.1} MB", bytes as f64 / MB as f64)
-        } else if bytes >= KB {
-            format!("{:.1} KB", bytes as f64 / KB as f64)
-        } else {
-            format!("{} B", bytes)
-        }
-    }
-
-    /// Format rate as human-readable (KB/s, MB/s, GB/s)
-    pub fn format_rate(bytes_per_sec: u64) -> String {
-        const KB: u64 = 1024;
-        const MB: u64 = KB * 1024;
-        const GB: u64 = MB * 1024;
-
-        if bytes_per_sec >= GB {
-            format!("{:.1} GB/s", bytes_per_sec as f64 / GB as f64)
-        } else if bytes_per_sec >= MB {
-            format!("{:.1} MB/s", bytes_per_sec as f64 / MB as f64)
-        } else if bytes_per_sec >= KB {
-            format!("{:.1} KB/s", bytes_per_sec as f64 / KB as f64)
-        } else {
-            format!("{} B/s", bytes_per_sec)
-        }
-    }
 }
 
 /// Calculated rate for a network device (from delta between samples)
@@ -1937,26 +1850,6 @@ impl NetDevRate {
             tx_dropped: curr.tx_dropped,
         }
     }
-
-    /// Check if device has any errors or dropped packets
-    pub fn has_errors(&self) -> bool {
-        self.rx_errors > 0 || self.tx_errors > 0 || self.rx_dropped > 0 || self.tx_dropped > 0
-    }
-
-    /// Get total rate (rx + tx)
-    pub fn total_rate(&self) -> u64 {
-        self.rx_bytes_per_sec + self.tx_bytes_per_sec
-    }
-
-    /// Get total errors
-    pub fn total_errors(&self) -> u64 {
-        self.rx_errors + self.tx_errors
-    }
-
-    /// Get total dropped
-    pub fn total_dropped(&self) -> u64 {
-        self.rx_dropped + self.tx_dropped
-    }
 }
 
 // ==================== Connection Types ====================
@@ -1990,24 +1883,6 @@ pub struct NodeConnections {
     pub hostname: String,
     /// Connections on this node
     pub connections: Vec<ConnectionInfo>,
-}
-
-impl NodeConnections {
-    /// Count connections by state
-    pub fn count_by_state(&self) -> ConnectionCounts {
-        let mut counts = ConnectionCounts::default();
-        for conn in &self.connections {
-            match conn.state {
-                ConnectionState::Established => counts.established += 1,
-                ConnectionState::Listen => counts.listen += 1,
-                ConnectionState::TimeWait => counts.time_wait += 1,
-                ConnectionState::CloseWait => counts.close_wait += 1,
-                ConnectionState::SynSent => counts.syn_sent += 1,
-                _ => counts.other += 1,
-            }
-        }
-        counts
-    }
 }
 
 /// Connection counts by state
@@ -2046,11 +1921,6 @@ impl ConnectionCounts {
             + self.close_wait
             + self.syn_sent
             + self.other
-    }
-
-    /// Check if there are any warning conditions
-    pub fn has_warnings(&self) -> bool {
-        self.time_wait > 100 || self.close_wait > 0 || self.syn_sent > 0
     }
 }
 
@@ -2110,34 +1980,6 @@ impl ConnectionInfo {
             netns,
         }
     }
-
-    /// Check if this is a listening socket
-    pub fn is_listening(&self) -> bool {
-        self.state == ConnectionState::Listen
-    }
-
-    /// Check if this is an established connection
-    pub fn is_established(&self) -> bool {
-        self.state == ConnectionState::Established
-    }
-
-    /// Format local address as "ip:port" or ":port" for listening
-    pub fn local_addr(&self) -> String {
-        if self.local_ip.is_empty() || self.local_ip == "0.0.0.0" || self.local_ip == "::" {
-            format!(":{}", self.local_port)
-        } else {
-            format!("{}:{}", self.local_ip, self.local_port)
-        }
-    }
-
-    /// Format remote address as "ip:port" or "-" for listening
-    pub fn remote_addr(&self) -> String {
-        if self.remote_ip.is_empty() || self.remote_port == 0 {
-            "-".to_string()
-        } else {
-            format!("{}:{}", self.remote_ip, self.remote_port)
-        }
-    }
 }
 
 /// Connection state
@@ -2174,29 +2016,6 @@ impl ConnectionState {
             _ => ConnectionState::Unknown,
         }
     }
-
-    /// Get short name for display
-    pub fn short_name(&self) -> &'static str {
-        match self {
-            ConnectionState::Established => "ESTABLISHED",
-            ConnectionState::SynSent => "SYN_SENT",
-            ConnectionState::SynRecv => "SYN_RECV",
-            ConnectionState::FinWait1 => "FIN_WAIT1",
-            ConnectionState::FinWait2 => "FIN_WAIT2",
-            ConnectionState::TimeWait => "TIME_WAIT",
-            ConnectionState::Close => "CLOSE",
-            ConnectionState::CloseWait => "CLOSE_WAIT",
-            ConnectionState::LastAck => "LAST_ACK",
-            ConnectionState::Listen => "LISTEN",
-            ConnectionState::Closing => "CLOSING",
-            ConnectionState::Unknown => "UNKNOWN",
-        }
-    }
-
-    /// Check if this is a problematic state
-    pub fn is_problematic(&self) -> bool {
-        matches!(self, ConnectionState::CloseWait | ConnectionState::SynSent)
-    }
 }
 
 // ==================== Time Types ====================
@@ -2216,25 +2035,6 @@ pub struct NodeTimeInfo {
     pub offset_seconds: f64,
     /// Whether time is considered synced (offset within tolerance)
     pub synced: bool,
-}
-
-impl NodeTimeInfo {
-    /// Get a human-readable offset string
-    pub fn offset_human(&self) -> String {
-        let offset_ms = (self.offset_seconds * 1000.0).abs();
-        if offset_ms < 1.0 {
-            format!("{:.3} ms", offset_ms)
-        } else if offset_ms < 1000.0 {
-            format!("{:.1} ms", offset_ms)
-        } else {
-            format!("{:.2} s", self.offset_seconds.abs())
-        }
-    }
-
-    /// Get sync status as a string
-    pub fn sync_status(&self) -> &'static str {
-        if self.synced { "synced" } else { "not synced" }
-    }
 }
 
 #[cfg(test)]
