@@ -22,6 +22,9 @@ struct Item {
 /// One field's value.
 enum Value {
     Text(String),
+    /// When a pod was made, if known; how long ago is worked out where it
+    /// is drawn, so it doesn't freeze at the derive.
+    Created(Option<DateTime<Utc>>),
     /// A workload's issues, one to a line; none reported when empty.
     Issues(Vec<String>),
     /// Where a pod runs, if scheduled, and whether the node is one of the
@@ -43,6 +46,15 @@ impl Detail {
 
     fn current(&self, data: &Arc<WorkloadData>, key: &ItemKey) -> bool {
         Arc::ptr_eq(&self.data, data) && &self.key == key
+    }
+}
+
+impl ItemKey {
+    /// The selected item's own name.
+    fn name(&self) -> &str {
+        match self {
+            Self::Namespace(name) | Self::Workload { name, .. } | Self::Pod { name, .. } => name,
+        }
     }
 }
 
@@ -143,17 +155,7 @@ fn item(
                     ("Phase", text(pod.phase.clone())),
                     ("Issue", text(issue_detail(&pod.issue))),
                     ("Restarts", text(pod.restarts.to_string())),
-                    (
-                        "Created",
-                        text(match pod.created_at {
-                            Some(created) => format!(
-                                "{} ({} ago)",
-                                created.format("%Y-%m-%d %H:%M UTC"),
-                                age(Some(created))
-                            ),
-                            None => "unknown".to_owned(),
-                        }),
-                    ),
+                    ("Created", Value::Created(pod.created_at)),
                 ],
             })
         }
@@ -180,15 +182,31 @@ impl WorkloadsScreen {
         let p = palette(cx);
         let inspector = Inspector::new("workload-detail");
         let Some(item) = &detail.item else {
+            // Health lists a pod only while it needs attention, so one that
+            // recovered leaves the list as one that was removed does.
+            let name = detail.key.name().to_owned();
             return Some(
                 inspector
+                    .heading(
+                        div()
+                            .id("workload-detail-title")
+                            .test_support()
+                            .aria_label(name.clone())
+                            .font_family(MONO_FONT)
+                            .text_size(dp(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .truncate()
+                            .child(name),
+                    )
                     .child(
                         div()
                             .id("workload-detail-gone")
                             .test_support()
                             .text_size(dp(12.5))
                             .text_color(p.muted)
-                            .child("The selected item is no longer reported by the cluster."),
+                            .child(
+                                "No longer listed here. It may have recovered, or been removed.",
+                            ),
                     )
                     .render(cx)
                     .into_any_element(),
@@ -228,6 +246,15 @@ impl WorkloadsScreen {
         let p = palette(cx);
         match value {
             Value::Text(text) => mono(text.clone()).into_any_element(),
+            Value::Created(created) => mono(match created {
+                Some(created) => format!(
+                    "{} ({} ago)",
+                    created.format("%Y-%m-%d %H:%M UTC"),
+                    age(Some(*created))
+                ),
+                None => "unknown".to_owned(),
+            })
+            .into_any_element(),
             Value::Issues(issues) => v_flex()
                 .id("workload-issues")
                 .test_support()

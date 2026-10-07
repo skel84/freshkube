@@ -161,7 +161,63 @@ fn a_selection_the_cluster_no_longer_reports_says_so(cx: &mut TestAppContext) {
         });
         window.render_frame(cx);
         assert!(window.find("workload-detail-gone").visible());
-        assert!(window.try_find("workload-detail-title").is_none());
+        assert_eq!(
+            window.find("workload-detail-title").label(),
+            Some("removed-namespace")
+        );
+    })
+    .unwrap();
+}
+
+/// A selected pod that leaves the cluster's answer, as one that recovers
+/// does, keeps the Inspector open under its name and says it is no longer
+/// listed, not that the cluster stopped reporting it.
+#[gpui_kit::test]
+fn a_selected_pod_the_next_answer_drops_keeps_its_name(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let (namespace, pod) = {
+            let data = screen.read(cx).loader.data().unwrap();
+            let namespace = (data.snapshot.namespaces.iter())
+                .find(|ns| !ns.problem_pods.is_empty())
+                .unwrap();
+            (
+                namespace.name.clone(),
+                namespace.problem_pods[0].name.clone(),
+            )
+        };
+        let key = ItemKey::Pod {
+            namespace: namespace.clone(),
+            name: pod.clone(),
+        };
+        screen.update(cx, |screen, cx| screen.select(key.clone(), cx));
+        window.render_frame(cx);
+        assert!(window.try_find("workload-detail-gone").is_none());
+        let title = window
+            .find("workload-detail-title")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(title.contains(&pod), "{title}");
+        screen.update(cx, |screen, cx| {
+            let mut snapshot = screen.loader.data().unwrap().snapshot.clone();
+            for ns in &mut snapshot.namespaces {
+                if ns.name == namespace {
+                    ns.problem_pods.retain(|p| p.name != pod);
+                }
+            }
+            let outcome = freshkube_core::workloads::WorkloadCollectionOutcome::Complete(snapshot);
+            screen.apply_summary("prod-fra", WorkloadData::from_outcome(&outcome), cx);
+        });
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).selected, Some(key));
+        let gone = window.find("workload-detail-gone");
+        assert!(gone.visible());
+        assert_eq!(
+            window.find("workload-detail-title").label(),
+            Some(pod.as_str())
+        );
     })
     .unwrap();
 }
@@ -838,43 +894,49 @@ fn a_row_tooltip_holds_its_issue(cx: &mut TestAppContext) {
 }
 
 /// Stacked, the Inspector a click opens shrinks the table; the clicked row,
-/// low in the full table, comes back into view once the table settles.
+/// low in the full table, comes back into view once the table settles, at
+/// the default text size and at 20.
 #[gpui_kit::test]
 fn a_stacked_inspector_keeps_the_clicked_row_in_view(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 900.);
-    cx.update_window(handle.into(), |_, window, cx| {
-        window.render_frame(cx);
-        assert!(crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH);
-        let scroll = window.find("workload-table-scroll").bounds();
-        let low = (0..screen.read(cx).line_count())
-            .filter(|&line| {
-                window
-                    .try_find(row_id(screen.read(cx), line))
-                    .is_some_and(|row| row.bounds().bottom() <= scroll.bottom())
-            })
-            .max()
-            .unwrap();
-        assert!(low > 8, "only {low} rows in the full table");
-        let id = row_id(screen.read(cx), low);
-        window.click(id.clone(), cx);
-        window.render_frame(cx);
-        for _ in 0..10 {
-            if window.simulate_next_frame(cx) == 0 {
-                break;
+    for text in [None, Some(20.)] {
+        let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 900.);
+        cx.update_window(handle.into(), |_, window, cx| {
+            if let Some(text) = text {
+                crate::text_size::set(text, cx);
             }
-        }
-        window.render_frame(cx);
-        let scroll = window.find("workload-table-scroll").bounds();
-        let detail = window.find("workload-detail").bounds();
-        assert!(
-            detail.top() >= scroll.bottom() - px(0.5),
-            "{detail:?} {scroll:?}"
-        );
-        let row = window.find(id).bounds();
-        assert!(
-            row.top() >= scroll.top() && row.bottom() <= scroll.bottom() + px(0.5),
-            "row {low} {row:?} out of the table {scroll:?}"
-        );
-    })
-    .unwrap();
+            window.render_frame(cx);
+            assert!(crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH);
+            let scroll = window.find("workload-table-scroll").bounds();
+            let low = (0..screen.read(cx).line_count())
+                .filter(|&line| {
+                    window
+                        .try_find(row_id(screen.read(cx), line))
+                        .is_some_and(|row| row.bounds().bottom() <= scroll.bottom())
+                })
+                .max()
+                .unwrap();
+            assert!(low > 4, "only {low} rows in the full table");
+            let id = row_id(screen.read(cx), low);
+            window.click(id.clone(), cx);
+            window.render_frame(cx);
+            for _ in 0..10 {
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            let scroll = window.find("workload-table-scroll").bounds();
+            let detail = window.find("workload-detail").bounds();
+            assert!(
+                detail.top() >= scroll.bottom() - px(0.5),
+                "{detail:?} {scroll:?}"
+            );
+            let row = window.find(id).bounds();
+            assert!(
+                row.top() >= scroll.top() && row.bottom() <= scroll.bottom() + px(0.5),
+                "row {low} {row:?} out of the table {scroll:?}"
+            );
+        })
+        .unwrap();
+    }
 }

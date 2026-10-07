@@ -1,4 +1,4 @@
-- **Health's details open beside the table only when you pick a row:**
+- **Health's details open beside or under the table only when you pick a row:**
   Health (workloads) no longer keeps an empty "Select a namespace,
   workload or pod" card beside or under its table. Picking a row opens the
   shared inspector, as Nodes and Incidents have it: beside the table on a
