@@ -22,7 +22,8 @@ use crate::monitoring::colors::{self, Ink, Tier};
 /// Legend rows drawn at most; the rest are counted.
 pub(crate) const LEGEND_ROWS: usize = 30;
 /// Series an inline legend lists at most, and the longest name it takes
-/// past four series. More, or longer names, take the table.
+/// past four series, in chars rather than display width. More, or longer
+/// names, take the table.
 const INLINE_ROWS: usize = 6;
 const INLINE_NAME: usize = 16;
 
