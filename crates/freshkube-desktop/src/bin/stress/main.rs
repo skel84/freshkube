@@ -16,6 +16,7 @@
 //! | `summary-410 <changes/s>` | the same changes, with a forced Pod relist after 10 s |
 //! | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate |
 //! | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
+//! | `loading <page>` | example data held (`FRESHKUBE_FIXTURE_HOLD`), so `resources` (Pods), `nodes` or `system-services` shows its loading rows for the whole run |
 //! | `workload-logs <lines/s>` | an example Deployment's Logs tab, its 13 pods' containers writing that many lines a second between them |
 //! | `terminal <lines/s>` | a window with only a terminal, fed coloured lines at that rate |
 //! | `terminal-top` | the terminal, redrawn whole by a `top`-like program about 60 times a second |
@@ -63,6 +64,7 @@ enum Scenario {
     PodLogs { rate: u32, tabs: u32 },
     TalosLogs { rate: u32 },
     WorkloadLogs { rate: u32 },
+    Loading { page: &'static str },
     Terminal { rate: u32 },
     TerminalTop,
     TerminalSample,
@@ -102,6 +104,14 @@ impl Scenario {
             },
             "terminal" => Scenario::Terminal {
                 rate: number(1, 10_000)? as u32,
+            },
+            "loading" => Scenario::Loading {
+                page: match args.get(1).map(String::as_str).unwrap_or("resources") {
+                    "resources" => "resources",
+                    "nodes" => "nodes",
+                    "system-services" => "system-services",
+                    _ => return None,
+                },
             },
             "terminal-top" => Scenario::TerminalTop,
             "terminal-sample" => Scenario::TerminalSample,
@@ -146,6 +156,20 @@ impl Scenario {
                 ("FRESHKUBE_PAGE", "workload-logs".into()),
                 ("FRESHKUBE_STRESS_WORKLOAD_RATE", rate.to_string()),
             ],
+            Scenario::Loading { page } => {
+                // Pods waits for its list alone, so the shell keeps still;
+                // Nodes and System services wait for Talos, as they do
+                // while a cluster connects.
+                let hold = if page == "resources" { "lists" } else { "talos" };
+                let mut env = vec![
+                    ("FRESHKUBE_PAGE", page.into()),
+                    ("FRESHKUBE_FIXTURE_HOLD", hold.into()),
+                ];
+                if page == "resources" {
+                    env.push(pods);
+                }
+                env
+            }
             Scenario::Terminal { .. } | Scenario::TerminalTop | Scenario::TerminalSample => {
                 Vec::new()
             }
@@ -180,7 +204,7 @@ fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(scenario) = Scenario::parse(&args) else {
         eprintln!(
-            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] [tabs] | talos-logs [lines/s] | workload-logs [lines/s] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
+            "usage: stress summary | table [pods] | burst [pods] [changes/s] | pod-logs [lines/s] [tabs] | talos-logs [lines/s] | workload-logs [lines/s] | loading [resources|nodes|system-services] | terminal [lines/s] | terminal-top | terminal-sample | monitoring <dashboard.json> [processes]"
         );
         std::process::exit(2);
     };
@@ -228,7 +252,9 @@ fn main() -> color_eyre::Result<()> {
         return freshkube_desktop::run_terminal(workload);
     }
     let runtime = tokio::runtime::Runtime::new()?;
-    if let Scenario::TalosLogs { .. } | Scenario::WorkloadLogs { .. } = scenario {
+    if let Scenario::TalosLogs { .. } | Scenario::WorkloadLogs { .. } | Scenario::Loading { .. } =
+        scenario
+    {
         return freshkube_desktop::run(
             freshkube_desktop::GpuiOptions::fixture(),
             runtime.handle().clone(),

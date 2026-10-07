@@ -107,7 +107,7 @@ impl Field {
 }
 
 impl Nodes {
-    pub(super) fn rebuild_columns(&mut self, talos: bool) {
+    pub(in crate::desktop) fn rebuild_columns(&mut self, talos: bool) {
         self.all_columns = [
             Field::Glyph,
             Field::Name,

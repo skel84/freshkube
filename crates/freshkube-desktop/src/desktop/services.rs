@@ -249,10 +249,13 @@ impl Pilot {
                     .ghost()
                     .small()
                     .size(dp(ui::CONTROL_HEIGHT))
-                    .icon(IconName::RefreshCw)
+                    .icon(ui::refresh_icon(self.services.is_loading(), cx))
                     .accessibility_label("Refresh services")
-                    .tooltip("Refresh services")
-                    .loading(self.services.is_loading())
+                    .tooltip(if self.services.is_loading() {
+                        "Refreshing…"
+                    } else {
+                        "Refresh services"
+                    })
                     .disabled(self.services.is_loading() || self.selected_node.is_none())
                     .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
             )

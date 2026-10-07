@@ -319,6 +319,8 @@ pub(crate) struct Pilot {
     logs: Entity<LogPanel>,
     countdown: Entity<Countdown>,
     fps: Entity<shell::fps::Fps>,
+    /// The header, rail and column, each cached beside the page.
+    chrome: shell::ChromeParts,
     /// The status bar's port forwards, which redraw on their own.
     forwards: Entity<ForwardsIndicator>,
     /// Logs under the page, in tabs; app-wide, like the forwards.
@@ -383,6 +385,9 @@ pub(crate) struct Pilot {
     automatic: bool,
     elapsed: Duration,
     fixture: bool,
+    /// Example data holds the Talos overview and the Kubernetes summary
+    /// (`fixture::hold`), so the pages that wait for them stay loading.
+    fixture_hold: bool,
     fixture_tick: u64,
     focus: FocusHandle,
     node_focus: FocusHandle,
@@ -476,7 +481,9 @@ impl Pilot {
             pilot: pilot.clone(),
             page: Page::Nodes,
         });
-        let node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        let mut node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        // The header the loading rows sit under before anything answers.
+        node_workspace.rebuild_columns(!options.kubernetes_only);
         let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let services_page = cx.new(|_| PageHost {
             pilot,
@@ -828,6 +835,7 @@ impl Pilot {
             logs,
             countdown,
             fps: cx.new(shell::fps::Fps::new),
+            chrome: shell::ChromeParts::new(cx),
             forwards: cx.new(ForwardsIndicator::new),
             dock,
             overview_page,
@@ -870,6 +878,7 @@ impl Pilot {
             automatic: true,
             elapsed: Duration::ZERO,
             fixture: options.fixture,
+            fixture_hold: options.fixture && options.hold_talos,
             fixture_tick: 0,
             focus: cx.focus_handle(),
             node_focus: cx.focus_handle(),
@@ -925,6 +934,7 @@ impl Pilot {
                 cx.notify();
             },
         ));
+        view.chrome.watch(&view, cx);
         view.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&view.focus, cx);
@@ -1328,6 +1338,11 @@ impl Pilot {
         }
         self.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
+        if self.fixture && self.fixture_hold {
+            // Loading until the hold is released, which only a test does.
+            cx.notify();
+            return;
+        }
         if self.fixture {
             self.fixture_tick += 1;
             let context = self.applied.context.clone().unwrap_or_default();

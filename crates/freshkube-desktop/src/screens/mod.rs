@@ -637,10 +637,9 @@ pub(crate) fn refresh_control<V: ScreenPanel, T: Send + 'static>(
         .ghost()
         .small()
         .size(dp(ui::CONTROL_HEIGHT))
-        .icon(IconName::RefreshCw)
+        .icon(ui::refresh_icon(loading, cx))
         .accessibility_label(label)
-        .tooltip(label)
-        .loading(loading)
+        .tooltip(if loading { "Refreshing…" } else { label })
         .disabled(loading || source.is_none())
         .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx)))
 }

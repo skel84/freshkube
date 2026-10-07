@@ -242,6 +242,12 @@ impl Nodes {
             document,
         }
     }
+    /// The motion over the table's loading rows, which the shell mounts
+    /// beside the cached page, so its frames redraw neither.
+    pub(super) fn loading_motion(&self) -> &Entity<freshkube_ui::table::LoadingMotion> {
+        &self.loading_motion
+    }
+
     pub(super) fn row(&self) -> Option<&NodeRow> {
         self.rows
             .iter()

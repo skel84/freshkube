@@ -98,10 +98,13 @@ impl EtcdScreen {
             .ghost()
             .small()
             .size(dp(ui::CONTROL_HEIGHT))
-            .icon(IconName::RefreshCw)
+            .icon(ui::refresh_icon(loading, cx))
             .accessibility_label("Refresh etcd")
-            .tooltip("Refresh etcd")
-            .loading(loading)
+            .tooltip(if loading {
+                "Refreshing…"
+            } else {
+                "Refresh etcd"
+            })
             .disabled(loading || self.source.is_none())
             .on_click(cx.listener(|view, _, window, cx| view.manual_refresh(window, cx)));
         header.chips(chips).control(refresh).render(window, cx)
