@@ -139,7 +139,83 @@ pub fn default_talosconfig_exists() -> bool {
         .as_deref()
         .and_then(connection_preferences::load)
         .is_some()
-        || talos_rs::config::TalosConfig::default_path().is_ok_and(|path| path.is_file())
+        || talos_rs::config::TalosConfig::default_path()
+            .is_ok_and(|path| default_talosconfig_present(&path))
+}
+
+/// Largest default talosconfig read when deciding whether it counts.
+const MAX_DEFAULT_TALOSCONFIG_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Whether the default talosconfig at `path` is a file to use. A missing file
+/// is absent, and so is a stub with no contexts to choose from, which
+/// `talosctl` can leave behind. A file that can't be read or parsed counts as
+/// present: it may be a real config the user needs to fix, and Talos mode says
+/// what is wrong with it.
+fn default_talosconfig_present(path: &std::path::Path) -> bool {
+    match freshkube_core::read_bounded_regular_file(path, MAX_DEFAULT_TALOSCONFIG_BYTES) {
+        Ok(bytes) => !std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| talos_rs::config::TalosConfig::parse(text).ok())
+            .is_some_and(|config| config.contexts.is_empty()),
+        Err(freshkube_core::BoundedReadError::NotFound) => false,
+        Err(_) => path.is_file(),
+    }
+}
+
+#[cfg(test)]
+mod default_talosconfig_tests {
+    use super::default_talosconfig_present;
+    use std::path::PathBuf;
+
+    const VALID: &str = "context: alpha\ncontexts:\n  alpha:\n    endpoints: [\"192.0.2.10\"]\n    ca: Y2E=\n    crt: Y3J0\n    key: a2V5\n";
+
+    fn write(dir: &tempfile::TempDir, text: &str) -> PathBuf {
+        let path = dir.path().join("config");
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_stub_with_no_contexts_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!default_talosconfig_present(&write(
+            &dir,
+            "context: \"\"\ncontexts: {}\n"
+        )));
+        assert!(!default_talosconfig_present(&write(
+            &dir,
+            "context: alpha\ncontexts: {}\n"
+        )));
+        assert!(!default_talosconfig_present(&write(
+            &dir,
+            "context: \"\"\ncontexts:\n"
+        )));
+    }
+
+    #[test]
+    fn a_missing_file_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!default_talosconfig_present(&dir.path().join("config")));
+    }
+
+    #[test]
+    fn a_valid_file_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(default_talosconfig_present(&write(&dir, VALID)));
+    }
+
+    #[test]
+    fn an_unparsable_file_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(default_talosconfig_present(&write(
+            &dir,
+            "context: [oops\n"
+        )));
+        assert!(default_talosconfig_present(&write(
+            &dir,
+            "not: a talosconfig\n"
+        )));
+    }
 }
 
 /// Checks a maintenance `--endpoint` with the same rule every frontend uses
