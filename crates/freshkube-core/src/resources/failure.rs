@@ -79,7 +79,7 @@ impl Failure {
                 Self::new(FailureKind::Unreachable, error.to_string())
             }
             kube::Error::Service(error) => {
-                let message = error.to_string();
+                let message = with_causes(error.as_ref());
                 let kind = if message.to_lowercase().contains("timed out") {
                     FailureKind::Timeout
                 } else {
@@ -94,6 +94,22 @@ impl Failure {
     pub fn timeout(what: &str) -> Self {
         Self::new(FailureKind::Timeout, format!("{what} timed out"))
     }
+}
+
+/// An error and its causes, as "client error (Connect): unsuccessful tunnel
+/// (HTTP/1.1 407 Pro)": hyper's own message names only the stage that failed.
+fn with_causes(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_message = cause.to_string();
+        if !message.contains(&cause_message) {
+            message.push_str(": ");
+            message.push_str(&cause_message);
+        }
+        source = cause.source();
+    }
+    message
 }
 
 impl fmt::Display for Failure {
