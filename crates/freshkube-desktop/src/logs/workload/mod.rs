@@ -1014,6 +1014,8 @@ impl Streams for WorkloadLogView {
             return;
         }
         for (key, pod) in refused {
+            // A fresh read: a failure after it backs off from the start.
+            self.source_mut().failures.remove(&key);
             self.start_stream(key, pod, cx);
         }
         self.source_mut().describe();
@@ -1130,6 +1132,10 @@ impl Streams for WorkloadLogView {
         } else {
             Vec::new()
         };
+        // Each is a fresh read: a failure after it backs off from the start.
+        for (key, _) in &refused {
+            source.failures.remove(key);
+        }
         if !markers.is_empty() {
             self.clear_shown();
             self.ingest(markers, cx);
@@ -1397,7 +1403,9 @@ impl Streams for WorkloadLogView {
             .pods
             .iter()
             .any(|pod| pod.name == key.pod && pod.uid == key.uid);
-        if !matches!(stream.state, StreamState::Failed(_)) || !listed {
+        // A refusal schedules no retry; should one still fire, it waits for
+        // the pods to change or Retry too.
+        if !matches!(stream.state, StreamState::Failed(_)) || stream.state.refused() || !listed {
             return;
         }
         let pod = stream.pod.clone();

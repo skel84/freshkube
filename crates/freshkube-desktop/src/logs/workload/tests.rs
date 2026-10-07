@@ -659,7 +659,8 @@ fn busy_streams_are_applied_once_a_delivery(cx: &mut TestAppContext) {
 fn a_refused_stream_waits_for_the_pods_to_change_or_retry(cx: &mut TestAppContext) {
     let (_runtime, view, handle) = mount(cx);
     let metrics = deployment("metrics-server");
-    let refused = pods(&metrics, "app=metrics-server");
+    // One pod of the example's many, so one stream is refused.
+    let refused = vec![pods(&metrics, "app=metrics-server").remove(0)];
     let refused_key = key(&refused[0]);
     let generation = |cx: &mut TestAppContext| {
         cx.update(|cx| view.read(cx).source().streams[&refused_key].generation)
@@ -722,6 +723,147 @@ fn a_refused_stream_waits_for_the_pods_to_change_or_retry(cx: &mut TestAppContex
     .unwrap();
     assert!(generation(cx) > third);
     assert!(still_refused(cx));
+}
+
+/// A pod replaced under the same name, with a new uid, is a change too: a
+/// refused stream is read again, its backoff from the start.
+#[gpui_kit::test]
+fn a_pod_replaced_under_its_name_wakes_a_refused_stream(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let metrics = deployment("metrics-server");
+    let mut both = pods(&metrics, "app=metrics-server");
+    both.truncate(2);
+    let refused_key = key(&both[0]);
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &metrics, cx);
+        feed(&view, both.clone(), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let first = cx.update(|cx| {
+        let stream = &view.read(cx).source().streams[&refused_key];
+        assert!(stream.state.refused());
+        stream.generation
+    });
+    // As if it had failed for a while before it was refused.
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            view.source_mut().failures.insert(refused_key.clone(), 3);
+        })
+    });
+
+    let mut replaced = both.clone();
+    replaced[1].uid = format!("{}-replaced", replaced[1].uid);
+    assert_eq!(replaced[1].name, both[1].name);
+    cx.update(|cx| feed(&view, replaced.clone(), cx));
+    cx.update(|cx| {
+        let source = view.read(cx).source();
+        assert!(source.streams[&refused_key].generation > first);
+        assert!(!source.failures.contains_key(&refused_key));
+        // The old incarnation's stream is gone; the new one's is read.
+        assert!(!source.streams.contains_key(&key(&both[1])));
+        assert!(source.streams.contains_key(&key(&replaced[1])));
+    });
+}
+
+/// Retry reads every refused stream at once and starts its backoff over;
+/// once none is refused, the notice goes.
+#[gpui_kit::test]
+fn retry_reads_refused_streams_and_starts_their_backoff_over(cx: &mut TestAppContext) {
+    use freshkube_core::resources::{Failure, FailureKind};
+    let (_runtime, view, handle) = mount(cx);
+    let api = deployment("api");
+    let all = pods(&api, "app=api");
+    cx.update_window(handle, |_, window, cx| {
+        show_fed(&view, &api, cx);
+        feed(&view, all.clone(), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let find = |cx: &mut TestAppContext, waiting: bool| {
+        cx.update(|cx| {
+            view.read(cx)
+                .source()
+                .streams
+                .iter()
+                .find(|(_, stream)| {
+                    if waiting {
+                        matches!(stream.state, StreamState::Waiting(_))
+                    } else {
+                        stream.state == StreamState::Streaming
+                    }
+                })
+                .map(|(key, _)| key.clone())
+                .unwrap()
+        })
+    };
+    // The container still being created waits again when read again, so
+    // its failures add up; a running one streams.
+    let waiting = find(cx, true);
+    let streaming = find(cx, false);
+    let generation = |key: &StreamKey, cx: &mut TestAppContext| {
+        cx.update(|cx| view.read(cx).source().streams[key].generation)
+    };
+    let failures = |key: &StreamKey, cx: &mut TestAppContext| {
+        cx.update(|cx| view.read(cx).source().failures.get(key).copied())
+    };
+    let fail = |key: &StreamKey, kind: FailureKind, cx: &mut TestAppContext| {
+        let generation = generation(key, cx);
+        let failure = Failure::new(kind, "an invented failure".to_owned());
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.apply_updates(
+                    key,
+                    generation,
+                    vec![PodLogUpdate::Failed(failure)],
+                    cx,
+                ));
+            })
+        });
+    };
+    let mut jitter = cx.update(|cx| view.read(cx).source().jitter.clone());
+    let tick = Duration::from_millis(1);
+
+    // A transient failure first: the creating container backs off once.
+    let delay = jitter.spread(RETRY_FIRST);
+    fail(&waiting, FailureKind::Unreachable, cx);
+    cx.executor().advance_clock(delay);
+    cx.run_until_parked();
+    assert_eq!(failures(&waiting, cx), Some(1));
+
+    // Then both are refused, and Retry reads them again.
+    fail(&waiting, FailureKind::Forbidden, cx);
+    fail(&streaming, FailureKind::Forbidden, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("workload-logs-refused").label(),
+            Some("Logs refused for 2 containers: read again when the pods change.")
+        );
+        window.click("workload-logs-retry-refused", cx);
+        window.render_frame(cx);
+        let source = view.read(cx).source();
+        assert_eq!(source.streams[&streaming].state, StreamState::Streaming);
+        assert!(matches!(
+            source.streams[&waiting].state,
+            StreamState::Waiting(_)
+        ));
+        assert!(source.refused_note.is_none());
+        assert!(window.try_find("workload-logs-refused").is_none());
+    })
+    .unwrap();
+    assert_eq!(failures(&waiting, cx), None);
+
+    // Its next failure waits the first step again, not the second.
+    let delay = jitter.spread(RETRY_FIRST);
+    let before = generation(&waiting, cx);
+    fail(&waiting, FailureKind::Unreachable, cx);
+    cx.executor().advance_clock(delay - tick);
+    cx.run_until_parked();
+    assert_eq!(generation(&waiting, cx), before);
+    cx.executor().advance_clock(tick);
+    cx.run_until_parked();
+    assert!(generation(&waiting, cx) > before);
 }
 
 /// A stream that fails for a while reads again with the watcher's backoff,
