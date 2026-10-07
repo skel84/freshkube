@@ -23,7 +23,7 @@ const CONTAINERS_WIDTH: f32 = freshkube_ui::squares::width(freshkube_ui::squares
 const READY_WIDTH: f32 = 72.;
 /// A pod's restart count, under its label and sort arrow.
 const RESTARTS_WIDTH: f32 = 88.;
-/// A pod's Logs button at the row's end.
+/// A pod's Logs button, after its name.
 const LOGS_WIDTH: f32 = 36.;
 /// A use figure and its 44-wide bullet.
 const USAGE_WIDTH: f32 = 116.;
@@ -53,7 +53,7 @@ pub(super) enum ColumnSource {
     Cpu,
     Memory,
     Node,
-    /// A pod's Logs button, last.
+    /// A pod's Logs button, after its name.
     Logs,
 }
 
@@ -113,9 +113,13 @@ impl freshkube_ui::table::TableColumn for DisplayColumn {
         self.flexible
     }
 
-    /// The glyph and the name stay in view when the table scrolls sideways.
+    /// The glyph, the name and a pod's Logs button stay in view when the
+    /// table scrolls sideways.
     fn pinned(&self) -> bool {
-        matches!(self.source, ColumnSource::Glyph | ColumnSource::Name(_))
+        matches!(
+            self.source,
+            ColumnSource::Glyph | ColumnSource::Name(_) | ColumnSource::Logs
+        )
     }
 }
 
@@ -224,6 +228,11 @@ impl TableLayout {
                 flexible: is_flexible,
                 status: status == Some(ix),
             });
+            // A pod's Logs button follows its name, pinned with it, so it
+            // stays in reach when the table scrolls sideways.
+            if is_name && pods {
+                columns.push(DisplayColumn::new("", ColumnSource::Logs, LOGS_WIDTH));
+            }
             if is_name && !pods && widest.owner > 0 {
                 columns.push(DisplayColumn::new(
                     "Owner",
@@ -239,9 +248,6 @@ impl TableLayout {
                     fit(widest.namespace.max(11), MAX_COLUMN),
                 ));
             }
-        }
-        if pods {
-            columns.push(DisplayColumn::new("", ColumnSource::Logs, LOGS_WIDTH));
         }
         let width = columns.iter().map(|column| column.width).sum();
         Self {

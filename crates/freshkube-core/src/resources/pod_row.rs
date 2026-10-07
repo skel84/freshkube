@@ -187,15 +187,23 @@ pub(crate) fn facts(spec: &PodSpec, status: Option<&PodStatus>) -> PodFacts {
         qos: status.qos_class.clone(),
         requests: sum(|resources| &resources.requests),
         limits: sum(|resources| &resources.limits),
-        containers: containers(&spec.containers, &status.container_statuses),
-        init_containers: containers(&spec.init_containers, &status.init_container_statuses),
+        containers: containers(&spec.containers, &status.container_statuses, false),
+        init_containers: containers(&spec.init_containers, &status.init_container_statuses, true),
     }
 }
 
 /// The spec's containers in its order, each with its status, or with an
 /// unknown state while it has none (a pod not yet scheduled), then any
 /// status the spec doesn't name.
-fn containers(spec: &[SpecContainer], statuses: &[ContainerStatus]) -> Vec<ContainerFacts> {
+/// Each declared container's facts in spec order, then any status the
+/// spec doesn't name. Only an init container restarted Always is a
+/// sidecar: an app container's restart rules, newer and alpha, don't make
+/// it one.
+fn containers(
+    spec: &[SpecContainer],
+    statuses: &[ContainerStatus],
+    init: bool,
+) -> Vec<ContainerFacts> {
     let named = |name: &str| spec.iter().any(|container| container.name == name);
     spec.iter()
         .map(|declared| {
@@ -208,7 +216,7 @@ fn containers(spec: &[SpecContainer], statuses: &[ContainerStatus]) -> Vec<Conta
                     ..ContainerFacts::default()
                 });
             ContainerFacts {
-                sidecar: declared.restart_policy == "Always",
+                sidecar: init && declared.restart_policy == "Always",
                 ..facts
             }
         })
@@ -401,7 +409,8 @@ mod tests {
               "spec":{"nodeName":"wk-1","containers":[
                 {"name":"app","resources":{"requests":{"cpu":"100m","memory":"64Mi"},
                   "limits":{"cpu":"1","memory":"256Mi"}}},
-                {"name":"proxy","resources":{"requests":{"cpu":"50m","memory":"32Mi"}}}],
+                {"name":"proxy","restartPolicy":"Always",
+                  "resources":{"requests":{"cpu":"50m","memory":"32Mi"}}}],
                 "initContainers":[{"name":"migrate"},{"name":"mesh","restartPolicy":"Always"},
                   {"name":"warm"}]},
               "status":{"phase":"Running","qosClass":"Burstable",
@@ -459,7 +468,8 @@ mod tests {
                 ("warm", &RunState::Unknown, 0),
             ]
         );
-        // Only an init container restarted Always is a sidecar.
+        // Only an init container restarted Always is a sidecar; the proxy,
+        // an app container with the same policy, isn't.
         let sidecars: Vec<_> = (facts.init_containers.iter())
             .chain(&facts.containers)
             .map(|c| c.sidecar)

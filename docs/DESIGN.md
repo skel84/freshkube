@@ -125,7 +125,7 @@ The status is a glyph, replaced by a checkbox on a marked row. Pods order their 
 
 Containers draws a square per container (`freshkube_ui::squares`), 8 dp with 3 dp between and a 3 px data-mark radius, in the order the pod runs them: init containers first, at half opacity, except native sidecars (`restartPolicy: Always`), which run beside the app and draw full. At most eight show, then a muted `+N`, derived with the row; the column (130 dp) fits eight and the count inside its padding. Squares take the status glyphs' colours. The tooltip and the accessible label name each container, its state and reason, and its restarts, so colour never carries the state alone. The column sorts the worst square first.
 
-Every pod row ends with a Logs button, an icon in a 36 dp column with no header, muted until the row is hovered or selected (`pod-row-logs-<uid>`, labelled "Logs for ⟨pod⟩"). It opens that pod's logs in the dock, as L does for the selected row, without selecting the row or opening the drawer; an open drawer covers it.
+Every pod row has a Logs button right after its name, an icon in a 36 dp column with no header, muted until the row is hovered or selected (`pod-row-logs-<uid>`, labelled "Logs for ⟨pod⟩"). It opens that pod's logs in the dock, as L does for the selected row, without selecting the row or opening the drawer. Freelens puts its row actions at the far right; here the table is wider than a 1280 window and the drawer covers the row's end, so the button sits with the name in the pinned run, where it stays in reach as the table scrolls sideways.
 
 | Container | Square |
 | --- | --- |

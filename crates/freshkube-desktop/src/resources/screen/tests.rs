@@ -145,10 +145,13 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
         assert_eq!(screen.read(cx).store.len(), 22);
         assert!(window.find("resource-list").visible());
         // The glyph first, which doesn't sort; then the name, after its
-        // namespace when listing every one, the owner, readiness with
-        // restarts, use, the node and age. IP stays left out.
+        // namespace when listing every one, and its Logs button, which
+        // doesn't sort either; then the containers, readiness, use,
+        // restarts, owner, the node and age. IP stays left out.
         assert!(window.try_find(("resource-sort", 0usize)).is_none());
-        let labels: Vec<String> = (1..10usize)
+        assert!(window.try_find(("resource-sort", 2usize)).is_none());
+        let labels: Vec<String> = (1..11usize)
+            .filter(|ix| *ix != 2)
             .map(|ix| {
                 window
                     .find(("resource-sort", ix))
@@ -171,7 +174,7 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
                 "Age"
             ]
         );
-        assert!(window.try_find(("resource-sort", 10usize)).is_none());
+        assert!(window.try_find(("resource-sort", 11usize)).is_none());
 
         let third = identity_at(&screen, 2, cx);
         window.within(row_id(&third)).click("name", cx);
@@ -244,7 +247,7 @@ fn a_namespace_narrows_namespaced_kinds_and_persists_across_kinds(cx: &mut TestA
         // One namespace isn't repeated before every name.
         assert!(!view.layout.namespaced);
         assert_eq!(
-            window.find(("resource-sort", 2usize)).label(),
+            window.find(("resource-sort", 3usize)).label(),
             Some("Containers")
         );
 
@@ -1753,11 +1756,15 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
             window.within(row.clone()).find("name").bounds().left()
         };
         let names: Vec<_> = rows.iter().map(|row| left(window, row)).collect();
+        let first = identity_at(&screen, 0, cx);
+        let logs = gpui_kit::SharedString::from(format!("pod-row-logs-{}", first.uid));
+        let button = window.find(logs.clone()).bounds().left();
         let header = window.find(("resource-sort", 1usize)).bounds().left();
-        // Column 2 starts at the pinned run's edge, where its label stays
-        // once scrolled; column 4 starts clear of the scroll's 120.
-        let edge = window.find(("resource-sort", 2usize)).bounds().left();
-        let later = window.find(("resource-sort", 4usize)).bounds().left();
+        // Column 3 starts at the pinned run's edge (glyph, name, Logs),
+        // where its label stays once scrolled; column 5 starts clear of
+        // the scroll's 120.
+        let edge = window.find(("resource-sort", 3usize)).bounds().left();
+        let later = window.find(("resource-sort", 5usize)).bounds().left();
         assert!(later - edge > px(120.), "{:?}", later - edge);
         window.scroll(
             "resource-table-scroll",
@@ -1765,13 +1772,15 @@ fn a_sideways_scroll_keeps_each_name_in_view_once(cx: &mut TestAppContext) {
             cx,
         );
         window.render_frame(cx);
-        let moved = later - window.find(("resource-sort", 4usize)).bounds().left();
+        let moved = later - window.find(("resource-sort", 5usize)).bounds().left();
         assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
         // `find` fails on an id that resolves twice.
         assert!((window.find(("resource-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
         for (row, name) in rows.iter().zip(names) {
             assert!((left(window, row) - name).abs() <= px(1.5));
         }
+        // A pod's Logs button is pinned with its name (#291).
+        assert!((window.find(logs).bounds().left() - button).abs() <= px(1.5));
     })
     .unwrap();
 }
