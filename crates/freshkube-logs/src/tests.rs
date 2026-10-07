@@ -624,6 +624,7 @@ fn next_shows_every_matched_line_of_a_tall_row(cx: &mut TestAppContext) {
         settle(cx, &panel, handle);
         let trace = SharedString::from("log-line-1-120");
         let mut offsets = Vec::new();
+        let mut line_ends: Vec<gpui_kit::Pixels> = Vec::new();
         for (step, line) in [(1, 60), (2, 120), (3, 199)] {
             let case = format!("wrapped {wrapped}, step {step}");
             let before = reveals();
@@ -645,10 +646,18 @@ fn next_shows_every_matched_line_of_a_tall_row(cx: &mut TestAppContext) {
                 assert_eq!((hit.id, hit.line), (120, Some(line)), "{case}");
                 assert_eq!(panel.read(cx).review.current_position(), Some(step - 1));
                 assert_eq!(panel.read(cx).review.match_count(), 4);
-                let ix = panel.read(cx).review.row_for_id(120).unwrap();
-                let line_end = panel
-                    .update(cx, |view, cx| view.matched_line_end(ix, line, window, cx))
-                    .expect("the line's end");
+                // Laying a row out works only while a frame draws; read
+                // what the reveal measured then.
+                let (id, revealed, line_end) =
+                    panel.read(cx).revealed_line.expect("a revealed line");
+                assert_eq!((id, revealed), (120, line), "{case}");
+                if let Some(&earlier) = line_ends.last() {
+                    assert!(
+                        line_end > earlier,
+                        "{case}: line {line} ends above the last"
+                    );
+                }
+                line_ends.push(line_end);
                 let row = window.find(trace.clone()).bounds();
                 let list = window.find("logs-viewport").bounds();
                 assert!(

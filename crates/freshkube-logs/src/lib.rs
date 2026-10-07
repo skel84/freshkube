@@ -335,6 +335,11 @@ pub struct LogView<S: LogSource> {
     /// a row taller than the list brings into view instead of its middle.
     /// `None` for any other reveal.
     reveal_matched_line: Option<usize>,
+    /// The last matched line a reveal brought into view: its row, its line
+    /// and how far down the row the line ends. Tests read it, since laying
+    /// a row out again works only while a frame draws.
+    #[cfg(test)]
+    revealed_line: Option<(u64, usize, Pixels)>,
     review_anchor: Option<ReviewAnchor>,
     anchor_evicted: bool,
     feedback: Option<String>,
@@ -408,6 +413,8 @@ impl<S: LogSource> LogView<S> {
             row_widths: Vec::new(),
             pending_reveal: None,
             reveal_matched_line: None,
+            #[cfg(test)]
+            revealed_line: None,
             manual_review: Rc::new(Cell::new(false)),
             row_measurements: BTreeMap::new(),
             row_exact: Vec::new(),

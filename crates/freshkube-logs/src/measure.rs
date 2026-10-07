@@ -189,6 +189,10 @@ impl<S: LogSource> LogView<S> {
             let before: Pixels = self.sizes[..ix].iter().map(|row| row.height).sum();
             let top = (before + line_end - list / 2.).max(px(0.));
             self.scroll.set_offset(point(self.scroll.offset().x, -top));
+            #[cfg(test)]
+            {
+                self.revealed_line = Some((self.review.id(ix), line, line_end));
+            }
         } else {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
@@ -198,7 +202,7 @@ impl<S: LogSource> LogView<S> {
     /// split after each newline, measured by laying the row out again with
     /// its message cut after that line, so it wraps as the row does. `None`
     /// when the row has no such line.
-    pub(super) fn matched_line_end(
+    fn matched_line_end(
         &mut self,
         ix: usize,
         line: usize,
