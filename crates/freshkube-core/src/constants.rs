@@ -55,17 +55,8 @@ pub const FLUX_CRDS: &[&str] = &[
 
 /// Default refresh intervals for components (in seconds)
 pub mod refresh_intervals {
-    /// Fast refresh for real-time data (network stats)
-    pub const FAST: u64 = 2;
-
     /// Normal refresh for moderately changing data (processes, etcd)
     pub const NORMAL: u64 = 5;
-
-    /// Slow refresh for stable data (workloads, diagnostics)
-    pub const SLOW: u64 = 10;
-
-    /// Very slow refresh for rarely changing data (lifecycle, security)
-    pub const VERY_SLOW: u64 = 30;
 }
 
 #[cfg(test)]
@@ -86,12 +77,5 @@ mod tests {
         assert!(!KYVERNO_CRDS.is_empty());
         assert!(!ARGOCD_CRDS.is_empty());
         assert!(!FLUX_CRDS.is_empty());
-    }
-
-    #[test]
-    fn test_refresh_intervals_ordering() {
-        const { assert!(refresh_intervals::FAST < refresh_intervals::NORMAL) };
-        const { assert!(refresh_intervals::NORMAL < refresh_intervals::SLOW) };
-        const { assert!(refresh_intervals::SLOW < refresh_intervals::VERY_SLOW) };
     }
 }

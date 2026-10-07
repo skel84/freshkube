@@ -16,14 +16,14 @@ use std::{
 use talos_rs::{
     ConnectionCounts, ConnectionInfo, ConnectionState, CpuStat, EtcdAlarm, EtcdMemberInfo,
     EtcdMemberStatus, KubeSpanPeerStatus, NetDevRate, NetDevStats, NetstatFilter, ProcessInfo,
-    ProcessState, ServiceInfo, TalosClient, get_kubespan_peers, get_kubespan_peers_for_node,
-    is_kubespan_enabled, is_kubespan_enabled_for_node,
+    ProcessState, ServiceInfo, TalosClient, get_kubespan_peers_for_node,
+    is_kubespan_enabled_for_node,
 };
 
 use crate::{
     constants::MAX_CAPTURE_SIZE,
     errors::{format_talos_error, format_timeout_error},
-    formatting::{format_bytes, format_bytes_signed, format_percent},
+    formatting::{format_bytes, format_percent},
     indicators::QuorumState,
     network::{ConnectionDirection, classify_connection, port_to_service_u32},
 };
@@ -943,30 +943,18 @@ pub struct NetworkInspectionRequest {
     pub target: InspectionTarget,
     /// Previous interface counter sample.
     pub sample: NetworkSampleState,
-    /// Whether to query KubeSpan through talosctl.
-    pub include_kubespan: bool,
     /// Per-source network timeout.
     pub timeout: Duration,
-    /// Explicit talosctl target for KubeSpan queries; `None` uses ambient config.
-    pub talosctl: Option<TalosctlTarget>,
 }
 
 impl NetworkInspectionRequest {
-    /// Creates a request with KubeSpan enabled and the standard timeout.
+    /// Creates a request with the standard timeout.
     pub fn new(target: InspectionTarget, sample: NetworkSampleState) -> Self {
         Self {
             target,
             sample,
-            include_kubespan: true,
             timeout: DEFAULT_TIMEOUT,
-            talosctl: None,
         }
-    }
-
-    /// Runs KubeSpan queries against an explicit talosctl context and config.
-    pub fn with_talosctl(mut self, target: TalosctlTarget) -> Self {
-        self.talosctl = Some(target);
-        self
     }
 }
 
@@ -1060,8 +1048,6 @@ pub struct NetworkConnectionsSnapshot {
 /// KubeSpan data collected through the Talos-supported `talosctl get` path.
 #[derive(Debug, Clone)]
 pub enum KubeSpanSnapshot {
-    /// The caller intentionally skipped the optional KubeSpan query.
-    NotRequested,
     /// KubeSpan configuration is not enabled and the peer query was available.
     Disabled,
     /// KubeSpan is enabled, with the current peer records.
@@ -1081,7 +1067,7 @@ impl KubeSpanSnapshot {
     pub fn peers(&self) -> Option<&[KubeSpanPeerStatus]> {
         match self {
             Self::Enabled { peers } => Some(peers),
-            Self::NotRequested | Self::Disabled | Self::Unavailable { .. } => None,
+            Self::Disabled | Self::Unavailable { .. } => None,
         }
     }
 }
@@ -1165,8 +1151,6 @@ pub struct NetworkInspectionSnapshot {
     pub connections: Option<NetworkConnectionsSnapshot>,
     /// Supplementary Talos service data, if available.
     pub services: Option<Vec<ServiceInfo>>,
-    /// KubeSpan state, including an explicit unavailable state.
-    pub kubespan: KubeSpanSnapshot,
     /// State to supply to the next request for rate calculations.
     pub next_sample: NetworkSampleState,
     /// Optional sources unavailable during collection.
@@ -1181,25 +1165,18 @@ impl NetworkInspectionSnapshot {
 }
 
 /// Collects interface counters as primary data and enriches them with optional
-/// netstat, service, and KubeSpan sources.
+/// netstat and service sources.
 pub async fn collect_network_inspection(
     client: TalosClient,
     request: NetworkInspectionRequest,
 ) -> Result<NetworkInspectionSnapshot, InspectionError> {
     let target_client = client.with_node(&request.target.address);
     let timeout = request.timeout;
-    let kubespan_future = collect_kubespan_snapshot(
-        request.target.address.clone(),
-        request.include_kubespan,
-        request.timeout,
-        request.talosctl.clone(),
-    );
 
-    let (interface_result, connection_result, service_result, kubespan) = tokio::join!(
+    let (interface_result, connection_result, service_result) = tokio::join!(
         tokio::time::timeout(timeout, target_client.network_device_stats()),
         tokio::time::timeout(timeout, target_client.netstat(NetstatFilter::All)),
         tokio::time::timeout(timeout, target_client.services()),
-        kubespan_future,
     );
 
     let devices = match interface_result {
@@ -1279,12 +1256,6 @@ pub async fn collect_network_inspection(
             None
         }
     };
-    if let KubeSpanSnapshot::Unavailable { message } = &kubespan {
-        unavailable.push(InspectionUnavailable {
-            source: InspectionSource::KubeSpan,
-            message: message.clone(),
-        });
-    }
 
     Ok(NetworkInspectionSnapshot {
         target: request.target,
@@ -1293,7 +1264,6 @@ pub async fn collect_network_inspection(
         totals,
         connections,
         services,
-        kubespan,
         next_sample,
         unavailable,
     })
@@ -1424,45 +1394,9 @@ pub fn inspect_network_connections(connections: Vec<ConnectionInfo>) -> NetworkC
 /// ask for it when it is shown rather than with every network refresh.
 pub async fn collect_kubespan_inspection(
     target: &InspectionTarget,
-    talosctl: Option<TalosctlTarget>,
+    talosctl: TalosctlTarget,
 ) -> KubeSpanSnapshot {
-    collect_kubespan_snapshot(target.address.clone(), true, DEFAULT_TIMEOUT, talosctl).await
-}
-
-async fn collect_kubespan_snapshot(
-    address: String,
-    requested: bool,
-    timeout: Duration,
-    talosctl: Option<TalosctlTarget>,
-) -> KubeSpanSnapshot {
-    if !requested {
-        return KubeSpanSnapshot::NotRequested;
-    }
-
-    if let Some(target) = talosctl {
-        return collect_kubespan_for_target(&address, &target, timeout).await;
-    }
-
-    let collection = tokio::task::spawn_blocking(move || {
-        let enabled = is_kubespan_enabled(&address);
-        match get_kubespan_peers(&address) {
-            Ok(peers) if enabled || !peers.is_empty() => KubeSpanSnapshot::Enabled { peers },
-            Ok(_) => KubeSpanSnapshot::Disabled,
-            Err(error) => KubeSpanSnapshot::Unavailable {
-                message: format_talos_error(&error),
-            },
-        }
-    });
-
-    match tokio::time::timeout(timeout, collection).await {
-        Ok(Ok(snapshot)) => snapshot,
-        Ok(Err(error)) => KubeSpanSnapshot::Unavailable {
-            message: format!("KubeSpan collection task failed: {error}"),
-        },
-        Err(_) => KubeSpanSnapshot::Unavailable {
-            message: format_timeout_error(timeout.as_secs(), 0),
-        },
-    }
+    collect_kubespan_for_target(&target.address, &talosctl, DEFAULT_TIMEOUT).await
 }
 
 /// The host of a node address, without its port, for talosctl's `-n`.
@@ -1627,11 +1561,6 @@ impl EtcdHealthSnapshot {
             [leader] => Some(*leader),
             _ => None,
         }
-    }
-
-    /// Formats the largest database size with the core signed-byte formatter.
-    pub fn largest_database_size_display(&self) -> String {
-        format_bytes_signed(self.largest_database_size)
     }
 }
 
@@ -1829,20 +1758,6 @@ mod tests {
 
     fn failure() -> talos_rs::TalosError {
         talos_rs::TalosError::Connection("boom".into())
-    }
-
-    #[test]
-    fn request_talosctl_target_is_optional_and_opt_in() {
-        let request = NetworkInspectionRequest::new(
-            InspectionTarget::new("n", "10.0.0.1"),
-            Default::default(),
-        );
-        assert!(request.talosctl.is_none());
-        let request = request.with_talosctl(TalosctlTarget::new("ctx", "/tmp/tc"));
-        assert_eq!(
-            request.talosctl,
-            Some(TalosctlTarget::new("ctx", "/tmp/tc"))
-        );
     }
 
     #[test]

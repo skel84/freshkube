@@ -398,7 +398,6 @@ pub(super) fn example(source: &ScreenSource, tick: u64) -> Result<NetworkData, S
             totals,
             connections: Some(connections),
             services: Some(services),
-            kubespan: KubeSpanSnapshot::NotRequested,
             next_sample: NetworkSampleState::default(),
             unavailable: Vec::new(),
         },
