@@ -1,0 +1,1 @@
+- Nodes: Enter on a node, a click on one of its pane's tabs, or a click in the pane moves the keyboard into the pane, as Enter does on Resources, so Escape first hands the keyboard back to the table and only a second Escape closes the pane. A tab whose screen takes no keys gives the keyboard to the tab strip, even from the filter.

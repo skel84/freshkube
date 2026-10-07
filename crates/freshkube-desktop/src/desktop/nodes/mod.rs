@@ -117,6 +117,9 @@ pub(super) struct Nodes {
     more: bool,
     pub(super) view: NodeView,
     tab_focus: FocusHandle,
+    /// Tracked by the whole pane, never focused itself: whether the
+    /// keyboard is already somewhere in it.
+    pane_focus: FocusHandle,
     /// The tab strip's scroll; the strip brings the active tab into view.
     pub(super) tab_strip: freshkube_ui::inspector::TabStrip,
     scroll: UniformListScrollHandle,
@@ -213,6 +216,7 @@ impl Nodes {
             more: false,
             view: NodeView::Table,
             tab_focus: cx.focus_handle(),
+            pane_focus: cx.focus_handle(),
             tab_strip: Default::default(),
             scroll: UniformListScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
@@ -532,6 +536,32 @@ impl Pilot {
             screen.focus(window, cx);
         } else {
             window.focus(&self.node_focus, cx);
+        }
+    }
+
+    /// Moves the keyboard into the node's pane, as Enter moves it into
+    /// Resources' drawer (#340): to the shown tab's list, document, log or
+    /// screen, or to the tab strip when the tab has none of its own.
+    pub(super) fn focus_node_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.node_workspace.tab {
+            NodeTab::Logs => self
+                .logs
+                .update(cx, |logs, cx| logs.focus_lines(window, cx)),
+            NodeTab::Pods => self.node_pods.update(cx, |pods, cx| pods.focus(window, cx)),
+            NodeTab::Events | NodeTab::Yaml => self
+                .node_workspace
+                .document
+                .update(cx, |pane, cx| pane.focus(window, cx)),
+            _ => {
+                // Most screens keep no keyboard of their own, so the tab
+                // strip takes it; a screen with its own then takes it from
+                // there. Always the strip first: a previous tab's list,
+                // log or screen may hold it, and isn't drawn next frame.
+                window.focus(&self.node_workspace.tab_focus, cx);
+                if let Some(screen) = self.active_screen() {
+                    screen.focus(window, cx);
+                }
+            }
         }
     }
 

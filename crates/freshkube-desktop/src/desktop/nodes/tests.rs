@@ -725,6 +725,209 @@ fn an_unmatched_hostname_uses_its_address_once() {
     );
 }
 
+/// Enter on a node, a click on a pane tab, or a click in the pane moves
+/// the keyboard into the node's pane, as Enter does on Resources (#340).
+/// Escape then hands it back to the table with the pane open, and a second
+/// Escape closes the pane.
+#[gpui_kit::test]
+fn enter_and_pane_clicks_move_the_keyboard_into_the_node_pane(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    let in_pane = |pilot: &gpui_kit::Entity<crate::desktop::Pilot>,
+                   window: &gpui_kit::Window,
+                   cx: &gpui_kit::App| {
+        pilot
+            .read(cx)
+            .node_workspace
+            .pane_focus
+            .contains_focused(window, cx)
+    };
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.open);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Overview);
+        assert!(in_pane(&pilot, window, cx));
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_workspace.open);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.open);
+
+        // A click on a row opens the pane and leaves the keyboard on the
+        // table; a click on a tab moves it into the tab's list.
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        window.click("node-talos-cp-fra1-01", cx);
+        window.render_frame(cx);
+        assert!(pilot.read(cx).node_focus.is_focused(window));
+        window.click("node-tab-pods", cx);
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Pods);
+        assert!(in_pane(&pilot, window, cx));
+
+        // A click on the pane's content takes it from the table too.
+        window.click("node-tab-overview", cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        window.click("node-pane", cx);
+        window.render_frame(cx);
+        assert!(in_pane(&pilot, window, cx));
+
+        // From the filter, a click on a tab whose screen takes no keys
+        // moves the keyboard to the tab strip, not leaving it in the filter.
+        let query = pilot.read(cx).node_workspace.query.clone();
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        window.render_frame(cx);
+        window.click("node-tab-overview", cx);
+        window.render_frame(cx);
+        assert!(in_pane(&pilot, window, cx));
+        assert!(!query.read(cx).focus_handle(cx).is_focused(window));
+        // The strip's mouse-down took it there; asked straight from the
+        // filter, the pane takes it too, rather than leaving it in the
+        // filter.
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        window.render_frame(cx);
+        pilot.update(cx, |pilot, cx| pilot.focus_node_pane(window, cx));
+        window.render_frame(cx);
+        assert!(in_pane(&pilot, window, cx));
+    })
+    .unwrap();
+}
+
+/// Leaving a tab whose list or log holds the keyboard for one whose screen
+/// takes no keys gives the keyboard to the tab strip, not to the previous
+/// tab's handle, which isn't drawn any more; Escape then still reaches the
+/// pane and hands the keyboard to the table (#343 review). A headless click
+/// on a tab focuses the strip on its mouse-down first, so the switch is
+/// asked straight, as More's items and Overview's links ask it.
+#[gpui_kit::test]
+fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        window.click("node-talos-cp-fra1-01", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    for from in [NodeTab::Pods, NodeTab::Logs] {
+        for to in [NodeTab::Overview, NodeTab::Services] {
+            cx.update_window(handle, |_, window, cx| {
+                pilot.update(cx, |pilot, cx| {
+                    pilot.show_node_tab(from, window, cx);
+                    pilot.focus_node_pane(window, cx);
+                });
+                window.render_frame(cx);
+                let tab_strip = pilot.read(cx).node_workspace.tab_focus.clone();
+                let pane = pilot.read(cx).node_workspace.pane_focus.clone();
+                assert!(pane.contains_focused(window, cx), "{from:?}");
+                assert!(!tab_strip.is_focused(window), "{from:?}");
+                pilot.update(cx, |pilot, cx| {
+                    pilot.show_node_tab(to, window, cx);
+                    pilot.focus_node_pane(window, cx);
+                });
+                window.render_frame(cx);
+                assert_eq!(pilot.read(cx).node_workspace.tab, to);
+                assert!(tab_strip.is_focused(window), "{from:?} → {to:?}");
+                window.press("escape", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(pilot.read(cx).node_workspace.open, "{from:?} → {to:?}");
+                assert!(
+                    pilot.read(cx).node_focus.is_focused(window),
+                    "{from:?} → {to:?}"
+                );
+            })
+            .unwrap();
+        }
+    }
+}
+
+/// With the open node hidden by the filter, Down and Up move the pane to the
+/// first and last rows the table shows (#339's selection rule).
+#[gpui_kit::test]
+fn arrows_from_a_hidden_open_node_move_to_the_visible_rows(cx: &mut TestAppContext) {
+    use freshkube_ui::table::{Line, TableSource};
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    let hidden = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            window.render_frame(cx);
+            crate::desktop::tests::expand_healthy_nodes(window, cx);
+            window.click("node-talos-cp-fra1-01", cx);
+            window.render_frame(cx);
+            pilot.read(cx).node_workspace.selected.clone().unwrap()
+        })
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        let query = pilot.read(cx).node_workspace.query.clone();
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        window.input("wk", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let visible: Vec<_> = {
+            let pilot = pilot.read(cx);
+            (0..pilot.line_count())
+                .filter_map(|line| match pilot.line(line, cx)? {
+                    Line::Row(row) => Some(row.key),
+                    Line::Group(_) => None,
+                })
+                .collect()
+        };
+        assert!(
+            visible.len() > 1 && !visible.contains(&hidden),
+            "{visible:?}"
+        );
+        for (key, first) in [("down", true), ("up", false)] {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_node(hidden.clone(), window, cx);
+                window.focus(&pilot.node_focus, cx);
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                pilot.read(cx).node_workspace.selected.as_ref(),
+                Some(&hidden)
+            );
+            window.press(key, cx);
+            window.render_frame(cx);
+            let expected = if first {
+                visible.first()
+            } else {
+                visible.last()
+            };
+            let nodes = &pilot.read(cx).node_workspace;
+            assert!(nodes.open, "{key}");
+            assert_eq!(nodes.selected.as_ref(), expected, "{key}");
+        }
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
