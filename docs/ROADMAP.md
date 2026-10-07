@@ -320,6 +320,7 @@ One ordered list. A step starts when the one above it is done or explicitly runs
 What remains:
 - 6.11 (System services without an actions column).
 - The closing `smoke.sh pages` pass, in light and dark, at 760 × 560 and at 20 px text. It becomes the new capture baseline.
+- [#396](https://github.com/skel84/freshkube/issues/396): tell code generation from clocks in #385's `pod-logs` process CPU, with a build whose shell parts are present but uncached, on an idle Air.
 
 ### 2. Linux and Windows releases
 
