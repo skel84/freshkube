@@ -146,19 +146,30 @@ impl ResourcesScreen {
                     })),
             );
         }
-        // Select all and Open node are the menu's and the keys' (change 10).
-        let (view, focus, target) = (cx.entity().downgrade(), self.focus.clone(), group.clone());
         let line = div()
             .id(SharedString::from(format!("{key}-line")))
             .test_support()
             .w_full()
-            .child(row.render(cx))
-            .context_menu(move |menu, window, cx| {
-                let actions = view
-                    .update(cx, |view, cx| view.group_menu(&target, window, cx))
-                    .unwrap_or_default();
-                table::row_menu(menu, actions, &focus)
-            });
+            .child(row.render(cx));
+        // Select all and Open node are the menu's and the keys' (change 10).
+        // The node pane's pods list has no menu, as its rows have none.
+        if self.embedded {
+            return Some(line.into_any_element());
+        }
+        let (view, focus, target) = (cx.entity().downgrade(), self.focus.clone(), group.clone());
+        let line = line.context_menu(move |menu, window, cx| {
+            let (actions, row) = view
+                .update(cx, |view, cx| view.group_menu(&target, window, cx))
+                .unwrap_or_default();
+            let view = view.clone();
+            table::row_menu(menu, actions, &focus, move |cx| match &row {
+                // The fold alone acts on no row.
+                None => true,
+                Some(row) => view
+                    .upgrade()
+                    .is_some_and(|view| view.read(cx).projection.selected() == Some(row)),
+            })
+        });
         Some(line.into_any_element())
     }
 

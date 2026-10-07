@@ -24,14 +24,15 @@ impl ResourcesScreen {
     }
 
     /// A group's menu selects its first row in sight, so the group's
-    /// actions, which act on the selected row's group, act on it. A folded
-    /// group with no row in sight offers its fold alone.
+    /// actions, which act on the selected row's group, act on it; they
+    /// come with that row, for the menu to check it is still there. A
+    /// folded group with no row in sight offers its fold alone.
     pub(super) fn group_menu(
         &mut self,
         group: &Group,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<RowAction> {
+    ) -> (Vec<RowAction>, Option<ResourceIdentity>) {
         let first = (group.shown > 0)
             .then(|| self.projection.row(&self.store, group.start))
             .flatten()
@@ -39,11 +40,11 @@ impl ResourcesScreen {
         match first {
             Some(identity) => {
                 self.select_for_menu(&identity, window, cx);
-                self.menu_actions(cx)
+                (self.menu_actions(cx), Some(identity))
             }
             None => {
                 window.focus(&self.focus, cx);
-                self.fold_action().into_iter().collect()
+                (self.fold_action().into_iter().collect(), None)
             }
         }
     }

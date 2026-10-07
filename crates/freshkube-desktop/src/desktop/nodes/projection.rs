@@ -135,6 +135,26 @@ impl Nodes {
         }
     }
 
+    /// Whether the healthy nodes may fold: something is wrong, no filter
+    /// is typed or picked, and some node is healthy.
+    pub(in crate::desktop) fn folds_healthy(&self) -> bool {
+        self.counts[..Status::Healthy.index()]
+            .iter()
+            .any(|count| *count > 0)
+            && self.query_text.is_empty()
+            && self.filter.is_none()
+            && self.group_counts[Status::Healthy.index()] > 0
+    }
+
+    /// H, the healthy group's chevron or its menu shows or folds the
+    /// healthy nodes, while they may fold.
+    pub(in crate::desktop) fn toggle_healthy(&mut self) {
+        if self.folds_healthy() {
+            self.healthy_open = !self.healthy_open;
+            self.rebuild_lines();
+        }
+    }
+
     pub(in crate::desktop) fn healthy_collapsed(&self) -> bool {
         self.healthy_folded
     }

@@ -115,7 +115,7 @@ pub struct GroupRow {
     label: SharedString,
     subject: Option<SharedString>,
     detail: Vec<String>,
-    actions: Vec<AnyElement>,
+    chevron: Option<AnyElement>,
     after: Vec<String>,
     room: Option<f32>,
     height: f32,
@@ -134,7 +134,7 @@ impl GroupRow {
             label: label.into(),
             subject: None,
             detail: Vec::new(),
-            actions: Vec::new(),
+            chevron: None,
             after: Vec::new(),
             room: None,
             height,
@@ -155,14 +155,7 @@ impl GroupRow {
     /// A foldable group's chevron, after its count, where it stays in the
     /// room a cover leaves.
     pub fn chevron(mut self, chevron: impl IntoElement) -> Self {
-        self.actions.push(chevron.into_any_element());
-        self
-    }
-
-    /// A button on the row. Only Nodes' healthy fold still uses it, until
-    /// it moves to its menu and key (#46 6.10).
-    pub fn action(mut self, action: impl IntoElement) -> Self {
-        self.actions.push(action.into_any_element());
+        self.chevron = Some(chevron.into_any_element());
         self
     }
 
@@ -270,7 +263,7 @@ impl GroupRow {
             .test_support()
             .flex_none()
             .gap_1()
-            .children(self.actions);
+            .children(self.chevron);
         let after = (!after.is_empty()).then(|| {
             whole_or_gone(
                 part("after")
@@ -590,7 +583,7 @@ mod tests {
             let row = GroupRow::new("g", Tone::Warn, "Node not ready", 26.)
                 .subject(Some("talos-wk-fra1-02"))
                 .detail(vec!["3 pods".into()])
-                .action(div().id("g-act").flex_none().w(dp(60.)).h(dp(18.)))
+                .chevron(div().id("g-act").flex_none().w(dp(60.)).h(dp(18.)))
                 .after(vec![
                     "NotReady for 4m".into(),
                     "metrics are last known".into(),

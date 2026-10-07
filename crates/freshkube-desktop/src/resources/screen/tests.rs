@@ -2430,3 +2430,81 @@ fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// Moves the selection to the first row, as a list change under an open
+/// menu could.
+fn select_first(screen: &Entity<ResourcesScreen>, cx: &mut gpui_kit::App) {
+    screen.update(cx, |screen, cx| {
+        screen.projection.select(&screen.store, Some(0));
+        cx.notify();
+    });
+}
+
+/// Picks `label` from the open menu.
+fn pick(
+    window: &mut gpui_kit::Window,
+    items: &[Option<String>],
+    label: &str,
+    cx: &mut gpui_kit::App,
+) {
+    let ix = items.iter().position(|item| item.as_deref() == Some(label));
+    window.within("popup-menu").click(ix.unwrap(), cx);
+}
+
+#[gpui_kit::test]
+fn a_menu_acts_only_on_the_row_it_was_opened_for(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let third = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            identity_at(&screen, 2, cx)
+        })
+        .unwrap();
+    let row = row_id(&third);
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row.clone()).right_click("name", cx)
+    });
+    // Another row is selected while the menu is open: Mark marks neither.
+    cx.update_window(handle, |_, window, cx| {
+        select_first(&screen, cx);
+        window.render_frame(cx);
+        pick(window, &items, "Mark", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert!(screen.read(cx).marked.is_empty()));
+
+    // A row's menu goes with its row.
+    open_menu(cx, handle, |window, cx| {
+        window.within(row).right_click("name", cx)
+    });
+    cx.update_window(handle, |_, window, cx| {
+        deliver(&screen, vec![ResourceEvent::Delete(third.clone())], cx);
+        window.render_frame(cx);
+        assert!(window.try_find("popup-menu").is_none());
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    // A group's menu outlives the row it selected, and acts only on it.
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.not_ready = [("talos-home".to_owned(), None)].into();
+            screen.set_list_view(ListView::Problems, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let group = "resource-group-node:talos-home-line";
+    let items = open_menu(cx, handle, |window, cx| window.right_click(group, cx));
+    let first = cx.read(|cx| selected(&screen, cx)).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        select_first(&screen, cx);
+        assert_ne!(selected(&screen, cx), Some(first.clone()));
+        window.render_frame(cx);
+        pick(window, &items, "Mark", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert!(screen.read(cx).marked.is_empty()));
+}
