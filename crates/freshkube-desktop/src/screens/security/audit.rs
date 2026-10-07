@@ -21,6 +21,15 @@ impl Section {
         }
     }
 
+    /// The row that stands for a source that answered with no certificates.
+    fn none_found(self) -> &'static str {
+        match self {
+            Section::TalosCertificates => "No Talos certificates found",
+            Section::KubernetesCertificates => "No Kubernetes certificates found",
+            Section::Rbac | Section::Volumes => "Nothing found",
+        }
+    }
+
     /// The group row it sits under: both kinds of certificate share one.
     pub(super) fn group(self) -> Group {
         match self {
@@ -160,7 +169,9 @@ fn date(time: DateTime<Utc>) -> String {
     time.format("%Y-%m-%d %H:%M UTC").to_string()
 }
 
-fn certificate_item(section: Section, ix: usize, cert: &CertificateAudit) -> Item {
+/// `nth` counts the certificates before this one with its source and name,
+/// so the key stays the same when a certificate is renewed.
+fn certificate_item(section: Section, nth: usize, cert: &CertificateAudit) -> Item {
     let (verdict, status) = match cert.expiry {
         CertificateExpiryStatus::Valid => (Verdict::Good, "Valid"),
         CertificateExpiryStatus::ExpiringSoon => (Verdict::Warn, "Expiring soon"),
@@ -192,10 +203,10 @@ fn certificate_item(section: Section, ix: usize, cert: &CertificateAudit) -> Ite
     };
     Item {
         key: format!(
-            "{}:{ix}:{}:{}",
+            "{}:{}:{}:{nth}",
             section.slug(),
-            cert.name,
-            cert.not_after.timestamp()
+            source_label(cert.source),
+            cert.name
         )
         .into(),
         section,
@@ -250,12 +261,17 @@ fn certificate_items(
                     }
                     _ => "The source returned no certificates".to_owned(),
                 };
-                return vec![unknown_item(section, "No certificates found", &reason)];
+                return vec![unknown_item(section, section.none_found(), &reason)];
             }
             certs
                 .iter()
                 .enumerate()
-                .map(|(ix, cert)| certificate_item(section, ix, cert))
+                .map(|(ix, cert)| {
+                    let nth = (certs[..ix].iter())
+                        .filter(|other| other.source == cert.source && other.name == cert.name)
+                        .count();
+                    certificate_item(section, nth, cert)
+                })
                 .collect()
         }
     }
@@ -379,6 +395,8 @@ fn volume_items(source: &SourceSnapshot<Vec<VolumeEncryptionAudit>>) -> Vec<Item
 #[derive(Default)]
 pub(super) struct Display {
     pub(super) items: Vec<Item>,
+    /// Each item's row ids and label, by the item's index.
+    pub(super) rows: Vec<RowText>,
     /// The table's lines: each group's row, then its items.
     pub(super) lines: Vec<Entry>,
     /// The group rows, by the index an [`Entry::Group`] carries.
@@ -391,12 +409,31 @@ impl Display {
     pub(super) fn new(snapshot: &SecurityAuditSnapshot) -> Self {
         let items = items(snapshot);
         let (lines, groups) = lines(&items);
+        let rows = items.iter().map(RowText::new).collect();
         Self {
             items,
+            rows,
             lines,
             groups,
             missing: missing(snapshot),
             stats: Stats::new(snapshot),
+        }
+    }
+}
+
+/// A row's element ids and the label assistive technology reads.
+pub(crate) struct RowText {
+    pub(super) id: SharedString,
+    pub(super) mark: SharedString,
+    pub(super) label: SharedString,
+}
+
+impl RowText {
+    fn new(item: &Item) -> Self {
+        Self {
+            id: format!("security-row-{}", item.key).into(),
+            mark: format!("security-row-{}-status", item.key).into(),
+            label: format!("{} · {} · {}", item.name, item.status, item.summary).into(),
         }
     }
 }

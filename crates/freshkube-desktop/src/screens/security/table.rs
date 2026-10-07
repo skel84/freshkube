@@ -1,7 +1,7 @@
 //! The audit as a `TableSource`: its columns, sized from the rows when they
 //! change, the group rows and the cells of each row.
 use super::*;
-use audit::Entry;
+use audit::{Entry, RowText};
 use freshkube_ui::table::{
     self as kit, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource,
 };
@@ -43,7 +43,7 @@ impl TableColumn for Column {
 fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a str>) -> f32 {
     let chars = texts
         .map(|text| text.chars().count())
-        .chain([label.len()])
+        .chain([label.chars().count()])
         .max()
         .unwrap_or_default();
     (chars as f32 * 7.5 + 24.).clamp(64., 280.)
@@ -78,7 +78,7 @@ impl TableSource for SecurityScreen {
     type Key = SharedString;
     type Sort = ();
     type Column = Column;
-    type Row<'a> = &'a Item;
+    type Row<'a> = (&'a Item, &'a RowText);
 
     fn table_state(&self) -> &TableState {
         &self.table
@@ -106,36 +106,37 @@ impl TableSource for SecurityScreen {
         self.display.1.lines.len()
     }
 
-    fn line(&self, line: usize, _: &App) -> Option<Line<SharedString, &Item>> {
+    fn line(&self, line: usize, _: &App) -> Option<Line<SharedString, (&Item, &RowText)>> {
         let ix = match *self.display.1.lines.get(line)? {
             Entry::Group(group) => return Some(Line::Group(group)),
             Entry::Row(ix) => ix,
         };
         let item = self.items().get(ix)?;
+        let text = self.display.1.rows.get(ix)?;
         Some(Line::Row(TableRow {
             key: item.key.clone(),
-            id: item.key.clone().into(),
-            label: format!("{} · {} · {}", item.name, item.status, item.summary).into(),
+            id: text.id.clone().into(),
+            label: text.label.clone(),
             tooltip: None,
             marked: false,
             muted: false,
-            data: item,
+            data: (item, text),
         }))
     }
 
     fn cell(
         &self,
-        row: &TableRow<SharedString, &Item>,
+        row: &TableRow<SharedString, (&Item, &RowText)>,
         style: &RowStyle,
         column: &Column,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let item = row.data;
+        let (item, text) = row.data;
         let cell = kit::cell(column);
         match column.field {
             Field::Glyph => kit::glyph_cell(column)
                 .child(ui::status_mark(
-                    SharedString::from(format!("{}-status", item.key)),
+                    text.mark.clone(),
                     item.verdict.glyph(),
                     item.status.clone(),
                     cx,
@@ -166,7 +167,7 @@ impl TableSource for SecurityScreen {
     }
 
     fn selected_key(&self) -> Option<&SharedString> {
-        self.selected.as_ref()
+        self.selected.as_ref().map(|selection| &selection.key)
     }
 
     fn line_of(&self, key: &SharedString) -> Option<usize> {

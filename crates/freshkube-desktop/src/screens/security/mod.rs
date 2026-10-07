@@ -51,12 +51,19 @@ use audit::{Display, Item, identity_parts};
 use audit::{Section, Verdict, items};
 use example::example;
 
+/// The selected row's key and its name, kept for when the row goes.
+struct Selection {
+    key: SharedString,
+    name: String,
+}
+
 pub(crate) struct SecurityScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<SecurityAuditSnapshot>,
-    /// The selected row's key, which survives a refresh that keeps the row.
-    selected: Option<SharedString>,
+    /// The selected row, which survives a refresh that keeps it; one that
+    /// goes keeps its name in the Inspector.
+    selected: Option<Selection>,
     focus: FocusHandle,
     table: TableState,
     /// The table's columns for the derived rows, and their total width.
@@ -192,12 +199,16 @@ impl SecurityScreen {
 
     /// The selected row, while it is listed.
     fn selected_item(&self) -> Option<&Item> {
-        let key = self.selected.as_ref()?;
+        let key = &self.selected.as_ref()?.key;
         self.items().iter().find(|item| &item.key == key)
     }
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
-        self.selected = Some(key);
+        let Some(item) = self.items().iter().find(|item| item.key == key) else {
+            return;
+        };
+        let name = item.name.clone();
+        self.selected = Some(Selection { key, name });
         freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
         cx.notify();
     }

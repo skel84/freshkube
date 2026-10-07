@@ -3,6 +3,7 @@
 use super::*;
 use audit::Stats;
 use freshkube_ui::table::DataTable;
+use freshkube_ui::tooltip::FollowTooltip as _;
 
 impl SecurityScreen {
     fn summary(stats: &Stats, cx: &App) -> AnyElement {
@@ -21,23 +22,32 @@ impl SecurityScreen {
     /// The selection's details in the Inspector; nothing while no row is
     /// selected.
     fn render_details(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let item = self.selected_item()?;
+        let selection = self.selected.as_ref()?;
         let p = palette(cx);
+        let inspector = Inspector::new("security-detail");
+        let Some(item) = self.selected_item() else {
+            // A row that a refresh dropped, or that changed past
+            // recognition, keeps its name until the selection moves.
+            return Some(
+                inspector
+                    .heading(Self::detail_title(&selection.name))
+                    .child(
+                        div()
+                            .id("security-detail-gone")
+                            .test_support()
+                            .text_size(dp(12.5))
+                            .text_color(p.muted)
+                            .child("No longer listed here."),
+                    )
+                    .render(cx)
+                    .into_any_element(),
+            );
+        };
         let (tone, icon) = item.verdict.tone();
         let heading = h_flex()
             .gap_2()
             .min_w_0()
-            .child(
-                div()
-                    .id("security-detail-title")
-                    .test_support()
-                    .aria_label(item.name.clone())
-                    .min_w_0()
-                    .text_size(dp(14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .truncate()
-                    .child(item.name.clone()),
-            )
+            .child(Self::detail_title(&item.name))
             .child(ui::tag(tone, icon, item.status.clone(), cx));
         let note = item.note.clone().map(|note| {
             div()
@@ -49,7 +59,7 @@ impl SecurityScreen {
                 .child(note)
         });
         Some(
-            Inspector::new("security-detail")
+            inspector
                 .heading(heading)
                 .children(item.fields.iter().map(|(label, value)| {
                     field(label, mono(value.clone()).whitespace_normal(), cx)
@@ -58,6 +68,21 @@ impl SecurityScreen {
                 .render(cx)
                 .into_any_element(),
         )
+    }
+
+    /// The Inspector's title: the row's name, cut short with the whole name
+    /// in its tooltip.
+    fn detail_title(name: &str) -> impl IntoElement + use<> {
+        div()
+            .id("security-detail-title")
+            .test_support()
+            .aria_label(name.to_owned())
+            .min_w_0()
+            .text_size(dp(14.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .truncate()
+            .follow_tooltip(name.to_owned())
+            .child(name.to_owned())
     }
 }
 

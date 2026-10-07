@@ -34,8 +34,56 @@ fn keys(screen: &Entity<SecurityScreen>, cx: &gpui_kit::App) -> Vec<SharedString
         .collect()
 }
 
+/// A row's element id, from its key.
+fn row(key: &SharedString) -> SharedString {
+    format!("security-row-{key}").into()
+}
+
 fn selected(window: &Window, key: &SharedString) -> bool {
-    window.find(key.clone()).selected() == Some(true)
+    window.find(row(key)).selected() == Some(true)
+}
+
+/// Replaces the audit with the example changed by `change`, as a refresh
+/// would.
+fn refresh_with(
+    cx: &mut gpui_kit::App,
+    screen: &Entity<SecurityScreen>,
+    change: impl FnOnce(&mut freshkube_core::security_lifecycle::SecurityAuditSnapshot),
+) {
+    screen.update(cx, |screen, cx| {
+        let source = screen.source.clone().unwrap();
+        let mut snapshot = example(&source, Utc::now()).unwrap();
+        change(&mut snapshot);
+        screen.loader.resolve(source.target.clone(), Ok(snapshot));
+        cx.notify();
+    });
+}
+
+/// The example's Kubernetes certificates, to change in a refresh.
+fn kubernetes_certificates(
+    snapshot: &mut freshkube_core::security_lifecycle::SecurityAuditSnapshot,
+) -> &mut Vec<freshkube_core::security_lifecycle::CertificateAudit> {
+    match &mut snapshot.talos_kubeconfig_certificates {
+        SourceSnapshot::Available(certs) => certs,
+        _ => unreachable!("the example's certificates are available"),
+    }
+}
+
+/// Selects `kubeconfig (admin)` with a click and returns its key.
+fn select_admin(
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+    screen: &Entity<SecurityScreen>,
+) -> SharedString {
+    window.render_frame(cx);
+    let key = (screen.read(cx).items().iter())
+        .find(|item| item.name == "kubeconfig (admin)")
+        .unwrap()
+        .key
+        .clone();
+    window.click(row(&key), cx);
+    window.render_frame(cx);
+    key
 }
 
 fn source(node: &str) -> ScreenSource {
@@ -100,7 +148,7 @@ fn keyboard_selection_updates_the_details(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let keys = keys(&screen, cx);
         assert!(!keys.iter().any(|key| selected(window, key)));
-        window.click(keys[0].clone(), cx);
+        window.click(row(&keys[0]), cx);
         window.render_frame(cx);
         assert!(selected(window, &keys[0]));
         window.press("down", cx);
@@ -134,7 +182,7 @@ fn the_inspector_opens_with_a_selection_and_escape_closes_it(cx: &mut TestAppCon
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
             assert!(window.try_find("security-detail").is_none(), "{width}");
-            window.click(keys(&screen, cx)[1].clone(), cx);
+            window.click(row(&keys(&screen, cx)[1]), cx);
             window.render_frame(cx);
             layout_check::assert_inspector(
                 window,
@@ -186,7 +234,7 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.click(keys(&screen, cx)[0].clone(), cx);
+        window.click(row(&keys(&screen, cx)[0]), cx);
         window.render_frame(cx);
         let state = screen.read(cx).split.beside_state().clone();
         state.update(cx, |state, cx| {
@@ -249,7 +297,7 @@ fn expiring_certificate_is_a_warning(cx: &mut TestAppContext) {
             "only the expiring certificate is flagged, and only as a warning"
         );
         assert_eq!(expiring[0].name, "kubeconfig (admin)");
-        let key = expiring[0].key.clone();
+        let key = row(&expiring[0].key);
         let label = window.find(key).label().map(str::to_owned);
         assert!(label.unwrap().contains("Expiring soon"));
         // Its group, Certificates, takes its warning.
@@ -299,7 +347,7 @@ fn unavailable_section_is_named_and_unknown(cx: &mut TestAppContext) {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].verdict, Verdict::Unknown);
         assert_eq!(rows[0].status, "Unknown");
-        window.find(rows[0].key.clone());
+        window.find(row(&rows[0].key));
     })
     .unwrap();
 }
@@ -334,6 +382,82 @@ fn rows_are_derived_once_per_audit(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// A renewed certificate keeps its row: the selection and the Inspector
+/// follow it to its new dates.
+#[gpui_kit::test]
+fn a_renewed_certificate_stays_selected(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        let key = select_admin(window, cx, &screen);
+        refresh_with(cx, &screen, |snapshot| {
+            let admin = &mut kubernetes_certificates(snapshot)[1];
+            admin.not_after += chrono::Duration::days(365);
+            admin.days_remaining += 365;
+            admin.expiry = freshkube_core::security_lifecycle::CertificateExpiryStatus::Valid;
+        });
+        window.render_frame(cx);
+        assert!(selected(window, &key));
+        assert_eq!(
+            window.find("security-detail-title").label(),
+            Some("kubeconfig (admin)")
+        );
+        assert!(window.try_find("security-detail-gone").is_none());
+        let item = screen.read(cx).selected_item().map(|item| item.verdict);
+        assert_eq!(item, Some(Verdict::Good));
+    })
+    .unwrap();
+}
+
+/// A selected row that a refresh drops keeps its name in the Inspector
+/// with "No longer listed here."; Escape then closes it.
+#[gpui_kit::test]
+fn a_dropped_row_says_so_until_escape(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        select_admin(window, cx, &screen);
+        refresh_with(cx, &screen, |snapshot| {
+            kubernetes_certificates(snapshot).remove(1);
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("security-detail-title").label(),
+            Some("kubeconfig (admin)")
+        );
+        window.find("security-detail-gone");
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(screen.read(cx).selected.is_none());
+        assert!(window.try_find("security-detail").is_none());
+    })
+    .unwrap();
+}
+
+/// Sources that answer with no certificates are each named, so their two
+/// rows in the Certificates group tell apart.
+#[gpui_kit::test]
+fn empty_certificate_sources_are_named(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        refresh_with(cx, &screen, |snapshot| {
+            snapshot.talosconfig_certificates = SourceSnapshot::Available(Vec::new());
+            snapshot.talos_kubeconfig_certificates = SourceSnapshot::Available(Vec::new());
+        });
+        window.render_frame(cx);
+        let names: Vec<String> = (screen.read(cx).items().iter())
+            .filter(|item| item.section.group() == super::audit::Group::Certificates)
+            .map(|item| item.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "No Talos certificates found",
+                "No Kubernetes certificates found"
+            ]
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn silent_target_offers_retry_without_data(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-03");
@@ -351,7 +475,8 @@ fn changing_target_drops_old_data(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            screen.selected = Some("rbac:role".into());
+            screen.select("rbac:role".into(), cx);
+            assert!(screen.selected.is_some());
             assert!(screen.loader.data().is_some());
             screen.set_source(Some(source("talos-wk-fra1-02")), window, cx);
             assert!(screen.loader.data().is_none());
