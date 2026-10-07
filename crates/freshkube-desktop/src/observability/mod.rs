@@ -110,7 +110,7 @@ pub(crate) struct ObservabilityPage {
     hours: u32,
     nodes: std::rc::Rc<Vec<MapNode>>,
     connections: std::rc::Rc<Vec<Connection>>,
-    map_display: map::MapDisplay,
+    map_display: freshkube_ui::graph::GraphState<freshkube_core::coroot::AppId>,
     /// The map and its Connections inspector, with its remembered width.
     map_split: InspectorSplit,
     incident_observations: incidents::Incidents,
@@ -350,7 +350,7 @@ impl ObservabilityPage {
             hours: DEFAULT_HOURS,
             nodes,
             connections,
-            map_display: Default::default(),
+            map_display: map::display(),
             map_split,
             incident_observations: Default::default(),
             incident_table: freshkube_ui::table::TableState::new("obs-incidents"),

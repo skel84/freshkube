@@ -210,7 +210,7 @@ impl ObservabilityPage {
             self.applications.clear();
             self.nodes = Default::default();
             self.connections = Default::default();
-            self.map_display = Default::default();
+            self.map_display = super::map::display();
             self.matrix.clear();
             self.selected_app = None;
             self.report_snapshot = None;
