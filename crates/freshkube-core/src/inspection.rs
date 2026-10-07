@@ -154,7 +154,7 @@ fn unavailable_from_error(
 fn unavailable_from_timeout(source: InspectionSource, timeout: Duration) -> InspectionUnavailable {
     InspectionUnavailable {
         source,
-        message: format_timeout_error(timeout.as_secs(), 0),
+        message: format_timeout_error(timeout.as_secs()),
     }
 }
 
@@ -180,7 +180,7 @@ fn required_from_timeout(
         inspection_source: source,
         target_name: target.name.clone(),
         target_address: target.address.clone(),
-        message: format_timeout_error(timeout.as_secs(), 0),
+        message: format_timeout_error(timeout.as_secs()),
     }
 }
 
@@ -1436,7 +1436,7 @@ async fn collect_kubespan_for_target(
     match tokio::time::timeout(timeout, queries).await {
         Ok((enabled, peers)) => kubespan_snapshot_from(enabled, peers),
         Err(_) => KubeSpanSnapshot::Unavailable {
-            message: format_timeout_error(timeout.as_secs(), 0),
+            message: format_timeout_error(timeout.as_secs()),
         },
     }
 }

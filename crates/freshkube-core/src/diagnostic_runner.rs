@@ -10,7 +10,7 @@ use crate::{
     diagnostics::{
         CheckCategory, CheckStatus, CniInfo, CniPodInfo, CniType, PodHealthInfo, UnhealthyPodInfo,
     },
-    errors::{ErrorCategory, categorize_error, format_talos_error},
+    errors::format_talos_error,
     formatting::{format_bytes, format_bytes_signed},
 };
 use k8s_openapi::{
@@ -1378,10 +1378,6 @@ async fn probe_file(client: &TalosClient, path: &str) -> (FileProbe, Option<Stri
 }
 
 fn is_missing_file_error(error: &talos_rs::TalosError) -> bool {
-    if categorize_error(error) == ErrorCategory::NotFound {
-        return true;
-    }
-
     let message = error.to_string().to_ascii_lowercase();
     message.contains("not found") || message.contains("no such file")
 }
@@ -2874,5 +2870,29 @@ mod tests {
             checks[0].fix.as_ref().map(|fix| &fix.action),
             Some(DiagnosticFixAction::RestartService { service_id }) if service_id == "kubelet"
         ));
+    }
+
+    #[test]
+    fn missing_file_is_recognized_from_the_error_text_alone() {
+        use talos_rs::TalosError;
+        use tonic::Status;
+        // Every gRPC shape the old category check called not-found carries
+        // "not found" in the status message, which the error's Display prints.
+        for error in [
+            TalosError::Grpc(Status::not_found("file not found")),
+            TalosError::Grpc(Status::unknown("open /run/x: No Such File or directory")),
+            TalosError::Grpc(Status::permission_denied("denied: path NOT FOUND")),
+            TalosError::Grpc(Status::unavailable("peer unavailable, not found in cache")),
+        ] {
+            assert!(is_missing_file_error(&error), "{error}");
+        }
+        for error in [
+            TalosError::Grpc(Status::unavailable("connection refused")),
+            TalosError::Grpc(Status::permission_denied("denied")),
+            TalosError::Connection("timeout".into()),
+            TalosError::ConfigInvalid("bad".into()),
+        ] {
+            assert!(!is_missing_file_error(&error), "{error}");
+        }
     }
 }
