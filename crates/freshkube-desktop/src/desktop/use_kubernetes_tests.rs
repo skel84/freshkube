@@ -278,7 +278,7 @@ fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn an_open_forward_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
+async fn an_open_forward_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     let file = kubeconfig(guard.path());
@@ -318,7 +318,10 @@ fn an_open_forward_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) 
 
     switch(cx);
     cx.simulate_prompt_answer("Stop");
-    cx.run_until_parked();
-    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_some()));
+    // The switch waits for the ports to be freed, which takes real time.
+    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, cx| {
+        view.read(cx).kubernetes_only.is_some()
+    })
+    .await;
     assert_eq!(cx.read(forwards::running), 0);
 }
