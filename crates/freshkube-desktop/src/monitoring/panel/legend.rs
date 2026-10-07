@@ -256,7 +256,9 @@ fn entry(
 ) -> Stateful<Div> {
     let p = palette(cx);
     let series = row.series;
-    let color = chart.series[series].ink.color(view.focus() == Some(series));
+    let color = chart.series[series]
+        .ink
+        .color(&palette(cx), view.focus() == Some(series));
     let picked = view.picked == Some(series);
     h_flex()
         .id(view.element_id(&format!("legend-{series}")))

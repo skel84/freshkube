@@ -41,6 +41,26 @@ pub struct Palette {
     pub memory: Hsla,
     pub integration: Hsla,
     pub on_fill: Hsla,
+    pub chart: ChartInks,
+}
+
+/// The inks a chart draws its series and thresholds in, as `0xRRGGBB`, since
+/// the ramp mixes its stops channel by channel. Each reaches 3:1 on
+/// `surface` at full opacity, and a threshold's at its 0.8 too
+/// (docs/DESIGN.md, Charts).
+#[derive(Clone, Copy)]
+pub struct ChartInks {
+    /// The two series slots, in their fixed order.
+    pub slots: [u32; 2],
+    /// Series past the second, until hovered or picked.
+    pub overflow: u32,
+    /// Ordered levels (p50, p95, p99; le buckets), lowest level darkest.
+    pub ramp: [u32; 3],
+    /// Log severities and thresholds, where colour is status.
+    pub critical: u32,
+    pub warning: u32,
+    pub ok: u32,
+    pub purple: u32,
 }
 
 fn hex(value: u32) -> Hsla {
@@ -51,7 +71,8 @@ fn hexa(value: u32) -> Hsla {
     rgba(value).into()
 }
 
-fn light() -> Palette {
+/// The light look; `palette` picks it or `dark` by the theme.
+pub fn light() -> Palette {
     Palette {
         surface: hex(0xFFFFFF),
         surface_2: hex(0xF0F2F5),
@@ -85,11 +106,21 @@ fn light() -> Palette {
         memory: hex(0x7560B9),
         integration: hex(0x7560B9),
         on_fill: hex(0xFFFFFF),
+        // Darker than the dark set's, which read faint on white.
+        chart: ChartInks {
+            slots: [0x2F6BD6, 0xB45A1E],
+            overflow: 0x737A85,
+            ramp: [0x1F4A9E, 0x3D6FD1, 0x6890DE],
+            critical: 0xD03B3B,
+            warning: 0x917300,
+            ok: 0x1E8A3E,
+            purple: 0x7560B9,
+        },
     }
 }
 
 /// The Fog look (docs/DESIGN.md).
-fn dark() -> Palette {
+pub fn dark() -> Palette {
     Palette {
         surface: hex(0x2C3037),
         surface_2: hex(0x343943),
@@ -124,6 +155,15 @@ fn dark() -> Palette {
         memory: hex(0xB7AAF7),
         integration: hex(0xB7AAF7),
         on_fill: hex(0x14223B),
+        chart: ChartInks {
+            slots: [0x5E93E6, 0xCC7C4A],
+            overflow: 0x737A85,
+            ramp: [0x5379BB, 0x7AA0E6, 0xB3CEFA],
+            critical: 0xF28B82,
+            warning: 0xF2C46D,
+            ok: 0x82D4AB,
+            purple: 0xB7AAF7,
+        },
     }
 }
 

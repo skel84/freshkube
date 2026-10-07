@@ -6,7 +6,12 @@ pub(super) fn chart(chart: &Chart, id: &'static str, cx: &App) -> AnyElement {
     let plot = chart.clone();
     let legend = line().children(chart.series.iter().enumerate().map(|(ix, series)| {
         line()
-            .child(div().w(dp(12.)).h(px(2.)).bg(Ink::Slot(ix).color(false)))
+            .child(
+                div()
+                    .w(dp(12.))
+                    .h(px(2.))
+                    .bg(Ink::Slot(ix).color(&p, false)),
+            )
             .child(mono(series.label).text_color(p.ink_2))
     }));
     card(chart.title, cx)
@@ -60,7 +65,7 @@ pub(super) fn chart(chart: &Chart, id: &'static str, cx: &App) -> AnyElement {
                                         window.paint_path(path, p.line);
                                     }
                                     for (ix, series) in plot.series.iter().enumerate() {
-                                        let color = Ink::Slot(ix).color(false);
+                                        let color = Ink::Slot(ix).color(&p, false);
                                         let count =
                                             series.values.len().saturating_sub(1).max(1) as f32;
                                         let mut path = PathBuilder::stroke(px(2.));

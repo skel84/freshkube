@@ -473,7 +473,7 @@ fn lines_that_look_alike_are_one_group_derived_with_the_chart() {
     for group in &chart.groups {
         let first = &chart.series[group[0]];
         for &i in group {
-            assert_eq!(chart.series[i].ink.color(false), first.ink.color(false));
+            assert_eq!(chart.series[i].ink.swatch(false), first.ink.swatch(false));
         }
     }
     // The last series' group draws first, so the first series ends on top.

@@ -287,12 +287,13 @@ impl PanelView {
 
     /// Each drawn series' name and colour, for the page's tests.
     #[cfg(test)]
-    pub(crate) fn series_colors(&self) -> Vec<(SharedString, gpui_kit::Hsla)> {
+    pub(crate) fn series_colors(&self, cx: &gpui_kit::App) -> Vec<(SharedString, gpui_kit::Hsla)> {
+        let p = crate::palette::palette(cx);
         self.chart().map_or_else(Vec::new, |chart| {
             chart
                 .series
                 .iter()
-                .map(|series| (series.name.clone(), series.ink.color(false)))
+                .map(|series| (series.name.clone(), series.ink.color(&p, false)))
                 .collect()
         })
     }

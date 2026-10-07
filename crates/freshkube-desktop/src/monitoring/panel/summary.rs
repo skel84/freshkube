@@ -56,7 +56,7 @@ pub(super) fn loading(_: &App) -> AnyElement {
 /// The stats as a `StatCard`'s figures, borrowed from the derived data;
 /// the sparkline's last stretch takes the first series colour.
 pub(super) fn stats(stats: &[Stat], cx: &App) -> AnyElement {
-    let recent = Ink::Slot(0).color(false);
+    let recent = Ink::Slot(0).color(&palette(cx), false);
     let figures: Vec<Figure> = stats
         .iter()
         .map(|stat| Figure {
