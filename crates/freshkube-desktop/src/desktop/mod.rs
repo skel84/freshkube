@@ -19,6 +19,8 @@ mod system_services;
 mod target;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod use_kubernetes_tests;
 mod view;
 
 use crate::{
@@ -903,10 +905,13 @@ impl Pilot {
             view.seed_fixture_history();
             view.refresh(window, cx);
         } else if options.kubernetes_only {
-            view.kubernetes_only = Some(kubernetes_only::KubernetesOnly::new(
-                options.kubeconfig_path,
-                options.kube_context,
-            ));
+            let kube =
+                kubernetes_only::KubernetesOnly::new(options.kubeconfig_path, options.kube_context);
+            view.kubernetes_only = Some(if options.remembered_kubernetes {
+                kube.remembering()
+            } else {
+                kube
+            });
             view.load_kube_contexts(window, cx);
         } else {
             view.load_configuration(window, cx);

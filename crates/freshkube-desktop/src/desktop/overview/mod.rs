@@ -44,6 +44,17 @@ impl Pilot {
                         cx.listener(|view, _, window, cx| view.load_configuration(window, cx)),
                     )
                     .into_any_element(),
+                Button::new("use-kubernetes-only")
+                    .outline()
+                    .icon(IconName::Boxes)
+                    .label("Use Kubernetes only")
+                    .tooltip(
+                        "Choose a kubeconfig file and a context; nothing connects before you do",
+                    )
+                    .on_click(
+                        cx.listener(|view, _, window, cx| view.choose_kubernetes_only(window, cx)),
+                    )
+                    .into_any_element(),
             ],
             cx,
         )

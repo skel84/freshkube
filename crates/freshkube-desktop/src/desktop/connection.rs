@@ -1,7 +1,7 @@
 //! Remember a validated Talos selection without blocking the window.
 
 use super::Pilot;
-use crate::connection_preferences::Selection;
+use crate::connection_preferences::{KubeSelection, Selection};
 use gpui_kit::component::{WindowExt, notification::Notification};
 use gpui_kit::{Context, Window};
 
@@ -20,6 +20,38 @@ impl Pilot {
             return;
         };
         store.remember(Selection { path, context });
+        self.save_connection(store, window, cx);
+    }
+    /// Remembers the kubeconfig file and context chosen for Kubernetes-only
+    /// mode, so the next launch without options opens on them.
+    pub(super) fn remember_kubernetes_connection(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.fixture {
+            return;
+        }
+        let (Some(store), Some(kube), Some(context)) = (
+            self.connection_store.clone(),
+            self.kubernetes_only.as_ref(),
+            self.applied.context.clone(),
+        ) else {
+            return;
+        };
+        let Some(path) = kube.remembered_file() else {
+            return;
+        };
+        store.remember_kubernetes(KubeSelection { path, context });
+        self.save_connection(store, window, cx);
+    }
+
+    fn save_connection(
+        &self,
+        store: crate::connection_preferences::ConnectionStore,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let saving = cx
             .background_executor()
             .spawn(async move { store.save_latest() });

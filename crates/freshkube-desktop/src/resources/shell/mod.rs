@@ -733,6 +733,34 @@ pub(crate) fn unless_shell<V: 'static>(
     .detach();
 }
 
+/// Like [`unless_shell`], for a change that also leaves the forwards running:
+/// with shells or forwards open it asks once, and `then` runs after the user
+/// agrees and every shell has ended and every forward stopped. Cancel leaves
+/// everything as it was.
+pub(crate) fn unless_held<V: 'static>(
+    view: &mut V,
+    window: &mut Window,
+    cx: &mut Context<V>,
+    then: impl FnOnce(&mut V, &mut Window, &mut Context<V>) + 'static,
+) {
+    let pods = running_anywhere(cx);
+    let forwards = forwards::running(cx);
+    if pods.is_empty() && forwards == 0 {
+        return then(view, window, cx);
+    }
+    let agreed = ask_closing(&pods, forwards, window, cx);
+    cx.spawn_in(window, async move |this, cx| {
+        if !agreed.await {
+            return;
+        }
+        if let Ok((ending, stopping)) = cx.update(|_, cx| (end_all(cx), forwards::stop_all(cx))) {
+            futures::future::join(ending, stopping).await;
+        }
+        _ = this.update_in(cx, then);
+    })
+    .detach();
+}
+
 /// Whether the window may close now. With a shell or a forward running it
 /// asks first, in one question, and `close` runs once the user agrees and
 /// every shell has ended and every forward stopped.

@@ -297,6 +297,33 @@ impl Pilot {
                                 view.context_item(ix, name, popover.clone(), cx)
                                     .into_any_element()
                             }))
+                            .when(view.kubernetes_only.is_none(), |this| {
+                                let popover = popover.clone();
+                                this.child(
+                                    Button::new("use-kubernetes-only-entry")
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::Boxes)
+                                        .label("Use Kubernetes only…")
+                                        .tooltip(
+                                            "Choose a kubeconfig file and a context, without Talos",
+                                        )
+                                        .on_click(cx.listener(move |view, _, window, cx| {
+                                            view.choose_kubernetes_only(window, cx);
+                                            // Closing runs the popover's own
+                                            // handler, which updates this view.
+                                            let handle = window.window_handle();
+                                            let popover = popover.clone();
+                                            cx.defer(move |cx| {
+                                                _ = handle.update(cx, |_, window, cx| {
+                                                    _ = popover.update(cx, |state, cx| {
+                                                        state.dismiss(window, cx)
+                                                    });
+                                                });
+                                            });
+                                        })),
+                                )
+                            })
                             .into_any_element()
                     })
                     .unwrap_or_else(|_| div().into_any_element())
