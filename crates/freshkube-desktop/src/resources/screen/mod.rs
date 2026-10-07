@@ -235,6 +235,9 @@ pub(crate) struct ResourcesScreen {
     store: ResourceStore,
     projection: ResourceProjection,
     layout: TableLayout,
+    /// The kind and namespace scope `layout` was built from by a list, so
+    /// a relist of the same keeps its header over the loading rows.
+    layout_for: Option<(ResourceKind, bool)>,
     hidden_columns: BTreeSet<layout::ColumnSource>,
     visible: bool,
     /// The selection to find again once a restarted read lists it.
@@ -248,6 +251,10 @@ pub(crate) struct ResourcesScreen {
     focus: FocusHandle,
     /// The table's scrolls.
     table: table::TableState,
+    /// What the table shows until the first list answers, and their motion,
+    /// drawn over the table so its frames don't redraw it.
+    loading: table::LoadingRows,
+    loading_motion: Entity<table::LoadingMotion>,
     page_scroll: ScrollHandle,
     /// The dock's height under the page when it last drew, in dp: when the
     /// dock takes more, the shorter list keeps its selected row in sight.
@@ -393,6 +400,8 @@ impl ResourcesScreen {
                 },
             ),
         ];
+        let loading = table::LoadingRows::new("resource");
+        let loading_motion = cx.new(|_| loading.motion(table::Look::Pulse));
         Self {
             field_selector: None,
             embedded: false,
@@ -408,6 +417,7 @@ impl ResourcesScreen {
             store: ResourceStore::new(),
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
+            layout_for: None,
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
@@ -416,6 +426,8 @@ impl ResourcesScreen {
             status: Default::default(),
             focus: cx.focus_handle(),
             table: table::TableState::new("resource"),
+            loading,
+            loading_motion,
             page_scroll: ScrollHandle::new(),
             below: 0.,
             watch: None,
@@ -732,7 +744,19 @@ impl ResourcesScreen {
         self.marked.clear();
         self.usage_state = UsageState::Unknown;
         self.regroup();
-        self.layout = TableLayout::default();
+        // The list's header over its loading rows until it answers: the
+        // last list's for the same kind and scope, else Name and Age.
+        let scope = (self.kind.clone(), self.lists_all_namespaces());
+        if self.layout_for.as_ref() != Some(&scope) {
+            self.layout_for = None;
+            self.layout = TableLayout::new(
+                &ResourceStore::provisional(),
+                scope.1,
+                self.lists_pods(),
+                !self.embedded,
+            );
+            self.layout.hide(&self.hidden_columns);
+        }
         self.updated = None;
         self.now = live::now();
         cx.notify();
@@ -844,6 +868,8 @@ impl ResourcesScreen {
                 !self.embedded,
             );
             self.layout.hide(&self.hidden_columns);
+            self.layout_for = (!self.store.columns().is_empty())
+                .then(|| (self.kind.clone(), self.lists_all_namespaces()));
             drop(_span);
             // A restarted read selects the same object again if it still
             // exists; only its first list can tell.

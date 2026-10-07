@@ -57,6 +57,9 @@ impl Pilot {
                 .size_full()
                 .min_h_0()
                 .child(table)
+                // Over the table. Its frames still redraw the shell above
+                // it, as the skeleton's did.
+                .child(self.node_workspace.loading_motion.clone())
                 .into_any_element();
             let detail = pane.then(|| self.render_node_pane(window, cx));
             inspector::split(
@@ -170,6 +173,8 @@ impl Pilot {
     fn nodes_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let state = self.node_workspace.empty.as_ref()?;
         let (id, label, element) = match state {
+            // The table draws its header over loading rows.
+            Empty::Loading if self.node_workspace.view == NodeView::Table => return None,
             Empty::Loading => (
                 "nodes-loading",
                 "Waiting for nodes".to_owned(),

@@ -1631,6 +1631,40 @@ fn short_window_node_log(cx: &mut TestAppContext, text_size: Option<f32>) {
 }
 
 #[gpui_kit::test]
+async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    // Never the user's default talosconfig: a missing file.
+    let options = GpuiOptions::new(Some(scratch("no-such-talosconfig-services")), None, 100);
+    let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    cx.update(|cx| {
+        let pilot = view.read(cx);
+        // Neither page waits on an overview that will never be asked.
+        let reading = pilot.system_services.read(cx).reading().clone();
+        assert!(
+            matches!(reading, super::system_services::Reading::Failed(_)),
+            "{reading:?}"
+        );
+        assert!(!pilot.nodes_wait());
+    });
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("services"), None);
+    wait_until(cx, handle, "the kubeconfig to load", |_, cx| {
+        !view.read(cx).contexts.is_empty()
+    });
+    cx.update(|cx| {
+        let reading = view.read(cx).system_services.read(cx).reading().clone();
+        assert_eq!(reading, super::system_services::Reading::Answered);
+    });
+}
+
+#[gpui_kit::test]
 async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext) {
     // Configuration loads on Tokio; let GPUI park for its completion.
     cx.executor().allow_parking();

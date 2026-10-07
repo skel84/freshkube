@@ -218,17 +218,21 @@ impl TableSource for SystemServices {
         false
     }
 
+    fn loading(&self) -> Option<&table::LoadingRows> {
+        (self.reading == Reading::Waiting && self.rows.is_empty()).then_some(&self.loading)
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if !self.lines.is_empty() {
             return None;
         }
-        Some(
-            if self.rows.is_empty() {
-                "No node has reported its services yet."
-            } else {
-                "No services match this filter."
+        Some(match (&self.reading, self.rows.is_empty()) {
+            (Reading::Failed(reason), true) => {
+                format!("Couldn't read the services, so none is shown as missing: {reason}")
+                    .into_any_element()
             }
-            .into_any_element(),
-        )
+            (_, true) => "No node has reported its services yet.".into_any_element(),
+            (_, false) => "No services match this filter.".into_any_element(),
+        })
     }
 }
