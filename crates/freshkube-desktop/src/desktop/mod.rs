@@ -1288,6 +1288,7 @@ impl Pilot {
                 cluster: Arc::new(cluster.clone()),
                 collector,
                 config_path: self.applied.path.clone(),
+                applied: self.applied_access(),
             })
         };
         Some(ScreenSource {
@@ -1299,6 +1300,17 @@ impl Pilot {
             },
             nodes: Arc::new(self.nodes.clone()),
             live,
+        })
+    }
+
+    /// The local access the last overview was collected with, which a live
+    /// source carries for Operations to pin its clients to.
+    fn applied_access(&self) -> Option<resources::talos::AppliedAccess> {
+        Some(resources::talos::AppliedAccess {
+            config_path: self.applied.path.clone(),
+            selection: self.kubeconfig.clone(),
+            configuration: self.access_configuration?,
+            identity: self.access?,
         })
     }
 
@@ -1353,6 +1365,7 @@ impl Pilot {
                     cluster: Arc::new(cluster.clone()),
                     collector,
                     config_path: self.applied.path.clone(),
+                    applied: self.applied_access(),
                 },
             })),
         })

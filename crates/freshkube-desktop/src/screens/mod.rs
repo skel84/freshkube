@@ -104,6 +104,9 @@ pub(crate) struct LiveSource {
     pub(crate) collector: ClusterOverviewCollector,
     /// The talosconfig in use; `None` means TALOSCONFIG or ~/.talos/config.
     pub(crate) config_path: Option<PathBuf>,
+    /// The access the shell applied with this source, once its overview has
+    /// answered. Operations pins its preview and run to it.
+    pub(crate) applied: Option<crate::resources::talos::AppliedAccess>,
 }
 
 impl LiveSource {

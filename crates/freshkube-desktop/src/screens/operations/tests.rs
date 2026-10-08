@@ -1,7 +1,10 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use freshkube_core::cluster_overview::KubeconfigSelection;
 use freshkube_core::operations::{NodeTarget, OperationKind, OperationStatus};
+use freshkube_core::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, ElementId, Entity, TestAppContext, WindowHandle, px, size};
@@ -10,11 +13,12 @@ use tokio::runtime::{Builder, Runtime};
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{
     Operations, OperationsScreen, PreviewKey, PreviewState, ScreenPanel, ScreenSource,
-    blocked_reason, example_preview, verdict,
+    blocked_reason, example_preview, run_client, verdict,
 };
 use crate::backend::Target;
 use crate::desktop::layout_check;
 use crate::desktop::tests::fixture as app;
+use crate::resources::talos::AppliedAccess;
 use crate::{fixture, presentation};
 
 fn source(context: &str, node_ix: usize) -> ScreenSource {
@@ -885,4 +889,182 @@ fn a_submitted_run_carries_on_through_hidden_source_updates(cx: &mut TestAppCont
         [("talos-cp-fra1-01".to_owned(), OperationStatus::Succeeded)]
     );
     assert_eq!(cx.read(|cx| reads(&screen, cx)).preview, None);
+}
+
+/// A talosconfig, a kubeconfig and the token file it names, in a fresh
+/// temporary directory, and the access a preview took on them.
+struct AccessFiles {
+    _directory: tempfile::TempDir,
+    talosconfig: std::path::PathBuf,
+    kubeconfig: std::path::PathBuf,
+    token: std::path::PathBuf,
+    access: AppliedAccess,
+}
+
+fn access_files() -> AccessFiles {
+    let directory = tempfile::tempdir().unwrap();
+    let talosconfig = directory.path().join("talosconfig");
+    let kubeconfig = directory.path().join("kubeconfig");
+    let token = directory.path().join("token");
+    std::fs::write(&talosconfig, "context: example\n").unwrap();
+    std::fs::write(&token, "first-token\n").unwrap();
+    std::fs::write(
+        &kubeconfig,
+        format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: example\n\
+             clusters:\n- name: example\n  cluster:\n    server: https://192.0.2.1:6443\n\
+             users:\n- name: example\n  user:\n    tokenFile: {}\n\
+             contexts:\n- name: example\n  context:\n    cluster: example\n    user: example\n",
+            token.display()
+        ),
+    )
+    .unwrap();
+    let selection = KubeconfigSelection::File {
+        path: kubeconfig.clone(),
+        context: None,
+    };
+    let configuration = ConfigurationRevision::for_talos_sources(Some(&talosconfig), &selection);
+    let access = AppliedAccess {
+        config_path: Some(talosconfig.clone()),
+        selection,
+        configuration,
+        identity: AccessIdentity::new(AccessSessionId::new(), configuration),
+    };
+    AccessFiles {
+        _directory: directory,
+        talosconfig,
+        kubeconfig,
+        token,
+        access,
+    }
+}
+
+/// Stands in for the Kubernetes API: counts the clients built for it and
+/// the mutations that reach it.
+#[derive(Clone, Default)]
+struct FakeApi {
+    built: Arc<AtomicUsize>,
+    mutations: Arc<AtomicUsize>,
+}
+
+impl FakeApi {
+    /// A fake connector: builds a client for this API, doing `meanwhile`
+    /// while it does.
+    async fn connect(self, meanwhile: impl FnOnce()) -> Result<FakeApi, String> {
+        self.built.fetch_add(1, Ordering::SeqCst);
+        meanwhile();
+        Ok(self)
+    }
+
+    fn counts(&self) -> (usize, usize) {
+        (
+            self.built.load(Ordering::SeqCst),
+            self.mutations.load(Ordering::SeqCst),
+        )
+    }
+}
+
+/// As core's runner: nothing is submitted until the connection answers, then
+/// the confirmed mutation once.
+async fn submit(
+    connect: impl std::future::Future<Output = Result<FakeApi, String>>,
+) -> Result<(), String> {
+    let api = connect.await?;
+    api.mutations.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
+fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
+}
+
+/// Unchanged access still submits, exactly once.
+#[test]
+fn a_run_on_unchanged_access_submits_once() {
+    let files = access_files();
+    let api = FakeApi::default();
+    let access = files.access.clone();
+    let connect = api.clone().connect(|| {});
+    block_on(submit(run_client(
+        Some(access.clone()),
+        Some(access),
+        connect,
+    )))
+    .unwrap();
+    assert_eq!(api.counts(), (1, 1));
+}
+
+/// Replacing the kubeconfig, the credential it names or the talosconfig
+/// between the preview and the confirmation refuses the run before a client
+/// is built, so nothing is submitted.
+#[test]
+fn access_replaced_after_the_preview_submits_nothing() {
+    for replace in ["kubeconfig", "token", "talosconfig"] {
+        let files = access_files();
+        let path = match replace {
+            "kubeconfig" => &files.kubeconfig,
+            "token" => &files.token,
+            _ => &files.talosconfig,
+        };
+        let mut contents = std::fs::read(path).unwrap();
+        contents.extend_from_slice(b"# replaced\n");
+        std::fs::write(path, contents).unwrap();
+        let api = FakeApi::default();
+        let access = files.access.clone();
+        let connect = api.clone().connect(|| {});
+        let error = block_on(submit(run_client(
+            Some(access.clone()),
+            Some(access),
+            connect,
+        )))
+        .expect_err(replace);
+        assert!(error.contains("changed"), "{replace}: {error}");
+        assert_eq!(api.counts(), (0, 0), "{replace}");
+    }
+}
+
+/// A credential replaced while the client is being built is caught by the
+/// check after it: the client is dropped and nothing is submitted.
+#[test]
+fn access_replaced_while_the_client_is_built_submits_nothing() {
+    let files = access_files();
+    let api = FakeApi::default();
+    let token = files.token.clone();
+    let connect = api.clone().connect(move || {
+        std::fs::write(&token, "second-token\n").unwrap();
+    });
+    let access = files.access.clone();
+    let error = block_on(submit(run_client(
+        Some(access.clone()),
+        Some(access),
+        connect,
+    )))
+    .unwrap_err();
+    assert!(error.contains("changed"), "{error}");
+    assert_eq!(api.counts(), (1, 0));
+}
+
+/// A confirmed source whose access isn't the preview's, or a preview that
+/// recorded none, refuses the run before a client is built.
+#[test]
+fn a_run_without_the_previews_access_submits_nothing() {
+    let files = access_files();
+    let other = AppliedAccess {
+        identity: AccessIdentity::new(AccessSessionId::new(), files.access.configuration),
+        ..files.access.clone()
+    };
+    for (previewed, confirmed) in [
+        (Some(files.access.clone()), Some(other)),
+        (Some(files.access.clone()), None),
+        (None, Some(files.access.clone())),
+    ] {
+        let api = FakeApi::default();
+        let connect = api.clone().connect(|| {});
+        assert!(block_on(submit(run_client(previewed, confirmed, connect))).is_err());
+        assert_eq!(api.counts(), (0, 0));
+    }
 }
