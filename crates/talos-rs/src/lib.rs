@@ -92,7 +92,6 @@ pub use client::{
     ProcessInfo,
     ProcessState,
     // Operation types
-    RebootMode,
     RebootResult,
     ServiceHealth,
     ServiceInfo,
