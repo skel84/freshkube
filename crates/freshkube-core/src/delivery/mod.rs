@@ -21,7 +21,7 @@ pub mod tekton;
 mod versions;
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod provenance;
 #[cfg(test)]

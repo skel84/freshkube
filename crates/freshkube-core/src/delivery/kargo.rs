@@ -469,7 +469,7 @@ pub struct KargoProject {
     pub promotions: Vec<Promotion>,
 }
 
-async fn read_kind<R: Reader, T>(
+pub(crate) async fn read_kind<R: Reader, T>(
     reader: &R,
     plural: &str,
     project: &str,
@@ -504,5 +504,78 @@ pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
         promotions: Source::from_listing(
             read_kind(reader, "promotions", project, parse_promotion).await,
         ),
+    }
+}
+
+/// The label Kargo puts on the namespace it makes for each Project.
+pub const PROJECT_LABEL: &str = "kargo.akuity.io/project";
+
+/// The names of the cluster's Kargo Projects. A Project is cluster-scoped and
+/// owns the namespace of its own name, which Kargo labels; the list is of
+/// those namespaces, since a listing here must carry a selector. A cluster
+/// that doesn't serve Kargo's `projects` is `NotInstalled`, not empty.
+pub async fn read_project_names<R: Reader>(reader: &R) -> Source<Vec<String>> {
+    async fn run<R: Reader>(reader: &R) -> Result<(Vec<String>, Option<Truncation>), Failure> {
+        resolve(reader, GROUP, "projects", VERSIONS, false).await?;
+        let listing = reader
+            .list(&ListRequest {
+                resource: Resource::new("", "v1", "namespaces", false),
+                scope: Scope::Labels {
+                    namespace: None,
+                    selector: super::read::label_equals(PROJECT_LABEL, "true")?,
+                },
+            })
+            .await?;
+        let mut names: Vec<String> = listing
+            .items
+            .iter()
+            .filter_map(|item| text(item, "/metadata/name"))
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok((names, listing.truncated))
+    }
+    Source::from_listing(run(reader).await)
+}
+
+#[cfg(test)]
+mod project_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::delivery::fixtures::FixtureReader;
+
+    fn namespace(name: &str, project: bool) -> Value {
+        let labels = if project {
+            json!({PROJECT_LABEL: "true"})
+        } else {
+            json!({})
+        };
+        json!({"metadata": {"name": name, "labels": labels}})
+    }
+
+    #[tokio::test]
+    async fn projects_are_the_labelled_namespaces() {
+        let reader = FixtureReader::default()
+            .serves(GROUP, "v1alpha1", &["projects"])
+            .with(
+                "namespaces",
+                vec![namespace("shop", true), namespace("kube-system", false)],
+            );
+        let read = read_project_names(&reader).await;
+        assert_eq!(read, Source::Read(vec!["shop".to_owned()]));
+    }
+
+    #[tokio::test]
+    async fn unserved_kargo_is_not_installed_and_a_refusal_is_not_empty() {
+        let none = read_project_names(&FixtureReader::default()).await;
+        assert!(matches!(none, Source::NotInstalled(_)));
+        let refused = FixtureReader::default()
+            .serves(GROUP, "v1alpha1", &["projects"])
+            .refusing("namespaces");
+        assert!(matches!(
+            read_project_names(&refused).await,
+            Source::Refused(_)
+        ));
     }
 }
