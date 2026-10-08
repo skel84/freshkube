@@ -538,7 +538,8 @@ pub fn warning_banner(
 }
 
 /// An inline banner with an optional action: Crit for a fault the page
-/// exists to show, such as a lost quorum, Warn for everything else.
+/// exists to show, such as a lost quorum, Good for something that worked,
+/// such as a save, Warn for everything else.
 pub fn banner(
     tone: Tone,
     lead: Option<SharedString>,
@@ -577,6 +578,7 @@ pub fn banner(
 fn banner_look(tone: Tone, p: &Palette) -> (IconName, Hsla, Hsla, Hsla) {
     match tone {
         Tone::Crit | Tone::Died => (IconName::CircleX, p.crit_ink, p.crit_soft, p.crit_line),
+        Tone::Good => (IconName::CircleCheck, p.good_ink, p.good_soft, p.good),
         _ => (
             IconName::TriangleAlert,
             p.warn_ink,
@@ -742,7 +744,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn a_critical_banner_draws_in_the_critical_colours(cx: &mut TestAppContext) {
+    fn banners_draw_in_the_colours_of_their_tone(cx: &mut TestAppContext) {
         let p = cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -753,11 +755,15 @@ mod tests {
             assert!(matches!(icon, IconName::CircleX), "{tone:?}");
             assert_eq!((ink, soft, line), (p.crit_ink, p.crit_soft, p.crit_line));
         }
-        for tone in [Tone::Warn, Tone::Unknown, Tone::Good] {
+        for tone in [Tone::Warn, Tone::Unknown] {
             let (icon, ink, soft, line) = banner_look(tone, &p);
             assert!(matches!(icon, IconName::TriangleAlert), "{tone:?}");
             assert_eq!((ink, soft, line), (p.warn_ink, p.warn_soft, p.warn_line));
         }
         assert_ne!(p.crit_line, p.warn_line);
+        // Something that worked, such as a save, is not drawn as a warning.
+        let (icon, ink, soft, line) = banner_look(Tone::Good, &p);
+        assert!(matches!(icon, IconName::CircleCheck));
+        assert_eq!((ink, soft, line), (p.good_ink, p.good_soft, p.good));
     }
 }
