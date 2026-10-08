@@ -2228,6 +2228,54 @@ mod tests {
         }
     }
 
+    /// The filters read ports only from a header that follows the IP
+    /// header directly, as tcpdump's `not port` does, and keep what they
+    /// can't place. A later IPv4 fragment carries no TCP or UDP header, so
+    /// it is kept, management traffic's too, and its payload is never read
+    /// as ports; the first, which has them, is dropped. An IPv6 packet whose
+    /// next header is Fragment (44) is kept whether first or later, since
+    /// its ports, when it has them, sit behind the fragment header.
+    #[test]
+    fn packet_capture_api_filter_keeps_fragments_whose_ports_it_cannot_read() {
+        for interface in ["eth0", "kubespan"] {
+            let ethernet = TalosClient::detect_link_type(interface) == LinkType::EN10MB;
+            let filter = TalosClient::packet_capture_api_exclusion_filter(interface);
+            let ip = if ethernet { 14 } else { 0 };
+            for protocol in [6, 17, 132] {
+                // IPv4: the payload where a header would be reads as port
+                // 50000 both ways. Offset 185 (1480 bytes in), more to come.
+                let mut later = capture_packet_fixture(ethernet, false, protocol, 50000, 50000);
+                later[ip + 6..ip + 8].copy_from_slice(&0x20b9u16.to_be_bytes());
+                assert!(
+                    capture_filter_accepts(&filter, &later),
+                    "{interface}, IPv4, protocol={protocol}: a later fragment is kept"
+                );
+                // Offset 0, more to come: the ports are there.
+                let mut first = capture_packet_fixture(ethernet, false, protocol, 1234, 50000);
+                first[ip + 6..ip + 8].copy_from_slice(&0x2000u16.to_be_bytes());
+                assert!(
+                    !capture_filter_accepts(&filter, &first),
+                    "{interface}, IPv4, protocol={protocol}: the first fragment is dropped"
+                );
+
+                // IPv6: a fragment header, then the protocol's header with
+                // port 50000 both ways, first (offset 0) and later (185).
+                for (offset, which) in [(0x0001u16, "first"), (0x05c9, "later")] {
+                    let mut packet = capture_packet_fixture(ethernet, true, 44, 0, 0);
+                    let fragment = ip + 40;
+                    packet[fragment] = protocol;
+                    packet[fragment + 2..fragment + 4].copy_from_slice(&offset.to_be_bytes());
+                    packet[fragment + 8..fragment + 10].copy_from_slice(&50000u16.to_be_bytes());
+                    packet[fragment + 10..fragment + 12].copy_from_slice(&50000u16.to_be_bytes());
+                    assert!(
+                        capture_filter_accepts(&filter, &packet),
+                        "{interface}, IPv6, protocol={protocol}: the {which} fragment is kept"
+                    );
+                }
+            }
+        }
+    }
+
     use super::*;
 
     /// Helper to create a TalosClient for testing without a real connection
