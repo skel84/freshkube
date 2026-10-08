@@ -4,9 +4,16 @@ use super::overrides::apply;
 use super::rules::{Builder, argo, coverage, infer_across_sessions, kargo, part_of};
 use super::{Derived, Inputs, Override};
 
-/// Applications from what was read, by precedence (Kargo Project, Argo CD,
-/// `part-of`) and then the override. The same inputs always give the same
-/// answer, in the same order.
+/// Applications from what was read, in this order:
+///
+/// 1. a Kargo Project;
+/// 2. an Argo CD ApplicationSet or Application;
+/// 3. the `part-of` label;
+/// 4. the user's override, which beats every rule above: a rename, merge,
+///    split or hide applies after all of them, to a Kargo Project's
+///    application as to any other.
+///
+/// The same inputs always give the same answer, in the same order.
 pub fn derive(inputs: &Inputs, over: &Override) -> Derived {
     let mut builder = Builder::default();
     let projects = kargo(&mut builder, inputs);

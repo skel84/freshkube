@@ -781,3 +781,91 @@ fn members_stay_in_order_after_a_merge_and_a_split() {
     let checkout = found.find(&id(Rule::Kargo, "checkout")).unwrap();
     assert_eq!(names(checkout), ["images", "web"]);
 }
+
+// The override applies after every rule, to a Kargo Project's application
+// as to any other.
+
+fn kargo_world(over: Override) -> Derived {
+    let mut core = session("core-fra");
+    core.kargo = Source::Read(vec![
+        project("checkout", &["dev", "prod"]),
+        project("cart", &["dev"]),
+    ]);
+    core.argo_applications = Source::Read(vec![argo("catalog", json!({}))]);
+    derive(
+        &Inputs {
+            sessions: vec![core],
+            stage_naming: None,
+        },
+        &over,
+    )
+}
+
+#[test]
+fn an_override_renames_a_kargo_application() {
+    let found = kargo_world(Override {
+        renames: [(id(Rule::Kargo, "checkout"), "Shop".to_owned())].into(),
+        ..Override::default()
+    });
+    let app = found.find(&id(Rule::Kargo, "checkout")).unwrap();
+    assert_eq!((app.name.as_str(), app.rule), ("Shop", Rule::Kargo));
+}
+
+#[test]
+fn an_override_hides_a_kargo_application() {
+    let found = kargo_world(Override {
+        hidden: [id(Rule::Kargo, "cart")].into(),
+        ..Override::default()
+    });
+    assert!(found.find(&id(Rule::Kargo, "cart")).is_none());
+    assert_eq!(found.hidden[0].id, id(Rule::Kargo, "cart"));
+}
+
+#[test]
+fn an_override_merges_a_kargo_application_into_a_lower_rules_and_the_other_way() {
+    let into_argo = kargo_world(Override {
+        merges: vec![Merge {
+            from: vec![id(Rule::Kargo, "cart")],
+            into: app_id("catalog"),
+        }],
+        ..Override::default()
+    });
+    assert!(into_argo.find(&id(Rule::Kargo, "cart")).is_none());
+    let catalog = into_argo.find(&app_id("catalog")).unwrap();
+    assert_eq!(names(catalog), ["dev", "images", "catalog"]);
+
+    let into_kargo = kargo_world(Override {
+        merges: vec![Merge {
+            from: vec![app_id("catalog")],
+            into: id(Rule::Kargo, "checkout"),
+        }],
+        ..Override::default()
+    });
+    assert!(into_kargo.find(&app_id("catalog")).is_none());
+    let checkout = into_kargo.find(&id(Rule::Kargo, "checkout")).unwrap();
+    assert_eq!(checkout.rule, Rule::Kargo);
+    assert_eq!(names(checkout), ["dev", "prod", "images", "catalog"]);
+}
+
+#[test]
+fn an_override_splits_a_stage_out_of_a_kargo_application() {
+    let stage = MemberRef {
+        session: key("core-fra"),
+        kind: MemberKind::KargoStage,
+        namespace: Some("checkout".into()),
+        name: "prod".into(),
+    };
+    let found = kargo_world(Override {
+        splits: vec![Split {
+            member: stage.clone(),
+            name: "checkout prod".into(),
+        }],
+        ..Override::default()
+    });
+    assert_eq!(
+        names(found.find(&id(Rule::Kargo, "checkout")).unwrap()),
+        ["dev", "images"]
+    );
+    let split = found.find(&id(Rule::Manual, "checkout prod")).unwrap();
+    assert_eq!(split.members[0].at, stage);
+}
