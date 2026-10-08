@@ -378,10 +378,6 @@ Taken as they come up, between larger steps:
 - CLI and MCP explanations ([F11](FUTURE_IDEAS.md#f11-expose-shared-explanations-through-cli-and-mcp)).
 - The rest of [FUTURE_IDEAS.md](FUTURE_IDEAS.md): shared store and workload health (F02, F03), traffic paths (F05), planned changes (F06), integration contracts (F07) and change history (F09).
 
-### Checks to add
-
-- **Monitoring discovery** finds Prometheus-compatible backends, not just a Prometheus Service. For example, VictoriaMetrics' `vmsingle`, or `vmselect` with its `/select/<tenant>/prometheus` prefix. Tested with an invented fixture.
-
 ### Known risks, documented, not fixed now
 
 - **Exec-plugin kubeconfigs from the Dock.** A kubeconfig whose user runs an exec plugin (`tsh`, `aws`, `gcloud`, `kubelogin`, …) needs that command on `PATH`. An app started from the Dock or Finder gets launchd's short `PATH` and may not find it; started from a terminal it works. Recorded in [MACOS_PACKAGING.md](MACOS_PACKAGING.md#install-a-release) until auth plugins are handled (step 8).
