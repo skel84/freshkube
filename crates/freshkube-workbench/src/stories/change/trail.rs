@@ -884,7 +884,7 @@ pub fn trail() -> Trail {
             "prod-fra-verification",
         ],
         [
-            (Tone::Good, "Approved by hand, past stage", "09:50"),
+            (Tone::Info, "Approved by hand, past stage", "09:50"),
             (Tone::Good, "Automatic · 4 of 4 steps", "09:52"),
             (Tone::Crit, "Failed: error rate 2.4 %, above 1 %", "10:01"),
         ],

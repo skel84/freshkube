@@ -116,7 +116,7 @@ impl ChangeStory {
                 past,
                 upstream_then,
             } => gate(
-                Tone::Good,
+                Tone::Info,
                 format!("Approved by {by} at {at}, not verified in {past} at the time."),
                 Some(format!(
                     "Approved by hand for this Stage, past {past}; {upstream_then}."

@@ -130,6 +130,16 @@ pub struct ChangeStory {
     opened: Option<SharedString>,
 }
 
+/// The status a row counts as: a blue dot (a Freight approved by hand,
+/// past its upstream) is something to know, not a fault, so it counts as
+/// ok in the chips, the filter and its group.
+fn status(tone: Tone) -> Tone {
+    match tone {
+        Tone::Info => Tone::Good,
+        tone => tone,
+    }
+}
+
 /// How bad a tone is, for a group's worst row.
 fn rank(tone: Tone) -> u8 {
     match tone {
@@ -162,7 +172,7 @@ impl ChangeStory {
             .map(|group| {
                 (trail.hops.iter())
                     .filter(|hop| hop.group == group)
-                    .map(|hop| hop.tone)
+                    .map(|hop| status(hop.tone))
                     .max_by_key(|tone| rank(*tone))
                     .unwrap_or(Tone::Good)
             })
@@ -176,7 +186,7 @@ impl ChangeStory {
             .collect();
         let mut counts = [0; TONES.len()];
         for hop in &trail.hops {
-            if let Some(ix) = TONES.iter().position(|(tone, _)| *tone == hop.tone) {
+            if let Some(ix) = TONES.iter().position(|(tone, _)| *tone == status(hop.tone)) {
                 counts[ix] += 1;
             }
         }
@@ -186,8 +196,8 @@ impl ChangeStory {
                 column(Kind::Glyph, "", GLYPH_WIDTH),
                 column(Kind::Hop, "Hop", 200.),
                 column(Kind::Link, "Link", 112.),
-                column(Kind::Detail, "Detail", 240.),
                 column(Kind::Time, "Time", 64.),
+                column(Kind::Detail, "Detail", 240.),
                 column(Kind::From, "Read from", 112.),
             ],
             trail,
@@ -230,7 +240,7 @@ impl ChangeStory {
         for group in 0..self.trail.groups.len() {
             let rows: Vec<usize> = (self.trail.hops.iter().enumerate())
                 .filter(|(_, hop)| hop.group == group)
-                .filter(|(_, hop)| self.filter.is_none_or(|tone| tone == hop.tone))
+                .filter(|(_, hop)| self.filter.is_none_or(|tone| tone == status(hop.tone)))
                 .map(|(ix, _)| ix)
                 .collect();
             if rows.is_empty() {

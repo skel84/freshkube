@@ -841,6 +841,15 @@ fn the_change_story_folds_stages_and_filters_by_status(cx: &mut TestAppContext) 
         window.click("change-trail-tally-failing", cx);
         window.render_frame(cx);
         assert_eq!(story.read(cx).shown(), vec!["prod-fra-verification"]);
+        // A Freight approved by hand past stage has the blue dot, and
+        // counts as ok.
+        window.click("change-trail-tally-failing", cx);
+        window.click("change-trail-tally-ok", cx);
+        window.render_frame(cx);
+        assert!(story.read(cx).shown().contains(&"prod-fra-eligible"));
+        window.click("change-trail-tally-ok", cx);
+        window.click("change-trail-tally-failing", cx);
+        window.render_frame(cx);
         window.click("change-trail-tally-waiting", cx);
         window.render_frame(cx);
         assert_eq!(
