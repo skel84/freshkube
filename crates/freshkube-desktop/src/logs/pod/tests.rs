@@ -1026,3 +1026,45 @@ fn all_containers_copy_and_download_lead_each_line_with_its_container(cx: &mut T
         assert!(led(line), "{line}");
     }
 }
+
+#[gpui_kit::test]
+fn all_containers_reads_at_most_the_cap_and_says_how_many_it_leaves_out(cx: &mut TestAppContext) {
+    use super::super::streams::MAX_STREAMS;
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(false);
+    // The gateway's containers, copied until the pod runs more than the
+    // cap allows.
+    let mut pod = containers(&identity);
+    let app = pod
+        .containers
+        .iter()
+        .find(|container| container.role == ContainerRole::App)
+        .unwrap()
+        .clone();
+    let total = MAX_STREAMS + 3;
+    for ix in apps(&pod).len()..total {
+        let mut extra = app.clone();
+        extra.name = format!("extra-{ix}");
+        pod.containers.push(extra);
+    }
+    assert_eq!(apps(&pod).len(), total);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.show_pod(Some(identity.clone()), Some(KubeAccess::Example), cx);
+            view.want(cx);
+            view.set_containers(pod.clone(), cx);
+        });
+        pick_all(window, cx);
+        // The first containers in the pod's order, up to the cap.
+        let first: Vec<String> = apps(&pod).into_iter().take(MAX_STREAMS).collect();
+        assert_eq!(read(&view, cx), sorted(first));
+        let note = window.find("pod-logs-note").label().unwrap().to_owned();
+        assert!(
+            note.ends_with(&format!(
+                "Reading {MAX_STREAMS} of {total} containers, in the pod's order."
+            )),
+            "{note}"
+        );
+    })
+    .unwrap();
+}

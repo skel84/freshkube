@@ -1,8 +1,9 @@
 //! A pod's logs in the dock: one container's log, followed live or its
 //! previous instance read to the end, or every app container's at once,
-//! interleaved by time and tagged by container (`logs/streams.rs`). The stream lives while the dock's tab
-//! stays open (`desktop/dock/`), whatever page shows, and stops when the
-//! tab closes or the connection changes. Read-only: it gets the pod and
+//! at most [`MAX_STREAMS`], interleaved by time and tagged by container
+//! (`logs/streams.rs`). The stream lives while the dock's tab stays open
+//! (`desktop/dock/`), whatever page shows, and stops when the tab closes
+//! or the connection changes. Read-only: it gets the pod and
 //! reads logs, nothing else.
 //!
 //! This file holds the source's state and its stream; `controls` draws the
@@ -26,7 +27,7 @@ use gpui_kit::{AnyElement, Context, SharedString, Task, Window};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use super::streams::{self, Clock, StreamKey, StreamSet, StreamSource};
+use super::streams::{self, Clock, MAX_STREAMS, StreamKey, StreamSet, StreamSource};
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
@@ -221,13 +222,27 @@ impl PodLogs {
             .filter(|container| container.role == ContainerRole::App)
     }
 
-    /// The containers All containers reads: every app container, or those
-    /// that ran before, for their previous instances.
-    fn all_names(&self) -> Vec<String> {
+    /// The containers All containers would read: every app container, or
+    /// those that ran before, for their previous instances.
+    fn all_wanted(&self) -> impl Iterator<Item = &Container> {
         self.app_containers()
             .filter(|container| !self.previous || container.has_previous())
+    }
+
+    /// The containers All containers reads: the first [`MAX_STREAMS`] it
+    /// would read, in the pod's order.
+    fn all_names(&self) -> Vec<String> {
+        self.all_wanted()
+            .take(MAX_STREAMS)
             .map(|container| container.name.clone())
             .collect()
+    }
+
+    /// What the cap leaves out, in the words of the note under the toolbar.
+    fn capped_note(&self) -> Option<String> {
+        let wanted = self.all_wanted().count();
+        (wanted > MAX_STREAMS)
+            .then(|| format!("Reading {MAX_STREAMS} of {wanted} containers, in the pod's order."))
     }
 
     /// Drops the stream and its delivery, and every container's stream;
@@ -418,6 +433,17 @@ impl PodLogs {
     /// is read: the tag by the containers together, and the text naming
     /// each container that doesn't stream, and why.
     fn describe_all(&self) -> (Tone, &'static str, String, String) {
+        let (tone, tag, text, empty) = self.describe_all_streams();
+        let text = match (self.capped_note(), text.is_empty()) {
+            (Some(capped), true) => capped,
+            (Some(capped), false) => format!("{text} · {capped}"),
+            (None, _) => text,
+        };
+        (tone, tag, text, empty)
+    }
+
+    /// The containers' states together, before the cap's note.
+    fn describe_all_streams(&self) -> (Tone, &'static str, String, String) {
         let states: Vec<(&str, &streams::StreamState)> = self
             .reads
             .streams

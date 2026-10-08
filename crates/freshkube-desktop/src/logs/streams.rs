@@ -31,6 +31,9 @@ use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
 use crate::ui::Tone;
 
+/// The most container logs one tab reads at once; a source counts the rest
+/// in its note.
+pub(crate) const MAX_STREAMS: usize = 20;
 /// How often an example container writes another line; each stream adds
 /// a tick or more, so they don't all write at once.
 pub(super) const EXAMPLE_INTERVAL: Duration = Duration::from_millis(1_500);
