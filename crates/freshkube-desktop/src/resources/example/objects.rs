@@ -153,6 +153,16 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
             String::new()
         }
     ));
+    let sidecars: &[&str] = if app == "gateway" {
+        &GATEWAY_SIDECARS
+    } else {
+        &[]
+    };
+    for sidecar in sidecars {
+        yaml.push_str(&format!(
+            "  - name: {sidecar}\n    image: example/{sidecar}:1.0\n"
+        ));
+    }
     if scheduled {
         yaml.push_str(&format!("  nodeName: {}\n", row.cells[6]));
     }
@@ -217,6 +227,29 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
             "CrashLoopBackOff" => "      waiting:\n        reason: CrashLoopBackOff\n        message: back-off 5m0s restarting failed container\n".into(),
             other => format!("      waiting:\n        reason: {other}\n"),
         });
+        // The sidecars run on while the proxy crashes.
+        let (sidecar_ready, sidecar_state) = match status {
+            "Running" | "CrashLoopBackOff" => (
+                true,
+                format!(
+                    "      running:\n        startedAt: '{}'\n",
+                    timestamp(created + 30)
+                ),
+            ),
+            "Completed" => (
+                false,
+                format!(
+                    "      terminated:\n        exitCode: 0\n        reason: Completed\n        finishedAt: '{}'\n",
+                    timestamp(created + 300)
+                ),
+            ),
+            other => (false, format!("      waiting:\n        reason: {other}\n")),
+        };
+        for sidecar in sidecars {
+            yaml.push_str(&format!(
+                "  - name: {sidecar}\n    image: example/{sidecar}:1.0\n    imageID: example://{sidecar}\n    ready: {sidecar_ready}\n    restartCount: 0\n    state:\n{sidecar_state}"
+            ));
+        }
     } else {
         yaml.push_str(&format!(
             "  - type: PodScheduled\n    status: 'False'\n    reason: Unschedulable\n    message: '0/3 nodes are available: 3 Insufficient memory.'\n    lastTransitionTime: '{}'\n",
@@ -325,6 +358,11 @@ pub(crate) fn pod_log(
         })));
         return (updates, false);
     }
+    if app == "gateway"
+        && let Some(position) = GATEWAY_SIDECARS.iter().position(|name| *name == container)
+    {
+        return sidecar_log(status, container, name, position, previous, created, now);
+    }
     if container != app {
         return failed(
             FailureKind::NotFound,
@@ -369,6 +407,55 @@ pub(crate) fn pod_log(
         "Completed" => {
             let mut updates = vec![streaming];
             updates.extend(log_lines(15, 18, created + 299));
+            updates.push(PodLogUpdate::Ended(Some(Termination {
+                exit_code: 0,
+                reason: "Completed".into(),
+                finished: time(created + 300),
+            })));
+            (updates, false)
+        }
+        "Pending" => (vec![PodLogUpdate::Waiting("Not started".into())], false),
+        other => (vec![PodLogUpdate::Waiting(other.into())], false),
+    }
+}
+
+/// A gateway sidecar's log: it runs on while the proxy crashes, and never
+/// restarted. Each writes a little apart from the others, so their lines
+/// interleave.
+fn sidecar_log(
+    status: &str,
+    container: &str,
+    pod: &str,
+    position: usize,
+    previous: bool,
+    created: i64,
+    now: i64,
+) -> (Vec<PodLogUpdate>, bool) {
+    if previous {
+        let message =
+            format!("previous terminated container \"{container}\" in pod \"{pod}\" not found");
+        return (
+            vec![PodLogUpdate::Failed(Failure::new(
+                FailureKind::Other,
+                message,
+            ))],
+            false,
+        );
+    }
+    let offset = position as i64 + 1;
+    let lines = (0..12).map(move |ix| {
+        let at = time(now - 2 - offset - (11 - ix) * 9).unwrap_or_default();
+        PodLogUpdate::Line(pod_log_line((ix + offset * 3) as u64, at))
+    });
+    match status {
+        "Running" | "CrashLoopBackOff" => {
+            let mut updates = vec![PodLogUpdate::Streaming];
+            updates.extend(lines);
+            (updates, true)
+        }
+        "Completed" => {
+            let mut updates = vec![PodLogUpdate::Streaming];
+            updates.extend(lines);
             updates.push(PodLogUpdate::Ended(Some(Termination {
                 exit_code: 0,
                 reason: "Completed".into(),

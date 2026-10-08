@@ -17,6 +17,13 @@ Taken with the user on 4 October 2026.
 - **Approval early.** Promoting freight and stepping or aborting a rollout come with the first delivery slice, not after it. They are explicit actions behind a confirmation that shows what will happen, the evidence and who the user acts as.
 - **Desktop grade is the look.** Chosen by the user on 5 October 2026 over the look of P1–P7 ([below](#desktop-grade)). P1–P7 stay as the reference for what each screen holds and how the screens connect; [DESIGN.md](DESIGN.md#platforms-desktop-grade-adapted-at-the-edges) holds the look.
 
+Taken with the user on 8 October 2026, for the delivery chain's hops (roadmap step 5):
+
+- **Argo CD diffs link out.** The change page links to Argo CD's own UI for a desired-against-live diff. There is no native diff for now.
+- **Tekton Results is read through the Kubernetes API.** When Results isn't installed, or a run was pruned, the change page says so ("run pruned, logs gone"); it never shows an empty history as a clean one.
+- **Supply chain: Tekton, Chains and Conforma first.** Konflux in full (Applications, Components, Snapshots, Releases) comes later.
+- **Approve or promote: three gates per Stage.** Eligible (the Freight was verified upstream, `status.verifiedIn`, or approved by hand for this Stage, `status.approvedFor`), Promotion (automatic, or waiting for someone with Kargo's `promote` permission) and Verification after the promotion. [#485](https://github.com/skel84/freshkube/issues/485) records how each shows on the change page.
+
 ## The stack, and where each piece is read
 
 | Hop | Lives in | What we read | How |
@@ -186,9 +193,5 @@ Steps 5–7 can move in any order once step 3 lands. Explore, Infrastructure and
 ## Open questions
 
 - **Teams.** How does the app know which applications are "mine": Kargo Project RBAC, GitHub team membership, a label, or a list the user keeps?
-- **Konflux.** Some teams run Konflux in full, with Applications, Components, Snapshots and Releases; others use Tekton, Chains and Conforma on their own. The supply-chain hop reads different objects in each case, so how does it tell which it has?
-- **Tekton Results.** It may not be installed. Without it, a pruned PipelineRun's logs are gone, and the change page should say so.
-- **Approve or promote.** Kargo separates approving freight for a Stage from promoting it. A prod Stage may be gated by manual approval, by manual promotion, or both; how does the app show which?
-- **Argo CD diffs.** F04 links out to Argo CD's UI for diffs. Is that enough, or does the change page need a native desired-against-live diff?
 - **Harbor replication.** Production may pull from a replicated registry. Is the digest the same there, and can the robot account read both?
 - **The name and the site.** The sk8s.app headline ("Your cluster, problems first") describes today's product. It waits for this direction to settle.
