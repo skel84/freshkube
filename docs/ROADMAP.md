@@ -366,7 +366,7 @@ The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histor
 
 Taken as they come up, between larger steps:
 - logs of a pod's several containers in one `LogView` (a whole workload's landed, Done);
-- current CPU and memory in tables from the metrics API;
+- current CPU and memory in tables from the metrics API (Pods, Nodes and a node's Pods list landed, Done; workload sums not planned);
 - YAML schema validation.
 
 ### 8. Later
