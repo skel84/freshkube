@@ -506,6 +506,25 @@ impl Pilot {
             KeyBinding::new("down", settings::NextCluster, Some(settings::CONTEXT)),
             KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("a", settings::AddCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("e", settings::EditCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("enter", settings::EditCluster, Some(settings::CONTEXT)),
+            KeyBinding::new(
+                "backspace",
+                settings::RemoveCluster,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-alt-up",
+                settings::MoveClusterUp,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-alt-down",
+                settings::MoveClusterDown,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new("r", settings::ReloadWorkspace, Some(settings::CONTEXT)),
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
                 "secondary-shift-enter",
