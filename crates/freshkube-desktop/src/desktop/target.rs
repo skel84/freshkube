@@ -192,7 +192,7 @@ impl Pilot {
     }
 
     /// Services on the target node that pass the name and health filters.
-    pub(super) fn visible_services(&self, cx: &App) -> Vec<ServiceInfo> {
+    fn visible_services(&self, cx: &App) -> Vec<ServiceInfo> {
         let query = self.service_filter.read(cx).value().to_lowercase();
         self.services
             .data()
@@ -210,8 +210,10 @@ impl Pilot {
             .unwrap_or_default()
     }
 
+    /// Steps through the rows on screen: the list `rebuild_service_rows`
+    /// derived, which every filter and data change rebuilds.
     pub(super) fn step_service(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let visible = self.visible_services(cx);
+        let visible = &self.service_display.visible;
         if visible.is_empty() {
             return;
         }

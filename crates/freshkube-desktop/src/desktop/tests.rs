@@ -454,6 +454,41 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     .unwrap();
 }
 
+/// The arrows step through the services the filter shows, not the node's
+/// whole list: with the selection filtered out, both land on the one row
+/// left.
+#[gpui_kit::test]
+fn service_arrows_step_through_the_filtered_rows(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
+        window.render_frame(cx);
+        window.click("service-filter", cx);
+        window.input("apid", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for key in ["down", "up"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // A click puts the keyboard on the list; the selection is then
+            // a service the filter hides.
+            window.within("services-region").click("apid", cx);
+            view.update(cx, |pilot, _| {
+                pilot.selected_service = Some("auditd".into())
+            });
+            window.press(key, cx);
+            assert_eq!(
+                view.read(cx).selected_service.as_deref(),
+                Some("apid"),
+                "{key}"
+            );
+        })
+        .unwrap();
+    }
+}
+
 /// Stacked under the list, a newly selected service's details scroll into
 /// view, by pointer and by keyboard; beside the list, nothing scrolls, and
 /// a refresh never reveals again (#238).
