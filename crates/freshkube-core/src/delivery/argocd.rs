@@ -272,6 +272,9 @@ pub struct Application {
     /// where a setup may name the Kargo project.
     pub metadata_annotations: BTreeMap<String, String>,
     pub metadata_labels: BTreeMap<String, String>,
+    /// The name of the ApplicationSet that generated it, by an owner
+    /// reference of kind `ApplicationSet` in this API group.
+    pub owner_application_set: Option<String>,
     /// `status.resources`; empty both when Argo CD lists none and when it
     /// reported no inventory, which [`Application::inventory`] tells apart.
     pub managed: Vec<ManagedObject>,
@@ -325,6 +328,7 @@ pub fn parse_application(value: &Value) -> Option<Application> {
         authorized_stage,
         metadata_annotations,
         metadata_labels: strings(value, "/metadata/labels"),
+        owner_application_set: owning_application_set(value),
         managed: value
             .pointer("/status/resources")
             .and_then(Value::as_array)
@@ -477,6 +481,24 @@ fn flag(value: &Value, pointer: &str) -> Option<bool> {
 
 fn number(value: &Value, pointer: &str) -> Option<i64> {
     value.pointer(pointer).and_then(Value::as_i64)
+}
+
+/// The ApplicationSet an owner reference names.
+fn owning_application_set(value: &Value) -> Option<String> {
+    value
+        .pointer("/metadata/ownerReferences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|owner| {
+            text(owner, "/kind").as_deref() == Some("ApplicationSet")
+                && text(owner, "/apiVersion").is_some_and(|version| {
+                    version
+                        .split_once('/')
+                        .is_some_and(|(group, _)| group == GROUP)
+                })
+        })
+        .and_then(|owner| text(owner, "/name"))
 }
 
 /// The string values of the object at `pointer`.
@@ -687,6 +709,63 @@ pub async fn read_applications<R: Reader>(reader: &R, namespace: &str) -> Source
     Source::from_listing(run(reader, namespace).await)
 }
 
+/// An ApplicationSet: the generator of a family of Applications, such as one
+/// per environment. Only what names and groups it is kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationSet {
+    pub namespace: String,
+    pub name: String,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
+    pub metadata_labels: BTreeMap<String, String>,
+    /// `spec.template.spec.project`, the AppProject its Applications use.
+    pub project: Option<String>,
+}
+
+pub fn parse_application_set(value: &Value) -> Option<ApplicationSet> {
+    Some(ApplicationSet {
+        namespace: text(value, "/metadata/namespace")?,
+        name: text(value, "/metadata/name")?,
+        meta: Meta::parse(value),
+        metadata_labels: strings(value, "/metadata/labels"),
+        project: text(value, "/spec/template/spec/project"),
+    })
+}
+
+impl ApplicationSet {
+    /// The object these facts were read from.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new(
+            GROUP,
+            "ApplicationSet",
+            Some(&self.namespace),
+            &self.name,
+            &self.meta,
+        )
+    }
+}
+
+/// The ApplicationSets of one Argo CD namespace.
+pub async fn read_application_sets<R: Reader>(
+    reader: &R,
+    namespace: &str,
+) -> Source<Vec<ApplicationSet>> {
+    async fn run<R: Reader>(
+        reader: &R,
+        namespace: &str,
+    ) -> Result<(Vec<ApplicationSet>, Option<Truncation>), Failure> {
+        let resource = resolve(reader, GROUP, "applicationsets", VERSIONS, true).await?;
+        let listing = reader
+            .list(&ListRequest {
+                resource,
+                scope: Scope::Namespace(namespace.to_owned()),
+            })
+            .await?;
+        Ok(listing.parse(parse_application_set))
+    }
+    Source::from_listing(run(reader, namespace).await)
+}
+
 /// The name Argo CD gives the cluster it runs in.
 pub const IN_CLUSTER_NAME: &str = "in-cluster";
 /// The address Argo CD gives the cluster it runs in, as seen from inside it.
@@ -813,6 +892,50 @@ mod tests {
             "status": status,
         }))
         .expect("an Application")
+    }
+
+    #[test]
+    fn application_set_owner_is_read_from_its_owner_reference() {
+        let owned = |kind: &str, api_version: &str| {
+            parse_application(&json!({
+                "metadata": {
+                    "namespace": "argocd",
+                    "name": "storefront-dev",
+                    "ownerReferences": [{"kind": kind, "apiVersion": api_version, "name": "storefront"}],
+                },
+            }))
+            .expect("an Application")
+            .owner_application_set
+        };
+        assert_eq!(
+            owned("ApplicationSet", "argoproj.io/v1alpha1").as_deref(),
+            Some("storefront")
+        );
+        assert_eq!(owned("ApplicationSet", "example.test/v1"), None);
+        assert_eq!(owned("Rollout", "argoproj.io/v1alpha1"), None);
+        assert_eq!(app(json!({}), json!({})).owner_application_set, None);
+    }
+
+    #[test]
+    fn application_set_parses_its_name_labels_and_project() {
+        let set = parse_application_set(&json!({
+            "metadata": {
+                "namespace": "argocd",
+                "name": "storefront",
+                "labels": {"app.kubernetes.io/part-of": "shop"},
+            },
+            "spec": {"template": {"spec": {"project": "shop"}}},
+        }))
+        .expect("an ApplicationSet");
+        assert_eq!(set.name, "storefront");
+        assert_eq!(set.project.as_deref(), Some("shop"));
+        assert_eq!(
+            set.metadata_labels
+                .get("app.kubernetes.io/part-of")
+                .map(String::as_str),
+            Some("shop")
+        );
+        assert!(parse_application_set(&json!({"metadata": {"name": "x"}})).is_none());
     }
 
     #[test]
