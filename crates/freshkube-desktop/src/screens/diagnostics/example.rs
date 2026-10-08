@@ -1,7 +1,8 @@
 use super::*;
 
-/// Example diagnostics for `--fixture`, shaped like the real runner's output.
-/// A node that doesn't answer errors, so the screen shows its silent state.
+/// Example diagnostics for `--fixture`: invented evidence, judged by the
+/// same `evaluate()` as a live snapshot. A node that doesn't answer errors,
+/// so the screen shows its silent state.
 /// The `homelab` context has no Kubernetes source, which exercises the path
 /// where Kubernetes checks are unknown but Talos checks still show.
 pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, String> {
@@ -11,7 +12,6 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
         ServiceHealthSnapshot, ServiceSnapshot, ServicesSnapshot, SystemSnapshot,
     };
     use freshkube_core::diagnostics::{CniInfo, CniPodInfo, PodHealthInfo, UnhealthyPodInfo};
-    use freshkube_core::formatting::format_bytes;
 
     use crate::presentation::Role as NodeRole;
 
@@ -43,8 +43,6 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
         },
         &source.target.context,
     );
-    let mut checks: Vec<DiagnosticCheck> = Vec::new();
-
     // System.
     let memory = node.memory.as_ref().map(|memory| MemorySnapshot {
         total_bytes: memory.total,
@@ -52,64 +50,11 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
         used_bytes: memory.used,
         usage_percent: memory.percent() as f32,
     });
-    match &memory {
-        Some(memory) => {
-            let message = format!(
-                "{} / {} ({:.0}%)",
-                format_bytes(memory.used_bytes),
-                format_bytes(memory.total_bytes),
-                memory.usage_percent
-            );
-            checks.push(if memory.usage_percent > 90.0 {
-                DiagnosticCheck::fail("memory", CheckCategory::System, "Memory", message)
-            } else if memory.usage_percent > 80.0 {
-                DiagnosticCheck::warn("memory", CheckCategory::System, "Memory", message)
-            } else {
-                DiagnosticCheck::pass("memory", CheckCategory::System, "Memory", message)
-            });
-        }
-        None => checks.push(DiagnosticCheck::unknown(
-            "memory",
-            CheckCategory::System,
-            "Memory",
-            &SourceUnavailable {
-                source: "Talos Memory API".into(),
-                reason: "Talos returned no memory information".into(),
-            },
-        )),
-    }
     let load = node.load.map(|load| LoadAverageSnapshot {
         one_minute: load[0],
         five_minutes: load[1],
         fifteen_minutes: load[2],
     });
-    match (&load, node.cores) {
-        (Some(load), Some(cores)) => {
-            let message = format!(
-                "{:.2} / {:.2} / {:.2}",
-                load.one_minute, load.five_minutes, load.fifteen_minutes
-            );
-            let threshold = cores as f64 * 1.5;
-            checks.push(if load.one_minute > threshold {
-                DiagnosticCheck::warn("cpu_load", CheckCategory::System, "CPU Load", message)
-                    .with_details(format!(
-                        "Load exceeds threshold ({threshold:.1} for {cores} CPUs)"
-                    ))
-            } else {
-                DiagnosticCheck::pass("cpu_load", CheckCategory::System, "CPU Load", message)
-            });
-        }
-        _ => checks.push(DiagnosticCheck::unknown(
-            "cpu_load",
-            CheckCategory::System,
-            "CPU Load",
-            &SourceUnavailable {
-                source: "Talos LoadAvg API".into(),
-                reason: "Talos returned no load information".into(),
-            },
-        )),
-    }
-
     // Services.
     let services: Vec<ServiceSnapshot> = node
         .services
@@ -136,51 +81,6 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
             },
         })
         .collect();
-    for service in &services {
-        let id = format!("service_{}", service.id);
-        checks.push(match &service.health {
-            SourceState::Available(health) if health.healthy => {
-                let check = DiagnosticCheck::pass(
-                    id,
-                    CheckCategory::Services,
-                    service.id.clone(),
-                    format!("{} (healthy)", service.state),
-                );
-                if health.last_message.is_empty() {
-                    check
-                } else {
-                    check.with_details(health.last_message.clone())
-                }
-            }
-            SourceState::Available(health) => {
-                let check = DiagnosticCheck::fail(
-                    id,
-                    CheckCategory::Services,
-                    service.id.clone(),
-                    format!("{} (unhealthy)", service.state),
-                )
-                .with_fix(DiagnosticFix {
-                    description: format!("Restart {}", service.id),
-                    action: DiagnosticFixAction::RestartService {
-                        service_id: service.id.clone(),
-                    },
-                });
-                if health.last_message.is_empty() {
-                    check
-                } else {
-                    check.with_details(health.last_message.clone())
-                }
-            }
-            SourceState::Unavailable(info) => {
-                DiagnosticCheck::unknown(id, CheckCategory::Services, service.id.clone(), info)
-                    .with_details(format!(
-                        "{} unavailable: {}\nReported state: {}",
-                        info.source, info.reason, service.state
-                    ))
-            }
-        });
-    }
-
     // etcd, on control planes only.
     let etcd = if control_plane {
         let leader = node.name.ends_with("-01");
@@ -198,16 +98,6 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
             errors: Vec::new(),
             is_learner: false,
         };
-        let role = if leader {
-            "Leader, healthy".to_owned()
-        } else {
-            format!("Follower (leader: {:x})", status.leader_id)
-        };
-        checks.push(
-            DiagnosticCheck::pass("etcd", CheckCategory::Kubernetes, "Etcd", role).with_details(
-                "Database: 40.0 MB total, 18.0 MB in use\nRaft: term 7, index 90412, applied 90412",
-            ),
-        );
         EtcdSnapshot::Available(status)
     } else {
         EtcdSnapshot::NotApplicable
@@ -246,36 +136,6 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
     } else {
         SourceState::Unavailable(unavailable("Kubernetes Pod API"))
     };
-    match &access {
-        SourceState::Available(access) => checks.push(
-            DiagnosticCheck::pass(
-                "kubernetes_api",
-                CheckCategory::Kubernetes,
-                "Kubernetes API",
-                format!("Pinned kubeconfig from {}", access.control_plane_address),
-            )
-            .with_details(format!("Talos config identity: {}", access.config_identity)),
-        ),
-        SourceState::Unavailable(info) => checks.push(DiagnosticCheck::unknown(
-            "kubernetes_api",
-            CheckCategory::Kubernetes,
-            "Kubernetes API",
-            info,
-        )),
-    }
-    checks.push(match &pod_health {
-        SourceState::Available(health) => DiagnosticCheck::warn(
-            "pod_health",
-            CheckCategory::Kubernetes,
-            "Pod Health",
-            health.summary(),
-        )
-        .with_details("Crashing pods:\n  payments/billing-worker-6f7c9d8b5-x2k4p (14 restarts)"),
-        SourceState::Unavailable(info) => {
-            DiagnosticCheck::unknown("pod_health", CheckCategory::Kubernetes, "Pod Health", info)
-        }
-    });
-
     // CNI: Flannel, detected from pods or, without Kubernetes, from files.
     let cni_pods = if kubernetes_ok {
         SourceState::Available(CniInfo {
@@ -293,29 +153,6 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
     } else {
         SourceState::Unavailable(unavailable("Kubernetes CNI pod API"))
     };
-    checks.push(DiagnosticCheck::pass(
-        "br_netfilter",
-        CheckCategory::Cni,
-        "br_netfilter",
-        "Loaded",
-    ));
-    checks.push(match &cni_pods {
-        SourceState::Available(info) => DiagnosticCheck::pass(
-            "flannel_pods",
-            CheckCategory::Cni,
-            "Flannel Pods",
-            info.pod_health_summary(),
-        ),
-        SourceState::Unavailable(info) => {
-            DiagnosticCheck::unknown("flannel_pods", CheckCategory::Cni, "Flannel Pods", info)
-        }
-    });
-    checks.push(DiagnosticCheck::pass(
-        "cni",
-        CheckCategory::Cni,
-        "CNI (Flannel)",
-        "OK",
-    ));
     let cni = CniSnapshot {
         cni_type: SourceState::Available(CniType::Flannel),
         pods: cni_pods,
@@ -403,47 +240,7 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
             )
         }),
     };
-    if kubernetes_ok {
-        checks.push(DiagnosticCheck::pass(
-            "addons",
-            CheckCategory::Addons,
-            "Addon Discovery",
-            addons.detected_names().join(", "),
-        ));
-        checks.push(DiagnosticCheck::pass(
-            "cert_manager_pods",
-            CheckCategory::Addons,
-            "cert-manager Pods",
-            "3/3 healthy",
-        ));
-        checks.push(DiagnosticCheck::pass(
-            "cert_manager_webhook",
-            CheckCategory::Addons,
-            "cert-manager Webhook",
-            "Ready",
-        ));
-    } else {
-        checks.push(DiagnosticCheck::unknown(
-            "addons",
-            CheckCategory::Addons,
-            "Addon Discovery",
-            &SourceUnavailable {
-                source: "Kubernetes addon discovery".into(),
-                reason: "One or more CRD or namespace sources are unavailable".into(),
-            },
-        ));
-        checks.push(DiagnosticCheck::unknown(
-            "cert_manager",
-            CheckCategory::Addons,
-            "cert-manager",
-            &SourceUnavailable {
-                source: "Kubernetes CRD API".into(),
-                reason: "cert-manager presence cannot be determined".into(),
-            },
-        ));
-    }
-
-    Ok(DiagnosticSnapshot {
+    let mut snapshot = DiagnosticSnapshot {
         context: DiagnosticContext {
             target,
             platform: SourceState::Available("metal".into()),
@@ -470,6 +267,8 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
         kubernetes: KubernetesSnapshot { pod_health },
         cni,
         addons,
-        checks,
-    })
+        checks: Vec::new(),
+    };
+    snapshot.checks = snapshot.evaluate();
+    Ok(snapshot)
 }
