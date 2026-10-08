@@ -77,6 +77,16 @@ type RowAction = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 /// Rows of Custom Resources' column, and where a reveal lands among
 /// them.
+/// What Custom Resources' column marks as shown and reveals.
+#[derive(Clone, Copy)]
+struct Wanted<'a> {
+    current: Option<&'a str>,
+    current_group: Option<&'a str>,
+    reveal: Option<&'a ColumnReveal>,
+    reveal_kind: Option<&'a str>,
+    reveal_group: Option<&'a str>,
+}
+
 struct CustomRows {
     rows: Vec<AnyElement>,
     reveal: Option<usize>,
@@ -153,61 +163,91 @@ impl Pilot {
                     .push(self.nav_status(status("No custom resources"), None, cx));
             }
             Some(Discovery::Loaded(groups)) => {
-                for entry in groups.iter().take(MAX_SIDEBAR_GROUPS) {
-                    let name = entry.name.as_ref();
-                    let group_open = custom.is_group_open(name);
-                    if reveal_group == Some(name) {
-                        out.reveal = Some(out.rows.len());
-                    }
-                    let toggled = entry.name.clone();
-                    out.rows.push(
-                        self.nav_header(
-                            NavRow::new(entry.id.clone(), entry.name.clone(), dp(4.))
-                                .tooltip(entry.tooltip.clone()),
-                            group_open,
-                            current_group == Some(name),
-                            cx.listener(move |view, _, _, cx| view.toggle_api_group(&toggled, cx)),
-                            cx,
-                        ),
-                    );
-                    if !group_open {
-                        continue;
-                    }
-                    let settled = matches!(
-                        entry.kinds,
-                        Some(Discovery::Loaded(_) | Discovery::Failed(_))
-                    );
-                    if reveal_group == Some(name) && !settled {
-                        out.settled = false;
-                    }
-                    let found = self.api_group_rows(entry, current, reveal_kind, cx);
-                    if let Some(row) = found.reveal {
-                        out.reveal = Some(out.rows.len() + row);
-                    } else if matches!(reveal, Some(ColumnReveal::ApiGroup(open)) if open == name) {
-                        out.reveal = Some(out.rows.len() + found.rows.len() - 1);
-                    }
-                    out.rows.extend(found.rows);
-                }
-                if groups.len() > MAX_SIDEBAR_GROUPS {
-                    out.rows.push(self.nav_status(
-                        NavRow::new(
-                            "nav-k8s-custom-more",
-                            format!(
-                                "{} more groups not shown",
-                                groups.len() - MAX_SIDEBAR_GROUPS
-                            ),
-                            dp(10.),
-                        ),
-                        None,
-                        cx,
-                    ));
-                }
+                self.custom_group_rows(
+                    &mut out,
+                    groups,
+                    Wanted {
+                        current,
+                        current_group,
+                        reveal,
+                        reveal_kind,
+                        reveal_group,
+                    },
+                    cx,
+                );
             }
         }
         if matches!(reveal, Some(ColumnReveal::Custom)) {
             out.reveal = Some(out.rows.len().saturating_sub(1));
         }
         out
+    }
+
+    /// One header per API group, with the kinds of each open group, and
+    /// where `reveal` lands among them.
+    fn custom_group_rows(
+        &self,
+        out: &mut CustomRows,
+        groups: &[CustomGroup],
+        Wanted {
+            current,
+            current_group,
+            reveal,
+            reveal_kind,
+            reveal_group,
+        }: Wanted,
+        cx: &Context<Self>,
+    ) {
+        let custom = self.custom.read(cx);
+        for entry in groups.iter().take(MAX_SIDEBAR_GROUPS) {
+            let name = entry.name.as_ref();
+            let group_open = custom.is_group_open(name);
+            if reveal_group == Some(name) {
+                out.reveal = Some(out.rows.len());
+            }
+            let toggled = entry.name.clone();
+            out.rows.push(
+                self.nav_header(
+                    NavRow::new(entry.id.clone(), entry.name.clone(), dp(4.))
+                        .tooltip(entry.tooltip.clone()),
+                    group_open,
+                    current_group == Some(name),
+                    cx.listener(move |view, _, _, cx| view.toggle_api_group(&toggled, cx)),
+                    cx,
+                ),
+            );
+            if !group_open {
+                continue;
+            }
+            let settled = matches!(
+                entry.kinds,
+                Some(Discovery::Loaded(_) | Discovery::Failed(_))
+            );
+            if reveal_group == Some(name) && !settled {
+                out.settled = false;
+            }
+            let found = self.api_group_rows(entry, current, reveal_kind, cx);
+            if let Some(row) = found.reveal {
+                out.reveal = Some(out.rows.len() + row);
+            } else if matches!(reveal, Some(ColumnReveal::ApiGroup(open)) if open == name) {
+                out.reveal = Some(out.rows.len() + found.rows.len() - 1);
+            }
+            out.rows.extend(found.rows);
+        }
+        if groups.len() > MAX_SIDEBAR_GROUPS {
+            out.rows.push(self.nav_status(
+                NavRow::new(
+                    "nav-k8s-custom-more",
+                    format!(
+                        "{} more groups not shown",
+                        groups.len() - MAX_SIDEBAR_GROUPS
+                    ),
+                    dp(10.),
+                ),
+                None,
+                cx,
+            ));
+        }
     }
 
     /// An open API group's kinds, or why it shows none, and whether a
