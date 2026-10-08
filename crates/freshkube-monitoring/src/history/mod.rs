@@ -44,6 +44,9 @@ pub struct HistorySource {
     /// The shell's connection id, so another cluster's answers never show.
     pub(crate) id: String,
     pub(crate) kind: HistoryKind,
+    /// Counts the page's rebuilt clients, so a Ready source built again
+    /// reads through the new one.
+    pub(crate) client: u64,
 }
 
 #[derive(Clone)]
@@ -59,16 +62,21 @@ pub(crate) enum HistoryKind {
 }
 
 impl HistorySource {
-    /// What tells two sources apart: the connection, the endpoint and
-    /// whether it was confirmed.
-    fn key(&self) -> (String, Option<Endpoint>, bool) {
+    /// What tells two sources apart: the connection, the endpoint, whether
+    /// it was confirmed and its client.
+    fn key(&self) -> (String, Option<Endpoint>, bool, u64) {
         let id = self.id.clone();
         match &self.kind {
-            HistoryKind::Example => (id, None, true),
-            HistoryKind::Ready(prometheus) => (id, Some(prometheus.endpoint().clone()), true),
-            HistoryKind::Remembered { service, .. } => {
-                (id, Some(Endpoint::Service(service.clone())), false)
+            HistoryKind::Example => (id, None, true, self.client),
+            HistoryKind::Ready(prometheus) => {
+                (id, Some(prometheus.endpoint().clone()), true, self.client)
             }
+            HistoryKind::Remembered { service, .. } => (
+                id,
+                Some(Endpoint::Service(service.clone())),
+                false,
+                self.client,
+            ),
         }
     }
 

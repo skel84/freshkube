@@ -28,6 +28,7 @@ pub(super) enum Connection {
         /// version for the tooltip.
         label: SharedString,
         version: SharedString,
+        rebuild: Rebuild,
     },
     /// Nothing answered as Prometheus.
     Missing(Missing),
@@ -44,6 +45,19 @@ pub(super) struct Missing {
     pub(super) confirming: Option<(PrometheusService, Request)>,
 }
 
+/// Building a Ready Service's cluster client again after a read through it
+/// failed in a way that implicates the client: once, until Refresh or Try
+/// again, so a Service that is down doesn't rebuild it on every read.
+#[derive(Default)]
+pub(super) enum Rebuild {
+    #[default]
+    Unused,
+    Building {
+        _request: Request,
+    },
+    Used,
+}
+
 impl Connection {
     pub(super) fn usable(&self) -> bool {
         matches!(self, Self::Example | Self::Ready { .. })
@@ -54,6 +68,11 @@ impl Connection {
         match self {
             Self::Looking { .. } => *self = Self::None,
             Self::Missing(missing) => missing.confirming = None,
+            // The next failure may build it again.
+            Self::Ready {
+                rebuild: rebuild @ Rebuild::Building { .. },
+                ..
+            } => *rebuild = Rebuild::Unused,
             _ => {}
         }
     }
@@ -95,6 +114,19 @@ impl MonitoringPage {
         }
     }
 
+    /// The Ready connection's client rebuild in a word, for tests.
+    #[cfg(test)]
+    pub(super) fn rebuild_name(&self) -> &'static str {
+        match &self.connection {
+            Connection::Ready { rebuild, .. } => match rebuild {
+                Rebuild::Unused => "unused",
+                Rebuild::Building { .. } => "building",
+                Rebuild::Used => "used",
+            },
+            _ => "not ready",
+        }
+    }
+
     /// Where pod and node history read: example data, the Prometheus this
     /// page confirmed, or the Service remembered for the context while it
     /// hasn't looked again. None when it looked and found none.
@@ -120,6 +152,7 @@ impl MonitoringPage {
         Some(HistorySource {
             id: source.id.clone(),
             kind,
+            client: self.clients,
         })
     }
 
@@ -311,10 +344,74 @@ impl MonitoringPage {
             prometheus,
             label,
             version,
+            rebuild: Rebuild::Unused,
         };
         cx.emit(MonitoringEvent::History);
         self.resume(cx);
         cx.notify();
+    }
+
+    /// A read through the Ready connection failed. When the cluster's
+    /// client may be the cause, it is forgotten and built again once, then
+    /// the variables and every panel are read again. A URL doesn't use the
+    /// client, and a 403 keeps it.
+    pub(super) fn read_failed(&mut self, error: &QueryError, cx: &mut Context<Self>) {
+        let Some(access) = self.source.as_ref().map(|source| source.access.clone()) else {
+            return;
+        };
+        let Connection::Ready {
+            prometheus,
+            rebuild: Rebuild::Unused,
+            ..
+        } = &self.connection
+        else {
+            return;
+        };
+        if !error.implicates_client() || prometheus.service().is_none() || access.is_example() {
+            return;
+        }
+        let prometheus = prometheus.clone();
+        access.forget();
+        let request = self.run(
+            async move { Ok(prometheus.with_client(cluster_client(&access).await?)) },
+            cx,
+            |this, result, cx| this.client_rebuilt(result, cx),
+        );
+        if let Connection::Ready { rebuild, .. } = &mut self.connection {
+            *rebuild = Rebuild::Building { _request: request };
+        }
+    }
+
+    /// The Ready Service through its new client, which pod and node history
+    /// take too. Without one, the panels keep their errors.
+    fn client_rebuilt(&mut self, result: Result<Prometheus, QueryError>, cx: &mut Context<Self>) {
+        let Connection::Ready {
+            prometheus,
+            rebuild,
+            ..
+        } = &mut self.connection
+        else {
+            return;
+        };
+        *rebuild = Rebuild::Used;
+        if let Ok(rebuilt) = result {
+            *prometheus = rebuilt;
+            self.clients += 1;
+            cx.emit(MonitoringEvent::History);
+            self.resolve_variables(cx);
+        }
+        cx.notify();
+    }
+
+    /// Refresh lets a failure build the client again.
+    pub(super) fn allow_rebuild(&mut self) {
+        if let Connection::Ready {
+            rebuild: rebuild @ Rebuild::Used,
+            ..
+        } = &mut self.connection
+        {
+            *rebuild = Rebuild::Unused;
+        }
     }
 
     /// Asks again after a failure, from the start.

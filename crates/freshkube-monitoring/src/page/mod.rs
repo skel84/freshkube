@@ -104,6 +104,8 @@ pub struct MonitoringPage {
     visible: bool,
     source: Option<ClusterSource>,
     connection: Connection,
+    /// Counts the Ready clients built again, so history takes the new one.
+    clients: u64,
     catalog: Catalog,
     /// The dashboard chosen, kept across contexts.
     chosen: EntryId,
@@ -152,6 +154,7 @@ impl MonitoringPage {
             visible: false,
             source: None,
             connection: Connection::None,
+            clients: 0,
             catalog: Catalog::new(),
             chosen: EntryId::Builtin(freshkube_core::monitoring::builtin::BUILTINS[0].uid),
             board: None,
@@ -238,6 +241,7 @@ impl MonitoringPage {
             return;
         }
         if self.connection.usable() {
+            self.allow_rebuild();
             self.resolve_variables(cx);
         } else {
             self.connection = Connection::None;

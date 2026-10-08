@@ -99,6 +99,15 @@ impl Prometheus {
         }
     }
 
+    /// The same Service through a new client, after the last one failed.
+    /// A URL keeps its own transport.
+    pub fn with_client(mut self, client: kube::Client) -> Self {
+        if let Transport::Proxy(_) = self.transport {
+            self.transport = Transport::Proxy(client);
+        }
+        self
+    }
+
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }

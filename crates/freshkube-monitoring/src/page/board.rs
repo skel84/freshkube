@@ -400,7 +400,8 @@ impl MonitoringPage {
                 self.ask_again(cx);
             }
             Err(error) => {
-                board.variable_error = Some(error.message.into());
+                board.variable_error = Some(error.message.clone().into());
+                self.read_failed(&error, cx);
             }
         }
         cx.notify();
@@ -487,10 +488,14 @@ impl MonitoringPage {
         };
         slot.request = None;
         slot.failed = result.is_err();
+        let error = result.as_ref().err().cloned();
         slot.view.update(cx, |panel, cx| match result {
             Ok(result) => panel.set_result(result, window, cx),
             Err(error) => panel.set_error(&error, cx),
         });
+        if let Some(error) = error {
+            self.read_failed(&error, cx);
+        }
         let now = (self.now)();
         let board = self.board.as_mut().unwrap();
         let moved = board
