@@ -88,7 +88,7 @@ pub(super) fn columns(rows: &[AppRow]) -> (Vec<Column>, f32) {
 pub(super) fn tone(mark: Mark) -> ui::Tone {
     match mark {
         Mark::Incomplete => ui::Tone::Unknown,
-        Mark::Notes => ui::Tone::Info,
+        Mark::Scoped | Mark::Notes => ui::Tone::Info,
         Mark::Read => ui::Tone::Good,
     }
 }

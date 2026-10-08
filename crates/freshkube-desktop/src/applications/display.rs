@@ -46,6 +46,10 @@ pub(super) fn rule_label(rule: Rule) -> &'static str {
 pub(super) enum Mark {
     /// A source it depends on wasn't read in full: parts may be missing.
     Incomplete,
+    /// Found by Argo CD where it was read in [`ARGOCD_NAMESPACE`] only: the
+    /// fixed namespace is where Argo CD keeps them by default, so a fact to
+    /// note rather than a gap.
+    Scoped,
     /// Read in full, with something to know: a lower claim, a destination
     /// in another cluster, a join by name.
     Notes,
@@ -53,14 +57,15 @@ pub(super) enum Mark {
     Read,
 }
 
-pub(super) const MARKS: [Mark; 3] = [Mark::Incomplete, Mark::Notes, Mark::Read];
+pub(super) const MARKS: [Mark; 4] = [Mark::Incomplete, Mark::Scoped, Mark::Notes, Mark::Read];
 
 impl Mark {
     pub(super) fn index(self) -> usize {
         match self {
             Self::Incomplete => 0,
-            Self::Notes => 1,
-            Self::Read => 2,
+            Self::Scoped => 1,
+            Self::Notes => 2,
+            Self::Read => 3,
         }
     }
 
@@ -68,6 +73,7 @@ impl Mark {
     pub(super) fn what(self) -> &'static str {
         match self {
             Self::Incomplete => "may be incomplete",
+            Self::Scoped => "read in argocd only, with notes",
             Self::Notes => "with notes",
             Self::Read => "read in full",
         }
@@ -76,6 +82,7 @@ impl Mark {
     pub(super) fn slug(self) -> &'static str {
         match self {
             Self::Incomplete => "incomplete",
+            Self::Scoped => "scoped",
             Self::Notes => "notes",
             Self::Read => "read",
         }
@@ -84,6 +91,7 @@ impl Mark {
     pub(super) fn tooltip(self) -> &'static str {
         match self {
             Self::Incomplete => "May be incomplete: a source it depends on wasn't read in full",
+            Self::Scoped => "Read in argocd only, with notes",
             Self::Notes => "Read in full, with notes",
             Self::Read => "Read in full",
         }
@@ -170,13 +178,14 @@ pub(crate) enum Body {
 pub(super) struct Display {
     pub(super) rows: Vec<AppRow>,
     pub(super) body: Body,
-    /// Sources that may have left applications out, one line each.
-    pub(super) missing: Vec<SharedString>,
-    /// Sources that aren't served, or read in one namespace: facts, not
-    /// warnings.
-    pub(super) legend: Vec<SharedString>,
+    /// Sources that may have left applications out, one line each, as the
+    /// banner says them, and its label.
+    pub(super) missing_text: Option<(SharedString, SharedString)>,
+    /// Sources that aren't served, or read in one namespace, as one line
+    /// under the header: facts, not warnings.
+    pub(super) legend_text: Option<SharedString>,
     /// Applications per mark, before any filter.
-    pub(super) marks: [usize; 3],
+    pub(super) marks: [usize; 4],
 }
 
 impl Default for Display {
@@ -184,9 +193,9 @@ impl Default for Display {
         Self {
             rows: Vec::new(),
             body: Body::Table,
-            missing: Vec::new(),
-            legend: Vec::new(),
-            marks: [0; 3],
+            missing_text: None,
+            legend_text: None,
+            marks: [0; 4],
         }
     }
 }
@@ -425,8 +434,12 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         .unread
         .get(&app.rule)
         .is_some_and(|short| short.iter().any(|s| sessions.contains(s)));
+    let scoped =
+        app.rule == Rule::ArgoCd && short.namespace_only.keys().any(|s| sessions.contains(s));
     let mark = if short_here || app.notes.iter().any(note_is_unknown) {
         Mark::Incomplete
+    } else if scoped {
+        Mark::Scoped
     } else if notes.is_empty() {
         Mark::Read
     } else {
@@ -551,7 +564,7 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     for (namespace, clusters) in namespace_only {
         lines.push(
             format!(
-                "Argo CD read in {namespace} only on {}; Applications elsewhere aren't known to be absent",
+                "Read in {namespace} only, with notes: Argo CD on {}; Applications in other namespaces aren't listed",
                 on(&clusters)
             )
             .into(),
@@ -615,7 +628,11 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
         description.push('.');
     }
     Body::Empty {
-        title: format!("No applications on {}", labels.all(sessions)).into(),
+        title: format!(
+            "No applications found in what was read on {}",
+            labels.all(sessions)
+        )
+        .into(),
         description: description.into(),
     }
 }
@@ -630,7 +647,7 @@ impl Display {
             .collect();
         // Grouped by rule, in precedence order; by name within, as derived.
         rows.sort_by_key(|row| rule_index(row.rule));
-        let mut marks = [0; 3];
+        let mut marks = [0; 4];
         for row in &rows {
             marks[row.mark.index()] += 1;
         }
@@ -645,11 +662,29 @@ impl Display {
         } else {
             missing_lines(&derived.coverage, labels)
         };
+        let missing_text = (!missing.is_empty()).then(|| {
+            let text = missing
+                .iter()
+                .map(|line| line.as_ref())
+                .collect::<Vec<_>>()
+                .join(". ");
+            let label = format!("May be missing: {text}");
+            (text.into(), label.into())
+        });
+        let legend = legend_lines(&derived.coverage, labels);
+        let legend_text = (!legend.is_empty()).then(|| {
+            legend
+                .iter()
+                .map(|line| line.as_ref())
+                .collect::<Vec<_>>()
+                .join(" · ")
+                .into()
+        });
         Self {
             rows,
             body,
-            missing,
-            legend: legend_lines(&derived.coverage, labels),
+            missing_text,
+            legend_text,
             marks,
         }
     }
@@ -706,13 +741,10 @@ mod tests {
             ]
         );
         assert_eq!(display.body, Body::Table);
-        assert!(display.missing.is_empty());
+        assert!(display.missing_text.is_none());
         assert_eq!(
-            display.legend,
-            [
-                SharedString::from("Kargo isn't served on 5 clusters"),
-                SharedString::from("Argo CD isn't served on 5 clusters"),
-            ]
+            display.legend_text.as_ref().map(|t| t.as_ref()),
+            Some("Kargo isn't served on 5 clusters · Argo CD isn't served on 5 clusters")
         );
     }
 
@@ -722,7 +754,10 @@ mod tests {
         let Body::Empty { title, description } = &display.body else {
             panic!("{:?}", display.body);
         };
-        assert_eq!(title.as_ref(), "No applications on acme-solo");
+        assert_eq!(
+            title.as_ref(),
+            "No applications found in what was read on acme-solo"
+        );
         assert!(description.contains("Kargo isn't served on acme-solo"));
     }
 
@@ -736,7 +771,7 @@ mod tests {
         };
         assert_eq!(title.as_ref(), "Not permitted to list labelled workloads");
         assert_eq!(reason.as_ref(), "deployments.apps is forbidden");
-        assert!(display.missing.is_empty(), "the state says it already");
+        assert!(display.missing_text.is_none(), "the state says it already");
     }
 
     #[test]
@@ -757,12 +792,12 @@ mod tests {
         inputs.sessions[0].kargo = Source::Refused("projects is forbidden".into());
         let display = shown(&inputs);
         assert_eq!(display.body, Body::Table);
-        assert_eq!(display.missing.len(), 1);
+        let (text, label) = display.missing_text.clone().unwrap();
         assert!(
-            display.missing[0].contains("Kargo Projects were refused on core-fra"),
-            "{}",
-            display.missing[0]
+            text.starts_with("Kargo Projects were refused on core-fra") && !text.contains(". "),
+            "one line: {text}"
         );
+        assert_eq!(label.as_ref(), format!("May be missing: {text}"));
         assert!(display.rows.iter().all(|row| row.rule != Rule::Kargo));
     }
 
@@ -773,7 +808,8 @@ mod tests {
             inputs.sessions[0].argo_applications = Source::Capped(apps, Truncation { read: 500 });
         }
         let display = shown(&inputs);
-        assert!(display.missing[0].contains("stopped after 500"));
+        let (text, _) = display.missing_text.clone().unwrap();
+        assert!(text.contains("stopped after 500"), "{text}");
         let catalog = display.rows.iter().find(|r| r.name == "catalog").unwrap();
         assert_eq!(catalog.mark, Mark::Incomplete);
         let loyalty = display.rows.iter().find(|r| r.name == "loyalty").unwrap();
@@ -799,17 +835,19 @@ mod tests {
         inputs.sessions[0].argo_scope =
             freshkube_core::applications::ArgoScope::Namespace(ARGOCD_NAMESPACE.into());
         let display = shown(&inputs);
-        assert!(display.missing.is_empty());
+        assert!(display.missing_text.is_none());
+        let legend = display.legend_text.clone().unwrap();
         assert!(
-            display
-                .legend
-                .iter()
-                .any(|line| line.starts_with("Argo CD read in argocd only on core-fra")),
-            "{:?}",
-            display.legend
+            legend.contains("Read in argocd only, with notes: Argo CD on core-fra"),
+            "{legend}"
         );
         let catalog = display.rows.iter().find(|r| r.name == "catalog").unwrap();
-        assert_eq!(catalog.mark, Mark::Notes, "a fact to note, not a gap");
+        assert_eq!(catalog.mark, Mark::Scoped, "a fact to note, not a gap");
+        assert_eq!(catalog.mark.tooltip(), "Read in argocd only, with notes");
+        assert!(
+            catalog.mark.what().contains(ARGOCD_NAMESPACE),
+            "the chip names the namespace read"
+        );
         assert!(
             catalog
                 .notes

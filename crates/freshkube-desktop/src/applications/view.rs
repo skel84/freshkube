@@ -66,41 +66,32 @@ impl ApplicationsPage {
 
     /// What may be missing, as a warning, and what isn't served or was
     /// read in one namespace, as plain facts; a refresh that failed over
-    /// an earlier read says so first.
+    /// an earlier read says so first. Every string was derived with the
+    /// display.
     fn render_notes(&self, cx: &App) -> Option<AnyElement> {
         let p = palette(cx);
-        let refresh = self.snapshot.data().and(self.snapshot.error()).map(|why| {
-            let text = format!("Showing the last read. {why}");
+        let refresh = self.stale.as_ref().map(|(text, label)| {
             ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
                 .id("applications-stale")
-                .aria_label(format!("Couldn't read again: {text}"))
+                .aria_label(label.clone())
                 .test_support()
                 .role(Role::Status)
         });
-        let missing = (!self.display.missing.is_empty()).then(|| {
-            let lines = self.display.missing.iter().map(|line| line.to_string());
-            let text = lines.collect::<Vec<_>>().join(". ");
+        let missing = self.display.missing_text.as_ref().map(|(text, label)| {
             ui::warning_banner(Some("May be missing".into()), text.clone(), None, cx)
                 .id("applications-missing")
-                .aria_label(format!("May be missing: {text}"))
+                .aria_label(label.clone())
                 .test_support()
                 .role(Role::Status)
         });
-        let legend = (!self.display.legend.is_empty()).then(|| {
-            let text = self
-                .display
-                .legend
-                .iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>()
-                .join(" · ");
+        let legend = self.display.legend_text.as_ref().map(|text| {
             div()
                 .id("applications-legend")
                 .test_support()
                 .aria_label(text.clone())
                 .text_size(dp(12.))
                 .text_color(p.muted)
-                .child(text)
+                .child(text.clone())
         });
         if refresh.is_none() && missing.is_none() && legend.is_none() {
             return None;
@@ -123,11 +114,16 @@ impl ApplicationsPage {
     /// failed say what wasn't read; only when every source answered is it
     /// empty.
     fn render_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // A retry in flight says so, and another press does nothing.
+        let retrying = self.pending;
         let retry = || {
+            let label = if retrying { "Retrying…" } else { "Retry" };
             Button::new("applications-retry")
                 .primary()
-                .icon(IconName::RefreshCw)
-                .label("Retry")
+                .icon(ui::refresh_icon(retrying, cx))
+                .label(label)
+                .accessibility_label(label)
+                .disabled(retrying)
                 .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
                 .into_any_element()
         };

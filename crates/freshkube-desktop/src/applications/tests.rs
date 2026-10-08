@@ -1,6 +1,8 @@
 //! The Applications page in the real app, on example data.
 use super::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
+use std::time::Duration;
+
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
 
 const APPLICATIONS: layout_check::TablePage = layout_check::TablePage {
@@ -86,8 +88,15 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
             "{legend}"
         );
         assert!(
-            legend.contains("Argo CD read in argocd only on core-fra"),
+            legend.contains("Read in argocd only, with notes: Argo CD on core-fra"),
             "{legend}"
+        );
+        // Argo CD's applications carry the namespace in their mark.
+        assert!(window.find("applications-tally-scoped").visible());
+        let mark = gpui_kit::SharedString::from(format!("{CATALOG}-mark"));
+        assert_eq!(
+            window.find(mark).label(),
+            Some("Read in argocd only, with notes")
         );
         assert!(window.try_find("applications-missing").is_none());
         let status = page.read(cx).status.clone();
@@ -203,6 +212,80 @@ fn a_stale_read_is_read_again_when_shown(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_read_dropped_on_hide_leaves_the_last_answer_as_old_as_it_was(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
+    // Answered at 0 s; a refresh at 25 s is dropped on hide.
+    cx.executor().advance_clock(Duration::from_secs(25));
+    cx.update_window(handle, |_, window, cx| {
+        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        window.click("applications-refresh", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
+        assert!(!page(&view, cx).read(cx).is_reading());
+    })
+    .unwrap();
+    // At 35 s the answer is 35 s old, whatever started at 25 s.
+    cx.executor().advance_clock(Duration::from_secs(10));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        assert!(window.find(CART).visible(), "shown while it reads again");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_read_hidden_mid_flight_never_lands(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    // Example data answers 5 s after it is asked, through a task.
+    cx.update_window(handle, |_, window, cx| {
+        let page = page(&view, cx);
+        page.update(cx, |page, _| page.set_example_delay(Duration::from_secs(5)));
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).is_reading());
+    })
+    .unwrap();
+    // Hidden at 2 s, shown again at 3 s: a new read, due at 8 s.
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
+        assert!(!page(&view, cx).read(cx).is_reading());
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+    })
+    .unwrap();
+    // At 5 s the first read would have answered: it was dropped.
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let page = page(&view, cx);
+        assert!(!page.read(cx).has_read(), "the hidden read never lands");
+        assert!(page.read(cx).is_reading());
+    });
+    // At 8 s the read asked for when shown again answers.
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).has_read());
+        assert!(!page(&view, cx).read(cx).is_reading());
+        assert!(window.find(CART).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn another_context_drops_the_read_and_the_selection(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
     cx.update_window(handle, |_, window, cx| {
@@ -224,12 +307,13 @@ fn another_context_drops_the_read_and_the_selection(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_refused_read_with_nothing_found_is_never_empty(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) =
-        open(cx, 1280., 880., |page| page.set_variant(Variant::Refused));
+    let (_runtime, handle, view) = open(cx, 1280., 880., |page| page.set_variant(Variant::Refused));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let state = window.find("applications-refused");
         assert!(state.visible());
+        let status = format!("{:?}", page(&view, cx).read(cx).status);
+        assert!(status.contains("applications not permitted"), "{status}");
         assert!(window.try_find("applications-none").is_none());
         assert!(window.try_find("applications-list").is_none());
     })
@@ -257,8 +341,29 @@ fn a_cluster_that_didnt_answer_fails_with_retry(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("applications-failed").visible());
-        page(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
+        let status = format!("{:?}", page(&view, cx).read(cx).status);
+        assert!(status.contains("couldn't read applications"), "{status}");
+
+        // A retry in flight says so, and another press does nothing.
+        page(&view, cx).update(cx, |page, _| page.set_hold(true));
         window.click("applications-retry", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        assert_eq!(window.find("applications-retry").label(), Some("Retrying…"));
+        page(&view, cx).update(cx, |page, _| {
+            page.set_hold(false);
+            page.set_variant(Variant::Acme);
+        });
+        window.click("applications-retry", cx);
+        window.render_frame(cx);
+        assert!(
+            page(&view, cx).read(cx).is_reading(),
+            "disabled while it runs"
+        );
+        assert!(window.find("applications-failed").visible());
+
+        // The next read answers.
+        page(&view, cx).update(cx, |page, cx| page.refresh(cx));
         window.render_frame(cx);
         assert!(window.try_find("applications-failed").is_none());
         assert!(window.find(CART).visible());
@@ -368,7 +473,8 @@ fn a_row_opens_the_inspector_and_escape_closes_it(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAppContext) {
-    for (width, height) in [(1600., 900.), (1000., 880.)] {
+    // 760 points wide leaves a page narrower than the split's width.
+    for (width, height) in [(1600., 900.), (760., 560.)] {
         let (_runtime, handle, _view) = open(cx, width, height, |_| {});
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);

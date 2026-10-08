@@ -30,9 +30,7 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource};
-#[cfg(test)]
-use display::Body;
-use display::{ARGOCD_NAMESPACE, Display, Labels, MARKS, Mark};
+use display::{ARGOCD_NAMESPACE, Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
 
 /// The page's id prefix: `applications-title`, `-list`, `-tally-…`.
@@ -100,15 +98,21 @@ pub(crate) struct ApplicationsPage {
     pending: bool,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
-    /// When the shown read was asked for, on the executor's clock.
+    /// Example data answers after this, in tests, so a read stays in
+    /// flight with a real task; zero answers at once.
+    example_delay: Duration,
+    /// When the shown read's answer arrived, on the executor's clock.
     read_at: Option<Instant>,
     display: Display,
+    /// The banner for a refresh that failed over an earlier read, and its
+    /// label, derived with the display.
+    stale: Option<(SharedString, SharedString)>,
     /// The table's lines, derived when the rows or a filter change.
     lines: Vec<Entry>,
     /// Rows per rule under the filters, for the group headers.
     groups: [usize; 4],
     /// Rows per mark under the text filter, for the chips.
-    counts: [usize; 3],
+    counts: [usize; 4],
     mark: Option<Mark>,
     columns: Vec<table::Column>,
     width: f32,
@@ -160,11 +164,13 @@ impl ApplicationsPage {
             pending: false,
             job: None,
             task: None,
+            example_delay: Duration::ZERO,
             read_at: None,
             display: Display::default(),
+            stale: None,
             lines: Vec::new(),
             groups: [0; 4],
-            counts: [0; 3],
+            counts: [0; 4],
             mark: None,
             columns,
             width,
@@ -189,6 +195,11 @@ impl ApplicationsPage {
     #[cfg(test)]
     pub(crate) fn set_hold(&mut self, hold: bool) {
         self.hold = hold;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_example_delay(&mut self, delay: Duration) {
+        self.example_delay = delay;
     }
 
     /// The connection the page reads. Another connection drops what was
@@ -221,8 +232,11 @@ impl ApplicationsPage {
             cx.notify();
             return;
         }
+        // Fresh only by when an answer arrived: a read dropped on hide, or
+        // a refresh that failed, doesn't make old data new.
         let now = cx.background_executor().now();
         let fresh = self.snapshot.data().is_some()
+            && !self.snapshot.is_stale()
             && self
                 .read_at
                 .is_some_and(|at| now.saturating_duration_since(at) < FRESH_FOR);
@@ -256,17 +270,25 @@ impl ApplicationsPage {
         };
         self.stop();
         let request = self.snapshot.begin(source.id.clone());
-        self.read_at = Some(cx.background_executor().now());
         match &source.access {
             KubeAccess::Example => {
+                // Held, it stays in flight, so the page keeps its loading
+                // rows.
+                self.pending = true;
                 if self.hold {
-                    // Stays in flight, so the page keeps its loading rows.
-                    self.pending = true;
+                    cx.notify();
+                    return;
+                }
+                let inputs = example::inputs(self.variant);
+                let read = Read::of(&inputs, example::labels(&inputs));
+                if self.example_delay.is_zero() {
+                    self.answer(&request, Ok(read), cx);
                 } else {
-                    let inputs = example::inputs(self.variant);
-                    let read = Read::of(&inputs, example::labels(&inputs));
-                    self.snapshot.apply(&request, Ok(read));
-                    self.show_read(cx);
+                    let delay = self.example_delay;
+                    self.task = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(delay).await;
+                        _ = this.update(cx, |page, cx| page.answer(&request, Ok(read), cx));
+                    }));
                 }
             }
             access => {
@@ -308,11 +330,16 @@ impl ApplicationsPage {
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
+        let answered = result.is_ok();
         if !self.pending || !self.snapshot.apply(request, result) {
             return;
         }
         self.pending = false;
         self.job = None;
+        self.task = None;
+        if answered {
+            self.read_at = Some(cx.background_executor().now());
+        }
         self.show_read(cx);
     }
 
@@ -337,12 +364,31 @@ impl ApplicationsPage {
             Some(read) => Display::new(&read.derived, &read.labels),
             None => Display::default(),
         };
+        self.stale = self.snapshot.data().and(self.snapshot.error()).map(|why| {
+            let text = format!("Showing the last read. {why}");
+            let label = format!("Couldn't read again: {text}");
+            (text.into(), label.into())
+        });
         (self.columns, self.width) = table::columns(&self.display.rows);
         self.status = self.segment();
         self.rebuild(cx);
     }
 
     fn segment(&self) -> Segment {
+        use freshkube_ui::ui::Tone;
+        let context = self.source.as_ref().map(|s| s.context.clone());
+        // A refused or failed read says so, never a count of nothing.
+        match &self.display.body {
+            Body::Refused { .. } => {
+                let part = Part::new("applications not permitted").tone(Tone::Unknown);
+                return Segment::new(context, vec![part]);
+            }
+            Body::Failed { .. } => {
+                let part = Part::new("couldn't read applications").tone(Tone::Warn);
+                return Segment::new(context, vec![part]);
+            }
+            Body::Table | Body::Empty { .. } => {}
+        }
         let Some(read) = self.snapshot.data() else {
             return Segment::default();
         };
@@ -363,15 +409,12 @@ impl ApplicationsPage {
         ))];
         let incomplete = self.display.marks[Mark::Incomplete.index()];
         if incomplete > 0 {
-            parts.push(
-                Part::new(format!("{incomplete} may be incomplete"))
-                    .tone(freshkube_ui::ui::Tone::Unknown),
-            );
+            parts.push(Part::new(format!("{incomplete} may be incomplete")).tone(Tone::Unknown));
         }
         if self.snapshot.is_stale() {
-            parts.push(Part::new("last read").tone(freshkube_ui::ui::Tone::Warn));
+            parts.push(Part::new("last read").tone(Tone::Warn));
         }
-        Segment::new(self.source.as_ref().map(|s| s.context.clone()), parts)
+        Segment::new(context, parts)
     }
 
     /// The motion over the table's loading rows, which the shell mounts
@@ -428,7 +471,7 @@ impl ApplicationsPage {
     /// header per rule.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let query = self.filter.read(cx).value().to_lowercase();
-        self.counts = [0; 3];
+        self.counts = [0; 4];
         self.groups = [0; 4];
         let mut shown: Vec<usize> = Vec::new();
         for (ix, row) in self.display.rows.iter().enumerate() {
