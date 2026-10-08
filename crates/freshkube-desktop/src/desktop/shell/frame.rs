@@ -418,13 +418,13 @@ pub(super) fn settings_content(
                     "Browse loads the chosen file right away; a typed path loads when you press Apply. Leave it empty to use TALOSCONFIG or ~/.talos/config."
                 })),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(div().h(px(1.)).flex_none().bg(p.line))
         .child(if kubernetes_only {
             kubernetes_only::settings_section(&view, popover.clone(), cx)
         } else {
             super::super::kubeconfig::settings_section(&view, popover.clone(), cx).into_any_element()
         })
-        .child(div().h(px(1.)).bg(p.line))
+        .child(div().h(px(1.)).flex_none().bg(p.line))
         .child(
             h_flex()
                 .justify_between()
@@ -449,7 +449,7 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(div().h(px(1.)).flex_none().bg(p.line))
         .child(
             h_flex()
                 .justify_between()
@@ -510,7 +510,7 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(div().h(px(1.)).flex_none().bg(p.line))
         .child(
             h_flex()
                 .justify_between()
@@ -533,9 +533,9 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(div().h(px(1.)).flex_none().bg(p.line))
         .child(crate::monitoring::page::source_section(&monitoring, cx))
-        .child(div().h(px(1.)).bg(p.line))
+        .child(div().h(px(1.)).flex_none().bg(p.line))
         .child(crate::monitoring::page::settings_section(
             &monitoring,
             popover.clone(),

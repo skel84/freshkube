@@ -161,7 +161,7 @@ impl TableSource for SettingsPage {
             return None;
         }
         Some(
-            "No clusters are listed: this window works with the one cluster it opened."
+            "Nothing is listed. The one cluster counted in the status bar is implicit: the one this window opened."
                 .into_any_element(),
         )
     }
