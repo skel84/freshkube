@@ -248,7 +248,7 @@ fn set_containers(tab: &mut DockTab, containers: PodContainers, cx: &mut Context
     view.update(cx, |view, cx| {
         view.set_containers(containers, cx);
         if let Some(at) = at {
-            view.open_container(at.container, at.previous, cx);
+            view.open_container(at, cx);
         }
     });
 }

@@ -665,9 +665,7 @@ impl Dock {
             return;
         };
         if tab.started && view.read(cx).knows_containers() {
-            view.update(cx, |view, cx| {
-                view.open_container(at.container, at.previous, cx)
-            });
+            view.update(cx, |view, cx| view.open_container(at, cx));
         } else {
             tab.at = Some(at);
         }

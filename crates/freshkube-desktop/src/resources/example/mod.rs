@@ -437,31 +437,30 @@ fn pod_facts(ix: usize, ready: bool, status: &str, restarts: u32) -> PodFacts {
 /// How many containers a gateway pod runs: its proxy and nine sidecars.
 const GATEWAY_CONTAINERS: usize = 10;
 
+/// The sidecars beside a gateway pod's proxy.
+const GATEWAY_SIDECARS: [&str; GATEWAY_CONTAINERS - 1] = [
+    "auth",
+    "ratelimit",
+    "otel",
+    "metrics",
+    "certs",
+    "config",
+    "logs",
+    "health",
+    "waf",
+];
+
 /// A pod's app containers: one, or a gateway's proxy and its sidecars.
 fn app_containers(app: &str, ready: bool, status: &str, restarts: u32) -> Vec<ContainerFacts> {
     let mut containers = vec![app_container(ready, status, restarts)];
     if app == "gateway" {
-        containers.extend(
-            [
-                "auth",
-                "ratelimit",
-                "otel",
-                "metrics",
-                "certs",
-                "config",
-                "logs",
-                "health",
-                "waf",
-            ]
-            .into_iter()
-            .map(|name| ContainerFacts {
-                name: name.into(),
-                ..match status {
-                    "CrashLoopBackOff" => app_container(true, "Running", 0),
-                    _ => app_container(ready, status, 0),
-                }
-            }),
-        );
+        containers.extend(GATEWAY_SIDECARS.into_iter().map(|name| ContainerFacts {
+            name: name.into(),
+            ..match status {
+                "CrashLoopBackOff" => app_container(true, "Running", 0),
+                _ => app_container(ready, status, 0),
+            }
+        }));
         debug_assert_eq!(containers.len(), GATEWAY_CONTAINERS);
     }
     containers

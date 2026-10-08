@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeDelta, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 use freshkube_core::resources::{
-    Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, follow_pod_log,
+    Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, Termination, follow_pod_log,
 };
 use gpui_kit::{App, Context, Task};
 use tokio::runtime::Handle;
@@ -31,6 +31,9 @@ use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
 use crate::ui::Tone;
 
+/// The most container logs one tab reads at once; a source counts the rest
+/// in its note.
+pub(crate) const MAX_STREAMS: usize = 20;
 /// How often an example container writes another line; each stream adds
 /// a tick or more, so they don't all write at once.
 pub(super) const EXAMPLE_INTERVAL: Duration = Duration::from_millis(1_500);
@@ -260,6 +263,12 @@ pub(super) trait StreamSource: LogSource + Sized + 'static {
 
     /// A stream started, before its first line.
     fn stream_started(view: &mut LogView<Self>, key: &StreamKey);
+
+    /// What the line between lines says where a container's log ends, if
+    /// anything.
+    fn ended_marker(&self, _key: &StreamKey, _ended: Option<&Termination>) -> Option<String> {
+        None
+    }
 }
 
 /// Reading a source's streams into its view.
@@ -448,6 +457,7 @@ impl<S: StreamSource> StreamReads for LogView<S> {
         let mut lines = Vec::new();
         let mut changed = false;
         let mut failed = Vec::new();
+        let mut ended = Vec::new();
         let reads = self.source_mut().reads_mut();
         for Fed {
             key,
@@ -492,9 +502,11 @@ impl<S: StreamSource> StreamReads for LogView<S> {
                         format!("{} restarted{how}", key.container),
                     ));
                 }
-                PodLogUpdate::Ended(_) => {
+                PodLogUpdate::Ended(termination) => {
                     stream.job = None;
                     stream.state = StreamState::Ended;
+                    let at = position.time().unwrap_or(now);
+                    ended.push((key, termination, at));
                     changed = true;
                 }
                 PodLogUpdate::Failed(failure) => {
@@ -507,6 +519,11 @@ impl<S: StreamSource> StreamReads for LogView<S> {
                     }
                     changed = true;
                 }
+            }
+        }
+        for (key, termination, at) in ended {
+            if let Some(text) = self.source().ended_marker(&key, termination.as_ref()) {
+                lines.push(LogEvent::marker(S::tag(&key), at.fixed_offset(), text));
             }
         }
         for (key, generation) in failed {

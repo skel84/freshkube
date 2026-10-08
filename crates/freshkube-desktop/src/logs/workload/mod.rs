@@ -63,7 +63,7 @@ pub(crate) type WorkloadLogView = LogView<WorkloadLogs>;
 
 /// The most container logs read at once. The newest pods come first; the
 /// rest are counted in a notice.
-pub(crate) const MAX_STREAMS: usize = 20;
+pub(crate) use super::streams::MAX_STREAMS;
 /// Lines from the end each container's log starts with.
 const TAIL: i64 = 100;
 /// Where the pod watch stands.

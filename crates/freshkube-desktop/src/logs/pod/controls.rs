@@ -24,6 +24,9 @@ use super::{PodLogView, Stream, StreamState, TAILS, role_heading};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 
+/// The picker's entry that reads every app container at once.
+const ALL_CONTAINERS: &str = "All containers";
+
 /// `Last 1,000`, or `All lines`.
 fn tail_label(tail: Option<i64>) -> String {
     let Some(tail) = tail else {
@@ -49,22 +52,35 @@ impl Controls for PodLogView {
         let source = self.source();
         let view = cx.entity().downgrade();
         let choices = source.choices.clone();
+        let (offers_all, all) = (source.offers_all, source.all);
         let current = source.container.clone().unwrap_or_default();
         let container = Button::new("pod-logs-container")
             .outline()
             .small()
             .dropdown_caret(true)
-            .label(if current.is_empty() {
+            .label(if all {
+                SharedString::from(ALL_CONTAINERS)
+            } else if current.is_empty() {
                 SharedString::from("No containers")
             } else {
                 SharedString::from(current.clone())
             })
             .accessibility_label("Container")
-            .tooltip("The container whose log shows")
+            .tooltip("The container whose log shows, or all of them")
             .disabled(choices.is_empty())
             .dropdown_menu({
                 let view = view.clone();
                 move |mut menu, _, _| {
+                    if offers_all {
+                        let view = view.clone();
+                        menu = menu
+                            .item(PopupMenuItem::new(ALL_CONTAINERS).checked(all).on_click(
+                                move |_, _, cx| {
+                                    let _ = view.update(cx, |view, cx| view.choose_all(cx));
+                                },
+                            ))
+                            .separator();
+                    }
                     let mut role = None;
                     for choice in choices.iter() {
                         if role != Some(choice.role) {
@@ -77,7 +93,7 @@ impl Controls for PodLogView {
                         let (view, name) = (view.clone(), choice.name.clone());
                         menu = menu.item(
                             PopupMenuItem::new(choice.label.clone())
-                                .checked(choice.name == current)
+                                .checked(!all && choice.name == current)
                                 .disabled(!choice.enabled)
                                 .on_click(move |_, _, cx| {
                                     let name = name.clone();
@@ -121,10 +137,14 @@ impl Controls for PodLogView {
             .toggled(source.previous)
             .selected(source.previous)
             .accessibility_label("Previous instance")
-            .tooltip(match (has_previous, source.previous) {
-                (false, _) => "No previous instance",
-                (true, false) => "Show the instance before this one, read to its end",
-                (true, true) => "Back to the running instance",
+            .tooltip(match (has_previous, source.previous, all) {
+                (false, _, _) => "No previous instance",
+                (true, false, false) => "Show the instance before this one, read to its end",
+                (true, false, true) => {
+                    "Show each container's instance before this one, read to its end"
+                }
+                (true, true, false) => "Back to the running instance",
+                (true, true, true) => "Back to the running instances",
             })
             .disabled(!has_previous && !source.previous)
             .on_click(cx.listener(|view, _, _, cx| {

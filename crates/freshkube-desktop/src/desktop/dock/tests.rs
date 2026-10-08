@@ -694,6 +694,7 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
         name: pod.name.clone(),
         container: None,
         previous: false,
+        all_containers: false,
         shell: false,
     };
     let saved = SavedDock {
@@ -1009,6 +1010,7 @@ fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
             name: "api-0".into(),
             container: Some("api".into()),
             previous: true,
+            all_containers: false,
             shell: false,
         }],
     };
@@ -1778,6 +1780,7 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
             name: pods[0].name.clone(),
             container: Some(container.clone()),
             previous: false,
+            all_containers: false,
             shell: true,
         }],
     };
@@ -1906,4 +1909,80 @@ fn the_drawer_closes_and_swaps_around_a_running_shell(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(drawer(handle, &pilot, cx), (false, Some(pods[0].clone())));
     untouched(cx);
+}
+
+/// A tab saved by a build before All containers has no `all_containers`
+/// key: it loads unchanged, on its container, and saving it again adds no
+/// key while the pick is one container.
+#[test]
+fn a_tab_saved_before_all_containers_loads_on_its_container() {
+    let json = r#"{"height":260.0,"open":true,"maximized":false,"selected":0,"tabs":[{"kind":"pods","context":"lab","namespace":"web","name":"gateway-0","container":"gateway","previous":true}]}"#;
+    let saved: SavedDock = serde_json::from_str(json).unwrap();
+    let tab = &saved.tabs[0];
+    assert_eq!(tab.container.as_deref(), Some("gateway"));
+    assert!(tab.previous);
+    assert!(!tab.all_containers);
+    assert_eq!(serde_json::to_string(&saved).unwrap(), json);
+
+    let all = SavedTab {
+        all_containers: true,
+        previous: false,
+        ..tab.clone()
+    };
+    let written = serde_json::to_string(&all).unwrap();
+    assert!(written.contains(r#""all_containers":true"#), "{written}");
+    assert_eq!(serde_json::from_str::<SavedTab>(&written).unwrap(), all);
+}
+
+#[gpui_kit::test]
+fn a_tab_saved_on_all_containers_comes_back_on_all_of_them(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let gateway = objects(
+        &pilot,
+        "pods",
+        |cells, name| cells[2] == "Running" && name.starts_with("gateway-"),
+        cx,
+    )
+    .remove(0);
+    let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let saved = SavedDock {
+        height: 260.,
+        open: true,
+        maximized: false,
+        selected: Some(0),
+        tabs: vec![SavedTab {
+            kind: "pods".into(),
+            context,
+            namespace: gateway.namespace.clone(),
+            name: gateway.name.clone(),
+            container: Some("gateway".into()),
+            previous: false,
+            all_containers: true,
+            shell: false,
+        }],
+    };
+    cx.update_window(handle, |_, window, cx| {
+        let source = pilot.read(cx).kube_source();
+        dock.update(cx, |dock, cx| {
+            dock.source = None;
+            dock.restore = Some(saved.clone());
+            dock.set_source(source, None, window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.run_until_parked();
+    let view = pod_view(&dock, 0, cx);
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert!(view.shows_all());
+        assert!(view.streaming());
+        assert!(view.columns().source);
+    });
+    // Saved again, it keeps the pick.
+    let again = cx.update(|cx| dock.read(cx).saved(cx));
+    assert!(again.tabs[0].all_containers);
+    assert_eq!(again.tabs[0].container.as_deref(), Some("gateway"));
 }
