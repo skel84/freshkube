@@ -1654,4 +1654,61 @@ mod tests {
             (1, 2, false)
         );
     }
+
+    fn known_roster() -> ClusterOverview {
+        let roster = vec![
+            member("cp1", "10.0.0.1", "controlplane"),
+            member("worker1", "10.0.0.2", "worker"),
+        ];
+        let mut cluster = ClusterOverview {
+            name: "example".into(),
+            ..Default::default()
+        };
+        replace_node_ips_from_discovery(&mut cluster, &roster);
+        cluster.discovery_members = roster;
+        cluster
+    }
+
+    #[test]
+    fn a_failed_discovery_keeps_a_known_roster_unless_a_kubeconfig_was_chosen() {
+        let mut collector = ClusterOverviewCollector::default();
+        assert!(!collector.roster_needs_kubernetes(&known_roster()));
+        assert!(collector.roster_needs_kubernetes(&ClusterOverview::default()));
+
+        collector.set_kubeconfig_selection(KubeconfigSelection::File {
+            path: PathBuf::from("/nonexistent/explicit-kubeconfig"),
+            context: None,
+        });
+        assert!(collector.roster_needs_kubernetes(&known_roster()));
+    }
+
+    #[test]
+    fn a_failed_shared_roster_keeps_the_known_roster_as_stale_evidence() {
+        for failed in [
+            crate::kubernetes_summary::Part::Failed("connection reset".into()),
+            crate::kubernetes_summary::Part::Refused("nodes is forbidden".into()),
+        ] {
+            let reason = failed.error().unwrap().to_owned();
+            let mut collector = ClusterOverviewCollector::default();
+            collector.set_observed_nodes(Some(failed));
+            let mut cluster = known_roster();
+
+            assert!(collector.roster_from_observed(&mut cluster));
+
+            let names = |cluster: &ClusterOverview| {
+                cluster
+                    .discovery_members
+                    .iter()
+                    .map(|member| (member.hostname.clone(), member.addresses.clone()))
+                    .collect::<Vec<_>>()
+            };
+            let known = known_roster();
+            assert_eq!(names(&cluster), names(&known));
+            assert_eq!(cluster.node_ips, known.node_ips);
+            assert_eq!(
+                cluster.discovery_warning.as_deref(),
+                Some(format!("Shared Kubernetes roster: {reason}").as_str())
+            );
+        }
+    }
 }
