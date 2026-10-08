@@ -1,1 +1,0 @@
-- **Sidebar:** in the folded sidebar, Lifecycle now has the same icon as in the open one.

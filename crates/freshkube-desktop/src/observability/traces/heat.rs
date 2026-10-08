@@ -383,7 +383,7 @@ impl ObservabilityPage {
                     .child(muted(heat.end.clone(), cx)),
             ),
             None => body.child(muted(
-                if self.live.tracing.is_loading() {
+                if self.live.tracing.is_loading() || self.first_read() {
                     "Reading the heatmap…"
                 } else if self.live.tracing.error().is_some() {
                     "The heatmap didn't load."

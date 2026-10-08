@@ -171,6 +171,9 @@ impl ObservabilityPage {
     /// Example mode answers the list and the selected incident at once,
     /// through the same preparation as Coroot's answers.
     pub(super) fn answer_example_incidents(&mut self) {
+        if self.hold {
+            return;
+        }
         let Some(to) = self.live.range.to else {
             return;
         };

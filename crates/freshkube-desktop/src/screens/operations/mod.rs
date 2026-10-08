@@ -75,8 +75,8 @@ use talos_rs::{EtcdMemberInfo, EtcdMemberStatus};
 use tokio::{runtime::Handle, sync::mpsc};
 
 use super::{
-    Loader, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, page_width, panel,
-    refresh_control, retry_button, segment, split_at,
+    Loader, Reading, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, TableLoading,
+    page_width, panel, reading, refresh_control, retry_button, segment, split_at,
 };
 use crate::backend::{self, OwnedJob};
 use crate::mutation::{self, Confirmation, Operations};
@@ -791,6 +791,8 @@ pub(crate) struct OperationsScreen {
     roster: Vec<RosterNode>,
     columns: (Vec<table::Column>, f32),
     table: freshkube_ui::table::TableState,
+    /// The roster's loading rows while the overview is read.
+    loading: TableLoading,
     preview: PreviewState,
     preview_generation: u64,
     preview_job: Option<OwnedJob>,
@@ -819,6 +821,10 @@ type StatusKey = (u64, Option<(String, bool)>);
 impl EventEmitter<ScreenEvent> for OperationsScreen {}
 
 impl ScreenPanel for OperationsScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextNode, Some(CONTEXT)),
@@ -844,6 +850,7 @@ impl ScreenPanel for OperationsScreen {
             roster: Vec::new(),
             columns: table::columns(&[]),
             table: freshkube_ui::table::TableState::new(PREFIX),
+            loading: TableLoading::new(PREFIX, cx),
             preview: PreviewState::Idle,
             preview_generation: 0,
             preview_job: None,
@@ -953,6 +960,12 @@ impl OperationsScreen {
             .as_ref()
             .map(|source| segment(Some(source), &self.audit, []));
         self.status = Some((key, line));
+    }
+
+    /// Whether the roster is still to come: the overview is being read and
+    /// there is no source yet. The table shows its loading rows meanwhile.
+    fn first_read(&self, cx: &App) -> bool {
+        self.source.is_none() && reading(cx) == Reading::Waiting
     }
 
     /// The source's nodes that can be targeted, and the table's columns.

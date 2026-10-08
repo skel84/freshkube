@@ -70,9 +70,13 @@ struct SpanRow {
 impl Traces {
     /// A new application or window: start from its latest spans. The filter
     /// stays, since its field still shows it, and so does the heatmap's
-    /// cursor, clamped when the new heatmap arrives.
+    /// cursor, clamped when the new heatmap arrives. The columns stay too,
+    /// so the first read shows their header over its loading rows; the
+    /// answer fits them again.
     pub(super) fn reset(&mut self) {
         *self = Self {
+            columns: std::mem::take(&mut self.columns),
+            width: self.width,
             source: std::mem::take(&mut self.source),
             default_source: self.default_source.take(),
             app: self.app.take(),
@@ -247,6 +251,9 @@ impl ObservabilityPage {
     /// Example mode answers the list and its trace at once, through the
     /// same preparation as Coroot's answers.
     fn answer_example_traces(&mut self) {
+        if self.hold {
+            return;
+        }
         let (Some(from), Some(to)) = (self.live.range.from, self.live.range.to) else {
             return;
         };
@@ -388,19 +395,22 @@ impl ObservabilityPage {
         } else {
             // The heatmap stays drawn while Coroot answers, so it keeps the keyboard.
             let waiting = !self.fixture && self.live.tracing.data().is_none();
-            if !waiting && !traces.note.is_empty() {
+            // Before the first answer the table shows its loading rows,
+            // with no trace beside it.
+            let first_read = self.first_read();
+            if !waiting && !first_read && !traces.note.is_empty() {
                 evidence = evidence.child(muted(traces.note.clone(), cx).whitespace_normal());
             }
             evidence = evidence.child(self.live_heatmap(window, cx));
-            (!waiting).then(|| {
+            (!waiting || first_read).then(|| {
                 let table = self.render_trace_table(window, cx);
-                let pane = self.live_waterfall(cx);
+                let pane = (!first_read).then(|| self.live_waterfall(cx));
                 freshkube_ui::inspector::split(
                     "obs-traces-split",
                     &self.trace_split,
                     inspector_beside(window),
                     table,
-                    Some(pane),
+                    pane,
                     window,
                 )
             })

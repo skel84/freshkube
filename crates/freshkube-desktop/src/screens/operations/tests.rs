@@ -726,8 +726,9 @@ fn the_table_chooses_nodes_and_review_still_asks_before_any_step(cx: &mut TestAp
     assert!(cx.read(|cx| screen.read(cx).run.is_none()));
 }
 
-/// Without a target the page keeps its header, says why it is empty and
-/// gives the status bar no segment.
+/// Without a target the page keeps its header and gives the status bar no
+/// segment: while the overview is read the roster shows its loading rows,
+/// and once it answered the page says why it is empty.
 #[gpui_kit::test]
 fn no_target_sits_under_the_header_without_a_segment(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", 50);
@@ -737,8 +738,16 @@ fn no_target_sits_under_the_header_without_a_segment(cx: &mut TestAppContext) {
         screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
         window.render_frame(cx);
         let toolbar = window.find("ops-toolbar").bounds();
+        let loading = window.find("ops-loading").bounds();
+        assert!(loading.top() >= toolbar.bottom(), "{loading:?} {toolbar:?}");
+        assert!(window.try_find("ops-state").is_none());
+        assert!(screen.read(cx).loading_motion(cx).is_some());
+        crate::screens::set_reading(crate::screens::Reading::Answered, cx);
+        window.render_frame(cx);
         let state = window.find("ops-state").bounds();
         assert!(state.top() >= toolbar.bottom(), "{state:?} {toolbar:?}");
+        assert!(window.try_find("ops-loading").is_none());
+        assert!(screen.read(cx).loading_motion(cx).is_none());
         assert!(window.try_find("ops-body").is_none());
         assert!(screen.update(cx, |screen, _| screen.status().is_none()));
     })
