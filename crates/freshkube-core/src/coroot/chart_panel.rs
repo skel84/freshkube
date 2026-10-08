@@ -247,8 +247,9 @@ impl ChartPanel {
     /// [`Self::coverage`]. The layout gives the legend names, colours and
     /// fill. Deploy markers come from the revisions
     /// ([`Self::with_revisions`]), not annotations, which can't tell a
-    /// deploy from an incident. None without a history, with fewer than
-    /// two points in its window, or with more than core's bound
+    /// deploy from an incident. None without a history, with no series to
+    /// draw, with fewer than two points in its window, or with more than
+    /// core's bound
     /// ([`CHART_LIMITS`]): Coroot's `ctx` sets the window, not the data, so a
     /// tiny answer can ask for billions of points.
     pub fn from_history(chart: &Chart) -> Option<Self> {
@@ -309,6 +310,9 @@ impl ChartPanel {
                     .collect(),
             });
         }
+        if series.is_empty() {
+            return None;
+        }
         Some(Self {
             spec,
             result: PanelResult {
@@ -352,14 +356,35 @@ impl ChartPanel {
 }
 
 /// A revision as a deploy marker, at the second its rollout started,
-/// labelled as Coroot labels the revision: its hash and images.
+/// labelled by its hash and the last part of each image Coroot names, as
+/// in `9c41e7 · worker:1.8.2`.
 pub fn revision_marker(revision: &DeploymentRevision, namespace: Option<&str>) -> Marker {
     Marker {
         kind: MarkerKind::Deploy,
         at: revision.started_at.timestamp(),
         namespace: namespace.map(str::to_owned),
         node: None,
-        label: revision.version.clone(),
+        label: revision_label(revision),
+    }
+}
+
+/// Coroot labels a revision `<hash>: <image>, <image>`; the images' paths
+/// say little on a chart, so only their names and tags stay.
+fn revision_label(revision: &DeploymentRevision) -> String {
+    let images = revision
+        .version
+        .strip_prefix(revision.hash.as_str())
+        .map(|rest| rest.trim_start_matches(':'))
+        .unwrap_or(&revision.version);
+    let images: Vec<&str> = images
+        .split([',', ' '])
+        .filter(|image| !image.is_empty())
+        .map(|image| image.rsplit('/').next().unwrap_or(image))
+        .collect();
+    match (revision.hash.is_empty(), images.is_empty()) {
+        (false, false) => format!("{} · {}", revision.hash, images.join(", ")),
+        (false, true) => revision.hash.clone(),
+        (true, _) => revision.version.clone(),
     }
 }
 
@@ -764,8 +789,32 @@ mod tests {
                 at: 1_759_999_980 + 130,
                 namespace: Some("shop".into()),
                 node: None,
-                label: "within: example.test/shop/worker:1.8.2".into(),
+                label: "within · worker:1.8.2".into(),
             }]
         );
+    }
+
+    #[test]
+    fn a_revision_s_label_keeps_its_hash_and_image_names() {
+        let label = |hash: &str, version: &str| {
+            revision_label(&DeploymentRevision {
+                id: format!("{hash}:1759999980"),
+                hash: hash.into(),
+                started_at: chrono::DateTime::from_timestamp(1_759_999_980, 0).unwrap(),
+                version: version.into(),
+                status: coroot_rs::Status::Unknown,
+                findings: vec![],
+                note: None,
+            })
+        };
+        assert_eq!(
+            label(
+                "9c41e7",
+                "9c41e7: example.test/shop/api:2, example.test/shop/proxy:1.1"
+            ),
+            "9c41e7 · api:2, proxy:1.1"
+        );
+        assert_eq!(label("9c41e7", "9c41e7"), "9c41e7");
+        assert_eq!(label("", "something else"), "something else");
     }
 }

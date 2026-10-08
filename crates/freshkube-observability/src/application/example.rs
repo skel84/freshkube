@@ -157,11 +157,88 @@ pub(crate) fn app_view(app: &api::AppId) -> api::AppView {
             }
         })
         .collect();
-    api::AppView {
+    let mut view = api::AppView {
         map: map(app, record, &apps, &pods),
         reports,
+        revisions: Some(Ok(if worker { revisions() } else { vec![] })),
         ..Default::default()
+    };
+    for report in &mut view.reports {
+        for widget in &mut report.widgets {
+            match &mut widget.kind {
+                api::WidgetKind::Chart(chart) => give_history(chart, None),
+                api::WidgetKind::ChartGroup { title, charts } => {
+                    charts.iter_mut().for_each(|c| give_history(c, Some(title)))
+                }
+                _ => {}
+            }
+        }
     }
+    view
+}
+
+/// What coroot-rs would decode from the chart's own answer, so example
+/// charts draw from a history as Coroot's do; the layout's points go, as
+/// core drops them once a chart takes its history.
+pub(super) fn give_history(chart: &mut api::AppChart, group: Option<&str>) {
+    let at = |ms: i64| chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
+    let expected = ((chart.to_ms - chart.from_ms) / chart.step_ms.max(1)) as usize + 1;
+    let take = |series: &mut api::Series| {
+        let samples: Vec<_> = std::mem::take(&mut series.points)
+            .into_iter()
+            .map(|p| p.map(f64::from))
+            .collect();
+        api::SeriesHistory {
+            name: series.name.clone(),
+            title: series.title.clone(),
+            coverage: if samples.is_empty() {
+                api::SeriesCoverage::Empty
+            } else if samples.len() < expected {
+                api::SeriesCoverage::Partial
+            } else {
+                api::SeriesCoverage::Full
+            },
+            samples,
+        }
+    };
+    let series = chart.series.iter_mut().map(&take).collect();
+    let threshold = chart.threshold.as_mut().map(take);
+    chart.history = Some(Box::new(api::ChartHistory {
+        group: group.map(str::to_owned),
+        title: chart.title.clone(),
+        from: at(chart.from_ms),
+        to: at(chart.to_ms),
+        step: std::time::Duration::from_millis(chart.step_ms as u64),
+        truncated: false,
+        stacked: chart.stacked,
+        series,
+        threshold,
+        annotations: vec![],
+    }));
+}
+
+/// The worker's rollouts, newest first: 1.8.2 a little before ledger-db
+/// began refusing it, inside the charts' hour, and 1.8.1 days before it.
+fn revisions() -> Vec<api::DeploymentRevision> {
+    let (_, to_ms) = hour();
+    let revision = |hash: &str, at_ms: i64, image: &str, note: &str| api::DeploymentRevision {
+        id: format!("{hash}:{}", at_ms / 1000),
+        hash: hash.into(),
+        started_at: chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_default(),
+        version: format!("{hash}: example.test/payments/{image}"),
+        status: api::Status::Unknown,
+        findings: vec![],
+        note: Some(note.into()),
+    };
+    vec![
+        revision("4f2a9c", rollout_ms(), "worker:1.8.2", "Collecting data..."),
+        revision(
+            "b71e03",
+            to_ms - 3 * 24 * 3_600_000,
+            "worker:1.8.1",
+            "No notable changes",
+        ),
+    ]
 }
 
 /// The example's verdict on a signal, by the issue named after its check.
@@ -254,10 +331,11 @@ const FAILING_MINUTES: usize = 20;
 /// The example charts' points, one a minute.
 const POINTS: usize = 60;
 
-/// The example's last hour, ending on the current minute.
+/// The example's last hour, ending on the current minute: `POINTS`
+/// minutes, the first and the last included.
 fn hour() -> (i64, i64) {
     let to = chrono::Utc::now().timestamp() / 60 * 60_000;
-    (to - POINTS as i64 * 60_000, to)
+    (to - (POINTS as i64 - 1) * 60_000, to)
 }
 
 fn chart(title: &str, series: Vec<api::Series>) -> api::AppChart {
@@ -287,16 +365,11 @@ fn wave(point: usize, phase: usize) -> f32 {
     1. + 0.15 * ((point + phase) % 7) as f32 / 6. - 0.075
 }
 
-/// A rollout of the worker a little before ledger-db began refusing it.
-fn rollout() -> api::Annotation {
+/// When the worker's 1.8.2 rolled out: a little before ledger-db began
+/// refusing it.
+fn rollout_ms() -> i64 {
     let (_, to_ms) = hour();
-    let at = to_ms - (FAILING_MINUTES as i64 + 6) * 60_000;
-    api::Annotation {
-        name: "worker:1.8.2".into(),
-        from_ms: at,
-        to_ms: at,
-        icon: "mdi-swap-horizontal-circle-outline".into(),
-    }
+    to_ms - (FAILING_MINUTES as i64 + 6) * 60_000
 }
 
 fn slo_charts() -> [api::AppChart; 2] {
@@ -319,7 +392,6 @@ fn slo_charts() -> [api::AppChart; 2] {
         api::AppChart {
             stacked: true,
             threshold: Some(total),
-            annotations: vec![rollout()],
             ..chart(
                 "Requests to the worker app, per second",
                 vec![fast, slow, failed("errors")],
@@ -398,7 +470,6 @@ fn cpu_usage(pods: &[(String, bool)]) -> api::WidgetKind {
             api::AppChart {
                 featured: !failing,
                 threshold: Some(series("limit", |_, _| Some(0.5))),
-                annotations: vec![rollout()],
                 ..chart(
                     pod,
                     vec![series("worker", |p, _| Some(usage * wave(p, ix * 2)))],
@@ -571,7 +642,7 @@ fn deployments() -> api::Table {
         rows: vec![
             row(
                 "worker:1.8.2",
-                "2 hours ago",
+                "26 minutes ago",
                 vec![
                     summary("Instances", false, "restarts increased"),
                     summary("CPU", true, "CPU usage unchanged"),

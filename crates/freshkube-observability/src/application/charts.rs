@@ -1,12 +1,12 @@
 //! A report's charts and heatmaps. Each chart is Monitoring's panel, made
-//! from Coroot's points when they arrive; a group shows one chart at a time,
-//! picked above it. Panels exist only for the shown report, and only for
-//! the chart a group shows.
+//! from the chart's history when Coroot answers, with its deployments
+//! marked; a group shows one chart at a time, picked above it. Panels exist
+//! only for the shown report, and only for the chart a group shows.
 use super::super::traces::heat::{Heat, app_heat};
 use super::super::*;
 use super::{AppPage, BlockKind};
 use crate::monitoring::panel::PanelView;
-use freshkube_core::coroot::{self as api, ChartPanel};
+use freshkube_core::coroot::{self as api, ChartPanel, Coverage};
 
 /// A chart's height, its legend included.
 const HEIGHT: f32 = 240.;
@@ -21,6 +21,7 @@ pub(crate) struct Charts {
     /// `obs-chart-<report>-<widget>`.
     id: SharedString,
     empty_id: SharedString,
+    coverage_id: SharedString,
     choices: Vec<Choice>,
     /// The chart shown until the reader picks another.
     featured: usize,
@@ -32,29 +33,75 @@ struct Choice {
     name: SharedString,
     pick_id: SharedString,
     title: SharedString,
-    /// None when Coroot sent no points.
+    /// None when Coroot sent no points, or no history to place them by.
     panel: Option<Rc<ChartPanel>>,
+    /// What of the window the history lacks, in one line; None when it
+    /// covers all of it.
+    coverage: Option<SharedString>,
+    /// Why the card shows no chart.
+    empty: SharedString,
 }
 
-fn choice(chart: &api::AppChart, title: String, pick_id: String) -> Choice {
-    let panel = ChartPanel::new(&api::AppChart {
+/// What a chart is drawn with besides its own answer: the application's
+/// deployments, and its namespace for their markers.
+pub(super) struct Marks<'a> {
+    pub revisions: &'a [api::DeploymentRevision],
+    pub namespace: Option<&'a str>,
+    /// The page's charts have no histories, so an empty card says so.
+    pub no_history: bool,
+}
+
+fn choice(chart: &api::AppChart, title: String, pick_id: String, marks: &Marks) -> Choice {
+    let panel = ChartPanel::from_history(&api::AppChart {
         title: title.clone(),
         ..chart.clone()
-    });
+    })
+    .map(|panel| panel.with_revisions(marks.revisions, marks.namespace));
+    let coverage = panel.as_ref().and_then(|p| coverage_line(&p.coverage));
+    let empty = if chart.history.is_none() && marks.no_history {
+        "Coroot's history for this chart couldn't be read."
+    } else {
+        "Coroot sent no points for this chart in this window."
+    };
     Choice {
         name: chart.title.clone().into(),
         pick_id: pick_id.into(),
         title: title.into(),
         panel: panel.map(Rc::new),
+        coverage,
+        empty: empty.into(),
     }
 }
 
+/// The chart's coverage in Coroot's terms, as one muted line under it.
+fn coverage_line(coverage: &[Coverage]) -> Option<SharedString> {
+    let words: Vec<String> = coverage
+        .iter()
+        .map(|c| match c {
+            Coverage::Truncated => "Truncated range".to_owned(),
+            Coverage::Partial {
+                series,
+                samples,
+                expected,
+            } => format!("{series} covers {samples} of {expected} points"),
+            Coverage::Empty { series } => format!("{series}: no data"),
+        })
+        .collect();
+    (!words.is_empty()).then(|| words.join(" · ").into())
+}
+
 impl Charts {
-    pub(super) fn chart(key: ChartKey, slug: &str, chart: &api::AppChart) -> Self {
+    pub(super) fn chart(key: ChartKey, slug: &str, chart: &api::AppChart, marks: &Marks) -> Self {
         let id = format!("obs-chart-{slug}-{}", key.2);
         Self {
-            choices: vec![choice(chart, chart.title.clone(), format!("{id}-pick-0"))],
+            choices: vec![choice(
+                chart,
+                chart.title.clone(),
+                format!("{id}-pick-0"),
+                marks,
+            )],
             empty_id: format!("{id}-empty").into(),
+            coverage_id: format!("{id}-coverage").into(),
             id: id.into(),
             key,
             featured: 0,
@@ -63,7 +110,13 @@ impl Charts {
     }
 
     /// A group's charts under one title, with `<selector>` naming each.
-    pub(super) fn group(key: ChartKey, slug: &str, title: &str, charts: &[api::AppChart]) -> Self {
+    pub(super) fn group(
+        key: ChartKey,
+        slug: &str,
+        title: &str,
+        charts: &[api::AppChart],
+        marks: &Marks,
+    ) -> Self {
         let id = format!("obs-chart-{slug}-{}", key.2);
         Self {
             choices: charts
@@ -71,11 +124,12 @@ impl Charts {
                 .enumerate()
                 .map(|(ix, chart)| {
                     let title = title.replace("<selector>", &chart.title);
-                    choice(chart, title, format!("{id}-pick-{ix}"))
+                    choice(chart, title, format!("{id}-pick-{ix}"), marks)
                 })
                 .collect(),
             featured: charts.iter().position(|c| c.featured).unwrap_or(0),
             empty_id: format!("{id}-empty").into(),
+            coverage_id: format!("{id}-coverage").into(),
             id: id.into(),
             key,
             group: true,
@@ -136,6 +190,22 @@ impl ShownChart {
 }
 
 impl AppPage {
+    /// Each chart's title, coverage line and empty card's words, in page
+    /// order, for the page's tests.
+    #[cfg(test)]
+    pub(super) fn chart_words(&self) -> Vec<(String, Option<String>, String)> {
+        self.charts()
+            .flat_map(|charts| &charts.choices)
+            .map(|c| {
+                (
+                    c.title.to_string(),
+                    c.coverage.as_ref().map(ToString::to_string),
+                    c.empty.to_string(),
+                )
+            })
+            .collect()
+    }
+
     fn charts(&self) -> impl Iterator<Item = &Rc<Charts>> {
         self.blocks.iter().filter_map(|b| match &b.kind {
             BlockKind::Charts(charts) => Some(charts),
@@ -231,11 +301,22 @@ impl ObservabilityPage {
                 .id(charts.empty_id.clone())
                 .test_support()
                 .h(dp(HEIGHT))
-                .child(body().child(muted(
-                    "Coroot sent no points for this chart in this window.",
-                    cx,
-                )))
+                .child(body().child(muted(choice.empty.clone(), cx)))
                 .into_any_element(),
+        };
+        let chart = match &choice.coverage {
+            Some(coverage) => v_flex()
+                .gap(dp(4.))
+                .child(chart)
+                .child(
+                    muted(coverage.clone(), cx)
+                        .id(charts.coverage_id.clone())
+                        .test_support()
+                        .text_size(dp(12.))
+                        .whitespace_normal(),
+                )
+                .into_any_element(),
+            None => chart,
         };
         if !charts.group {
             return chart;

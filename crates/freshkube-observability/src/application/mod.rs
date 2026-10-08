@@ -26,6 +26,9 @@ pub(super) struct AppPage {
     checks: Vec<CheckLine>,
     blocks: Vec<Block>,
     tables: Vec<Rc<table::Prepared>>,
+    /// Why the charts lack their histories, when coroot-rs couldn't read
+    /// them; said once for the page, not on every chart.
+    history_note: Option<SharedString>,
     /// Coroot sent no reports at all.
     empty: bool,
 }
@@ -124,7 +127,21 @@ impl AppPage {
             checks: vec![],
             blocks: vec![],
             tables: vec![],
+            history_note: view.history_error.map(|error| {
+                format!(
+                    "Some charts show no points: Coroot's chart histories couldn't be read. {error}"
+                )
+                .into()
+            }),
             empty: view.reports.is_empty(),
+        };
+        let marks = charts::Marks {
+            revisions: match &view.revisions {
+                Some(Ok(revisions)) => revisions,
+                _ => &[],
+            },
+            namespace: view.map.app.id.namespace(),
+            no_history: view.history_error.is_some(),
         };
         if let Some(report) = view.reports.iter().find(|r| r.name == report) {
             let slug = report.name.to_lowercase().replace(' ', "-");
@@ -137,11 +154,11 @@ impl AppPage {
                 .collect();
             for (ix, widget) in report.widgets.iter().enumerate() {
                 let kind = match &widget.kind {
-                    api::WidgetKind::Chart(chart) => {
-                        BlockKind::Charts(Rc::new(charts::Charts::chart(key(ix), &slug, chart)))
-                    }
+                    api::WidgetKind::Chart(chart) => BlockKind::Charts(Rc::new(
+                        charts::Charts::chart(key(ix), &slug, chart, &marks),
+                    )),
                     api::WidgetKind::ChartGroup { title, charts } => BlockKind::Charts(Rc::new(
-                        charts::Charts::group(key(ix), &slug, title, charts),
+                        charts::Charts::group(key(ix), &slug, title, charts, &marks),
                     )),
                     api::WidgetKind::Heatmap(heatmap) => {
                         BlockKind::Heatmap(Box::new(charts::HeatBlock::new(&slug, ix, heatmap)))
@@ -345,6 +362,13 @@ impl ObservabilityPage {
             .when(!page.checks.is_empty(), |this| {
                 this.child(self.render_checks(page, cx))
             })
+            .children(page.history_note.clone().map(|note| {
+                muted(note, cx)
+                    .id("obs-app-history-error")
+                    .test_support()
+                    .role(Role::Status)
+                    .whitespace_normal()
+            }))
             .children(self.render_blocks(page, window, cx))
     }
 
