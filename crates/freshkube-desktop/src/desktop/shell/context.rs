@@ -14,6 +14,8 @@ pub(in crate::desktop) enum Connection {
 
 #[derive(Default)]
 pub(in crate::desktop) struct ContextDisplay {
+    /// The context's whole name, for the label and tooltip.
+    pub(in crate::desktop) full: SharedString,
     pub(in crate::desktop) name: SharedString,
     pub(in crate::desktop) detail: SharedString,
     pub(in crate::desktop) status: SharedString,
@@ -55,6 +57,7 @@ impl Pilot {
 
     pub(in crate::desktop) fn prepare_context_display(&mut self, window: &mut Window, cx: &App) {
         let full = self.display_context(cx);
+        self.context_display.full = full.clone().into();
         let full = full.as_str();
         let font = window.text_system().resolve_font(&Font {
             family: cx.theme().font_family.clone(),

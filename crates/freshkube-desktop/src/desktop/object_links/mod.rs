@@ -35,6 +35,13 @@ impl Pilot {
                     self.open_object(kind, object, resources::Tab::Overview, window, cx);
                     return;
                 }
+                let work = LinkWork::Owner {
+                    api_version: api_version.clone(),
+                    kind: kind.clone(),
+                };
+                if self.divert_link(&object, work, window, cx) {
+                    return;
+                }
                 if self.fixture {
                     let found = resources::example::custom_groups()
                         .into_iter()
@@ -62,8 +69,7 @@ impl Pilot {
     }
 
     /// Reads which kind an owner's API version and kind name, then opens the
-    /// owner. A link made in another cluster is sent to it or refused first:
-    /// this read would otherwise go to the cluster that is open.
+    /// owner. A link made in another cluster is sent to it or refused first.
     pub(super) fn resolve_owner_remote(
         &mut self,
         source: resources::KubeSource,
@@ -73,6 +79,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Also here, for a caller that has not routed it: this read goes to
+        // the cluster that is open.
         let work = LinkWork::Owner {
             api_version: api_version.clone(),
             kind: kind.clone(),

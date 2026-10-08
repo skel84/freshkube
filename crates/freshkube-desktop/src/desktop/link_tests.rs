@@ -344,3 +344,90 @@ fn with_no_entry_and_no_context_the_header_still_says_so(cx: &mut TestAppContext
         })
     });
 }
+
+fn hold(cx: &mut TestAppContext, view: &Entity<Pilot>, entry: &str, link: ObjectRef) {
+    cx.update(|cx| {
+        view.update(cx, |pilot, _| {
+            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+                entry,
+                pilot.entry_generation,
+                link,
+                LinkWork::Open {
+                    kind: builtin("pods").unwrap(),
+                    tab: resources::Tab::Overview,
+                },
+            ));
+        })
+    });
+}
+
+fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>) {
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.open_pending_link(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn held(cx: &mut TestAppContext, view: &Entity<Pilot>) -> bool {
+    cx.read(|cx| view.read(cx).pending_link.is_some())
+}
+
+#[gpui_kit::test]
+fn another_switch_drops_a_held_link(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    switch(cx, handle, &view, "dev-fra");
+    hold(cx, &view, "dev-fra", pod_link("dev-fra"));
+    switch(cx, handle, &view, "core-fra");
+    assert!(!held(cx, &view));
+    settle(cx, handle, &view);
+    assert_eq!(opened(cx, &view), None);
+    assert_eq!(active(cx, &view), key("core-fra"));
+}
+
+#[gpui_kit::test]
+fn a_link_whose_connection_is_not_the_entrys_now_says_it_reconnected(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    switch(cx, handle, &view, "dev-fra");
+    let mut link = pod_link("dev-fra");
+    link.connection = Some("another-access".into());
+    hold(cx, &view, "dev-fra", link);
+    settle(cx, handle, &view);
+    assert!(!held(cx, &view));
+    assert_eq!(opened(cx, &view), None, "never opened by name alone");
+}
+
+#[gpui_kit::test]
+fn a_manual_pick_retires_the_entry_it_left_and_a_fresh_entry_retires_nothing(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    switch(cx, handle, &view, "dev-fra");
+    cx.read(|cx| {
+        let registry = &view.read(cx).registry;
+        assert!(registry.retired(&example::connection("dev-fra")).is_none());
+    });
+    switch(cx, handle, &view, "core-fra");
+    cx.read(|cx| {
+        let registry = &view.read(cx).registry;
+        assert!(registry.retired(&example::connection("dev-fra")).is_some());
+        assert!(registry.retired(&example::connection("core-fra")).is_none());
+    });
+    // A hand-made change leaves core-fra, which keeps its id for links.
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.leave_entry(cx);
+            pilot.applied.context = Some("dev-fra".into());
+        })
+    });
+    assert_eq!(active(cx, &view), SessionKey::Implicit);
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        let retired = pilot.registry.retired(&example::connection("core-fra"));
+        assert_eq!(retired.map(|retired| &retired.key), Some(&key("core-fra")));
+        assert!(matches!(
+            pilot.route_link(&pod_link("core-fra"), cx),
+            LinkRoute::Activate(id) if id == "core-fra"
+        ));
+    });
+}

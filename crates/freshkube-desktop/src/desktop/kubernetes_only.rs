@@ -158,7 +158,10 @@ impl Pilot {
                 view.config_job = None;
                 match result {
                     Ok(report) => view.kubeconfig_read(report, window, cx),
-                    Err(error) => view.config_error = Some(error),
+                    Err(error) => {
+                        view.pending_link = None;
+                        view.config_error = Some(error);
+                    }
                 }
                 view.sync_unread_health(cx);
                 // The header reads a failed read as a failed connection.
@@ -183,6 +186,7 @@ impl Pilot {
         // A file that can't be read matters only when no other one has
         // contexts.
         if report.contexts.is_empty() {
+            self.pending_link = None;
             self.config_error = Some(match report.errors.first() {
                 Some((path, error)) => format!("{}: {error}", path.display()),
                 None if report.sources.is_empty() => {

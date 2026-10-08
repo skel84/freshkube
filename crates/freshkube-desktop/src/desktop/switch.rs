@@ -232,6 +232,10 @@ impl Pilot {
         if self.active_cluster().is_none() {
             return;
         }
+        // Links made in the session being left name an id that ends here,
+        // and belong to the entry it was.
+        self.registry
+            .retire_connection(self.kube_identity(), &self.active_definition);
         self.registry.adopt(SessionKey::Implicit);
         self.active_definition = Definition::default();
         self.entry_open = None;
@@ -362,17 +366,35 @@ impl Pilot {
             self.pending_link = None;
             return;
         }
+        // The interim sources of a Talos entry (the control plane's
+        // kubeconfig before its own is applied) are not the entry's.
+        if self.entry_open.is_some()
+            || self.entry_locate.is_some()
+            || self.kubeconfig_draft.inspecting
+        {
+            return;
+        }
         let Some(source) = self.kube_source() else {
             return;
         };
         let Some(pending) = self.pending_link.take() else {
             return;
         };
+        // The same id is the same access; another means the entry's access
+        // changed since the link was made, and the object may be another's.
+        if pending.object.connection.as_deref() != Some(source.id.as_str()) {
+            gpui_kit::component::WindowExt::push_notification(
+                window,
+                format!(
+                    "{} reconnected since this link was made; open it again",
+                    pending.entry
+                ),
+                cx,
+            );
+            return;
+        }
         self.cancel_object_open();
-        let object = resources::model::ObjectRef {
-            connection: Some(source.id.clone()),
-            ..pending.object
-        };
+        let object = pending.object;
         match pending.work {
             LinkWork::Open { kind, tab } => self.open_object(kind, object, tab, window, cx),
             LinkWork::Owner { api_version, kind } => {
@@ -478,12 +500,9 @@ impl Pilot {
                 .update(cx, |input, cx| input.set_value(shown, window, cx));
             self.load_configuration(window, cx);
             match workspace.kubeconfig.clone() {
-                Some(kubeconfig) => self.inspect_kubeconfig_file(
-                    kubeconfig,
-                    Some(entry.context.clone()),
-                    window,
-                    cx,
-                ),
+                Some(kubeconfig) => {
+                    self.inspect_entry_kubeconfig(kubeconfig, entry.context.clone(), window, cx)
+                }
                 None => self.locate_entry_kubeconfig(entry.context.clone(), window, cx),
             }
         } else {
@@ -586,7 +605,7 @@ impl Pilot {
                     .ok()
                     .and_then(|report| report.context(&context).map(|found| found.source.clone()));
                 match source {
-                    Some(file) => view.inspect_kubeconfig_file(file, Some(context), window, cx),
+                    Some(file) => view.inspect_entry_kubeconfig(file, context, window, cx),
                     None => {
                         let Some(id) = view.active_cluster().map(str::to_owned) else {
                             return;

@@ -751,3 +751,109 @@ fn a_launch_naming_the_source_an_entry_describes_belongs_to_that_entry(cx: &mut 
         None
     );
 }
+
+#[gpui_kit::test]
+async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_link(
+    cx: &mut TestAppContext,
+) {
+    // The workspace's own kubeconfig, which every entry reads.
+    let guard = talos_folder(TALOSCONFIG_OTHER_CURRENT);
+    let wanted = guard.path().join("kubeconfig");
+    std::fs::write(&wanted, KUBECONFIG.replace("alpha", "acme-mgmt")).unwrap();
+    std::fs::write(
+        guard.path().join("workspace.json"),
+        std::fs::read_to_string(guard.path().join("workspace.json"))
+            .unwrap()
+            .replace(
+                "\"version\":1,",
+                &format!(
+                    "\"version\":1,\"kubeconfig\":{},",
+                    serde_json::to_string(&wanted).unwrap()
+                ),
+            ),
+    )
+    .unwrap();
+    let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
+    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+        matches!(
+            &view.read(cx).kubeconfig,
+            freshkube_core::KubeconfigSelection::File { path, .. } if *path == wanted
+        )
+    })
+    .await;
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        // Its own kubeconfig applied; the window never left the entry.
+        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(
+            NavigationFile::global(cx).active_cluster().as_deref(),
+            Some("mgmt")
+        );
+        assert!(pilot.kubernetes_only.is_none());
+    });
+    // A link held for the entry survives its own kubeconfig applying.
+    let generation = cx.read(|cx| view.read(cx).entry_generation);
+    cx.update(|cx| {
+        view.update(cx, |pilot, _| {
+            let link = crate::resources::model::ObjectRef {
+                namespace: "ns".into(),
+                name: "p".into(),
+                uid: String::new(),
+                connection: Some("c".into()),
+            };
+            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+                "mgmt",
+                generation,
+                link,
+                super::switch::LinkWork::Open {
+                    kind: freshkube_core::resources::builtin("pods").unwrap(),
+                    tab: crate::resources::Tab::Overview,
+                },
+            ));
+        })
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(pilot.entry_generation, generation);
+        assert!(pilot.pending_link.is_some());
+    });
+}
+
+#[gpui_kit::test]
+async fn an_entry_that_cannot_read_its_kubeconfig_drops_a_held_link(cx: &mut TestAppContext) {
+    let guard = both();
+    let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.activate_entry("dev", window, cx);
+            let link = crate::resources::model::ObjectRef {
+                namespace: "ns".into(),
+                name: "p".into(),
+                uid: String::new(),
+                connection: Some("c".into()),
+            };
+            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+                "dev",
+                pilot.entry_generation,
+                link,
+                super::switch::LinkWork::Open {
+                    kind: freshkube_core::resources::builtin("pods").unwrap(),
+                    tab: crate::resources::Tab::Overview,
+                },
+            ));
+        });
+    })
+    .unwrap();
+    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.registry.active_key(), &key("dev"));
+        assert!(pilot.pending_link.is_none());
+    });
+}

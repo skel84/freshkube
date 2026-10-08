@@ -1174,9 +1174,7 @@ impl Pilot {
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.epoch = self.epoch.wrapping_add(1);
         // The whole session goes, with its summary tasks, before anything
-        // below rebuilds from it. Links made in it name an id that ends here.
-        self.registry
-            .retire_connection(self.kube_identity(), &self.active_definition);
+        // below rebuilds from it.
         self.registry.reset_active();
         self.search.update(cx, |search, cx| search.invalidate(cx));
         self.overview_task = None;
@@ -1255,6 +1253,7 @@ impl Pilot {
                             } else if view.contexts.contains(&catalog.current) {
                                 view.applied.context = Some(catalog.current);
                             } else {
+                                view.pending_link = None;
                                 view.config_error = Some(format!(
                                     "Talos context '{}' was not found",
                                     catalog.current
@@ -1268,6 +1267,7 @@ impl Pilot {
                         view.refresh(window, cx);
                     }
                     Err(error) => {
+                        view.pending_link = None;
                         view.config_error = Some(error);
                         view.rebuild_joined_nodes(cx);
                         view.prepare_context_display(window, cx);
